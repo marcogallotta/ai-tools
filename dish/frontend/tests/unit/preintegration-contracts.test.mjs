@@ -40,7 +40,7 @@ test("initial authority policy does not trust forwarded identity", () => {
 });
 
 const stage3 = JSON.parse(await readFile(new URL("../../contracts/stage3-read-contract.json", import.meta.url)));
-const migrationHead = await readFile(new URL("../../../dish_pg/migrations/versions/0012_task_grant_semantic_identity.py", import.meta.url), "utf8");
+const migrationHead = await readFile(new URL("../../../dish_pg/migrations/versions/0030_validation_failure_admission.py", import.meta.url), "utf8");
 const modelSources = await Promise.all([
   "../../../dish_pg/models.py",
   "../../../dish_pg/stage3_models.py",
@@ -50,9 +50,9 @@ const modelSources = await Promise.all([
 const allModels = modelSources.join("\n");
 
 test("Stage 3 contract is reconciled to the checked-in migration head", () => {
-  assert.match(migrationHead, /revision\s*=\s*["']0012_task_grant_semantic_identity["']/);
-  assert.equal(stage3.checked_in_schema.alembic_head, "0012_task_grant_semantic_identity");
-  assert.equal(stage3.checked_in_schema.production_status, "not-yet-activated");
+  assert.match(migrationHead, /revision\s*=\s*["']0030_validation_failure_admission["']/);
+  assert.equal(stage3.checked_in_schema.alembic_head, "0030_validation_failure_admission");
+  assert.equal(stage3.checked_in_schema.production_status, "dark-launch-target-non-authoritative");
 });
 
 test("Stage 3 canonical source inventory names real current tables", () => {
@@ -62,7 +62,7 @@ test("Stage 3 canonical source inventory names real current tables", () => {
   }
 });
 
-test("frontend support tables remain explicitly unimplemented before migration", () => {
+test("frontend support-table inventory matches the current Stage 3 contract", () => {
   const futureTables = [
     ...stage3.frontend_migration_requirements.stage2,
     ...stage3.frontend_migration_requirements.stage3,
@@ -100,11 +100,13 @@ test("Stage 3 acceptance scaffold covers only Gate B dependencies", () => {
 
 const readiness = JSON.parse(await readFile(new URL("../../contracts/pre-db-readiness.json", import.meta.url)));
 
-test("pre-database readiness record keeps integrated stages unauthorized", () => {
+test("pre-database readiness authorizes only the isolated Stage 3 read core", () => {
   assert.equal(readiness.checked_in_postgresql_head, stage3.checked_in_schema.alembic_head);
   assert.equal(readiness.authorization.stage2, false);
-  assert.equal(readiness.authorization.stage3, false);
+  assert.equal(readiness.authorization.stage3_read_core, true);
+  assert.equal(readiness.authorization.stage3_http_activation, false);
   assert.ok(readiness.stage2_go_conditions.length >= 5);
-  assert.ok(readiness.stage3_go_conditions.length >= 6);
+  assert.ok(readiness.stage3_read_core_conditions.length >= 5);
+  assert.ok(readiness.stage3_http_activation_conditions.length >= 6);
   assert.ok(readiness.forbidden_shortcuts.includes("fixture-backed production API routes"));
 });

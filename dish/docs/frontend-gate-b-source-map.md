@@ -5,47 +5,50 @@
 **Authoring map complete for the Stage 3 board and Stage 4 detail scope; Gate B is not passed.**
 
 This packet maps the approved frontend fields against the current PostgreSQL models, read surfaces,
-and frontend contracts. It is deliberately written before the pending production database rollout is
-complete so that the rollout can absorb missing read support and indexes. The map must be reconciled
-against the exact migrated schema and independently reviewed before Delivery Stage 3 begins. The
-Stage 4 portion must be reviewed again immediately before Delivery Stage 4.
+and frontend contracts. It is reconciled to checked-in Alembic head
+`0030_validation_failure_admission`. PostgreSQL remains a non-authoritative dark-launch target: the
+frontend read core may be implemented and exercised locally against it without transferring authority.
+Gate B still must pass before the Stage 3 HTTP/browser surface is activated. The Stage 4 portion must
+be reviewed again immediately before Delivery Stage 4.
 
 No predicate marked **unresolved** below may be guessed in a query, browser component, label mapper,
-or DTO builder. A Stage 3 implementation may begin only after all board predicates are accepted and
-the review record in `frontend-gate-b-review.md` records a pass for that scope.
+or DTO builder. The Stage 3 implementation therefore emits only the durable subset currently mapped;
+unresolved invalid/contested lease and failed/disputed Verification meanings remain absent rather
+than inferred.
 
 ## Evidence inspected
 
 - Product and implementation contracts: `frontend.md`, `frontend-imp.md`.
 - PostgreSQL authority models: `dish_pg/models.py`, `dish_pg/stage3_models.py`,
   `dish_pg/stage5_models.py`, and `dish_pg/stage6_models.py`.
-- Current PostgreSQL read surface: `dish_pg/read_model.py`.
+- Current PostgreSQL read surfaces: `dish_pg/read_model.py` and the Stage 3 candidate `dish_pg/frontend_board_query.py`.
 - PostgreSQL transition and projection code under `dish_pg/`.
-- Database design, implementation, migration, testing, and production-ledger documents in `docs/`.
+- Architecture entrypoint `docs/architecture/index.md` and the routed PostgreSQL, authority, package, and testing-boundary documents under `docs/architecture/`, plus operational migration/testing documents in `docs/`.
 - Workflow-policy and recovery implementation under `dish_tool/`, used only to identify current
   authority concepts; those Python paths are not approved as per-card query loops.
 - Fixture frontend DTO shapes, notice registry, detail fixtures, and frontend OpenAPI document.
 
 The current checked-in models are treated as design evidence, not proof that the same schema is live in
-production. The checked-in `0012_task_grant_semantic_identity` reconciliation is recorded in
-`frontend-db-migration-reconciliation.md`; final production rollout reconciliation remains mandatory.
+production. This map is reconciled to checked-in head `0030_validation_failure_admission`; final
+production rollout reconciliation and independent Gate B review remain mandatory before HTTP/browser
+activation.
 
 ## Material findings blocking Gate B
 
 | ID | Finding | Required resolution |
 |---|---|---|
-| B-01 | The map is reconciled to checked-in Alembic head `0012_task_grant_semantic_identity`, but that schema is not yet the recorded live production authority and the Verification-hold ledger marker remains open. | Re-run the reconciliation against the exact activated migration/schema revision and closed production-change ledger. |
-| B-02 | `PostgresReadModel.section_tasks()` is a per-section list query, includes completed tasks, exposes raw technical/external identities, and cannot produce a coherent all-section bootstrap with attention facts. | Add a frontend-owned board query service and DTO builder; do not extend the browser from this method directly. |
-| B-03 | The current read model has no browser-safe task/section route-identity authority. | Add a bounded environment/type-scoped route-identity codec or frontend-owned alias mapping with normalization tests. |
-| B-04 | The English terms **invalid lease** and **contested lease** have no exact named PostgreSQL predicate in the current schema. | Add a versioned frontend predicate registry backed by accepted durable facts, or approve a targeted contract amendment. |
-| B-05 | Verification **failed** and **disputed** do not resolve unambiguously from `VerificationCycle.lifecycle/outcome`; approved outcome values and dispute authority are not defined as frontend predicates. | Name the exact lifecycle/outcome/review predicates and add equivalence tests against governing workflow behavior. |
-| B-06 | A **named unresolved recovery requirement** has no single durable PostgreSQL relation in the current model set. Several command/recovery paths compute transient `recovery_required` results, but those are not a canonical set-oriented task fact. | Add frontend-owned durable/read-support state derived transactionally from governing recovery evidence, or amend the contract. |
-| B-07 | Projection presentation lacks an accepted state reducer for `delayed`, `failed`, `drifted`, `unknown`, `unavailable`, `current`, and `not_configured`, including configured delay thresholds and precedence. | Add one versioned projection-presentation reducer over durable projection facts and readiness input, with threshold configuration and equivalence tests. |
-| B-08 | The current `task_view()` returns `legal_actions`, raw UUID-backed internal data, and a hard-coded `not_configured` projection result; it performs multiple scalar workflow queries. | Add a dedicated frontend detail query/factual service. Do not serialize `TaskCurrentView` to the browser. |
-| B-09 | No checked-in versioned attention, disclosure, advisory, or projection-presentation backend registry exists. | Add registries synchronized with the frontend OpenAPI contract and generated browser validators. |
-| B-10 | Required bounded-query, query-plan, response-size, and execution-time evidence does not yet exist for board bootstrap, continuation, or detail. | Land plan/performance fixtures and enforce configured limits with closed capacity errors. |
-| B-11 | Browser-facing board snapshot, section continuity, and bounded retry-safe cursor semantics are not implemented. | Add frontend-specific identity/cursor services bound to all contract-relevant inputs and explicit expiry/cleanup. |
-| B-12 | Independent Gate B review has not occurred. | A reviewer must validate this map against the final schema and governing policy, then record scope-specific acceptance. |
+| B-01 | The map is reconciled to checked-in Alembic head `0030_validation_failure_admission`, while PostgreSQL remains a non-authoritative dark-launch target rather than production authority. | Reconcile again to the exact deployed dark-launch schema/runtime evidence before HTTP/browser activation; authority transfer is not required for read-only use. |
+| B-02 | A frontend-owned set-oriented board query candidate now exists in `dish_pg/frontend_board_query.py`; it is not yet activated through HTTP and lacks native PostgreSQL plan/isolation evidence. | Review the query against native PostgreSQL, record bounded plans/isolation, and keep it read-only/no-network. |
+| B-03 | Stateless typed/environment-scoped route identities now exist in `dish_service/frontend_tokens.py`; secret lifetime/rotation is not yet accepted. | Review secret lifecycle, collision/bounds evidence, and deployment ownership before HTTP activation. |
+| B-04 | The English terms **invalid lease** and **contested lease** still have no exact named PostgreSQL predicate. The candidate query emits only durable expired-lease attention for the latest actor attempt on the current open operation. | Name durable predicates or amend the approved meaning; do not broaden non-active lease states heuristically. |
+| B-05 | Verification **failed** and **disputed** remain unresolved. The candidate query emits only durable open human-review attention. | Name exact failed/disputed/current-cycle predicates and add policy-equivalence tests. |
+| B-06 | A task-scoped recovery candidate is now mapped as `CommandExecution.status='uncertain'` without a corresponding `RequestUncertaintyResolution`; equivalence with governing recovery semantics is not yet accepted. | Review and accept/reject that mapping before HTTP activation; no new support table is currently required. |
+| B-07 | The candidate query can flag open drift, live-origin blocked/uncertain outbox work, and explicitly configured delayed live-origin work, but the full projection presentation reducer and precedence remain unaccepted. | Accept the reducer, delay threshold source, readiness input, and precedence before exposing final projection presentation. |
+| B-08 | The current `task_view()` remains unsuitable for Stage 4 browser detail. | Add a dedicated frontend detail query/factual service in Stage 4; do not serialize `TaskCurrentView`. |
+| B-09 | A versioned Stage 3 board operation/phase/attention registry now exists in `dish_service/frontend_contract.py`; detail disclosure/advisory/projection registries remain pending and normalization/collation equivalence is unresolved. | Review board registry coverage and normalization; finish detail registries in Stage 4. |
+| B-10 | Focused tests prove a fixed three-statement bootstrap in the SQLite-rendered test fixture, but native PostgreSQL `EXPLAIN`, transaction-isolation/coherence, response-size, and execution-time evidence remain outstanding. | Record native PostgreSQL bounded-work evidence and enforce the chosen short coherent read transaction before HTTP activation. |
+| B-11 | Stateless retry-safe cursor, section continuity, and board snapshot candidates now exist in `dish_service/frontend_tokens.py` and `dish_service/frontend_board.py`; they deliberately do not promise a frozen task snapshot. | Review token secret lifecycle, expiry, compatibility semantics, and keyset boundary behavior before HTTP activation. |
+| B-12 | Independent Gate B review has not occurred. | A reviewer must validate this map against the deployed dark-launch schema/runtime and governing policy, then record scope-specific acceptance. |
 
 ## Canonical eligibility and evaluation boundary
 
@@ -57,7 +60,7 @@ formatting happen after the immutable fact bundle is captured and must not keep 
 A task is eligible for the Stage 1 board/detail only when all of these are true in the active authority
 generation and active registry:
 
-1. `DishTask.existence_state <> 'retired'`;
+1. `DishTask.existence_state IN ('ordinary', 'isolated')`; isolated rows remain visible and are marked `ISOLATED`;
 2. `CurrentTaskCompletion.completed = false`;
 3. one current placement exists with `registry_version_id` equal to the active registry and a non-null
    section present in that registry;
@@ -65,9 +68,10 @@ generation and active registry:
 5. the task authority head and current content activation/version are complete and belong to the same
    generation/task bundle.
 
-`isolated` is not automatically equivalent to retired in the current schema. Whether an isolated task
-is display-eligible is **unresolved** and must be decided from the governing isolation contract before
-the eligibility predicate is accepted. Until then, Stage 3 must not silently include or exclude it.
+`isolated` is an explicit PostgreSQL presentation state. It is display-eligible for the board and
+detail read surface, remains visible under default filters, and contributes the first fixed
+`isolated`/`ISOLATED` attention code. Migrated authoritative-source tasks must not be inferred isolated
+without a separate accepted reconciliation rule.
 
 Card order is deterministic `lower(current title), task_id` in the current read model. The contract
 requires deterministic title ordering but forbids raw internal keys in the DTO. This ordering is a
@@ -83,16 +87,15 @@ read-only owners rather than alter it into a browser DTO service:
 |---|---|
 | `dish_pg/frontend_board_query.py` | One coherent bootstrap query, section continuation query, card fact aggregation, attention inputs, and internal snapshot/continuity inputs. |
 | `dish_pg/frontend_detail_query.py` | One coherent eligible-task fact bundle containing canonical content and every disclosure/advisory/projection input. |
-| `dish_pg/frontend_route_identity.py` | Bounded typed/environment-scoped route identities and legacy normalization; no raw UUID/GID exposure. |
-| `dish_pg/frontend_cursor.py` | Bounded opaque tamper-resistant cursor lifecycle, compatibility checks, expiry, and optional handle cleanup. |
-| `dish_service/frontend_attention.py` | Versioned accepted predicates, labels, severities, and deterministic registry order. |
+| `dish_service/frontend_tokens.py` | Stateless bounded typed/environment-scoped route identities, opaque digests, and retry-safe expiring cursor tokens; no raw UUID/GID exposure. |
+| `dish_service/frontend_contract.py` | Versioned Stage 3 operation/phase/attention labels, severities, normalization candidate, and deterministic registry order. |
+| `dish_service/frontend_board.py` | Closed board DTO builder, capacity/configuration validation, notices, snapshot/continuity identities, and stateless cursor lifecycle. |
 | `dish_service/frontend_disclosure.py` | Versioned category/source registry and bounded factual detail formatting. |
 | `dish_service/frontend_projection.py` | Versioned projection state reducer and human presentation, using captured durable facts plus one optional readiness sample. |
 | `dish_service/frontend_advisory.py` | Non-authorizing factual next-step advisory derived from the same captured workflow facts as the authority layer. |
 | `dish_service/frontend_renderer.py` | Pinned bounded renderer/sanitizer and inert fallback over captured canonical body source. |
 
-Names are implementation proposals. Their separation and authority limits are required; exact file
-names may change during implementation review.
+The Stage 3 owner names above are the checked-in candidate implementation. Stage 4 names remain implementation proposals. Their separation and authority limits are required.
 
 ## Board-bootstrap field map
 
@@ -100,24 +103,24 @@ names may change during implementation review.
 |---|---|---|---|---|
 | Active generation | `AuthorityGeneration` | Exactly one row with `status='active'`; none/multiple is service/configuration failure. | Reuse `active_generation()` semantics, add cardinality test. | Mapped |
 | Active registry | `ActiveSectionRegistry` joined to `SectionRegistryVersion` | Exact row for active generation; registry version/revision captured once. | Bootstrap transaction invariant tests. | Mapped |
-| Ordered sections | `SectionRegistryEntry` joined `GovernedSection` and `GovernedProject` | Entries for active registry ordered by `ordinal`; section/project lifecycle must be active. Every registry section is returned, including empty sections. | One bounded registry query; ambiguity validation. | Mapped, lifecycle filter to add |
+| Ordered sections | `SectionRegistryEntry` joined `GovernedSection` and `GovernedProject` | Entries for active registry ordered by `ordinal`; section/project lifecycle must be active. Every registry section is returned, including empty sections. | One bounded registry query; ambiguity validation. | Implemented candidate |
 | Section label | `SectionRegistryEntry.display_name` | Current active registry value. | Bounded length/normalization in DTO. | Mapped |
 | Project label | `GovernedProject.logical_name` via `GovernedSection.project_id` | Emit only when equal normalized section labels need disambiguation; if normalized project+section still collides, fail `board_configuration_invalid`. | Frontend configuration validator and collision tests. | Mapped |
-| Section route identity | Internal `GovernedSection.section_id` plus environment/type binding | Browser receives only current normalized route identity. | New route-identity service and wrong-type/environment tests. | Support required B-03 |
-| Section continuity identity | Server-owned digest/handle over active generation/registry, section, normalized query contract, effective page sizes, every eligible card/order/visible fact and attention set in the section, and time-threshold crossings | Equality only has contract meaning; no raw revisions in DTO. | New continuity builder with deterministic fixtures and refresh tests. | Support required B-11 |
+| Section route identity | Internal `GovernedSection.section_id` plus environment/type binding | Browser receives only typed environment-scoped route identity. | `frontend_tokens.py` and wrong-type/environment tests. | Implemented candidate B-03 |
+| Section continuity identity | Server-owned digest over active generation/registry, section, query/normalization contract versions, and effective page sizes | Equality means pagination-contract compatibility, not a frozen task snapshot; ordinary keyset boundary movement between requests is acceptable. | `frontend_board.py` deterministic digest and cursor tests. | Implemented candidate B-11 |
 | Effective page size | Frontend deployment configuration | Positive bounded value, returned exactly. | Startup bounds and schema tests. | Support required |
-| Card task identity | Internal `DishTask.task_id` | Current normalized browser route identity; one task at most once across accepted pages. | Route-identity service and duplicate detection. | Support required B-03 |
+| Card task identity | Internal `DishTask.task_id` | Typed environment-scoped browser route identity; immutable task ID remains cursor-internal only. | `frontend_tokens.py` and pagination identity tests. | Implemented candidate B-03 |
 | Card title | `TaskAuthorityHead.current_content_activation_id` → `ContentActivation` → `ContentVersion.title` | Current active content version for same generation/task; nonblank. | Set-oriented join already demonstrated in `section_tasks()`. | Mapped |
 | Card section identity | Current placement + containing registry entry | Must equal containing section route identity. | DTO invariant test. | Mapped |
-| Eligibility | `DishTask`, `CurrentTaskCompletion`, `CurrentTaskSectionPlacement`, `CurrentTaskProjectMembership`, `TaskAuthorityHead`, registry/project/section | Non-retired, incomplete, active-registry placement, current membership true, complete authority bundle; isolation rule still unresolved. | Frontend eligibility CTE and equivalence tests. | Partially mapped |
+| Eligibility | `DishTask`, `CurrentTaskCompletion`, `CurrentTaskSectionPlacement`, `CurrentTaskProjectMembership`, `TaskAuthorityHead`, registry/project/section | `ordinary` or `isolated`, incomplete, active-registry placement, current membership true, complete authority bundle; isolated remains visible/marked. | Set-oriented frontend eligibility query and tests. | Implemented candidate |
 | Active operation | `WorkflowOperation` | At most one `lifecycle='open'` row per generation/task by partial unique index. | Bulk outer join/CTE; invariant failure if cardinality is violated. | Mapped |
-| Operation label | `WorkflowOperation.kind` through a checked-in closed presentation registry | Browser must not title-case arbitrary database text. | Versioned operation-label registry and schema sync. | Support required |
-| Phase label | `WorkflowOperation.phase` through a checked-in closed/bounded presentation mapping | Optional approved display label; unknown required phase is contract failure or service-owned generic factual representation only if contract permits. | Phase registry/equivalence decision. | Unresolved presentation mapping |
+| Operation label | `WorkflowOperation.kind` through `frontend_contract.py` | Browser must not title-case arbitrary database text. | Closed versioned registry and schema sync. | Implemented candidate B-09 |
+| Phase label | `WorkflowOperation.phase` through `frontend_contract.py` | Known Stage 3 phases map through a closed registry; unknown values fail closed. | Registry coverage/equivalence review. | Implemented candidate B-09; coverage review pending |
 | No-operation status | Absence of an open `WorkflowOperation` | Emit approved closed `no_active_operation` state. | Outer-join and schema tests. | Mapped |
-| Attention codes | See registry below | Derived only from accepted named predicates at the same evaluation time, in fixed registry order, with no duplicates. | Bulk aggregate CTE plus versioned registry/equivalence tests. | Blocked B-04–B-09 |
+| Attention codes | See registry below | Derived only from currently mapped durable predicates at the same evaluation time, in fixed registry order, with no duplicates. Unresolved predicate branches are omitted. | Set-oriented query plus versioned registry/equivalence tests. | Candidate; B-04/B-05/B-06/B-07 review remains |
 | Per-response notices | Attention codes on only cards returned in that response | One contribution per distinct returned task/code; grouped counts happen over accepted loaded contributions in the client. | DTO notice builder and equivalence tests. | Mapped once predicates pass |
-| `next_cursor` | Server cursor service over section/query/page boundary | Present exactly when an additional eligible row exists; bounded, opaque, tamper-resistant, retry-safe, expiring no later than session lifetime. | New cursor service; current `CursorCodec` is insufficient because it has no expiry/contract/compatibility/service-unavailable distinction. | Support required B-11 |
-| Board snapshot identity | Server-owned digest/handle over the exact presentation inputs defined in `frontend-imp.md` | Equal only for equivalent active registry/order/labels, effective first-page size, first-page identities/order/visible fields, continuity identities, cursor presence, and notices. | New snapshot builder and deterministic change matrix. | Support required B-11 |
+| `next_cursor` | Stateless sealed cursor over section/query/page boundary | Present exactly when an additional eligible row exists; bounded, opaque, tamper-evident, retry-safe, and expiring. | `frontend_tokens.py`; deployment secret lifetime/rotation review remains. | Implemented candidate B-11 |
+| Board snapshot identity | Server-owned digest over exact returned first-page presentation inputs | Equal only for equivalent returned Stage 3 bootstrap presentation under the current contract versions. | `frontend_board.py` digest and deterministic tests. | Implemented candidate B-11 |
 
 ### Current read-model gap
 
@@ -126,12 +129,12 @@ names may change during implementation review.
 - issues one query for one section rather than one coherent all-section bootstrap;
 - omits current-project-membership validation;
 - does not filter `CurrentTaskCompletion.completed = false`;
-- does not settle isolated-task eligibility;
+- predates the accepted isolated-task visibility rule;
 - returns UUID and Asana alias values rather than frontend route identities;
 - has no open-operation or attention aggregation;
 - has no shared evaluation time, board snapshot, section continuity identity, notices, or contract
   capacity outcome;
-- uses a stateless cursor without expiry or the required invalid/stale/unavailable distinctions.
+- exposes a generic cursor shape rather than the frontend-specific contract/expiry/compatibility token.
 
 The useful part to retain is its set-oriented content/placement/head/completion join and deterministic
 keyset boundary pattern.
@@ -143,10 +146,11 @@ must become an exact checked-in backend predicate with accepted tests before Sta
 
 | Code | Contract meaning | Current durable facts | Candidate exact predicate / precedence | Decision |
 |---|---|---|---|---|
-| `lease_attention` | Lease is expired, invalid, or contested; healthy active lease excluded. | `ServiceLease.state`, `expires_at`, operation/task links, one-active-actor partial index. | `expired` can be `state='active' AND expires_at <= evaluation_time` (and possibly durable `state='expired'` if that state remains presentation-relevant). No current column/relation names **invalid** or **contested**. Do not equate every non-active state with attention: `released` and `recovered` are ordinary terminal states. | **Unresolved B-04.** Add named durable/read-support predicates for invalid/contested or amend approved meaning. |
+| `isolated` | Task is explicitly isolated but remains visible. | `DishTask.existence_state`. | Exact implemented predicate: `existence_state='isolated'`; it is first in registry order and renders `ISOLATED`. | **Accepted product decision; implemented candidate.** |
+| `lease_attention` | Lease is expired, invalid, or contested; healthy active lease excluded. | `WorkflowOperation.lifecycle`; `ServiceLease.operation_id`, `actor_attempt_sequence`, `state`, `expires_at`; one-open-operation and one-active-actor partial indexes. | For the one current open operation, select the actor lease with the greatest `actor_attempt_sequence`. That relevant attempt qualifies when `state='expired'` or when `state='active' AND expires_at <= evaluation_time`. Any later actor attempt supersedes an earlier expired/released/recovered attempt for presentation, so historical terminal rows cannot create sticky attention. `released` and `recovered` do not themselves qualify. No current column/relation names **invalid** or **contested**. | **Partially mapped; unresolved B-04** for invalid/contested only. |
 | `verification_attention` | Verification failed, disputed, or awaiting human review; ordinary pending/in-progress excluded. | `VerificationCycle.lifecycle/outcome`; `HumanReviewRequirement(route='human_review', state='open')`; workflow operation kind/lifecycle/phase. | Awaiting human review can map exactly to an open `HumanReviewRequirement` with `route='human_review'` linked to the current operation/cycle. Current lifecycle supports `rejected`, but the contract says failed; current `outcome` is free text and no dispute relation is named. | **Partially mapped; unresolved B-05** for failed/disputed and current-cycle precedence. |
 | `hold_active` | A named active hold exists. | `EvidenceHold(state='open')`; `HumanReviewRequirement(route='two_pass_hold', state='open')`. | Candidate: existence of either open durable hold type linked to the current operation, preserving the hold kind for detail disclosure. The reviewer must confirm both are approved “named hold” authorities rather than only `EvidenceHold`. | **Candidate requires policy equivalence review.** |
-| `recovery_required` | A named unresolved recovery requirement exists. | Recovery outcomes are computed in command/operation paths; abandonment states and projection uncertainty are separate facts. No single current task-scoped durable relation names an unresolved recovery requirement. | Do not infer from operation phase strings, failed operations, expired leases, or active abandonment. Introduce a task-scoped frontend read-support projection sourced transactionally from the governing recovery evidence, with explicit kind/state/opened/resolved facts, or amend the contract. | **Unresolved B-06.** |
+| `recovery_required` | A named unresolved recovery requirement exists. | `CommandExecution.status`; `RequestUncertaintyResolution` keyed by request identity. | Candidate exact predicate: task-scoped `CommandExecution.status='uncertain'` with no matching uncertainty resolution. Do not infer from phase strings, failed operations, expired leases, or active abandonment. | **Mapped candidate; B-06 equivalence review required.** |
 | `abandonment_active` | An active abandonment fact exists. | `AbandonmentAttempt.state`; partial unique index already defines active set. | Exact candidate: an attempt for current generation/task with `state IN ('preparing','published','blocked','reconciling')`. The active partial unique index is the strongest current canonical definition. | **Mapped candidate; acceptance/equivalence required.** |
 | `succession_active` | An active succession fact exists. | `OperationSuccessionEdge` plus `AbandonmentAttempt` and source/successor `WorkflowOperation`. | Candidate: a succession edge whose abandonment is currently `published`, whose successor matches `AbandonmentAttempt.successor_operation_id`, and whose successor operation remains `lifecycle='open'`. Whether succession remains active in another abandonment state is not stated. | **Candidate requires policy decision.** |
 | `projection_abnormal` | Projection state is delayed, failed, drifted, unknown, or unavailable; current/not-configured excluded. | Active `ProjectionEpoch`, `TaskProjectionMapping`, `ProjectionOutboxEvent`, latest `ProjectionAttempt`/`Observation`/`Adjudication`, open `ProjectionDriftEvent`, reconciliation/readiness evidence. | Precedence candidate: `unavailable` when configured projection presentation cannot be established; `drifted` for open drift; `failed` for terminal blocked/not-applied state requiring intervention; `unknown` for uncertain evidence; `delayed` for unresolved pending/claimed/dispatched work older than configured threshold; `current` when mapped and no higher state; `not_configured` only when projection is intentionally absent. Exact threshold, latest-event selection, not-applied semantics, readiness source, and precedence require acceptance. | **Unresolved B-07.** |
@@ -180,11 +184,11 @@ bounded coherent read at one evaluation time. The cursor must bind at least:
 - section continuity identity or equivalent compatibility input;
 - issued/expiry time and cursor representation version.
 
-The response repeats the current normalized section and continuity identities, returns `1..page_size`
-cards when nonterminal, and includes notices only for returned cards. A current accepted cursor cannot
-produce an empty nonterminal page. Cursor-store outages map to `service_unavailable`; malformed or
-wrong-scope tokens map to `cursor_invalid`; expired/retired/incompatible valid tokens map to
-`cursor_stale`.
+The response repeats the current section and continuity identities, returns `1..page_size` cards when
+nonterminal, and includes notices only for returned cards. A current accepted cursor cannot produce an
+empty nonterminal page. The current candidate is stateless, so there is no cursor-store availability
+dependency. Malformed/tampered/wrong-scope tokens map to `cursor_invalid`; expired or incompatible
+valid tokens map to `cursor_stale`.
 
 ## Task-detail field map
 
@@ -229,20 +233,24 @@ after closing the read transaction.
 The recommended bootstrap is one application-service call using a short read-only transaction and a
 small fixed number of set-oriented SQL statements, independent of returned task count:
 
-1. capture evaluation time, active generation, active registry, registry entries, project labels, and
-   validate section-label/path uniqueness;
-2. run one eligible-card query across all registry sections using a window function partitioned by
-   section, fetching at most `first_page_size + 1` rows per section and joining the single open
-   operation;
-3. bulk aggregate accepted attention-source facts for only candidate returned task IDs, or integrate
-   them as lateral/CTE aggregates in the same statement when query plans remain bounded;
-4. construct DTOs, notices, continuity inputs, cursors, and snapshot identity from immutable rows.
+1. capture database evaluation time, active generation, and active registry context;
+2. load bounded active-registry section/project metadata in ordinal order;
+3. validate the configured section-count bound and all registry-fatal lifecycle, label,
+   normalization/path, and route-identity conditions from that cheap metadata read;
+4. run one eligible-card query across all registry sections using a window function partitioned by
+   section, fetching at most `first_page_size + 1` rows per section and integrating the currently
+   mapped attention facts set-wise;
+5. construct DTOs, notices, continuity inputs, stateless cursors, and
+   snapshot identity from the captured facts.
 
-An empty registry is a successful zero-section board. A configured section-count or response bound is
-checked before expensive card work and maps to `board_capacity_exceeded`. Invalid labels/path
-configuration maps to `board_configuration_invalid`.
+An empty registry is a successful zero-section board. The configured section-count bound and cheap
+registry/configuration-fatal conditions are checked before expensive card work. Section-capacity
+failure maps to `board_capacity_exceeded`; invalid lifecycle, labels, normalized paths, or route
+identity configuration maps to `board_configuration_invalid`. Remaining response-size/query-work
+bounds still require the explicit Gate B/native-runtime evidence listed below rather than an invented
+threshold in the read core.
 
-Continuation uses one card query plus at most one bulk attention query. Detail uses one base task fact
+The current continuation candidate uses one context query plus one bounded card/attention query. Detail uses one base task fact
 query plus a fixed number of bulk/aggregate queries for the one task. No query count may grow with the
 number of cards, disclosures, or sections.
 
@@ -292,13 +300,13 @@ Internal identity inputs must use accepted canonical revisions/facts, not browse
 At minimum:
 
 - board snapshot changes when any contract-listed first-page presentation input changes;
-- section continuity changes when any pagination-relevant membership, eligibility, title/order,
-  visible status, attention, page-size/query-contract input, or time-derived threshold anywhere in
-  that section changes;
+- section continuity binds active generation/registry, section identity, contract versions, and page
+  sizes; it deliberately does not freeze all task facts between pages, so ordinary keyset boundary
+  movement remains possible;
 - detail derives all facts from one snapshot and does not expose its internal current-view token;
 - projection presentation precedence is applied once by the backend reducer;
 - attention registry order is fixed as:
-  lease, Verification, hold, recovery, abandonment, succession, projection;
+  isolated, lease, Verification, hold, recovery, abandonment, succession, projection;
 - disclosure order is fixed as:
   lease, Verification, hold, recovery, abandonment, succession;
 - no generic authoritative `blocked` card field is emitted;
@@ -310,14 +318,14 @@ Before the Gate B reviewer can accept the Stage 3 scope, record:
 
 - exact migration head and production-candidate schema revision;
 - exact lifecycle/check-constraint values for every table named here;
-- whether isolated tasks are board/detail eligible;
-- accepted route-identity design and any supporting table/migration;
+- isolated-task visibility decision (`ordinary` and `isolated` are eligible; isolated is explicitly marked);
+- accepted stateless route-identity design and deployment secret lifecycle;
 - accepted attention predicate registry, including every previously unresolved term;
 - accepted projection reducer, delay threshold, readiness input, and precedence;
-- accepted recovery durable/read-support source;
+- accepted/rejected recovery mapping from unresolved task-scoped command uncertainty;
 - active registry/project/section lifecycle behavior;
 - required indexes and query-plan evidence;
-- board snapshot, continuity, and cursor representation/lifetime;
+- board snapshot, non-frozen continuity semantics, stateless cursor representation/lifetime, and secret rotation;
 - OpenAPI DTO synchronization and closed registry versions.
 
 Before Stage 4, additionally record:
@@ -358,7 +366,7 @@ previously unresolved destination, disclosure, advisory, rendering, and projecti
 
 ## Prepared implementation and test handoff
 
-The blocked Stage 3 sequence is recorded in `frontend-stage3-implementation-checklist.md`. The
+The Stage 3 read-core sequence is recorded in `frontend-stage3-implementation-checklist.md`; HTTP/browser activation remains blocked on Gate B. The
 acceptance families are instantiated as stable case identifiers in
 `../frontend/contracts/stage3-acceptance-cases.json`. They are scaffolding only; no case is counted as
 passed until it runs against the accepted production-candidate schema and implementation.

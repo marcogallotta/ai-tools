@@ -4,6 +4,7 @@ const active = (operation, phase) => ({ state: "active_operation", operation, ph
 const idle = { state: "no_active_operation" };
 
 export const attentionLabels = Object.freeze({
+  isolated: "ISOLATED",
   lease_attention: "Lease needs attention",
   verification_attention: "Verification needs attention",
   hold_active: "On hold",
@@ -106,7 +107,7 @@ export const boardFixture = Object.freeze({
           id: "task-jollof",
           title: "Smoky jollof-style rice",
           status: idle,
-          attention: ["projection_abnormal"],
+          attention: ["isolated", "projection_abnormal"],
         },
       ],
     },

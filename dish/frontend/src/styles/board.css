@@ -136,6 +136,15 @@
   line-height: 1.25;
 }
 
+.attention-chip--isolated {
+  border-width: 2px;
+  border-color: #b87913;
+  background: #ffedbd;
+  color: #513000;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+}
+
 .attention-chip--recovery_required,
 .attention-chip--abandonment_active,
 .attention-chip--succession_active {

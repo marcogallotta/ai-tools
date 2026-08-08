@@ -1,11 +1,11 @@
 {
   "contract_version": "dish-frontend-v1",
   "gate": "B",
-  "status": "schema-reconciled-production-and-predicates-blocked",
+  "status": "implementation-in-progress-gate-b-pending",
   "checked_in_schema": {
-    "alembic_head": "0012_task_grant_semantic_identity",
-    "migration_file": "dish_pg/migrations/versions/0012_task_grant_semantic_identity.py",
-    "production_status": "not-yet-activated"
+    "alembic_head": "0030_validation_failure_admission",
+    "migration_file": "dish_pg/migrations/versions/0030_validation_failure_admission.py",
+    "production_status": "dark-launch-target-non-authoritative"
   },
   "eligibility_inputs_present": {
     "active_generation": "authority_generations.status",
@@ -18,49 +18,63 @@
     "current_content": "task_authority_heads.current_content_activation_id",
     "open_operation": "workflow_operations.lifecycle"
   },
+  "eligibility_decisions": {
+    "ordinary": "included-when-other-eligibility-facts-pass",
+    "isolated": "included-when-other-eligibility-facts-pass-and-marked-isolated",
+    "retired": "excluded",
+    "completed": "excluded"
+  },
   "attention_sources": {
+    "isolated": {
+      "present": ["dish_tasks.existence_state"],
+      "exact_now": ["existence_state-isolated"],
+      "unresolved": []
+    },
     "lease_attention": {
-      "present": ["service_leases.state", "service_leases.expires_at"],
-      "exact_now": ["expired"],
+      "present": [
+        "workflow_operations.lifecycle",
+        "service_leases.operation_id",
+        "service_leases.lease_kind",
+        "service_leases.actor_attempt_sequence",
+        "service_leases.state",
+        "service_leases.expires_at"
+      ],
+      "precedence": "latest-actor-attempt-on-current-open-operation",
+      "exact_now": [
+        "relevant-actor-lease-state-expired",
+        "relevant-actor-lease-state-active-but-past-evaluation-time"
+      ],
       "unresolved": ["invalid", "contested"]
     },
     "verification_attention": {
-      "present": ["verification_cycles.lifecycle", "verification_cycles.outcome"],
-      "exact_now": ["awaiting-human-review-through-human_review_requirements"],
-      "unresolved": ["failed", "disputed", "outcome-registry"]
+      "present": ["human_review_requirements.route", "human_review_requirements.state"],
+      "exact_now": ["open-human-review-requirement"],
+      "unresolved": ["failed", "disputed"]
     },
     "hold_attention": {
-      "present": ["evidence_holds.state", "human_review_requirements.state"],
-      "exact_now": ["open-evidence-hold", "open-human-review"],
+      "present": ["evidence_holds.state", "human_review_requirements.route", "human_review_requirements.state"],
+      "exact_now": ["open-evidence-hold", "open-two-pass-hold-review"],
       "unresolved": []
     },
     "recovery_required": {
-      "present": [],
-      "exact_now": [],
-      "unresolved": ["task-scoped-named-unresolved-recovery-fact"]
+      "present": ["command_executions.status", "request_uncertainty_resolutions.request_id"],
+      "exact_now": ["task-scoped-uncertain-command-execution-without-resolution"],
+      "unresolved": ["equivalence-review-against-all-admin-recovery-paths"]
     },
     "abandonment_active": {
       "present": ["abandonment_attempts.state"],
-      "exact_now": ["active"],
+      "exact_now": ["preparing", "published", "blocked", "reconciling"],
       "unresolved": []
     },
     "succession_active": {
-      "present": ["operation_succession_edges", "abandonment_attempts.state"],
-      "exact_now": ["published-successor-for-active-abandonment"],
+      "present": ["operation_succession_edges", "abandonment_attempts.state", "workflow_operations.lifecycle"],
+      "exact_now": ["published-abandonment-with-matching-open-successor-operation"],
       "unresolved": []
     },
     "projection_abnormal": {
-      "present": [
-        "projection_epochs.status",
-        "task_projection_mappings.state",
-        "projection_outbox_events.state",
-        "projection_attempts.state",
-        "projection_observations",
-        "projection_adjudications.outcome",
-        "projection_drift_events.state"
-      ],
-      "exact_now": ["open-drift"],
-      "unresolved": ["delay-threshold", "failed-precedence", "unknown-precedence", "unavailable-readiness-source"]
+      "present": ["projection_drift_events.state", "projection_outbox_events.origin", "projection_outbox_events.state", "projection_outbox_events.created_at"],
+      "exact_now": ["open-drift", "live-blocked-outbox", "live-uncertain-outbox", "live-pending-or-claimed-outbox-older-than-configured-delay"],
+      "unresolved": ["accepted-delay-threshold", "full-reducer-precedence", "unavailable-readiness-source"]
     }
   },
   "frontend_migration_requirements": {
@@ -71,35 +85,40 @@
       "frontend_security_audit_events",
       "frontend_password_state"
     ],
-    "stage3": [
-      "frontend_route_identities",
-      "frontend_recovery_requirements"
-    ],
+    "stage3": [],
     "conditional": [
-      "frontend_cursor_handles-if-stateful-cursors-are-selected",
       "frontend_read_projection-if-query-plans-require-materialization"
     ]
   },
-  "decisions_required": [
-    "isolated-task-eligibility",
-    "invalid-and-contested-lease-product-meaning",
-    "verification-failed-and-disputed-predicates",
+  "stage3_read_core": {
+    "board_query_owner": "dish_pg/frontend_board_query.py",
+    "dto_owner": "dish_service/frontend_board.py",
+    "presentation_registry_owner": "dish_service/frontend_contract.py",
+    "route_and_cursor_owner": "dish_service/frontend_tokens.py",
+    "route_identity": "stateless-hmac-environment-and-type-scoped",
+    "cursor": "stateless-sealed-sort-boundary-plus-immutable-task-id",
+    "projection_delay": "explicit-runtime-configuration-no-default",
+    "http_activation": false
+  },
+  "decisions_remaining": [
+    "invalid-and-contested-lease-durable-predicates",
+    "verification-failed-and-disputed-durable-predicates",
     "projection-reducer-and-delay-threshold",
-    "route-identity-lifetime-and-rotation",
-    "stateful-versus-stateless-cursor-representation"
+    "route-secret-lifetime-and-rotation",
+    "normalization-and-database-collation-contract"
   ],
   "blockers": {
-    "B-01": "checked-in-0012-reconciled-production-activation-pending",
-    "B-02": "frontend-board-query-service-pending",
-    "B-03": "route-identity-support-pending",
-    "B-04": "product-predicate-decision-pending",
-    "B-05": "workflow-predicate-decision-pending",
-    "B-06": "frontend-recovery-support-migration-pending",
-    "B-07": "projection-reducer-decision-pending",
-    "B-08": "frontend-detail-query-service-pending",
-    "B-09": "backend-registries-pending",
-    "B-10": "query-plan-and-capacity-evidence-pending",
-    "B-11": "snapshot-continuity-and-cursor-services-pending",
+    "B-01": "checked-in-0030-reconciled-production-remains-non-authoritative-dark-launch-target",
+    "B-02": "frontend-board-query-candidate-implemented-review-pending",
+    "B-03": "stateless-route-identity-candidate-implemented-review-pending",
+    "B-04": "invalid-and-contested-lease-predicates-pending",
+    "B-05": "verification-failed-and-disputed-predicates-pending",
+    "B-06": "uncertain-execution-recovery-equivalence-review-pending",
+    "B-07": "projection-reducer-and-threshold-decision-pending",
+    "B-08": "frontend-detail-query-service-pending-stage4",
+    "B-09": "board-presentation-registries-candidate-implemented-detail-registries-pending",
+    "B-10": "native-query-plan-transaction-isolation-and-capacity-evidence-pending",
+    "B-11": "stateless-board-continuity-and-cursor-candidate-implemented-review-pending",
     "B-12": "independent-review-pending"
   }
 }

@@ -1,4 +1,5 @@
 export const noticeRegistry = Object.freeze({
+  isolated: { label: "ISOLATED", severity: "warning" },
   lease_attention: { label: "Lease needs attention", severity: "warning" },
   verification_attention: { label: "Verification needs attention", severity: "warning" },
   hold_active: { label: "On hold", severity: "warning" },

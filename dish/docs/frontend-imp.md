@@ -1,6 +1,6 @@
 # Dish private frontend implementation contract
 
-**Status: staged implementation contract. Delivery Stages 0 and 1 are specified enough to begin after explicit authorization. Delivery Stages 2 through 7 are conditionally specified and must not begin until the readiness evidence gates in Section 11.2 pass.**
+**Status: staged implementation contract. Delivery Stages 0 and 1 are available after explicit authorization. Delivery Stage 3 read-core implementation is explicitly authorized behind an unserved/local-only boundary; Delivery Stage 2 and Stage 3 HTTP/browser activation remain readiness-gated, and later stages remain conditionally specified.**
 
 This document defines how to realize the approved product in
 [`frontend.md`](frontend.md). The product behavior and authority outcomes in `frontend.md` are
@@ -415,11 +415,11 @@ The board read model must:
 - return the active logical section registry in authoritative order;
 - use positive bounded server-defined first-page and continuation-page sizes that are validated at
   startup and reported where the browser needs them;
-- return the first bounded page of non-retired, incomplete tasks for every section;
+- return the first bounded page of ordinary or isolated, incomplete tasks for every section;
 - represent empty active sections explicitly and treat zero active sections as a successful empty
   board;
 - support one bounded continuation cursor per section;
-- exclude completed and retired tasks server-side;
+- exclude completed and retired tasks server-side while keeping otherwise eligible `isolated` tasks visible;
 - order tasks predictably by a server-owned normalized-title key, then Dish task UUID as the deterministic tie-breaker;
 - use one checked-in versioned normalization-and-comparison contract consistently for task-title
   ordering and project/section-label comparison, without exposing its internal keys to the browser.
@@ -495,6 +495,7 @@ can still be reconciled without duplicate panels or history entries.
 
 The Stage 1 attention-code registry is limited to:
 
+- `isolated` — **ISOLATED**;
 - `lease_attention` — **Lease needs attention**;
 - `verification_attention` — **Verification needs attention**;
 - `hold_active` — **On hold**;
@@ -509,6 +510,8 @@ state qualifies for an attention code. Changing any predicate, label, or severit
 contract version and requires an explicit frontend-contract update. The current contract requires these
 distinctions:
 
+- `isolated`: `DishTask.existence_state = 'isolated'`; the task remains board-eligible when the
+  other eligibility facts pass and the marker is never inferred from projection drift or labels;
 - `lease_attention`: a lease is expired, invalid, or contested; an ordinary healthy active lease does
   not qualify;
 - `verification_attention`: Verification is failed, disputed, or awaiting human review; ordinary
@@ -768,10 +771,12 @@ validation. Equal board or section identities never suppress notice or first-pag
 response replaces the registry and first page
 of every section atomically from the client's perspective. A section's additional loaded pages are
 retained only when its opaque continuity identity is unchanged; a changed identity discards those
-pages and their cursor. A section continuity identity remains equal while all pagination-relevant inputs are equivalent and
-changes when any effective first- or continuation-page size, the normalized query contract, any
-card-visible fact, membership, eligibility, title/order input, or emitted attention-code set changes,
-including a change caused by crossing a time-derived threshold anywhere in that section.
+pages and their cursor. For Stage 3, section continuity binds the active authority generation, active
+registry version/revision, section identity, frontend/query/normalization contract versions, and the
+effective first- and continuation-page sizes. It deliberately does **not** promise a frozen task
+snapshot across continuation requests. If tasks are inserted, removed, retitled, or reordered between
+page reads, ordinary keyset-pagination boundary effects are acceptable for this operational board and
+may be refined later if real usage shows a usability problem.
 
 Refresh reconciliation must preserve the product rules:
 
@@ -1103,8 +1108,13 @@ authorize an integration stage.
 
 Delivery Stages 0 and 1 may proceed after explicit authorization because they create the modular shell,
 test infrastructure, and fixture-backed design prototype without claiming real authentication or
-canonical task data. Delivery Stage 2 and later are blocked until Gate A passes. Delivery Stage 3 and
-later are additionally blocked until Gate B passes. A prior stage review cannot waive either gate.
+canonical task data. Delivery Stage 2 remains blocked until Gate A passes. By explicit project
+authorization, Delivery Stage 3's read-only PostgreSQL query, DTO, route-identity, and cursor core may
+proceed behind an unserved/local-only boundary while Gate B is refreshed, including reading the
+non-authoritative dark-launch database as an operational observation surface. Gate B must pass before
+that real board is exposed through frontend HTTP/browser routes. Stage 4 and later remain gated by the
+applicable accepted source map. A prior stage review cannot waive an activation gate or authorize
+guessed semantics.
 
 #### Gate A — complete contract and runtime readiness review
 
@@ -1132,7 +1142,7 @@ change only through an approved contract amendment; technical gaps remain fronte
 #### Gate B — code-grounded canonical-data and attention map
 
 Gate B is a checked-in living source map, reviewed and extended immediately before each real-data
-stage. Before Delivery Stage 3 begins, it must cover every field emitted by board bootstrap, section
+stage. Before Delivery Stage 3 is activated through the frontend HTTP/browser surface, it must cover every field emitted by board bootstrap, section
 continuation, card status, card attention, and board projection presentation. Before Delivery Stage 4
 begins, it must additionally cover every task-detail, disclosure, next-step-guidance, rendering-input,
 and detail projection field. For each mapped field the packet identifies:
@@ -1221,7 +1231,7 @@ API-contract, and browser-lifecycle tests required by Sections 2–4 land in thi
 
 ### 11.6 Delivery Stage 3 — real board vertical slice
 
-**Entry condition:** Gates A and B in Section 11.2 are accepted. The code-grounded source map covers every board field and every attention predicate, and all frontend-owned read-support work required for this vertical slice is identified.
+**Entry condition:** Read-core implementation may proceed under the explicit isolated/local authorization in Section 11.2. HTTP/browser activation requires the applicable Gate A runtime boundary and an accepted Gate B board scope. The code-grounded source map must cover every activated board field and attention predicate; unresolved semantics remain omitted or gated rather than guessed.
 
 Connect the board to the real frontend-owned board read model. Deliver:
 
@@ -1375,9 +1385,10 @@ passing against the production-shaped build.
 - first-page and continuation-page sizes are positive and bounded; `next_cursor` appears exactly when
   more cards remain, and neither bootstrap nor continuation returns an empty nonterminal page;
 - retrying a continuation after a lost response does not skip or duplicate cards;
-- malformed or mis-scoped cursors produce `cursor_invalid`; expired, retired-handle, or incompatible
-  current-state cursors produce `cursor_stale`; temporary cursor-store failure produces
-  `service_unavailable`; cursor errors reset only the affected column through a fresh first page;
+- malformed, tampered, or mis-scoped cursors produce `cursor_invalid`; expired or incompatible
+  current-state cursors produce `cursor_stale`; the Stage 3 cursor candidate is stateless and therefore
+  has no cursor-store availability dependency; cursor errors reset only the affected column through a
+  fresh first page;
 - moved tasks appear only in the new section, completed or retired tasks disappear, task-detail
   `task_not_found`/`task_ineligible` closes and reconciles the panel through a board refresh, a normalized
   section identity is accepted only through a fresh bootstrap, and stale in-flight responses cannot

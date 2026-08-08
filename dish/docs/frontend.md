@@ -86,6 +86,8 @@ The board behaves as follows:
   display-label normalization contract, and the board fails visibly rather than showing ambiguous
   columns when configuration cannot provide a unique normalized path;
 - completed and retired tasks are always hidden, with no control to reveal them;
+- isolated tasks remain visible when otherwise eligible, stay in their authoritative logical section,
+  and are unmistakably marked **ISOLATED** so unexpected isolated records cannot disappear from view;
 - every task remains in its authoritative logical section;
 - tasks within each section are ordered by normalized title ascending, with Dish task UUID as the
   deterministic tie-breaker;
@@ -106,9 +108,9 @@ Each card shows:
 - the task title;
 - one compact factual status line showing the current operation and phase when present, or
   **No active operation** when no operation is active;
-- small attention indicators only for the approved Stage 1 categories: lease attention, Verification
-  attention, active hold, required recovery, active abandonment, active succession, or abnormal
-  projection.
+- small attention indicators only for the approved Stage 1 categories: **ISOLATED**, lease attention,
+  Verification attention, active hold, required recovery, active abandonment, active succession, or
+  abnormal projection.
 
 Attention facts do not move the task into a synthetic column. The card remains in its authoritative
 section. Every active attention category represented by the currently loaded board pages or open task
@@ -309,8 +311,8 @@ replacement.
 
 Stage 1 is complete only when the product demonstrates that:
 
-- the user can find, open, and understand every non-retired, incomplete task placed in the active
-  logical section registry without relying on Asana;
+- the user can find, open, and understand every ordinary or isolated, incomplete task placed in the
+  active logical section registry without relying on Asana, and isolated tasks are clearly marked;
 - every active logical section appears in authoritative order, including empty sections;
 - completed or retired tasks never appear on the board or in board pagination;
 - tasks remain in their authoritative section and follow normalized-title order with Dish task UUID
@@ -357,7 +359,7 @@ continues. Approval of an intermediate deliverable does not waive the remaining 
 or authorize unreviewed product behavior. Fixture-backed prototypes are review tools only and never
 become canonical authority.
 
-The staged plan does not make a document-wide claim that every integration dependency is already verified. Delivery Stages 0 and 1 may begin because they establish structure and obtain visual feedback without claiming real task authority. Before Delivery Stage 2, the complete contract and authentication/runtime dependencies must pass the independent readiness review in `frontend-imp.md`. Before Delivery Stage 3, every real board, detail, projection, and attention field must have an accepted code-grounded source and predicate map. An implementation agent may not infer missing semantics from field names or continue past either gate on the basis that the remaining work is probably straightforward.
+The staged plan does not make a document-wide claim that every integration dependency is already verified. Delivery Stages 0 and 1 may begin because they establish structure and obtain visual feedback without claiming real task authority. Before Delivery Stage 2, the complete contract and authentication/runtime dependencies must pass the independent readiness review in `frontend-imp.md`. Stage 3 read-only query, DTO, identity, and cursor implementation may proceed behind an unserved/local-only boundary when explicitly authorized, including against non-authoritative dark-launch PostgreSQL as an observation surface. Gate B still must pass before the real board is exposed through the frontend HTTP/browser surface. An implementation agent may not infer missing semantics from field names or treat dark-launch reads as an authority transfer.
 
 Stage 1 is not complete until the final integrated product passes its automated acceptance suite and a
 committed, repeatable Playwright browser-acceptance suite (authored by a capable local agent, such as

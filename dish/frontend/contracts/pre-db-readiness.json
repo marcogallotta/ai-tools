@@ -1,21 +1,23 @@
 {
-  "baseline": "ai-tools-venv(98).tgz",
+  "baseline": "ai-tools-venv(20260807-204024).tgz",
   "frontend_contract_version": "dish-frontend-v1",
-  "checked_in_postgresql_head": "0012_task_grant_semantic_identity",
+  "checked_in_postgresql_head": "0030_validation_failure_admission",
   "completed_pre_db_work": [
     "fixture visual review environment",
     "visual and interaction hardening",
     "Gate A readiness packet",
     "Gate B source map",
     "Stage 2 runtime decisions",
-    "checked-in schema reconciliation",
+    "checked-in schema reconciliation through 0030",
     "Stage 2 acceptance scaffold",
     "Stage 3 acceptance scaffold",
-    "test deployment checklist"
+    "test deployment checklist",
+    "Stage 3 read-core implementation authorized behind an unserved/local-only boundary"
   ],
   "authorization": {
     "stage2": false,
-    "stage3": false
+    "stage3_read_core": true,
+    "stage3_http_activation": false
   },
   "stage2_go_conditions": [
     "frontend security support migration accepted and available",
@@ -24,13 +26,20 @@
     "dedicated HTTPS frontend hostname and HSTS termination provisioned",
     "Gate A independently reviewed and passed"
   ],
-  "stage3_go_conditions": [
-    "Stage 2 complete",
-    "final production PostgreSQL head and schema fingerprint recorded",
-    "production-change ledger closed without WORKTREE markers",
-    "six migration-shape decisions in frontend-db-migration-reconciliation.md accepted",
-    "required route identity and recovery support migrations available",
-    "Gate B Stage 3 scope independently reviewed and passed"
+  "stage3_read_core_conditions": [
+    "read-only PostgreSQL access only",
+    "no Asana calls or workflow mutation authority",
+    "no production route exposure",
+    "unresolved predicates fail closed or remain omitted rather than guessed",
+    "PostgreSQL remains non-authoritative during dark launch"
+  ],
+  "stage3_http_activation_conditions": [
+    "dark-launch PostgreSQL is locally usable as the frontend observation surface",
+    "Gate B board scope independently reviewed and passed",
+    "native PostgreSQL query plans and coherent read-transaction behavior recorded",
+    "projection delay/reducer and remaining attention predicates accepted",
+    "route/cursor secret lifecycle accepted",
+    "normalization and database collation contract accepted"
   ],
   "forbidden_shortcuts": [
     "in-memory production authentication",
@@ -39,6 +48,7 @@
     "raw UUID or Asana GID browser identities",
     "attention inferred from English labels or free text",
     "frontend code that calls Asana",
-    "temporary workflow policy in route handlers or browser code"
+    "temporary workflow policy in route handlers or browser code",
+    "treating dark-launch PostgreSQL reads as an authority transfer"
   ]
 }

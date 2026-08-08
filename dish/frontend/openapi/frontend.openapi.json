@@ -876,6 +876,7 @@
       "AttentionCode": {
         "type": "string",
         "enum": [
+          "isolated",
           "lease_attention",
           "verification_attention",
           "hold_active",
@@ -942,7 +943,7 @@
           },
           "attention_codes": {
             "type": "array",
-            "maxItems": 7,
+            "maxItems": 8,
             "uniqueItems": true,
             "items": {
               "$ref": "#/components/schemas/AttentionCode"
@@ -1021,7 +1022,7 @@
               "string",
               "null"
             ],
-            "maxLength": 1000
+            "maxLength": 4096
           }
         }
       },
@@ -1054,7 +1055,7 @@
           },
           "notices": {
             "type": "array",
-            "maxItems": 700,
+            "maxItems": 80000,
             "items": {
               "$ref": "#/components/schemas/Notice"
             }
@@ -1094,11 +1095,11 @@
               "string",
               "null"
             ],
-            "maxLength": 1000
+            "maxLength": 4096
           },
           "notices": {
             "type": "array",
-            "maxItems": 700,
+            "maxItems": 800,
             "items": {
               "$ref": "#/components/schemas/Notice"
             }
@@ -1201,7 +1202,7 @@
           },
           "attention_codes": {
             "type": "array",
-            "maxItems": 7,
+            "maxItems": 8,
             "uniqueItems": true,
             "items": {
               "$ref": "#/components/schemas/AttentionCode"
