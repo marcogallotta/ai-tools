@@ -2041,6 +2041,8 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                     args.project_name,
                     "--receipt",
                     receipt,
+                    "--research-queue-section-id",
+                    str(args.section_id),
                 ],
             )
             boot = json.loads(receipt.read_text(encoding="utf-8"))

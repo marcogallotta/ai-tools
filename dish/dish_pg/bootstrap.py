@@ -102,6 +102,33 @@ def section_specs_from_bundle(source_bundle: SourceBundle) -> tuple[SectionSpec,
     )
 
 
+def apply_research_queue_role(
+    sections: tuple[SectionSpec, ...], *, research_queue_section_id: uuid.UUID
+) -> tuple[SectionSpec, ...]:
+    """Designate one already-discovered section as the Research Queue.
+
+    A real corpus carries no operator role assignment, so nothing about a
+    section's content can imply it is the Research Queue; that is always an
+    explicit operator/bootstrap-time decision, made here rather than guessed
+    from the source bundle.
+    """
+    if not any(section.section_id == research_queue_section_id for section in sections):
+        raise InitialBootstrapError(
+            f"--research-queue-section-id {research_queue_section_id} is not a discovered section"
+        )
+    return tuple(
+        section
+        if section.section_id != research_queue_section_id
+        else SectionSpec(
+            section_id=section.section_id,
+            section_gid=section.section_gid,
+            section_name=section.section_name,
+            workflow_role="research_queue",
+        )
+        for section in sections
+    )
+
+
 @dataclass(frozen=True)
 class InitialBootstrapSpec:
     dish_commit: str
@@ -711,6 +738,12 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--project-gid", required=True)
     parser.add_argument("--project-name", default="Cooking")
     parser.add_argument("--receipt", type=Path)
+    parser.add_argument(
+        "--research-queue-section-id",
+        type=uuid.UUID,
+        default=None,
+        help="designate this discovered section as the Research Queue (workflow_role=research_queue)",
+    )
     return parser
 
 
@@ -728,6 +761,11 @@ def main(argv: list[str] | None = None) -> int:
             args.source,
             project_id=args.project_id,
         )
+        sections = section_specs_from_bundle(source_bundle)
+        if args.research_queue_section_id is not None:
+            sections = apply_research_queue_role(
+                sections, research_queue_section_id=args.research_queue_section_id
+            )
         spec = InitialBootstrapSpec(
             dish_commit=args.dish_commit,
             schema_head=args.schema_head,
@@ -737,7 +775,7 @@ def main(argv: list[str] | None = None) -> int:
             project_id=args.project_id,
             project_gid=args.project_gid,
             project_name=args.project_name,
-            sections=section_specs_from_bundle(source_bundle),
+            sections=sections,
         )
         engine = create_database_engine(DatabaseSettings(url=args.database_url))
         try:
