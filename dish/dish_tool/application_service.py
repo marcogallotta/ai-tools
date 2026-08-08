@@ -616,7 +616,3 @@ class OperationApplicationService:
             raise RuntimeError("current workflow service requires a backend")
         return self.current.authoritative_view(operation_id, schema=schema)
 
-
-def derive_operation_state(conn: sqlite3.Connection, backend, operation_id: str, *, schema=None) -> dict[str, object]:
-    """Compatibility wrapper for callers not yet constructed with the service."""
-    return CurrentWorkflowService(conn, backend).authoritative_view(operation_id, schema=schema)
