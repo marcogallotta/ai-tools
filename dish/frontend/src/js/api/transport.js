@@ -9,7 +9,7 @@ export class FrontendApiTransport {
   async request({ path, method, body, headers = {}, query = null }) {
     const search = query ? new URLSearchParams(query).toString() : "";
     const requestPath = search ? `${path}?${search}` : path;
-    const response = await this.fetchImpl(`${this.baseUrl}${requestPath}`, {
+    const response = await Reflect.apply(this.fetchImpl, globalThis, [`${this.baseUrl}${requestPath}`, {
       method,
       credentials: "same-origin",
       redirect: "manual",
@@ -20,7 +20,7 @@ export class FrontendApiTransport {
         ...headers,
       },
       body: body === undefined ? undefined : JSON.stringify(body),
-    });
+    }]);
     if (response.type === "opaqueredirect" || response.redirected) {
       throw new Error("Frontend API redirects are rejected");
     }

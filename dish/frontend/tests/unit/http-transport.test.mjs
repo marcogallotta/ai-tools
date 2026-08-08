@@ -34,6 +34,18 @@ test("same-origin client sends contract header and binds continuation cursor", a
   assert.equal(calls[0].options.redirect, "manual");
 });
 
+test("transport invokes browser fetch with the global receiver", async () => {
+  let receiver;
+  const client = new FrontendHttpClient({
+    fetchImpl: function () {
+      receiver = this;
+      return response({ ok: true });
+    },
+  });
+  await client.board();
+  assert.equal(receiver, globalThis);
+});
+
 test("response contract mismatch remains client-local", async () => {
   const client = new FrontendHttpClient({
     fetchImpl: async () => response({ snapshot_id: "ignored" }, { contract: "other" }),
