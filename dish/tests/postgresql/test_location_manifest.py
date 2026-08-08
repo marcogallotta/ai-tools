@@ -31,7 +31,20 @@ def _database(
         last_confirmed_notes TEXT,schema_version TEXT,confirmed_at TEXT)"""
     )
     connection.execute(
-        """CREATE TABLE operations(operation_id TEXT PRIMARY KEY, task_gid TEXT NOT NULL)"""
+        """CREATE TABLE operations(
+        operation_id TEXT PRIMARY KEY, task_gid TEXT NOT NULL, operation_kind TEXT, status TEXT,
+        created_at TEXT, completed_at TEXT, phase TEXT, terminal_outcome TEXT)"""
+    )
+    connection.execute(
+        """CREATE TABLE verification_cycles(
+        cycle_id TEXT PRIMARY KEY, operation_id TEXT, task_gid TEXT, cycle_number INTEGER,
+        outcome TEXT, created_at TEXT, completed_at TEXT)"""
+    )
+    connection.execute(
+        """CREATE TABLE service_leases(
+        lease_id TEXT PRIMARY KEY, operation_id TEXT, task_gid TEXT, owner_id TEXT, run_id TEXT,
+        acquired_at TEXT, expires_at TEXT, released_at TEXT, lease_kind TEXT,
+        actor_attempt_seq INTEGER, context_cycle_id TEXT)"""
     )
     connection.execute(
         """CREATE TABLE movement_attempts(
@@ -53,7 +66,7 @@ def _database(
     for index, (task_gid, section_gid) in enumerate((last_known_sections or {}).items(), 1):
         operation_id = f"op-{index}"
         connection.execute(
-            "INSERT INTO operations VALUES (?,?)", (operation_id, task_gid)
+            "INSERT INTO operations(operation_id,task_gid) VALUES (?,?)", (operation_id, task_gid)
         )
         connection.execute(
             "INSERT INTO movement_attempts VALUES (?,?,?,?,?)",

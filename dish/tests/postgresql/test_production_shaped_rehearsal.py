@@ -67,6 +67,7 @@ def _record(tmp_path: Path) -> dict[str, object]:
         "section_id": "8b5bfb31-b986-5116-a207-569a5ba95907",
         "completed": False,
         "observed_at": "2026-08-06T12:00:00Z",
+        "operation_history": {"operations": [], "leases": [], "verification_cycles": []},
     }
 
 

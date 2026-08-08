@@ -216,6 +216,64 @@ def _identifier_bindings(session, envelope: tx.ShadowEnvelope) -> dict[str, dict
     return bindings
 
 
+def _imported_identity_binding(
+    session,
+    envelope: tx.ShadowEnvelope,
+    *,
+    family: str,
+    source_value: str,
+) -> str | None:
+    """Resolve preserved legacy IDs only from this baseline's exact import lineage."""
+    try:
+        identifier = uuid.UUID(source_value)
+    except (TypeError, ValueError):
+        return None
+    baseline = session.get(tx.ShadowBaseline, envelope.shadow_baseline_id)
+    if baseline is None:
+        return None
+    model = {
+        "operation": wf.WorkflowOperation,
+        "lease": wf.ServiceLease,
+        "verification_cycle": wf.VerificationCycle,
+    }.get(family)
+    if model is None:
+        return None
+    row = session.get(model, identifier)
+    if (
+        row is None
+        or row.generation_id != baseline.generation_id
+        or row.import_run_id is None
+    ):
+        return None
+
+    active = session.get(models.ActiveSectionRegistry, baseline.generation_id)
+    if active is None:
+        return None
+    registry = session.get(models.SectionRegistryVersion, active.registry_version_id)
+    activation = session.get(models.SectionRegistryActivation, active.registry_activation_id)
+    if (
+        registry is None
+        or registry.generation_id != baseline.generation_id
+        or activation is None
+        or activation.generation_id != baseline.generation_id
+        or activation.registry_version_id != registry.registry_version_id
+        or activation.activation_route != "import"
+        or activation.import_run_id != registry.import_run_id
+        or activation.registry_revision != active.registry_revision
+        or row.import_run_id != registry.import_run_id
+    ):
+        return None
+    import_run = session.get(models.ImportRun, registry.import_run_id)
+    if (
+        import_run is None
+        or import_run.status != "complete"
+        or import_run.legacy_generation_id != baseline.source_generation_identity
+        or import_run.source_commit != baseline.source_commit
+    ):
+        return None
+    return str(identifier)
+
+
 def _translate_workflow_identifiers(
     session,
     envelope: tx.ShadowEnvelope,
@@ -233,6 +291,10 @@ def _translate_workflow_identifiers(
     for key, family in needed.items():
         source_value = str(arguments[key])
         target_value = bindings.get(family, {}).get(source_value)
+        if target_value is None:
+            target_value = _imported_identity_binding(
+                session, envelope, family=family, source_value=source_value
+            )
         if target_value is None:
             raise ShadowIdentityMappingError(
                 f"no unique target {family} binding for captured field {key}"

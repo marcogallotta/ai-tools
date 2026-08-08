@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import models
+from . import stage3_models as wf
 from .database import DatabaseSettings, create_database_engine, session_factory, session_scope
 from .importer import SourceRecord, iter_source, run_import
 from .repositories import CoreAuthorityError
@@ -133,6 +134,87 @@ def verify_imported_records(
         )
         if {row.project_id for row in memberships} != set(spec.project_ids):
             errors.append(f"{prefix}: current project membership mismatch")
+
+        history = spec.operation_history
+        imported_operations = tuple(
+            session.scalars(
+                select(wf.WorkflowOperation).where(
+                    wf.WorkflowOperation.generation_id == generation_id,
+                    wf.WorkflowOperation.task_id == spec.task_id,
+                    wf.WorkflowOperation.import_run_id == import_run_id,
+                )
+            )
+        )
+        if {row.operation_id for row in imported_operations} != {item.operation_id for item in history.operations}:
+            errors.append(f"{prefix}: imported workflow operation identity set mismatch")
+        for source in history.operations:
+            target = session.get(wf.WorkflowOperation, source.operation_id)
+            expected_lifecycle = (
+                "completed"
+                if source.status == "completed"
+                else "abandoned"
+                if source.terminal_outcome in {"agent_abandoned", "safe_reclaimed"}
+                else "cancelled_by_marco"
+            )
+            if target is None or (
+                target.import_run_id != import_run_id
+                or target.creation_request_id is not None
+                or target.creation_execution_id is not None
+                or target.kind != source.kind
+                or target.lifecycle != expected_lifecycle
+                or target.phase != "terminal"
+                or target.terminal_outcome != source.terminal_outcome
+            ):
+                errors.append(f"{prefix}: imported WorkflowOperation mismatch {source.operation_id}")
+
+        imported_cycles = tuple(
+            session.scalars(
+                select(wf.VerificationCycle).where(
+                    wf.VerificationCycle.generation_id == generation_id,
+                    wf.VerificationCycle.task_id == spec.task_id,
+                    wf.VerificationCycle.import_run_id == import_run_id,
+                )
+            )
+        )
+        if {row.cycle_id for row in imported_cycles} != {item.cycle_id for item in history.verification_cycles}:
+            errors.append(f"{prefix}: imported verification cycle identity set mismatch")
+        for source in history.verification_cycles:
+            target = session.get(wf.VerificationCycle, source.cycle_id)
+            if target is None or (
+                target.import_run_id != import_run_id
+                or target.created_by_execution_id is not None
+                or target.reviewed_content_version_id is not None
+                or target.operation_id != source.operation_id
+                or target.cycle_sequence != source.cycle_sequence
+                or target.outcome != source.outcome
+            ):
+                errors.append(f"{prefix}: imported VerificationCycle mismatch {source.cycle_id}")
+
+        imported_leases = tuple(
+            session.scalars(
+                select(wf.ServiceLease).where(
+                    wf.ServiceLease.generation_id == generation_id,
+                    wf.ServiceLease.task_id == spec.task_id,
+                    wf.ServiceLease.import_run_id == import_run_id,
+                )
+            )
+        )
+        if {row.lease_id for row in imported_leases} != {item.lease_id for item in history.leases}:
+            errors.append(f"{prefix}: imported service lease identity set mismatch")
+        for source in history.leases:
+            target = session.get(wf.ServiceLease, source.lease_id)
+            if target is None or (
+                target.import_run_id != import_run_id
+                or target.run_id is not None
+                or target.source_run_id != source.source_run_id
+                or target.operation_id != source.operation_id
+                or target.owner_id != source.owner_id
+                or target.lease_kind != source.lease_kind
+                or target.actor_attempt_sequence != source.actor_attempt_sequence
+                or target.verification_cycle_id != source.verification_cycle_id
+                or target.state != "released"
+            ):
+                errors.append(f"{prefix}: imported ServiceLease mismatch {source.lease_id}")
     return errors
 
 

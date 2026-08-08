@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import uuid
 from collections.abc import Iterator
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -14,6 +14,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from dish_pg import models
+from dish_pg import stage3_models as wf
+from dish_pg.command_port import PostgresCommandPort
 from dish_pg.database import session_scope
 from dish_pg.repositories import (
     AuthorityRepository,
@@ -21,7 +23,13 @@ from dish_pg.repositories import (
     CoreAuthorityError,
     RegistryRepository,
 )
-from dish_pg.services import CoreAuthorityService, ImportedTaskSpec
+from dish_pg.services import (
+    CoreAuthorityService,
+    ImportedOperationHistorySpec,
+    ImportedServiceLeaseSpec,
+    ImportedTaskSpec,
+    ImportedWorkflowOperationSpec,
+)
 from tests.support.postgresql.core import _bootstrap_registry, _import_one, _next, core_db
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -174,6 +182,77 @@ def test_import_activation_commits_complete_authority_bundle(core_db) -> None:
             )
         )
         assert alias is not None and alias.task_id == result.task_id
+
+
+def test_import_backfills_terminal_operation_attempt_history_without_fake_authority(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(session, ids)
+        task_id, operation_id, lease_id = _next(ids), _next(ids), _next(ids)
+        CoreAuthorityService(session, uuid_factory=lambda: _next(ids)).import_task_document(
+            generation_id=context["generation_id"],
+            import_run_id=context["import_run_id"],
+            contract_binding_id=context["binding_id"],
+            spec=ImportedTaskSpec(
+                task_id=task_id,
+                asana_task_gid="123456788",
+                title="[ready] Imported history",
+                body="Canonical body\n---\nStatus: ready\n",
+                identity_scheme="legacy-sha256-v1",
+                content_identity=HASH_A,
+                project_ids=(context["project_id"],),
+                section_id=context["section_id"],
+                completed=False,
+                observed_at=NOW,
+                operation_history=ImportedOperationHistorySpec(
+                    operations=(ImportedWorkflowOperationSpec(
+                        operation_id=operation_id, kind="planning", status="completed",
+                        phase="terminal", terminal_outcome="planning_handoff_confirmed",
+                        created_at=NOW, completed_at=NOW,
+                    ),),
+                    leases=(ImportedServiceLeaseSpec(
+                        lease_id=lease_id, operation_id=operation_id, source_run_id="legacy-run-1",
+                        owner_id="legacy-owner", lease_kind="actor", actor_attempt_sequence=1,
+                        verification_cycle_id=None, issued_at=NOW,
+                        expires_at=NOW + timedelta(minutes=1), released_at=NOW,
+                    ),),
+                ),
+            ),
+        )
+
+    with factory() as session:
+        operation = session.get(wf.WorkflowOperation, operation_id)
+        lease = session.get(wf.ServiceLease, lease_id)
+        assert operation is not None and operation.import_run_id == context["import_run_id"]
+        assert operation.creation_request_id is None and operation.creation_execution_id is None
+        assert lease is not None and lease.import_run_id == context["import_run_id"]
+        assert lease.run_id is None and lease.source_run_id == "legacy-run-1"
+        assert PostgresCommandPort(session, cursor_secret=b"t" * 32)._next_actor_attempt_sequence(task_id) == 2
+
+
+def test_import_rejects_uncertain_operation_even_with_terminal_evidence(core_db) -> None:
+    factory, ids = core_db
+    with pytest.raises(CoreAuthorityError, match="terminal completed/cancelled"):
+        with session_scope(factory) as session:
+            context = _bootstrap_registry(session, ids)
+            CoreAuthorityService(session, uuid_factory=lambda: _next(ids)).import_task_document(
+                generation_id=context["generation_id"],
+                import_run_id=context["import_run_id"],
+                contract_binding_id=context["binding_id"],
+                spec=ImportedTaskSpec(
+                    task_id=_next(ids), asana_task_gid="123456787", title="[ready] Invalid history",
+                    body="Canonical body\n---\nStatus: ready\n", identity_scheme="legacy-sha256-v1",
+                    content_identity=HASH_A, project_ids=(context["project_id"],),
+                    section_id=context["section_id"], completed=False, observed_at=NOW,
+                    operation_history=ImportedOperationHistorySpec(operations=(
+                        ImportedWorkflowOperationSpec(
+                            operation_id=_next(ids), kind="planning", status="uncertain",
+                            phase="terminal", terminal_outcome="planning_handoff_confirmed",
+                            created_at=NOW, completed_at=NOW,
+                        ),
+                    )),
+                ),
+            )
 
 
 def test_import_failure_rolls_back_the_whole_bundle(core_db) -> None:

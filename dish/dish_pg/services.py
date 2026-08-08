@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Callable
 
 from sqlalchemy.orm import Session
 
 from . import models
+from . import stage3_models as wf
 from .repositories import (
     AuthorityRepository,
     ContractBindingRepository,
@@ -16,6 +17,48 @@ from .repositories import (
     RegistryRepository,
     TaskRepository,
 )
+
+
+@dataclass(frozen=True)
+class ImportedWorkflowOperationSpec:
+    operation_id: uuid.UUID
+    kind: str
+    status: str
+    phase: str
+    terminal_outcome: str | None
+    created_at: datetime
+    completed_at: datetime | None
+
+
+@dataclass(frozen=True)
+class ImportedServiceLeaseSpec:
+    lease_id: uuid.UUID
+    operation_id: uuid.UUID
+    source_run_id: str
+    owner_id: str
+    lease_kind: str
+    actor_attempt_sequence: int | None
+    verification_cycle_id: uuid.UUID | None
+    issued_at: datetime
+    expires_at: datetime
+    released_at: datetime | None
+
+
+@dataclass(frozen=True)
+class ImportedVerificationCycleSpec:
+    cycle_id: uuid.UUID
+    operation_id: uuid.UUID
+    cycle_sequence: int
+    outcome: str | None
+    created_at: datetime
+    completed_at: datetime | None
+
+
+@dataclass(frozen=True)
+class ImportedOperationHistorySpec:
+    operations: tuple[ImportedWorkflowOperationSpec, ...] = ()
+    leases: tuple[ImportedServiceLeaseSpec, ...] = ()
+    verification_cycles: tuple[ImportedVerificationCycleSpec, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -30,6 +73,9 @@ class ImportedTaskSpec:
     section_id: uuid.UUID
     completed: bool
     observed_at: datetime
+    operation_history: ImportedOperationHistorySpec = field(
+        default_factory=ImportedOperationHistorySpec
+    )
     existence_state: str = "ordinary"
 
 
@@ -69,8 +115,8 @@ class CoreAuthorityService:
         """Create one complete import authority bundle without fake commands.
 
         The caller's transaction owns all-or-nothing durability. This method creates
-        no service request, command execution, workflow operation, or projection
-        attempt. Exact import provenance is present on every imported authority row.
+        no service request, command execution, service run, or projection attempt.
+        Historical workflow rows are admitted only with explicit import provenance.
         """
 
         generation = self.authority.generation(generation_id)
@@ -249,6 +295,13 @@ class CoreAuthorityService:
             completion_event=completion_event,
             current_completion=current_completion,
         )
+        self.session.flush()
+        self._import_operation_history(
+            generation_id=generation_id,
+            import_run_id=import_run_id,
+            contract_binding_id=contract_binding_id,
+            spec=spec,
+        )
         return ImportedTaskResult(
             task_id=spec.task_id,
             content_version_id=content_version_id,
@@ -256,3 +309,138 @@ class CoreAuthorityService:
             placement_event_id=placement_event_id,
             completion_event_id=completion_event_id,
         )
+
+    def _import_operation_history(
+        self,
+        *,
+        generation_id: uuid.UUID,
+        import_run_id: uuid.UUID,
+        contract_binding_id: uuid.UUID,
+        spec: ImportedTaskSpec,
+    ) -> None:
+        history = spec.operation_history
+        if not (history.operations or history.leases or history.verification_cycles):
+            return
+
+        operation_ids = {item.operation_id for item in history.operations}
+        lease_ids = {item.lease_id for item in history.leases}
+        cycle_ids = {item.cycle_id for item in history.verification_cycles}
+        if len(operation_ids) != len(history.operations):
+            raise CoreAuthorityError("imported operation history contains duplicate operation IDs")
+        if len(lease_ids) != len(history.leases):
+            raise CoreAuthorityError("imported operation history contains duplicate lease IDs")
+        if len(cycle_ids) != len(history.verification_cycles):
+            raise CoreAuthorityError("imported operation history contains duplicate verification cycle IDs")
+
+        for item in history.operations:
+            if item.status not in {"completed", "cancelled"}:
+                raise CoreAuthorityError(
+                    "legacy operation-history import admits only terminal completed/cancelled operations"
+                )
+            if item.phase != "terminal" or item.completed_at is None or not item.terminal_outcome:
+                raise CoreAuthorityError("imported terminal operation has inconsistent terminal evidence")
+            lifecycle = (
+                "completed"
+                if item.status == "completed"
+                else "abandoned"
+                if item.terminal_outcome in {"agent_abandoned", "safe_reclaimed"}
+                else "cancelled_by_marco"
+            )
+            self.session.add(
+                wf.WorkflowOperation(
+                    operation_id=item.operation_id,
+                    generation_id=generation_id,
+                    task_id=spec.task_id,
+                    kind=item.kind,
+                    lifecycle=lifecycle,
+                    phase="terminal",
+                    persisted_actions=[],
+                    import_run_id=import_run_id,
+                    creation_request_id=None,
+                    creation_execution_id=None,
+                    contract_binding_id=contract_binding_id,
+                    predecessor_operation_id=None,
+                    terminal_outcome=item.terminal_outcome,
+                    operation_revision=1,
+                    created_at=item.created_at,
+                    terminal_at=item.completed_at,
+                )
+            )
+        self.session.flush()
+
+        cycle_by_id = {item.cycle_id: item for item in history.verification_cycles}
+        for item in history.verification_cycles:
+            if item.operation_id not in operation_ids:
+                raise CoreAuthorityError("imported verification cycle references another task/history")
+            if item.completed_at is None or item.outcome is None:
+                raise CoreAuthorityError("legacy operation-history import does not admit open verification cycles")
+            if item.cycle_sequence <= 0:
+                raise CoreAuthorityError("imported verification cycle sequence must be positive")
+            lifecycle = (
+                item.outcome
+                if item.outcome in {"approved", "rejected", "abandoned"}
+                else "abandoned"
+                if item.outcome == "safe_reclaimed"
+                else "reset"
+            )
+            self.session.add(
+                wf.VerificationCycle(
+                    cycle_id=item.cycle_id,
+                    generation_id=generation_id,
+                    task_id=spec.task_id,
+                    operation_id=item.operation_id,
+                    reviewed_content_version_id=None,
+                    contract_binding_id=contract_binding_id,
+                    cycle_sequence=item.cycle_sequence,
+                    lifecycle=lifecycle,
+                    outcome=item.outcome,
+                    import_run_id=import_run_id,
+                    created_by_execution_id=None,
+                    created_at=item.created_at,
+                    terminal_at=item.completed_at,
+                )
+            )
+        self.session.flush()
+
+        for item in history.leases:
+            if item.operation_id not in operation_ids:
+                raise CoreAuthorityError("imported lease references another task/history")
+            if item.verification_cycle_id is not None:
+                cycle = cycle_by_id.get(item.verification_cycle_id)
+                if cycle is None or cycle.operation_id != item.operation_id:
+                    raise CoreAuthorityError(
+                        "imported lease verification cycle does not belong to its operation"
+                    )
+            if item.released_at is None:
+                raise CoreAuthorityError("legacy operation-history import does not admit active service leases")
+            if not item.source_run_id.strip():
+                raise CoreAuthorityError("imported lease source run identity must be nonblank")
+            if item.lease_kind == "actor":
+                if item.actor_attempt_sequence is None or item.actor_attempt_sequence <= 0:
+                    raise CoreAuthorityError("imported actor lease lacks a positive attempt sequence")
+            elif item.lease_kind == "admin_request":
+                if item.actor_attempt_sequence is not None:
+                    raise CoreAuthorityError("imported admin lease carries actor attempt context")
+            else:
+                raise CoreAuthorityError(f"unsupported imported lease kind: {item.lease_kind!r}")
+            self.session.add(
+                wf.ServiceLease(
+                    lease_id=item.lease_id,
+                    generation_id=generation_id,
+                    task_id=spec.task_id,
+                    operation_id=item.operation_id,
+                    run_id=None,
+                    import_run_id=import_run_id,
+                    source_run_id=item.source_run_id,
+                    owner_id=item.owner_id,
+                    lease_kind=item.lease_kind,
+                    actor_role=None,
+                    actor_attempt_sequence=item.actor_attempt_sequence,
+                    verification_cycle_id=item.verification_cycle_id,
+                    state="released",
+                    issued_at=item.issued_at,
+                    expires_at=item.expires_at,
+                    lease_revision=1,
+                    terminal_at=item.released_at,
+                )
+            )

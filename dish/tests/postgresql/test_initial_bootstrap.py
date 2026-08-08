@@ -59,6 +59,7 @@ def _record(
         "section_gid": section_gid,
         "completed": False,
         "observed_at": NOW.isoformat(),
+        "operation_history": {"operations": [], "leases": [], "verification_cycles": []},
     }
 
 
@@ -111,7 +112,28 @@ def _factory(tmp_path: Path) -> tuple[sessionmaker[Session], object]:
 @pytest.mark.smoke
 def test_bootstrap_baseline_and_import_run_end_to_end(tmp_path: Path) -> None:
     first_task, second_task = uuid.uuid4(), uuid.uuid4()
-    source = _source(tmp_path, _record(first_task, "1001"), _record(second_task, "1002"))
+    operation_id, cycle_id, lease_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    first = _record(first_task, "1001")
+    first["operation_history"] = {
+        "operations": [{
+            "operation_id": str(operation_id), "kind": "planning", "status": "completed",
+            "phase": "terminal", "terminal_outcome": "planning_handoff_confirmed",
+            "created_at": NOW.isoformat(), "completed_at": NOW.isoformat(),
+        }],
+        "verification_cycles": [{
+            "cycle_id": str(cycle_id), "operation_id": str(operation_id),
+            "cycle_sequence": 1, "outcome": "approved",
+            "created_at": NOW.isoformat(), "completed_at": NOW.isoformat(),
+        }],
+        "leases": [{
+            "lease_id": str(lease_id), "operation_id": str(operation_id),
+            "source_run_id": "legacy-run-1", "owner_id": "legacy-owner",
+            "lease_kind": "actor", "actor_attempt_sequence": 1,
+            "verification_cycle_id": str(cycle_id), "issued_at": NOW.isoformat(),
+            "expires_at": "2026-08-03T20:05:00+00:00", "released_at": NOW.isoformat(),
+        }],
+    }
+    source = _source(tmp_path, first, _record(second_task, "1002"))
     spec = _spec(source)
     factory, engine = _factory(tmp_path)
     try:

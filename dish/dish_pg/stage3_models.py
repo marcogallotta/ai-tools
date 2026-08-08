@@ -281,11 +281,14 @@ class WorkflowOperation(Base):
     lifecycle: Mapped[str] = mapped_column(String(24), nullable=False, default="open")
     phase: Mapped[str] = mapped_column(String(48), nullable=False)
     persisted_actions: Mapped[list[str]] = mapped_column(JSON, nullable=False)
-    creation_request_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("service_requests.request_id", ondelete="RESTRICT"), nullable=False
+    import_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("stage_a_import_runs.import_run_id", ondelete="RESTRICT")
     )
-    creation_execution_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("command_executions.execution_id", ondelete="RESTRICT"), nullable=False, unique=True
+    creation_request_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("service_requests.request_id", ondelete="RESTRICT")
+    )
+    creation_execution_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("command_executions.execution_id", ondelete="RESTRICT"), unique=True
     )
     contract_binding_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("honest_contract_bindings.binding_id", ondelete="RESTRICT"), nullable=False
@@ -305,6 +308,13 @@ class WorkflowOperation(Base):
             name="lifecycle_allowed",
         ),
         CheckConstraint("operation_revision > 0", name="positive_revision"),
+        CheckConstraint(
+            "(import_run_id IS NULL AND creation_request_id IS NOT NULL "
+            "AND creation_execution_id IS NOT NULL) OR "
+            "(import_run_id IS NOT NULL AND creation_request_id IS NULL "
+            "AND creation_execution_id IS NULL)",
+            name="creation_provenance_exact",
+        ),
         CheckConstraint(
             "(lifecycle = 'open' AND terminal_outcome IS NULL AND terminal_at IS NULL) OR "
             "(lifecycle <> 'open' AND terminal_outcome IS NOT NULL AND terminal_at IS NOT NULL)",
@@ -406,9 +416,13 @@ class ServiceLease(Base):
     operation_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("workflow_operations.operation_id", ondelete="RESTRICT")
     )
-    run_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("service_runs.run_id", ondelete="RESTRICT"), nullable=False
+    run_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("service_runs.run_id", ondelete="RESTRICT")
     )
+    import_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("stage_a_import_runs.import_run_id", ondelete="RESTRICT")
+    )
+    source_run_id: Mapped[str | None] = mapped_column(String(256))
     owner_id: Mapped[str] = mapped_column(String(256), nullable=False)
     lease_kind: Mapped[str] = mapped_column(String(24), nullable=False)
     actor_role: Mapped[str | None] = mapped_column(String(32))
@@ -426,8 +440,14 @@ class ServiceLease(Base):
         CheckConstraint("lease_revision > 0", name="positive_revision"),
         CheckConstraint("expires_at > issued_at", name="positive_duration"),
         CheckConstraint(
-            "(lease_kind = 'actor' AND operation_id IS NOT NULL AND actor_role IS NOT NULL "
-            "AND actor_attempt_sequence IS NOT NULL) OR "
+            "(import_run_id IS NULL AND run_id IS NOT NULL AND source_run_id IS NULL) OR "
+            "(import_run_id IS NOT NULL AND run_id IS NULL AND length(trim(source_run_id)) > 0)",
+            name="provenance_exact",
+        ),
+        CheckConstraint(
+            "(lease_kind = 'actor' AND operation_id IS NOT NULL "
+            "AND actor_attempt_sequence IS NOT NULL "
+            "AND (import_run_id IS NOT NULL OR actor_role IS NOT NULL)) OR "
             "(lease_kind = 'admin_request' AND actor_role IS NULL "
             "AND actor_attempt_sequence IS NULL AND verification_cycle_id IS NULL)",
             name="classification_context_complete",
@@ -657,8 +677,8 @@ class VerificationCycle(Base):
     operation_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("workflow_operations.operation_id", ondelete="RESTRICT"), nullable=False
     )
-    reviewed_content_version_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("task_content_versions.content_version_id", ondelete="RESTRICT"), nullable=False
+    reviewed_content_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("task_content_versions.content_version_id", ondelete="RESTRICT")
     )
     contract_binding_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("honest_contract_bindings.binding_id", ondelete="RESTRICT"), nullable=False
@@ -666,8 +686,11 @@ class VerificationCycle(Base):
     cycle_sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
     lifecycle: Mapped[str] = mapped_column(String(24), nullable=False, default="open")
     outcome: Mapped[str | None] = mapped_column(String(32))
-    created_by_execution_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("command_executions.execution_id", ondelete="RESTRICT"), nullable=False
+    import_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("stage_a_import_runs.import_run_id", ondelete="RESTRICT")
+    )
+    created_by_execution_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("command_executions.execution_id", ondelete="RESTRICT")
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     terminal_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -675,6 +698,13 @@ class VerificationCycle(Base):
     __table_args__ = (
         CheckConstraint("cycle_sequence > 0", name="positive_cycle_sequence"),
         CheckConstraint("lifecycle IN ('open','approved','rejected','reset','abandoned')", name="lifecycle_allowed"),
+        CheckConstraint(
+            "(import_run_id IS NULL AND reviewed_content_version_id IS NOT NULL "
+            "AND created_by_execution_id IS NOT NULL) OR "
+            "(import_run_id IS NOT NULL AND reviewed_content_version_id IS NULL "
+            "AND created_by_execution_id IS NULL)",
+            name="creation_provenance_exact",
+        ),
         CheckConstraint(
             "(lifecycle = 'open' AND outcome IS NULL AND terminal_at IS NULL) OR "
             "(lifecycle <> 'open' AND outcome IS NOT NULL AND terminal_at IS NOT NULL)",
@@ -1249,4 +1279,25 @@ def _install_sqlite_stage3_immutability_triggers() -> None:
         )
 
 
+
+def _install_sqlite_import_provenance_triggers() -> None:
+    protected_columns = {
+        "workflow_operations": ("import_run_id", "creation_request_id", "creation_execution_id"),
+        "service_leases": ("import_run_id", "run_id", "source_run_id"),
+        "verification_cycles": ("import_run_id", "reviewed_content_version_id", "created_by_execution_id"),
+    }
+    for table_name, columns in protected_columns.items():
+        table = Base.metadata.tables[table_name]
+        event.listen(
+            table,
+            "after_create",
+            DDL(
+                f"CREATE TRIGGER {table_name}_import_provenance_immutable "
+                f"BEFORE UPDATE OF {','.join(columns)} ON {table_name} "
+                "BEGIN SELECT RAISE(ABORT, 'import provenance is immutable'); END"
+            ).execute_if(dialect="sqlite"),
+        )
+
+
 _install_sqlite_stage3_immutability_triggers()
+_install_sqlite_import_provenance_triggers()

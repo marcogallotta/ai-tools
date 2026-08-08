@@ -1106,16 +1106,7 @@ class PostgresCommandPort:
                     "the author or material editor cannot verify this candidate",
                     data={"conflicting_actor_fact_id": str(conflicting.actor_fact_id)},
                 )
-            sequence = int(
-                self.session.scalar(
-                    select(
-                        func.coalesce(
-                            func.max(wf.OperationActorFact.actor_attempt_sequence), 0
-                        )
-                    ).where(wf.OperationActorFact.task_id == task.task_id)
-                )
-                or 0
-            ) + 1
+            sequence = self._next_actor_attempt_sequence(task.task_id)
             actor_fact = self.workflow.create_actor_fact(
                 actor_fact_id=self.uuid_factory(),
                 execution_id=execution.execution_id,
@@ -1176,16 +1167,7 @@ class PostgresCommandPort:
             persisted_actions=["prepare"],
             created_at=call.now,
         )
-        sequence = int(
-            self.session.scalar(
-                select(
-                    func.coalesce(
-                        func.max(wf.OperationActorFact.actor_attempt_sequence), 0
-                    )
-                ).where(wf.OperationActorFact.task_id == task.task_id)
-            )
-            or 0
-        ) + 1
+        sequence = self._next_actor_attempt_sequence(task.task_id)
         actor_fact = self.workflow.create_actor_fact(
             actor_fact_id=self.uuid_factory(),
             execution_id=execution.execution_id,
@@ -2827,6 +2809,27 @@ class PostgresCommandPort:
 
     def _next_step(self, operation_id: uuid.UUID) -> int:
         return int(self.session.scalar(select(func.coalesce(func.max(wf.OperationStep.step_sequence), 0)).where(wf.OperationStep.operation_id == operation_id)) or 0) + 1
+
+    def _next_actor_attempt_sequence(self, task_id: uuid.UUID) -> int:
+        live_max = int(
+            self.session.scalar(
+                select(func.coalesce(func.max(wf.OperationActorFact.actor_attempt_sequence), 0)).where(
+                    wf.OperationActorFact.task_id == task_id
+                )
+            )
+            or 0
+        )
+        imported_lease_max = int(
+            self.session.scalar(
+                select(func.coalesce(func.max(wf.ServiceLease.actor_attempt_sequence), 0)).where(
+                    wf.ServiceLease.task_id == task_id,
+                    wf.ServiceLease.lease_kind == "actor",
+                    wf.ServiceLease.import_run_id.is_not(None),
+                )
+            )
+            or 0
+        )
+        return max(live_max, imported_lease_max) + 1
 
     def _section_for_role(
         self,

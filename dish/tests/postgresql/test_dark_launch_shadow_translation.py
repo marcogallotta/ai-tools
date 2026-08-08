@@ -3,6 +3,7 @@ import uuid
 from datetime import timedelta
 import pytest
 from sqlalchemy import select
+from dish_pg import models
 from dish_pg import stage3_models as wf
 from dish_pg import stage5_models as tx
 from dish_pg.database import session_scope
@@ -28,6 +29,128 @@ from tests.support.postgresql.dark_launch_shadow_worker import (
     _spool,
     _real_verification_target,
 )
+
+
+def _add_imported_operation(session, *, context, task_id, operation_id, import_run_id=None):
+    session.add(
+        wf.WorkflowOperation(
+            operation_id=operation_id,
+            generation_id=context["generation_id"],
+            task_id=task_id,
+            kind="planning",
+            lifecycle="completed",
+            phase="terminal",
+            persisted_actions=[],
+            import_run_id=import_run_id or context["import_run_id"],
+            creation_request_id=None,
+            creation_execution_id=None,
+            contract_binding_id=context["binding_id"],
+            predecessor_operation_id=None,
+            terminal_outcome="planning_handoff_confirmed",
+            operation_revision=1,
+            created_at=NOW,
+            terminal_at=NOW,
+        )
+    )
+    session.flush()
+
+
+def _captured_envelope(session, *, context, source_generation, source_commit, identity):
+    service = ShadowService(session)
+    baseline = service.create_baseline(
+        generation_id=context["generation_id"],
+        source_generation_identity=source_generation,
+        source_commit=source_commit,
+        created_at=NOW,
+    )
+    return service.capture_envelope(
+        shadow_baseline_id=baseline.shadow_baseline_id,
+        command_name="start",
+        source_request_identity=identity,
+        canonical_input={"command": "start", "arguments": {}},
+        source_outcome={"ok": True},
+        source_post_state={"phase": "research"},
+        rollout_sequence=1,
+        source_authority_generation=source_generation,
+        captured_at=NOW,
+    )
+
+
+def test_shadow_identifier_translation_accepts_exact_import_lineage(workflow_db):
+    factory, _ids, context, task_id = workflow_db
+    operation_id = uuid.uuid4()
+    with session_scope(factory) as session:
+        run = session.get(models.ImportRun, context["import_run_id"])
+        assert run is not None
+        _add_imported_operation(session, context=context, task_id=task_id, operation_id=operation_id)
+        envelope = _captured_envelope(
+            session,
+            context=context,
+            source_generation=run.legacy_generation_id,
+            source_commit=run.source_commit,
+            identity="matching-imported-operation",
+        )
+        assert _translate_workflow_identifiers(
+            session, envelope, {"submission_id": str(operation_id)}
+        ) == {"submission_id": str(operation_id)}
+
+
+def test_shadow_identifier_translation_rejects_live_identity_without_binding(workflow_db):
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        run = session.get(models.ImportRun, context["import_run_id"])
+        assert run is not None
+        run_id = _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        operation_id = _start_initial(_port(session, ids), ids, task_id=task_id, run_id=run_id).data["operation_id"]
+        envelope = _captured_envelope(
+            session,
+            context=context,
+            source_generation=run.legacy_generation_id,
+            source_commit=run.source_commit,
+            identity="live-operation-without-binding",
+        )
+        with pytest.raises(ShadowIdentityMappingError, match="no unique target operation"):
+            _translate_workflow_identifiers(session, envelope, {"submission_id": str(operation_id)})
+
+
+def test_shadow_identifier_translation_rejects_different_import_lineage(workflow_db):
+    factory, ids, context, task_id = workflow_db
+    operation_id = uuid.uuid4()
+    with session_scope(factory) as session:
+        run_a = session.get(models.ImportRun, context["import_run_id"])
+        assert run_a is not None
+        run_b_id = _next(ids)
+        session.add(
+            models.ImportRun(
+                import_run_id=run_b_id,
+                source_commit=run_a.source_commit,
+                source_release=run_a.source_release,
+                legacy_generation_id=run_a.legacy_generation_id,
+                baseline_high_water_mark="other-corpus",
+                source_bundle_sha256="b" * 64,
+                status="complete",
+                started_at=NOW,
+                completed_at=NOW,
+                provenance={"capture": "other-corpus"},
+            )
+        )
+        _add_imported_operation(
+            session,
+            context=context,
+            task_id=task_id,
+            operation_id=operation_id,
+            import_run_id=run_b_id,
+        )
+        envelope = _captured_envelope(
+            session,
+            context=context,
+            source_generation=run_a.legacy_generation_id,
+            source_commit=run_a.source_commit,
+            identity="wrong-import-lineage",
+        )
+        with pytest.raises(ShadowIdentityMappingError, match="no unique target operation"):
+            _translate_workflow_identifiers(session, envelope, {"submission_id": str(operation_id)})
 
 
 def test_real_shadow_evaluator_tags_outbox_and_projection_claim_refuses_it(workflow_db):

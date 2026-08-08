@@ -21,7 +21,15 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from dish_pg.repositories import CoreAuthorityError
-from dish_pg.services import CoreAuthorityService, ImportedTaskResult, ImportedTaskSpec
+from dish_pg.services import (
+    CoreAuthorityService,
+    ImportedOperationHistorySpec,
+    ImportedServiceLeaseSpec,
+    ImportedTaskResult,
+    ImportedTaskSpec,
+    ImportedVerificationCycleSpec,
+    ImportedWorkflowOperationSpec,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -83,6 +91,92 @@ def _required_string(record: Mapping[str, object], field: str) -> str:
     return value
 
 
+def _optional_string(record: Mapping[str, object], field: str) -> str | None:
+    value = record.get(field)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError(f"{field} must be a string or null")
+    return value
+
+
+def _optional_uuid(record: Mapping[str, object], field: str) -> UUID | None:
+    value = record.get(field)
+    return None if value in {None, ""} else UUID(str(value))
+
+
+def _optional_datetime(record: Mapping[str, object], *, field: str) -> datetime | None:
+    value = record.get(field)
+    return None if value is None else _parse_datetime(value, field=field)
+
+
+def _optional_positive_int(record: Mapping[str, object], field: str) -> int | None:
+    value = record.get(field)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{field} must be a positive integer or null")
+    return value
+
+
+def _history_items(history: Mapping[str, object], field: str) -> list[Mapping[str, object]]:
+    if field not in history:
+        raise ValueError(f"operation_history.{field} is required; re-export the legacy source")
+    value = history[field]
+    if not isinstance(value, list) or any(not isinstance(item, Mapping) for item in value):
+        raise ValueError(f"operation_history.{field} must be a JSON array of objects")
+    return list(value)
+
+
+def _operation_history_from_mapping(record: Mapping[str, object]) -> ImportedOperationHistorySpec:
+    value = record.get("operation_history")
+    if not isinstance(value, Mapping):
+        raise ValueError("operation_history is required; re-export the legacy source")
+    operations = tuple(
+        ImportedWorkflowOperationSpec(
+            operation_id=UUID(_required_string(item, "operation_id")),
+            kind=_required_string(item, "kind"),
+            status=_required_string(item, "status"),
+            phase=_required_string(item, "phase"),
+            terminal_outcome=_optional_string(item, "terminal_outcome"),
+            created_at=_parse_datetime(item.get("created_at"), field="operation_history.operations.created_at"),
+            completed_at=_optional_datetime(item, field="completed_at"),
+        )
+        for item in _history_items(value, "operations")
+    )
+    leases = tuple(
+        ImportedServiceLeaseSpec(
+            lease_id=UUID(_required_string(item, "lease_id")),
+            operation_id=UUID(_required_string(item, "operation_id")),
+            source_run_id=_required_string(item, "source_run_id"),
+            owner_id=_required_string(item, "owner_id"),
+            lease_kind=_required_string(item, "lease_kind"),
+            actor_attempt_sequence=_optional_positive_int(item, "actor_attempt_sequence"),
+            verification_cycle_id=_optional_uuid(item, "verification_cycle_id"),
+            issued_at=_parse_datetime(item.get("issued_at"), field="operation_history.leases.issued_at"),
+            expires_at=_parse_datetime(item.get("expires_at"), field="operation_history.leases.expires_at"),
+            released_at=_optional_datetime(item, field="released_at"),
+        )
+        for item in _history_items(value, "leases")
+    )
+    cycles = tuple(
+        ImportedVerificationCycleSpec(
+            cycle_id=UUID(_required_string(item, "cycle_id")),
+            operation_id=UUID(_required_string(item, "operation_id")),
+            cycle_sequence=_optional_positive_int(item, "cycle_sequence") or 0,
+            outcome=_optional_string(item, "outcome"),
+            created_at=_parse_datetime(item.get("created_at"), field="operation_history.verification_cycles.created_at"),
+            completed_at=_optional_datetime(item, field="completed_at"),
+        )
+        for item in _history_items(value, "verification_cycles")
+    )
+    return ImportedOperationHistorySpec(
+        operations=operations,
+        leases=leases,
+        verification_cycles=cycles,
+    )
+
+
 def _spec_from_mapping(record: Mapping[str, object]) -> ImportedTaskSpec:
     projects = record.get("project_ids")
     if not isinstance(projects, list):
@@ -101,6 +195,7 @@ def _spec_from_mapping(record: Mapping[str, object]) -> ImportedTaskSpec:
         section_id=UUID(_required_string(record, "section_id")),
         completed=completed,
         observed_at=_parse_datetime(record.get("observed_at"), field="observed_at"),
+        operation_history=_operation_history_from_mapping(record),
         existence_state=str(record.get("existence_state", "ordinary")),
     )
 

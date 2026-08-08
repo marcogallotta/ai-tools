@@ -48,7 +48,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0031_worker_readiness_consolidation"
+ALEMBIC_HEAD = "0032_imported_operation_history"
 
 
 class ReleaseCandidateService(
