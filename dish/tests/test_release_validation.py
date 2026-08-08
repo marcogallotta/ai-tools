@@ -172,9 +172,6 @@ def test_resolver_loads_external_schema_adapter_for_legacy_note_checks(release_r
     assert release.schema_version == "2"
     assert set(release.protocols) == {"planning"}
     assert set(release.manifests) == {"planning", "complete_task"}
-    assert release.bundle_for_submission("planning") == {
-        "planning": release.protocols["planning"]
-    }
 
 
 @pytest.mark.smoke

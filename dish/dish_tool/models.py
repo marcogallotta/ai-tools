@@ -136,27 +136,6 @@ class ResolvedRelease:
                 details={"requested_role": role},
             ) from exc
 
-    def bundle_for_submission(self, submission_kind: str) -> dict[str, str]:
-        """Return the one stage protocol needed by the legacy start envelope.
-
-        This method deliberately no longer returns a Research+Verification
-        bundle. It exists only until the later command-lifecycle rewrite removes
-        the legacy database column.
-        """
-
-        if submission_kind == "planning":
-            role = "planning"
-        elif submission_kind in {"initial", "change"}:
-            role = "research"
-        else:
-            raise DishRuleError(
-                "INVALID_ARGUMENT",
-                f"unknown submission kind: {submission_kind!r}",
-                rule="invalid_submission_kind",
-            )
-        return {role: self.protocol_for_role(role)}
-
-
 @dataclass(frozen=True)
 class VerificationProtocolSnapshot:
     identity: str

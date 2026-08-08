@@ -232,17 +232,6 @@ def test_missing_or_malformed_schema_fails_closed(tmp_path, change, rule):
 
 
 @pytest.mark.smoke
-def test_submission_bundle_is_role_specific_not_task_lifetime_bundle(tmp_path):
-    root = copy_fixture(tmp_path)
-    planning = resolve_release(root, protocol_role="planning")
-    research = resolve_release(root, protocol_role="research")
-
-    assert set(planning.bundle_for_submission("planning")) == {"planning"}
-    assert set(research.bundle_for_submission("initial")) == {"research"}
-    assert "verification" not in research.bundle_for_submission("initial")
-
-
-@pytest.mark.smoke
 def test_historical_verification_git_text_ignores_current_compatibility_gate(tmp_path):
     root = copy_fixture(tmp_path)
     old_text = (root / "dish-verification-protocol.md").read_text()
