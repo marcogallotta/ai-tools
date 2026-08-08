@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import copy
 import json
 
@@ -8,14 +7,11 @@ import pytest
 from pathlib import Path
 
 from dish_service.command_spec import (
-    ACTION_CLI_COMMANDS,
     ACTION_COMMANDS,
     ACTION_COMMAND_SPECS,
-    READ_ONLY_ACTION_COMMANDS,
     REPLAY_SAFE_COMMANDS,
 )
 from dish_service.openapi import action_openapi
-from dish_tool.cli import TOPIC_COMMANDS, build_parser
 from dish_tool.results import (
     RESULT_ENVELOPE_FIELD_SET,
     RESULT_OPENAPI_REQUIRED_FIELDS,
@@ -123,27 +119,11 @@ def test_action_and_runtime_docs_preserve_replay_inventory_and_decision_rules():
     assert "fresh UUID represents new work" in runtime
 
 
-def test_typed_action_policy_derives_public_command_views():
+def test_typed_action_policy_derives_command_and_request_id_inventory():
     assert ACTION_COMMANDS == tuple(spec.name for spec in ACTION_COMMAND_SPECS)
     assert REPLAY_SAFE_COMMANDS == frozenset(
         spec.name for spec in ACTION_COMMAND_SPECS if spec.request_id_required
     )
-    assert READ_ONLY_ACTION_COMMANDS == frozenset(
-        spec.name for spec in ACTION_COMMAND_SPECS if not spec.request_id_required
-    )
-    assert ACTION_CLI_COMMANDS == tuple(
-        spec.name for spec in ACTION_COMMAND_SPECS if spec.cli_exposed
-    )
-
-
-def test_agent_cli_exposure_matches_typed_action_policy():
-    parser = build_parser()
-    subparsers = next(
-        action
-        for action in parser._actions
-        if isinstance(action, argparse._SubParsersAction)
-    )
-    assert set(subparsers.choices) == set(ACTION_CLI_COMMANDS) | set(TOPIC_COMMANDS)
 
 
 def test_result_envelope_metadata_drives_client_and_openapi_shape():

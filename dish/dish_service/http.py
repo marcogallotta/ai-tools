@@ -23,7 +23,7 @@ from .identifiers import require_asana_gid, require_dish_uuid, validate_identifi
 from .http_routing import resolve_post_route
 from .leases import ServicePrincipal
 from .legacy_writer_fence import assert_legacy_writer_mutation_allowed
-from .command_spec import ACTION_COMMANDS, REPLAY_CAPABLE_COMMANDS, REPLAY_SAFE_COMMANDS, validate_action_request
+from .command_spec import ACTION_COMMANDS, REPLAY_SAFE_COMMANDS, validate_action_request
 from .openapi import action_openapi
 
 LOG = logging.getLogger("dish.service")
@@ -540,7 +540,7 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             if (
                 not agent_command_dispatched
                 and (
-                    (surface in {"action", "agent"} and command in REPLAY_CAPABLE_COMMANDS)
+                    (surface in {"action", "agent"} and command in REPLAY_SAFE_COMMANDS)
                     or surface in {
                         "lease",
                         "admin",

@@ -28,11 +28,6 @@ class ActionCommandSpec:
     private_route: ActionRoute = "agent"
     workflow_action: str | None = None
 
-    @property
-    def cli_exposed(self) -> bool:
-        return self.private_route == "agent"
-
-
 def _action(
     name: str,
     principal: ActionPrincipal,
@@ -88,16 +83,10 @@ if len(ACTION_COMMAND_DEFINITIONS) != len(ACTION_COMMAND_SPECS):
     raise ValueError("duplicate GPT Action command definition")
 
 ACTION_COMMANDS = tuple(spec.name for spec in ACTION_COMMAND_SPECS)
-ACTION_CLI_COMMANDS = tuple(spec.name for spec in ACTION_COMMAND_SPECS if spec.cli_exposed)
 ACTION_LEASE_COMMAND = RENEW_LEASE_COMMAND.name
 REPLAY_SAFE_COMMANDS = frozenset(
     spec.name for spec in ACTION_COMMAND_SPECS if spec.request_id_required
 )
-REPLAY_CAPABLE_COMMANDS = REPLAY_SAFE_COMMANDS
-READ_ONLY_ACTION_COMMANDS = frozenset(
-    spec.name for spec in ACTION_COMMAND_SPECS if not spec.request_id_required
-)
-AGENT_MUTATION_COMMANDS = REPLAY_SAFE_COMMANDS - {ACTION_LEASE_COMMAND}
 
 DISH_UUID_SCHEMA = dict(CANONICAL_DISH_UUID_SCHEMA)
 ASANA_GID_SCHEMA = {

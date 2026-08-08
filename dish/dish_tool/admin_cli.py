@@ -22,7 +22,7 @@ from .backend import AsanaBackend
 from .admin_command_spec import (
     ADMIN_COMMANDS as _ADMIN_COMMANDS,
     ADMIN_COMMAND_SPECS,
-    CLI_OPERATION_IDENTIFIER_COMMANDS as _OPERATION_ADMIN_COMMANDS,
+    RESOLVED_OPERATION_TARGET_COMMANDS as _OPERATION_ADMIN_COMMANDS,
 )
 from .releases import configured_honest_path, resolve_release
 from dish_service.client import DishAdminServiceClient

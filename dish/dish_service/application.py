@@ -62,7 +62,7 @@ from dish_tool.validation_scope import scope_for_command
 from dish_tool.transactions import immediate_transaction
 
 from .backup import BackupManager, BackupRecord
-from .command_spec import ACTION_COMMANDS
+from .command_spec import ACTION_COMMANDS, ACTION_LEASE_COMMAND, REPLAY_SAFE_COMMANDS
 from .backup_creation_journal import (
     complete_backup_creation,
     creation_for_request,
@@ -100,7 +100,7 @@ from .restore_request_journal import RestoreRequestJournal
 _READ_ONLY_AGENT_COMMANDS = {"sections", "section-tasks", "read", "inspect", "proposals"}
 _LEASED_AGENT_COMMANDS = {"prepare", "approve", "reject", "submit", "apply-proposal"}
 _MUTATING_AGENT_COMMANDS = {"create", "start", "safe-reclaim", *_LEASED_AGENT_COMMANDS}
-_REPLAYED_AGENT_COMMANDS = _MUTATING_AGENT_COMMANDS | {"inspect"}
+_REPLAYED_AGENT_COMMANDS = REPLAY_SAFE_COMMANDS - {ACTION_LEASE_COMMAND}
 _RUN_ID_AGENT_COMMANDS = {"start", "prepare", "approve", "reject", "apply-proposal"}
 _HANDOFF_PHASES = {"await_verification", "held_evidence", "held_human"}
 
