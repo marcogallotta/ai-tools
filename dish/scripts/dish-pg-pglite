@@ -499,6 +499,7 @@ def _run_lane(
     node_timeout_seconds: float,
     collection_timeout_seconds: float,
     cleanup_grace_seconds: float,
+    allow_empty: bool = False,
 ) -> dict[str, Any]:
     lane_dir = artifact_root / name
     lane_dir.mkdir(parents=True, exist_ok=True)
@@ -578,7 +579,7 @@ def _run_lane(
     skipped_nodes = sum(item["status"] == "skipped" for item in node_results)
     lane_passed = (
         collection_error is None
-        and bool(inventory)
+        and (allow_empty or bool(inventory))
         and len(node_results) == len(inventory)
         and assertion_failures == 0
         and infrastructure_failures == 0
@@ -635,6 +636,7 @@ def main(argv: list[str] | None = None) -> int:
         node_timeout_seconds=args.node_timeout_seconds,
         collection_timeout_seconds=args.collection_timeout_seconds,
         cleanup_grace_seconds=args.cleanup_grace_seconds,
+        allow_empty=True,
     )
     passed = primary["passed"] and quarantine["passed"]
     report = {

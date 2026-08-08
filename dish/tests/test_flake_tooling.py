@@ -142,3 +142,44 @@ def test_stress_lane_uses_fresh_seeded_process_commands(tmp_path, monkeypatch):
         "--randomly-seed=101",
         "--randomly-dont-reset-seed",
     ]
+
+
+def test_repeat_can_select_one_quarantined_node(tmp_path, monkeypatch):
+    calls = []
+
+    def fake_run_command(**kwargs):
+        calls.append(kwargs)
+        return flake_runner.CommandResult(
+            label=kwargs["label"], command=["pytest"], returncode=0
+        )
+
+    monkeypatch.setattr(flake_runner, "_run_command", fake_run_command)
+    monkeypatch.setattr(flake_runner, "_write_summary", lambda **_kwargs: 0)
+    args = type(
+        "Args",
+        (),
+        {
+            "artifacts": str(tmp_path / "repeat"),
+            "nodeid": "tests/test_example.py::test_example",
+            "same_process": 2,
+            "fresh_runs": 1,
+            "quarantine": True,
+        },
+    )()
+
+    assert flake_runner.run_repeat(args) == 0
+    assert calls[0]["arguments"] == [
+        "-p",
+        "no:randomly",
+        "--count",
+        "2",
+        "-x",
+        "--quarantine",
+        args.nodeid,
+    ]
+    assert calls[1]["arguments"] == [
+        "-p",
+        "no:randomly",
+        "--quarantine",
+        args.nodeid,
+    ]

@@ -439,10 +439,10 @@ plus any detached Node/PGlite descendants recorded while it ran. The runner prin
 `FAIL`, or `TIMEOUT` for each exact node and writes the per-node artifacts beside the JSON report.
 This isolation is runner-only: manual lane selectors combined with explicit test paths remain
 prohibited, and the ordinary pytest suite excludes the separately governed PGlite inventory. The
-normal PGlite inventory and foundational quarantine inventory remain separate; the
-runner refuses to let the quarantined lifecycle test disappear silently and classifies known
-connection-lifecycle failures separately from assertion or schema failures. PGlite success never
-sets native PostgreSQL certification true.
+normal PGlite inventory and optional quarantine inventory remain separate; an empty quarantine
+inventory is reported successfully, while known connection-lifecycle failures are classified
+separately from assertion or schema failures. PGlite success never sets native PostgreSQL
+certification true.
 
 ## Flaky-test classifications
 
@@ -508,7 +508,10 @@ Quarantine rules are enforced during collection:
 - a test cannot be both `flake_candidate` and `quarantined`;
 - automatic per-test `@pytest.mark.flaky(reruns=...)` is forbidden.
 
-Two PGlite lifecycle tests are currently quarantined and remain visible through the separate PGlite quarantine result. They do not certify native PostgreSQL behavior.
+No tests are currently quarantined. The two previously quarantined PGlite lifecycle tests returned
+to the normal PGlite lane after per-node process supervision, descendant cleanup, stronger SQL
+readiness checks, and repeated fresh- and shared-process investigation passed cleanly. They do not
+certify native PostgreSQL behavior.
 
 ## Reproducible detection commands
 
@@ -577,6 +580,9 @@ The marker is diagnostic selection, not a flaky label.
   --same-process 50 \
   --fresh-runs 30
 ```
+
+Add `--quarantine` when the suspected node is currently quarantined; ordinary pytest deselects
+quarantined nodes by default.
 
 The same-process phase is a fast screen. Fresh-process repetitions are the stronger evidence because
 they reset module globals, thread state, SQLite connections, environment changes, and pytest caches.
@@ -780,4 +786,3 @@ coordinator structure modules when changing request or lease lifecycle orchestra
 coordinators have typed dependencies and remain directly constructible; focused seam checks assert acquisition,
 successful settlement, and cleanup call ordering, while behavioral modules continue to protect the underlying
 transaction, replay, lease, error-conversion, and response semantics.
-

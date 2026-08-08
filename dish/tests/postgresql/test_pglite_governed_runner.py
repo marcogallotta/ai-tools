@@ -111,6 +111,25 @@ def test_classifier_uses_log_when_child_exits_before_junit(tmp_path) -> None:
     assert infrastructure == 1
 
 
+def test_optional_empty_quarantine_lane_passes(tmp_path) -> None:
+    runner = _load_runner()
+
+    result = runner._run_lane(
+        python=sys.executable,
+        selector="--quarantine",
+        name="quarantine",
+        artifact_root=tmp_path,
+        node_timeout_seconds=1.0,
+        collection_timeout_seconds=30.0,
+        cleanup_grace_seconds=1.0,
+        allow_empty=True,
+    )
+
+    assert result["inventory_count"] == 0
+    assert result["nodes"] == []
+    assert result["passed"] is True
+
+
 def test_aggregate_junit_records_lifecycle_failures_as_errors(tmp_path) -> None:
     runner = _load_runner()
     output = tmp_path / "aggregate.xml"

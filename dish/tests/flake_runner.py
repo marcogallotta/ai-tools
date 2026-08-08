@@ -216,6 +216,7 @@ def run_stress(args: argparse.Namespace) -> int:
 def run_repeat(args: argparse.Namespace) -> int:
     artifact_dir = _artifact_dir("repeat", args.artifacts)
     results: list[CommandResult] = []
+    selector = ["--quarantine"] if args.quarantine else []
     if args.same_process:
         results.append(
             _run_command(
@@ -226,6 +227,7 @@ def run_repeat(args: argparse.Namespace) -> int:
                     "--count",
                     str(args.same_process),
                     "-x",
+                    *selector,
                     args.nodeid,
                 ],
                 artifact_dir=artifact_dir,
@@ -235,7 +237,7 @@ def run_repeat(args: argparse.Namespace) -> int:
         results.append(
             _run_command(
                 label=f"fresh-{index:02d}",
-                arguments=["-p", "no:randomly", args.nodeid],
+                arguments=["-p", "no:randomly", *selector, args.nodeid],
                 artifact_dir=artifact_dir,
             )
         )
@@ -245,6 +247,7 @@ def run_repeat(args: argparse.Namespace) -> int:
             "nodeid": args.nodeid,
             "same_process_repeats": args.same_process,
             "fresh_process_runs": args.fresh_runs,
+            "quarantine": args.quarantine,
         }
     )
     return _write_summary(artifact_dir=artifact_dir, metadata=metadata, results=results)
@@ -441,6 +444,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--same-process", type=int, default=DEFAULT_SAME_PROCESS_REPEATS
     )
     repeat.add_argument("--fresh-runs", type=int, default=DEFAULT_FRESH_REPEATS)
+    repeat.add_argument(
+        "--quarantine",
+        action="store_true",
+        help="select a quarantined node that ordinary pytest would deselect",
+    )
     _add_common_artifact_argument(repeat)
     repeat.set_defaults(handler=run_repeat)
 
