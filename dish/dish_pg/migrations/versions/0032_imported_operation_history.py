@@ -1,7 +1,7 @@
 """Import terminal legacy operation history without fabricating live authority.
 
 Revision ID: 0032_imported_operation_history
-Revises: 0031_worker_readiness_consolidation
+Revises: 0030_validation_failure_admission
 """
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "0032_imported_operation_history"
-down_revision = "0031_worker_readiness_consolidation"
+down_revision = "0030_validation_failure_admission"
 branch_labels = None
 depends_on = None
 
