@@ -63,7 +63,7 @@ def test_consequential_request_serialization_failure_is_not_ambiguous(
         pytest.fail("serialization failure must happen before network dispatch")
 
     monkeypatch.setattr(
-        "dish_service.client.http.client.HTTPConnection", unexpected_connection
+        "dish_service._client_transport.http.client.HTTPConnection", unexpected_connection
     )
     client = client_type(
         "http://127.0.0.1:1", token=token, run_id=str(uuid.uuid4())
@@ -97,7 +97,7 @@ def test_consequential_connect_failure_remains_safe_to_retry(
             pass
 
     monkeypatch.setattr(
-        "dish_service.client.http.client.HTTPConnection", RefusingConnection
+        "dish_service._client_transport.http.client.HTTPConnection", RefusingConnection
     )
     client = client_type(
         "http://127.0.0.1:1", token=token, run_id=str(uuid.uuid4())
@@ -116,7 +116,7 @@ def test_consequential_connect_failure_remains_safe_to_retry(
 def _replace_first_response(monkeypatch, replacement: bytes) -> None:
     ReplaceFirstResponseHTTPConnection.reset(replacement=replacement)
     monkeypatch.setattr(
-        "dish_service.client.http.client.HTTPConnection",
+        "dish_service._client_transport.http.client.HTTPConnection",
         ReplaceFirstResponseHTTPConnection,
     )
 

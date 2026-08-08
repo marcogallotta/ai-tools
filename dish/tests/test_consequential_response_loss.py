@@ -44,7 +44,7 @@ def test_inspect_lost_response_surfaces_transmitted_identity_for_exact_replay(
     )
     LoseFirstResponseHTTPConnection.reset()
     monkeypatch.setattr(
-        "dish_service.client.http.client.HTTPConnection",
+        "dish_service._client_transport.http.client.HTTPConnection",
         LoseFirstResponseHTTPConnection,
     )
     client = client_type(url, token=token, run_id=run_id)
@@ -92,7 +92,7 @@ def test_inspect_cli_prints_exact_replay_command_after_lost_response(
     )
     LoseFirstResponseHTTPConnection.reset()
     monkeypatch.setattr(
-        "dish_service.client.http.client.HTTPConnection",
+        "dish_service._client_transport.http.client.HTTPConnection",
         LoseFirstResponseHTTPConnection,
     )
     client = DishServiceClient(url, token="agent-secret", run_id=run_id)
@@ -157,7 +157,7 @@ def test_apply_proposal_lost_response_replays_without_second_application(
         assert available["allowed_actions"] == ["apply-proposal"]
         LoseFirstResponseHTTPConnection.reset()
         monkeypatch.setattr(
-            "dish_service.client.http.client.HTTPConnection",
+            "dish_service._client_transport.http.client.HTTPConnection",
             LoseFirstResponseHTTPConnection,
         )
         arguments = {
@@ -254,7 +254,7 @@ def test_apply_proposal_cli_preserves_explicit_identity_in_replay_command(
         assert available["allowed_actions"] == ["apply-proposal"]
         LoseFirstResponseHTTPConnection.reset()
         monkeypatch.setattr(
-            "dish_service.client.http.client.HTTPConnection",
+            "dish_service._client_transport.http.client.HTTPConnection",
             LoseFirstResponseHTTPConnection,
         )
         status = cli.main(arguments, application=client)
