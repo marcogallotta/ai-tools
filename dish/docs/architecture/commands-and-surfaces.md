@@ -10,9 +10,9 @@ This document separates command semantics from surface-specific behavior. It doe
 
 ## Authoritative implementation
 
-Current anchors include `dish_service/cli.py`, `dish_service/admin_cli.py`, `dish_service/command_spec.py`, `dish_tool/admin_command_spec.py`, `dish_service/http_routing.py`, `dish_service/http.py`, `dish_service/auth.py`, `dish_service/openapi.py`, and application command handlers.
+Current anchors include `dish_service/cli.py`, `dish_service/admin_cli.py`, `dish_tool/command_identity.py`, `dish_service/command_spec.py`, `dish_tool/admin_command_spec.py`, `dish_service/http_routing.py`, `dish_service/http.py`, `dish_service/auth.py`, `dish_service/openapi.py`, and application command handlers.
 
-Current public GPT Action exposure is derived from `ACTION_COMMAND_DEFINITIONS` in the shared Action command specification and the generated Action schema. A command existing in CLI/application code does not by itself mean that the connected GPT can call it.
+Stable connected-agent command names are owned below transport composition by `dish_tool/command_identity.py`. `ACTION_COMMAND_DEFINITIONS` in `dish_service/command_spec.py` must cover that identity set exactly and remains authoritative for Action-specific principal, request-ID/replay, route, workflow-link, validation, and schema metadata. The generated Action schema derives from those service definitions. A command existing elsewhere in CLI/application code does not by itself mean that the connected GPT can call it.
 
 ## Actors, processes, and stores
 
@@ -20,7 +20,7 @@ Agent CLI, admin CLI, GPT Action, and frontend are caller surfaces. They may exp
 
 ## Authority and data ownership
 
-Command specifications currently provide shared identity/exposure metadata. Workflow authority determines whether a consequential transition is legal. A surface decides how to expose, describe, collect arguments for, or present the authoritative result to its caller.
+Connected-agent command identity/exposure membership is shared lower-level metadata; service command specifications add transport-specific policy without redefining those names. Workflow authority determines whether a consequential transition is legal. A surface decides how to expose, describe, collect arguments for, or present the authoritative result to its caller.
 
 ## Invariants
 

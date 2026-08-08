@@ -87,6 +87,17 @@ def test_production_import_graph_is_acyclic():
     assert _cycles(_graph()) == []
 
 
+def test_dish_tool_does_not_depend_on_dish_service():
+    graph = _graph()
+    offenders = {
+        module: sorted(target for target in targets if target.startswith("dish_service."))
+        for module, targets in graph.items()
+        if module.startswith("dish_tool.")
+        and any(target.startswith("dish_service.") for target in targets)
+    }
+    assert offenders == {}
+
+
 def test_numbered_workflow_dependencies_point_to_earlier_stages_only():
     graph = _graph()
     numbered = {f"dish_tool.step{number}" for number in range(5, 10)}

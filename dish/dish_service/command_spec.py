@@ -5,6 +5,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal, Mapping
 
+from dish_tool import command_identity as command_ids
 from dish_tool.errors import DishRuleError
 from dish_tool.identifiers import (
     CANONICAL_DISH_UUID_SCHEMA,
@@ -45,21 +46,31 @@ def _action(
     )
 
 
-CREATE_COMMAND = _action("create", "agent", request_id=True)
-SECTIONS_COMMAND = _action("sections", "reader", request_id=False)
-SECTION_TASKS_COMMAND = _action("section-tasks", "reader", request_id=False)
-READ_COMMAND = _action("read", "reader", request_id=False)
-PROPOSALS_COMMAND = _action("proposals", "reader", request_id=False)
-APPLY_PROPOSAL_COMMAND = _action("apply-proposal", "agent", request_id=True, workflow_action="apply-proposal")
-SAFE_RECLAIM_COMMAND = _action("safe-reclaim", "agent", request_id=True)
-INSPECT_COMMAND = _action("inspect", "verification", request_id=True)
-START_COMMAND = _action("start", "agent", request_id=True)
-PREPARE_COMMAND = _action("prepare", "agent", request_id=True, workflow_action="prepare")
-APPROVE_COMMAND = _action("approve", "verification", request_id=True, workflow_action="approve")
-REJECT_COMMAND = _action("reject", "verification", request_id=True, workflow_action="reject")
-SUBMIT_COMMAND = _action("submit", "agent", request_id=True, workflow_action="submit")
+CREATE_COMMAND = _action(command_ids.CREATE, "agent", request_id=True)
+SECTIONS_COMMAND = _action(command_ids.SECTIONS, "reader", request_id=False)
+SECTION_TASKS_COMMAND = _action(command_ids.SECTION_TASKS, "reader", request_id=False)
+READ_COMMAND = _action(command_ids.READ, "reader", request_id=False)
+PROPOSALS_COMMAND = _action(command_ids.PROPOSALS, "reader", request_id=False)
+APPLY_PROPOSAL_COMMAND = _action(
+    command_ids.APPLY_PROPOSAL, "agent", request_id=True, workflow_action="apply-proposal"
+)
+SAFE_RECLAIM_COMMAND = _action(command_ids.SAFE_RECLAIM, "agent", request_id=True)
+INSPECT_COMMAND = _action(command_ids.INSPECT, "verification", request_id=True)
+START_COMMAND = _action(command_ids.START, "agent", request_id=True)
+PREPARE_COMMAND = _action(
+    command_ids.PREPARE, "agent", request_id=True, workflow_action="prepare"
+)
+APPROVE_COMMAND = _action(
+    command_ids.APPROVE, "verification", request_id=True, workflow_action="approve"
+)
+REJECT_COMMAND = _action(
+    command_ids.REJECT, "verification", request_id=True, workflow_action="reject"
+)
+SUBMIT_COMMAND = _action(
+    command_ids.SUBMIT, "agent", request_id=True, workflow_action="submit"
+)
 RENEW_LEASE_COMMAND = _action(
-    "renew-lease", "agent", request_id=True, private_route="lease"
+    command_ids.RENEW_LEASE, "agent", request_id=True, private_route="lease"
 )
 
 ACTION_COMMAND_SPECS = (
@@ -82,7 +93,9 @@ ACTION_COMMAND_DEFINITIONS = {spec.name: spec for spec in ACTION_COMMAND_SPECS}
 if len(ACTION_COMMAND_DEFINITIONS) != len(ACTION_COMMAND_SPECS):
     raise ValueError("duplicate GPT Action command definition")
 
-ACTION_COMMANDS = tuple(spec.name for spec in ACTION_COMMAND_SPECS)
+ACTION_COMMANDS = command_ids.CONNECTED_AGENT_COMMANDS
+if ACTION_COMMANDS != tuple(spec.name for spec in ACTION_COMMAND_SPECS):
+    raise ValueError("GPT Action command metadata does not cover connected-agent identities")
 ACTION_LEASE_COMMAND = RENEW_LEASE_COMMAND.name
 REPLAY_SAFE_COMMANDS = frozenset(
     spec.name for spec in ACTION_COMMAND_SPECS if spec.request_id_required

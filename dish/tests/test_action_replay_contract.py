@@ -12,6 +12,7 @@ from dish_service.command_spec import (
     REPLAY_SAFE_COMMANDS,
 )
 from dish_service.openapi import action_openapi
+from dish_tool.command_identity import CONNECTED_AGENT_COMMANDS
 from dish_tool.results import (
     RESULT_ENVELOPE_FIELD_SET,
     RESULT_OPENAPI_REQUIRED_FIELDS,
@@ -120,6 +121,8 @@ def test_action_and_runtime_docs_preserve_replay_inventory_and_decision_rules():
 
 
 def test_typed_action_policy_derives_command_and_request_id_inventory():
+    assert set(CONNECTED_AGENT_COMMANDS) == set(EXPECTED_ACTION_COMMANDS)
+    assert ACTION_COMMANDS == CONNECTED_AGENT_COMMANDS
     assert ACTION_COMMANDS == tuple(spec.name for spec in ACTION_COMMAND_SPECS)
     assert REPLAY_SAFE_COMMANDS == frozenset(
         spec.name for spec in ACTION_COMMAND_SPECS if spec.request_id_required

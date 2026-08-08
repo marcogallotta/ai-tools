@@ -70,7 +70,7 @@ These are current implementation anchors, not promises that these exact modules 
 
 | Subsystem | Current anchors |
 |---|---|
-| Command metadata / Action schema | `dish_service/command_spec.py`, `dish_service/openapi.py` |
+| Connected-agent command identity / Action schema | `dish_tool/command_identity.py`, `dish_service/command_spec.py`, `dish_service/openapi.py` |
 | Agent/admin CLI presentation | `dish_service/cli.py`, `dish_service/admin_cli.py` |
 | HTTP/authentication | `dish_service/http.py`, `dish_service/http_routing.py`, `dish_service/auth.py` |
 | Workflow/action policy | `dish_tool/application_service.py`, `dish_tool/workflow_policy.py` |

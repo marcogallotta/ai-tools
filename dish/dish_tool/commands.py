@@ -11,6 +11,7 @@ import sqlite3
 from typing import Any, Callable, Mapping
 
 from .application_service import OperationApplicationService
+from .command_identity import CONNECTED_AGENT_COMMANDS
 from .command_support import (
     CommandBackend,
     CommandTrace,
@@ -42,16 +43,11 @@ def _exposed_action_contract(
     actions: list[str] | tuple[str, ...],
 ) -> tuple[list[str], str | None, str | None]:
     """Project internal workflow actions onto accepted connected command metadata."""
-    # Import lazily so dish_tool can still be imported while dish_service is
-    # constructing its application module.  The metadata is the accepted Stage
-    # A3 command/exposure owner; this module does not keep a second action list.
-    from dish_service.command_spec import ACTION_COMMAND_DEFINITIONS
-
     from .admin_command_spec import ADMIN_COMMANDS
 
     required_start_kind = "verification" if "verify" in actions else None
     translated = ["start" if action == "verify" else action for action in actions]
-    exposed = [action for action in translated if action in ACTION_COMMAND_DEFINITIONS]
+    exposed = [action for action in translated if action in CONNECTED_AGENT_COMMANDS]
     required_admin_action = next(
         (action for action in translated if action in ADMIN_COMMANDS),
         None,
