@@ -17,14 +17,14 @@ if str(ROOT) not in sys.path:
 
 from test_selection.model import PolicyError  # noqa: E402
 from test_selection.parallel import (  # noqa: E402
-    EXPERIMENTAL_PARALLEL_TEST_FILES,
-    validate_experimental_parallel_files,
+    PARALLEL_SAFE_TEST_FILES,
+    require_parallel_safe_qualification,
+    validate_parallel_safe_files,
 )
 
 # Reuse the interpreter that launched this runner. This avoids accidentally executing a relocated
 # archive venv merely because ROOT/.venv/bin/python exists.
 PYTHON = sys.executable
-PARALLEL_PYTHON = str(ROOT / ".venv-parallel" / "bin" / "python")
 
 
 @dataclass(frozen=True)
@@ -35,17 +35,17 @@ class Phase:
 
 
 LANES: Mapping[str, tuple[Phase, ...]] = {
-    "experimental-parallel": (
+    "parallel-safe": (
         Phase(
-            "experimental xdist candidate (worker safety unproven)",
+            "parallel-safe reviewed inventory",
             (
-                PARALLEL_PYTHON,
+                PYTHON,
                 "-m",
                 "pytest",
                 "-p",
                 "no:randomly",
                 "-q",
-                *EXPERIMENTAL_PARALLEL_TEST_FILES,
+                *PARALLEL_SAFE_TEST_FILES,
             ),
         ),
     ),
@@ -162,13 +162,13 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--workers",
         type=int,
-        help="required worker count for the experimental-parallel lane",
+        help="opt into xdist for the parallel-safe lane; omit for the exact serial baseline",
     )
     parser.add_argument(
         "--test-file",
         action="append",
         default=[],
-        help="experimental-parallel reviewed test file; repeatable; omit for the full candidate set",
+        help="parallel-safe reviewed test file; repeatable; omit for the full reviewed inventory",
     )
     parser.add_argument(
         "--diagnose",
@@ -219,19 +219,10 @@ def _run_phase(phase: Phase, *, env: Mapping[str, str]) -> int:
     return completed.returncode
 
 
-def _parallel_preflight() -> int:
-    parallel_python = Path(PARALLEL_PYTHON)
-    if not parallel_python.is_file():
-        print(
-            "UNAVAILABLE [experimental xdist candidate (worker safety unproven)]: optional .venv-parallel "
-            "is missing; create it from requirements-parallel.txt",
-            file=sys.stderr,
-            flush=True,
-        )
-        return 3
+def _xdist_preflight() -> int:
     try:
         completed = subprocess.run(
-            [PARALLEL_PYTHON, "-c", "import xdist, execnet"],
+            [PYTHON, "-c", "import xdist, execnet"],
             cwd=ROOT,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -239,16 +230,16 @@ def _parallel_preflight() -> int:
         )
     except OSError as exc:
         print(
-            "UNAVAILABLE [experimental xdist candidate (worker safety unproven)]: optional .venv-parallel "
-            f"interpreter is not executable on this host: {exc}",
+            "UNAVAILABLE [parallel-safe reviewed inventory]: invoking test interpreter "
+            f"is not executable on this host: {exc}",
             file=sys.stderr,
             flush=True,
         )
         return 3
     if completed.returncode != 0:
         print(
-            "UNAVAILABLE [experimental xdist candidate (worker safety unproven)]: optional .venv-parallel "
-            "does not provide pytest-xdist/execnet; install requirements-parallel.txt",
+            "UNAVAILABLE [parallel-safe reviewed inventory]: invoking environment does not provide "
+            "pytest-xdist/execnet; install requirements-test.txt",
             file=sys.stderr,
             flush=True,
         )
@@ -256,20 +247,21 @@ def _parallel_preflight() -> int:
     return 0
 
 
-def _experimental_phase(*, workers: int, test_files: Sequence[str]) -> Phase:
-    selected = validate_experimental_parallel_files(test_files)
+def _parallel_safe_phase(*, workers: int | None, test_files: Sequence[str]) -> Phase:
+    selected = validate_parallel_safe_files(test_files)
+    worker_args: tuple[str, ...] = ()
+    if workers is not None:
+        selected = require_parallel_safe_qualification(selected)
+        worker_args = ("-n", str(workers), "--dist", "loadfile")
     return Phase(
-        "experimental xdist candidate (worker safety unproven)",
+        "parallel-safe reviewed inventory",
         (
-            PARALLEL_PYTHON,
+            PYTHON,
             "-m",
             "pytest",
             "-p",
             "no:randomly",
-            "-n",
-            str(workers),
-            "--dist",
-            "loadfile",
+            *worker_args,
             "-q",
             *selected,
         ),
@@ -280,20 +272,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
 
-    if args.lane == "experimental-parallel":
-        if args.workers is None:
-            parser.error("experimental-parallel requires --workers N")
-        if args.workers < 1:
+    if args.lane == "parallel-safe":
+        if args.workers is not None and args.workers < 1:
             parser.error("--workers must be at least 1")
         try:
-            phases = (_experimental_phase(workers=args.workers, test_files=args.test_file),)
+            phases = (_parallel_safe_phase(workers=args.workers, test_files=args.test_file),)
         except PolicyError as exc:
             parser.error(str(exc))
     else:
         if args.workers is not None:
-            parser.error("--workers is supported only for the experimental-parallel lane")
+            parser.error("--workers is supported only for the parallel-safe lane")
         if args.test_file:
-            parser.error("--test-file is supported only for the experimental-parallel lane")
+            parser.error("--test-file is supported only for the parallel-safe lane")
         phases = LANES[args.lane]
 
     if args.diagnose:
@@ -311,8 +301,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{phase.name}: {_display(phase.command)}")
         return 0
 
-    if args.lane == "experimental-parallel":
-        preflight = _parallel_preflight()
+    if args.lane == "parallel-safe" and args.workers is not None:
+        preflight = _xdist_preflight()
         if preflight != 0:
             return preflight
 

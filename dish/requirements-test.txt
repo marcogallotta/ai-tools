@@ -1,5 +1,6 @@
 -r requirements.txt
 pytest==9.1.1
+pytest-xdist==3.8.0
 jsonschema==4.26.0
 py-pglite==0.5.3
 psutil==7.2.2

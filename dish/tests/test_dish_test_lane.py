@@ -17,9 +17,9 @@ def test_named_lanes_are_complete_and_obvious() -> None:
     lanes = _namespace()["LANES"]
     assert tuple(sorted(lanes)) == (
         "command-api-contracts",
-        "experimental-parallel",
         "native-concurrency",
         "operational-certification",
+        "parallel-safe",
         "pglite",
         "release-cutover",
         "schema-migrations",
@@ -58,23 +58,7 @@ def test_native_lane_reports_unavailable_before_running(monkeypatch, capsys) -> 
     assert "UNAVAILABLE [native PostgreSQL concurrency contracts]" in capsys.readouterr().err
 
 
-def test_experimental_parallel_requires_workers_and_rejects_unreviewed_files() -> None:
-    main = _namespace()["main"]
-    with pytest.raises(SystemExit):
-        main(["experimental-parallel"])
-    with pytest.raises(SystemExit):
-        main(
-            [
-                "experimental-parallel",
-                "--workers",
-                "2",
-                "--test-file",
-                "tests/test_lease_authority.py",
-            ]
-        )
-
-
-def test_experimental_parallel_uses_optional_parallel_environment_and_exact_selection(monkeypatch) -> None:
+def test_parallel_safe_can_run_serially_and_rejects_unreviewed_files(monkeypatch) -> None:
     namespace = _namespace()
     commands: list[tuple[str, ...]] = []
 
@@ -83,12 +67,37 @@ def test_experimental_parallel_uses_optional_parallel_environment_and_exact_sele
         return 0
 
     main = namespace["main"]
-    monkeypatch.setitem(main.__globals__, "_parallel_preflight", lambda: 0)
+    monkeypatch.setitem(main.__globals__, "_run_phase", fake_run)
+    assert main(["parallel-safe", "--test-file", "tests/test_commands.py"]) == 0
+    assert "-n" not in commands[-1]
+    assert commands[-1][-1] == "tests/test_commands.py"
+
+    main = _namespace()["main"]
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "parallel-safe",
+                "--test-file",
+                "tests/test_lease_authority.py",
+            ]
+        )
+
+
+def test_parallel_safe_workers_use_invoking_environment_and_exact_selection(monkeypatch) -> None:
+    namespace = _namespace()
+    commands: list[tuple[str, ...]] = []
+
+    def fake_run(phase, *, env):
+        commands.append(phase.command)
+        return 0
+
+    main = namespace["main"]
+    monkeypatch.setitem(main.__globals__, "_xdist_preflight", lambda: 0)
     monkeypatch.setitem(main.__globals__, "_run_phase", fake_run)
 
     assert main(
         [
-            "experimental-parallel",
+            "parallel-safe",
             "--workers",
             "4",
             "--test-file",
@@ -97,7 +106,7 @@ def test_experimental_parallel_uses_optional_parallel_environment_and_exact_sele
     ) == 0
     command = commands[-1]
     assert command[:10] == (
-        namespace["PARALLEL_PYTHON"],
+        namespace["PYTHON"],
         "-m",
         "pytest",
         "-p",
@@ -111,14 +120,14 @@ def test_experimental_parallel_uses_optional_parallel_environment_and_exact_sele
     assert command[10:] == ("tests/test_commands.py",)
 
 
-def test_experimental_parallel_reports_missing_optional_environment(monkeypatch, capsys) -> None:
+def test_parallel_safe_reports_xdist_missing_from_primary_environment(monkeypatch, capsys) -> None:
     namespace = _namespace()
-    main = namespace["main"]
-    monkeypatch.setitem(main.__globals__, "PARALLEL_PYTHON", str(ROOT / ".missing-parallel" / "python"))
-    monkeypatch.setitem(main.__globals__, "_run_phase", lambda *args, **kwargs: pytest.fail("ran"))
+    class _Completed:
+        returncode = 1
 
-    assert main(["experimental-parallel", "--workers", "2"]) == 3
-    assert "optional .venv-parallel is missing" in capsys.readouterr().err
+    monkeypatch.setattr(namespace["subprocess"], "run", lambda *args, **kwargs: _Completed())
+    assert namespace["_xdist_preflight"]() == 3
+    assert "install requirements-test.txt" in capsys.readouterr().err
 
 
 def test_diagnostic_mode_changes_output_only_not_pytest_selection(monkeypatch) -> None:
@@ -138,3 +147,52 @@ def test_diagnostic_mode_changes_output_only_not_pytest_selection(monkeypatch) -
     assert "-q" not in command
     assert command[-2:] == ("-vv", "--durations=20")
     assert tuple(part for part in command if part.endswith(".py")) == expected_files
+
+
+def test_parallel_safe_drift_blocks_workers_but_keeps_serial_diagnosis_usable(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    import test_selection.parallel as parallel
+
+    changed = tmp_path / "tests" / "test_commands.py"
+    changed.parent.mkdir(parents=True)
+    changed.write_text("# changed after parallel review\n", encoding="utf-8")
+    monkeypatch.setattr(parallel, "ROOT", tmp_path)
+
+    namespace = _namespace()
+    monkeypatch.setitem(
+        namespace["main"].__globals__,
+        "_xdist_preflight",
+        lambda: pytest.fail("xdist preflight must not run after qualification drift"),
+    )
+    with pytest.raises(SystemExit) as excinfo:
+        namespace["main"](
+            [
+                "parallel-safe",
+                "--workers",
+                "4",
+                "--test-file",
+                "tests/test_commands.py",
+            ]
+        )
+    assert excinfo.value.code == 2
+    error = capsys.readouterr().err
+    assert "parallel-safe qualification drift" in error
+    assert "changed since parallel review" in error
+    assert "explicitly update PARALLEL_SAFE_FILE_SHA256" in error
+
+    commands: list[tuple[str, ...]] = []
+
+    def fake_run(phase, *, env):
+        commands.append(phase.command)
+        return 0
+
+    namespace = _namespace()
+    monkeypatch.setitem(namespace["main"].__globals__, "_run_phase", fake_run)
+    assert namespace["main"](
+        ["parallel-safe", "--test-file", "tests/test_commands.py"]
+    ) == 0
+    assert "-n" not in commands[-1]
+    assert commands[-1][-1] == "tests/test_commands.py"

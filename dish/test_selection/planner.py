@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
 from .parallel import (
-    EXPERIMENTAL_PARALLEL_TEST_FILES,
-    experimental_parallel_command,
-    experimental_parallel_eligible,
+    parallel_safe_blockers,
+    parallel_safe_command,
+    parallel_safe_eligible,
 )
 from .model import (
     ALLOWED_LANES,
@@ -101,8 +101,10 @@ class TestPlan:
     focused_tests: tuple[str, ...]
     lanes: tuple[str, ...]
     commands: tuple[str, ...]
-    experimental_parallel_eligible: bool
-    experimental_commands: tuple[str, ...]
+    parallel_safe_eligible: bool
+    parallel_workers: int | None
+    parallel_acceleration_used: bool
+    parallel_blockers: tuple[str, ...]
     conditional_reviews: tuple[ConditionalReview, ...]
     integration_checkpoint: bool
 
@@ -116,8 +118,10 @@ class TestPlan:
             "focused_tests": list(self.focused_tests),
             "lanes": list(self.lanes),
             "commands": list(self.commands),
-            "experimental_parallel_eligible": self.experimental_parallel_eligible,
-            "experimental_commands": list(self.experimental_commands),
+            "parallel_safe_eligible": self.parallel_safe_eligible,
+            "parallel_workers": self.parallel_workers,
+            "parallel_acceleration_used": self.parallel_acceleration_used,
+            "parallel_blockers": list(self.parallel_blockers),
             "conditional_reviews": [review.as_dict() for review in self.conditional_reviews],
             "integration_checkpoint": self.integration_checkpoint,
         }
@@ -139,20 +143,23 @@ class TestPlan:
         lines.extend(f"  {index}. {command}" for index, command in enumerate(self.commands, start=1))
         if not self.commands:
             lines.append("  (none)")
-        if self.experimental_commands:
+        if self.parallel_acceleration_used:
             lines.extend([
                 "",
-                "Experimental acceleration (non-authoritative; required serial commands still apply):",
+                f"Parallel-safe focused execution selected with {self.parallel_workers} workers.",
+                "Governed serial lanes, when present, remain serial.",
             ])
-            lines.extend(
-                f"  {index}. {command}"
-                for index, command in enumerate(self.experimental_commands, start=1)
-            )
-        elif self.experimental_parallel_eligible:
+        elif self.parallel_safe_eligible:
             lines.extend([
                 "",
-                "Experimental parallel candidate available for the focused tests.",
-                "Rerun the planner with --experimental-workers N to emit a runnable optional command.",
+                "Parallel-safe focused execution is available for the reviewed focused tests.",
+                "Rerun the planner with --parallel-workers N to select that supported fast path.",
+            ])
+        elif self.parallel_workers is not None:
+            lines.extend([
+                "",
+                "Parallel-safe focused execution was not selected; the focused command remains serial.",
+                "Parallel blockers: " + ", ".join(self.parallel_blockers),
             ])
         if self.conditional_reviews:
             lines.extend(["", "Agent semantic review required:"])
@@ -198,9 +205,14 @@ def _ordered_lanes(lanes: set[str]) -> tuple[str, ...]:
     return tuple(known + unknown)
 
 
-def _commands(focused_tests: set[str], lanes: set[str]) -> tuple[str, ...]:
+def _commands(
+    focused_tests: set[str],
+    lanes: set[str],
+    *,
+    focused_override: str | None = None,
+) -> tuple[str, ...]:
     commands: list[str] = []
-    focused = _focused_command(focused_tests)
+    focused = focused_override or _focused_command(focused_tests)
     if focused:
         commands.append(focused)
     seen: set[str] = set(commands)
@@ -219,7 +231,7 @@ def build_plan(
     fallback_policy: Mapping[str, PolicyRow] | None = None,
     add_lanes: Iterable[str] = (),
     integration_checkpoint: bool = False,
-    experimental_workers: int | None = None,
+    parallel_workers: int | None = None,
 ) -> TestPlan:
     policy = load_policy(policy_path)
     fallback = fallback_policy or {}
@@ -271,23 +283,16 @@ def build_plan(
         lanes.add("ordinary full suite")
 
     ordinary_focused = _ordinary_focused_tests(focused_tests)
-    parallel_eligible = experimental_parallel_eligible(ordinary_focused)
-    experimental_commands: tuple[str, ...] = ()
-    if experimental_workers is not None:
-        if experimental_workers < 1:
-            raise PolicyError("--experimental-workers must be at least 1")
-        if not parallel_eligible:
-            unsupported = sorted(
-                set(ordinary_focused) - set(EXPERIMENTAL_PARALLEL_TEST_FILES)
-            )
-            detail = ", ".join(unsupported) if unsupported else "no reviewed focused tests"
-            raise PolicyError(
-                "experimental parallel acceleration is unavailable for this focused selection: "
-                + detail
-            )
-        experimental_commands = (
-            experimental_parallel_command(ordinary_focused, workers=experimental_workers),
-        )
+    parallel_eligible = parallel_safe_eligible(ordinary_focused)
+    parallel_blockers = parallel_safe_blockers(ordinary_focused)
+    parallel_used = False
+    focused_override = None
+    if parallel_workers is not None:
+        if parallel_workers < 1:
+            raise PolicyError("--parallel-workers must be at least 1")
+        if parallel_eligible:
+            focused_override = parallel_safe_command(ordinary_focused, workers=parallel_workers)
+            parallel_used = True
 
     return TestPlan(
         changed_paths=normalized,
@@ -296,9 +301,11 @@ def build_plan(
         traits=tuple(sorted(traits)),
         focused_tests=tuple(sorted(focused_tests)),
         lanes=tuple(sorted(lanes)),
-        commands=_commands(focused_tests, lanes),
-        experimental_parallel_eligible=parallel_eligible,
-        experimental_commands=experimental_commands,
+        commands=_commands(focused_tests, lanes, focused_override=focused_override),
+        parallel_safe_eligible=parallel_eligible,
+        parallel_workers=parallel_workers,
+        parallel_acceleration_used=parallel_used,
+        parallel_blockers=parallel_blockers,
         conditional_reviews=tuple(reviews),
         integration_checkpoint=integration_checkpoint,
     )

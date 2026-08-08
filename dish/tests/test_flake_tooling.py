@@ -58,22 +58,23 @@ def test_scan_command_writes_machine_and_human_readable_artifacts(tmp_path, monk
     )
 
 
-def test_optional_requirement_layers_keep_xdist_out_of_serial_bootstrap():
+def test_primary_test_requirements_include_xdist_while_flake_plugins_stay_separate():
     flake = (flake_runner.ROOT / "requirements-flake.txt").read_text(encoding="utf-8")
-    parallel = (flake_runner.ROOT / "requirements-parallel.txt").read_text(encoding="utf-8")
     deterministic = (flake_runner.ROOT / "requirements-test.txt").read_text(encoding="utf-8")
 
-    assert "-r requirements-parallel.txt" in flake
+    assert "-r requirements-test.txt" in flake
     assert "pytest-rerunfailures==16.4" in flake
     assert "pytest-randomly==4.1.0" in flake
     assert "pytest-repeat==0.9.4" in flake
-    assert "pytest-xdist==3.8.0" in parallel
-    assert "-r requirements-test.txt" in parallel
-    assert "pytest-xdist" not in deterministic
+    assert "pytest-xdist==3.8.0" in deterministic
+    assert "pytest-randomly" not in deterministic
+    assert "pytest-rerunfailures" not in deterministic
+    assert "pytest-repeat" not in deterministic
 
     metadata = flake_runner._environment_metadata("unit-test")
-    assert metadata["requirements_parallel_sha256"] == flake_runner._hash_file(
-        flake_runner.ROOT / "requirements-parallel.txt"
+    assert "requirements_parallel_sha256" not in metadata
+    assert metadata["requirements_test_sha256"] == flake_runner._hash_file(
+        flake_runner.ROOT / "requirements-test.txt"
     )
 
 

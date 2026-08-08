@@ -81,7 +81,6 @@ def _environment_metadata(mode: str) -> dict[str, object]:
         "platform": platform.platform(),
         "git_sha": _git_sha(),
         "requirements_test_sha256": _hash_file(ROOT / "requirements-test.txt"),
-        "requirements_parallel_sha256": _hash_file(ROOT / "requirements-parallel.txt"),
         "requirements_flake_sha256": _hash_file(ROOT / "requirements-flake.txt"),
     }
 

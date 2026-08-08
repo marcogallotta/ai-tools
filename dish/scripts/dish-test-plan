@@ -40,11 +40,11 @@ def _parser() -> argparse.ArgumentParser:
         help="add the ordinary full suite for an integration, merge, or certification checkpoint",
     )
     parser.add_argument(
-        "--experimental-workers",
+        "--parallel-workers",
         type=int,
         help=(
-            "emit an optional xdist command for a focused selection that is entirely in the "
-            "reviewed experimental candidate inventory; required commands remain serial"
+            "prefer the supported parallel-safe command when the focused ordinary selection is "
+            "entirely reviewed; unreviewed/stateful focused tests and governed lanes remain serial"
         ),
     )
     parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
@@ -90,7 +90,7 @@ def main(argv: list[str] | None = None) -> int:
             fallback_policy=fallback_policy,
             add_lanes=args.add_lane,
             integration_checkpoint=args.integration_checkpoint,
-            experimental_workers=args.experimental_workers,
+            parallel_workers=args.parallel_workers,
         )
     except PolicyError as exc:
         print(f"dish-test-plan: {exc}", file=sys.stderr)

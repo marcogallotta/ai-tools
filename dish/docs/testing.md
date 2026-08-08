@@ -16,19 +16,11 @@ python3 -m venv --clear .venv
 .venv/bin/python -m pip install -r requirements-test.txt
 ```
 
-This environment runs the authoritative first-attempt gates. It deliberately does not install
-plugins that randomize order, rerun failures, or provide xdist. Parallel tooling must never become a
-prerequisite for this serial bootstrap.
-
-### Optional parallel-test environment
-
-```sh
-python3 -m venv --clear .venv-parallel
-.venv-parallel/bin/python -m pip install -r requirements-parallel.txt
-```
-
-This environment adds only the pinned xdist layer on top of the deterministic test requirements. It
-is optional: failure to build it must not block serial first-attempt evidence.
+This environment runs the authoritative first-attempt gates and includes pinned `pytest-xdist` so
+the reviewed `parallel-safe` lane can opt into workers without a second normal-test environment.
+Nothing in pytest configuration enables workers globally: ordinary pytest remains serial unless an
+explicit supported command supplies `--workers`/`-n`. Plugins that randomize order or rerun failures
+remain outside this environment.
 
 ### Flake-detection environment
 
@@ -37,10 +29,10 @@ python3 -m venv --clear .venv-flake
 .venv-flake/bin/python -m pip install -r requirements-flake.txt
 ```
 
-This environment layers flake diagnostics on the optional parallel requirements, adding
+This environment layers flake diagnostics on the normal test requirements, adding
 `pytest-rerunfailures`, `pytest-randomly`, and `pytest-repeat`. Use it only through the explicit
 commands below. `pytest-randomly` changes normal pytest behavior when installed, which is why the
-entire optional stack stays out of `requirements-test.txt`.
+flake-only stack stays out of `requirements-test.txt`.
 
 ### Archive/offline bootstrap and environment portability
 
@@ -51,8 +43,9 @@ site-packages behind. Test runners also reuse the interpreter that launched them
 for an arbitrary repository `.venv`.
 
 For a handoff that must bootstrap without an index, prepare a platform/interpreter-matched wheelhouse
-on a connected machine and ship that dependency bundle with the source archive. Keep deterministic and
-optional tooling independently satisfiable:
+on a connected machine and ship that dependency bundle with the source archive. The serial/default
+wheelhouse includes xdist because it is part of `requirements-test.txt`; flake-only tooling remains
+independently satisfiable:
 
 ```sh
 # Connected preparation for the authoritative serial environment.
@@ -61,11 +54,6 @@ python3 -m pip download --only-binary=:all: -r requirements-test.txt -d wheelhou
 # Offline target.
 python3 -m venv --clear .venv
 .venv/bin/python -m pip install --no-index --find-links wheelhouse-serial -r requirements-test.txt
-
-# Optional xdist environment; failure here must not block .venv.
-python3 -m pip download --only-binary=:all: -r requirements-parallel.txt -d wheelhouse-parallel
-python3 -m venv --clear .venv-parallel
-.venv-parallel/bin/python -m pip install --no-index --find-links wheelhouse-parallel -r requirements-parallel.txt
 
 # Optional flake diagnostics can be bundled independently as well.
 python3 -m pip download --only-binary=:all: -r requirements-flake.txt -d wheelhouse-flake
@@ -104,20 +92,21 @@ lane explicitly:
   --add-lane 'SQLite database-boundary'
 ```
 
-When the focused ordinary test files are entirely inside the statically reviewed experimental xdist
-candidate inventory, the normal planner output says that an optional acceleration is available. To
-emit a runnable candidate command, rerun the same plan with an explicit worker count:
+When the focused ordinary test files are entirely inside the reviewed `parallel-safe` inventory, the
+normal planner output says that a supported accelerated path is available. To select that focused
+command, rerun the same plan with an explicit worker count:
 
 ```sh
 .venv/bin/python scripts/dish-test-plan \
   --path tests/test_commands.py \
-  --experimental-workers 4
+  --parallel-workers 4
 ```
 
-The planner keeps every required command serial and prints the xdist command in a separate
-**experimental, non-authoritative** section. It fails closed if any focused ordinary test is outside
-the reviewed candidate inventory. This improves time-to-first-diagnostic-test without allowing a
-parallel result to erase required serial or governed high-risk evidence.
+For an eligible selection, the planner replaces only the focused serial pytest command with the
+equivalent `parallel-safe` command. Governed lanes remain serial. If even one focused ordinary test is
+outside the reviewed inventory, `--parallel-workers` fails closed to the serial focused command and
+prints the blocking files. Never split an ineligible focused set merely to parallelize the
+safe-looking subset.
 
 The eight primary classes are:
 
@@ -185,20 +174,33 @@ lane; it never hides a failed inner phase behind one final aggregate result.
 | release and cutover | `.venv/bin/python scripts/dish-test-lane release-cutover` |
 | command and API contracts | `.venv/bin/python scripts/dish-test-lane command-api-contracts` |
 | operational certification | `.venv/bin/python scripts/dish-test-lane operational-certification` |
-| experimental xdist candidate | `.venv/bin/python scripts/dish-test-lane experimental-parallel --workers <count>` |
+| reviewed parallel-safe inventory | `.venv/bin/python scripts/dish-test-lane parallel-safe --workers <count>` |
 
 `native-concurrency` requires `DISH_TEST_POSTGRESQL_DSN`; `operational-certification` requires
 `DISH_PG_TEST_URL`. Missing infrastructure is reported as unavailable with exit status 3, never as a
 pass. These commands complement, rather than replace, changed-path focused tests and the ordinary
 full-suite integration checkpoint.
 
-`experimental-parallel` is deliberately not named or treated as parallel-safe. Its file inventory has
-passed static isolation review and serial baselines, but worker isolation remains unproven until the
-pinned xdist environment can run repeated `-n 2`, `-n 4`, and host-appropriate `-n 8` probes. It uses
-the optional `.venv-parallel` and reports exit 3 when xdist is unavailable. Native PostgreSQL,
-process-failure/process-boundary, concurrency, lease/fencing/reclaim/recovery, fixed-port/shared-service,
-shared-filesystem, production-shaped rehearsal, and migration/
-backup/restore evidence remain serial unless independently proven isolated.
+`parallel-safe` is an explicit allowlist, not a general pytest mode. The exact 565-test inventory
+passed static isolation review and three clean runs each at `-n 2`, `-n 4`, and `-n 8` on 2026-08-08.
+The measured local wall times were approximately 15.6-17.4s (`-n 2`), 14.2-14.4s (`-n 4`), and
+13.1-13.4s (`-n 8`) versus roughly 25s serial. Four workers is the conservative recommendation on
+Marco's local machine: it captures most of the speedup without making the fastest/highest-worker
+result a universal rule. Running `parallel-safe` without `--workers` exercises the exact same file
+inventory serially for diagnosis or comparison.
+
+Parallel qualification is also bound to the reviewed SHA-256 of every allowlisted file in
+`test_selection/parallel.py`. If any listed file changes, the planner keeps that focused command
+serial and reports qualification drift, and direct `parallel-safe --workers N` execution fails
+closed before pytest starts. Serial execution remains available for diagnosis. Requalification is
+manual: repeat the static isolation review and parallel evidence for the changed file/selection,
+then explicitly update that file's `PARALLEL_SAFE_FILE_SHA256` entry. Never regenerate qualification
+hashes automatically as part of normal test execution or planning.
+
+Native PostgreSQL, process-failure/process-boundary, concurrency, lease/fencing/reclaim/recovery,
+fixed-port/shared-service, shared-filesystem, production-shaped rehearsal, and migration/
+backup/restore evidence remain serial unless independently proven isolated. Do not add global xdist
+pytest configuration or infer worker safety for a new test merely because it lacks a risky marker.
 
 ## Authoritative first-attempt lanes
 
@@ -564,7 +566,7 @@ For every unexpected failure record:
 - full pytest node ID;
 - commit SHA;
 - Python version and platform;
-- `requirements-test.txt`, `requirements-parallel.txt`, and `requirements-flake.txt` hashes;
+- `requirements-test.txt` and `requirements-flake.txt` hashes;
 - random seed and xdist worker count, when applicable;
 - whether it passes alone;
 - whether it passes in its containing file;

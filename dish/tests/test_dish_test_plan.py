@@ -74,39 +74,59 @@ def test_agent_can_add_a_semantic_escalation_lane() -> None:
 
 
 
-def test_reviewed_focused_test_advertises_experimental_parallel_without_replacing_serial() -> None:
+def test_reviewed_focused_test_advertises_parallel_safe_without_replacing_serial_by_default() -> None:
     plan = build_plan(["tests/test_commands.py"], policy_path=POLICY)
 
     assert plan.commands == (".venv/bin/python -m pytest -q tests/test_commands.py",)
-    assert plan.experimental_parallel_eligible is True
-    assert plan.experimental_commands == ()
+    assert plan.parallel_safe_eligible is True
+    assert plan.parallel_acceleration_used is False
     text = plan.to_text()
-    assert "Experimental parallel candidate available" in text
-    assert "--experimental-workers N" in text
+    assert "Parallel-safe focused execution is available" in text
+    assert "--parallel-workers N" in text
 
 
-def test_planner_can_emit_runnable_optional_parallel_command_for_reviewed_focus() -> None:
+def test_planner_can_select_supported_parallel_command_for_reviewed_focus() -> None:
     plan = build_plan(
         ["tests/test_commands.py"],
         policy_path=POLICY,
-        experimental_workers=4,
+        parallel_workers=4,
     )
 
-    assert plan.commands == (".venv/bin/python -m pytest -q tests/test_commands.py",)
-    assert plan.experimental_commands == (
-        ".venv/bin/python scripts/dish-test-lane experimental-parallel --workers 4 "
+    assert plan.commands == (
+        ".venv/bin/python scripts/dish-test-lane parallel-safe --workers 4 "
         "--test-file tests/test_commands.py",
     )
-    assert "non-authoritative; required serial commands still apply" in plan.to_text()
+    assert plan.parallel_acceleration_used is True
+    assert "Governed serial lanes, when present, remain serial" in plan.to_text()
 
 
-def test_planner_refuses_experimental_parallel_for_unreviewed_focused_test() -> None:
-    with pytest.raises(PolicyError, match="experimental parallel acceleration is unavailable"):
-        build_plan(
-            ["tests/test_lease_authority.py"],
-            policy_path=POLICY,
-            experimental_workers=2,
-        )
+def test_parallel_safe_focus_does_not_parallelize_governed_lanes() -> None:
+    plan = build_plan(
+        ["tests/test_commands.py"],
+        policy_path=POLICY,
+        add_lanes=["SQLite database-boundary"],
+        parallel_workers=4,
+    )
+
+    assert plan.commands == (
+        ".venv/bin/python scripts/dish-test-lane parallel-safe --workers 4 "
+        "--test-file tests/test_commands.py",
+        ".venv/bin/python -m pytest --database-boundary",
+    )
+
+
+def test_planner_keeps_unreviewed_focused_test_serial_when_parallel_is_requested() -> None:
+    plan = build_plan(
+        ["tests/test_lease_authority.py"],
+        policy_path=POLICY,
+        parallel_workers=2,
+    )
+
+    assert plan.parallel_safe_eligible is False
+    assert plan.parallel_acceleration_used is False
+    assert plan.commands == (".venv/bin/python -m pytest -q tests/test_lease_authority.py",)
+    assert plan.parallel_blockers == ("tests/test_lease_authority.py",)
+    assert "focused command remains serial" in plan.to_text()
 
 
 def test_deleted_path_can_use_base_revision_policy(tmp_path: Path) -> None:
@@ -150,3 +170,42 @@ def test_complete_collection_detection_distinguishes_focused_paths() -> None:
     assert not _is_complete_repository_collection(
         _CollectionConfig(ROOT, ["tests/test_dish_test_plan.py"])
     )
+
+
+def test_unchanged_reviewed_file_remains_parallel_eligible() -> None:
+    from test_selection.parallel import parallel_safe_qualification_drift
+
+    assert parallel_safe_qualification_drift(["tests/test_commands.py"]) == ()
+    plan = build_plan(
+        ["tests/test_commands.py"],
+        policy_path=POLICY,
+        parallel_workers=4,
+    )
+    assert plan.parallel_safe_eligible is True
+    assert plan.parallel_acceleration_used is True
+
+
+def test_changed_reviewed_file_keeps_planner_serial_and_reports_qualification_drift(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import test_selection.parallel as parallel
+
+    changed = tmp_path / "tests" / "test_commands.py"
+    changed.parent.mkdir(parents=True)
+    changed.write_text("# changed after parallel review\n", encoding="utf-8")
+    monkeypatch.setattr(parallel, "ROOT", tmp_path)
+
+    plan = build_plan(
+        ["tests/test_commands.py"],
+        policy_path=POLICY,
+        parallel_workers=4,
+    )
+
+    assert plan.parallel_safe_eligible is False
+    assert plan.parallel_acceleration_used is False
+    assert plan.commands == (".venv/bin/python -m pytest -q tests/test_commands.py",)
+    assert plan.parallel_blockers == (
+        "tests/test_commands.py (changed since parallel review; requires explicit requalification)",
+    )
+    assert "changed since parallel review" in plan.to_text()
