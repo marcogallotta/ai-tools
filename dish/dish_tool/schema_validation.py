@@ -8,7 +8,6 @@ from typing import Any, Mapping, Sequence
 
 from .constants import MANIFEST_FILENAMES, PROTOCOL_FILENAMES
 from .errors import ReleaseResolutionError
-from .models import TitleFields, TitleValidationResult, ValidationResult
 
 _LABEL_RE = re.compile(r"^([A-Za-z][A-Za-z0-9 /_-]*):(?:[ \t]*(.*))$")
 _TAG_AT_START_RE = re.compile(r"\A\s*\[([^\]]+)\]")

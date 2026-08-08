@@ -4,7 +4,6 @@ from pathlib import Path
 def test_responsibility_modules_expose_authoritative_owners():
     from dish_tool import (
         command_support,
-        content_validation,
         database_initialization,
         database_migrations,
         database_schema,
@@ -16,11 +15,9 @@ def test_responsibility_modules_expose_authoritative_owners():
     from dish_tool.database_migrations import migrate_database
     from dish_tool.database_schema import MIGRATIONS
     from dish_tool.database_schema_validation import validate_current_database
-    from dish_tool.content_validation import validate_note
     from dish_tool.schema_validation import validate_manifest_shape
 
     assert command_support.CommandTrace
-    assert content_validation.validate_note is validate_note
     assert schema_validation.validate_manifest_shape is validate_manifest_shape
     assert database_schema.MIGRATIONS is MIGRATIONS
     assert database_migrations.migrate_database is migrate_database

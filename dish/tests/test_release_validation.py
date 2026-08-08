@@ -7,7 +7,6 @@ import pytest
 
 from dish_tool.errors import ReleaseResolutionError
 from dish_tool.releases import resolve_release
-from dish_tool.content_validation import validate_note
 
 
 FIXTURE_RELEASE_DIR = Path(__file__).resolve().parent / "fixtures" / "dish-version-current"
@@ -172,54 +171,6 @@ def test_resolver_loads_external_schema_adapter_for_legacy_note_checks(release_r
     assert release.schema_version == "2"
     assert set(release.protocols) == {"planning"}
     assert set(release.manifests) == {"planning", "complete_task"}
-
-
-@pytest.mark.smoke
-def test_literal_note_validation_uses_manifest(release_repo):
-    repo, _ = release_repo
-    manifest = resolve_release(repo).manifests["planning"]
-    valid = """# PLANNING BRIEF
-Destination section: Ready to Cook (14)
-Exemptions: [nutrition-kcal] Marco approved 2026-07-21 for this dish
-Research notes: Opaque text
-"""
-    result = validate_note(valid, manifest)
-    assert result.ok is True
-    assert result.exemption_tags == ("nutrition-kcal",)
-    assert result.destination_name == "Ready to Cook"
-    assert result.destination_gid == "14"
-
-    invalid = valid + "## UNKNOWN\nExemptions: None\n"
-    result = validate_note(invalid, manifest)
-    rules = {error["rule"] for error in result.errors}
-    assert {"unknown_heading", "duplicate_label", "mixed_exemptions"} <= rules
-
-
-@pytest.mark.smoke
-def test_literal_note_validation_rejects_unknown_manifest_kind(release_repo):
-    repo, _ = release_repo
-    manifest = dict(resolve_release(repo).manifests["planning"])
-    manifest["manifest_kind"] = "unknown"
-
-    with pytest.raises(ReleaseResolutionError) as exc:
-        validate_note("", manifest)
-    assert exc.value.rule == "manifest_malformed"
-
-
-@pytest.mark.smoke
-def test_contextual_label_is_required_only_when_heading_present(release_repo):
-    repo, _ = release_repo
-    manifest = resolve_release(repo).manifests["complete_task"]
-    note = """# DISH
-Exemptions: None
-Destination section: Ready to Cook (14)
-Self-verified: claude, 2026-07-21
-Verification: pending
-## QUANTITIES
-## PROCESS RECORD
-"""
-    result = validate_note(note, manifest)
-    assert any(error["rule"] == "missing_contextual_label" for error in result.errors)
 
 
 @pytest.mark.smoke
