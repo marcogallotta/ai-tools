@@ -203,14 +203,14 @@ from the "Local PostgreSQL 17 server binaries" section below (port 5432). Provis
 ```sh
 sudo -u postgres psql -c "DROP DATABASE IF EXISTS dish_test;"
 sudo -u postgres psql -c "DROP ROLE IF EXISTS dish_test;"
-sudo -u postgres psql -c "CREATE ROLE dish_test LOGIN PASSWORD '<password>' CREATEDB;"
+sudo -u postgres psql -c "CREATE ROLE dish_test LOGIN PASSWORD '0ddca88b81a8bf1a15d84caa78efd7b3' CREATEDB;"
 sudo -u postgres psql -c "CREATE DATABASE dish_test OWNER dish_test;"
 ```
 
 then export the DSN in the same shell before running the lane above:
 
 ```sh
-export DISH_TEST_POSTGRESQL_DSN='postgresql+psycopg://dish_test:<password>@localhost:5432/dish_test'
+export DISH_TEST_POSTGRESQL_DSN='postgresql+psycopg://dish_test:0ddca88b81a8bf1a15d84caa78efd7b3@localhost:5432/dish_test'
 export DISH_PG_TEST_URL="$DISH_TEST_POSTGRESQL_DSN"
 ```
 
