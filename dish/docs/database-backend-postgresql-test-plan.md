@@ -139,11 +139,7 @@ no longer blocked transitively by this; see below for its own separate status.
 Sections §1 and §2 have equivalent maintained runners and both now have successful native
 execution (§1: `scripts/dish-pg-process-failure`, fixed in commit `445da12`; §2:
 `scripts/dish-pg-recovery-rehearsal`, passed 2026-08-06 against PostgreSQL 17.10 after the
-jsonb/json operator fix in `778d82c`). Section §4 has `scripts/dish-pg-production-shaped-rehearsal`;
-it reuses the §3 PostgreSQL TEST service path and is no longer blocked by §3's fixed defect, but its
-own native end-to-end run still has not been attempted — the script requires `--evidence-dir
---work-root --corpus --corpus-manifest --honest-repo --honest-commit --repository-input-identity`,
-and no documented invocation or automated test exercises a full run (only sub-pieces like
-corpus/manifest validation are unit-tested). Standing up that setup and running it is separate
-follow-up work, not a consequence of the §3 fix.
+jsonb/json operator fix in `778d82c`). Section §4's `scripts/dish-pg-production-shaped-rehearsal`
+passed natively 2026-08-08 (`status=passed`, `ok=true`, all 10 phases) after a bootstrap fix
+(commit `a7cd44b`) to let the rehearsal designate its own corpus section as the Research Queue.
 Do not treat the §3 script as evidence for the distinct §1, §2, or §4 requirements.

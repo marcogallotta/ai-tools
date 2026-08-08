@@ -42,28 +42,6 @@ or real external-system state).
 
 ---
 
-## Local runtime validation plan (must not be forgotten)
-
-`database-backend-postgresql-test-plan.md` is the authoritative execution runbook for the
-Hard-local-effort verification work — it is not optional background reading, it is the actual
-procedure. Per that doc's own completion rule: "Local runtime validation is complete only when
-Sections 1 through 4 have reproducible evidence." As of this snapshot (2026-08-07/08), §1-§3 have
-passed native execution with real reproducible evidence; §4 has not been run — not because it is
-blocked, but because its own native run has never been attempted and needs setup (Honest-repo
-checkout, sanitized corpus/manifest) that is separate follow-up work, not a quick check.
-
-| Section | Covers | Status |
-| --- | --- | --- |
-| §1 Process-failure exercise | commit-before-response/lost-response replay, worker restart/takeover, PostgreSQL disconnect/recovery | **Passed natively** (commit `445da12` fixed the fixture/import gaps). `scripts/dish-pg-process-failure` covers disconnect, projection, takeover, command-child replay, reconciliation-checkpoint resume, and worker supervision/restart scenarios: 14/14 scenarios, evidence validated. |
-| §2 Backup, restore, and PITR rehearsal | backup/restore, PITR, RPO/RTO, fail-closed on corrupt backup | **Passed natively** on 2026-08-06 (PostgreSQL 17.10 via PGDG). `scripts/dish-pg-recovery-rehearsal` covers backup/restore, PITR to an LSN, and fail-closed corrupt-backup/missing-WAL paths; `pg_verifybackup`/`pg_controldata` checks and RPO/RTO measurement completed. Required a jsonb-vs-json operator fix (`778d82c`) and the version-pin bump to 17.10 (`7fb8d0f`) to get a real local PG that PGDG still serves. |
-| §3 Runtime wiring rehearsal | service + both workers against real PostgreSQL, cross-process proofs | **Passed natively, 2026-08-08.** `PostgresRuntimeService.record_replay_validation_failure` (`dish_pg/postgres_service.py:222`) now exists and is wired from `dish_service/http.py:578`; the previously-reproducing `AttributeError` is gone. Re-ran `scripts/dish-pg-runtime-wiring-rehearsal` against a fresh disposable Compose instance: `status=passed`, first attempt clean, `evidence_validation.ok=true` (11 distinct PIDs, 8 runtime-identity reports). Covers PostgreSQL-loss fail-closed, worker takeover, same-worker restart, no duplicate dispatch/settlement. |
-| §4 Production-shaped local rehearsal | full sequence against sanitized production-shaped data | **Not run — genuinely open, own follow-up task.** `scripts/dish-pg-production-shaped-rehearsal` requires `--evidence-dir`, `--work-root`, `--corpus`, `--corpus-manifest`, `--honest-repo`, `--honest-commit`, `--repository-input-identity`; none of these have a documented default invocation, and no one has run this script standalone before (confirmed 2026-08-08: `--describe-input-identities` works, but a full run needs corpus/manifest authoring first). No longer blocked on §3's bug — blocked only on someone doing that setup work. |
-
-**§3 blocker: resolved.** The previous entry described a missing `record_replay_validation_failure`
-adapter method causing an `AttributeError` fail-closed crash. That method now exists and the fault
-sequence above proves it works end-to-end against real PostgreSQL, not just that the method is
-present in code.
-
 ## Done — verified implementation
 
 | Item | Last verified | Evidence |
@@ -164,4 +142,3 @@ still unchecked directly.
 | Doc | Issue | Last verified |
 | --- | --- | --- |
 | `docs/database-backend-production-change-ledger.md` | Stale — last reviewed through `42619b9` (2026-08-01), well behind current HEAD as of this snapshot | 2026-08-04 (fork-verified) |
-| `docs/database-backend-imp.md` | Stale, superseding earlier "no action needed" note — its "Outstanding work for Stage A" §"Local, no production access needed" list still shows runtime-wiring rehearsal and production-shaped rehearsal as open work items, but both now have landed implementations (commits `41c0015` "Add native PostgreSQL §3 runtime-wiring rehearsal...", `069027d` "Add TEST dark-launch acceptance orchestrator"; §3 independently reverified passing this session). Needs its outstanding-work list refreshed against what's actually landed. | 2026-08-08 (directly code+commit-verified) |

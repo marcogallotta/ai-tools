@@ -1,9 +1,9 @@
 # Database backend implementation
 
 Status: Stage A design approved; Stages 1-5 and Stage 6's offline plumbing are implemented in code
-(see §3). Native PostgreSQL execution, including backup/restore (`database-backend-postgresql-test-plan.md`
-§1-§3), now has passing local evidence; production-shaped rehearsal (§4), production capture, and
-cutover evidence do not yet exist — see "Outstanding work" below.
+(see §3). Native PostgreSQL execution, including backup/restore and the production-shaped rehearsal
+(`database-backend-postgresql-test-plan.md` §1-§4), now has passing local evidence; production
+capture and cutover evidence do not yet exist — see "Outstanding work" below.
 
 Role: this document tracks what remains before Stage A can go to production and defines the
 acceptance bar for that remaining work. The implemented design itself (table shapes, command
@@ -41,14 +41,10 @@ still track; it is not "entirely open."
   `tests/postgresql/native/test_reconciliation_worker.py`), flake-checked clean, and are now also
   proven talking to each other as real separate OS processes via the runtime wiring rehearsal above.
   None has a systemd unit yet — that remains outstanding.
-- Production-shaped rehearsal (migration, activation, fault-injection, backup, restore) against
-  sanitized or copied production-shaped data: `dish_pg/production_shaped_rehearsal.py` and
-  `scripts/dish-pg-production-shaped-rehearsal` exist and reuse the runtime-wiring service path plus
-  the §2 recovery-rehearsal backup/restore/PITR helpers, but no full end-to-end native run has been
-  attempted — the CLI requires `--evidence-dir --work-root --corpus --corpus-manifest --honest-repo
-  --honest-commit --repository-input-identity` with no documented default invocation, and no test
-  exercises a complete run (only sub-pieces like corpus/manifest validation are unit-tested). See
-  `database-backend-postgresql-test-plan.md` §4.
+- Production-shaped rehearsal: **done, passed 2026-08-08.** `scripts/dish-pg-production-shaped-rehearsal`
+  ran to completion against real PostgreSQL 17: `status=passed`, `ok=true`, all 10 phases (migration,
+  corpus import, reconciliation, service/worker startup, representative commands, fault injection,
+  backup, restore, PITR, final reconciliation). See `database-backend-postgresql-test-plan.md` §4.
 
 **Needs real production access:**
 
@@ -107,7 +103,7 @@ The outstanding crash/fault rehearsal must inject failures at these boundaries (
 | 3 | Command execution and workflow authority | Done |
 | 4 | Command and service port | Done |
 | 5 | Import, shadow, and projection | Done |
-| 6 | Rehearsal, acceptance, and cutover package | Offline plumbing done; native §1-§3 local rehearsal now passes (see "Outstanding work" above); §4 production-shaped rehearsal, real production access, and Marco's approval remain outstanding |
+| 6 | Rehearsal, acceptance, and cutover package | Offline plumbing done; native §1-§4 local rehearsal now passes (see "Outstanding work" above); real production access and Marco's approval remain outstanding |
 
 The actual production activation is a controlled release event, not a seventh implementation stage.
 
