@@ -2,7 +2,7 @@ from __future__ import annotations
 import uuid
 import pytest
 from dish_tool.admin import DishAdminApplication
-from dish_tool.admin_cli import build_parser
+from dish_service.admin_cli import build_parser
 from tests.support.service_scenarios import RUN_ID, post as _post, running as _running
 from tests.support.thread_teardown import join_thread, stop_server
 from tests.support.submission import _signed
@@ -297,7 +297,7 @@ def test_representative_generated_admin_commands_roundtrip_the_real_parser():
         assert parsed.command == spec.command
 
 def test_output_flags_are_accepted_before_or_after_admin_subcommand():
-    from dish_tool.admin_cli import _normalize_output_flags
+    from dish_service.admin_cli import _normalize_output_flags
 
     operation_id = str(uuid.uuid4())
     before = _normalize_output_flags(["--json", "--verbose", "inspect", operation_id])

@@ -65,9 +65,9 @@
   ],
   "governing_source_sha256": {
     "dish_pg/release.py": "7ed6a52d7f7abdd0d93ddd3294a7db08b734e77a2ce4b44759ea00465e6a0459",
+    "dish_service/admin_cli.py": "05fde58f459a3840d5f6b5bf2f37920b94a98f00afe8b72d7b375b2ae8e19d8b",
     "dish_service/application.py": "7140dfeeb2fda740133ba13eaca70ec92dd588718426f1ef6d8a8a8429e62831",
     "dish_service/command_spec.py": "ff16a04ea371ce756c901b63a33030b7be8fb7910cbd9198b3522c06d5b536cd",
-    "dish_tool/admin_cli.py": "ff181ff4b400a6e7fdde976ca7e76a5b8f62829657baf26d3a56efeb2fa03ac1",
     "dish_tool/admin_command_spec.py": "bff66dabd6895e0039c111062197ae736b6c1b6a923b33f5beb140740bfbe14a",
     "dish_tool/database_initialization.py": "1205caa574c78fd7fe73c2be017218d10543a53f1acc66463f96963a7cd06def",
     "dish_tool/database_schema.py": "be03973ca4f11ec634aa2f9e6fc82112659c08fc9570014df40d4beecb0ac460",
@@ -77,7 +77,7 @@
     "scripts/dish-pg-acceptance": "d7b30b7f45a9ff38b1106aa868065449bea879f71ce30f2428b1333aa0ec43d4",
     "scripts/dish-pg-stage-a-baseline": "fe86091089d0324f46edb5397decf517f2846c3138cd6c31edd22dc7ae19b5fa"
   },
-  "last_rebaseline_reason": "Stage B1 command/transport consolidation: remove duplicate/decorative command classifications without changing command inventory or semantics",
+  "last_rebaseline_reason": "Stage B6 package-boundary cleanup: move canonical agent/admin CLI presentation into dish_service and transfer governed admin CLI source identity",
   "notes": [
     "The baseline records current source authority only; PostgreSQL is not production authority.",
     "Changes to governed source hashes or acceptance rules require explicit baseline review; ordinary test-file changes do not.",

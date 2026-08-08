@@ -13,7 +13,7 @@ from dish_service.client import DishActionClient, DishAdminServiceClient, DishSe
 from dish_service.config import ServiceConfig
 from dish_service.http import build_action_server, build_private_server
 from dish_service.process_lock import ServiceProcessLock
-from dish_tool import admin_cli
+from dish_service import admin_cli
 from dish_tool.errors import DishRuleError
 from tests.support.thread_teardown import start_server_thread, stop_server
 from tests.support.service_foundation import _release_loader

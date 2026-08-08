@@ -221,8 +221,8 @@ def test_prearmed_restore_lockout_survives_enrichment_failure(monkeypatch, tmp_p
 
 
 def test_common_database_lock_excludes_local_cli_and_admin(monkeypatch, tmp_path):
-    import dish_tool.cli as cli_module
-    import dish_tool.admin_cli as admin_module
+    import dish_service.cli as cli_module
+    import dish_service.admin_cli as admin_module
     from dish_service.database_ownership import database_process_lock_path
     from dish_service.process_lock import DatabaseProcessLock
 
@@ -249,7 +249,7 @@ def test_common_database_lock_excludes_local_cli_and_admin(monkeypatch, tmp_path
 
 
 def test_local_application_holds_common_lock_until_released(monkeypatch, tmp_path):
-    import dish_tool.cli as cli_module
+    import dish_service.cli as cli_module
     from dish_service.database_ownership import database_process_lock_path
     from dish_service.process_lock import DatabaseProcessLock
 

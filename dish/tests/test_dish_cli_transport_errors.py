@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from dish_tool import admin_cli, cli
+from dish_service import admin_cli, cli
 from dish_tool.errors import DishRuleError
 
 

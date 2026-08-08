@@ -9,18 +9,18 @@ import shlex
 import sys
 from typing import Sequence
 
-from .backend import AsanaBackend
-from .client_profiles import (
+from dish_tool.backend import AsanaBackend
+from dish_tool.client_profiles import (
     add_profile_argument,
     argv_without_profile,
     profile_from_argv,
     resolve_client_profile,
 )
-from .commands import DishApplication
-from .constants import DB_PATH
-from .database import initialize_database
-from .errors import DishRuleError
-from .releases import configured_honest_path, resolve_release
+from dish_tool.commands import DishApplication
+from dish_tool.constants import DB_PATH
+from dish_tool.database import initialize_database
+from dish_tool.errors import DishRuleError
+from dish_tool.releases import configured_honest_path, resolve_release
 from dish_service.client import DishServiceClient
 from dish_service.command_spec import (
     ARGUMENT_SCHEMAS,
@@ -40,7 +40,7 @@ from dish_service.command_spec import (
 )
 from dish_service.database_ownership import ServiceDatabaseOwnership, database_process_lock_path
 from dish_service.process_lock import DatabaseProcessLock
-from .results import error_envelope, exit_status
+from dish_tool.results import error_envelope, exit_status
 
 
 class JsonArgumentParser(argparse.ArgumentParser):

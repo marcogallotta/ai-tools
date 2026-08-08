@@ -11,7 +11,7 @@ BIN_DIR = Path(__file__).resolve().parent.parent
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "dish-version-current"
 GIT_COMMIT = BIN_DIR.parent / "tools" / "git-commit"
 
-from dish_tool import cli as dish_cli
+from dish_service import cli as dish_cli
 from dish_tool.commands import DishApplication
 from dish_tool.errors import ReleaseResolutionError
 from dish_tool.releases import (

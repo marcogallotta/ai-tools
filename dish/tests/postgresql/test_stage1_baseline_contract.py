@@ -79,6 +79,12 @@ def test_stage_a_baseline_does_not_freeze_test_file_hashes() -> None:
     assert "characterization_test_sha256" not in _baseline()
 
 
+def test_stage_a_baseline_governs_canonical_admin_cli() -> None:
+    sources = _baseline()["governing_source_sha256"]
+    assert "dish_service/admin_cli.py" in sources
+    assert "dish_tool/admin_cli.py" not in sources
+
+
 def test_canonical_stage_a_regeneration_matches_checked_in_bytes(tmp_path: Path) -> None:
     import subprocess
     import sys

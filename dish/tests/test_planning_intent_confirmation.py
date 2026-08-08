@@ -13,7 +13,7 @@ from dish_service.http import build_server
 from dish_service.leases import ServicePrincipal
 from dish_service.planning_intent import issue_or_claim_planning_intent
 from dish_service.request_replay import begin_request
-from dish_tool.cli import build_parser
+from dish_service.cli import build_parser
 from dish_tool.database import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.transactions import immediate_transaction

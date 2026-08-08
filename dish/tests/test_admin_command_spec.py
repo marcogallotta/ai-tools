@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import argparse
 
-from dish_tool import admin, admin_cli
+from dish_tool import admin
+from dish_service import admin_cli
 from dish_tool.admin_command_spec import (
     ADMIN_COMMANDS,
     ADMIN_COMMAND_SPECS,

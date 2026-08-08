@@ -10,7 +10,7 @@ This document separates command semantics from surface-specific behavior. It doe
 
 ## Authoritative implementation
 
-Current anchors include `dish_service/command_spec.py`, `dish_tool/admin_command_spec.py`, `dish_service/http_routing.py`, `dish_service/http.py`, `dish_service/auth.py`, `dish_service/openapi.py`, and application command handlers.
+Current anchors include `dish_service/cli.py`, `dish_service/admin_cli.py`, `dish_service/command_spec.py`, `dish_tool/admin_command_spec.py`, `dish_service/http_routing.py`, `dish_service/http.py`, `dish_service/auth.py`, `dish_service/openapi.py`, and application command handlers.
 
 Current public GPT Action exposure is derived from `ACTION_COMMAND_DEFINITIONS` in the shared Action command specification and the generated Action schema. A command existing in CLI/application code does not by itself mean that the connected GPT can call it.
 

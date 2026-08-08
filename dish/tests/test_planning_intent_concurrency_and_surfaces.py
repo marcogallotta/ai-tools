@@ -11,7 +11,7 @@ from dish_service.command_spec import validate_action_request
 from dish_service.config import ServiceConfig
 from dish_service.http import build_server
 from dish_service.leases import ServicePrincipal
-from dish_tool.cli import build_parser
+from dish_service.cli import build_parser
 from dish_tool.database import initialize_database
 from dish_tool.errors import DishRuleError
 from tests.support.thread_teardown import join_thread, start_server_thread, stop_server, managed_thread

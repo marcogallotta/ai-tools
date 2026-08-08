@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from dish_service.command_spec import action_openapi_argument_schema
-from dish_tool.admin_cli import build_parser
+from dish_service.admin_cli import build_parser
 from dish_tool.errors import DishRuleError
 from dish_tool.step8 import _validated_quantified_blocker
 

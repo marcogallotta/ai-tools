@@ -236,7 +236,7 @@ find . -type d -name .git -prune -print
 sha256sum /mnt/data/ai-tools-venv(20260805-195845).tgz
 find docs dish/docs -type f | grep -Ei 'postgres|cutover|decision|implement|plan|testing|runtime'
 rg -n 'COMMAND|CommandSpec|ADMIN_COMMAND_SPECS|COMMAND_DEFINITIONS|ACTION_COMMANDS'
-rg -n 'add_parser\(' dish_tool/cli.py dish_tool/admin_cli.py
+rg -n 'add_parser\(' dish_service/cli.py dish_service/admin_cli.py
 rg -n 'command ==|command in \{' dish_service dish_pg
 rg -n 'planning-intent-settlement|review-(queue|inspect|approve|reject)|apply-proposal'
 rg -n 'backup-(create|restore)|backup_create|backup_restore'

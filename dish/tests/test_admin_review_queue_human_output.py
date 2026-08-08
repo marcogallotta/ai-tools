@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from dish_tool.admin_cli import build_parser
+from dish_service.admin_cli import build_parser
 from dish_tool.admin_human import render_admin_result
 
 

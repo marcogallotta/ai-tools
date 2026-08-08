@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 from dish_tool.admin import DishAdminApplication
-from dish_tool.cli import build_parser
+from dish_service.cli import build_parser
 from tests.support.planning import Backend as PlanningBackend, PLANNING, TASK as RESEARCH_TASK, app as planning_app, write
 from tests.support.verification import TASK, make_app
 

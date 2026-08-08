@@ -9,7 +9,7 @@ from dish_service.application import DishService
 from dish_service.config import ServiceConfig
 from dish_service.leases import LeaseManager, ServicePrincipal
 from dish_tool.admin import DishAdminApplication
-from dish_tool.admin_cli import build_parser
+from dish_service.admin_cli import build_parser
 from dish_tool.application_service import CurrentWorkflowService
 from dish_tool.database import declare_operation_step, record_actor_fact
 from dish_tool.database_initialization import initialize_database

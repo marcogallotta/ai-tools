@@ -9,30 +9,30 @@ import sys
 import uuid
 from typing import Sequence
 
-from .admin import DishAdminApplication
-from .client_profiles import (
+from dish_tool.admin import DishAdminApplication
+from dish_tool.client_profiles import (
     add_profile_argument,
     argv_without_profile,
     profile_from_argv,
     resolve_client_profile,
 )
-from .constants import DB_PATH
-from .database import initialize_database
-from .backend import AsanaBackend
-from .admin_command_spec import (
+from dish_tool.constants import DB_PATH
+from dish_tool.database import initialize_database
+from dish_tool.backend import AsanaBackend
+from dish_tool.admin_command_spec import (
     ADMIN_COMMANDS as _ADMIN_COMMANDS,
     ADMIN_COMMAND_SPECS,
     RESOLVED_OPERATION_TARGET_COMMANDS as _OPERATION_ADMIN_COMMANDS,
 )
-from .releases import configured_honest_path, resolve_release
+from dish_tool.releases import configured_honest_path, resolve_release
 from dish_service.client import DishAdminServiceClient
 from dish_service.database_ownership import ServiceDatabaseOwnership, database_process_lock_path
 from dish_service.process_lock import DatabaseProcessLock
 from dish_service.identifiers import require_asana_gid, require_dish_uuid
 from dish_service.task_urls import task_gid_from_url
-from .errors import DishRuleError
-from .results import error_envelope, exit_status
-from .admin_human import render_admin_result
+from dish_tool.errors import DishRuleError
+from dish_tool.results import error_envelope, exit_status
+from dish_tool.admin_human import render_admin_result
 
 
 

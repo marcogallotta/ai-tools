@@ -4,8 +4,8 @@ import re
 import sqlite3
 from pathlib import Path
 
-from dish_tool.cli import build_parser
-from dish_tool.admin_cli import build_parser as build_admin_parser
+from dish_service.cli import build_parser
+from dish_service.admin_cli import build_parser as build_admin_parser
 from dish_tool.constants import EXIT_STATUS_BY_CODE
 from dish_tool.database import initialize_database
 
@@ -91,7 +91,7 @@ def test_all_step10_reports_execute_against_current_empty_schema(tmp_path):
 
 
 def test_reopen_planning_admin_cli_contract():
-    from dish_tool.admin_cli import build_parser
+    from dish_service.admin_cli import build_parser
     parsed = build_parser().parse_args([
         "reopen-planning", "task-gid", "--reason", "cook again"
     ])

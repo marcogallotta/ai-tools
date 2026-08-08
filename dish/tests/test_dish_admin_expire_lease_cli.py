@@ -3,7 +3,7 @@ import pytest
 
 import json
 
-from dish_tool import admin_cli
+from dish_service import admin_cli
 from tests.support.lease_expiry import ADMIN_RUN, EXPIRY_REQUEST, TASK_GID
 
 

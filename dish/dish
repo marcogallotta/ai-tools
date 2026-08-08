@@ -21,7 +21,7 @@ if __name__ == "__main__" and Path(sys.prefix).resolve() != (ROOT / ".venv").res
 
 sys.path.insert(0, str(ROOT))
 
-from dish_tool.cli import main
+from dish_service.cli import main
 
 
 if __name__ == "__main__":

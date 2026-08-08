@@ -196,7 +196,7 @@ contract break.
 rg -n 'AGENT_MUTATION_COMMANDS|ACTION_COMMANDS|REPLAY_SAFE_COMMANDS' dish_service/command_spec.py
 rg -n 'ADMIN_COMMAND_SPECS|AdminCommandSpec' dish_tool/admin_command_spec.py
 rg -n 'COMMAND_DEFINITIONS|RETAINED_COMMANDS|RETIRED_COMMANDS' dish_pg/command_contract.py
-rg -n 'add_parser\(' dish_tool/cli.py dish_tool/admin_cli.py
+rg -n 'add_parser\(' dish_service/cli.py dish_service/admin_cli.py
 rg -n 'command ==|command in \{' dish_service/application.py dish_service/http.py
 rg -n 'handlers =|COMMAND_NOT_PORTED' dish_pg/command_port.py
 rg -n 'legal_actions|ACTION\(' dish_tool/workflow_policy.py dish_pg

@@ -2,7 +2,7 @@ from __future__ import annotations
 import uuid
 import pytest
 from dish_tool.admin import DishAdminApplication
-from dish_tool.admin_cli import build_parser
+from dish_service.admin_cli import build_parser
 from tests.support.service_scenarios import RUN_ID, post as _post, running as _running
 from tests.support.thread_teardown import join_thread, stop_server
 from tests.support.submission import _signed

@@ -11,7 +11,7 @@ import dish_tool.task_store as task_store
 from dish_service.application import DishService
 from dish_service.leases import ServicePrincipal
 from dish_service.request_replay import begin_request, complete_request
-from dish_tool.admin_cli import build_parser as build_admin_parser
+from dish_service.admin_cli import build_parser as build_admin_parser
 from dish_tool.constants import COOKING_PROJECT_GID
 from dish_tool.database import (
     begin_planning_reopen_attempt,

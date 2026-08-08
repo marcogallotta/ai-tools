@@ -18,7 +18,7 @@ from dish_service.leases import LeaseManager, ServicePrincipal
 
 from dish_tool.admin import DishAdminApplication
 
-from dish_tool.admin_cli import build_parser
+from dish_service.admin_cli import build_parser
 
 from dish_tool.application_service import CurrentWorkflowService
 

@@ -108,7 +108,7 @@ Implementation should extend the existing owners rather than introduce another l
 - `dish_tool.backend.AsanaBackend` and `CommandBackend` own fully paginated section-task retrieval;
 - `dish_tool.commands` validates the actor and Cooking section, filters status, and builds the
   canonical result;
-- `dish_tool.cli` owns `list` parsing and help;
+- `dish_service.cli` owns `list` parsing and help;
 - the private service client and route carry the read-only command;
 - `dish_service.command_spec.ACTION_COMMANDS` deliberately excludes it in the first version.
 
