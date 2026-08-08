@@ -9,6 +9,10 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from dish_tool.errors import DishRuleError
+from dish_tool.operation_execution import (
+    operation_recovery_pending,
+    unresolved_operation_executions,
+)
 from dish_tool.transactions import immediate_transaction, require_transaction
 
 def _lease_transaction(
@@ -79,8 +83,8 @@ class LeaseManager:
             (task_gid,),
         ).fetchone()
 
-    def is_expired(self, row) -> bool:
-        return _parse(row["expires_at"]) <= self.now()
+    def is_expired(self, row, *, at: datetime | None = None) -> bool:
+        return _parse(row["expires_at"]) <= (self.now() if at is None else at)
 
     @staticmethod
     def is_owned_by(row, principal: ServicePrincipal) -> bool:
@@ -106,7 +110,7 @@ class LeaseManager:
                 "CONFLICT", "operation has no active service lease",
                 rule="service_lease_missing",
             )
-        if _parse(row["expires_at"]) <= now:
+        if self.is_expired(row, at=now):
             raise DishRuleError(
                 "CONFLICT",
                 "service lease expired and requires administrative recovery",
@@ -154,20 +158,7 @@ class LeaseManager:
             or not operation["terminal_outcome"]
         ):
             return False
-        pending = self.conn.execute(
-            "SELECT 1 FROM operation_steps WHERE operation_id=? AND completed_at IS NULL LIMIT 1",
-            (row["operation_id"],),
-        ).fetchone()
-        unresolved = self.conn.execute(
-            """SELECT 1 FROM write_attempts
-                 WHERE operation_id=? AND outcome IN ('started','uncertain')
-               UNION ALL
-               SELECT 1 FROM movement_attempts
-                 WHERE operation_id=? AND outcome IN ('started','uncertain')
-               LIMIT 1""",
-            (row["operation_id"], row["operation_id"]),
-        ).fetchone()
-        if pending is not None or unresolved is not None:
+        if operation_recovery_pending(self.conn, row["operation_id"]):
             return False
         self._release_row(row, reason="terminal_lease_reaped", now=now)
         return True
@@ -198,7 +189,7 @@ class LeaseManager:
             existing = self.active_for_operation(operation_id)
             if existing is not None:
                 if self.is_owned_by(existing, principal):
-                    if _parse(existing["expires_at"]) <= now:
+                    if self.is_expired(existing, at=now):
                         raise DishRuleError(
                             "CONFLICT",
                             "service lease expired and requires administrative recovery",
@@ -234,7 +225,7 @@ class LeaseManager:
                             },
                         )
                     return existing
-                expired = _parse(existing["expires_at"]) <= now
+                expired = self.is_expired(existing, at=now)
                 raise DishRuleError(
                     "CONFLICT",
                     "service lease expired and requires administrative recovery"
@@ -319,7 +310,7 @@ class LeaseManager:
         row = self.active_for_operation(operation_id)
         if row is None:
             return None
-        if _parse(row["expires_at"]) <= now:
+        if self.is_expired(row, at=now):
             raise DishRuleError(
                 "CONFLICT",
                 "expired actor lease requires recover-lease first",
@@ -328,12 +319,14 @@ class LeaseManager:
             )
         if self.is_owned_by(row, principal):
             return row
-        execution = self.conn.execute(
-            """SELECT 1 FROM operation_executions
-                 WHERE execution_id=? AND operation_id=?
-                   AND status='uncertain' AND resolved_at IS NULL""",
-            (execution_id, operation_id),
-        ).fetchone()
+        execution = next(
+            (
+                row
+                for row in unresolved_operation_executions(self.conn, operation_id)
+                if row["execution_id"] == execution_id and row["status"] == "uncertain"
+            ),
+            None,
+        )
         if execution is None:
             return self._assert_owned_row(row, principal, now=now)
         return row
@@ -417,18 +410,7 @@ class LeaseManager:
                     rule="service_lease_release_forbidden",
                     details={"phase": op["phase"]},
                 )
-            unresolved = self.conn.execute(
-                """SELECT 1 FROM write_attempts WHERE operation_id=? AND outcome IN ('started','uncertain')
-                   UNION ALL
-                   SELECT 1 FROM movement_attempts WHERE operation_id=? AND outcome IN ('started','uncertain')
-                   LIMIT 1""",
-                (operation_id, operation_id),
-            ).fetchone()
-            pending = self.conn.execute(
-                "SELECT 1 FROM operation_steps WHERE operation_id=? AND completed_at IS NULL LIMIT 1",
-                (operation_id,),
-            ).fetchone()
-            if unresolved or pending:
+            if operation_recovery_pending(self.conn, operation_id):
                 raise DishRuleError(
                     "WRONG_STATE",
                     "owner lease cannot be released before durable completion markers",
@@ -500,27 +482,19 @@ class LeaseManager:
                 "SELECT 1 FROM operation_execution_claims WHERE operation_id=? LIMIT 1",
                 (operation_id,),
             ).fetchone()
-            unresolved_execution = self.conn.execute(
-                """SELECT 1 FROM operation_executions
-                     WHERE operation_id=? AND status='uncertain'
-                       AND resolved_at IS NULL LIMIT 1""",
-                (operation_id,),
-            ).fetchone()
-            unresolved_attempt = self.conn.execute(
-                """SELECT 1 FROM write_attempts
-                     WHERE operation_id=? AND outcome IN ('started','uncertain')
-                   UNION ALL
-                   SELECT 1 FROM movement_attempts
-                     WHERE operation_id=? AND outcome IN ('started','uncertain')
-                   LIMIT 1""",
-                (operation_id, operation_id),
-            ).fetchone()
-            pending_step = self.conn.execute(
-                """SELECT 1 FROM operation_steps
-                     WHERE operation_id=? AND completed_at IS NULL LIMIT 1""",
-                (operation_id,),
-            ).fetchone()
-            if active_claim or unresolved_execution or unresolved_attempt or pending_step:
+            unresolved_execution = next(
+                (
+                    row
+                    for row in unresolved_operation_executions(self.conn, operation_id)
+                    if row["status"] == "uncertain"
+                ),
+                None,
+            )
+            if (
+                active_claim
+                or unresolved_execution
+                or operation_recovery_pending(self.conn, operation_id)
+            ):
                 raise DishRuleError(
                     "WRONG_STATE",
                     "actor lease cannot be released before recovered workflow evidence is coherent",
@@ -594,18 +568,7 @@ class LeaseManager:
                     "task lock remains active until the operation is terminal",
                     rule="service_task_lock_active",
                 )
-            pending = self.conn.execute(
-                "SELECT 1 FROM operation_steps WHERE operation_id=? AND completed_at IS NULL LIMIT 1",
-                (operation_id,),
-            ).fetchone()
-            unresolved = self.conn.execute(
-                """SELECT 1 FROM write_attempts WHERE operation_id=? AND outcome IN ('started','uncertain')
-                   UNION ALL
-                   SELECT 1 FROM movement_attempts WHERE operation_id=? AND outcome IN ('started','uncertain')
-                   LIMIT 1""",
-                (operation_id, operation_id),
-            ).fetchone()
-            if pending or unresolved:
+            if operation_recovery_pending(self.conn, operation_id):
                 raise DishRuleError(
                     "WRONG_STATE",
                     "task lock cannot release before all completion markers are durable",
@@ -638,7 +601,7 @@ class LeaseManager:
             row = self.active_for_operation(operation_id)
             if row is None:
                 return None
-            if _parse(row["expires_at"]) > now:
+            if not self.is_expired(row, at=now):
                 raise DishRuleError(
                     "CONFLICT", "active lease is not stale",
                     rule="service_lease_not_stale",

@@ -188,7 +188,7 @@ def unresolved_operation_executions(
     ).fetchall()
 
 
-def _recovery_pending(conn: sqlite3.Connection, operation_id: str) -> bool:
+def operation_recovery_pending(conn: sqlite3.Connection, operation_id: str) -> bool:
     return conn.execute(
         """SELECT 1 FROM write_attempts
              WHERE operation_id=? AND outcome IN ('started','uncertain')
@@ -336,7 +336,7 @@ def claim_abandonment_execution(
             )
 
         resuming_uncertain = execution["status"] == "uncertain"
-        if execution["status"] == "started" and _recovery_pending(
+        if execution["status"] == "started" and operation_recovery_pending(
             conn, execution["operation_id"]
         ):
             evidence = execution_recovery_state(
@@ -478,7 +478,7 @@ def _stale_claim_recovery(
         prior_execution, command=command, request_id=request_id
     )
     recovery_required = (
-        _recovery_pending(conn, operation_id)
+        operation_recovery_pending(conn, operation_id)
         if prior_recovery is None
         else bool(prior_recovery["recovery_required"])
     )
