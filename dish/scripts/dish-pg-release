@@ -556,10 +556,8 @@ def _service_call(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                 row = service.record_projection_worker_readiness(
                     candidate_id=_uuid(args.candidate_id),
                     reconciliation_run_id=_uuid(data["reconciliation_run_id"]),
-                    worker_identity=data["worker_identity"],
-                    worker_release=data["worker_release"],
-                    payload=data.get("payload", {}),
-                    ready_at=_time(data["ready_at"]),
+                    probes=data["probes"],
+                    completed_at=_time(data["completed_at"]),
                 )
             elif cmd == "first-admission-plan":
                 data = _load(args.file)

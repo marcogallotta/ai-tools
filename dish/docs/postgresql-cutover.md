@@ -115,7 +115,7 @@ These should be fixed before broader migration work.
 - No concrete production Asana projection adapter is present.
 - No concrete production reconciliation fetcher/comparator is present.
 - The shipped reconciliation path cannot populate all fields required by release validation.
-- Some required readiness and import evidence has no production writer.
+- Some required final import evidence still lacks a production writer; CC5 worker-readiness revision 0031 closes the readiness producer gap.
 - Invocation-audit obligations required by cutover validation are not fulfilled by a production path.
 
 ## 2.4 Confirmed structural excess
@@ -411,7 +411,7 @@ These are candidates for later simplification, not a required-before-runtime or 
 | Closure invalidations | New report revision invalidating prior revision |
 | Recertifications | New approval/revision |
 | Runtime release attestations | Artifact digest on cutover record |
-| Worker readiness evidence | Runtime rehearsal report |
+| Worker readiness evidence | One immutable post-burn runtime-readiness report |
 | Candidate manifests | One canonical cutover snapshot digest |
 | Approval-manifest bindings | Snapshot digest stored directly on approval |
 | Manifest revalidations | New snapshot revision |
@@ -427,7 +427,7 @@ These are candidates for later simplification, not a required-before-runtime or 
 Same timing as §6.2: these are deletion candidates for code-cleanup consolidation/maintainability or cutover Phase 0, not a precondition already blocking live work.
 
 - evidence certifying other evidence;
-- typed worker-probe inventory / requirement / evidence / completion layers;
+- typed worker-probe inventory / requirement / evidence / completion layers — **resolved by CC5 revision 0031**: removed from the forward schema after fail-closed live-row preflight;
 - database-backed rehearsal checkpoint bureaucracy;
 - separate recertification nouns where a new signed revision is sufficient;
 - separate manifest-of-manifest chains;
@@ -435,6 +435,19 @@ Same timing as §6.2: these are deletion candidates for code-cleanup consolidati
 - production-change ledger machinery beyond exact final source identity;
 - source-import linkage duplicated by canonical import evidence;
 - cutover controls with no production writer or consumer.
+
+### CC5 worker-readiness disposition (revision 0031)
+
+The accepted typed-readiness dependency proof is implemented as a narrow forward transition after
+`0030_validation_failure_admission`:
+
+- `worker_probe_inventories`, `worker_probe_requirements`, `worker_probe_evidence`, and `worker_readiness_completions` leave the forward schema; historical migration `0026_typed_worker_readiness_evidence` is not rewritten;
+- `projection_worker_readiness` becomes the single immutable, server-owned post-burn report, with fixed validator-owned `claim`, `exact_write`, and `restart` probes; exact candidate/epoch/reconciliation; exact worker identity/release and deployed artifact SHA-256; per-probe execution/evidence identities; completion time; and report SHA-256;
+- candidate-authority manifest v3 binds the exact approval-time reconciliation run and excludes all worker-readiness state. Later post-burn reconciliation/readiness therefore cannot stale approval authority. Stored v2 manifests retain their original fingerprint semantics and are not reinterpreted; activation requires a forward v3 candidate/approval;
+- first admission re-observes deployed artifacts and revalidates the report against the exact candidate/epoch, runtime worker identity/release, fixed passing probes, fresh exact reconciliation, timing, generation, and authority fences;
+- revision 0031 fails closed before destructive reduction if any legacy typed/readiness row exists. Such rows must first be exported with `scripts/dish-pg-export-typed-readiness` as Class-C cutover/stabilization evidence, then the dark-launch target is rebuilt/reseeded at 0031 rather than silently discarding evidence.
+
+This disposition does not consolidate source import, workflow/Human Review/leases, first-admission design, dark-launch/shadow state, or unrelated schema.
 
 ## 6.4 Inert or incomplete schema candidates
 
@@ -445,7 +458,7 @@ Subject to final dependency confirmation:
 - `applied_migration_events`;
 - `source_import_native_links`;
 - incomplete generation bootstrap authority;
-- unimplemented readiness and audit-fulfillment structures.
+- unimplemented audit-fulfillment structures.
 
 A table should not remain solely because tests can construct it.
 
@@ -726,7 +739,7 @@ In practice, Phase 2 was never executed. Phase 3 and Phase 4 were built and dark
 
 - Live defect fixes (§2.2) and the minimum Stage A contract (§4) are complete.
 - The real PostgreSQL runtime, GPT Actions contract migration, Asana projection adapter, reconciliation adapter, and semantic-proposal/Human Review port (§8) are built and live.
-- Dark launch is running on the full, unreduced schema (migration revision 0030).
+- Dark launch was last documented running on the full, unreduced schema at migration revision 0030. The checked-in forward head after CC5 is `0031_worker_readiness_consolidation`; do not assume a live dark-launch database has been upgraded without direct evidence.
 - Cutover (§5, §9.4 validation, Addendum B) has not happened.
 
 ## Before cutover
@@ -780,7 +793,7 @@ Disposition, reconciled against current code (confirmed rows verified by direct 
 | Stage A baseline evidence | **Confirmed resolved.** Redesigned to `dish-stage-a-baseline-v2`; hashes only production source files, excludes test files (`docs/database-backend-stage-a-baseline.json`) |
 | Legacy-writer inventory | Retain as part of fence report — still open |
 | Stage 6 runbook command checks | Reconcile against the live control plane (§5–§6.1); not squash-gated — still open |
-| Typed readiness writers missing | Remove typed subsystem or implement one report — still open |
+| Typed readiness writers missing | **Resolved by CC5 revision 0031.** The producer-orphaned typed inventory/requirement/evidence/completion chain is removed from the forward schema and `projection_worker_readiness` is the one production post-burn report; populated legacy rows force Class-C export plus rebuild/reseed rather than deletion. |
 | Import evidence not produced | **Confirmed resolved.** Produced via `dish_pg/candidate_manifest.py`'s `_import_completion_digest()`, wired into production candidate-manifest generation. Caveat: confirmed only via the SQLite/PGlite test lane (`tests/postgresql/test_0022_candidate_state_manifest_import_linkage.py`); native-PostgreSQL execution of this path is not separately confirmed |
 | Invocation audit not fulfilled | **Confirmed resolved.** `dish_tool/invocation_audit.py` is wired into `dish_service/application.py` and live in the production application service |
 | Stale lock/kill-switch/final-gate claims | **Confirmed not stale.** Already accurately tracked with dates and code verification in `docs/ops-issues.md`; this row is superseded by that file's own maintained tracking, not by the underlying claims being false |
@@ -1073,6 +1086,8 @@ If that first write fails after authority switches, remain in maintenance mode, 
 ## Final verification status
 
 The planning challenge/override verification (§2, "Standing authorization verification requirement") is a mandatory standing requirement. No admission-gate or schema-reduction work may begin until it passes.
+
+For the CC5 worker-readiness reduction on the 0030 predecessor snapshot, this standing check was run before implementation. `tests/authority/test_planning_override_service.py`, `tests/postgresql/test_planning_override_command_authority.py`, and `tests/test_planning_intent_confirmation.py` passed together (21 tests). They preserve the boundary that Planning challenge/override can authorize Planning start only: it creates no Marco mutation authorization or Human Review decision, cannot satisfy a lease/authority fence, and does not expand GPT Action mutation scope. Existing exact-proposal/candidate-version approval contracts remain independently required.
 
 ## Implementation clarifications
 

@@ -482,20 +482,49 @@ class ProjectionWorkerReadiness(Base):
     reconciliation_run_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("projection_reconciliation_runs.reconciliation_run_id", ondelete="RESTRICT"), nullable=False
     )
-    probe_inventory_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("worker_probe_inventories.inventory_id", ondelete="RESTRICT")
-    )
     worker_identity: Mapped[str] = mapped_column(String(256), nullable=False)
     worker_release: Mapped[str] = mapped_column(String(128), nullable=False)
-    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
-    readiness_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
-    ready_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    deployed_artifact_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    report_contract_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    claim_probe_result: Mapped[str] = mapped_column(String(16), nullable=False)
+    claim_execution_identity: Mapped[str] = mapped_column(String(256), nullable=False)
+    claim_evidence_identity: Mapped[str] = mapped_column(String(512), nullable=False)
+    exact_write_probe_result: Mapped[str] = mapped_column(String(16), nullable=False)
+    exact_write_execution_identity: Mapped[str] = mapped_column(String(256), nullable=False)
+    exact_write_evidence_identity: Mapped[str] = mapped_column(String(512), nullable=False)
+    restart_probe_result: Mapped[str] = mapped_column(String(16), nullable=False)
+    restart_execution_identity: Mapped[str] = mapped_column(String(256), nullable=False)
+    restart_evidence_identity: Mapped[str] = mapped_column(String(512), nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    report_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
 
     __table_args__ = (
-        Index("ix_projection_worker_readiness_probe_inventory", "probe_inventory_id"),
         CheckConstraint("length(trim(worker_identity)) > 0", name="worker_identity_nonblank"),
         CheckConstraint("length(trim(worker_release)) > 0", name="worker_release_nonblank"),
-        CheckConstraint("length(readiness_sha256) = 64", name="readiness_hash_length"),
+        CheckConstraint("length(deployed_artifact_sha256) = 64", name="deployed_artifact_hash_length"),
+        CheckConstraint(
+            "report_contract_version = 'projection-worker-readiness-v1'",
+            name="report_contract_version_exact",
+        ),
+        CheckConstraint(
+            "claim_probe_result IN ('pass','fail','error') AND "
+            "exact_write_probe_result IN ('pass','fail','error') AND "
+            "restart_probe_result IN ('pass','fail','error')",
+            name="probe_results_allowed",
+        ),
+        CheckConstraint(
+            "length(trim(claim_execution_identity)) > 0 AND "
+            "length(trim(exact_write_execution_identity)) > 0 AND "
+            "length(trim(restart_execution_identity)) > 0",
+            name="probe_execution_identities_nonblank",
+        ),
+        CheckConstraint(
+            "length(trim(claim_evidence_identity)) > 0 AND "
+            "length(trim(exact_write_evidence_identity)) > 0 AND "
+            "length(trim(restart_evidence_identity)) > 0",
+            name="probe_evidence_identities_nonblank",
+        ),
+        CheckConstraint("length(report_sha256) = 64", name="report_hash_length"),
     )
 
 

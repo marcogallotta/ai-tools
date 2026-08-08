@@ -15,16 +15,14 @@ from . import stage5_models as tx
 from . import stage6_models as rel
 from .release_evidence import ReleaseAuthorityError, sha256_json
 
-MANIFEST_VERSION = 2
-BUILDER_CONTRACT_VERSION = "candidate-authority-v2"
+MANIFEST_VERSION = 3
+BUILDER_CONTRACT_VERSION = "candidate-authority-v3"
 
 COMPONENT_FIELDS = (
     "mapping_membership_sha256",
     "import_completion_sha256",
     "typed_import_linkage_sha256",
     "reconciliation_evidence_sha256",
-    "readiness_inventory_sha256",
-    "readiness_completion_sha256",
 )
 
 _UUID_HEX_RE = re.compile(r"[0-9a-fA-F]{32}\Z")
@@ -300,8 +298,34 @@ def _typed_import_linkage_digest(
     )
 
 
-def _reconciliation_evidence_digest(
+def _latest_reconciliation_run_id(
     session: Session, *, candidate: rel.ReleaseCandidate
+) -> uuid.UUID:
+    run_id = session.scalar(
+        select(tx.ProjectionReconciliationRun.reconciliation_run_id)
+        .where(
+            tx.ProjectionReconciliationRun.generation_id == candidate.generation_id,
+            tx.ProjectionReconciliationRun.projection_epoch_id == candidate.projection_epoch_id,
+            tx.ProjectionReconciliationRun.candidate_id == candidate.candidate_id,
+        )
+        .order_by(
+            tx.ProjectionReconciliationRun.started_at.desc(),
+            tx.ProjectionReconciliationRun.reconciliation_run_id.desc(),
+        )
+        .limit(1)
+    )
+    if run_id is None:
+        raise ReleaseAuthorityError(
+            "candidate manifest requires exact approval-time reconciliation evidence"
+        )
+    return run_id
+
+
+def _reconciliation_evidence_digest(
+    session: Session,
+    *,
+    candidate: rel.ReleaseCandidate,
+    reconciliation_run_id: uuid.UUID,
 ) -> str:
     runs = _table_rows(
         session,
@@ -328,24 +352,17 @@ def _reconciliation_evidence_digest(
             "completed_at",
         ),
         where=lambda table, dialect: (
-            _uuid_match(table.c.generation_id, candidate.generation_id, dialect)
-            & _uuid_match(
-                table.c.projection_epoch_id, candidate.projection_epoch_id, dialect
-            )
+            _uuid_match(table.c.reconciliation_run_id, reconciliation_run_id, dialect)
+            & _uuid_match(table.c.generation_id, candidate.generation_id, dialect)
+            & _uuid_match(table.c.projection_epoch_id, candidate.projection_epoch_id, dialect)
+            & _uuid_match(table.c.candidate_id, candidate.candidate_id, dialect)
         ),
     )
-    selected: dict[str, Any] | None = None
-    if runs["rows"]:
-        selected = max(
-            runs["rows"],
-            key=lambda row: (
-                str(row.get("started_at") or ""),
-                str(row.get("reconciliation_run_id") or ""),
-            ),
+    selected = _single_row(runs, label="approval reconciliation run")
+    if selected is None:
+        raise ReleaseAuthorityError(
+            "candidate manifest approval reconciliation run is missing or no longer candidate-bound"
         )
-    selected_run_id = (
-        uuid.UUID(str(selected["reconciliation_run_id"])) if selected is not None else None
-    )
     items = _table_rows(
         session,
         table_name="projection_reconciliation_items",
@@ -359,20 +376,14 @@ def _reconciliation_evidence_digest(
             "evidence",
             "recorded_at",
         ),
-        where=(
-            None
-            if selected_run_id is None
-            else lambda table, dialect: _uuid_match(
-                table.c.reconciliation_run_id, selected_run_id, dialect
-            )
+        where=lambda table, dialect: _uuid_match(
+            table.c.reconciliation_run_id, reconciliation_run_id, dialect
         ),
     )
-    if selected_run_id is None:
-        items["rows"] = []
     return sha256_json(
         {
-            "contract": "latest-candidate-reconciliation-evidence-v1",
-            "selection": "max(started_at,reconciliation_run_id) for generation and epoch",
+            "contract": "exact-approval-reconciliation-evidence-v2",
+            "reconciliation_run_id": str(reconciliation_run_id),
             "run_schema": {
                 "table": runs["table"],
                 "present": runs["present"],
@@ -384,136 +395,12 @@ def _reconciliation_evidence_digest(
     )
 
 
-def _readiness_inventory_digest(
-    session: Session, *, candidate: rel.ReleaseCandidate
-) -> str:
-    inventory = _table_rows(
-        session,
-        table_name="worker_probe_inventories",
-        expected_columns=(
-            "inventory_id",
-            "candidate_id",
-            "projection_epoch_id",
-            "inventory_version",
-            "required_probe_count",
-            "inventory_sha256",
-            "inventory_contract_version",
-            "sealed_at",
-        ),
-        where=lambda table, dialect: _uuid_match(
-            table.c.candidate_id, candidate.candidate_id, dialect
-        ),
-    )
-    inventory_ids = [
-        uuid.UUID(str(row["inventory_id"]))
-        for row in inventory["rows"]
-        if row.get("inventory_id") is not None
-    ]
-    requirements = _table_rows(
-        session,
-        table_name="worker_probe_requirements",
-        expected_columns=(
-            "requirement_id",
-            "inventory_id",
-            "probe_kind",
-            "ordinal",
-            "probe_contract_version",
-        ),
-        where=(
-            None
-            if not inventory_ids
-            else lambda table, dialect: _uuid_membership(
-                table.c.inventory_id, inventory_ids, dialect
-            )
-        ),
-    )
-    if not inventory_ids:
-        requirements["rows"] = []
-    return sha256_json(
-        {
-            "contract": "worker-readiness-inventory-v1",
-            "inventory": inventory,
-            "requirements": requirements,
-        }
-    )
-
-
-def _readiness_completion_digest(
-    session: Session, *, candidate: rel.ReleaseCandidate
-) -> str:
-    readiness = _table_rows(
-        session,
-        table_name="projection_worker_readiness",
-        expected_columns=(
-            "readiness_id",
-            "candidate_id",
-            "projection_epoch_id",
-            "reconciliation_run_id",
-            "probe_inventory_id",
-            "worker_identity",
-            "worker_release",
-            "payload",
-            "readiness_sha256",
-            "ready_at",
-        ),
-        where=lambda table, dialect: _uuid_match(
-            table.c.candidate_id, candidate.candidate_id, dialect
-        ),
-    )
-    evidence = _table_rows(
-        session,
-        table_name="worker_probe_evidence",
-        expected_columns=(
-            "evidence_id",
-            "readiness_id",
-            "requirement_id",
-            "inventory_id",
-            "candidate_id",
-            "projection_epoch_id",
-            "probe_kind",
-            "execution_identity",
-            "worker_identity",
-            "deployed_artifact_sha256",
-            "result",
-            "observed_at",
-            "evidence_artifact_identity",
-            "evidence_sha256",
-            "recorded_at",
-        ),
-        where=lambda table, dialect: _uuid_match(
-            table.c.candidate_id, candidate.candidate_id, dialect
-        ),
-    )
-    completion = _table_rows(
-        session,
-        table_name="worker_readiness_completions",
-        expected_columns=(
-            "completion_id",
-            "readiness_id",
-            "inventory_id",
-            "candidate_id",
-            "projection_epoch_id",
-            "completion_state",
-            "required_probe_count",
-            "passed_probe_count",
-            "completion_sha256",
-            "completed_at",
-        ),
-        where=lambda table, dialect: _uuid_match(
-            table.c.candidate_id, candidate.candidate_id, dialect
-        ),
-    )
-    return sha256_json(
-        {
-            "contract": "worker-readiness-execution-completion-v1",
-            "readiness": readiness,
-            "probe_evidence": evidence,
-            "completion": completion,
-        }
-    )
-
-
-def _identity(session: Session, candidate: rel.ReleaseCandidate) -> dict[str, object]:
+def _identity(
+    session: Session,
+    candidate: rel.ReleaseCandidate,
+    *,
+    approval_reconciliation_run_id: uuid.UUID | None = None,
+) -> dict[str, object]:
     batch = session.get(tx.SourceImportBatch, candidate.source_import_batch_id)
     active = session.get(models.ActiveSectionRegistry, candidate.generation_id)
     epoch = session.get(tx.ProjectionEpoch, candidate.projection_epoch_id)
@@ -534,6 +421,10 @@ def _identity(session: Session, candidate: rel.ReleaseCandidate) -> dict[str, ob
         or registry.import_run_id != batch.import_run_id
     ):
         raise ReleaseAuthorityError("candidate manifest registry lineage mismatch")
+    if approval_reconciliation_run_id is None:
+        approval_reconciliation_run_id = _latest_reconciliation_run_id(
+            session, candidate=candidate
+        )
     identity: dict[str, object] = {
         "manifest_version": MANIFEST_VERSION,
         "candidate_id": str(candidate.candidate_id),
@@ -544,6 +435,7 @@ def _identity(session: Session, candidate: rel.ReleaseCandidate) -> dict[str, ob
         "projection_epoch_id": str(epoch.projection_epoch_id),
         "registry_version_id": str(registry.registry_version_id),
         "honest_binding_id": str(registry.contract_binding_id),
+        "approval_reconciliation_run_id": str(approval_reconciliation_run_id),
         "builder_contract_version": BUILDER_CONTRACT_VERSION,
         "mapping_membership_sha256": _mapping_membership_digest(
             session, candidate=candidate
@@ -557,13 +449,9 @@ def _identity(session: Session, candidate: rel.ReleaseCandidate) -> dict[str, ob
             session, candidate=candidate
         ),
         "reconciliation_evidence_sha256": _reconciliation_evidence_digest(
-            session, candidate=candidate
-        ),
-        "readiness_inventory_sha256": _readiness_inventory_digest(
-            session, candidate=candidate
-        ),
-        "readiness_completion_sha256": _readiness_completion_digest(
-            session, candidate=candidate
+            session,
+            candidate=candidate,
+            reconciliation_run_id=approval_reconciliation_run_id,
         ),
     }
     return identity
@@ -576,14 +464,25 @@ def build_candidate_manifest(
     candidate: rel.ReleaseCandidate,
     built_at: datetime,
 ) -> manifest_models.ReleaseCandidateManifest:
-    identity = _identity(session, candidate)
-    fingerprint = sha256_json(identity)
     existing = session.scalar(
         select(manifest_models.ReleaseCandidateManifest).where(
             manifest_models.ReleaseCandidateManifest.candidate_id
             == candidate.candidate_id
         )
     )
+    if existing is not None and existing.manifest_version != MANIFEST_VERSION:
+        raise ReleaseAuthorityError(
+            "candidate already has a historical authority-manifest contract; "
+            "create and approve a forward candidate instead of reinterpreting it"
+        )
+    identity = _identity(
+        session,
+        candidate,
+        approval_reconciliation_run_id=(
+            None if existing is None else existing.approval_reconciliation_run_id
+        ),
+    )
+    fingerprint = sha256_json(identity)
     if existing is not None:
         if existing.canonical_fingerprint != fingerprint:
             raise ReleaseAuthorityError(
@@ -602,6 +501,11 @@ def build_candidate_manifest(
         projection_epoch_id=candidate.projection_epoch_id,
         registry_version_id=uuid.UUID(str(identity["registry_version_id"])),
         honest_binding_id=uuid.UUID(str(identity["honest_binding_id"])),
+        approval_reconciliation_run_id=uuid.UUID(
+            str(identity["approval_reconciliation_run_id"])
+        ),
+        readiness_inventory_sha256=None,
+        readiness_completion_sha256=None,
         builder_contract_version=BUILDER_CONTRACT_VERSION,
         built_at=built_at,
         **{field: str(identity[field]) for field in COMPONENT_FIELDS},
@@ -651,15 +555,31 @@ def revalidate_candidate_manifest(
     candidate: rel.ReleaseCandidate,
     revalidated_at: datetime,
 ) -> manifest_models.CandidateManifestRevalidation:
-    manifest = session.scalar(
-        select(manifest_models.ReleaseCandidateManifest).where(
-            manifest_models.ReleaseCandidateManifest.candidate_id
+    binding = session.scalar(
+        select(manifest_models.CutoverApprovalManifestBinding).where(
+            manifest_models.CutoverApprovalManifestBinding.candidate_id
             == candidate.candidate_id
         )
     )
+    manifest = None if binding is None else session.get(
+        manifest_models.ReleaseCandidateManifest, binding.manifest_id
+    )
     if manifest is None:
         raise ReleaseAuthorityError("approved candidate lacks an authority manifest")
-    identity = _identity(session, candidate)
+    if manifest.manifest_version != MANIFEST_VERSION:
+        raise ReleaseAuthorityError(
+            "approved candidate uses a historical authority-manifest contract; "
+            "create and approve a forward candidate before activation"
+        )
+    if manifest.approval_reconciliation_run_id is None:
+        raise ReleaseAuthorityError(
+            "forward candidate manifest lacks exact approval-time reconciliation identity"
+        )
+    identity = _identity(
+        session,
+        candidate,
+        approval_reconciliation_run_id=manifest.approval_reconciliation_run_id,
+    )
     observed = sha256_json(identity)
     result = "matched" if observed == manifest.canonical_fingerprint else "stale"
     existing = session.scalar(
@@ -681,6 +601,8 @@ def revalidate_candidate_manifest(
         manifest_version=manifest.manifest_version,
         approved_fingerprint=manifest.canonical_fingerprint,
         observed_fingerprint=observed,
+        observed_readiness_inventory_sha256=None,
+        observed_readiness_completion_sha256=None,
         result=result,
         revalidated_at=revalidated_at,
         **{

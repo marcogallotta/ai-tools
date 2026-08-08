@@ -10,7 +10,7 @@ This document describes the PostgreSQL replacement architecture and current migr
 
 ## Authoritative implementation
 
-Current anchors include PostgreSQL models/migrations under `dish_pg/`, `dish_pg/command_port.py`, `dish_pg/postgres_service.py`, `dish_pg/transition.py`, workers, and release/cutover services. The current schema head includes `0030_validation_failure_admission.py`.
+Current anchors include PostgreSQL models/migrations under `dish_pg/`, `dish_pg/command_port.py`, `dish_pg/postgres_service.py`, `dish_pg/transition.py`, workers, and release/cutover services. The current schema head includes `0031_worker_readiness_consolidation.py`.
 
 ## Actors, processes, and stores
 
@@ -27,6 +27,8 @@ Authority transfer is explicit and one-way for the activated generation. Importe
 - The first-request reservation and activation/admission controls prevent uncontrolled authority opening.
 - Projection origin/effect settlement remain separate from canonical command authority.
 - Reconciliation is evidence/repair machinery, not an alternate canonical writer.
+- Forward candidate-authority manifests use contract v3: they bind the exact approval-time reconciliation run and exclude all post-burn worker-readiness state. Historical v2 fingerprints keep their original stored semantics.
+- Post-burn projection-worker readiness is one immutable `projection_worker_readiness` report with validator-owned `claim`, `exact_write`, and `restart` probes, exact worker/artifact identity, exact fresh reconciliation identity, and a report SHA-256 revalidated at first admission.
 
 ## Process and transaction boundaries
 

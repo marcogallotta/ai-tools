@@ -249,12 +249,774 @@
     },
     "tests/test_commands.py": {
       "active_evidence": {
-        "id": "4aafeb44b8f56e73454910d1e95baaa44a3710ede0b262e6d3e1d3c1b2b1e9ad",
-        "kind": "batch"
+        "id": "795d5b2b1e7ebd0f83d9f2eb3d9c0d8d99065ded7642484c33f727fccc24acee",
+        "kind": "file"
       },
-      "history": [],
+      "history": [
+        {
+          "environment": {
+            "cpu_count": 5,
+            "execnet_version": "2.1.2",
+            "git_head": null,
+            "git_status": "",
+            "platform": "Linux-6.18.35-x86_64-with-glibc2.41",
+            "pytest_version": "9.1.1",
+            "python_executable": "/mnt/data/cc5-work/dish/.venv/bin/python",
+            "python_version": "3.13.5",
+            "requirements_test_sha256": "0c6d93e63d059c0a9fa17ce57a98640d329ac7da1307a24cb615742db2dee6b0",
+            "xdist_version": "3.8.0"
+          },
+          "environment_identity": "180eeb01fb5bb2162553d83d2c0254e5e918a5919efcefe9b0f5874d6e32ca4b",
+          "evidence_id": "795d5b2b1e7ebd0f83d9f2eb3d9c0d8d99065ded7642484c33f727fccc24acee",
+          "exercise_files": [
+            "tests/test_commands.py",
+            "tests/test_batch_apply.py",
+            "tests/test_core_models_and_dispatch.py",
+            "tests/test_dish_planning_authority_labels.py",
+            "tests/test_dish_tool_critical_input_safety.py",
+            "tests/test_dish_tool_step2_canonical.py",
+            "tests/test_dish_tool_step5_commands.py",
+            "tests/test_dish_tool_step6_prepare.py"
+          ],
+          "file_sha256": {
+            "tests/test_commands.py": "7b54dc519fcdf6a2aeeee0e3809cf281f6a2bb8e6893618b15fd1c99ddcec6ac"
+          },
+          "files": [
+            "tests/test_commands.py"
+          ],
+          "kind": "file",
+          "note": "CC5 PostgreSQL shared support readiness consolidation",
+          "parallel": {
+            "2": [
+              {
+                "errors": 0,
+                "failed": 0,
+                "file_results": {
+                  "tests/test_batch_apply.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 15,
+                    "skipped": 0,
+                    "tests": 15
+                  },
+                  "tests/test_core_models_and_dispatch.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 11,
+                    "skipped": 0,
+                    "tests": 11
+                  },
+                  "tests/test_dish_planning_authority_labels.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 14,
+                    "skipped": 0,
+                    "tests": 14
+                  },
+                  "tests/test_dish_tool_critical_input_safety.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 51,
+                    "skipped": 0,
+                    "tests": 51
+                  },
+                  "tests/test_dish_tool_step2_canonical.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 27,
+                    "skipped": 0,
+                    "tests": 27
+                  },
+                  "tests/test_dish_tool_step5_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 23,
+                    "skipped": 0,
+                    "tests": 23
+                  },
+                  "tests/test_dish_tool_step6_prepare.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 17,
+                    "skipped": 0,
+                    "tests": 17
+                  }
+                },
+                "passed": 167,
+                "repeat": 1,
+                "returncode": 0,
+                "skipped": 0,
+                "tests": 167,
+                "wall_seconds": 5.378,
+                "workers": 2
+              },
+              {
+                "errors": 0,
+                "failed": 0,
+                "file_results": {
+                  "tests/test_batch_apply.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 15,
+                    "skipped": 0,
+                    "tests": 15
+                  },
+                  "tests/test_core_models_and_dispatch.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 11,
+                    "skipped": 0,
+                    "tests": 11
+                  },
+                  "tests/test_dish_planning_authority_labels.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 14,
+                    "skipped": 0,
+                    "tests": 14
+                  },
+                  "tests/test_dish_tool_critical_input_safety.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 51,
+                    "skipped": 0,
+                    "tests": 51
+                  },
+                  "tests/test_dish_tool_step2_canonical.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 27,
+                    "skipped": 0,
+                    "tests": 27
+                  },
+                  "tests/test_dish_tool_step5_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 23,
+                    "skipped": 0,
+                    "tests": 23
+                  },
+                  "tests/test_dish_tool_step6_prepare.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 17,
+                    "skipped": 0,
+                    "tests": 17
+                  }
+                },
+                "passed": 167,
+                "repeat": 2,
+                "returncode": 0,
+                "skipped": 0,
+                "tests": 167,
+                "wall_seconds": 14.471,
+                "workers": 2
+              },
+              {
+                "errors": 0,
+                "failed": 0,
+                "file_results": {
+                  "tests/test_batch_apply.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 15,
+                    "skipped": 0,
+                    "tests": 15
+                  },
+                  "tests/test_core_models_and_dispatch.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 11,
+                    "skipped": 0,
+                    "tests": 11
+                  },
+                  "tests/test_dish_planning_authority_labels.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 14,
+                    "skipped": 0,
+                    "tests": 14
+                  },
+                  "tests/test_dish_tool_critical_input_safety.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 51,
+                    "skipped": 0,
+                    "tests": 51
+                  },
+                  "tests/test_dish_tool_step2_canonical.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 27,
+                    "skipped": 0,
+                    "tests": 27
+                  },
+                  "tests/test_dish_tool_step5_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 23,
+                    "skipped": 0,
+                    "tests": 23
+                  },
+                  "tests/test_dish_tool_step6_prepare.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 17,
+                    "skipped": 0,
+                    "tests": 17
+                  }
+                },
+                "passed": 167,
+                "repeat": 3,
+                "returncode": 0,
+                "skipped": 0,
+                "tests": 167,
+                "wall_seconds": 5.304,
+                "workers": 2
+              }
+            ],
+            "4": [
+              {
+                "errors": 0,
+                "failed": 0,
+                "file_results": {
+                  "tests/test_batch_apply.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 15,
+                    "skipped": 0,
+                    "tests": 15
+                  },
+                  "tests/test_core_models_and_dispatch.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 11,
+                    "skipped": 0,
+                    "tests": 11
+                  },
+                  "tests/test_dish_planning_authority_labels.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 14,
+                    "skipped": 0,
+                    "tests": 14
+                  },
+                  "tests/test_dish_tool_critical_input_safety.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 51,
+                    "skipped": 0,
+                    "tests": 51
+                  },
+                  "tests/test_dish_tool_step2_canonical.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 27,
+                    "skipped": 0,
+                    "tests": 27
+                  },
+                  "tests/test_dish_tool_step5_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 23,
+                    "skipped": 0,
+                    "tests": 23
+                  },
+                  "tests/test_dish_tool_step6_prepare.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 17,
+                    "skipped": 0,
+                    "tests": 17
+                  }
+                },
+                "passed": 167,
+                "repeat": 1,
+                "returncode": 0,
+                "skipped": 0,
+                "tests": 167,
+                "wall_seconds": 4.379,
+                "workers": 4
+              },
+              {
+                "errors": 0,
+                "failed": 0,
+                "file_results": {
+                  "tests/test_batch_apply.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 15,
+                    "skipped": 0,
+                    "tests": 15
+                  },
+                  "tests/test_core_models_and_dispatch.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 11,
+                    "skipped": 0,
+                    "tests": 11
+                  },
+                  "tests/test_dish_planning_authority_labels.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 14,
+                    "skipped": 0,
+                    "tests": 14
+                  },
+                  "tests/test_dish_tool_critical_input_safety.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 51,
+                    "skipped": 0,
+                    "tests": 51
+                  },
+                  "tests/test_dish_tool_step2_canonical.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 27,
+                    "skipped": 0,
+                    "tests": 27
+                  },
+                  "tests/test_dish_tool_step5_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 23,
+                    "skipped": 0,
+                    "tests": 23
+                  },
+                  "tests/test_dish_tool_step6_prepare.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 17,
+                    "skipped": 0,
+                    "tests": 17
+                  }
+                },
+                "passed": 167,
+                "repeat": 2,
+                "returncode": 0,
+                "skipped": 0,
+                "tests": 167,
+                "wall_seconds": 4.276,
+                "workers": 4
+              },
+              {
+                "errors": 0,
+                "failed": 0,
+                "file_results": {
+                  "tests/test_batch_apply.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 15,
+                    "skipped": 0,
+                    "tests": 15
+                  },
+                  "tests/test_core_models_and_dispatch.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 11,
+                    "skipped": 0,
+                    "tests": 11
+                  },
+                  "tests/test_dish_planning_authority_labels.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 14,
+                    "skipped": 0,
+                    "tests": 14
+                  },
+                  "tests/test_dish_tool_critical_input_safety.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 51,
+                    "skipped": 0,
+                    "tests": 51
+                  },
+                  "tests/test_dish_tool_step2_canonical.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 27,
+                    "skipped": 0,
+                    "tests": 27
+                  },
+                  "tests/test_dish_tool_step5_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 23,
+                    "skipped": 0,
+                    "tests": 23
+                  },
+                  "tests/test_dish_tool_step6_prepare.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 17,
+                    "skipped": 0,
+                    "tests": 17
+                  }
+                },
+                "passed": 167,
+                "repeat": 3,
+                "returncode": 0,
+                "skipped": 0,
+                "tests": 167,
+                "wall_seconds": 5.318,
+                "workers": 4
+              }
+            ],
+            "8": [
+              {
+                "errors": 0,
+                "failed": 0,
+                "file_results": {
+                  "tests/test_batch_apply.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 15,
+                    "skipped": 0,
+                    "tests": 15
+                  },
+                  "tests/test_core_models_and_dispatch.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 11,
+                    "skipped": 0,
+                    "tests": 11
+                  },
+                  "tests/test_dish_planning_authority_labels.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 14,
+                    "skipped": 0,
+                    "tests": 14
+                  },
+                  "tests/test_dish_tool_critical_input_safety.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 51,
+                    "skipped": 0,
+                    "tests": 51
+                  },
+                  "tests/test_dish_tool_step2_canonical.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 27,
+                    "skipped": 0,
+                    "tests": 27
+                  },
+                  "tests/test_dish_tool_step5_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 23,
+                    "skipped": 0,
+                    "tests": 23
+                  },
+                  "tests/test_dish_tool_step6_prepare.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 17,
+                    "skipped": 0,
+                    "tests": 17
+                  }
+                },
+                "passed": 167,
+                "repeat": 1,
+                "returncode": 0,
+                "skipped": 0,
+                "tests": 167,
+                "wall_seconds": 5.738,
+                "workers": 8
+              },
+              {
+                "errors": 0,
+                "failed": 0,
+                "file_results": {
+                  "tests/test_batch_apply.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 15,
+                    "skipped": 0,
+                    "tests": 15
+                  },
+                  "tests/test_core_models_and_dispatch.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 11,
+                    "skipped": 0,
+                    "tests": 11
+                  },
+                  "tests/test_dish_planning_authority_labels.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 14,
+                    "skipped": 0,
+                    "tests": 14
+                  },
+                  "tests/test_dish_tool_critical_input_safety.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 51,
+                    "skipped": 0,
+                    "tests": 51
+                  },
+                  "tests/test_dish_tool_step2_canonical.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 27,
+                    "skipped": 0,
+                    "tests": 27
+                  },
+                  "tests/test_dish_tool_step5_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 23,
+                    "skipped": 0,
+                    "tests": 23
+                  },
+                  "tests/test_dish_tool_step6_prepare.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 17,
+                    "skipped": 0,
+                    "tests": 17
+                  }
+                },
+                "passed": 167,
+                "repeat": 2,
+                "returncode": 0,
+                "skipped": 0,
+                "tests": 167,
+                "wall_seconds": 6.496,
+                "workers": 8
+              },
+              {
+                "errors": 0,
+                "failed": 0,
+                "file_results": {
+                  "tests/test_batch_apply.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 15,
+                    "skipped": 0,
+                    "tests": 15
+                  },
+                  "tests/test_core_models_and_dispatch.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 11,
+                    "skipped": 0,
+                    "tests": 11
+                  },
+                  "tests/test_dish_planning_authority_labels.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 14,
+                    "skipped": 0,
+                    "tests": 14
+                  },
+                  "tests/test_dish_tool_critical_input_safety.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 51,
+                    "skipped": 0,
+                    "tests": 51
+                  },
+                  "tests/test_dish_tool_step2_canonical.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 27,
+                    "skipped": 0,
+                    "tests": 27
+                  },
+                  "tests/test_dish_tool_step5_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 23,
+                    "skipped": 0,
+                    "tests": 23
+                  },
+                  "tests/test_dish_tool_step6_prepare.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 17,
+                    "skipped": 0,
+                    "tests": 17
+                  }
+                },
+                "passed": 167,
+                "repeat": 3,
+                "returncode": 0,
+                "skipped": 0,
+                "tests": 167,
+                "wall_seconds": 6.14,
+                "workers": 8
+              }
+            ]
+          },
+          "pytest_args": [
+            "-p",
+            "no:randomly",
+            "--dist",
+            "loadfile"
+          ],
+          "qualified_at": "2026-08-08T15:10:13.119597+00:00",
+          "reviewer": "openai-cc5",
+          "serial": [
+            {
+              "errors": 0,
+              "failed": 0,
+              "file_results": {
+                "tests/test_batch_apply.py": {
+                  "errors": 0,
+                  "failed": 0,
+                  "passed": 9,
+                  "skipped": 0,
+                  "tests": 9
+                },
+                "tests/test_commands.py": {
+                  "errors": 0,
+                  "failed": 0,
+                  "passed": 15,
+                  "skipped": 0,
+                  "tests": 15
+                },
+                "tests/test_core_models_and_dispatch.py": {
+                  "errors": 0,
+                  "failed": 0,
+                  "passed": 11,
+                  "skipped": 0,
+                  "tests": 11
+                },
+                "tests/test_dish_planning_authority_labels.py": {
+                  "errors": 0,
+                  "failed": 0,
+                  "passed": 14,
+                  "skipped": 0,
+                  "tests": 14
+                },
+                "tests/test_dish_tool_critical_input_safety.py": {
+                  "errors": 0,
+                  "failed": 0,
+                  "passed": 51,
+                  "skipped": 0,
+                  "tests": 51
+                },
+                "tests/test_dish_tool_step2_canonical.py": {
+                  "errors": 0,
+                  "failed": 0,
+                  "passed": 27,
+                  "skipped": 0,
+                  "tests": 27
+                },
+                "tests/test_dish_tool_step5_commands.py": {
+                  "errors": 0,
+                  "failed": 0,
+                  "passed": 23,
+                  "skipped": 0,
+                  "tests": 23
+                },
+                "tests/test_dish_tool_step6_prepare.py": {
+                  "errors": 0,
+                  "failed": 0,
+                  "passed": 17,
+                  "skipped": 0,
+                  "tests": 17
+                }
+              },
+              "passed": 167,
+              "repeat": 1,
+              "returncode": 0,
+              "skipped": 0,
+              "tests": 167,
+              "wall_seconds": 6.841,
+              "workers": null
+            }
+          ],
+          "shared_scope": [
+            "tests/conftest.py",
+            "tests/support"
+          ],
+          "shared_sha256": "51862207197bd16386de06f7a2c46cc8e5fee3d50062ef4404717fb6b31b778f",
+          "started_at": "2026-08-08T15:08:34.167952+00:00",
+          "static_review": {
+            "findings": [],
+            "tool": "tests.flake_runner.scan_flake_risks"
+          },
+          "witness_sha256": {
+            "tests/test_batch_apply.py": "0e37cfd7c8f93bb212c294f5f913fc481135487e59749fccb09b9dde4c265110",
+            "tests/test_core_models_and_dispatch.py": "ceb41da4c3150c0beaa7630d45b9e4da79abb53b15b0b8b2ac05c74e164d3aa7",
+            "tests/test_dish_planning_authority_labels.py": "4a51d825dc34bce96bccd4268b66cd84d451502c5331ad83b4f0fe2228232340",
+            "tests/test_dish_tool_critical_input_safety.py": "2f7f1098ec77fca6fbe9ab2f124159a94a0b88d5683c7cbc31a88d1a4c48e6ab",
+            "tests/test_dish_tool_step2_canonical.py": "9eb3e6cf675e87d5563333260a7c949181255ec705da4dd6b9bb8ba1c383305d",
+            "tests/test_dish_tool_step5_commands.py": "8590610d25bd952d1d12fb01bebefcf0fb095ba7531653a5701188c5b8b0c30b",
+            "tests/test_dish_tool_step6_prepare.py": "2117ff4e1d69f4c0123251de3dd6e93f516e0779f85a339b413bbd5c9338324e"
+          }
+        }
+      ],
       "reviewed_sha256": "7b54dc519fcdf6a2aeeee0e3809cf281f6a2bb8e6893618b15fd1c99ddcec6ac",
-      "shared_sha256": "e695290b3ad453f33b084dc2f72c7011ac10931c6641fb2b68d6337257ffa67e"
+      "shared_sha256": "51862207197bd16386de06f7a2c46cc8e5fee3d50062ef4404717fb6b31b778f"
     },
     "tests/test_core_models_and_dispatch.py": {
       "active_evidence": {

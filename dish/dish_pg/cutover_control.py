@@ -18,7 +18,6 @@ from dish_service.legacy_writer_fence import (
 from . import artifact_identity_models as artifact
 from . import models
 from . import reservation_models as reservations
-from . import readiness_evidence_models as typed_readiness
 from . import stage3_models as wf
 from . import stage5_models as tx
 from . import stage6_models as rel
@@ -28,9 +27,12 @@ from .command_effects import expected_projection_count
 from .cutover_chronology import _require_at_or_after, _utc_comparable
 from .release_artifacts import observe_release_artifact
 from .release_validation import (
+    WORKER_READINESS_REPORT_CONTRACT,
+    normalize_worker_readiness_probes,
     validate_reconciliation,
     validate_worker_readiness,
     validate_writer_fence_observation,
+    worker_readiness_report_sha256,
 )
 from .release_evidence import (
     ReleaseAuthorityError,
@@ -775,6 +777,10 @@ class CutoverControlAuthority:
         ):
             raise ReleaseAuthorityError("runtime attestation artifact identities must be SHA-256 digests")
         body = dict(payload)
+        _require_nonblank(
+            body.get("projection_worker_identity"),
+            "runtime attestation projection_worker_identity",
+        )
         expected = {
             "dish_release": candidate.dish_release,
             "protocol_release": candidate.protocol_release,
@@ -835,10 +841,8 @@ class CutoverControlAuthority:
         *,
         candidate_id: uuid.UUID,
         reconciliation_run_id: uuid.UUID,
-        worker_identity: str,
-        worker_release: str,
-        payload: Mapping[str, Any],
-        ready_at: datetime,
+        probes: Mapping[str, Any],
+        completed_at: datetime,
     ) -> rel.ProjectionWorkerReadiness:
         candidate = self._candidate(candidate_id)
         cutover = self.session.scalar(
@@ -853,23 +857,45 @@ class CutoverControlAuthority:
                 models.AuthorityActivation.outcome == "activated",
             )
         )
-        reconciliation = self.session.get(tx.ProjectionReconciliationRun, reconciliation_run_id)
-        body = dict(payload)
+        runtime = self.session.scalar(
+            select(rel.RuntimeReleaseAttestation).where(
+                rel.RuntimeReleaseAttestation.candidate_id == candidate_id
+            )
+        )
+        reconciliation = self.session.get(
+            tx.ProjectionReconciliationRun, reconciliation_run_id
+        )
         if candidate.status != "activated" or cutover is None or activation is None:
             raise ReleaseAuthorityError(
                 "projection worker readiness requires the exact candidate after durable rollback burn"
             )
+        if runtime is None:
+            raise ReleaseAuthorityError(
+                "projection worker readiness requires the exact runtime release attestation"
+            )
         _require_at_or_after(
-            ready_at,
+            completed_at,
             activation.rollback_burned_at,
-            field="ready_at",
+            field="completed_at",
             floor_field="rollback burn",
         )
-        self._require_not_future(ready_at, "ready_at")
-        if worker_release.strip() != candidate.dish_release:
-            raise ReleaseAuthorityError("projection worker readiness is for the wrong release")
+        _require_at_or_after(
+            completed_at,
+            runtime.recorded_at,
+            field="completed_at",
+            floor_field="runtime attestation",
+        )
+        self._require_not_future(completed_at, "completed_at")
+        worker_identity = _require_nonblank(
+            runtime.payload.get("projection_worker_identity"),
+            "runtime attestation projection_worker_identity",
+        )
+        observe_release_artifact(
+            artifact_path=runtime.payload.get("projection_worker_artifact_path"),
+            expected_sha256=runtime.projection_worker_artifact_sha256,
+        )
         reconciliation_validation = validate_reconciliation(
-            self.session, candidate=candidate, as_of=ready_at
+            self.session, candidate=candidate, as_of=completed_at
         )
         if (
             reconciliation is None
@@ -879,58 +905,58 @@ class CutoverControlAuthority:
             or reconciliation.completed_at is None
             or _utc_comparable(reconciliation.completed_at)
             < _utc_comparable(activation.rollback_burned_at)
+            or _utc_comparable(reconciliation.completed_at)
+            > _utc_comparable(completed_at)
         ):
             raise ReleaseAuthorityError(
                 "projection worker readiness requires fresh candidate-bound exact reconciliation"
             )
-        inventory = self.session.scalar(
-            select(typed_readiness.WorkerProbeInventory).where(
-                typed_readiness.WorkerProbeInventory.candidate_id == candidate_id,
-                typed_readiness.WorkerProbeInventory.projection_epoch_id
-                == candidate.projection_epoch_id,
+        normalized_probes = normalize_worker_readiness_probes(dict(probes))
+        if any(probe["result"] != "pass" for probe in normalized_probes.values()):
+            raise ReleaseAuthorityError(
+                "projection worker readiness requires every fixed probe to pass"
             )
+        report_sha256 = worker_readiness_report_sha256(
+            candidate_id=candidate_id,
+            projection_epoch_id=candidate.projection_epoch_id,
+            reconciliation_run_id=reconciliation_run_id,
+            worker_identity=worker_identity,
+            worker_release=candidate.dish_release,
+            deployed_artifact_sha256=runtime.projection_worker_artifact_sha256,
+            probes=normalized_probes,
+            completed_at=completed_at,
         )
-        if inventory is None or _utc_comparable(inventory.sealed_at) > _utc_comparable(ready_at):
-            raise ReleaseAuthorityError("projection worker readiness requires a sealed typed probe inventory")
-        requirement_count = len(
-            self.session.scalars(
-                select(typed_readiness.WorkerProbeRequirement).where(
-                    typed_readiness.WorkerProbeRequirement.inventory_id == inventory.inventory_id
-                )
-            ).all()
-        )
-        if requirement_count != inventory.required_probe_count:
-            raise ReleaseAuthorityError("typed worker probe inventory is incomplete")
-        identity = {
-            "candidate_id": str(candidate_id),
-            "projection_epoch_id": str(candidate.projection_epoch_id),
-            "reconciliation_run_id": str(reconciliation_run_id),
-            "probe_inventory_id": str(inventory.inventory_id),
-            "worker_identity": worker_identity,
-            "worker_release": worker_release,
-            "payload": body,
-        }
-        digest = sha256_json(identity)
         existing = self.session.scalar(
             select(rel.ProjectionWorkerReadiness).where(
                 rel.ProjectionWorkerReadiness.candidate_id == candidate_id
             )
         )
         if existing is not None:
-            if existing.readiness_sha256 != digest:
-                raise ReleaseAuthorityError("projection worker readiness identity conflict")
+            if existing.report_sha256 != report_sha256:
+                raise ReleaseAuthorityError(
+                    "projection worker readiness report identity conflict"
+                )
             return existing
         row = rel.ProjectionWorkerReadiness(
             readiness_id=self.uuid_factory(),
             candidate_id=candidate_id,
             projection_epoch_id=candidate.projection_epoch_id,
             reconciliation_run_id=reconciliation_run_id,
-            probe_inventory_id=inventory.inventory_id,
-            worker_identity=worker_identity.strip(),
-            worker_release=worker_release.strip(),
-            payload=body,
-            readiness_sha256=digest,
-            ready_at=ready_at,
+            worker_identity=worker_identity,
+            worker_release=candidate.dish_release,
+            deployed_artifact_sha256=runtime.projection_worker_artifact_sha256,
+            report_contract_version=WORKER_READINESS_REPORT_CONTRACT,
+            claim_probe_result=normalized_probes["claim"]["result"],
+            claim_execution_identity=normalized_probes["claim"]["execution_identity"],
+            claim_evidence_identity=normalized_probes["claim"]["evidence_identity"],
+            exact_write_probe_result=normalized_probes["exact_write"]["result"],
+            exact_write_execution_identity=normalized_probes["exact_write"]["execution_identity"],
+            exact_write_evidence_identity=normalized_probes["exact_write"]["evidence_identity"],
+            restart_probe_result=normalized_probes["restart"]["result"],
+            restart_execution_identity=normalized_probes["restart"]["execution_identity"],
+            restart_evidence_identity=normalized_probes["restart"]["evidence_identity"],
+            completed_at=completed_at,
+            report_sha256=report_sha256,
         )
         self.session.add(row)
         self.session.flush()
@@ -1193,12 +1219,12 @@ class CutoverControlAuthority:
             self.session,
             candidate=candidate,
             row=worker,
-            deployed_artifact_sha256=runtime.projection_worker_artifact_sha256,
+            runtime=runtime,
             as_of=opened_at,
         )
         if (
             _utc_comparable(runtime.recorded_at) > _utc_comparable(opened_at)
-            or _utc_comparable(worker.ready_at) > _utc_comparable(opened_at)
+            or _utc_comparable(worker.completed_at) > _utc_comparable(opened_at)
             or _utc_comparable(plan.recorded_at) > _utc_comparable(opened_at)
             or _utc_comparable(reservation.reserved_at) > _utc_comparable(opened_at)
         ):
@@ -1212,7 +1238,7 @@ class CutoverControlAuthority:
                 "admission_control_state": control.state,
                 "runtime_attestation_id": str(runtime.attestation_id),
                 "projection_worker_readiness_id": str(worker.readiness_id),
-                "worker_readiness_completion": readiness_details,
+                "worker_readiness_report": readiness_details,
                 "first_admission_plan_id": str(plan.plan_id),
                 "first_request_reservation_id": str(reservation.reservation_id),
             },

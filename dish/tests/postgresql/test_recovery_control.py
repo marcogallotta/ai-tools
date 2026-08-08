@@ -8,12 +8,15 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import select
 
+from dish_pg import candidate_manifest_models as manifest_models
 from dish_pg import models
 from dish_pg import stage5_models as projection_models
 from dish_pg import stage6_models as release_models
 from dish_pg.candidate_manifest import bind_approval_manifest
 from dish_pg.recovery_control import (
     RecoveredPhysicalState,
+    _authorized_release_candidate,
+    _stored_manifest_fingerprint,
     RestoreControl,
     RestoreControlError,
     migration_revision_sha256,
@@ -30,6 +33,7 @@ from dish_pg.workflow import (
 )
 from tests.support.postgresql.core import NOW, _bootstrap_registry, _next, core_db
 from tests.support.postgresql.workflow import (
+    NOW as WORKFLOW_NOW,
     _admit,
     _execution,
     _register_run,
@@ -41,6 +45,12 @@ from tests.support.postgresql.recovery_control import (
     _physical_state,
     _setup,
 )
+
+from tests.support.postgresql.release import (
+    _complete_active_mapping_reconciliation,
+    _record_runtime_and_worker_readiness_report,
+)
+from tests.support.postgresql.stage8_cutover_evidence_gates import _burn_rollback
 
 
 @pytest.mark.parametrize(
@@ -301,3 +311,91 @@ def test_retired_generation_lease_cannot_be_renewed(workflow_db):
                 owner_id="owner-1", now=NOW + timedelta(minutes=2),
                 new_expiry=NOW + timedelta(hours=2),
             )
+
+
+def test_historical_v2_manifest_fingerprint_keeps_original_contract():
+    values = [uuid.uuid4() for _ in range(8)]
+    hash_values = [hashlib.sha256(str(index).encode()).hexdigest() for index in range(6)]
+    manifest = manifest_models.ReleaseCandidateManifest(
+        manifest_id=uuid.uuid4(),
+        candidate_id=values[0],
+        manifest_version=2,
+        canonical_fingerprint="f" * 64,
+        generation_id=values[1],
+        source_import_batch_id=values[2],
+        source_import_run_id=values[3],
+        shadow_baseline_id=values[4],
+        projection_epoch_id=values[5],
+        registry_version_id=values[6],
+        honest_binding_id=values[7],
+        approval_reconciliation_run_id=None,
+        mapping_membership_sha256=hash_values[0],
+        import_completion_sha256=hash_values[1],
+        typed_import_linkage_sha256=hash_values[2],
+        reconciliation_evidence_sha256=hash_values[3],
+        readiness_inventory_sha256=hash_values[4],
+        readiness_completion_sha256=hash_values[5],
+        builder_contract_version="candidate-authority-v2",
+        built_at=NOW,
+    )
+    expected = sha256_json(
+        {
+            "manifest_version": 2,
+            "candidate_id": str(values[0]),
+            "generation_id": str(values[1]),
+            "source_import_batch_id": str(values[2]),
+            "source_import_run_id": str(values[3]),
+            "shadow_baseline_id": str(values[4]),
+            "projection_epoch_id": str(values[5]),
+            "registry_version_id": str(values[6]),
+            "honest_binding_id": str(values[7]),
+            "builder_contract_version": "candidate-authority-v2",
+            "mapping_membership_sha256": hash_values[0],
+            "import_completion_sha256": hash_values[1],
+            "typed_import_linkage_sha256": hash_values[2],
+            "reconciliation_evidence_sha256": hash_values[3],
+            "readiness_inventory_sha256": hash_values[4],
+            "readiness_completion_sha256": hash_values[5],
+        }
+    )
+    assert _stored_manifest_fingerprint(manifest) == expected
+
+
+def test_recovery_remains_valid_after_legitimate_post_burn_readiness(workflow_db):
+    factory, ids, context, task_id = workflow_db
+    with factory() as session:
+        service, candidate_id, _cutover_run_id = _burn_rollback(
+            session, ids, context, task_id
+        )
+        reconciliation = _complete_active_mapping_reconciliation(
+            session,
+            ids,
+            candidate_id=candidate_id,
+            corpus_identity="cc5-recovery-post-burn",
+            started_at=WORKFLOW_NOW + timedelta(minutes=6),
+            completed_at=WORKFLOW_NOW + timedelta(minutes=6),
+        )
+        _record_runtime_and_worker_readiness_report(
+            session,
+            ids,
+            service=service,
+            candidate_id=candidate_id,
+            reconciliation=reconciliation,
+            recorded_at=WORKFLOW_NOW + timedelta(minutes=6),
+        )
+        candidate = service._candidate(candidate_id)
+        active = session.get(models.AuthorityGeneration, context["generation_id"])
+        state = _physical_state()
+        control = replace(
+            _control(context, ids, state),
+            schema_head=candidate.schema_head,
+            dish_release=candidate.dish_release,
+            honest_release=candidate.honest_release,
+            protocol_release=candidate.protocol_release,
+            openapi_release=candidate.openapi_release,
+            routing_release=candidate.routing_release,
+        )
+        authorized = _authorized_release_candidate(
+            session, active=active, control=control
+        )
+        assert authorized.candidate_id == candidate_id

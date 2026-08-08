@@ -80,27 +80,43 @@ def _same_instant(left: datetime, right: datetime) -> bool:
 def _stored_manifest_fingerprint(
     manifest: manifest_models.ReleaseCandidateManifest,
 ) -> str:
-    """Recompute only the immutable approval-time manifest row, not live corpora."""
-    return sha256_json(
-        {
-            "manifest_version": manifest.manifest_version,
-            "candidate_id": str(manifest.candidate_id),
-            "generation_id": str(manifest.generation_id),
-            "source_import_batch_id": str(manifest.source_import_batch_id),
-            "source_import_run_id": str(manifest.source_import_run_id),
-            "shadow_baseline_id": str(manifest.shadow_baseline_id),
-            "projection_epoch_id": str(manifest.projection_epoch_id),
-            "registry_version_id": str(manifest.registry_version_id),
-            "honest_binding_id": str(manifest.honest_binding_id),
-            "builder_contract_version": manifest.builder_contract_version,
-            "mapping_membership_sha256": manifest.mapping_membership_sha256,
-            "import_completion_sha256": manifest.import_completion_sha256,
-            "typed_import_linkage_sha256": manifest.typed_import_linkage_sha256,
-            "reconciliation_evidence_sha256": manifest.reconciliation_evidence_sha256,
-            "readiness_inventory_sha256": manifest.readiness_inventory_sha256,
-            "readiness_completion_sha256": manifest.readiness_completion_sha256,
-        }
-    )
+    """Recompute the stored manifest under its original immutable contract."""
+    payload = {
+        "manifest_version": manifest.manifest_version,
+        "candidate_id": str(manifest.candidate_id),
+        "generation_id": str(manifest.generation_id),
+        "source_import_batch_id": str(manifest.source_import_batch_id),
+        "source_import_run_id": str(manifest.source_import_run_id),
+        "shadow_baseline_id": str(manifest.shadow_baseline_id),
+        "projection_epoch_id": str(manifest.projection_epoch_id),
+        "registry_version_id": str(manifest.registry_version_id),
+        "honest_binding_id": str(manifest.honest_binding_id),
+        "builder_contract_version": manifest.builder_contract_version,
+        "mapping_membership_sha256": manifest.mapping_membership_sha256,
+        "import_completion_sha256": manifest.import_completion_sha256,
+        "typed_import_linkage_sha256": manifest.typed_import_linkage_sha256,
+        "reconciliation_evidence_sha256": manifest.reconciliation_evidence_sha256,
+    }
+    if manifest.manifest_version == 2:
+        payload.update(
+            {
+                "readiness_inventory_sha256": manifest.readiness_inventory_sha256,
+                "readiness_completion_sha256": manifest.readiness_completion_sha256,
+            }
+        )
+    elif manifest.manifest_version == 3:
+        if manifest.approval_reconciliation_run_id is None:
+            raise RestoreControlError(
+                "stored v3 candidate manifest lacks approval reconciliation identity"
+            )
+        payload["approval_reconciliation_run_id"] = str(
+            manifest.approval_reconciliation_run_id
+        )
+    else:
+        raise RestoreControlError(
+            f"unsupported stored candidate manifest version: {manifest.manifest_version}"
+        )
+    return sha256_json(payload)
 
 
 @dataclass(frozen=True)

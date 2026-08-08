@@ -34,8 +34,7 @@ from tests.support.postgresql.release import (
     HASH_A,
     ROOT,
     _complete_active_mapping_reconciliation,
-    _record_runtime_and_typed_readiness,
-    _seed_worker_probe_inventory,
+    _record_runtime_and_worker_readiness_report,
     _artifact_file,
     _prepare_candidate,
     _record_and_engage_writer_fence,
@@ -131,7 +130,7 @@ def _record_runtime_and_worker_readiness(session, ids, service, candidate_id, co
         started_at=NOW + timedelta(minutes=6),
         completed_at=NOW + timedelta(minutes=6),
     )
-    return _record_runtime_and_typed_readiness(
+    return _record_runtime_and_worker_readiness_report(
         session,
         ids,
         service=service,

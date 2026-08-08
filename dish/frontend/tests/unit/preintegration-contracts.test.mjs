@@ -40,7 +40,7 @@ test("initial authority policy does not trust forwarded identity", () => {
 });
 
 const stage3 = JSON.parse(await readFile(new URL("../../contracts/stage3-read-contract.json", import.meta.url)));
-const migrationHead = await readFile(new URL("../../../dish_pg/migrations/versions/0030_validation_failure_admission.py", import.meta.url), "utf8");
+const migrationHead = await readFile(new URL("../../../dish_pg/migrations/versions/0031_worker_readiness_consolidation.py", import.meta.url), "utf8");
 const modelSources = await Promise.all([
   "../../../dish_pg/models.py",
   "../../../dish_pg/stage3_models.py",
@@ -50,8 +50,8 @@ const modelSources = await Promise.all([
 const allModels = modelSources.join("\n");
 
 test("Stage 3 contract is reconciled to the checked-in migration head", () => {
-  assert.match(migrationHead, /revision\s*=\s*["']0030_validation_failure_admission["']/);
-  assert.equal(stage3.checked_in_schema.alembic_head, "0030_validation_failure_admission");
+  assert.match(migrationHead, /revision\s*=\s*["']0031_worker_readiness_consolidation["']/);
+  assert.equal(stage3.checked_in_schema.alembic_head, "0031_worker_readiness_consolidation");
   assert.equal(stage3.checked_in_schema.production_status, "dark-launch-target-non-authoritative");
 });
 

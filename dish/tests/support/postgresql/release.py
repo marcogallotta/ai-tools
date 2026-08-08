@@ -10,7 +10,6 @@ from sqlalchemy import select, text
 
 from dish_pg import import_link_models as import_links
 from dish_pg import models
-from dish_pg import readiness_evidence_models as typed_readiness
 from dish_pg import stage5_models as tx
 from dish_pg.release import ALEMBIC_HEAD, ReleaseCandidateService
 from dish_pg.transition import ProjectionService, ShadowService, SourceImportService
@@ -59,74 +58,6 @@ def _independent_reconciliation_corpus_sha256(*, candidate, membership) -> str:
                     membership, key=lambda item: (item[0], str(item[1]))
                 )
             ],
-        }
-    )
-
-
-def _independent_iso_utc(value: datetime) -> str:
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).isoformat()
-
-
-def _independent_worker_inventory_sha256(*, inventory, requirements) -> str:
-    return independent_sha256_json(
-        {
-            "contract": "worker-probe-inventory-v1",
-            "candidate_id": str(inventory.candidate_id),
-            "projection_epoch_id": str(inventory.projection_epoch_id),
-            "inventory_version": inventory.inventory_version,
-            "inventory_contract_version": inventory.inventory_contract_version,
-            "requirements": [
-                {
-                    "probe_kind": item.probe_kind,
-                    "ordinal": item.ordinal,
-                    "probe_contract_version": item.probe_contract_version,
-                }
-                for item in sorted(requirements, key=lambda row: row.ordinal)
-            ],
-        }
-    )
-
-
-def _independent_worker_probe_evidence_sha256(
-    *, readiness, requirement, inventory, deployed_artifact_sha256, observed_at
-) -> str:
-    return independent_sha256_json(
-        {
-            "contract": "worker-probe-evidence-v1",
-            "readiness_id": str(readiness.readiness_id),
-            "requirement_id": str(requirement.requirement_id),
-            "inventory_id": str(inventory.inventory_id),
-            "candidate_id": str(inventory.candidate_id),
-            "projection_epoch_id": str(inventory.projection_epoch_id),
-            "probe_kind": requirement.probe_kind,
-            "execution_identity": (
-                f"probe:{requirement.probe_kind}:{readiness.readiness_id}"
-            ),
-            "worker_identity": readiness.worker_identity,
-            "deployed_artifact_sha256": deployed_artifact_sha256,
-            "result": "pass",
-            "observed_at": _independent_iso_utc(observed_at),
-            "evidence_artifact_identity": f"fixture:{requirement.probe_kind}",
-        }
-    )
-
-
-def _independent_worker_completion_sha256(
-    *, readiness, inventory, completed_at
-) -> str:
-    return independent_sha256_json(
-        {
-            "contract": "worker-readiness-completion-v1",
-            "readiness_id": str(readiness.readiness_id),
-            "inventory_id": str(inventory.inventory_id),
-            "candidate_id": str(inventory.candidate_id),
-            "projection_epoch_id": str(inventory.projection_epoch_id),
-            "completion_state": "complete",
-            "required_probe_count": inventory.required_probe_count,
-            "passed_probe_count": inventory.required_probe_count,
-            "completed_at": _independent_iso_utc(completed_at),
         }
     )
 
@@ -496,94 +427,18 @@ def _artifact_file(label: str) -> tuple[str, str]:
     return str(path), hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _seed_worker_probe_inventory(session, ids, *, candidate, sealed_at):
-    inventory = typed_readiness.WorkerProbeInventory(
-        inventory_id=_next(ids),
-        candidate_id=candidate.candidate_id,
-        projection_epoch_id=candidate.projection_epoch_id,
-        inventory_version=1,
-        required_probe_count=3,
-        inventory_sha256="0" * 64,
-        inventory_contract_version="worker-probes-v1",
-        sealed_at=sealed_at,
-    )
-    session.add(inventory)
-    session.flush()
-    requirements = []
-    for ordinal, probe_kind in enumerate(("claim", "write", "restart")):
-        requirement = typed_readiness.WorkerProbeRequirement(
-            requirement_id=_next(ids),
-            inventory_id=inventory.inventory_id,
-            probe_kind=probe_kind,
-            ordinal=ordinal,
-            probe_contract_version="projection-worker-probe-v1",
-        )
-        session.add(requirement)
-        requirements.append(requirement)
-    session.flush()
-    inventory.inventory_sha256 = _independent_worker_inventory_sha256(
-        inventory=inventory, requirements=requirements
-    )
-    session.flush()
-    return inventory, requirements
+def _worker_readiness_probes(*, worker_identity: str) -> dict[str, dict[str, str]]:
+    return {
+        probe_kind: {
+            "result": "pass",
+            "execution_identity": f"{worker_identity}:{probe_kind}:execution",
+            "evidence_identity": f"fixture:{worker_identity}:{probe_kind}",
+        }
+        for probe_kind in ("claim", "exact_write", "restart")
+    }
 
 
-def _complete_worker_readiness(
-    session,
-    ids,
-    *,
-    candidate,
-    readiness,
-    inventory,
-    requirements,
-    deployed_artifact_sha256,
-    completed_at,
-):
-    for requirement in requirements:
-        session.add(typed_readiness.WorkerProbeEvidence(
-            evidence_id=_next(ids),
-            readiness_id=readiness.readiness_id,
-            requirement_id=requirement.requirement_id,
-            inventory_id=inventory.inventory_id,
-            candidate_id=candidate.candidate_id,
-            projection_epoch_id=candidate.projection_epoch_id,
-            probe_kind=requirement.probe_kind,
-            execution_identity=f"probe:{requirement.probe_kind}:{readiness.readiness_id}",
-            worker_identity=readiness.worker_identity,
-            deployed_artifact_sha256=deployed_artifact_sha256,
-            result="pass",
-            observed_at=completed_at,
-            evidence_artifact_identity=f"fixture:{requirement.probe_kind}",
-            evidence_sha256=_independent_worker_probe_evidence_sha256(
-                readiness=readiness,
-                requirement=requirement,
-                inventory=inventory,
-                deployed_artifact_sha256=deployed_artifact_sha256,
-                observed_at=completed_at,
-            ),
-            recorded_at=completed_at,
-        ))
-    session.flush()
-    completion = typed_readiness.WorkerReadinessCompletion(
-        completion_id=_next(ids),
-        readiness_id=readiness.readiness_id,
-        inventory_id=inventory.inventory_id,
-        candidate_id=candidate.candidate_id,
-        projection_epoch_id=candidate.projection_epoch_id,
-        completion_state="complete",
-        required_probe_count=inventory.required_probe_count,
-        passed_probe_count=inventory.required_probe_count,
-        completion_sha256=_independent_worker_completion_sha256(
-            readiness=readiness, inventory=inventory, completed_at=completed_at
-        ),
-        completed_at=completed_at,
-    )
-    session.add(completion)
-    session.flush()
-    return completion
-
-
-def _record_runtime_and_typed_readiness(
+def _record_runtime_and_worker_readiness_report(
     session,
     ids,
     *,
@@ -610,31 +465,17 @@ def _record_runtime_and_typed_readiness(
             "route_target": "postgresql",
             "health": "pass",
             "mutation_admission": "closed",
+            "projection_worker_identity": worker_identity,
             "service_artifact_path": service_path,
             "projection_worker_artifact_path": worker_path,
             "route_probe_path": route_path,
         },
         recorded_at=recorded_at,
     )
-    inventory, requirements = _seed_worker_probe_inventory(
-        session, ids, candidate=candidate, sealed_at=recorded_at
-    )
     readiness_row = service.record_projection_worker_readiness(
         candidate_id=candidate_id,
         reconciliation_run_id=reconciliation.reconciliation_run_id,
-        worker_identity=worker_identity,
-        worker_release=candidate.dish_release,
-        payload={"probe_runner": "typed-worker-probes-v1"},
-        ready_at=recorded_at,
-    )
-    _complete_worker_readiness(
-        session,
-        ids,
-        candidate=candidate,
-        readiness=readiness_row,
-        inventory=inventory,
-        requirements=requirements,
-        deployed_artifact_sha256=worker_sha,
+        probes=_worker_readiness_probes(worker_identity=worker_identity),
         completed_at=recorded_at,
     )
     return runtime, readiness_row

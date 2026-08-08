@@ -137,6 +137,30 @@ def _candidate(session, ids, context, epoch_id, *, status: str):
     return candidate
 
 def _approve_candidate(session, ids, candidate) -> None:
+    active_registry = session.get(models.ActiveSectionRegistry, candidate.generation_id)
+    reconciliation = projection_models.ProjectionReconciliationRun(
+        reconciliation_run_id=_next(ids),
+        generation_id=candidate.generation_id,
+        projection_epoch_id=candidate.projection_epoch_id,
+        corpus_identity=f"recovery-approval:{candidate.candidate_id}",
+        candidate_id=candidate.candidate_id,
+        registry_version_id=active_registry.registry_version_id,
+        observation_started_at=NOW,
+        observation_completed_at=NOW,
+        external_snapshot_identity="recovery-approval-snapshot",
+        external_high_water=None,
+        corpus_manifest_sha256="e" * 64,
+        scope_complete=True,
+        adapter_contract_version="asana-snapshot-v1",
+        evidence_recorded_at=NOW,
+        status="complete",
+        expected_items=0,
+        processed_items=0,
+        started_at=NOW,
+        completed_at=NOW,
+    )
+    session.add(reconciliation)
+    session.flush()
     manifest = {"candidate_id": str(candidate.candidate_id), "authorized": True}
     digest = sha256_json(manifest)
     bundle = release_models.EvidenceBundle(

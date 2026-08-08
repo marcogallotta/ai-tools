@@ -56,7 +56,10 @@ def _approve_candidate(session, ids, context, task_id):
     )
     assert manifest is not None and binding is not None
     assert binding.canonical_fingerprint == manifest.canonical_fingerprint
-    assert manifest.manifest_version == 2
+    assert manifest.manifest_version == 3
+    assert manifest.approval_reconciliation_run_id is not None
+    assert manifest.readiness_inventory_sha256 is None
+    assert manifest.readiness_completion_sha256 is None
     return service, candidate_id, manifest
 
 

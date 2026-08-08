@@ -320,15 +320,16 @@ def test_active_batch_evidence_tampering_fails_closed(tmp_path: Path) -> None:
     import test_selection.parallel as parallel
 
     isolated = _parallel_fixture_root(tmp_path)
+    shutil.copy2(ROOT / "tests" / "test_batch_apply.py", isolated / "tests" / "test_batch_apply.py")
     manifest_path = isolated / "test_selection" / "parallel_safe_qualifications.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    active = manifest["files"]["tests/test_commands.py"]["active_evidence"]
+    active = manifest["files"]["tests/test_batch_apply.py"]["active_evidence"]
     assert active["kind"] == "batch"
     manifest["batch_evidence"][active["id"]]["note"] += " tampered"
     manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
     assert parallel.parallel_safe_qualification_reason(
-        "tests/test_commands.py", root=isolated
+        "tests/test_batch_apply.py", root=isolated
     ) == "qualification evidence content does not match its evidence ID"
 
 

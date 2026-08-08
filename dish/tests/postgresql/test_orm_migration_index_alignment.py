@@ -18,9 +18,6 @@ EXPECTED = {
     "projection_reconciliation_runs": {
         "ix_reconciliation_candidate_boundary": "0025_reconciliation_observation_boundary.py",
     },
-    "projection_worker_readiness": {
-        "ix_projection_worker_readiness_probe_inventory": "0026_typed_worker_readiness_evidence.py",
-    },
 }
 
 

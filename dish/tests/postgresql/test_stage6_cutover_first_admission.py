@@ -36,7 +36,7 @@ from tests.support.postgresql.release import (
     _prepare_candidate,
     _record_and_engage_writer_fence,
     _record_final_closure,
-    _record_runtime_and_typed_readiness,
+    _record_runtime_and_worker_readiness_report,
     _writer_fence_proof,
 )
 from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
@@ -200,6 +200,6 @@ def test_rollback_bundle_identity_migration_adds_nonblank_constraint(tmp_path: P
         assert "trim(legacy_bundle_id)" in checks[
             "ck_authority_activations_legacy_bundle_nonblank"
         ]
-        assert ALEMBIC_HEAD == "0030_validation_failure_admission"
+        assert ALEMBIC_HEAD == "0031_worker_readiness_consolidation"
     finally:
         engine.dispose()

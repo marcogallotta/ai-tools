@@ -48,7 +48,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0030_validation_failure_admission"
+ALEMBIC_HEAD = "0031_worker_readiness_consolidation"
 
 
 class ReleaseCandidateService(
@@ -1084,7 +1084,7 @@ class ReleaseCandidateService(
             }
             manifest["projection_worker_readiness"] = None if worker is None else {
                 "readiness_id": str(worker.readiness_id),
-                "sha256": worker.readiness_sha256,
+                "sha256": worker.report_sha256,
                 "reconciliation_run_id": str(worker.reconciliation_run_id),
             }
             manifest["first_admission_plan"] = None if plan is None else {

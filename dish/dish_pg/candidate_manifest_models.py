@@ -66,17 +66,21 @@ class ReleaseCandidateManifest(Base):
         ForeignKey("honest_contract_bindings.binding_id", ondelete="RESTRICT"),
         nullable=False,
     )
+    approval_reconciliation_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey("projection_reconciliation_runs.reconciliation_run_id", ondelete="RESTRICT"),
+    )
     mapping_membership_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     import_completion_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     typed_import_linkage_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     reconciliation_evidence_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
-    readiness_inventory_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
-    readiness_completion_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    readiness_inventory_sha256: Mapped[str | None] = mapped_column(String(64))
+    readiness_completion_sha256: Mapped[str | None] = mapped_column(String(64))
     builder_contract_version: Mapped[str] = mapped_column(String(64), nullable=False)
     built_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
-        CheckConstraint("manifest_version = 2", name="manifest_version_two"),
+        CheckConstraint("manifest_version IN (2, 3)", name="manifest_version_supported"),
         CheckConstraint(
             "length(canonical_fingerprint) = 64", name="fingerprint_hash_length"
         ),
@@ -85,8 +89,12 @@ class ReleaseCandidateManifest(Base):
             "length(import_completion_sha256) = 64 AND "
             "length(typed_import_linkage_sha256) = 64 AND "
             "length(reconciliation_evidence_sha256) = 64 AND "
-            "length(readiness_inventory_sha256) = 64 AND "
-            "length(readiness_completion_sha256) = 64",
+            "((manifest_version = 2 AND approval_reconciliation_run_id IS NULL "
+            "AND length(readiness_inventory_sha256) = 64 "
+            "AND length(readiness_completion_sha256) = 64) OR "
+            "(manifest_version = 3 AND approval_reconciliation_run_id IS NOT NULL "
+            "AND readiness_inventory_sha256 IS NULL "
+            "AND readiness_completion_sha256 IS NULL))",
             name="component_hash_lengths",
         ),
         CheckConstraint(
@@ -140,7 +148,7 @@ class CutoverApprovalManifestBinding(Base):
             name="fk_approval_manifest_binding_exact_manifest",
             ondelete="RESTRICT",
         ),
-        CheckConstraint("manifest_version = 2", name="manifest_version_two"),
+        CheckConstraint("manifest_version IN (2, 3)", name="manifest_version_supported"),
         CheckConstraint(
             "length(canonical_fingerprint) = 64", name="fingerprint_hash_length"
         ),
@@ -168,12 +176,8 @@ class CandidateManifestRevalidation(Base):
     observed_reconciliation_evidence_sha256: Mapped[str] = mapped_column(
         String(64), nullable=False
     )
-    observed_readiness_inventory_sha256: Mapped[str] = mapped_column(
-        String(64), nullable=False
-    )
-    observed_readiness_completion_sha256: Mapped[str] = mapped_column(
-        String(64), nullable=False
-    )
+    observed_readiness_inventory_sha256: Mapped[str | None] = mapped_column(String(64))
+    observed_readiness_completion_sha256: Mapped[str | None] = mapped_column(String(64))
     result: Mapped[str] = mapped_column(String(16), nullable=False)
     revalidated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -189,7 +193,7 @@ class CandidateManifestRevalidation(Base):
             name="fk_candidate_manifest_revalidation_exact_manifest",
             ondelete="RESTRICT",
         ),
-        CheckConstraint("manifest_version = 2", name="manifest_version_two"),
+        CheckConstraint("manifest_version IN (2, 3)", name="manifest_version_supported"),
         CheckConstraint(
             "length(approved_fingerprint) = 64 AND "
             "length(observed_fingerprint) = 64",
@@ -200,8 +204,10 @@ class CandidateManifestRevalidation(Base):
             "length(observed_import_completion_sha256) = 64 AND "
             "length(observed_typed_import_linkage_sha256) = 64 AND "
             "length(observed_reconciliation_evidence_sha256) = 64 AND "
-            "length(observed_readiness_inventory_sha256) = 64 AND "
-            "length(observed_readiness_completion_sha256) = 64",
+            "((manifest_version = 2 AND length(observed_readiness_inventory_sha256) = 64 "
+            "AND length(observed_readiness_completion_sha256) = 64) OR "
+            "(manifest_version = 3 AND observed_readiness_inventory_sha256 IS NULL "
+            "AND observed_readiness_completion_sha256 IS NULL))",
             name="observed_component_hash_lengths",
         ),
         CheckConstraint("result IN ('matched','stale')", name="result_allowed"),

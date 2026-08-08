@@ -1,14 +1,14 @@
 {
   "baseline": "ai-tools-venv(20260807-204024).tgz",
   "frontend_contract_version": "dish-frontend-v1",
-  "checked_in_postgresql_head": "0030_validation_failure_admission",
+  "checked_in_postgresql_head": "0031_worker_readiness_consolidation",
   "completed_pre_db_work": [
     "fixture visual review environment",
     "visual and interaction hardening",
     "Gate A readiness packet",
     "Gate B source map",
     "Stage 2 runtime decisions",
-    "checked-in schema reconciliation through 0030",
+    "checked-in schema reconciliation through 0031",
     "Stage 2 acceptance scaffold",
     "Stage 3 acceptance scaffold",
     "test deployment checklist",

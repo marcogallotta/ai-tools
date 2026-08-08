@@ -1,8 +1,8 @@
-# PostgreSQL schema contract: revisions 0019–0027 (pattern unchanged through 0030)
+# PostgreSQL schema contract: revisions 0019–0027 plus forward contract 0031
 
 This is the narrow durable interface for release, cutover, import, reconciliation, readiness, and runtime agents. It lists stable schema names, database-enforced behavior, application-computed values, and required transitions. It is not general architecture documentation.
 
-Detailed per-revision entries below stop at 0027. Revisions 0028–0030 (`0028_consumed_first_request_open_admission`, `0029_cutover_authority_admission_fixes`, `0030_validation_failure_admission`) continue the same admission/authority-fixes pattern this contract already documents and do not introduce a new kind of durable interface; they are not separately broken out here.
+Detailed historical per-revision entries below stop at 0027. Revisions 0028–0030 (`0028_consumed_first_request_open_admission`, `0029_cutover_authority_admission_fixes`, `0030_validation_failure_admission`) continue the same admission/authority-fixes pattern and are not separately broken out. Revision 0031 introduces the forward worker-readiness/manifest-v3 interface and is documented separately after the historical 0027 section.
 
 ## Linear revision sequence
 
@@ -15,7 +15,8 @@ Detailed per-revision entries below stop at 0027. Revisions 0028–0030 (`0028_c
 7. `0024_typed_import_linkage` → `0025_reconciliation_observation_boundary`
 8. `0025_reconciliation_observation_boundary` → `0026_typed_worker_readiness_evidence`
 9. `0026_typed_worker_readiness_evidence` → `0027_server_default_alignment`
-10. `0027_server_default_alignment` → `0028_consumed_first_request_open_admission` → `0029_cutover_authority_admission_fixes` → `0030_validation_failure_admission` (head, not separately detailed below — see note above)
+10. `0027_server_default_alignment` → `0028_consumed_first_request_open_admission` → `0029_cutover_authority_admission_fixes` → `0030_validation_failure_admission` (not separately detailed below)
+11. `0030_validation_failure_admission` → `0031_worker_readiness_consolidation` (current checked-in head; forward contract detailed below)
 
 ## 0019 — exact service-run ownership
 
@@ -163,10 +164,12 @@ Consumers: reconciliation adapter and release gate. Revision 0022 includes the s
 
 ORM/tables:
 
-- `dish_pg.readiness_evidence_models.WorkerProbeInventory` / `worker_probe_inventories`
-- `dish_pg.readiness_evidence_models.WorkerProbeRequirement` / `worker_probe_requirements`
-- `dish_pg.readiness_evidence_models.WorkerProbeEvidence` / `worker_probe_evidence`
-- `dish_pg.readiness_evidence_models.WorkerReadinessCompletion` / `worker_readiness_completions`
+- historical migration-0026 `worker_probe_inventories`
+- historical migration-0026 `worker_probe_requirements`
+- historical migration-0026 `worker_probe_evidence`
+- historical migration-0026 `worker_readiness_completions`
+
+These four tables describe the historical v2 contract only; revision 0031 removes them from the forward schema and the current ORM no longer exposes those model classes.
 
 Changed table: `projection_worker_readiness.probe_inventory_id` binds the readiness row to its sealed inventory.
 
@@ -190,3 +193,14 @@ ORM fields and durable server defaults:
 All four remain active raw-SQL contracts, not backfill-only defaults. ORM metadata carries equivalent `server_default` values while retaining Python defaults. Alembic online and offline configuration enables `compare_server_default=True`.
 
 Consumers: raw SQL writers, ORM writers, metadata drift checks, and migration tests. No state transition changes.
+
+
+## 0031 — post-burn worker-readiness consolidation and candidate-authority manifest v3
+
+Forward durable report: `dish_pg.stage6_models.ProjectionWorkerReadiness` / `projection_worker_readiness`.
+
+The report stores one row per candidate with: `readiness_id`, exact `candidate_id`, exact `projection_epoch_id`, exact post-burn `reconciliation_run_id`, server-derived `worker_identity`, `worker_release`, deployed `deployed_artifact_sha256`, exact `report_contract_version = 'projection-worker-readiness-v1'`, result/execution/evidence identities for each fixed probe (`claim`, `exact_write`, `restart`), `completed_at`, and `report_sha256`. Update/delete are forbidden. The application writer derives candidate/epoch/release/artifact/worker identity from durable candidate/runtime state, accepts only the validator-owned fixed probe set, requires every probe to pass, requires fresh exact candidate-bound reconciliation completed after rollback burn, re-observes the deployed worker artifact, and writes the canonical report hash. First admission re-observes deployment artifacts and recomputes/revalidates the report and fresh reconciliation, so missing, tampered, wrong-worker, wrong-artifact, failed, or stale reports fail closed.
+
+Forward approval manifest: `ReleaseCandidateManifest.manifest_version = 3`, `builder_contract_version = 'candidate-authority-v3'`. The manifest retains mapping, import-completion, typed-import-linkage, and reconciliation evidence digests, but the reconciliation digest is for the exact `approval_reconciliation_run_id` stored on the manifest. Worker-readiness inventory/completion digest columns are `NULL` for v3 and do not participate in the v3 fingerprint. A later legitimate post-burn reconciliation/readiness report therefore cannot stale approval authority. Historical v2 rows keep their original six-component fingerprint semantics; recovery hashes them as v2 and does not reinterpret them under v3. Activation rejects a historical manifest and requires a newly approved forward v3 candidate.
+
+Schema transition: migration 0031 does not rewrite historical migration 0026. Before dropping the historical typed readiness tables or replacing the old `projection_worker_readiness` shape, the migration counts all legacy readiness rows and aborts if any exist. Operators must export those rows using read-only `scripts/dish-pg-export-typed-readiness` as `dish-class-c-typed-worker-readiness-export-v1` evidence and then rebuild/reseed the dark-launch target at 0031; the migration never silently destroys live historical evidence.

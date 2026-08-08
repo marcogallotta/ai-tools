@@ -139,7 +139,7 @@ def test_board_includes_isolated_and_paginates_without_consuming_retry(core_db) 
             session,
             ids,
             generation_status="active",
-            schema_head="0030_validation_failure_admission",
+            schema_head="0031_worker_readiness_consolidation",
         )
         isolated = _import_title(session, ids, context, title="Alpha", asana_gid="1001")
         peer = _import_title(session, ids, context, title="alpha", asana_gid="1002")
@@ -209,7 +209,7 @@ def test_empty_section_is_explicit_and_bootstrap_query_count_is_constant(core_db
             session,
             ids,
             generation_status="active",
-            schema_head="0030_validation_failure_admission",
+            schema_head="0031_worker_readiness_consolidation",
         )
 
     statements: list[str] = []
@@ -239,7 +239,7 @@ def test_section_capacity_is_rejected_before_bootstrap_card_query(core_db) -> No
             session,
             ids,
             generation_status="active",
-            schema_head="0030_validation_failure_admission",
+            schema_head="0031_worker_readiness_consolidation",
         )
         second_section_id = _next(ids)
         session.add(

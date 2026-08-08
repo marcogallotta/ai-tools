@@ -13,7 +13,7 @@ memory.
 
 ## 1. What the repository can prove offline
 
-The repository can migrate an empty target through `0030_validation_failure_admission`, execute the Stage 1–6
+The repository can migrate an empty target through `0031_worker_readiness_consolidation`, execute the Stage 1–6
 acceptance suites, hash the exact source tree, store immutable evidence revisions and rehearsal
 reports, recompute structural closure from PostgreSQL, build deterministic evidence bundles, fence
 the legacy HTTP writer mechanically, and resume an interrupted cutover from durable checkpoints.
@@ -51,7 +51,7 @@ Freeze and retain these exact identities before candidate creation:
 - closed shadow baseline;
 - active projection epoch and completed reconciliation run;
 - Dish, Honest, protocol, OpenAPI, and routing releases;
-- PostgreSQL schema head `0030_validation_failure_admission`.
+- PostgreSQL schema head `0031_worker_readiness_consolidation`.
 
 A changed source commit, ledger high-water mark, production object, release, schema head, or proof gap
 requires a new or revised candidate. Do not relabel an old evidence bundle.
@@ -112,7 +112,7 @@ DISH_PG_URL="$DISH_PG_REHEARSAL_URL" \
   .venv/bin/python scripts/dish-pg-operations-evidence database-fingerprint \
   --database-url-env DISH_PG_URL \
   --expected-database-name dish_rehearsal \
-  --expected-schema-head 0030_validation_failure_admission \
+  --expected-schema-head 0031_worker_readiness_consolidation \
   --output /secure/evidence/clean-migration-fingerprint.json
 ```
 
@@ -129,7 +129,7 @@ DISH_PG_URL="$DISH_PG_REHEARSAL_URL" \
   .venv/bin/python scripts/dish-pg-operations-evidence database-fingerprint \
   --database-url-env DISH_PG_URL \
   --expected-database-name dish_rehearsal \
-  --expected-schema-head 0030_validation_failure_admission \
+  --expected-schema-head 0031_worker_readiness_consolidation \
   --output /secure/evidence/backup-source-fingerprint.json
 pg_dump "$DISH_PG_REHEARSAL_LIBPQ_URL" \
   --format=custom --no-owner --no-privileges \
@@ -144,7 +144,7 @@ DISH_PG_URL="$DISH_PG_RESTORE_URL" \
   .venv/bin/python scripts/dish-pg-operations-evidence database-fingerprint \
   --database-url-env DISH_PG_URL \
   --expected-database-name dish_restore_verify \
-  --expected-schema-head 0030_validation_failure_admission \
+  --expected-schema-head 0031_worker_readiness_consolidation \
   --output /secure/evidence/backup-restored-fingerprint.json
 .venv/bin/python scripts/dish-pg-operations-evidence compare-database-fingerprints \
   --source /secure/evidence/backup-source-fingerprint.json \
@@ -169,7 +169,7 @@ Prepare a mode-0600 JSON file containing exact UUIDs and release identities:
   "source_release": "EXACT_RELEASE",
   "source_commit": "EXACT_COMMIT",
   "ledger_through_commit": "EXACT_COMMIT",
-  "schema_head": "0030_validation_failure_admission",
+  "schema_head": "0031_worker_readiness_consolidation",
   "dish_release": "EXACT_RELEASE",
   "honest_release": "EXACT_RELEASE",
   "protocol_release": "EXACT_RELEASE",
@@ -309,7 +309,7 @@ Evaluation fails closed unless all of the following are true in authoritative Po
   unresolved;
 - no projection outbox item, attempt, create correlation, or drift item is unresolved;
 - the latest completed reconciliation accounts for every active projection mapping;
-- the database is at `0030_validation_failure_admission`;
+- the database is at `0031_worker_readiness_consolidation`;
 - every required evidence item and rehearsal class passes.
 
 Bundle identity is deterministic from authoritative contents; build time does not alter its SHA-256.
@@ -518,13 +518,36 @@ scripts/dish-pg-release runtime-attestation-record CANDIDATE_UUID \
   --file /secure/evidence/runtime-attestation.json
 ```
 
-Run the projection worker's claim, exact-write and restart probes and complete a reconciliation of
-every active mapping after rollback burn. Record the exact worker release and reconciliation:
+The runtime attestation payload must include the exact deployed `projection_worker_identity`; the
+service also re-observes the worker artifact path/digest before accepting readiness. Worker identity,
+release, candidate/epoch, and deployed artifact digest are server-derived for the readiness report,
+not operator-declared readiness fields.
+
+Run the projection worker's fixed `claim`, `exact_write`, and `restart` probes and complete a fresh,
+exact candidate-bound reconciliation of every active mapping after rollback burn. The readiness input
+contains only that reconciliation identity, the validator-owned fixed probe set with per-probe
+execution/evidence identities, and the completion time:
+
+```json
+{
+  "reconciliation_run_id": "UUID",
+  "probes": {
+    "claim": {"result": "pass", "execution_identity": "EXACT_ID", "evidence_identity": "EXACT_ID"},
+    "exact_write": {"result": "pass", "execution_identity": "EXACT_ID", "evidence_identity": "EXACT_ID"},
+    "restart": {"result": "pass", "execution_identity": "EXACT_ID", "evidence_identity": "EXACT_ID"}
+  },
+  "completed_at": "RFC3339_WITH_OFFSET"
+}
+```
 
 ```sh
 scripts/dish-pg-release projection-worker-ready CANDIDATE_UUID \
   --file /secure/evidence/projection-worker-readiness.json
 ```
+
+The resulting `projection_worker_readiness` row is the immutable runtime-readiness report and carries
+its own report SHA-256. It is post-burn evidence and is intentionally outside the approval-time
+candidate-manifest fingerprint.
 
 Choose one bounded first production request before opening admission. The request must target an
 existing task in the candidate generation and use canonical `task_id`. Commands that require a

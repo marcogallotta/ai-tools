@@ -1,6 +1,6 @@
 # Frontend database migration reconciliation
 
-Status: reconciled against checked-in Alembic head `0030_validation_failure_admission`; PostgreSQL
+Status: reconciled against checked-in Alembic head `0031_worker_readiness_consolidation`; PostgreSQL
 remains a non-authoritative dark-launch target and final production/runtime reconciliation remains pending.
 
 This document turns Gate A/B database dependencies into a migration handoff. It records what the
@@ -11,7 +11,7 @@ state may be added without becoming task or workflow authority. The machine-read
 ## Reconciliation boundary
 
 The checked-in chain is `0001_stage_a_baseline` through
-`0030_validation_failure_admission`. The database remains in dark-launch preparation and the migration
+`0031_worker_readiness_consolidation`. The database remains in dark-launch preparation and the migration
 contract does not claim authority cutover. Therefore:
 
 - schema statements here describe the checked-in production candidate, not live production;

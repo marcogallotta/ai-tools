@@ -13,7 +13,6 @@ from . import artifact_identity_models as artifact
 from . import import_link_models as import_links
 from . import legacy_request_models as legacy
 from . import models
-from . import readiness_evidence_models as readiness
 from . import stage5_models as tx
 from . import stage6_models as rel
 from .cutover_chronology import _utc_comparable
@@ -383,183 +382,154 @@ def validate_writer_fence_observation(
 
 
 
+WORKER_READINESS_REPORT_CONTRACT = "projection-worker-readiness-v1"
+REQUIRED_WORKER_READINESS_PROBES = ("claim", "exact_write", "restart")
+_ALLOWED_WORKER_PROBE_RESULTS = frozenset({"pass", "fail", "error"})
+
+
 def _iso_utc(value: datetime) -> str:
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).isoformat()
+    normalized = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return normalized.astimezone(timezone.utc).isoformat(timespec="microseconds")
 
 
-def worker_inventory_sha256(
+def normalize_worker_readiness_probes(probes: Any) -> dict[str, dict[str, str]]:
+    if not isinstance(probes, dict) or set(probes) != set(REQUIRED_WORKER_READINESS_PROBES):
+        raise ReleaseAuthorityError(
+            "projection worker readiness requires exactly claim, exact_write, and restart probes"
+        )
+    normalized: dict[str, dict[str, str]] = {}
+    for probe_kind in REQUIRED_WORKER_READINESS_PROBES:
+        raw = probes.get(probe_kind)
+        if not isinstance(raw, dict) or set(raw) != {
+            "result",
+            "execution_identity",
+            "evidence_identity",
+        }:
+            raise ReleaseAuthorityError(
+                f"{probe_kind} readiness probe must contain result, execution_identity, and evidence_identity"
+            )
+        result = str(raw.get("result") or "").strip()
+        execution_identity = str(raw.get("execution_identity") or "").strip()
+        evidence_identity = str(raw.get("evidence_identity") or "").strip()
+        if result not in _ALLOWED_WORKER_PROBE_RESULTS:
+            raise ReleaseAuthorityError(f"{probe_kind} readiness probe result is invalid")
+        if not execution_identity or not evidence_identity:
+            raise ReleaseAuthorityError(
+                f"{probe_kind} readiness probe requires execution and evidence identities"
+            )
+        normalized[probe_kind] = {
+            "result": result,
+            "execution_identity": execution_identity,
+            "evidence_identity": evidence_identity,
+        }
+    return normalized
+
+
+def worker_readiness_report_sha256(
     *,
     candidate_id: uuid.UUID,
     projection_epoch_id: uuid.UUID,
-    inventory_version: int,
-    inventory_contract_version: str,
-    requirements: list[readiness.WorkerProbeRequirement],
-) -> str:
-    return sha256_json({
-        "contract": "worker-probe-inventory-v1",
-        "candidate_id": str(candidate_id),
-        "projection_epoch_id": str(projection_epoch_id),
-        "inventory_version": inventory_version,
-        "inventory_contract_version": inventory_contract_version,
-        "requirements": [
-            {
-                "probe_kind": item.probe_kind,
-                "ordinal": item.ordinal,
-                "probe_contract_version": item.probe_contract_version,
-            }
-            for item in sorted(requirements, key=lambda row: row.ordinal)
-        ],
-    })
-
-
-def worker_probe_evidence_sha256(
-    *,
-    readiness_id: uuid.UUID,
-    requirement_id: uuid.UUID,
-    inventory_id: uuid.UUID,
-    candidate_id: uuid.UUID,
-    projection_epoch_id: uuid.UUID,
-    probe_kind: str,
-    execution_identity: str,
+    reconciliation_run_id: uuid.UUID,
     worker_identity: str,
+    worker_release: str,
     deployed_artifact_sha256: str,
-    result: str,
-    observed_at: datetime,
-    evidence_artifact_identity: str,
-) -> str:
-    return sha256_json({
-        "contract": "worker-probe-evidence-v1",
-        "readiness_id": str(readiness_id),
-        "requirement_id": str(requirement_id),
-        "inventory_id": str(inventory_id),
-        "candidate_id": str(candidate_id),
-        "projection_epoch_id": str(projection_epoch_id),
-        "probe_kind": probe_kind,
-        "execution_identity": execution_identity,
-        "worker_identity": worker_identity,
-        "deployed_artifact_sha256": deployed_artifact_sha256,
-        "result": result,
-        "observed_at": _iso_utc(observed_at),
-        "evidence_artifact_identity": evidence_artifact_identity,
-    })
-
-
-def worker_completion_sha256(
-    *,
-    readiness_id: uuid.UUID,
-    inventory_id: uuid.UUID,
-    candidate_id: uuid.UUID,
-    projection_epoch_id: uuid.UUID,
-    required_probe_count: int,
-    passed_probe_count: int,
+    probes: dict[str, dict[str, str]],
     completed_at: datetime,
 ) -> str:
-    return sha256_json({
-        "contract": "worker-readiness-completion-v1",
-        "readiness_id": str(readiness_id),
-        "inventory_id": str(inventory_id),
-        "candidate_id": str(candidate_id),
-        "projection_epoch_id": str(projection_epoch_id),
-        "completion_state": "complete",
-        "required_probe_count": required_probe_count,
-        "passed_probe_count": passed_probe_count,
-        "completed_at": _iso_utc(completed_at),
-    })
+    return sha256_json(
+        {
+            "contract": WORKER_READINESS_REPORT_CONTRACT,
+            "candidate_id": str(candidate_id),
+            "projection_epoch_id": str(projection_epoch_id),
+            "reconciliation_run_id": str(reconciliation_run_id),
+            "worker_identity": worker_identity,
+            "worker_release": worker_release,
+            "deployed_artifact_sha256": deployed_artifact_sha256,
+            "probes": {
+                probe_kind: probes[probe_kind]
+                for probe_kind in REQUIRED_WORKER_READINESS_PROBES
+            },
+            "completed_at": _iso_utc(completed_at),
+        }
+    )
+
+
+def _row_worker_readiness_probes(row: rel.ProjectionWorkerReadiness) -> dict[str, dict[str, str]]:
+    return {
+        "claim": {
+            "result": row.claim_probe_result,
+            "execution_identity": row.claim_execution_identity,
+            "evidence_identity": row.claim_evidence_identity,
+        },
+        "exact_write": {
+            "result": row.exact_write_probe_result,
+            "execution_identity": row.exact_write_execution_identity,
+            "evidence_identity": row.exact_write_evidence_identity,
+        },
+        "restart": {
+            "result": row.restart_probe_result,
+            "execution_identity": row.restart_execution_identity,
+            "evidence_identity": row.restart_evidence_identity,
+        },
+    }
+
 
 def validate_worker_readiness(
     session: Session,
     *,
     candidate: rel.ReleaseCandidate,
     row: rel.ProjectionWorkerReadiness,
-    deployed_artifact_sha256: str,
+    runtime: rel.RuntimeReleaseAttestation,
     as_of: datetime,
 ) -> dict[str, Any]:
-    inventory = session.get(readiness.WorkerProbeInventory, row.probe_inventory_id)
-    if inventory is None:
-        raise ReleaseAuthorityError("worker readiness lacks a sealed typed inventory")
-    requirements = session.scalars(
-        select(readiness.WorkerProbeRequirement)
-        .where(readiness.WorkerProbeRequirement.inventory_id == inventory.inventory_id)
-        .order_by(readiness.WorkerProbeRequirement.ordinal)
-    ).all()
-    evidence = session.scalars(
-        select(readiness.WorkerProbeEvidence).where(
-            readiness.WorkerProbeEvidence.readiness_id == row.readiness_id
-        )
-    ).all()
-    completion = session.scalar(
-        select(readiness.WorkerReadinessCompletion).where(
-            readiness.WorkerReadinessCompletion.readiness_id == row.readiness_id
-        )
-    )
-    requirement_by_id = {item.requirement_id: item for item in requirements}
-    exact_evidence = {
-        item.requirement_id: item
-        for item in evidence
-        if item.requirement_id in requirement_by_id
-        and item.inventory_id == inventory.inventory_id
-        and item.candidate_id == candidate.candidate_id
-        and item.projection_epoch_id == candidate.projection_epoch_id
-        and item.probe_kind == requirement_by_id[item.requirement_id].probe_kind
-        and item.worker_identity == row.worker_identity
-        and item.deployed_artifact_sha256 == deployed_artifact_sha256
-        and item.result == "pass"
-        and item.evidence_sha256 == worker_probe_evidence_sha256(
-            readiness_id=item.readiness_id,
-            requirement_id=item.requirement_id,
-            inventory_id=item.inventory_id,
-            candidate_id=item.candidate_id,
-            projection_epoch_id=item.projection_epoch_id,
-            probe_kind=item.probe_kind,
-            execution_identity=item.execution_identity,
-            worker_identity=item.worker_identity,
-            deployed_artifact_sha256=item.deployed_artifact_sha256,
-            result=item.result,
-            observed_at=item.observed_at,
-            evidence_artifact_identity=item.evidence_artifact_identity,
-        )
-        and _utc_comparable(item.recorded_at) >= _utc_comparable(item.observed_at)
-        and _utc_comparable(item.recorded_at) <= _utc_comparable(as_of)
-    }
+    expected_worker_identity = runtime.payload.get("projection_worker_identity")
+    probes = _row_worker_readiness_probes(row)
+    reconciliation = validate_reconciliation(session, candidate=candidate, as_of=as_of)
     if (
-        inventory.candidate_id != candidate.candidate_id
-        or inventory.projection_epoch_id != candidate.projection_epoch_id
-        or inventory.required_probe_count <= 0
-        or inventory.inventory_sha256 != worker_inventory_sha256(
-            candidate_id=inventory.candidate_id,
-            projection_epoch_id=inventory.projection_epoch_id,
-            inventory_version=inventory.inventory_version,
-            inventory_contract_version=inventory.inventory_contract_version,
-            requirements=requirements,
+        row.candidate_id != candidate.candidate_id
+        or row.projection_epoch_id != candidate.projection_epoch_id
+        or row.worker_release != candidate.dish_release
+        or not isinstance(expected_worker_identity, str)
+        or not expected_worker_identity.strip()
+        or row.worker_identity != expected_worker_identity.strip()
+        or row.deployed_artifact_sha256 != runtime.projection_worker_artifact_sha256
+        or row.report_contract_version != WORKER_READINESS_REPORT_CONTRACT
+        or any(
+            probe["result"] != "pass"
+            or not str(probe["execution_identity"]).strip()
+            or not str(probe["evidence_identity"]).strip()
+            for probe in probes.values()
         )
-        or len(requirements) != inventory.required_probe_count
-        or len({item.probe_kind for item in requirements}) != len(requirements)
-        or len({item.ordinal for item in requirements}) != len(requirements)
-        or set(exact_evidence) != set(requirement_by_id)
-        or completion is None
-        or completion.inventory_id != inventory.inventory_id
-        or completion.candidate_id != candidate.candidate_id
-        or completion.projection_epoch_id != candidate.projection_epoch_id
-        or completion.completion_state != "complete"
-        or completion.required_probe_count != inventory.required_probe_count
-        or completion.passed_probe_count != inventory.required_probe_count
-        or completion.completion_sha256 != worker_completion_sha256(
-            readiness_id=completion.readiness_id,
-            inventory_id=completion.inventory_id,
-            candidate_id=completion.candidate_id,
-            projection_epoch_id=completion.projection_epoch_id,
-            required_probe_count=completion.required_probe_count,
-            passed_probe_count=completion.passed_probe_count,
-            completed_at=completion.completed_at,
+        or row.report_sha256
+        != worker_readiness_report_sha256(
+            candidate_id=row.candidate_id,
+            projection_epoch_id=row.projection_epoch_id,
+            reconciliation_run_id=row.reconciliation_run_id,
+            worker_identity=row.worker_identity,
+            worker_release=row.worker_release,
+            deployed_artifact_sha256=row.deployed_artifact_sha256,
+            probes=probes,
+            completed_at=row.completed_at,
         )
-        or _utc_comparable(completion.completed_at) > _utc_comparable(as_of)
+        or _utc_comparable(runtime.recorded_at) > _utc_comparable(row.completed_at)
+        or _utc_comparable(row.completed_at) > _utc_comparable(as_of)
+        or reconciliation.run is None
+        or reconciliation.run.reconciliation_run_id != row.reconciliation_run_id
+        or reconciliation.run.completed_at is None
+        or _utc_comparable(reconciliation.run.completed_at)
+        > _utc_comparable(row.completed_at)
+        or not reconciliation.passed
     ):
-        raise ReleaseAuthorityError("projection worker readiness lacks exact completed typed probe evidence")
+        raise ReleaseAuthorityError(
+            "projection worker readiness report is missing, tampered, mismatched, failed, or stale"
+        )
     return {
-        "inventory_id": str(inventory.inventory_id),
-        "required_probe_count": inventory.required_probe_count,
-        "passed_probe_count": len(exact_evidence),
-        "completion_id": str(completion.completion_id),
+        "report_contract_version": row.report_contract_version,
+        "report_sha256": row.report_sha256,
+        "worker_identity": row.worker_identity,
+        "worker_release": row.worker_release,
+        "deployed_artifact_sha256": row.deployed_artifact_sha256,
+        "reconciliation_run_id": str(row.reconciliation_run_id),
+        "probes": probes,
+        "completed_at": _iso_utc(row.completed_at),
     }

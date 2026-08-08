@@ -36,7 +36,7 @@ from tests.support.postgresql.release import (
     _prepare_candidate,
     _record_and_engage_writer_fence,
     _record_final_closure,
-    _record_runtime_and_typed_readiness,
+    _record_runtime_and_worker_readiness_report,
     _writer_fence_proof,
 )
 from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db

@@ -64,7 +64,7 @@
     "live Asana governed projects/sections/tasks"
   ],
   "governing_source_sha256": {
-    "dish_pg/release.py": "7ed6a52d7f7abdd0d93ddd3294a7db08b734e77a2ce4b44759ea00465e6a0459",
+    "dish_pg/release.py": "f34cd3db155b32ff0e6d2ba767f08ceb28f4ad3fcc852a74ced23dfb7718d526",
     "dish_service/admin_cli.py": "96c1674947c6c0d01343e45f345b6fea4679be507e942c71d33db6ce57062c1a",
     "dish_service/application.py": "d140ce17cd4caa7a75b002e4b5524990d58fb4ad2c58d0001fdf07f7db678ace",
     "dish_service/command_spec.py": "4ec70142b918e39e669da1edfd19ad264c66d6c35d8a8414e551598febd9f005",
@@ -77,7 +77,7 @@
     "scripts/dish-pg-acceptance": "d7b30b7f45a9ff38b1106aa868065449bea879f71ce30f2428b1333aa0ec43d4",
     "scripts/dish-pg-stage-a-baseline": "fe86091089d0324f46edb5397decf517f2846c3138cd6c31edd22dc7ae19b5fa"
   },
-  "last_rebaseline_reason": "Refresh governed source hashes for bounded Dish recovery consistency and human-handoff fixes; command inventory, schema authority, and PostgreSQL target treatment are unchanged.",
+  "last_rebaseline_reason": "Adopt CC5 candidate-manifest v3 and consolidated post-burn projection-worker readiness at schema head 0031, preserving historical v2 authority while removing post-burn readiness from approval fingerprints; enforce reconciliation completion before readiness, reconcile frontend schema-head contracts, and align maintained cutover status.",
   "notes": [
     "The baseline records current source authority only; PostgreSQL is not production authority.",
     "Changes to governed source hashes or acceptance rules require explicit baseline review; ordinary test-file changes do not.",
@@ -85,7 +85,7 @@
     "The evidence characterizes immutable source commit 7dff85921f005c62929c46d347a7ab29ae463480; this evidence-only commit follows it and does not alter characterized runtime source."
   ],
   "production_change_epoch": "2026-08-05",
-  "schema_head": "0030_validation_failure_admission",
+  "schema_head": "0031_worker_readiness_consolidation",
   "source_commit": "7dff85921f005c62929c46d347a7ab29ae463480",
   "source_commit_time": "2026-08-05T11:09:00+00:00",
   "source_only_commands": [

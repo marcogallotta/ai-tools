@@ -71,7 +71,7 @@ def test_populated_0018_predecessor_upgrades_linearly_to_0027(pglite) -> None:
                         'release_candidate_manifests',
                         'legacy_request_tombstones',
                         'source_import_native_links',
-                        'worker_probe_inventories'
+                        'projection_worker_readiness'
                     )"""
                 )
             ).scalar_one()

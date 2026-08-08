@@ -14,7 +14,6 @@ from dish_pg import artifact_identity_models  # noqa: F401 -- register writer-fe
 from dish_pg import candidate_manifest_models  # noqa: F401 -- register candidate manifest metadata
 from dish_pg import legacy_request_models  # noqa: F401 -- register legacy request tombstones
 from dish_pg import import_link_models  # noqa: F401 -- register typed import linkage
-from dish_pg import readiness_evidence_models  # noqa: F401 -- register typed readiness evidence
 
 config = context.config
 if config.config_file_name is not None:

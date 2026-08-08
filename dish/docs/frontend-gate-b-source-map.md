@@ -6,7 +6,7 @@
 
 This packet maps the approved frontend fields against the current PostgreSQL models, read surfaces,
 and frontend contracts. It is reconciled to checked-in Alembic head
-`0030_validation_failure_admission`. PostgreSQL remains a non-authoritative dark-launch target: the
+`0031_worker_readiness_consolidation`. PostgreSQL remains a non-authoritative dark-launch target: the
 frontend read core may be implemented and exercised locally against it without transferring authority.
 Gate B still must pass before the Stage 3 HTTP/browser surface is activated. The Stage 4 portion must
 be reviewed again immediately before Delivery Stage 4.
@@ -29,7 +29,7 @@ than inferred.
 - Fixture frontend DTO shapes, notice registry, detail fixtures, and frontend OpenAPI document.
 
 The current checked-in models are treated as design evidence, not proof that the same schema is live in
-production. This map is reconciled to checked-in head `0030_validation_failure_admission`; final
+production. This map is reconciled to checked-in head `0031_worker_readiness_consolidation`; final
 production rollout reconciliation and independent Gate B review remain mandatory before HTTP/browser
 activation.
 
@@ -37,7 +37,7 @@ activation.
 
 | ID | Finding | Required resolution |
 |---|---|---|
-| B-01 | The map is reconciled to checked-in Alembic head `0030_validation_failure_admission`, while PostgreSQL remains a non-authoritative dark-launch target rather than production authority. | Reconcile again to the exact deployed dark-launch schema/runtime evidence before HTTP/browser activation; authority transfer is not required for read-only use. |
+| B-01 | The map is reconciled to checked-in Alembic head `0031_worker_readiness_consolidation`, while PostgreSQL remains a non-authoritative dark-launch target rather than production authority. | Reconcile again to the exact deployed dark-launch schema/runtime evidence before HTTP/browser activation; authority transfer is not required for read-only use. |
 | B-02 | A frontend-owned set-oriented board query candidate now exists in `dish_pg/frontend_board_query.py`; it is not yet activated through HTTP and lacks native PostgreSQL plan/isolation evidence. | Review the query against native PostgreSQL, record bounded plans/isolation, and keep it read-only/no-network. |
 | B-03 | Stateless typed/environment-scoped route identities now exist in `dish_service/frontend_tokens.py`; secret lifetime/rotation is not yet accepted. | Review secret lifecycle, collision/bounds evidence, and deployment ownership before HTTP activation. |
 | B-04 | The English terms **invalid lease** and **contested lease** still have no exact named PostgreSQL predicate. The candidate query emits only durable expired-lease attention for the latest actor attempt on the current open operation. | Name durable predicates or amend the approved meaning; do not broaden non-active lease states heuristically. |
