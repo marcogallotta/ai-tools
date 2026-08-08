@@ -438,7 +438,7 @@ def _target_authority_state(
             wf.AbandonmentAttempt.generation_id == generation.generation_id
         )
         if operation_ids:
-            query = query.where(wf.AbandonmentAttempt.operation_id.in_(operation_ids))
+            query = query.where(wf.AbandonmentAttempt.source_operation_id.in_(operation_ids))
         elif sorted_task_ids:
             query = query.where(wf.AbandonmentAttempt.task_id.in_(sorted_task_ids))
         else:
