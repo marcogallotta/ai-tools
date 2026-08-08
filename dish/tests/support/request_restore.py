@@ -20,7 +20,8 @@ from dish_tool.commands import DishApplication
 
 from dish_tool.database_initialization import initialize_database
 
-from dish_tool.database_schema import MIGRATIONS, _execute_script_statements
+from dish_tool.database_migrations import _execute_script_statements
+from dish_tool.database_schema import MIGRATIONS
 from tests.support.service_foundation import _release_loader
 from tests.support.verification import Backend as WorkflowBackend
 

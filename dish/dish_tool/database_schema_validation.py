@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import sqlite3
 
-from .database_schema import (
-    MIGRATIONS,
+from .database_migrations import (
     _execute_script_statements,
     _schema_version_state,
-    _validate_semantic_evidence,
     _validate_version_claims,
 )
+from .database_schema import MIGRATIONS, _validate_semantic_evidence
 from .errors import DishRuleError
 from .transactions import immediate_transaction
 

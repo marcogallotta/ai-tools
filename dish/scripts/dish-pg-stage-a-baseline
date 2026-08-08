@@ -26,7 +26,7 @@ if str(ROOT) not in sys.path:
 from dish_pg.release import ALEMBIC_HEAD  # noqa: E402
 from dish_service.command_spec import ACTION_COMMANDS  # noqa: E402
 from dish_tool.admin_command_spec import ADMIN_COMMANDS  # noqa: E402
-from dish_tool.database_schema import migrate_database  # noqa: E402
+from dish_tool.database_migrations import migrate_database  # noqa: E402
 
 
 class BaselineRegenerationError(ValueError):

@@ -404,7 +404,8 @@ def test_startup_closes_terminal_not_applied_reservation_with_pending_request(tm
 @pytest.mark.database_boundary_upgrade
 def test_schema_39_migrates_backup_reservations_and_completed_rows(tmp_path):
     from dish_service.request_replay import begin_request, complete_request
-    from dish_tool.database_schema import MIGRATIONS, _execute_script_statements
+    from dish_tool.database_migrations import _execute_script_statements
+    from dish_tool.database_schema import MIGRATIONS
     from dish_tool.results import result_envelope
 
     db_path = tmp_path / "schema-38.db"

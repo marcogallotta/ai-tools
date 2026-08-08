@@ -9,7 +9,7 @@ from typing import Any
 
 from dish_service.command_spec import ACTION_COMMANDS
 from dish_tool.admin_command_spec import ADMIN_COMMANDS
-from dish_tool.database_schema import migrate_database
+from dish_tool.database_migrations import migrate_database
 
 ROOT = Path(__file__).resolve().parents[2]
 BASELINE_PATH = ROOT / "docs/database-backend-stage-a-baseline.json"

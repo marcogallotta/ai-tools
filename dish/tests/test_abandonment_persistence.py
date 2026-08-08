@@ -18,9 +18,9 @@ from dish_tool.database import (
     record_actor_fact,
 )
 from dish_tool.database_initialization import initialize_database
+from dish_tool.database_migrations import _execute_script_statements
 from dish_tool.database_schema import (
     MIGRATIONS,
-    _execute_script_statements,
     _validate_semantic_evidence,
 )
 from dish_tool.errors import DishRuleError

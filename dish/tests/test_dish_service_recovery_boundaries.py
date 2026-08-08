@@ -9,7 +9,8 @@ from dish_service.leases import ServicePrincipal
 from dish_service.maintenance import MaintenanceGate
 from dish_tool.constants import SCHEMA_VERSION
 from dish_tool.database_initialization import initialize_database
-from dish_tool.database_schema import MIGRATIONS, _execute_script_statements
+from dish_tool.database_migrations import _execute_script_statements
+from dish_tool.database_schema import MIGRATIONS
 from tests.support.thread_teardown import join_thread, managed_thread
 from tests.support.operational import UnavailableBackend, _service
 

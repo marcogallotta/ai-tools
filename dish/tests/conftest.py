@@ -592,7 +592,7 @@ def isolate_dish_client_profile_env(monkeypatch):
 @pytest.fixture(scope="session")
 def current_database_template(tmp_path_factory):
     """Build the current empty schema once for tests that do not test migration."""
-    from dish_tool import database_schema
+    from dish_tool import database_migrations
     from dish_tool.database_schema_validation import validate_current_database
 
     path = tmp_path_factory.mktemp("dish-db-template") / "current.sqlite"
@@ -601,7 +601,7 @@ def current_database_template(tmp_path_factory):
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA synchronous = OFF")
-        database_schema.migrate_database(conn)
+        database_migrations.migrate_database(conn)
         validate_current_database(conn)
     finally:
         conn.close()
@@ -613,10 +613,10 @@ def close_sqlite_connections(
     monkeypatch, request, current_database_template, require_native_postgresql
 ):
     """Make every test own and deterministically close its SQLite handles."""
-    from dish_tool import database_schema
+    from dish_tool import database_migrations, database_initialization
 
     real_connect = sqlite3.connect
-    real_migrate = database_schema.migrate_database
+    real_migrate = database_migrations.migrate_database
     opened = []
 
     uses_production_pragmas = (
@@ -653,7 +653,8 @@ def close_sqlite_connections(
             template.close()
 
     monkeypatch.setattr(sqlite3, "connect", tracked_connect)
-    monkeypatch.setattr(database_schema, "migrate_database", migrate_or_clone_current_schema)
+    monkeypatch.setattr(database_migrations, "migrate_database", migrate_or_clone_current_schema)
+    monkeypatch.setattr(database_initialization, "migrate_database", migrate_or_clone_current_schema)
     yield
     for conn in reversed(opened):
         try:

@@ -32,8 +32,9 @@ from dish_tool.database import (
     record_audit,
 )
 from dish_tool.database_initialization import initialize_database
-from dish_tool.database_schema import migrate_database
-from dish_tool.database_schema import MIGRATIONS, _execute_script_statements
+from dish_tool.database_migrations import migrate_database
+from dish_tool.database_migrations import _execute_script_statements
+from dish_tool.database_schema import MIGRATIONS
 from dish_tool.errors import BackendFailure, DishRuleError, ReleaseResolutionError
 from dish_tool.models import (
     RequestPhase,
