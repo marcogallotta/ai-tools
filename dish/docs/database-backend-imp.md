@@ -1,8 +1,9 @@
 # Database backend implementation
 
 Status: Stage A design approved; Stages 1-5 and Stage 6's offline plumbing are implemented in code
-(see §3). No real-PostgreSQL execution, backup/restore, production capture, or cutover evidence
-exists yet — see "Outstanding work" below.
+(see §3). Native PostgreSQL execution, including backup/restore (`database-backend-postgresql-test-plan.md`
+§1-§3), now has passing local evidence; production-shaped rehearsal (§4), production capture, and
+cutover evidence do not yet exist — see "Outstanding work" below.
 
 Role: this document tracks what remains before Stage A can go to production and defines the
 acceptance bar for that remaining work. The implemented design itself (table shapes, command
@@ -27,22 +28,27 @@ still track; it is not "entirely open."
 - Backup, restore, and PITR rehearsal against a disposable PostgreSQL instance, with measured
   (not inferred) RPO/RTO.
 - Crash/fault rehearsal at each durable checkpoint listed in §2 below.
-- Runtime wiring rehearsal: start the deployable service and both workers against a disposable
-  PostgreSQL target and prove cross-process behavior — projection claim, external-attempt
-  settlement, reconciliation, worker restart, and worker takeover — not just that each process
-  starts and connects in isolation.
+- Runtime wiring rehearsal: **done, passed 2026-08-08.** `scripts/dish-pg-runtime-wiring-rehearsal`
+  starts the deployable service and both workers as separate OS processes against a disposable
+  Compose PostgreSQL target and passed first-attempt-clean (`status=passed`,
+  `evidence_validation.ok=true`, 11 distinct PIDs, 8 runtime-identity reports), proving projection
+  claim, external-attempt settlement, worker restart/takeover, and PostgreSQL-loss fail-closed. See
+  `database-backend-postgresql-test-plan.md` §3.
 - The importer (`dish_pg/importer.py`), projection worker (`dish_pg/projection_worker.py`), and
-  reconciliation worker (`dish_pg/reconciliation_worker.py`) now exist and are each verified against
-  real PostgreSQL (`tests/postgresql/native/test_importer.py`,
+  reconciliation worker (`dish_pg/reconciliation_worker.py`) exist, are each verified against real
+  PostgreSQL (`tests/postgresql/native/test_importer.py`,
   `tests/postgresql/native/test_projection_worker.py`,
-  `tests/postgresql/native/test_reconciliation_worker.py`), flake-checked clean. Projection outbox
-  rows now carry immutable live/shadow origin and the projection worker structurally refuses shadow
-  rows regardless of epoch effect state. None has a systemd
-  unit yet, and none has been exercised as a real separate OS process talking to another live
-  process — the runtime wiring rehearsal above still requires that, not just that each process
-  starts and connects in isolation.
+  `tests/postgresql/native/test_reconciliation_worker.py`), flake-checked clean, and are now also
+  proven talking to each other as real separate OS processes via the runtime wiring rehearsal above.
+  None has a systemd unit yet — that remains outstanding.
 - Production-shaped rehearsal (migration, activation, fault-injection, backup, restore) against
-  sanitized or copied production-shaped data.
+  sanitized or copied production-shaped data: `dish_pg/production_shaped_rehearsal.py` and
+  `scripts/dish-pg-production-shaped-rehearsal` exist and reuse the runtime-wiring service path plus
+  the §2 recovery-rehearsal backup/restore/PITR helpers, but no full end-to-end native run has been
+  attempted — the CLI requires `--evidence-dir --work-root --corpus --corpus-manifest --honest-repo
+  --honest-commit --repository-input-identity` with no documented default invocation, and no test
+  exercises a complete run (only sub-pieces like corpus/manifest validation are unit-tested). See
+  `database-backend-postgresql-test-plan.md` §4.
 
 **Needs real production access:**
 

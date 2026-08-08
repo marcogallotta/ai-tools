@@ -127,16 +127,23 @@ field pass. `status=blocked` is an honest native-infrastructure result, never a 
 native PostgreSQL and never permission to omit a scenario.
 
 As of 2026-08-06, a native §3 rerun (after fixing unrelated fixture/import gaps in commit
-`18e6446`) produces a deterministic, reproducing first-attempt failure: `PostgresRuntimeService`
-has no `record_replay_validation_failure` method, so `dish_service/http.py`'s fail-closed error
-handler crashes with `AttributeError` on any validation failure for a replay-sensitive command.
-This is a real gap, not test flakiness — see `ops-issues.md`'s "§3/§4 blocker detail" for the fix
-shape. §4 is blocked transitively until it is resolved.
+`18e6446`) produced a deterministic, reproducing first-attempt failure: `PostgresRuntimeService`
+had no `record_replay_validation_failure` method, so `dish_service/http.py`'s fail-closed error
+handler crashed with `AttributeError` on any validation failure for a replay-sensitive command.
+That gap is fixed (`dish_pg/postgres_service.py:222`), and a real native §3 rerun on 2026-08-08
+against a fresh disposable Compose PostgreSQL instance passed first-attempt-clean: `status=passed`,
+`evidence_validation.ok=true`, 11 distinct PIDs, 8 runtime-identity reports — proving projection
+claim, external-attempt settlement, worker restart/takeover, and PostgreSQL-loss fail-closed. §4 is
+no longer blocked transitively by this; see below for its own separate status.
 
 Sections §1 and §2 have equivalent maintained runners and both now have successful native
 execution (§1: `scripts/dish-pg-process-failure`, fixed in commit `445da12`; §2:
 `scripts/dish-pg-recovery-rehearsal`, passed 2026-08-06 against PostgreSQL 17.10 after the
 jsonb/json operator fix in `778d82c`). Section §4 has `scripts/dish-pg-production-shaped-rehearsal`;
-it reuses the §3 PostgreSQL TEST service path and remains incomplete — both because its own native
-run hasn't been attempted and because it inherits §3's `record_replay_validation_failure` blocker.
+it reuses the §3 PostgreSQL TEST service path and is no longer blocked by §3's fixed defect, but its
+own native end-to-end run still has not been attempted — the script requires `--evidence-dir
+--work-root --corpus --corpus-manifest --honest-repo --honest-commit --repository-input-identity`,
+and no documented invocation or automated test exercises a full run (only sub-pieces like
+corpus/manifest validation are unit-tested). Standing up that setup and running it is separate
+follow-up work, not a consequence of the §3 fix.
 Do not treat the §3 script as evidence for the distinct §1, §2, or §4 requirements.
