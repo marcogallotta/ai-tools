@@ -10,7 +10,7 @@ This document records durable authority boundaries. It intentionally avoids turn
 
 ## Authoritative implementation
 
-Current anchors include `dish_tool/releases.py`, `dish_tool/task_document.py`, `dish_tool/database.py`, `dish_tool/task_gateway.py`, `dish_tool/workflow_policy.py`, `dish_service/request_replay.py`, and PostgreSQL models/services under `dish_pg/`.
+Current anchors include `dish_tool/releases.py`, `dish_tool/task_document.py`, `dish_tool/database.py`, `dish_tool/task_store.py`, `dish_tool/workflow_policy.py`, `dish_service/request_replay.py`, and PostgreSQL models/services under `dish_pg/`.
 
 ## Actors, processes, and stores
 

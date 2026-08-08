@@ -10,7 +10,7 @@ This document describes system actors and runtime boundaries. It does not prescr
 
 ## Authoritative implementation
 
-Current anchors include `dish_service/__main__.py`, `dish_service/http.py`, `dish_service/auth.py`, `dish_tool/database.py`, `dish_tool/task_gateway.py`, `dish_pg/postgres_service.py`, and dark-launch components under `dish_pg/` and `dish_service/`.
+Current anchors include `dish_service/__main__.py`, `dish_service/http.py`, `dish_service/auth.py`, `dish_tool/database.py`, `dish_tool/task_store.py`, `dish_pg/postgres_service.py`, and dark-launch components under `dish_pg/` and `dish_service/`.
 
 ## Actors, processes, and stores
 

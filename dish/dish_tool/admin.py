@@ -1075,7 +1075,7 @@ def _command_holds(self, *, trace: AdminTrace) -> dict[str, Any]:
         )
     from .commands import _evidence_hold_continuation, expose_authoritative_view
     from .constants import COOKING_PROJECT_GID
-    from .task_gateway import read_complete_task
+    from .task_store import read_complete_task
 
     release = None if self.release_loader is None else self.release_loader()
     schema = None if release is None else release.schema

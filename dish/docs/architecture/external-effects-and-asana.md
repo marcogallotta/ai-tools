@@ -10,7 +10,7 @@ This document records the correctness boundary around external effects and the t
 
 ## Authoritative implementation
 
-Current anchors include `dish_tool/task_gateway.py`, `dish_tool/backend.py`, current effect journals/recovery code, and PostgreSQL projection/settlement code in `dish_pg/transition.py` and workers.
+Current anchors include `dish_tool/task_store.py`, `dish_tool/backend.py`, current effect journals/recovery code, and PostgreSQL projection/settlement code in `dish_pg/transition.py` and workers.
 
 ## Actors, processes, and stores
 

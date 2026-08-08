@@ -19,7 +19,7 @@ from .operation_execution import (
     finish_operation_execution,
     partial_write_error,
 )
-from .task_gateway import ExactTaskGateway
+from .task_store import read_complete_task
 from .workflow_policy import WorkflowSnapshot, legal_actions
 from .human_actions import exact_action, relay_text
 
@@ -65,7 +65,6 @@ class CurrentWorkflowService:
         self.conn = conn
         self.backend = backend
         self.request_id = str(request_id or "").strip() or None
-        self.gateway = ExactTaskGateway(conn, backend)
 
     def operation(self, operation_id: str) -> sqlite3.Row:
         row = self.conn.execute("SELECT * FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
@@ -83,7 +82,7 @@ class CurrentWorkflowService:
         )
 
         op = self.operation(operation_id)
-        live = self.gateway.read(task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
+        live = read_complete_task(self.backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
         live_status = None
         validation_rules: list[str] = []
         try:
