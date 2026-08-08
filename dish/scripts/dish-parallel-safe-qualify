@@ -1,0 +1,522 @@
+#!/usr/bin/env python3
+"""Collect and commit one file's parallel-safe qualification evidence in bounded phases."""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import importlib.metadata
+import json
+import os
+import platform
+import subprocess
+import sys
+import tempfile
+import time
+import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Mapping
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from test_selection.model import PolicyError  # noqa: E402
+from test_selection.parallel import (  # noqa: E402
+    QUALIFICATION_ENVIRONMENT_ID_FIELDS,
+    REQUIRED_PARALLEL_REPEATS,
+    REQUIRED_WORKER_COUNTS,
+    SHARED_QUALIFICATION_INPUTS,
+    qualification_environment_id,
+    qualification_run_problem,
+    parallel_safe_shared_sha256,
+    parallel_safe_witness_files,
+    record_parallel_safe_qualification,
+    validate_parallel_safe_files,
+)
+from tests.flake_runner import scan_flake_risks  # noqa: E402
+
+PENDING_ROOT = ROOT / ".test-artifacts" / "parallel-safe-qualification"
+PENDING_SCHEMA_VERSION = 2
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="dish-parallel-safe-qualify",
+        description=(
+            "Requalify exactly one reviewed parallel-safe test file in wrapper-bounded phases. "
+            "Run --phase serial, then 2, 4, 8, then finalize. Only finalize can update the "
+            "committed qualification manifest."
+        ),
+    )
+    parser.add_argument("--test-file", required=True, help="one existing reviewed test file")
+    parser.add_argument(
+        "--reviewer",
+        required=True,
+        help="human/agent identity recorded with the qualification evidence",
+    )
+    parser.add_argument(
+        "--phase",
+        required=True,
+        choices=("serial", "2", "4", "8", "finalize"),
+        help="one bounded evidence phase",
+    )
+    parser.add_argument("--note", default="", help="optional concise review note recorded in evidence")
+    parser.add_argument(
+        "--restart",
+        action="store_true",
+        help="discard an existing pending session; valid only with --phase serial",
+    )
+    return parser
+
+
+def _hash_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _package_version(name: str) -> str | None:
+    try:
+        return importlib.metadata.version(name)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+
+
+def _git_output(args: list[str]) -> str | None:
+    completed = subprocess.run(
+        ["git", *args],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        check=False,
+    )
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.strip() or None
+
+
+def _environment_metadata(path: str) -> dict[str, Any]:
+    status_paths = [path, *SHARED_QUALIFICATION_INPUTS]
+    return {
+        "python_executable": sys.executable,
+        "python_version": platform.python_version(),
+        "platform": platform.platform(),
+        "cpu_count": os.cpu_count(),
+        "pytest_version": _package_version("pytest"),
+        "xdist_version": _package_version("pytest-xdist"),
+        "execnet_version": _package_version("execnet"),
+        "requirements_test_sha256": _hash_file(ROOT / "requirements-test.txt"),
+        "git_head": _git_output(["rev-parse", "HEAD"]),
+        "git_status": _git_output(["status", "--porcelain", "--", *status_paths]) or "",
+    }
+
+
+def _pending_path(test_file: str) -> Path:
+    safe = test_file.replace("/", "__").replace("\\", "__")
+    return PENDING_ROOT / f"{safe}.json"
+
+
+def _write_json_atomic(path: Path, payload: Mapping[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rendered = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    fd, temporary = tempfile.mkstemp(prefix=path.name + ".", dir=path.parent, text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(rendered)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+
+
+def _load_pending(path: Path) -> dict[str, Any]:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PolicyError(f"cannot load pending qualification session {path}: {exc}") from exc
+    if payload.get("schema_version") != PENDING_SCHEMA_VERSION:
+        raise PolicyError("unsupported pending parallel-safe qualification schema")
+    return payload
+
+
+def _reported_test_file(value: str) -> str:
+    path = Path(value)
+    if path.is_absolute():
+        try:
+            path = path.relative_to(ROOT)
+        except ValueError:
+            return path.as_posix()
+    return path.as_posix()
+
+
+def _junit_summary(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        return {
+            "tests": 0,
+            "passed": 0,
+            "failed": 0,
+            "errors": 0,
+            "skipped": 0,
+            "file_results": {},
+        }
+    root = ET.parse(path).getroot()
+    suites = [root] if root.tag == "testsuite" else list(root.iter("testsuite"))
+    tests = sum(int(suite.attrib.get("tests", 0)) for suite in suites)
+    failed = sum(int(suite.attrib.get("failures", 0)) for suite in suites)
+    errors = sum(int(suite.attrib.get("errors", 0)) for suite in suites)
+    skipped = sum(int(suite.attrib.get("skipped", 0)) for suite in suites)
+    file_results: dict[str, dict[str, int]] = {}
+    for testcase in root.iter("testcase"):
+        reported_file = testcase.attrib.get("file")
+        if not reported_file:
+            continue
+        test_file = _reported_test_file(reported_file)
+        counts = file_results.setdefault(
+            test_file,
+            {"tests": 0, "passed": 0, "failed": 0, "errors": 0, "skipped": 0},
+        )
+        counts["tests"] += 1
+        if testcase.find("failure") is not None:
+            counts["failed"] += 1
+        elif testcase.find("error") is not None:
+            counts["errors"] += 1
+        elif testcase.find("skipped") is not None:
+            counts["skipped"] += 1
+        else:
+            counts["passed"] += 1
+    return {
+        "tests": tests,
+        "passed": max(0, tests - failed - errors - skipped),
+        "failed": failed,
+        "errors": errors,
+        "skipped": skipped,
+        "file_results": file_results,
+    }
+
+
+def _run_pytest(
+    *,
+    exercise_files: list[str],
+    workers: int | None,
+    repeat: int,
+    artifact_dir: Path,
+) -> dict[str, Any]:
+    label = "serial" if workers is None else f"n{workers}-run{repeat}"
+    junit = artifact_dir / f"{label}.xml"
+    command = [sys.executable, "-m", "pytest", "-p", "no:randomly"]
+    if workers is not None:
+        command.extend(["-n", str(workers), "--dist", "loadfile"])
+    command.extend(
+        ["-q", "-o", "junit_family=legacy", *exercise_files, f"--junitxml={junit}"]
+    )
+    print(f"BEGIN [{label}] {' '.join(command[:-1])}", flush=True)
+    started = time.monotonic()
+    completed = subprocess.run(command, cwd=ROOT, check=False)
+    wall_seconds = time.monotonic() - started
+    counts = _junit_summary(junit)
+    result = {
+        "workers": workers,
+        "repeat": repeat,
+        "returncode": completed.returncode,
+        "wall_seconds": round(wall_seconds, 3),
+        **counts,
+    }
+    status = "PASS" if completed.returncode == 0 else "FAIL"
+    print(
+        f"{status} [{label}] exit={completed.returncode} "
+        f"passed={counts['passed']} failed={counts['failed']} skipped={counts['skipped']} "
+        f"wall_seconds={wall_seconds:.2f}",
+        flush=True,
+    )
+    return result
+
+
+def _run_problem(
+    result: Mapping[str, Any],
+    *,
+    exercise_files: list[str],
+    workers: int | None,
+    repeat: int,
+) -> str | None:
+    return qualification_run_problem(
+        result,
+        exercise_files=exercise_files,
+        workers=workers,
+        repeat=repeat,
+        require_participation=True,
+    )
+
+
+def _static_findings(path: str) -> list[dict[str, object]]:
+    return [finding for finding in scan_flake_risks() if finding.get("file") == path]
+
+
+def _verify_xdist() -> None:
+    try:
+        import execnet  # noqa: F401
+        import xdist  # noqa: F401
+    except ImportError as exc:
+        raise PolicyError(f"pytest-xdist/execnet unavailable in the invoking environment: {exc}") from exc
+
+
+def _verify_environment_identity(pending: Mapping[str, Any]) -> None:
+    expected_environment = pending.get("environment")
+    expected_identity = pending.get("environment_identity")
+    if not isinstance(expected_environment, Mapping) or not isinstance(expected_identity, str):
+        raise PolicyError("pending qualification environment identity is malformed; restart from --phase serial")
+    current_environment = _environment_metadata(str(pending["test_file"]))
+    current_identity = qualification_environment_id(current_environment)
+    if current_identity == expected_identity:
+        return
+    changes = [
+        f"{field}={expected_environment.get(field)!r}->{current_environment.get(field)!r}"
+        for field in QUALIFICATION_ENVIRONMENT_ID_FIELDS
+        if expected_environment.get(field) != current_environment.get(field)
+    ]
+    detail = ", ".join(changes) if changes else "qualification environment identity changed"
+    raise PolicyError(
+        "qualification environment changed since --phase serial "
+        f"({detail}); restart from --phase serial"
+    )
+
+
+def _verify_session_identity(pending: Mapping[str, Any]) -> None:
+    _verify_environment_identity(pending)
+    path = str(pending["test_file"])
+    if _hash_file(ROOT / path) != pending.get("file_sha256"):
+        raise PolicyError("selected test changed during qualification; restart from --phase serial")
+    if parallel_safe_shared_sha256(ROOT) != pending.get("shared_sha256"):
+        raise PolicyError("shared fixture/helper scope changed during qualification; restart from --phase serial")
+    expected_witnesses = pending.get("witness_sha256")
+    if not isinstance(expected_witnesses, Mapping):
+        raise PolicyError("pending qualification witness identity is malformed")
+    for witness, expected in expected_witnesses.items():
+        if _hash_file(ROOT / witness) != expected:
+            raise PolicyError(f"concurrency witness changed during qualification: {witness}")
+
+
+def _start_serial(path: str, reviewer: str, note: str, pending_path: Path) -> int:
+    findings = _static_findings(path)
+    if findings:
+        print("static isolation scan found risk signals; qualification unchanged:", file=sys.stderr)
+        for finding in findings:
+            print(
+                f"  {finding['file']}:{finding['line']} {finding['kind']} {finding['call']}",
+                file=sys.stderr,
+            )
+        return 2
+    witnesses = parallel_safe_witness_files(path, root=ROOT)
+    exercise_files = [path, *witnesses]
+    environment = _environment_metadata(path)
+    payload: dict[str, Any] = {
+        "schema_version": PENDING_SCHEMA_VERSION,
+        "test_file": path,
+        "reviewer": reviewer,
+        "note": note,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "file_sha256": _hash_file(ROOT / path),
+        "shared_sha256": parallel_safe_shared_sha256(ROOT),
+        "shared_scope": list(SHARED_QUALIFICATION_INPUTS),
+        "exercise_files": exercise_files,
+        "witness_sha256": {witness: _hash_file(ROOT / witness) for witness in witnesses},
+        "static_review": {"tool": "tests.flake_runner.scan_flake_risks", "findings": findings},
+        "serial": [],
+        "parallel": {str(workers): [] for workers in REQUIRED_WORKER_COUNTS},
+        "environment": environment,
+        "environment_identity": qualification_environment_id(environment),
+    }
+    print("CONCURRENCY WITNESSES " + ", ".join(witnesses), flush=True)
+    with tempfile.TemporaryDirectory(prefix="dish-parallel-safe-qualify-") as temporary:
+        result = _run_pytest(
+            exercise_files=exercise_files,
+            workers=None,
+            repeat=1,
+            artifact_dir=Path(temporary),
+        )
+    problem = _run_problem(
+        result,
+        exercise_files=exercise_files,
+        workers=None,
+        repeat=1,
+    )
+    if problem:
+        print(f"qualification session not created: serial baseline invalid: {problem}", file=sys.stderr)
+        return int(result.get("returncode") or 2)
+    payload["serial"] = [result]
+    _verify_environment_identity(payload)
+    _write_json_atomic(pending_path, payload)
+    print(f"EVIDENCE STAGED phase=serial pending={pending_path}", flush=True)
+    return 0
+
+
+def _run_worker_phase(pending: dict[str, Any], workers: int, pending_path: Path) -> int:
+    _verify_session_identity(pending)
+    _verify_xdist()
+    exercise_files = list(pending["exercise_files"])
+    existing = pending["parallel"].get(str(workers), [])
+    if (
+        len(existing) == REQUIRED_PARALLEL_REPEATS
+        and {
+            run.get("repeat")
+            for run in existing
+            if isinstance(run, Mapping)
+        }
+        == set(range(1, REQUIRED_PARALLEL_REPEATS + 1))
+        and all(
+            _run_problem(
+                run,
+                exercise_files=exercise_files,
+                workers=workers,
+                repeat=int(run["repeat"]),
+            )
+            is None
+            for run in existing
+            if isinstance(run, Mapping) and isinstance(run.get("repeat"), int)
+        )
+    ):
+        print(f"EVIDENCE ALREADY COMPLETE phase={workers}", flush=True)
+        return 0
+    runs: list[dict[str, Any]] = []
+    with tempfile.TemporaryDirectory(prefix="dish-parallel-safe-qualify-") as temporary:
+        artifact_dir = Path(temporary)
+        for repeat in range(1, REQUIRED_PARALLEL_REPEATS + 1):
+            result = _run_pytest(
+                exercise_files=exercise_files,
+                workers=workers,
+                repeat=repeat,
+                artifact_dir=artifact_dir,
+            )
+            runs.append(result)
+            problem = _run_problem(
+                result,
+                exercise_files=exercise_files,
+                workers=workers,
+                repeat=repeat,
+            )
+            if problem:
+                print(
+                    f"qualification evidence not staged: invalid -n {workers} repeat {repeat}: {problem}",
+                    file=sys.stderr,
+                )
+                return int(result.get("returncode") or 2)
+    _verify_session_identity(pending)
+    pending["parallel"][str(workers)] = runs
+    _write_json_atomic(pending_path, pending)
+    print(f"EVIDENCE STAGED phase={workers} pending={pending_path}", flush=True)
+    return 0
+
+
+def _finalize(pending: dict[str, Any], pending_path: Path) -> int:
+    _verify_session_identity(pending)
+    exercise_files = list(pending["exercise_files"])
+    serial = pending.get("serial")
+    if (
+        not isinstance(serial, list)
+        or len(serial) != 1
+        or _run_problem(
+            serial[0],
+            exercise_files=exercise_files,
+            workers=None,
+            repeat=1,
+        )
+        is not None
+    ):
+        raise PolicyError("serial qualification evidence is incomplete")
+    for workers in REQUIRED_WORKER_COUNTS:
+        runs = pending.get("parallel", {}).get(str(workers), [])
+        if (
+            not isinstance(runs, list)
+            or len(runs) != REQUIRED_PARALLEL_REPEATS
+            or {run.get("repeat") for run in runs if isinstance(run, Mapping)}
+            != set(range(1, REQUIRED_PARALLEL_REPEATS + 1))
+            or any(
+                _run_problem(
+                    run,
+                    exercise_files=exercise_files,
+                    workers=workers,
+                    repeat=int(run.get("repeat", -1)),
+                )
+                is not None
+                for run in runs
+                if isinstance(run, Mapping)
+            )
+        ):
+            raise PolicyError(
+                f"-n {workers} qualification evidence is incomplete; run --phase {workers} first"
+            )
+    path = str(pending["test_file"])
+    evidence: dict[str, Any] = {
+        "kind": "file",
+        "qualified_at": datetime.now(timezone.utc).isoformat(),
+        "started_at": pending["started_at"],
+        "reviewer": pending["reviewer"],
+        "note": pending.get("note", ""),
+        "files": [path],
+        "file_sha256": {path: pending["file_sha256"]},
+        "exercise_files": pending["exercise_files"],
+        "witness_sha256": pending["witness_sha256"],
+        "shared_sha256": pending["shared_sha256"],
+        "shared_scope": pending["shared_scope"],
+        "static_review": pending["static_review"],
+        "serial": pending["serial"],
+        "parallel": pending["parallel"],
+        "pytest_args": ["-p", "no:randomly", "--dist", "loadfile"],
+        "environment": pending["environment"],
+        "environment_identity": pending["environment_identity"],
+    }
+    evidence_id = record_parallel_safe_qualification(path, evidence, root=ROOT)
+    pending_path.unlink()
+    print(
+        f"QUALIFIED {path} evidence_id={evidence_id} "
+        "manifest=test_selection/parallel_safe_qualifications.json",
+        flush=True,
+    )
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    reviewer = args.reviewer.strip()
+    note = args.note.strip()
+    if not reviewer:
+        print("dish-parallel-safe-qualify: --reviewer must not be empty", file=sys.stderr)
+        return 2
+    if args.restart and args.phase != "serial":
+        print("dish-parallel-safe-qualify: --restart is valid only with --phase serial", file=sys.stderr)
+        return 2
+    try:
+        path = validate_parallel_safe_files([args.test_file])[0]
+        pending_path = _pending_path(path)
+        if args.phase == "serial":
+            if pending_path.exists():
+                if not args.restart:
+                    raise PolicyError(
+                        f"pending qualification session already exists at {pending_path}; "
+                        "continue its worker phases or use --restart with --phase serial"
+                    )
+                pending_path.unlink()
+            return _start_serial(path, reviewer, note, pending_path)
+
+        if not pending_path.is_file():
+            raise PolicyError("no pending qualification session; run --phase serial first")
+        pending = _load_pending(pending_path)
+        if pending.get("test_file") != path:
+            raise PolicyError("pending qualification session targets a different file")
+        if pending.get("reviewer") != reviewer:
+            raise PolicyError(
+                "--reviewer must match the identity that started this qualification session"
+            )
+        if args.phase == "finalize":
+            return _finalize(pending, pending_path)
+        return _run_worker_phase(pending, int(args.phase), pending_path)
+    except PolicyError as exc:
+        print(f"dish-parallel-safe-qualify: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

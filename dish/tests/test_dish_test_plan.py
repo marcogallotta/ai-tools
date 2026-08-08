@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -191,9 +192,17 @@ def test_changed_reviewed_file_keeps_planner_serial_and_reports_qualification_dr
 ) -> None:
     import test_selection.parallel as parallel
 
+    (tmp_path / "test_selection").mkdir(parents=True)
+    shutil.copy2(
+        ROOT / "test_selection" / "parallel_safe_qualifications.json",
+        tmp_path / "test_selection" / "parallel_safe_qualifications.json",
+    )
+    (tmp_path / "tests").mkdir()
+    shutil.copy2(ROOT / "tests" / "conftest.py", tmp_path / "tests" / "conftest.py")
+    shutil.copytree(ROOT / "tests" / "support", tmp_path / "tests" / "support")
     changed = tmp_path / "tests" / "test_commands.py"
-    changed.parent.mkdir(parents=True)
-    changed.write_text("# changed after parallel review\n", encoding="utf-8")
+    shutil.copy2(ROOT / "tests" / "test_commands.py", changed)
+    changed.write_text(changed.read_text(encoding="utf-8") + "\n# changed after review\n", encoding="utf-8")
     monkeypatch.setattr(parallel, "ROOT", tmp_path)
 
     plan = build_plan(

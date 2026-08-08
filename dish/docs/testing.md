@@ -37,10 +37,14 @@ flake-only stack stays out of `requirements-test.txt`.
 ### Archive/offline bootstrap and environment portability
 
 Never execute a `.venv` copied from another checkout, archive, host, Python minor version, or absolute
-path. Virtual environments are not portable artifacts. Recreate them with the target host's current
-interpreter; `--clear` makes an accidentally archived environment fail safe instead of leaving stale
-site-packages behind. Test runners also reuse the interpreter that launched them rather than probing
-for an arbitrary repository `.venv`.
+path. Virtual environments are not portable artifacts. Treat an archived venv as a package source:
+preserve its `site-packages`, recreate `.venv` with the target host's current interpreter, install from
+the configured index, then seed only compatible packages that the index cannot provide from the
+preserved archive. Pure-Python packages may cross Python minors; CPython-minor-specific compiled
+extensions may not. Verify the rebuilt environment's imports and pinned versions before using it as
+evidence. `--clear` is appropriate only after the archived package source has been preserved. Test
+runners reuse the interpreter that launched them rather than probing for an arbitrary repository
+`.venv`.
 
 For a handoff that must bootstrap without an index, prepare a platform/interpreter-matched wheelhouse
 on a connected machine and ship that dependency bundle with the source archive. The serial/default
@@ -201,13 +205,64 @@ Marco's local machine: it captures most of the speedup without making the fastes
 result a universal rule. Running `parallel-safe` without `--workers` exercises the exact same file
 inventory serially for diagnosis or comparison.
 
-Parallel qualification is also bound to the reviewed SHA-256 of every allowlisted file in
-`test_selection/parallel.py`. If any listed file changes, the planner keeps that focused command
-serial and reports qualification drift, and direct `parallel-safe --workers N` execution fails
-closed before pytest starts. Serial execution remains available for diagnosis. Requalification is
-manual: repeat the static isolation review and parallel evidence for the changed file/selection,
-then explicitly update that file's `PARALLEL_SAFE_FILE_SHA256` entry. Never regenerate qualification
-hashes automatically as part of normal test execution or planning.
+Parallel qualification is governed by the committed
+`test_selection/parallel_safe_qualifications.json` evidence manifest. Each reviewed file records its
+content SHA-256, the SHA-256 tree identity of the shared isolation scope (`tests/conftest.py` plus all
+files under `tests/support/`), and the evidence that activated that identity. Every active evidence
+payload, including the original batch qualification, has a content-addressed evidence ID and fails
+closed if its payload no longer matches that ID. Active evidence is accepted only when it covers the
+exact file/shared identities, has a clean static risk scan, has a successful serial baseline, and
+records exactly three successful, distinctly numbered runs each at `-n 2`, `-n 4`, and `-n 8` with
+worker metadata matching the phase. Updating a hash or evidence payload without matching evidence
+therefore remains ineligible.
+
+Focused planner selections remain fail-closed as a unit: if any selected ordinary file is unreviewed
+or drifted, the focused command stays serial and reports the blocker. Direct worker invocation with
+explicit `--test-file` arguments behaves the same. The full `parallel-safe --workers N` inventory is
+more granular: currently qualified files run in the xdist phase, while drifted reviewed files are
+reported and run in an explicit serial fallback phase. One frequently edited test file therefore no
+longer disables acceleration for unrelated qualified files. A shared fixture/helper change still
+invalidates every qualification whose shared identity is stale, as it can affect all workers.
+
+Requalify exactly one reviewed file at a time with the evidence-producing tool; do not hand-edit the
+manifest to make drift disappear. Qualification is deliberately split into bounded phases so an
+outer execution wrapper cannot erase a long healthy evidence run:
+
+```sh
+QUALIFY=(
+  .venv/bin/python scripts/dish-parallel-safe-qualify
+  --test-file tests/test_commands.py
+  --reviewer '<reviewer/session>'
+)
+
+"${QUALIFY[@]}" --phase serial
+"${QUALIFY[@]}" --phase 2
+"${QUALIFY[@]}" --phase 4
+"${QUALIFY[@]}" --phase 8
+"${QUALIFY[@]}" --phase finalize
+```
+
+`serial` refuses static risk findings, selects seven unchanged previously reviewed witness files,
+and stages a serial baseline plus exact file/shared/witness identities under
+`.test-artifacts/parallel-safe-qualification/`. The serial phase also binds the session to a stable
+qualification-environment identity covering the Python executable/version, pytest, xdist, execnet,
+and `requirements-test.txt`; every later phase and `finalize` rechecks that identity and requires a
+restart if it changes. Each numeric phase records three fresh xdist runs of the target plus those
+witnesses, and JUnit participation evidence must show at least one executed passing test from the
+target and every witness in every recorded run. This proves the intended eight-file `loadfile`
+exercise rather than merely starting workers around witness-only successes. Interrupted/failed
+phases do not update staged results; rerun that phase. `finalize` is the only phase allowed to change
+the committed manifest, and it refuses unless serial plus all three `-n 2`, `-n 4`, and `-n 8`
+repetitions are complete and the test, witnesses, shared isolation scope, and qualification
+environment are unchanged. Use `--restart --phase serial` only when a pending session must
+intentionally be discarded.
+
+The committed manifest is also the audit artifact: per-file evidence records who qualified the file,
+when, exact identities, witness set, human-readable environment metadata plus its stable identity,
+per-file run participation, run counts/results, and an immutable content-addressed evidence ID.
+Requalification mutates only that file's manifest block. Independent
+agents working on different files normally merge as non-overlapping edits; concurrent qualification
+of the same file should conflict and be reviewed rather than auto-resolved.
 
 Native PostgreSQL, process-failure/process-boundary, concurrency, lease/fencing/reclaim/recovery,
 fixed-port/shared-service, shared-filesystem, production-shaped rehearsal, and migration/

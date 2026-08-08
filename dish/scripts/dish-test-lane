@@ -18,6 +18,7 @@ if str(ROOT) not in sys.path:
 from test_selection.model import PolicyError  # noqa: E402
 from test_selection.parallel import (  # noqa: E402
     PARALLEL_SAFE_TEST_FILES,
+    parallel_safe_partition,
     require_parallel_safe_qualification,
     validate_parallel_safe_files,
 )
@@ -247,14 +248,17 @@ def _xdist_preflight() -> int:
     return 0
 
 
-def _parallel_safe_phase(*, workers: int | None, test_files: Sequence[str]) -> Phase:
-    selected = validate_parallel_safe_files(test_files)
+def _parallel_safe_pytest_phase(
+    name: str,
+    selected: Sequence[str],
+    *,
+    workers: int | None,
+) -> Phase:
     worker_args: tuple[str, ...] = ()
     if workers is not None:
-        selected = require_parallel_safe_qualification(selected)
         worker_args = ("-n", str(workers), "--dist", "loadfile")
     return Phase(
-        "parallel-safe reviewed inventory",
+        name,
         (
             PYTHON,
             "-m",
@@ -268,6 +272,57 @@ def _parallel_safe_phase(*, workers: int | None, test_files: Sequence[str]) -> P
     )
 
 
+def _parallel_safe_phases(
+    *,
+    workers: int | None,
+    test_files: Sequence[str],
+) -> tuple[Phase, ...]:
+    selected = validate_parallel_safe_files(test_files)
+    if workers is None:
+        return (
+            _parallel_safe_pytest_phase(
+                "parallel-safe reviewed inventory (serial)", selected, workers=None
+            ),
+        )
+
+    # Explicit focused selections remain fail-closed as one unit. The whole reviewed inventory is
+    # different: file-level drift should not disable unrelated qualified files, so it is partitioned
+    # into a worker phase plus an explicit serial fallback for only the drifted files.
+    if test_files:
+        qualified = require_parallel_safe_qualification(selected)
+        return (
+            _parallel_safe_pytest_phase(
+                "parallel-safe qualified selection", qualified, workers=workers
+            ),
+        )
+
+    qualified, blocked = parallel_safe_partition(selected)
+    phases: list[Phase] = []
+    if qualified:
+        phases.append(
+            _parallel_safe_pytest_phase(
+                "parallel-safe qualified inventory", qualified, workers=workers
+            )
+        )
+    if blocked:
+        print(
+            "QUALIFICATION FALLBACK: running drifted reviewed files serially; requalify each file "
+            "before it can rejoin worker execution:",
+            file=sys.stderr,
+            flush=True,
+        )
+        for path, reason in blocked:
+            print(f"  - {path}: {reason}", file=sys.stderr, flush=True)
+        phases.append(
+            _parallel_safe_pytest_phase(
+                "parallel-safe qualification fallback (serial)",
+                tuple(path for path, _reason in blocked),
+                workers=None,
+            )
+        )
+    return tuple(phases)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
@@ -276,7 +331,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.workers is not None and args.workers < 1:
             parser.error("--workers must be at least 1")
         try:
-            phases = (_parallel_safe_phase(workers=args.workers, test_files=args.test_file),)
+            phases = _parallel_safe_phases(workers=args.workers, test_files=args.test_file)
         except PolicyError as exc:
             parser.error(str(exc))
     else:
@@ -302,9 +357,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.lane == "parallel-safe" and args.workers is not None:
-        preflight = _xdist_preflight()
-        if preflight != 0:
-            return preflight
+        if any("-n" in phase.command for phase in phases):
+            preflight = _xdist_preflight()
+            if preflight != 0:
+                return preflight
 
     for phase in phases:
         result = _run_phase(phase, env=os.environ)

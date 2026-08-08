@@ -2,79 +2,68 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 import shlex
-from collections.abc import Iterable
+import tempfile
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 from .model import PolicyError
 
 ROOT = Path(__file__).resolve().parents[1]
-
-# This exact inventory completed three clean runs each at -n 2, -n 4, and -n 8 on 2026-08-08
-# (565/565 tests each run) after static isolation review. Qualification applies only to this
-# allowlist and does not extend to native PostgreSQL, process-boundary, concurrency/recovery,
-# migration/backup/restore, shared-service, or production-shaped evidence.
-PARALLEL_SAFE_TEST_FILES = (
-    "tests/test_pagination.py",
-    "tests/test_architecture_knowledge_base.py",
-    "tests/test_dish_tool_critical_input_safety.py",
-    "tests/test_materiality_persistence_and_audit_contracts.py",
-    "tests/test_material_change_authority_matrix.py",
-    "tests/test_dish_tool_step2_canonical.py",
-    "tests/test_request_identity.py",
-    "tests/test_dish_tool_step5_commands.py",
-    "tests/test_admin_argument_validation.py",
-    "tests/test_task_store_and_backend_negative_contracts.py",
-    "tests/test_workflow_policy_fail_closed.py",
-    "tests/test_dish_tool_step6_prepare.py",
-    "tests/test_dish_tool_step7_verification.py",
-    "tests/test_commands.py",
-    "tests/test_dish_planning_authority_labels.py",
-    "tests/test_planning_intent_confirmation.py",
-    "tests/test_verifier_attestation_safety.py",
-    "tests/test_action_replay_contract.py",
-    "tests/test_dish_tool_step8_routes.py",
-    "tests/test_core_models_and_dispatch.py",
-    "tests/test_verification_arguments_and_hold_contracts.py",
-    "tests/test_prepare_operation_boundaries.py",
-    "tests/test_batch_apply.py",
-    "tests/test_material_change_grammar.py",
-    "tests/test_mutation_tooling.py",
-    "tests/test_unicode_planning_labels.py",
+QUALIFICATION_MANIFEST = Path("test_selection/parallel_safe_qualifications.json")
+QUALIFICATION_SCHEMA_VERSION = 1
+SHARED_QUALIFICATION_INPUTS = ("tests/conftest.py", "tests/support")
+REQUIRED_WORKER_COUNTS = (2, 4, 8)
+REQUIRED_PARALLEL_REPEATS = 3
+QUALIFICATION_ENVIRONMENT_ID_FIELDS = (
+    "python_executable",
+    "python_version",
+    "pytest_version",
+    "xdist_version",
+    "execnet_version",
+    "requirements_test_sha256",
 )
 
-# Qualification is deliberately content-bound. Do not regenerate these hashes automatically.
-# After a listed file changes, keep it serial until static isolation review plus repeated xdist
-# evidence has been rerun, then explicitly update only that file's reviewed identity here.
-PARALLEL_SAFE_FILE_SHA256 = {
-    "tests/test_pagination.py": "22f64d30651261d3fae44accc024d0c987d2f966b14a972bafbd8a8c1c8bfb5e",
-    "tests/test_architecture_knowledge_base.py": "fb4d805d12f5e66db0ef88f1e703e6064ed4491689c121c2c5dc515c8547db31",
-    "tests/test_dish_tool_critical_input_safety.py": "2f7f1098ec77fca6fbe9ab2f124159a94a0b88d5683c7cbc31a88d1a4c48e6ab",
-    "tests/test_materiality_persistence_and_audit_contracts.py": "02fa248bf0dd03e925e853c5a7856b9f1ca151c241622896475ab4be54ae2489",
-    "tests/test_material_change_authority_matrix.py": "5fa2a1be36c1cf2638b10977eb5c49d2565cb866950e12c0e5a5116ba0f5f074",
-    "tests/test_dish_tool_step2_canonical.py": "9eb3e6cf675e87d5563333260a7c949181255ec705da4dd6b9bb8ba1c383305d",
-    "tests/test_request_identity.py": "c4bcff6b6974183ded772f68cf10d26d280047ab492fee661191313794e0913e",
-    "tests/test_dish_tool_step5_commands.py": "8590610d25bd952d1d12fb01bebefcf0fb095ba7531653a5701188c5b8b0c30b",
-    "tests/test_admin_argument_validation.py": "4b2101df8a47e2c560a177028b24badff1a49c0433b95d4f575f7a3f01f15558",
-    "tests/test_task_store_and_backend_negative_contracts.py": "15e03f9aec0fadcf24bf03d1c36875ccd85585a9239f2627847a5c7febd0067a",
-    "tests/test_workflow_policy_fail_closed.py": "425c8b1bc0c64f2e1c49ca0640841308b01103566faec9d2baf1edfc74b1e908",
-    "tests/test_dish_tool_step6_prepare.py": "2117ff4e1d69f4c0123251de3dd6e93f516e0779f85a339b413bbd5c9338324e",
-    "tests/test_dish_tool_step7_verification.py": "91fbbf9d3673040ab52e5d41cbfc3abdbd4f38abd5c763a113167063649fa6e8",
-    "tests/test_commands.py": "7b54dc519fcdf6a2aeeee0e3809cf281f6a2bb8e6893618b15fd1c99ddcec6ac",
-    "tests/test_dish_planning_authority_labels.py": "4a51d825dc34bce96bccd4268b66cd84d451502c5331ad83b4f0fe2228232340",
-    "tests/test_planning_intent_confirmation.py": "786e90a6b4b166d9ca77f983697d51b96f9e1c761d564f389396907d74dbe842",
-    "tests/test_verifier_attestation_safety.py": "dffa70aab48cdaa18e35d3900a36f3a3a2ee8d8ae1fec5a07deddbc4acb2c22c",
-    "tests/test_action_replay_contract.py": "0618acfad49eb1a0f49c57a506feb03dd432a8c69d9ba32dce495682691c07e2",
-    "tests/test_dish_tool_step8_routes.py": "72192dac52912f88bf08ba56adf92398c10d8d993f686c9b0cd3126a681ce99d",
-    "tests/test_core_models_and_dispatch.py": "ceb41da4c3150c0beaa7630d45b9e4da79abb53b15b0b8b2ac05c74e164d3aa7",
-    "tests/test_verification_arguments_and_hold_contracts.py": "de2c0e9301eecaee473b17d7df42ab2d81be7f39d868266d4f83c863f4834aa1",
-    "tests/test_prepare_operation_boundaries.py": "62dedb6ab5365bb7562b9ff09f8c3d15384118aae2dc0d937562e595bff2c883",
-    "tests/test_batch_apply.py": "0e37cfd7c8f93bb212c294f5f913fc481135487e59749fccb09b9dde4c265110",
-    "tests/test_material_change_grammar.py": "47bb20c5ee262a58e7c019e41fa9516c7e01fb7298b0414b8a52f74b1be9ce7d",
-    "tests/test_mutation_tooling.py": "3d169601de8cb93925560770834ddf750e43e170ff86d8e91fcdfc81d6fc843c",
-    "tests/test_unicode_planning_labels.py": "fa77f9097d33b0744daf766c4ca7562daad82a22f204e2e947b9c177837f3a1e",
-}
 
+def _manifest_path(root: Path) -> Path:
+    return root / QUALIFICATION_MANIFEST
+
+
+def _load_manifest(root: Path | None = None) -> dict[str, Any]:
+    root = root or ROOT
+    path = _manifest_path(root)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PolicyError(f"cannot load parallel-safe qualification manifest {path}: {exc}") from exc
+    if payload.get("schema_version") != QUALIFICATION_SCHEMA_VERSION:
+        raise PolicyError(
+            "unsupported parallel-safe qualification manifest schema: "
+            f"{payload.get('schema_version')!r}"
+        )
+    files = payload.get("files")
+    inventory = payload.get("inventory")
+    if not isinstance(files, dict) or not files:
+        raise PolicyError("parallel-safe qualification manifest has no reviewed files")
+    if (
+        not isinstance(inventory, list)
+        or not all(isinstance(path, str) for path in inventory)
+        or len(inventory) != len(set(inventory))
+        or set(inventory) != set(files)
+    ):
+        raise PolicyError("parallel-safe qualification manifest inventory does not match file records")
+    return payload
+
+
+def _inventory(root: Path | None = None) -> tuple[str, ...]:
+    return tuple(_load_manifest(root)["inventory"])
+
+
+# Public compatibility name used by the lane/tests. The manifest is the single inventory authority.
+PARALLEL_SAFE_TEST_FILES = _inventory()
 _PARALLEL_SAFE_SET = frozenset(PARALLEL_SAFE_TEST_FILES)
 
 
@@ -82,33 +71,267 @@ def _normalize(test_files: Iterable[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(path.strip() for path in test_files if path.strip()))
 
 
+def _hash_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _shared_files(root: Path) -> tuple[Path, ...]:
+    files: list[Path] = []
+    for item in SHARED_QUALIFICATION_INPUTS:
+        candidate = root / item
+        if candidate.is_file():
+            files.append(candidate)
+            continue
+        if not candidate.is_dir():
+            continue
+        files.extend(
+            path
+            for path in candidate.rglob("*")
+            if path.is_file()
+            and "__pycache__" not in path.parts
+            and path.suffix not in {".pyc", ".pyo"}
+        )
+    return tuple(sorted(files, key=lambda path: path.relative_to(root).as_posix()))
+
+
+def parallel_safe_shared_sha256(root: Path | None = None) -> str:
+    """Hash the shared fixture/helper scope that can change worker isolation semantics."""
+    root = root or ROOT
+    digest = hashlib.sha256()
+    for path in _shared_files(root):
+        relative = path.relative_to(root).as_posix().encode("utf-8")
+        content = path.read_bytes()
+        digest.update(len(relative).to_bytes(8, "big"))
+        digest.update(relative)
+        digest.update(len(content).to_bytes(8, "big"))
+        digest.update(content)
+    return digest.hexdigest()
+
+
 def validate_parallel_safe_files(test_files: Iterable[str]) -> tuple[str, ...]:
-    """Validate membership only; serial diagnosis remains usable after qualification drift."""
+    """Validate inventory membership only; serial diagnosis stays available after drift."""
     selected = _normalize(test_files)
     if not selected:
         return PARALLEL_SAFE_TEST_FILES
     unsupported = sorted(set(selected) - _PARALLEL_SAFE_SET)
     if unsupported:
-        raise PolicyError(
-            "parallel-safe execution is not reviewed for: " + ", ".join(unsupported)
-        )
+        raise PolicyError("parallel-safe execution is not reviewed for: " + ", ".join(unsupported))
     return selected
 
 
+def _successful_result(result: object) -> bool:
+    return (
+        isinstance(result, Mapping)
+        and result.get("returncode") == 0
+        and result.get("failed", 0) == 0
+        and result.get("errors", 0) == 0
+        and isinstance(result.get("passed"), int)
+        and result.get("passed", 0) > 0
+    )
+
+
+def qualification_environment_id(environment: Mapping[str, Any]) -> str:
+    """Hash the execution-environment facts that must stay fixed across qualification phases."""
+    payload = {field: environment.get(field) for field in QUALIFICATION_ENVIRONMENT_ID_FIELDS}
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def qualification_run_problem(
+    result: object,
+    *,
+    exercise_files: Sequence[str],
+    workers: int | None,
+    repeat: int,
+    require_participation: bool,
+) -> str | None:
+    """Validate one recorded qualification run, including file participation when required."""
+    if not isinstance(result, Mapping):
+        return "qualification run result is missing or malformed"
+    if result.get("workers") != workers:
+        return f"qualification run records workers={result.get('workers')!r}; expected {workers!r}"
+    if result.get("repeat") != repeat:
+        return f"qualification run records repeat={result.get('repeat')!r}; expected {repeat}"
+    if not _successful_result(result):
+        return "qualification run did not complete successfully"
+    if not require_participation:
+        return None
+    file_results = result.get("file_results")
+    if not isinstance(file_results, Mapping):
+        return "qualification run does not record per-file test participation"
+    for exercise_file in exercise_files:
+        counts = file_results.get(exercise_file)
+        if not isinstance(counts, Mapping):
+            return f"qualification run does not prove participation for {exercise_file}"
+        tests = counts.get("tests")
+        passed = counts.get("passed")
+        if (
+            not isinstance(tests, int)
+            or tests <= 0
+            or not isinstance(passed, int)
+            or passed <= 0
+        ):
+            return f"qualification run does not prove executed passing tests for {exercise_file}"
+    return None
+
+
+def _validate_evidence(evidence: object, *, path: str, reviewed_sha256: str, shared_sha256: str) -> str | None:
+    if not isinstance(evidence, Mapping):
+        return "qualification evidence is missing or malformed"
+    kind = evidence.get("kind")
+    if kind not in {"batch", "file"}:
+        return "qualification evidence kind is missing or unsupported"
+    evidence_id = evidence.get("evidence_id")
+    if not isinstance(evidence_id, str) or qualification_evidence_id(evidence) != evidence_id:
+        return "qualification evidence content does not match its evidence ID"
+    exercise_files: Sequence[str]
+    require_participation = kind == "file"
+    if kind == "file":
+        exercise_files = evidence.get("exercise_files")
+        witness_sha256 = evidence.get("witness_sha256")
+        if (
+            not isinstance(exercise_files, list)
+            or len(exercise_files) != max(REQUIRED_WORKER_COUNTS)
+            or len(set(exercise_files)) != max(REQUIRED_WORKER_COUNTS)
+            or exercise_files[0] != path
+            or not isinstance(witness_sha256, Mapping)
+            or len(witness_sha256) != max(REQUIRED_WORKER_COUNTS) - 1
+            or set(witness_sha256) != set(exercise_files[1:])
+        ):
+            return "per-file qualification evidence lacks the required concurrency witness set"
+        environment = evidence.get("environment")
+        environment_identity = evidence.get("environment_identity")
+        if (
+            not isinstance(environment, Mapping)
+            or not isinstance(environment_identity, str)
+            or qualification_environment_id(environment) != environment_identity
+        ):
+            return "per-file qualification evidence environment identity is missing or inconsistent"
+    else:
+        exercise_files = ()
+    files = evidence.get("files")
+    hashes = evidence.get("file_sha256")
+    if not isinstance(files, list) or path not in files:
+        return "qualification evidence does not cover this file"
+    if not isinstance(hashes, Mapping) or hashes.get(path) != reviewed_sha256:
+        return "qualification evidence does not match the reviewed file identity"
+    if evidence.get("shared_sha256") != shared_sha256:
+        return "qualification evidence does not match the reviewed shared fixture/helper identity"
+    static_review = evidence.get("static_review")
+    if not isinstance(static_review, Mapping) or static_review.get("findings") != []:
+        return "qualification evidence does not contain a clean static isolation review"
+    serial = evidence.get("serial")
+    if not isinstance(serial, list) or len(serial) != 1:
+        return "qualification evidence does not contain a successful serial baseline"
+    serial_problem = qualification_run_problem(
+        serial[0],
+        exercise_files=exercise_files,
+        workers=None,
+        repeat=1,
+        require_participation=require_participation,
+    )
+    if serial_problem:
+        return "qualification serial evidence is invalid: " + serial_problem
+    parallel = evidence.get("parallel")
+    if not isinstance(parallel, Mapping):
+        return "qualification evidence does not contain repeated xdist runs"
+    for workers in REQUIRED_WORKER_COUNTS:
+        runs = parallel.get(str(workers))
+        if not isinstance(runs, list) or len(runs) != REQUIRED_PARALLEL_REPEATS:
+            return (
+                f"qualification evidence requires {REQUIRED_PARALLEL_REPEATS} successful "
+                f"-n {workers} runs"
+            )
+        repeats = {run.get("repeat") for run in runs if isinstance(run, Mapping)}
+        if repeats != set(range(1, REQUIRED_PARALLEL_REPEATS + 1)):
+            return (
+                f"qualification evidence requires distinct -n {workers} repetitions "
+                f"1..{REQUIRED_PARALLEL_REPEATS}"
+            )
+        for run in runs:
+            repeat = run.get("repeat") if isinstance(run, Mapping) else None
+            run_problem = qualification_run_problem(
+                run,
+                exercise_files=exercise_files,
+                workers=workers,
+                repeat=repeat if isinstance(repeat, int) else -1,
+                require_participation=require_participation,
+            )
+            if run_problem:
+                return f"qualification -n {workers} evidence is invalid: {run_problem}"
+    return None
+
+
+def _active_evidence(manifest: Mapping[str, Any], path: str, record: Mapping[str, Any]) -> object:
+    active = record.get("active_evidence")
+    if not isinstance(active, Mapping):
+        return None
+    kind = active.get("kind")
+    evidence_id = active.get("id")
+    if not isinstance(evidence_id, str):
+        return None
+    if kind == "batch":
+        batch = manifest.get("batch_evidence")
+        return batch.get(evidence_id) if isinstance(batch, Mapping) else None
+    if kind == "file":
+        history = record.get("history")
+        if not isinstance(history, list):
+            return None
+        for evidence in reversed(history):
+            if isinstance(evidence, Mapping) and evidence.get("evidence_id") == evidence_id:
+                return evidence
+    return None
+
+
+def parallel_safe_qualification_reason(path: str, *, root: Path | None = None) -> str | None:
+    """Return the fail-closed reason a reviewed file is not currently parallel-qualified."""
+    root = root or ROOT
+    manifest = _load_manifest(root)
+    record = manifest["files"].get(path)
+    if not isinstance(record, Mapping):
+        return "not in the reviewed parallel-safe inventory"
+    candidate = root / path
+    if not candidate.is_file():
+        return "reviewed file is missing; requires explicit requalification"
+    reviewed_sha256 = record.get("reviewed_sha256")
+    shared_sha256 = record.get("shared_sha256")
+    if not isinstance(reviewed_sha256, str) or not isinstance(shared_sha256, str):
+        return "qualification record is malformed; requires explicit requalification"
+    evidence_problem = _validate_evidence(
+        _active_evidence(manifest, path, record),
+        path=path,
+        reviewed_sha256=reviewed_sha256,
+        shared_sha256=shared_sha256,
+    )
+    if evidence_problem:
+        return evidence_problem
+    if _hash_file(candidate) != reviewed_sha256:
+        return "changed since parallel review; requires explicit requalification"
+    if parallel_safe_shared_sha256(root) != shared_sha256:
+        return "shared fixtures/helpers changed since parallel review; requires explicit requalification"
+    return None
+
+
 def parallel_safe_qualification_drift(test_files: Iterable[str]) -> tuple[str, ...]:
-    """Return reviewed files whose current bytes no longer match the qualified identity."""
+    """Return reviewed files whose current file/shared content is no longer qualified."""
     selected = _normalize(test_files)
-    drifted: list[str] = []
+    return tuple(path for path in selected if parallel_safe_qualification_reason(path) is not None)
+
+
+def parallel_safe_partition(
+    test_files: Iterable[str], *, root: Path | None = None
+) -> tuple[tuple[str, ...], tuple[tuple[str, str], ...]]:
+    """Partition reviewed files into worker-qualified and serial-fallback groups."""
+    selected = validate_parallel_safe_files(test_files)
+    qualified: list[str] = []
+    blocked: list[tuple[str, str]] = []
     for path in selected:
-        expected = PARALLEL_SAFE_FILE_SHA256.get(path)
-        candidate = ROOT / path
-        if expected is None or not candidate.is_file():
-            drifted.append(path)
-            continue
-        actual = hashlib.sha256(candidate.read_bytes()).hexdigest()
-        if actual != expected:
-            drifted.append(path)
-    return tuple(drifted)
+        reason = parallel_safe_qualification_reason(path, root=root)
+        if reason is None:
+            qualified.append(path)
+        else:
+            blocked.append((path, reason))
+    return tuple(qualified), tuple(blocked)
 
 
 def parallel_safe_blockers(test_files: Iterable[str]) -> tuple[str, ...]:
@@ -118,33 +341,78 @@ def parallel_safe_blockers(test_files: Iterable[str]) -> tuple[str, ...]:
         return ("no reviewed focused tests",)
     unsupported = tuple(sorted(set(selected) - _PARALLEL_SAFE_SET))
     reviewed = tuple(path for path in selected if path in _PARALLEL_SAFE_SET)
-    drifted = parallel_safe_qualification_drift(reviewed)
-    return unsupported + tuple(
-        f"{path} (changed since parallel review; requires explicit requalification)"
-        for path in drifted
-    )
+    blocked: list[str] = list(unsupported)
+    for path in reviewed:
+        reason = parallel_safe_qualification_reason(path)
+        if reason is not None:
+            blocked.append(f"{path} ({reason})")
+    return tuple(blocked)
 
 
 def parallel_safe_eligible(test_files: Iterable[str]) -> bool:
-    """Return whether a non-empty focused set is both reviewed and content-qualified."""
+    """Return whether a non-empty focused set is reviewed and currently qualified."""
     selected = _normalize(test_files)
     return bool(selected) and not parallel_safe_blockers(selected)
 
 
 def require_parallel_safe_qualification(test_files: Iterable[str]) -> tuple[str, ...]:
-    """Fail closed if reviewed file content changed since parallel qualification."""
+    """Fail closed if an explicitly selected reviewed file is no longer qualified."""
     selected = validate_parallel_safe_files(test_files)
-    drifted = parallel_safe_qualification_drift(selected)
-    if drifted:
+    blockers = parallel_safe_blockers(selected)
+    if blockers:
         raise PolicyError(
             "parallel-safe qualification drift: "
-            + ", ".join(drifted)
-            + "; file content changed since parallel review. Run the serial selection, repeat "
-            "static isolation review and parallel evidence, then explicitly update "
-            "PARALLEL_SAFE_FILE_SHA256 to requalify."
+            + "; ".join(blockers)
+            + ". Run the serial selection and scripts/dish-parallel-safe-qualify for each changed "
+            "file; do not hand-edit qualification identities."
         )
     return selected
 
+
+
+def parallel_safe_witness_files(
+    target: str,
+    *,
+    count: int = 7,
+    root: Path | None = None,
+) -> tuple[str, ...]:
+    """Choose unchanged previously reviewed files as concurrency witnesses for requalification.
+
+    Current shared-scope qualification is intentionally ignored: this must still work after a
+    shared fixture/helper change invalidates every active qualification at once. Witness file
+    content and its prior evidence must still match, so a drifted test cannot silently become a
+    witness.
+    """
+    root = root or ROOT
+    manifest = _load_manifest(root)
+    witnesses: list[str] = []
+    for path, record in manifest["files"].items():
+        if path == target or not isinstance(record, Mapping):
+            continue
+        candidate = root / path
+        reviewed_sha256 = record.get("reviewed_sha256")
+        shared_sha256 = record.get("shared_sha256")
+        if (
+            not candidate.is_file()
+            or not isinstance(reviewed_sha256, str)
+            or not isinstance(shared_sha256, str)
+            or _hash_file(candidate) != reviewed_sha256
+        ):
+            continue
+        if _validate_evidence(
+            _active_evidence(manifest, path, record),
+            path=path,
+            reviewed_sha256=reviewed_sha256,
+            shared_sha256=shared_sha256,
+        ) is not None:
+            continue
+        witnesses.append(path)
+        if len(witnesses) == count:
+            return tuple(witnesses)
+    raise PolicyError(
+        f"parallel-safe requalification needs {count} unchanged reviewed witness files; "
+        f"only {len(witnesses)} are available"
+    )
 
 def parallel_safe_command(test_files: Iterable[str], *, workers: int) -> str:
     """Render the governed opt-in command for one qualified focused selection."""
@@ -161,3 +429,71 @@ def parallel_safe_command(test_files: Iterable[str], *, workers: int) -> str:
     for path in selected:
         parts.extend(("--test-file", path))
     return " ".join(shlex.quote(part) for part in parts)
+
+
+def qualification_evidence_id(evidence: Mapping[str, Any]) -> str:
+    """Return a content-addressed identifier for immutable qualification evidence."""
+    payload = dict(evidence)
+    payload.pop("evidence_id", None)
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def record_parallel_safe_qualification(
+    path: str,
+    evidence: Mapping[str, Any],
+    *,
+    root: Path | None = None,
+) -> str:
+    """Atomically activate one completed per-file qualification evidence record."""
+    root = root or ROOT
+    manifest = _load_manifest(root)
+    record = manifest["files"].get(path)
+    if not isinstance(record, dict):
+        raise PolicyError(f"cannot requalify unreviewed parallel-safe file: {path}")
+    evidence_payload = dict(evidence)
+    evidence_id = qualification_evidence_id(evidence_payload)
+    evidence_payload["evidence_id"] = evidence_id
+    file_sha256 = evidence_payload.get("file_sha256")
+    if not isinstance(file_sha256, Mapping) or not isinstance(file_sha256.get(path), str):
+        raise PolicyError("qualification evidence is missing the selected file identity")
+    shared_sha256 = evidence_payload.get("shared_sha256")
+    if not isinstance(shared_sha256, str):
+        raise PolicyError("qualification evidence is missing the shared fixture/helper identity")
+    problem = _validate_evidence(
+        evidence_payload,
+        path=path,
+        reviewed_sha256=file_sha256[path],
+        shared_sha256=shared_sha256,
+    )
+    if problem:
+        raise PolicyError("refusing incomplete parallel-safe qualification evidence: " + problem)
+
+    history = record.setdefault("history", [])
+    if not isinstance(history, list):
+        raise PolicyError(f"parallel-safe qualification history is malformed for {path}")
+    history.append(evidence_payload)
+    record["reviewed_sha256"] = file_sha256[path]
+    record["shared_sha256"] = shared_sha256
+    record["active_evidence"] = {"kind": "file", "id": evidence_id}
+
+    manifest_path = _manifest_path(root)
+    rendered = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(
+        prefix=manifest_path.name + ".",
+        dir=manifest_path.parent,
+        text=True,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(rendered)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, manifest_path)
+    finally:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+    return evidence_id
