@@ -107,7 +107,7 @@ The outstanding crash/fault rehearsal must inject failures at these boundaries (
 | 3 | Command execution and workflow authority | Done |
 | 4 | Command and service port | Done |
 | 5 | Import, shadow, and projection | Done |
-| 6 | Rehearsal, acceptance, and cutover package | Offline plumbing done; everything requiring real PostgreSQL, real production access, or Marco's approval is outstanding — see "Outstanding work" above |
+| 6 | Rehearsal, acceptance, and cutover package | Offline plumbing done; native §1-§3 local rehearsal now passes (see "Outstanding work" above); §4 production-shaped rehearsal, real production access, and Marco's approval remain outstanding |
 
 The actual production activation is a controlled release event, not a seventh implementation stage.
 
