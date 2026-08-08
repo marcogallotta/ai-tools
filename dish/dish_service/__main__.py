@@ -15,9 +15,9 @@ from typing import Any
 
 from .application import DishService
 from .config import ServiceConfig
-from .database_ownership import ServiceDatabaseOwnership, service_process_lock_path
+from .database_ownership import ServiceDatabaseOwnership, database_process_lock_path
 from .http import DishHTTPServer, build_action_server, build_private_server
-from .process_lock import ServiceProcessLock
+from .process_lock import DatabaseProcessLock
 from .sd_notify import notify as sd_notify
 from dish_tool.errors import DishRuleError
 
@@ -166,8 +166,10 @@ def _build_servers(service: DishService) -> tuple[DishHTTPServer, DishHTTPServer
 
 
 def _run_configured_service(config: ServiceConfig) -> int:
-    lock_path = service_process_lock_path(config.db_path)
-    with ServiceProcessLock(lock_path):
+    lock_path = database_process_lock_path(config.db_path)
+    with DatabaseProcessLock(
+        lock_path, role="service", rule="service_process_lock_held"
+    ):
         ServiceDatabaseOwnership(config.db_path).mark()
         service = DishService(config)
         startup = service.startup_check()

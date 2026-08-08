@@ -12,7 +12,7 @@ from dish_service.application import DishService
 from dish_service.client import DishActionClient, DishAdminServiceClient, DishServiceClient
 from dish_service.config import ServiceConfig
 from dish_service.http import build_action_server, build_private_server
-from dish_service.process_lock import ServiceProcessLock
+from dish_service.process_lock import DatabaseProcessLock
 from dish_service import admin_cli
 from dish_tool.errors import DishRuleError
 from tests.support.thread_teardown import start_server_thread, stop_server
@@ -138,17 +138,23 @@ def test_hidden_post_route_closes_without_reinterpreting_its_body(tmp_path):
 
 def test_service_process_lock_rejects_second_process_owner(tmp_path):
     path = tmp_path / "shared.db.service.lock"
-    first = ServiceProcessLock(path).acquire()
+    first = DatabaseProcessLock(
+        path, role="service", rule="service_process_lock_held"
+    ).acquire()
     try:
         with pytest.raises(DishRuleError) as exc:
-            ServiceProcessLock(path).acquire()
+            DatabaseProcessLock(
+                path, role="service", rule="service_process_lock_held"
+            ).acquire()
         assert exc.value.code == "CONFLICT"
         assert exc.value.rule == "service_process_lock_held"
         assert exc.value.retryable is False
     finally:
         first.release()
 
-    with ServiceProcessLock(path):
+    with DatabaseProcessLock(
+        path, role="service", rule="service_process_lock_held"
+    ):
         pass
 
 

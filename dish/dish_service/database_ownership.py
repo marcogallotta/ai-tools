@@ -22,11 +22,6 @@ def database_process_lock_path(db_path: Path) -> Path:
     return canonical.with_suffix(canonical.suffix + ".service.lock")
 
 
-def service_process_lock_path(db_path: Path) -> Path:
-    """Compatibility alias for the shared database process lock path."""
-    return database_process_lock_path(db_path)
-
-
 class ServiceDatabaseOwnership:
     """Mark a database as belonging exclusively to the shared service runtime."""
 

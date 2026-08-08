@@ -107,7 +107,9 @@ def test_process_lock_contention_is_a_concise_startup_diagnostic(
     )
     monkeypatch.setattr(service_main.ServiceConfig, "from_env", lambda: config)
     lock_path = config.db_path.with_suffix(config.db_path.suffix + ".service.lock")
-    held = service_main.ServiceProcessLock(lock_path).acquire()
+    held = service_main.DatabaseProcessLock(
+        lock_path, role="service", rule="service_process_lock_held"
+    ).acquire()
     try:
         with caplog.at_level("ERROR", logger="dish.service"):
             result = service_main.main([])

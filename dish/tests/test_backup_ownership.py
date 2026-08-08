@@ -10,9 +10,9 @@ import pytest
 from dish_service.backup import BackupManager
 from dish_service.database_ownership import (
     ServiceDatabaseOwnership,
-    service_process_lock_path,
+    database_process_lock_path,
 )
-from dish_service.process_lock import ServiceProcessLock
+from dish_service.process_lock import DatabaseProcessLock
 from dish_tool.constants import SCHEMA_VERSION
 from dish_tool.database_initialization import initialize_database
 from dish_tool.database_schema import MIGRATIONS, _execute_script_statements
@@ -122,13 +122,17 @@ def test_database_ownership_and_process_lock_follow_symlink_identity(tmp_path):
         alias_owner.assert_local_access_allowed()
     assert exc.value.rule == "service_owned_database"
 
-    real_lock = service_process_lock_path(target)
-    alias_lock = service_process_lock_path(alias)
+    real_lock = database_process_lock_path(target)
+    alias_lock = database_process_lock_path(alias)
     assert real_lock == alias_lock
-    held = ServiceProcessLock(real_lock).acquire()
+    held = DatabaseProcessLock(
+        real_lock, role="service", rule="service_process_lock_held"
+    ).acquire()
     try:
         with pytest.raises(DishRuleError) as lock_exc:
-            ServiceProcessLock(alias_lock).acquire()
+            DatabaseProcessLock(
+                alias_lock, role="service", rule="service_process_lock_held"
+            ).acquire()
         assert lock_exc.value.rule == "service_process_lock_held"
     finally:
         held.release()

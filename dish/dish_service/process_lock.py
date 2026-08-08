@@ -61,10 +61,3 @@ class DatabaseProcessLock:
 
     def __exit__(self, exc_type, exc, traceback) -> None:
         self.release()
-
-
-class ServiceProcessLock(DatabaseProcessLock):
-    """Compatibility wrapper preserving the service contention rule."""
-
-    def __init__(self, path: Path) -> None:
-        super().__init__(path, role="service", rule="service_process_lock_held")
