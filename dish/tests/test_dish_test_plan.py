@@ -74,6 +74,40 @@ def test_agent_can_add_a_semantic_escalation_lane() -> None:
 
 
 
+def test_reviewed_focused_test_advertises_experimental_parallel_without_replacing_serial() -> None:
+    plan = build_plan(["tests/test_commands.py"], policy_path=POLICY)
+
+    assert plan.commands == (".venv/bin/python -m pytest -q tests/test_commands.py",)
+    assert plan.experimental_parallel_eligible is True
+    assert plan.experimental_commands == ()
+    text = plan.to_text()
+    assert "Experimental parallel candidate available" in text
+    assert "--experimental-workers N" in text
+
+
+def test_planner_can_emit_runnable_optional_parallel_command_for_reviewed_focus() -> None:
+    plan = build_plan(
+        ["tests/test_commands.py"],
+        policy_path=POLICY,
+        experimental_workers=4,
+    )
+
+    assert plan.commands == (".venv/bin/python -m pytest -q tests/test_commands.py",)
+    assert plan.experimental_commands == (
+        ".venv/bin/python scripts/dish-test-lane experimental-parallel --workers 4 "
+        "--test-file tests/test_commands.py",
+    )
+    assert "non-authoritative; required serial commands still apply" in plan.to_text()
+
+
+def test_planner_refuses_experimental_parallel_for_unreviewed_focused_test() -> None:
+    with pytest.raises(PolicyError, match="experimental parallel acceleration is unavailable"):
+        build_plan(
+            ["tests/test_lease_authority.py"],
+            policy_path=POLICY,
+            experimental_workers=2,
+        )
+
 
 def test_deleted_path_can_use_base_revision_policy(tmp_path: Path) -> None:
     current_rows = POLICY.read_text(encoding="utf-8").splitlines()

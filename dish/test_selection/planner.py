@@ -8,6 +8,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
+from .parallel import (
+    EXPERIMENTAL_PARALLEL_TEST_FILES,
+    experimental_parallel_command,
+    experimental_parallel_eligible,
+)
 from .model import (
     ALLOWED_LANES,
     CLASS_NAMES,
@@ -96,6 +101,8 @@ class TestPlan:
     focused_tests: tuple[str, ...]
     lanes: tuple[str, ...]
     commands: tuple[str, ...]
+    experimental_parallel_eligible: bool
+    experimental_commands: tuple[str, ...]
     conditional_reviews: tuple[ConditionalReview, ...]
     integration_checkpoint: bool
 
@@ -109,6 +116,8 @@ class TestPlan:
             "focused_tests": list(self.focused_tests),
             "lanes": list(self.lanes),
             "commands": list(self.commands),
+            "experimental_parallel_eligible": self.experimental_parallel_eligible,
+            "experimental_commands": list(self.experimental_commands),
             "conditional_reviews": [review.as_dict() for review in self.conditional_reviews],
             "integration_checkpoint": self.integration_checkpoint,
         }
@@ -130,6 +139,21 @@ class TestPlan:
         lines.extend(f"  {index}. {command}" for index, command in enumerate(self.commands, start=1))
         if not self.commands:
             lines.append("  (none)")
+        if self.experimental_commands:
+            lines.extend([
+                "",
+                "Experimental acceleration (non-authoritative; required serial commands still apply):",
+            ])
+            lines.extend(
+                f"  {index}. {command}"
+                for index, command in enumerate(self.experimental_commands, start=1)
+            )
+        elif self.experimental_parallel_eligible:
+            lines.extend([
+                "",
+                "Experimental parallel candidate available for the focused tests.",
+                "Rerun the planner with --experimental-workers N to emit a runnable optional command.",
+            ])
         if self.conditional_reviews:
             lines.extend(["", "Agent semantic review required:"])
             for review in self.conditional_reviews:
@@ -147,16 +171,22 @@ class TestPlan:
         return "\n".join(lines) + "\n"
 
 
-def _focused_command(tests: Iterable[str]) -> str | None:
-    ordered = sorted(
-        {
-            test
-            for test in tests
-            if not test.startswith("tests/postgresql/native/")
-            and not test.startswith("tests/postgresql/pglite/")
-            and not test.startswith("frontend/tests/")
-        }
+def _ordinary_focused_tests(tests: Iterable[str]) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                test
+                for test in tests
+                if not test.startswith("tests/postgresql/native/")
+                and not test.startswith("tests/postgresql/pglite/")
+                and not test.startswith("frontend/tests/")
+            }
+        )
     )
+
+
+def _focused_command(tests: Iterable[str]) -> str | None:
+    ordered = _ordinary_focused_tests(tests)
     if not ordered:
         return None
     return ".venv/bin/python -m pytest -q " + " ".join(shlex.quote(test) for test in ordered)
@@ -189,6 +219,7 @@ def build_plan(
     fallback_policy: Mapping[str, PolicyRow] | None = None,
     add_lanes: Iterable[str] = (),
     integration_checkpoint: bool = False,
+    experimental_workers: int | None = None,
 ) -> TestPlan:
     policy = load_policy(policy_path)
     fallback = fallback_policy or {}
@@ -239,6 +270,25 @@ def build_plan(
     if integration_checkpoint:
         lanes.add("ordinary full suite")
 
+    ordinary_focused = _ordinary_focused_tests(focused_tests)
+    parallel_eligible = experimental_parallel_eligible(ordinary_focused)
+    experimental_commands: tuple[str, ...] = ()
+    if experimental_workers is not None:
+        if experimental_workers < 1:
+            raise PolicyError("--experimental-workers must be at least 1")
+        if not parallel_eligible:
+            unsupported = sorted(
+                set(ordinary_focused) - set(EXPERIMENTAL_PARALLEL_TEST_FILES)
+            )
+            detail = ", ".join(unsupported) if unsupported else "no reviewed focused tests"
+            raise PolicyError(
+                "experimental parallel acceleration is unavailable for this focused selection: "
+                + detail
+            )
+        experimental_commands = (
+            experimental_parallel_command(ordinary_focused, workers=experimental_workers),
+        )
+
     return TestPlan(
         changed_paths=normalized,
         ignored_paths=(),
@@ -247,6 +297,8 @@ def build_plan(
         focused_tests=tuple(sorted(focused_tests)),
         lanes=tuple(sorted(lanes)),
         commands=_commands(focused_tests, lanes),
+        experimental_parallel_eligible=parallel_eligible,
+        experimental_commands=experimental_commands,
         conditional_reviews=tuple(reviews),
         integration_checkpoint=integration_checkpoint,
     )
@@ -278,7 +330,6 @@ def _git_lines(git_root: Path, args: Sequence[str]) -> set[str]:
     if completed.returncode != 0:
         raise PolicyError(f"git {' '.join(args)} failed: {completed.stderr.strip()}")
     return {line.strip() for line in completed.stdout.splitlines() if line.strip()}
-
 
 
 

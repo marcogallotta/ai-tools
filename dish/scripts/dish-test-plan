@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,6 +38,14 @@ def _parser() -> argparse.ArgumentParser:
         "--integration-checkpoint",
         action="store_true",
         help="add the ordinary full suite for an integration, merge, or certification checkpoint",
+    )
+    parser.add_argument(
+        "--experimental-workers",
+        type=int,
+        help=(
+            "emit an optional xdist command for a focused selection that is entirely in the "
+            "reviewed experimental candidate inventory; required commands remain serial"
+        ),
     )
     parser.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     parser.add_argument("--validate", action="store_true", help="validate the current ownership map")
@@ -81,23 +90,14 @@ def main(argv: list[str] | None = None) -> int:
             fallback_policy=fallback_policy,
             add_lanes=args.add_lane,
             integration_checkpoint=args.integration_checkpoint,
+            experimental_workers=args.experimental_workers,
         )
     except PolicyError as exc:
         print(f"dish-test-plan: {exc}", file=sys.stderr)
         return 2
 
     if ignored:
-        plan = type(plan)(
-            changed_paths=plan.changed_paths,
-            ignored_paths=ignored,
-            classes=plan.classes,
-            traits=plan.traits,
-            focused_tests=plan.focused_tests,
-            lanes=plan.lanes,
-            commands=plan.commands,
-            conditional_reviews=plan.conditional_reviews,
-            integration_checkpoint=plan.integration_checkpoint,
-        )
+        plan = replace(plan, ignored_paths=ignored)
     sys.stdout.write(plan.to_json() if args.json else plan.to_text())
     return 0
 

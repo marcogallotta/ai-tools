@@ -6,28 +6,76 @@ quarantine rules.
 
 ## Test environments
 
-Use two repository-local environments. Do not package either environment.
+Use repository-local environments. Do not package any environment.
 
 ### Deterministic development environment
 
 ```sh
-python3 -m venv .venv
+# --clear is intentional: source archives may contain a relocated/stale .venv.
+python3 -m venv --clear .venv
 .venv/bin/python -m pip install -r requirements-test.txt
 ```
 
 This environment runs the authoritative first-attempt gates. It deliberately does not install
-plugins that randomize order or rerun failures automatically.
+plugins that randomize order, rerun failures, or provide xdist. Parallel tooling must never become a
+prerequisite for this serial bootstrap.
+
+### Optional parallel-test environment
+
+```sh
+python3 -m venv --clear .venv-parallel
+.venv-parallel/bin/python -m pip install -r requirements-parallel.txt
+```
+
+This environment adds only the pinned xdist layer on top of the deterministic test requirements. It
+is optional: failure to build it must not block serial first-attempt evidence.
 
 ### Flake-detection environment
 
 ```sh
-python3 -m venv .venv-flake
+python3 -m venv --clear .venv-flake
 .venv-flake/bin/python -m pip install -r requirements-flake.txt
 ```
 
-This environment adds `pytest-rerunfailures`, `pytest-randomly`, `pytest-repeat`, and
-`pytest-xdist`. Use it only through the explicit commands below. `pytest-randomly` changes normal
-pytest behavior when installed, which is why it is kept out of `requirements-test.txt`.
+This environment layers flake diagnostics on the optional parallel requirements, adding
+`pytest-rerunfailures`, `pytest-randomly`, and `pytest-repeat`. Use it only through the explicit
+commands below. `pytest-randomly` changes normal pytest behavior when installed, which is why the
+entire optional stack stays out of `requirements-test.txt`.
+
+### Archive/offline bootstrap and environment portability
+
+Never execute a `.venv` copied from another checkout, archive, host, Python minor version, or absolute
+path. Virtual environments are not portable artifacts. Recreate them with the target host's current
+interpreter; `--clear` makes an accidentally archived environment fail safe instead of leaving stale
+site-packages behind. Test runners also reuse the interpreter that launched them rather than probing
+for an arbitrary repository `.venv`.
+
+For a handoff that must bootstrap without an index, prepare a platform/interpreter-matched wheelhouse
+on a connected machine and ship that dependency bundle with the source archive. Keep deterministic and
+optional tooling independently satisfiable:
+
+```sh
+# Connected preparation for the authoritative serial environment.
+python3 -m pip download --only-binary=:all: -r requirements-test.txt -d wheelhouse-serial
+
+# Offline target.
+python3 -m venv --clear .venv
+.venv/bin/python -m pip install --no-index --find-links wheelhouse-serial -r requirements-test.txt
+
+# Optional xdist environment; failure here must not block .venv.
+python3 -m pip download --only-binary=:all: -r requirements-parallel.txt -d wheelhouse-parallel
+python3 -m venv --clear .venv-parallel
+.venv-parallel/bin/python -m pip install --no-index --find-links wheelhouse-parallel -r requirements-parallel.txt
+
+# Optional flake diagnostics can be bundled independently as well.
+python3 -m pip download --only-binary=:all: -r requirements-flake.txt -d wheelhouse-flake
+python3 -m venv --clear .venv-flake
+.venv-flake/bin/python -m pip install --no-index --find-links wheelhouse-flake -r requirements-flake.txt
+```
+
+Record the source archive SHA-256 plus the builder/target Python version and platform alongside an
+offline wheelhouse. A missing wheel is a bootstrap evidence gap to fix on the connected builder; do
+not fall back to a relocated virtual environment.
 
 ## Autonomous changed-path selection
 
@@ -55,6 +103,21 @@ lane explicitly:
   --path dish_tool/example.py \
   --add-lane 'SQLite database-boundary'
 ```
+
+When the focused ordinary test files are entirely inside the statically reviewed experimental xdist
+candidate inventory, the normal planner output says that an optional acceleration is available. To
+emit a runnable candidate command, rerun the same plan with an explicit worker count:
+
+```sh
+.venv/bin/python scripts/dish-test-plan \
+  --path tests/test_commands.py \
+  --experimental-workers 4
+```
+
+The planner keeps every required command serial and prints the xdist command in a separate
+**experimental, non-authoritative** section. It fails closed if any focused ordinary test is outside
+the reviewed candidate inventory. This improves time-to-first-diagnostic-test without allowing a
+parallel result to erase required serial or governed high-risk evidence.
 
 The eight primary classes are:
 
@@ -122,11 +185,20 @@ lane; it never hides a failed inner phase behind one final aggregate result.
 | release and cutover | `.venv/bin/python scripts/dish-test-lane release-cutover` |
 | command and API contracts | `.venv/bin/python scripts/dish-test-lane command-api-contracts` |
 | operational certification | `.venv/bin/python scripts/dish-test-lane operational-certification` |
+| experimental xdist candidate | `.venv/bin/python scripts/dish-test-lane experimental-parallel --workers <count>` |
 
 `native-concurrency` requires `DISH_TEST_POSTGRESQL_DSN`; `operational-certification` requires
 `DISH_PG_TEST_URL`. Missing infrastructure is reported as unavailable with exit status 3, never as a
 pass. These commands complement, rather than replace, changed-path focused tests and the ordinary
 full-suite integration checkpoint.
+
+`experimental-parallel` is deliberately not named or treated as parallel-safe. Its file inventory has
+passed static isolation review and serial baselines, but worker isolation remains unproven until the
+pinned xdist environment can run repeated `-n 2`, `-n 4`, and host-appropriate `-n 8` probes. It uses
+the optional `.venv-parallel` and reports exit 3 when xdist is unavailable. Native PostgreSQL,
+process-failure/process-boundary, concurrency, lease/fencing/reclaim/recovery, fixed-port/shared-service,
+shared-filesystem, production-shaped rehearsal, and migration/
+backup/restore evidence remain serial unless independently proven isolated.
 
 ## Authoritative first-attempt lanes
 
@@ -154,6 +226,27 @@ closure, connection reset, or broken pipe before an assertion or domain transact
 the exact same commit, environment, selection, and command, and report both attempts. Never retry an
 assertion, SQL constraint, migration, domain-rule, lock-order, state, hash, collection, or inventory
 failure. An ambiguous timeout is a correctness failure until infrastructure failure is proved.
+
+### Wrapper-timeout diagnosis
+
+A wrapper timeout is not a pass and should not be described as a test failure until the active test
+and process state are known. Named pytest lanes support a diagnostic rendering that preserves the
+exact selection but prints each node and final slowest durations:
+
+```sh
+.venv/bin/python scripts/dish-test-lane release-cutover --diagnose
+```
+
+For the ordinary suite use the equivalent diagnostic command directly:
+
+```sh
+.venv/bin/python -m pytest -vv --durations=20
+```
+
+Diagnostic reruns are not replacement first-attempt evidence. Record the last announced node, elapsed
+time, child-process state, and whether cleanup left descendants/resources behind. PGlite already
+prints `BEGIN/PASS/FAIL` for each governed node and records descendant/forced-cleanup accounting in
+its report, so an outer wrapper cutoff can be distinguished from its per-node timeout.
 
 ### Source-contract acceptance
 
@@ -471,7 +564,7 @@ For every unexpected failure record:
 - full pytest node ID;
 - commit SHA;
 - Python version and platform;
-- `requirements-test.txt` and `requirements-flake.txt` hashes;
+- `requirements-test.txt`, `requirements-parallel.txt`, and `requirements-flake.txt` hashes;
 - random seed and xdist worker count, when applicable;
 - whether it passes alone;
 - whether it passes in its containing file;

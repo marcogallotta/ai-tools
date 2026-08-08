@@ -53,6 +53,7 @@ TOP_LEVEL_FILES = {
     "pytest.ini",
     "requirements.txt",
     "requirements-test.txt",
+    "requirements-parallel.txt",
     "requirements-flake.txt",
     "dish",
     "dish-admin",

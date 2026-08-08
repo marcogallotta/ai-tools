@@ -58,14 +58,23 @@ def test_scan_command_writes_machine_and_human_readable_artifacts(tmp_path, monk
     )
 
 
-def test_flake_requirement_file_declares_established_detection_plugins():
-    requirements = (flake_runner.ROOT / "requirements-flake.txt").read_text(
-        encoding="utf-8"
+def test_optional_requirement_layers_keep_xdist_out_of_serial_bootstrap():
+    flake = (flake_runner.ROOT / "requirements-flake.txt").read_text(encoding="utf-8")
+    parallel = (flake_runner.ROOT / "requirements-parallel.txt").read_text(encoding="utf-8")
+    deterministic = (flake_runner.ROOT / "requirements-test.txt").read_text(encoding="utf-8")
+
+    assert "-r requirements-parallel.txt" in flake
+    assert "pytest-rerunfailures==16.4" in flake
+    assert "pytest-randomly==4.1.0" in flake
+    assert "pytest-repeat==0.9.4" in flake
+    assert "pytest-xdist==3.8.0" in parallel
+    assert "-r requirements-test.txt" in parallel
+    assert "pytest-xdist" not in deterministic
+
+    metadata = flake_runner._environment_metadata("unit-test")
+    assert metadata["requirements_parallel_sha256"] == flake_runner._hash_file(
+        flake_runner.ROOT / "requirements-parallel.txt"
     )
-    assert "pytest-rerunfailures==16.4" in requirements
-    assert "pytest-randomly==4.1.0" in requirements
-    assert "pytest-repeat==0.9.4" in requirements
-    assert "pytest-xdist==3.8.0" in requirements
 
 
 def test_rerun_detector_disables_random_order_and_fails_on_pass_after_rerun(
