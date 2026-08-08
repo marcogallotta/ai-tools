@@ -9,7 +9,7 @@ from urllib.parse import urlsplit
 import pytest
 
 from dish_service import application as application_module
-from dish_tool import database_schema as database_schema_module
+from dish_tool import database_initialization as database_initialization_module
 from dish_tool.database_initialization import initialize_database
 from tests.support.service_scenarios import (
     REQUEST_ID,
@@ -245,7 +245,7 @@ def test_health_reports_transient_writer_lock_without_calling_it_corruption(
 ):
     service, _backend, server, thread, _url = _running(tmp_path)
     stop_server(server, thread)
-    monkeypatch.setattr(database_schema_module, "MIGRATION_BUSY_TIMEOUT_MS", 25)
+    monkeypatch.setattr(database_initialization_module, "MIGRATION_BUSY_TIMEOUT_MS", 25)
     locker = initialize_database(service.config.db_path)
     locker.execute("BEGIN IMMEDIATE")
     try:

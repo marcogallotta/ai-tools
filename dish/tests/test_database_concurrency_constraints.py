@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
+import dish_tool.database_initialization as database_initialization
 import dish_tool.database_migrations as database_migrations
-import dish_tool.database_schema as database_schema
 from dish_tool.database_initialization import initialize_database
 from dish_tool.database_migrations import _execute_script_statements
 from dish_tool.database_schema import MIGRATIONS
@@ -80,7 +80,7 @@ def test_legacy_backup_uses_the_schema_snapshot_that_was_versioned(
             _MigrateBeforeBackupConnection.migrate_live_database = migrate_live_database
         return tracked_connect(database, *args, **kwargs)
 
-    monkeypatch.setattr(database_schema.sqlite3, "connect", racing_connect)
+    monkeypatch.setattr(database_initialization.sqlite3, "connect", racing_connect)
     initialized = initialize_database(db_path)
     initialized.close()
 

@@ -4,18 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import time
 import sqlite3
-import tempfile
-import uuid
-from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any
 
-from .constants import DEFAULT_DB_PATH, SUBMISSION_STATES
+from .constants import SUBMISSION_STATES
 from .errors import DishRuleError
-from .transactions import immediate_transaction, read_transaction
-from .models import ContentIdentity, OperationActors, agent_family, utc_now
+from .models import utc_now
 
 _MIGRATION_1 = f"""
 CREATE TABLE submissions (
@@ -2908,68 +2902,6 @@ BEGIN SELECT RAISE(ABORT, 'safe-reclaimed operation cannot receive content versi
 """
 
 MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31, 32: _MIGRATION_32, 33: _MIGRATION_33, 34: _MIGRATION_34, 35: _MIGRATION_35, 36: _MIGRATION_36, 37: _MIGRATION_37, 38: _MIGRATION_38, 39: _MIGRATION_39, 40: _MIGRATION_40}
-
-
-def _backup_legacy_database(db_path: Path) -> None:
-    """Keep one transactionally complete legacy snapshot before migration.
-
-    Copying only the main SQLite file can omit committed pages still resident in
-    a WAL file. Build the legacy backup through SQLite's online backup API and
-    replace any earlier incomplete artifact while the live database is still on
-    a pre-redesign schema.
-    """
-
-    if not db_path.exists() or str(db_path) == ":memory:":
-        return
-    backup = db_path.with_suffix(db_path.suffix + ".legacy-v2.bak")
-    source = sqlite3.connect(str(db_path), timeout=30, isolation_level=None)
-    source.row_factory = sqlite3.Row
-    temp_path: Path | None = None
-    try:
-        # Keep the schema-version observation and the online-backup source on
-        # one SQLite snapshot. In WAL mode another initializer may migrate the
-        # live file after this read; without the read transaction the backup
-        # API can then copy the newer schema while ``version`` still describes
-        # the legacy one.
-        with read_transaction(source):
-            version = int(source.execute("PRAGMA user_version").fetchone()[0])
-            if version >= 3:
-                return
-            with tempfile.NamedTemporaryFile(
-                dir=backup.parent,
-                prefix=f".{backup.name}.",
-                suffix=".tmp",
-                delete=False,
-            ) as handle:
-                temp_path = Path(handle.name)
-            target = sqlite3.connect(str(temp_path), timeout=30, isolation_level=None)
-            try:
-                source.backup(target)
-                target.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            finally:
-                target.close()
-        check = sqlite3.connect(str(temp_path), timeout=30, isolation_level=None)
-        try:
-            if check.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
-                raise sqlite3.DatabaseError("legacy backup integrity check failed")
-            if int(check.execute("PRAGMA user_version").fetchone()[0]) != version:
-                raise sqlite3.DatabaseError("legacy backup schema version mismatch")
-        finally:
-            check.close()
-        os.replace(temp_path, backup)
-        temp_path = None
-    finally:
-        source.close()
-        if temp_path is not None:
-            temp_path.unlink(missing_ok=True)
-
-
-WAL_BUSY_TIMEOUT_MS = 100
-WAL_RETRY_ATTEMPTS = 20
-WAL_RETRY_SLEEP_BASE_SECONDS = 0.01
-WAL_RETRY_SLEEP_CAP_SECONDS = 0.1
-MIGRATION_BUSY_TIMEOUT_MS = 2000
-RUNTIME_BUSY_TIMEOUT_MS = 30000
 
 
 def _content_digest(title: str, notes: str) -> str:

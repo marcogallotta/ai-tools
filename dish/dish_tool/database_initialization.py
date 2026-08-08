@@ -4,22 +4,77 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import tempfile
 import time
 from pathlib import Path
 
-from .database_schema import (
-    DEFAULT_DB_PATH,
-    MIGRATION_BUSY_TIMEOUT_MS,
-    RUNTIME_BUSY_TIMEOUT_MS,
-    WAL_BUSY_TIMEOUT_MS,
-    WAL_RETRY_ATTEMPTS,
-    WAL_RETRY_SLEEP_BASE_SECONDS,
-    WAL_RETRY_SLEEP_CAP_SECONDS,
-    _backup_legacy_database,
-)
+from .constants import DEFAULT_DB_PATH
 from .database_migrations import migrate_database
 from .database_schema_validation import validate_current_database, validate_runtime_schema_state
 from .errors import DishRuleError
+from .transactions import read_transaction
+
+
+def _backup_legacy_database(db_path: Path) -> None:
+    """Keep one transactionally complete legacy snapshot before migration.
+
+    Copying only the main SQLite file can omit committed pages still resident in
+    a WAL file. Build the legacy backup through SQLite's online backup API and
+    replace any earlier incomplete artifact while the live database is still on
+    a pre-redesign schema.
+    """
+
+    if not db_path.exists() or str(db_path) == ":memory:":
+        return
+    backup = db_path.with_suffix(db_path.suffix + ".legacy-v2.bak")
+    source = sqlite3.connect(str(db_path), timeout=30, isolation_level=None)
+    source.row_factory = sqlite3.Row
+    temp_path: Path | None = None
+    try:
+        # Keep the schema-version observation and the online-backup source on
+        # one SQLite snapshot. In WAL mode another initializer may migrate the
+        # live file after this read; without the read transaction the backup
+        # API can then copy the newer schema while ``version`` still describes
+        # the legacy one.
+        with read_transaction(source):
+            version = int(source.execute("PRAGMA user_version").fetchone()[0])
+            if version >= 3:
+                return
+            with tempfile.NamedTemporaryFile(
+                dir=backup.parent,
+                prefix=f".{backup.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                temp_path = Path(handle.name)
+            target = sqlite3.connect(str(temp_path), timeout=30, isolation_level=None)
+            try:
+                source.backup(target)
+                target.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            finally:
+                target.close()
+        check = sqlite3.connect(str(temp_path), timeout=30, isolation_level=None)
+        try:
+            if check.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                raise sqlite3.DatabaseError("legacy backup integrity check failed")
+            if int(check.execute("PRAGMA user_version").fetchone()[0]) != version:
+                raise sqlite3.DatabaseError("legacy backup schema version mismatch")
+        finally:
+            check.close()
+        os.replace(temp_path, backup)
+        temp_path = None
+    finally:
+        source.close()
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
+
+
+WAL_BUSY_TIMEOUT_MS = 100
+WAL_RETRY_ATTEMPTS = 20
+WAL_RETRY_SLEEP_BASE_SECONDS = 0.01
+WAL_RETRY_SLEEP_CAP_SECONDS = 0.1
+MIGRATION_BUSY_TIMEOUT_MS = 2000
+RUNTIME_BUSY_TIMEOUT_MS = 30000
 
 
 def _open_connection(db_path: Path) -> sqlite3.Connection:

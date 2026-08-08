@@ -12,6 +12,7 @@ def test_responsibility_modules_expose_authoritative_owners():
         schema_validation,
     )
     from dish_tool.database_initialization import initialize_database
+    from dish_tool.constants import DEFAULT_DB_PATH
     from dish_tool.database_migrations import migrate_database
     from dish_tool.database_schema import MIGRATIONS
     from dish_tool.database_schema_validation import validate_current_database
@@ -27,6 +28,8 @@ def test_responsibility_modules_expose_authoritative_owners():
     assert database_schema_validation.validate_current_database is validate_current_database
     assert not hasattr(database_schema, "validate_current_database")
     assert database_initialization.initialize_database is initialize_database
+    assert database_initialization.DEFAULT_DB_PATH is DEFAULT_DB_PATH
+    assert not hasattr(database_schema, "DEFAULT_DB_PATH")
     assert not hasattr(database_schema, "initialize_database")
 
 

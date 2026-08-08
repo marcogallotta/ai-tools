@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-import dish_tool.database_schema as database_schema
+import dish_tool.database_initialization as database_initialization
 from dish_tool.database_initialization import initialize_database
 from dish_tool.errors import DishRuleError
 
@@ -67,7 +67,7 @@ finally:
 @pytest.mark.database_boundary_concurrency
 @pytest.mark.boundary
 def test_held_writer_returns_structured_retryable_error(monkeypatch, tmp_path: Path):
-    monkeypatch.setattr(database_schema, "MIGRATION_BUSY_TIMEOUT_MS", 10)
+    monkeypatch.setattr(database_initialization, "MIGRATION_BUSY_TIMEOUT_MS", 10)
     path = tmp_path / "writer.sqlite"
     ready_path = tmp_path / "writer.ready"
     release_path = tmp_path / "writer.release"

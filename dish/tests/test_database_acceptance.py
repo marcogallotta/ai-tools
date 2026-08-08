@@ -5,7 +5,7 @@ import pytest
 
 
 from dish_tool.database import create_operation, confirm_task_content
-import dish_tool.database_schema as database_schema
+import dish_tool.database_initialization as database_initialization
 from dish_tool.database_initialization import initialize_database
 from dish_tool.database_schema import MIGRATIONS
 from dish_tool.errors import DishRuleError
@@ -75,10 +75,10 @@ def test_confirmed_attempts_require_evidence_bindings(tmp_path):
 
 
 def test_reader_lock_has_structured_retryable_diagnostic(monkeypatch, tmp_path):
-    monkeypatch.setattr(database_schema, "WAL_BUSY_TIMEOUT_MS", 1)
-    monkeypatch.setattr(database_schema, "WAL_RETRY_ATTEMPTS", 2)
-    monkeypatch.setattr(database_schema, "WAL_RETRY_SLEEP_BASE_SECONDS", 0.001)
-    monkeypatch.setattr(database_schema, "WAL_RETRY_SLEEP_CAP_SECONDS", 0.001)
+    monkeypatch.setattr(database_initialization, "WAL_BUSY_TIMEOUT_MS", 1)
+    monkeypatch.setattr(database_initialization, "WAL_RETRY_ATTEMPTS", 2)
+    monkeypatch.setattr(database_initialization, "WAL_RETRY_SLEEP_BASE_SECONDS", 0.001)
+    monkeypatch.setattr(database_initialization, "WAL_RETRY_SLEEP_CAP_SECONDS", 0.001)
     path = tmp_path / "reader.sqlite"
     writer = sqlite3.connect(path)
     writer.execute("CREATE TABLE seed(x INTEGER)")
