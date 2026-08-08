@@ -69,12 +69,6 @@ def expose_authoritative_view(view: Mapping[str, Any]) -> dict[str, Any]:
     return exposed
 
 
-def _exposed_view(view: Mapping[str, Any]) -> dict[str, Any]:
-    """Backward-compatible internal alias for the shared exposure contract."""
-
-    return expose_authoritative_view(view)
-
-
 def _exposed_result_contract(
     view: Mapping[str, Any], data: Mapping[str, Any]
 ) -> tuple[list[str], dict[str, Any]]:
@@ -604,7 +598,7 @@ class DishApplication:
             if trace.submission_id:
                 try:
                     release = self._load_release(None)
-                    view = _exposed_view(
+                    view = expose_authoritative_view(
                         self.operation_service.authoritative_view(
                             trace.submission_id, schema=release.schema
                         )
@@ -820,7 +814,7 @@ def _step5_read(self, *, trace: CommandTrace, agent: str, task_gid: str) -> dict
     if operation is None:
         return result_envelope(command="read", task_gid=task_gid, data=data)
     operation_id = operation["operation_id"]
-    view = _exposed_view(_current_operation_view(self, operation_id, schema=release.schema))
+    view = expose_authoritative_view(_current_operation_view(self, operation_id, schema=release.schema))
     data["active_operation"] = {
         "submission_id": operation_id,
         "authoritative_view": view,
@@ -860,7 +854,7 @@ def _step5_inspect(self, *, trace: CommandTrace, agent: str, submission_id: str)
         self.conn, operation_id, current_run_id=self.invocation_run_id
     )
     internal_view = _current_operation_view(self, operation_id, schema=release.schema)
-    view = _exposed_view(internal_view)
+    view = expose_authoritative_view(internal_view)
     data["legal_next_actions"] = view["legal_actions"]
     data["authoritative_view"] = view
     content = data.get("content")
@@ -1086,7 +1080,7 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
             if existing is None:
                 raise
             existing_id = existing["operation_id"]
-            view = _exposed_view(
+            view = expose_authoritative_view(
                 self.operation_service.authoritative_view(
                     existing_id, schema=release.schema
                 )
