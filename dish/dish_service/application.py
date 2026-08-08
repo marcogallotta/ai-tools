@@ -46,6 +46,7 @@ from dish_tool.operation_execution import (
     execution_claim_is_live,
     execution_recovery_state,
     live_operation_execution_claim,
+    unresolved_operation_executions,
 )
 from dish_tool.step5 import diagnostics_for, start_result_data
 from dish_tool.step7 import replay_verification_read
@@ -85,6 +86,9 @@ from .request_replay import (
     begin_request,
     complete_request,
     pending_error,
+    request_has_uncertain_outcome,
+    request_is_unresolved,
+    request_may_reconcile_pending,
     stored_result,
 )
 from .lease_requests import LeaseRequestCoordinator
@@ -229,12 +233,11 @@ def _exact_uncertain_admin_recovery(
 ) -> dict[str, Any] | None:
     """Return the one fenced execution whose recovery may use a live lease."""
 
-    rows = conn.execute(
-        """SELECT execution_id FROM operation_executions
-             WHERE operation_id=? AND status='uncertain' AND resolved_at IS NULL
-             ORDER BY created_at, rowid""",
-        (operation_id,),
-    ).fetchall()
+    rows = [
+        row
+        for row in unresolved_operation_executions(conn, operation_id)
+        if row["status"] == "uncertain"
+    ]
     if len(rows) != 1:
         return None
     execution_id = rows[0]["execution_id"]
@@ -2215,9 +2218,10 @@ class DishService:
             if prior is not None:
                 return prior
             if (
-                not state.replay_started
-                and command != "start"
-                and state.request_row["status"] != "uncertain"
+                command != "start"
+                and request_may_reconcile_pending(
+                    state.request_row, newly_admitted=state.replay_started
+                )
             ):
                 reconciled = self._reconcile_pending_operation_request(
                     conn=state.conn, command=command, request_id=request_id
@@ -3043,9 +3047,10 @@ class DishService:
             if prior is not None:
                 return prior
             if (
-                not state.replay_started
-                and request_row["status"] != "uncertain"
-                and command != "reopen-planning"
+                command != "reopen-planning"
+                and request_may_reconcile_pending(
+                    request_row, newly_admitted=state.replay_started
+                )
             ):
                 reconciled = self._reconcile_pending_operation_request(
                     conn=state.conn, command=command, request_id=request_id
@@ -3501,7 +3506,7 @@ class DishService:
                             return self._commit_backup_creation_result(
                                 conn, request_id=request_id, record=recovered, result=result
                             )
-                        if request_row["status"] == "uncertain":
+                        if request_has_uncertain_outcome(request_row):
                             result = error_envelope(
                                 "backup-create",
                                 self._backup_not_applied_error(
@@ -4056,7 +4061,7 @@ class DishService:
                     )
                     summary["confirmed"] += 1
                 else:
-                    if request is not None and request["status"] in {"pending", "uncertain"}:
+                    if request is not None and request_is_unresolved(request):
                         result = error_envelope(
                             "backup-create",
                             self._backup_not_applied_error(

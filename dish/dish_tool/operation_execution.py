@@ -175,6 +175,19 @@ def _execution_baseline(conn: sqlite3.Connection, operation_id: str) -> dict[str
     }
 
 
+def unresolved_operation_executions(
+    conn: sqlite3.Connection, operation_id: str
+) -> list[sqlite3.Row]:
+    """Return executions whose command outcome is not durably settled."""
+    return conn.execute(
+        """SELECT execution_id,status,resolved_at,command FROM operation_executions
+             WHERE operation_id=?
+               AND (status='started' OR (status='uncertain' AND resolved_at IS NULL))
+             ORDER BY created_at""",
+        (operation_id,),
+    ).fetchall()
+
+
 def _recovery_pending(conn: sqlite3.Connection, operation_id: str) -> bool:
     return conn.execute(
         """SELECT 1 FROM write_attempts

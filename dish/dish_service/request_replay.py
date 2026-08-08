@@ -62,21 +62,46 @@ def begin_request(
         return row, False
 
 
-def stored_result(
-    row, *, permit_uncertain_resume: bool = False
-) -> dict[str, Any] | None:
-    if row["status"] not in {"completed", "uncertain"}:
-        return None
-    if row["status"] == "uncertain" and permit_uncertain_resume:
-        return None
+def request_has_uncertain_outcome(row: Mapping[str, Any]) -> bool:
+    """Return whether the admitted request is durably in uncertain outcome state."""
+    return row["status"] == "uncertain"
+
+
+def request_is_unresolved(row: Mapping[str, Any]) -> bool:
+    """Return whether the request lacks a final authoritative settlement."""
+    return row["status"] in {"pending", "uncertain"}
+
+
+def request_may_reconcile_pending(
+    row: Mapping[str, Any], *, newly_admitted: bool
+) -> bool:
+    """Return whether pending-request reconciliation may inspect durable execution evidence."""
+    return not newly_admitted and not request_has_uncertain_outcome(row)
+
+
+def _authoritative_result(row: Mapping[str, Any]) -> dict[str, Any] | None:
     encoded = (
         row["resolution_result_json"]
         if row["status"] == "completed" and row["resolution_result_json"]
         else row["result_json"]
     )
-    if encoded is None:
+    return None if encoded is None else json.loads(encoded)
+
+
+def _result_request_status(result: Mapping[str, Any]) -> str:
+    return "uncertain" if result.get("code") == "BACKEND_UNCERTAIN" else "completed"
+
+
+def stored_result(
+    row, *, permit_uncertain_resume: bool = False
+) -> dict[str, Any] | None:
+    if row["status"] not in {"completed", "uncertain"}:
         return None
-    result = json.loads(encoded)
+    if request_has_uncertain_outcome(row) and permit_uncertain_resume:
+        return None
+    result = _authoritative_result(row)
+    if result is None:
+        return None
     result.setdefault("data", {})["request_replayed"] = True
     result["data"]["request_id"] = row["request_id"]
     return result
@@ -114,15 +139,6 @@ def _confirmed_backup_creation_exists(conn: sqlite3.Connection, request_id: str)
     ).fetchone() is not None
 
 
-def _authoritative_result(row: Mapping[str, Any]) -> dict[str, Any] | None:
-    encoded = (
-        row["resolution_result_json"]
-        if row["status"] == "completed" and row["resolution_result_json"]
-        else row["result_json"]
-    )
-    return None if encoded is None else json.loads(encoded)
-
-
 def complete_request(
     conn: sqlite3.Connection,
     *,
@@ -138,7 +154,7 @@ def complete_request(
     resolved by exact replay evidence.
     """
 
-    status = "uncertain" if result.get("code") == "BACKEND_UNCERTAIN" else "completed"
+    status = _result_request_status(result)
     encoded = json.dumps(
         dict(result), sort_keys=True, separators=(",", ":"), ensure_ascii=False
     )

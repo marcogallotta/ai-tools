@@ -18,6 +18,7 @@ from .database import (
 )
 from .errors import DishRuleError
 from .models import SectionRegistry, utc_now
+from .operation_execution import unresolved_operation_executions
 from .task_store import read_complete_task
 from .transactions import immediate_transaction
 
@@ -355,13 +356,7 @@ def safe_reclaim_eligibility(
                 command=execution_claim["command"],
             )
         )
-    executions = conn.execute(
-        """SELECT execution_id,status,resolved_at,command FROM operation_executions
-             WHERE operation_id=?
-               AND (status='started' OR (status='uncertain' AND resolved_at IS NULL))
-             ORDER BY created_at""",
-        (operation_id,),
-    ).fetchall()
+    executions = unresolved_operation_executions(conn, operation_id)
     if executions:
         failures.append(
             _failure(
