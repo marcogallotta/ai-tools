@@ -17,6 +17,9 @@ _WORKFLOW_PROVENANCE = "ck_workflow_operations_creation_provenance_exact"
 _LEASE_PROVENANCE = "ck_service_leases_provenance_exact"
 _LEASE_CLASSIFICATION = "ck_service_leases_classification_context_complete"
 _CYCLE_PROVENANCE = "ck_verification_cycles_creation_provenance_exact"
+_WORKFLOW_IMPORTED_TERMINAL = "ck_workflow_operations_imported_history_terminal"
+_LEASE_IMPORTED_TERMINAL = "ck_service_leases_imported_history_terminal"
+_CYCLE_IMPORTED_TERMINAL = "ck_verification_cycles_imported_history_terminal"
 
 _PROVENANCE_COLUMNS = {
     "workflow_operations": ("import_run_id", "creation_request_id", "creation_execution_id"),
@@ -93,6 +96,10 @@ def upgrade() -> None:
             "(import_run_id IS NOT NULL AND creation_request_id IS NULL "
             "AND creation_execution_id IS NULL)",
         )
+        batch.create_check_constraint(
+            op.f(_WORKFLOW_IMPORTED_TERMINAL),
+            "import_run_id IS NULL OR lifecycle <> 'open'",
+        )
 
     with op.batch_alter_table("service_leases") as batch:
         batch.drop_constraint(op.f(_LEASE_CLASSIFICATION), type_="check")
@@ -107,6 +114,10 @@ def upgrade() -> None:
             op.f(_LEASE_PROVENANCE),
             "(import_run_id IS NULL AND run_id IS NOT NULL AND source_run_id IS NULL) OR "
             "(import_run_id IS NOT NULL AND run_id IS NULL AND length(trim(source_run_id)) > 0)",
+        )
+        batch.create_check_constraint(
+            op.f(_LEASE_IMPORTED_TERMINAL),
+            "import_run_id IS NULL OR state <> 'active'",
         )
         batch.create_check_constraint(op.f(_LEASE_CLASSIFICATION), _IMPORT_LEASE_CLASSIFICATION)
 
@@ -125,6 +136,10 @@ def upgrade() -> None:
             "(import_run_id IS NOT NULL AND reviewed_content_version_id IS NULL "
             "AND created_by_execution_id IS NULL)",
         )
+        batch.create_check_constraint(
+            op.f(_CYCLE_IMPORTED_TERMINAL),
+            "import_run_id IS NULL OR lifecycle <> 'open'",
+        )
 
     _install_provenance_immutability()
 
@@ -138,6 +153,7 @@ def downgrade() -> None:
     _drop_provenance_immutability()
 
     with op.batch_alter_table("verification_cycles") as batch:
+        batch.drop_constraint(op.f(_CYCLE_IMPORTED_TERMINAL), type_="check")
         batch.drop_constraint(op.f(_CYCLE_PROVENANCE), type_="check")
         batch.alter_column("reviewed_content_version_id", existing_type=sa.Uuid(), nullable=False)
         batch.alter_column("created_by_execution_id", existing_type=sa.Uuid(), nullable=False)
@@ -146,6 +162,7 @@ def downgrade() -> None:
 
     with op.batch_alter_table("service_leases") as batch:
         batch.drop_constraint(op.f(_LEASE_CLASSIFICATION), type_="check")
+        batch.drop_constraint(op.f(_LEASE_IMPORTED_TERMINAL), type_="check")
         batch.drop_constraint(op.f(_LEASE_PROVENANCE), type_="check")
         batch.alter_column("run_id", existing_type=sa.Uuid(), nullable=False)
         batch.create_check_constraint(op.f(_LEASE_CLASSIFICATION), _LIVE_LEASE_CLASSIFICATION)
@@ -154,6 +171,7 @@ def downgrade() -> None:
         batch.drop_column("import_run_id")
 
     with op.batch_alter_table("workflow_operations") as batch:
+        batch.drop_constraint(op.f(_WORKFLOW_IMPORTED_TERMINAL), type_="check")
         batch.drop_constraint(op.f(_WORKFLOW_PROVENANCE), type_="check")
         batch.alter_column("creation_request_id", existing_type=sa.Uuid(), nullable=False)
         batch.alter_column("creation_execution_id", existing_type=sa.Uuid(), nullable=False)

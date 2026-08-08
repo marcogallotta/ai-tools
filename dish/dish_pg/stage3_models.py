@@ -316,6 +316,10 @@ class WorkflowOperation(Base):
             name="creation_provenance_exact",
         ),
         CheckConstraint(
+            "import_run_id IS NULL OR lifecycle <> 'open'",
+            name="imported_history_terminal",
+        ),
+        CheckConstraint(
             "(lifecycle = 'open' AND terminal_outcome IS NULL AND terminal_at IS NULL) OR "
             "(lifecycle <> 'open' AND terminal_outcome IS NOT NULL AND terminal_at IS NOT NULL)",
             name="terminal_state_consistent",
@@ -443,6 +447,10 @@ class ServiceLease(Base):
             "(import_run_id IS NULL AND run_id IS NOT NULL AND source_run_id IS NULL) OR "
             "(import_run_id IS NOT NULL AND run_id IS NULL AND length(trim(source_run_id)) > 0)",
             name="provenance_exact",
+        ),
+        CheckConstraint(
+            "import_run_id IS NULL OR state <> 'active'",
+            name="imported_history_terminal",
         ),
         CheckConstraint(
             "(lease_kind = 'actor' AND operation_id IS NOT NULL "
@@ -704,6 +712,10 @@ class VerificationCycle(Base):
             "(import_run_id IS NOT NULL AND reviewed_content_version_id IS NULL "
             "AND created_by_execution_id IS NULL)",
             name="creation_provenance_exact",
+        ),
+        CheckConstraint(
+            "import_run_id IS NULL OR lifecycle <> 'open'",
+            name="imported_history_terminal",
         ),
         CheckConstraint(
             "(lifecycle = 'open' AND outcome IS NULL AND terminal_at IS NULL) OR "
