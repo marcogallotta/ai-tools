@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
@@ -75,7 +76,67 @@ def test_agent_can_add_a_semantic_escalation_lane() -> None:
 
 
 
-def test_reviewed_focused_test_advertises_parallel_safe_without_replacing_serial_by_default() -> None:
+def _write_synthetic_qualified_batch(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, target: str) -> None:
+    """Install a self-contained, currently-qualified evidence set for an inventoried file.
+
+    The real ``tests/test_commands.py`` batch (test_selection/parallel_safe_qualifications.json)
+    is legitimately drifted right now because tests/test_core_models_and_dispatch.py, a member of
+    that same reviewed batch, changed during cleanup iteration 1. This helper builds an isolated,
+    freshly-qualified manifest under tmp_path instead of relying on that real (drifted) evidence,
+    so positive-path planner behavior stays covered without re-qualifying the real batch.
+    """
+    import test_selection.parallel as parallel
+
+    (tmp_path / "tests").mkdir()
+    shutil.copy2(ROOT / target, tmp_path / target)
+    shutil.copy2(ROOT / "tests" / "conftest.py", tmp_path / "tests" / "conftest.py")
+    shutil.copytree(ROOT / "tests" / "support", tmp_path / "tests" / "support")
+    monkeypatch.setattr(parallel, "ROOT", tmp_path)
+
+    reviewed_sha256 = parallel._hash_file(tmp_path / target)
+    shared_sha256 = parallel.parallel_safe_shared_sha256(tmp_path)
+    successful_run = {"returncode": 0, "failed": 0, "errors": 0, "passed": 1}
+    evidence_payload = {
+        "kind": "batch",
+        "files": [target],
+        "file_sha256": {target: reviewed_sha256},
+        "shared_sha256": shared_sha256,
+        "static_review": {"findings": []},
+        "serial": [{**successful_run, "workers": None, "repeat": 1}],
+        "parallel": {
+            str(workers): [
+                {**successful_run, "workers": workers, "repeat": repeat} for repeat in (1, 2, 3)
+            ]
+            for workers in parallel.REQUIRED_WORKER_COUNTS
+        },
+    }
+    evidence_id = parallel.qualification_evidence_id(evidence_payload)
+    evidence_payload["evidence_id"] = evidence_id
+
+    manifest = {
+        "schema_version": parallel.QUALIFICATION_SCHEMA_VERSION,
+        "inventory": [target],
+        "files": {
+            target: {
+                "reviewed_sha256": reviewed_sha256,
+                "shared_sha256": shared_sha256,
+                "active_evidence": {"kind": "batch", "id": evidence_id},
+            }
+        },
+        "batch_evidence": {evidence_id: evidence_payload},
+    }
+    (tmp_path / "test_selection").mkdir(parents=True)
+    (tmp_path / "test_selection" / "parallel_safe_qualifications.json").write_text(
+        json.dumps(manifest), encoding="utf-8"
+    )
+
+
+def test_reviewed_focused_test_advertises_parallel_safe_without_replacing_serial_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_synthetic_qualified_batch(tmp_path, monkeypatch, "tests/test_commands.py")
+
     plan = build_plan(["tests/test_commands.py"], policy_path=POLICY)
 
     assert plan.commands == (".venv/bin/python -m pytest -q tests/test_commands.py",)
@@ -86,7 +147,12 @@ def test_reviewed_focused_test_advertises_parallel_safe_without_replacing_serial
     assert "--parallel-workers N" in text
 
 
-def test_planner_can_select_supported_parallel_command_for_reviewed_focus() -> None:
+def test_planner_can_select_supported_parallel_command_for_reviewed_focus(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_synthetic_qualified_batch(tmp_path, monkeypatch, "tests/test_commands.py")
+
     plan = build_plan(
         ["tests/test_commands.py"],
         policy_path=POLICY,
@@ -101,7 +167,12 @@ def test_planner_can_select_supported_parallel_command_for_reviewed_focus() -> N
     assert "Governed serial lanes, when present, remain serial" in plan.to_text()
 
 
-def test_parallel_safe_focus_does_not_parallelize_governed_lanes() -> None:
+def test_parallel_safe_focus_does_not_parallelize_governed_lanes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_synthetic_qualified_batch(tmp_path, monkeypatch, "tests/test_commands.py")
+
     plan = build_plan(
         ["tests/test_commands.py"],
         policy_path=POLICY,
@@ -173,8 +244,13 @@ def test_complete_collection_detection_distinguishes_focused_paths() -> None:
     )
 
 
-def test_unchanged_reviewed_file_remains_parallel_eligible() -> None:
+def test_unchanged_reviewed_file_remains_parallel_eligible(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from test_selection.parallel import parallel_safe_qualification_drift
+
+    _write_synthetic_qualified_batch(tmp_path, monkeypatch, "tests/test_commands.py")
 
     assert parallel_safe_qualification_drift(["tests/test_commands.py"]) == ()
     plan = build_plan(
