@@ -93,12 +93,10 @@ or real external-system state).
 
 ## Confirmed open — verified directly against code (high confidence)
 
-Empty as of 2026-08-08. The two rows previously here (shadow-baseline capture/close race,
-`test_native_initial_state_insert_guards_reject_direct_sql`) and the six rows before that
-(rollback-burn quiescence, first-request admission reopening, missing generation-bound FKs,
-illegal candidate/admission-control/reservation INSERT states, migration `0028` failing open) were
-all directly code-verified as fixed and moved to Done below. If this table gains new rows later,
-re-check the Done table isn't already covering them before assuming something regressed.
+| Item | Priority | Owner | Local effort | Last verified | Note |
+| --- | --- | --- | --- | --- | --- |
+| Dark-launch legacy import drops prior operation/lease history | Later | Mixed | Hard | 2026-08-08 (directly verified live against production legacy SQLite and PostgreSQL) | `dish_pg/importer.py` / `CoreAuthorityService.import_task_document` only imports task content/registry state, never `workflow_operations`/`service_leases`/etc. Any task with pre-existing legacy operation history at resync time gets treated as pristine in PostgreSQL, producing shadow-comparison `mismatch`/`delivery_failure` on its next captured command. Design+implementation handed to ChatGPT (extending import requires deciding how backfilled operations get authorized without a live service request, without weakening that invariant for live-authorized operations). |
+| Dark-launch rollout-order stall: one permanently-failed delivery blocks all later evidence | Later | Mixed | Medium | 2026-08-08 (directly verified live) | Delivery claiming is strictly rollout-ordered (`claim_delivery` in `dish_pg/transition.py`): an envelope cannot be claimed while any earlier-rollout-sequence delivery for the same baseline is not yet `delivered`. A `failed` delivery is terminal and nothing currently converts it back to `delivered` except a full retry (which fails again for the same root cause above). Live consequence observed 2026-08-08: one `prepare` delivery failed with "no unique target operation binding," permanently blocking 15 newer captured commands from ever being evaluated. No operator tool exists to skip/void a permanently-stuck delivery and unblock what's behind it (`skip_delivery` in `dish_pg/transition.py` requires an active claim, so it can't be invoked on an already-terminal `failed` row). Revisit once the import-history fix above lands and load is lower — may resolve itself after a fresh resync, or may need its own recovery tool. |
 
 ## Partial — mechanism exists, real gap remains
 
