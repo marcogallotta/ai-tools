@@ -66,21 +66,6 @@ class DishServiceClient:
             response_timeout=self.response_timeout,
         )
 
-    def _json_request(
-        self,
-        path: str,
-        *,
-        method: str = "GET",
-        payload: Mapping[str, Any] | None = None,
-        ambiguous_after_dispatch: bool = False,
-    ):
-        return self._transport.request_json(
-            path,
-            method=method,
-            payload=payload,
-            ambiguous_after_dispatch=ambiguous_after_dispatch,
-        )
-
     def _client(self, *, request_id: str | None = None) -> dict[str, str]:
         client = {"run_id": self.run_id}
         if request_id is not None:
@@ -96,7 +81,7 @@ class DishServiceClient:
         ambiguous_after_dispatch: bool = False,
     ) -> dict[str, Any]:
         return require_result_envelope(
-            self._json_request(
+            self._transport.request_json(
                 path,
                 method=method,
                 payload=payload,
@@ -104,40 +89,8 @@ class DishServiceClient:
             )
         )
 
-    def _command_result_request(
-        self,
-        command: str,
-        path: str,
-        *,
-        request_id: str | None,
-        payload: Mapping[str, Any],
-    ) -> dict[str, Any]:
-        return command_result_request(
-            command=command,
-            path=path,
-            request_id=request_id,
-            payload=payload,
-            run_id=self.run_id,
-            result_request=self._result_request,
-        )
-
-    def _expire_lease_request(
-        self,
-        *,
-        payload: Mapping[str, Any],
-        request_id: str,
-        task_gid: str | None,
-    ) -> dict[str, Any]:
-        return expire_lease_result_request(
-            payload=payload,
-            request_id=request_id,
-            task_gid=task_gid,
-            run_id=self.run_id,
-            request_json=self._transport.request_json_ignoring_status,
-        )
-
     def health(self) -> dict[str, Any]:
-        return self._json_request("/health")
+        return self._transport.request_json("/health")
 
     @staticmethod
     def _transport_arguments(arguments: Mapping[str, Any]) -> dict[str, Any]:
@@ -169,14 +122,16 @@ class DishServiceClient:
             )
         prepared = dict(arguments or keyword_arguments)
         request_id = request_id_for_command(command, request_id)
-        return self._command_result_request(
-            command,
-            f"/v1/commands/{command}",
+        return command_result_request(
+            command=command,
+            path=f"/v1/commands/{command}",
             request_id=request_id,
             payload={
                 "arguments": self._transport_arguments(prepared),
                 "client": self._client(request_id=request_id),
             },
+            run_id=self.run_id,
+            result_request=self._result_request,
         )
 
     def record_argument_failure(
@@ -330,10 +285,12 @@ class DishAdminServiceClient(DishServiceClient):
             "reason": clean_reason,
             "client": self._client(request_id=request_id),
         }
-        return self._expire_lease_request(
+        return expire_lease_result_request(
             payload=payload,
             request_id=request_id,
             task_gid=task_gid,
+            run_id=self.run_id,
+            request_json=self._transport.request_json_ignoring_status,
         )
 
     def create_backup(
@@ -380,14 +337,16 @@ class DishActionClient(DishServiceClient):
             )
         prepared = dict(arguments or keyword_arguments)
         request_id = request_id_for_command(command, request_id)
-        return self._command_result_request(
-            command,
-            f"/v1/action/{command}",
+        return command_result_request(
+            command=command,
+            path=f"/v1/action/{command}",
             request_id=request_id,
             payload={
                 "arguments": self._transport_arguments(prepared),
                 "client": self._client(request_id=request_id),
             },
+            run_id=self.run_id,
+            result_request=self._result_request,
         )
 
     def renew_lease(
