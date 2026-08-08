@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import copy
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Mapping
+from typing import Any, Iterable, Mapping
 
 from .constants import AGENT_FAMILIES
 from .errors import DishRuleError
@@ -79,40 +78,18 @@ class SectionRegistry:
         return frozenset({self.research_queue_gid, self.verification_queue_gid})
 
 
-class ReadOnlyLegacyAdapter(Mapping[str, Any]):
-    """Explicit read-only view of deprecated validation metadata."""
-
-    def __init__(self, data: Mapping[str, Any]) -> None:
-        self._data = copy.deepcopy(dict(data))
-
-    def __getitem__(self, key: str) -> Any:
-        return copy.deepcopy(self._data[key])
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(self._data)
-
-    def __len__(self) -> int:
-        return len(self._data)
-
-    def as_dict(self) -> dict[str, Any]:
-        return copy.deepcopy(self._data)
-
-
 @dataclass(frozen=True)
 class ResolvedRelease:
     """One current Honest compatibility resolution.
 
     ``protocols`` contains at most the single stage protocol requested by the
-    caller. ``manifests`` is a transitional projection from the authoritative
-    Honest task schema for commands not yet converted by later rollout steps.
+    caller. The authoritative Honest task schema remains available on ``schema``.
     """
 
     version: str
     commit: str
     root: Path
     protocols: Mapping[str, str]
-    manifests: Mapping[str, Mapping[str, Any]]
-    manifest_texts: Mapping[str, str]
     schema_version: str = ""
     schema: Mapping[str, Any] = field(default_factory=dict)
     schema_text: str = ""

@@ -29,8 +29,6 @@ def _release(root: Path, role: str | None = None) -> ResolvedRelease:
         protocols={} if role is None else {
             role: verification if role == "verification" else f"{role} protocol"
         },
-        manifests={},
-        manifest_texts={},
         schema_version="2",
         schema={},
         schema_text="{}",

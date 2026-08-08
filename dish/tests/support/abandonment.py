@@ -80,8 +80,6 @@ def _release(role: str) -> ResolvedRelease:
         commit="test",
         root=Path("."),
         protocols={role: f"{role} protocol"},
-        manifests={},
-        manifest_texts={},
         schema_version="2",
         schema={},
         schema_text="{}",

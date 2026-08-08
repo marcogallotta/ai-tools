@@ -211,7 +211,7 @@ def test_real_planning_prepare_crash_before_terminal_preserves_committed_finaliz
         return ResolvedRelease(
             version="test-release", commit="test", root=honest,
             protocols={} if role is None else {role: f"{role} protocol"},
-            manifests={}, manifest_texts={}, schema_version="2", schema={},
+            schema_version="2", schema={},
             schema_text="{}", requested_protocol_role=role,
         )
 

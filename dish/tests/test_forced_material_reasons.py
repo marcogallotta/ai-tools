@@ -45,8 +45,6 @@ def test_service_prepare_preserves_exact_forced_material_reasons(tmp_path):
                     )
                 }
             ),
-            manifests={},
-            manifest_texts={},
             schema_version="2",
             schema={},
             schema_text="{}",

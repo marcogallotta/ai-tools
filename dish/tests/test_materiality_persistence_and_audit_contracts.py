@@ -160,7 +160,7 @@ def test_start_returns_environment_specific_runtime_context(tmp_path, monkeypatc
     def release(role=None):
         return ResolvedRelease(version="1.0.10", commit="", root=honest,
             protocols={} if role is None else {role: f"{role} protocol"},
-            manifests={}, manifest_texts={}, schema_version="2", schema={}, schema_text="{}",
+            schema_version="2", schema={}, schema_text="{}",
             migration_metadata={}, requested_protocol_role=role)
     app = DishApplication(initialize_database(tmp_path / "dish.db"), backend, release_loader=release)
     result = app.execute("start", agent="gpt", task_gid="t", kind="initial", run_id="constructor")
@@ -285,8 +285,7 @@ def test_current_operation_placement_baseline_is_immutable(tmp_path):
     honest = tmp_path / "honest"; honest.mkdir()
     (honest / "dish-verification-protocol.md").write_text("# Verification\n")
     release = lambda role=None: ResolvedRelease(version="1.0.10", commit="", root=honest,
-        protocols={} if role is None else {role: f"{role} protocol"}, manifests={}, manifest_texts={},
-        schema_version="2", schema={}, schema_text="{}", migration_metadata={}, requested_protocol_role=role)
+        protocols={} if role is None else {role: f"{role} protocol"}, schema_version="2", schema={}, schema_text="{}", migration_metadata={}, requested_protocol_role=role)
     app = DishApplication(initialize_database(tmp_path / "dish.db"), backend, release_loader=release)
     started = app.execute("start", agent="gpt", task_gid="t", kind="initial", run_id="run")
     with pytest.raises(sqlite3.IntegrityError):

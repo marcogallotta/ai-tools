@@ -79,7 +79,7 @@ def make_app(tmp_path):
     def release(role=None):
         return ResolvedRelease(version="1.0.10", commit="", root=honest,
             protocols={} if role is None else {role: verification_text if role == "verification" else f"{role} protocol"},
-            manifests={}, manifest_texts={}, schema_version="2", schema={}, schema_text="{}",
+            schema_version="2", schema={}, schema_text="{}",
             migration_metadata={}, requested_protocol_role=role)
     app = DishApplication(initialize_database(tmp_path / "dish.db"), backend, release_loader=release)
     candidate = tmp_path / "candidate.txt"; candidate.write_text(TASK)

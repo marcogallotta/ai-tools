@@ -80,6 +80,6 @@ def _release(root: Path, role: str | None = None) -> ResolvedRelease:
     return ResolvedRelease(
         version="1.0.10", commit="", root=root,
         protocols={} if role is None else {role: protocol if role == "verification" else f"{role} protocol"},
-        manifests={}, manifest_texts={}, schema_version="2", schema={}, schema_text="{}",
+        schema_version="2", schema={}, schema_text="{}",
         migration_metadata={}, requested_protocol_role=role,
     )

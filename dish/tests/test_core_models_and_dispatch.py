@@ -188,8 +188,8 @@ def test_agent_dispatcher_rejects_undeclared_argument_as_invalid_argument(tmp_pa
             raise AssertionError("handler must not run")
 
     release = ResolvedRelease(
-        version="1.0.10", commit="", root=tmp_path, protocols={}, manifests={},
-        manifest_texts={}, schema_version="2", schema={}, schema_text="{}",
+        version="1.0.10", commit="", root=tmp_path, protocols={},
+        schema_version="2", schema={}, schema_text="{}",
         migration_metadata={}, requested_protocol_role=None,
     )
     app = DishApplication(
