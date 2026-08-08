@@ -1,4 +1,4 @@
-"""SQLite schema, audit, and state transitions."""
+"""SQLite schema definitions and durable semantic-evidence validation."""
 
 from __future__ import annotations
 

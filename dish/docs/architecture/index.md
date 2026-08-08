@@ -74,7 +74,7 @@ These are current implementation anchors, not promises that these exact modules 
 | Agent/admin CLI presentation | `dish_service/cli.py`, `dish_service/admin_cli.py` |
 | HTTP/authentication | `dish_service/http.py`, `dish_service/http_routing.py`, `dish_service/auth.py` |
 | Workflow/action policy | `dish_tool/application_service.py`, `dish_tool/workflow_policy.py` |
-| SQLite persistence | `dish_tool/database_schema.py`, `dish_tool/database.py` |
+| SQLite persistence | `dish_tool/database.py`, `dish_tool/database_schema.py`, `dish_tool/database_migrations.py`, `dish_tool/database_schema_validation.py`, `dish_tool/database_initialization.py` |
 | Asana boundary | `dish_tool/task_store.py`, `dish_tool/backend.py` |
 | Replay/leases | `dish_service/request_replay.py`, `dish_service/leases.py` |
 | PostgreSQL target | `dish_pg/command_port.py`, `dish_pg/postgres_service.py`, `dish_pg/transition.py` |
