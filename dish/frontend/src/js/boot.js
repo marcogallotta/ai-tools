@@ -5,6 +5,8 @@ import { isReviewScenario, scenarioTaskId } from "./review/review-catalog.js";
 import { createReviewToolbar } from "./review/review-toolbar.js";
 import { parseTaskRoute } from "./features/routing/routes.js";
 import { renderLoginShell } from "./shell/login-shell.js";
+import { renderLocalPostgresqlBoard } from "./local/local-board-app.js";
+import { frontendDataSource } from "./local/source-selection.js";
 
 export function resolveInitialView(search = window.location.search, pathname = window.location.pathname) {
   const parameters = new URLSearchParams(search);
@@ -16,6 +18,7 @@ export function resolveInitialView(search = window.location.search, pathname = w
     scenario,
     reviewMode: parameters.get("review") === "1",
     taskId: parseTaskRoute(pathname) ?? scenarioTaskId(scenario),
+    dataSource: frontendDataSource(search),
   };
 }
 
@@ -28,6 +31,10 @@ export function boot(root = document.querySelector("#app")) {
   if (initial.view === "login") {
     renderLoginShell(root);
     if (initial.reviewMode) root.prepend(createReviewToolbar("login"));
+    return;
+  }
+  if (initial.dataSource === "postgresql") {
+    void renderLocalPostgresqlBoard(root);
     return;
   }
   renderFixturePrototype(root, initial.scenario, initial.taskId, { reviewMode: initial.reviewMode });

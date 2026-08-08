@@ -6,8 +6,10 @@ export class FrontendApiTransport {
     this.fetchImpl = fetchImpl;
   }
 
-  async request({ path, method, body, headers = {} }) {
-    const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
+  async request({ path, method, body, headers = {}, query = null }) {
+    const search = query ? new URLSearchParams(query).toString() : "";
+    const requestPath = search ? `${path}?${search}` : path;
+    const response = await this.fetchImpl(`${this.baseUrl}${requestPath}`, {
       method,
       credentials: "same-origin",
       redirect: "manual",

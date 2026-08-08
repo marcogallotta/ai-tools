@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from uuid import UUID
 
 import pytest
@@ -17,6 +19,11 @@ from dish_service.frontend_board import (
     BoardCapacityExceeded,
     FrontendBoardConfig,
     FrontendBoardService,
+)
+from dish_service.frontend_contract import (
+    OPERATION_PRESENTATION_LABELS,
+    PHASE_PRESENTATION_LABELS,
+    WORKFLOW_PRESENTATION_LABEL_MAX_LENGTH,
 )
 from dish_service.frontend_tokens import route_identity
 from tests.support.postgresql.core import NOW, _bootstrap_registry, _next, core_db
@@ -93,6 +100,23 @@ def _import_title(session, ids, context, *, title: str, asana_gid: str):
     )
 
 
+def test_workflow_status_openapi_matches_server_presentation_registry() -> None:
+    schema = json.loads(
+        (Path(__file__).resolve().parents[2] / "frontend" / "openapi" / "frontend.openapi.json").read_text()
+    )
+    variants = schema["components"]["schemas"]["WorkflowStatus"]["oneOf"]
+    active = next(
+        item
+        for item in variants
+        if "active_operation" in item["properties"]["state"]["enum"]
+    )
+    assert active["required"] == ["state", "operation", "phase"]
+    assert active["properties"]["operation"]["enum"] == list(OPERATION_PRESENTATION_LABELS)
+    assert active["properties"]["phase"]["enum"] == list(PHASE_PRESENTATION_LABELS)
+    assert active["properties"]["operation"]["maxLength"] == WORKFLOW_PRESENTATION_LABEL_MAX_LENGTH
+    assert active["properties"]["phase"]["maxLength"] == WORKFLOW_PRESENTATION_LABEL_MAX_LENGTH
+
+
 def _open_operation(session, ids, context, task_id):
     run_id = _workflow_next(ids)
     request_id = _workflow_next(ids)
@@ -139,7 +163,7 @@ def test_board_includes_isolated_and_paginates_without_consuming_retry(core_db) 
             session,
             ids,
             generation_status="active",
-            schema_head="0031_worker_readiness_consolidation",
+            schema_head="0032_imported_operation_history",
         )
         isolated = _import_title(session, ids, context, title="Alpha", asana_gid="1001")
         peer = _import_title(session, ids, context, title="alpha", asana_gid="1002")
@@ -202,6 +226,27 @@ def test_board_includes_isolated_and_paginates_without_consuming_retry(core_db) 
         assert _task_route(nonmember.task_id) not in returned
 
 
+def test_snapshot_identity_ignores_randomized_cursor_bytes(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(
+            session,
+            ids,
+            generation_status="active",
+            schema_head="0032_imported_operation_history",
+        )
+        _import_title(session, ids, context, title="Alpha", asana_gid="1101")
+        _import_title(session, ids, context, title="Beta", asana_gid="1102")
+
+    with session_scope(factory) as session:
+        service = _service(session, first_page_size=1, continuation_page_size=1)
+        first = service.bootstrap()
+        second = service.bootstrap()
+
+    assert first["sections"][0]["next_cursor"] != second["sections"][0]["next_cursor"]
+    assert first["snapshot_id"] == second["snapshot_id"]
+
+
 def test_empty_section_is_explicit_and_bootstrap_query_count_is_constant(core_db) -> None:
     factory, ids = core_db
     with session_scope(factory) as session:
@@ -209,7 +254,7 @@ def test_empty_section_is_explicit_and_bootstrap_query_count_is_constant(core_db
             session,
             ids,
             generation_status="active",
-            schema_head="0031_worker_readiness_consolidation",
+            schema_head="0032_imported_operation_history",
         )
 
     statements: list[str] = []
@@ -239,7 +284,7 @@ def test_section_capacity_is_rejected_before_bootstrap_card_query(core_db) -> No
             session,
             ids,
             generation_status="active",
-            schema_head="0031_worker_readiness_consolidation",
+            schema_head="0032_imported_operation_history",
         )
         second_section_id = _next(ids)
         session.add(

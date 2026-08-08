@@ -86,6 +86,7 @@ class FrontendBoardService:
             projection_delay=self._projection_delay,
         )
         sections: list[dict[str, Any]] = []
+        snapshot_sections: list[dict[str, Any]] = []
         notices: list[dict[str, str]] = []
         for section, project_label in prepared:
             cards = facts.cards_by_section[section.section_id]
@@ -114,6 +115,16 @@ class FrontendBoardService:
             if project_label is not None:
                 section_dto["project_label"] = project_label
             sections.append(section_dto)
+            snapshot_section: dict[str, Any] = {
+                "section_id": section_dto["section_id"],
+                "section_label": section.section_label,
+                "continuity_id": continuity_id,
+                "cards": card_dtos,
+                "has_more": next_cursor is not None,
+            }
+            if project_label is not None:
+                snapshot_section["project_label"] = project_label
+            snapshot_sections.append(snapshot_section)
         snapshot_id = opaque_digest(
             secret=self.token_secret,
             environment=self.environment,
@@ -123,7 +134,7 @@ class FrontendBoardService:
                 "board_query_contract": BOARD_QUERY_CONTRACT_VERSION,
                 "normalization_contract": NORMALIZATION_CONTRACT_VERSION,
                 "page_size": self.config.first_page_size,
-                "sections": sections,
+                "sections": snapshot_sections,
                 "notices": notices,
             },
         )

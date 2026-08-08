@@ -1,6 +1,6 @@
 # Frontend database migration reconciliation
 
-Status: reconciled against checked-in Alembic head `0031_worker_readiness_consolidation`; PostgreSQL
+Status: reconciled against checked-in Alembic head `0032_imported_operation_history`; PostgreSQL
 remains a non-authoritative dark-launch target and final production/runtime reconciliation remains pending.
 
 This document turns Gate A/B database dependencies into a migration handoff. It records what the
@@ -11,7 +11,7 @@ state may be added without becoming task or workflow authority. The machine-read
 ## Reconciliation boundary
 
 The checked-in chain is `0001_stage_a_baseline` through
-`0031_worker_readiness_consolidation`. The database remains in dark-launch preparation and the migration
+`0032_imported_operation_history`. The database remains in dark-launch preparation and the migration
 contract does not claim authority cutover. Therefore:
 
 - schema statements here describe the checked-in production candidate, not live production;
@@ -112,7 +112,7 @@ Likely plan-driven additions remain:
 No index is approved solely by this list. The Stage 3 package must include representative
 `EXPLAIN (ANALYZE, BUFFERS)` and fixed-query-count evidence against the final PostgreSQL schema.
 
-## Decisions still required before HTTP/browser activation
+## Decisions still required before production/private HTTP/browser activation
 
 1. Which exact durable facts mean lease **invalid** and **contested**? The read core currently emits
    only durable expiry evidence.
@@ -128,7 +128,7 @@ No index is approved solely by this list. The Stage 3 package must include repre
    and what native plans/bounds support it?
 
 These decisions no longer block isolated read-core implementation or local dark-launch observation.
-They do block Stage 3 HTTP/browser activation where their semantics are exposed.
+They do block Stage 3 production/private HTTP/browser activation where their semantics are exposed.
 
 ## Final rollout reconciliation record
 

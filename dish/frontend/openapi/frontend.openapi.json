@@ -887,30 +887,66 @@
         ]
       },
       "WorkflowStatus": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "state"
-        ],
-        "properties": {
-          "state": {
-            "type": "string",
-            "enum": [
-              "active_operation",
-              "no_active_operation"
-            ]
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "state"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "no_active_operation"
+                ]
+              }
+            }
           },
-          "operation": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 80
-          },
-          "phase": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 80
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "state",
+              "operation",
+              "phase"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "active_operation"
+                ]
+              },
+              "operation": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+                "enum": [
+                  "Planning",
+                  "Initial",
+                  "Change",
+                  "Verification",
+                  "Migration"
+                ]
+              },
+              "phase": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 80,
+                "enum": [
+                  "Prepare required",
+                  "Await verification",
+                  "Evidence hold",
+                  "Human review",
+                  "Await submission",
+                  "Destination repair required",
+                  "Recovery rehearsal"
+                ]
+              }
+            }
           }
-        }
+        ]
       },
       "Card": {
         "type": "object",

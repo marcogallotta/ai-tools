@@ -18,5 +18,6 @@ test("fixture boundary allows local static reads and blocks backend access", asy
   await target.fetch("/build.json");
   assert.equal(target.calls.length, 1);
   await assert.rejects(target.fetch("/api/board"), /blocks backend/);
+  await assert.rejects(target.fetch("/frontend/board"), /blocks backend/);
   await assert.rejects(target.fetch("https://example.test/data"), /blocks backend/);
 });

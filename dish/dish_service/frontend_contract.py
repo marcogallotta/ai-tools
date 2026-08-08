@@ -12,6 +12,7 @@ from dataclasses import dataclass
 FRONTEND_CONTRACT_VERSION = "dish-frontend-v1"
 BOARD_QUERY_CONTRACT_VERSION = "frontend-board-query-v1"
 NORMALIZATION_CONTRACT_VERSION = "frontend-normalization-v1-candidate"
+WORKFLOW_PRESENTATION_LABEL_MAX_LENGTH = 80
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,6 +52,8 @@ _PHASE_LABELS = {
     "ready_move_failed": "Destination repair required",
     "recovery_rehearsal": "Recovery rehearsal",
 }
+OPERATION_PRESENTATION_LABELS = tuple(_OPERATION_LABELS.values())
+PHASE_PRESENTATION_LABELS = tuple(_PHASE_LABELS.values())
 _WHITESPACE_RE = re.compile(r"\s+")
 
 

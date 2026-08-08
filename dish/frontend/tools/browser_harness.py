@@ -153,6 +153,21 @@ def assert_visual_resilience(browser) -> None:
         page.close()
 
 
+
+def assert_local_postgresql(browser) -> None:
+    url = os.environ.get("DISH_FRONTEND_LOCAL_URL")
+    if not url:
+        raise RuntimeError("DISH_FRONTEND_LOCAL_URL is required for local-postgresql mode")
+    expected_title = os.environ.get("DISH_FRONTEND_LOCAL_EXPECTED_TITLE", "[ready] Exact imported task")
+    page = browser.new_page(viewport={"width": 1440, "height": 900})
+    page.goto(url, wait_until="networkidle")
+    page.locator('#app[data-shell-state="local-postgresql-board"]').wait_for()
+    assert page.get_by_text("LOCAL POSTGRESQL — NON-AUTHORITATIVE", exact=True).is_visible()
+    assert page.get_by_text(expected_title, exact=True).is_visible()
+    content = page.locator("body").inner_text()
+    assert not re.search(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b", content, re.I)
+    page.close()
+
 def capture_shells(browser) -> None:
     SCREENSHOTS.mkdir(parents=True, exist_ok=True)
     page = browser.new_page(viewport={"width": 1440, "height": 900})
@@ -183,7 +198,7 @@ def capture_shells(browser) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("mode", choices=("test", "screenshots"))
+    parser.add_argument("mode", choices=("test", "screenshots", "local-postgresql"))
     args = parser.parse_args()
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
@@ -196,6 +211,9 @@ def main() -> None:
                 assert_shells(browser)
                 assert_visual_resilience(browser)
                 print("Playwright shell and visual-resilience checks passed")
+            elif args.mode == "local-postgresql":
+                assert_local_postgresql(browser)
+                print("Local PostgreSQL board browser smoke passed")
             else:
                 capture_shells(browser)
                 print(f"Captured frontend screenshots in {SCREENSHOTS}")

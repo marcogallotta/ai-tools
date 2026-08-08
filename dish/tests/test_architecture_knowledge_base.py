@@ -211,7 +211,7 @@ def test_current_postgresql_validation_and_reconciliation_ownership_is_documente
     runtime = (ARCHITECTURE / "postgresql-runtime.md").read_text(encoding="utf-8")
     replay = (ARCHITECTURE / "request-replay-and-idempotency.md").read_text(encoding="utf-8")
     for required in (
-        "0031_worker_readiness_consolidation.py",
+        "0032_imported_operation_history.py",
         "record_replay_validation_failure",
         "record_validation_failure",
         "first-request reservation",

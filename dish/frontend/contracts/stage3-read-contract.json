@@ -3,8 +3,8 @@
   "gate": "B",
   "status": "implementation-in-progress-gate-b-pending",
   "checked_in_schema": {
-    "alembic_head": "0031_worker_readiness_consolidation",
-    "migration_file": "dish_pg/migrations/versions/0031_worker_readiness_consolidation.py",
+    "alembic_head": "0032_imported_operation_history",
+    "migration_file": "dish_pg/migrations/versions/0032_imported_operation_history.py",
     "production_status": "dark-launch-target-non-authoritative"
   },
   "eligibility_inputs_present": {
@@ -108,7 +108,7 @@
     "normalization-and-database-collation-contract"
   ],
   "blockers": {
-    "B-01": "checked-in-0031-reconciled-production-remains-non-authoritative-dark-launch-target",
+    "B-01": "checked-in-0032-reconciled-production-remains-non-authoritative-dark-launch-target",
     "B-02": "frontend-board-query-candidate-implemented-review-pending",
     "B-03": "stateless-route-identity-candidate-implemented-review-pending",
     "B-04": "invalid-and-contested-lease-predicates-pending",

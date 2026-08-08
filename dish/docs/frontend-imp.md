@@ -1,6 +1,6 @@
 # Dish private frontend implementation contract
 
-**Status: staged implementation contract. Delivery Stages 0 and 1 are available after explicit authorization. Delivery Stage 3 read-core implementation is explicitly authorized behind an unserved/local-only boundary; Delivery Stage 2 and Stage 3 HTTP/browser activation remain readiness-gated, and later stages remain conditionally specified.**
+**Status: staged implementation contract. Delivery Stages 0 and 1 are available after explicit authorization. Delivery Stage 3 read-core implementation and loopback-only local PostgreSQL observation wiring are explicitly authorized behind a non-production boundary; Delivery Stage 2 and production/private Stage 3 HTTP/browser activation remain readiness-gated, and later stages remain conditionally specified.**
 
 This document defines how to realize the approved product in
 [`frontend.md`](frontend.md). The product behavior and authority outcomes in `frontend.md` are
@@ -1109,10 +1109,11 @@ authorize an integration stage.
 Delivery Stages 0 and 1 may proceed after explicit authorization because they create the modular shell,
 test infrastructure, and fixture-backed design prototype without claiming real authentication or
 canonical task data. Delivery Stage 2 remains blocked until Gate A passes. By explicit project
-authorization, Delivery Stage 3's read-only PostgreSQL query, DTO, route-identity, and cursor core may
-proceed behind an unserved/local-only boundary while Gate B is refreshed, including reading the
-non-authoritative dark-launch database as an operational observation surface. Gate B must pass before
-that real board is exposed through frontend HTTP/browser routes. Stage 4 and later remain gated by the
+authorization, Delivery Stage 3's read-only PostgreSQL query, DTO, route-identity, cursor core, and explicit
+loopback-only local observation harness may proceed behind a non-production boundary while Gate B is
+refreshed, including reading the non-authoritative dark-launch database as an operational observation
+surface. The local harness is development evidence, not Stage 3D activation. Gate B must pass before
+that real board is exposed through the production/private frontend HTTP/browser routes. Stage 4 and later remain gated by the
 applicable accepted source map. A prior stage review cannot waive an activation gate or authorize
 guessed semantics.
 
@@ -1142,7 +1143,7 @@ change only through an approved contract amendment; technical gaps remain fronte
 #### Gate B — code-grounded canonical-data and attention map
 
 Gate B is a checked-in living source map, reviewed and extended immediately before each real-data
-stage. Before Delivery Stage 3 is activated through the frontend HTTP/browser surface, it must cover every field emitted by board bootstrap, section
+stage. Before Delivery Stage 3 is activated through the production/private frontend HTTP/browser surface, it must cover every field emitted by board bootstrap, section
 continuation, card status, card attention, and board projection presentation. Before Delivery Stage 4
 begins, it must additionally cover every task-detail, disclosure, next-step-guidance, rendering-input,
 and detail projection field. For each mapped field the packet identifies:
@@ -1231,7 +1232,7 @@ API-contract, and browser-lifecycle tests required by Sections 2–4 land in thi
 
 ### 11.6 Delivery Stage 3 — real board vertical slice
 
-**Entry condition:** Read-core implementation may proceed under the explicit isolated/local authorization in Section 11.2. HTTP/browser activation requires the applicable Gate A runtime boundary and an accepted Gate B board scope. The code-grounded source map must cover every activated board field and attention predicate; unresolved semantics remain omitted or gated rather than guessed.
+**Entry condition:** Read-core implementation and the loopback-only local observation harness may proceed under the explicit isolated/local authorization in Section 11.2. Production/private HTTP/browser activation requires the applicable Gate A runtime boundary and an accepted Gate B board scope. The code-grounded source map must cover every activated board field and attention predicate; unresolved semantics remain omitted or gated rather than guessed.
 
 Connect the board to the real frontend-owned board read model. Deliver:
 

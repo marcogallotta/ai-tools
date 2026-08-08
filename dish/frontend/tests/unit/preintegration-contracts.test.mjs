@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import {
+  WORKFLOW_LABEL_MAX_LENGTH,
+  WORKFLOW_OPERATION_LABELS,
+  WORKFLOW_PHASE_LABELS,
+} from "../../src/js/features/board/api-board-model.js";
 
 const contract = JSON.parse(await readFile(new URL("../../contracts/stage2-security-contract.json", import.meta.url)));
 const openapi = JSON.parse(await readFile(new URL("../../openapi/frontend.openapi.json", import.meta.url)));
@@ -40,7 +45,7 @@ test("initial authority policy does not trust forwarded identity", () => {
 });
 
 const stage3 = JSON.parse(await readFile(new URL("../../contracts/stage3-read-contract.json", import.meta.url)));
-const migrationHead = await readFile(new URL("../../../dish_pg/migrations/versions/0031_worker_readiness_consolidation.py", import.meta.url), "utf8");
+const migrationHead = await readFile(new URL("../../../dish_pg/migrations/versions/0032_imported_operation_history.py", import.meta.url), "utf8");
 const modelSources = await Promise.all([
   "../../../dish_pg/models.py",
   "../../../dish_pg/stage3_models.py",
@@ -50,8 +55,8 @@ const modelSources = await Promise.all([
 const allModels = modelSources.join("\n");
 
 test("Stage 3 contract is reconciled to the checked-in migration head", () => {
-  assert.match(migrationHead, /revision\s*=\s*["']0031_worker_readiness_consolidation["']/);
-  assert.equal(stage3.checked_in_schema.alembic_head, "0031_worker_readiness_consolidation");
+  assert.match(migrationHead, /revision\s*=\s*["']0032_imported_operation_history["']/);
+  assert.equal(stage3.checked_in_schema.alembic_head, "0032_imported_operation_history");
   assert.equal(stage3.checked_in_schema.production_status, "dark-launch-target-non-authoritative");
 });
 
@@ -60,6 +65,18 @@ test("Stage 3 canonical source inventory names real current tables", () => {
     const table = source.split(".")[0];
     assert.ok(allModels.includes(`__tablename__ = "${table}"`), `${table} must exist in current models`);
   }
+});
+
+test("WorkflowStatus OpenAPI and browser validation share the closed presentation registry", () => {
+  const variants = openapi.components.schemas.WorkflowStatus.oneOf;
+  const inactive = variants.find((item) => item.properties.state.enum.includes("no_active_operation"));
+  const active = variants.find((item) => item.properties.state.enum.includes("active_operation"));
+  assert.deepEqual(inactive.required, ["state"]);
+  assert.deepEqual(active.required, ["state", "operation", "phase"]);
+  assert.deepEqual(active.properties.operation.enum, [...WORKFLOW_OPERATION_LABELS]);
+  assert.deepEqual(active.properties.phase.enum, [...WORKFLOW_PHASE_LABELS]);
+  assert.equal(active.properties.operation.maxLength, WORKFLOW_LABEL_MAX_LENGTH);
+  assert.equal(active.properties.phase.maxLength, WORKFLOW_LABEL_MAX_LENGTH);
 });
 
 test("frontend support-table inventory matches the current Stage 3 contract", () => {

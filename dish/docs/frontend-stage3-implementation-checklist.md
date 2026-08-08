@@ -1,6 +1,6 @@
 # Frontend Stage 3 implementation checklist
 
-Status: read-core implementation in progress behind an unserved/local boundary; HTTP/browser activation remains blocked until Gate B and runtime evidence pass.
+Status: read-core implementation and loopback-only local observation wiring are in progress behind a non-production boundary; production/private HTTP/browser activation remains blocked until Gate B and runtime evidence pass.
 
 This checklist sequences the real board vertical slice. PostgreSQL may be read during dark launch as
 a non-authoritative observation/offload surface; that does not transfer task/workflow authority. It
@@ -44,10 +44,10 @@ Exit evidence: `S3-BOARD-*`, `S3-ORDER-001`, `S3-STATUS-001`, and `S3-SURFACE-00
 
 Exit evidence: `S3-CURSOR-*` and `S3-SNAPSHOT-001` are green, including lost-response retry.
 
-## 3D — native plans, local hookup, API integration, and browser switch
+## 3D — native plans, production API integration, and browser switch
 
-- hook the read core locally to production-shaped/dark-launch PostgreSQL once the dark launch is live;
-  this is observability/offload, not authority transfer;
+- use the separately authorized loopback-only local PostgreSQL observation harness to gather real-data
+  usability evidence; the harness itself is not 3D activation or authority transfer;
 - add only indexes justified by final PostgreSQL plans;
 - record query count, transaction isolation/coherence, statement timeout, response bound, cold/warm
   timing, and minimum/typical/maximum `EXPLAIN (ANALYZE, BUFFERS)` evidence;

@@ -6,9 +6,9 @@
 
 This packet maps the approved frontend fields against the current PostgreSQL models, read surfaces,
 and frontend contracts. It is reconciled to checked-in Alembic head
-`0031_worker_readiness_consolidation`. PostgreSQL remains a non-authoritative dark-launch target: the
+`0032_imported_operation_history`. PostgreSQL remains a non-authoritative dark-launch target: the
 frontend read core may be implemented and exercised locally against it without transferring authority.
-Gate B still must pass before the Stage 3 HTTP/browser surface is activated. The Stage 4 portion must
+Gate B still must pass before the Stage 3 production/private HTTP/browser surface is activated. The Stage 4 portion must
 be reviewed again immediately before Delivery Stage 4.
 
 No predicate marked **unresolved** below may be guessed in a query, browser component, label mapper,
@@ -29,16 +29,16 @@ than inferred.
 - Fixture frontend DTO shapes, notice registry, detail fixtures, and frontend OpenAPI document.
 
 The current checked-in models are treated as design evidence, not proof that the same schema is live in
-production. This map is reconciled to checked-in head `0031_worker_readiness_consolidation`; final
-production rollout reconciliation and independent Gate B review remain mandatory before HTTP/browser
-activation.
+production. This map is reconciled to checked-in head `0032_imported_operation_history`; final
+production rollout reconciliation and independent Gate B review remain mandatory before production/private
+HTTP/browser activation.
 
 ## Material findings blocking Gate B
 
 | ID | Finding | Required resolution |
 |---|---|---|
-| B-01 | The map is reconciled to checked-in Alembic head `0031_worker_readiness_consolidation`, while PostgreSQL remains a non-authoritative dark-launch target rather than production authority. | Reconcile again to the exact deployed dark-launch schema/runtime evidence before HTTP/browser activation; authority transfer is not required for read-only use. |
-| B-02 | A frontend-owned set-oriented board query candidate now exists in `dish_pg/frontend_board_query.py`; it is not yet activated through HTTP and lacks native PostgreSQL plan/isolation evidence. | Review the query against native PostgreSQL, record bounded plans/isolation, and keep it read-only/no-network. |
+| B-01 | The map is reconciled to checked-in Alembic head `0032_imported_operation_history`, while PostgreSQL remains a non-authoritative dark-launch target rather than production authority. | Reconcile again to the exact deployed dark-launch schema/runtime evidence before production/private HTTP/browser activation; authority transfer is not required for read-only use. |
+| B-02 | A frontend-owned set-oriented board query candidate now exists in `dish_pg/frontend_board_query.py`; it is exposed only through the separately scoped loopback local observation harness, not the production/private frontend service, and it lacks native PostgreSQL plan/isolation evidence. | Review the query against native PostgreSQL, record bounded plans/isolation, and keep it read-only/no-network. |
 | B-03 | Stateless typed/environment-scoped route identities now exist in `dish_service/frontend_tokens.py`; secret lifetime/rotation is not yet accepted. | Review secret lifecycle, collision/bounds evidence, and deployment ownership before HTTP activation. |
 | B-04 | The English terms **invalid lease** and **contested lease** still have no exact named PostgreSQL predicate. The candidate query emits only durable expired-lease attention for the latest actor attempt on the current open operation. | Name durable predicates or amend the approved meaning; do not broaden non-active lease states heuristically. |
 | B-05 | Verification **failed** and **disputed** remain unresolved. The candidate query emits only durable open human-review attention. | Name exact failed/disputed/current-cycle predicates and add policy-equivalence tests. |
@@ -366,7 +366,7 @@ previously unresolved destination, disclosure, advisory, rendering, and projecti
 
 ## Prepared implementation and test handoff
 
-The Stage 3 read-core sequence is recorded in `frontend-stage3-implementation-checklist.md`; HTTP/browser activation remains blocked on Gate B. The
+The Stage 3 read-core sequence is recorded in `frontend-stage3-implementation-checklist.md`; production/private HTTP/browser activation remains blocked on Gate B. The
 acceptance families are instantiated as stable case identifiers in
 `../frontend/contracts/stage3-acceptance-cases.json`. They are scaffolding only; no case is counted as
 passed until it runs against the accepted production-candidate schema and implementation.
