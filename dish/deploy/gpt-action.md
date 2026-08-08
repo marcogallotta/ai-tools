@@ -70,9 +70,11 @@ workflow procedure.
   target pair.
 - When an Action requires candidate text, send the complete exact candidate, never a partial patch
   or assumed local file. Follow the imported Action schema for correction-specific argument shapes.
-- When Dish returns `human_action`, relay it faithfully, including its effect and required input, and
-  relay its rendered command exactly. Never synthesize an admin/recovery command. Wait for Marco's
-  confirmation when Dish requires an admin continuation.
+- When Dish returns `human_action`, keep Marco-facing output compact: state the decision/action first,
+  quantify any material threshold blocker, then give the simplest available options and consequence.
+  Do not dump raw details, IDs, evidence notes, resume state, or rendered admin commands unless Marco
+  asks for protocol detail or how to execute the action. Never synthesize an admin/recovery command.
+  Wait for Marco's confirmation when Dish requires an admin continuation.
 - A deterministic tool pass is not the semantic stage work. Complete the semantic work required by
   the routed Dish protocol, while letting Dish's current response determine the legal continuation.
 

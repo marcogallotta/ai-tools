@@ -35,7 +35,11 @@ from .semantic_proposals import (
     proposal_payload,
     reject_semantic_proposal,
 )
-from .review_queue import list_review_items, resolve_review_item
+from .review_queue import (
+    human_review_consequence_metadata,
+    list_review_items,
+    resolve_review_item,
+)
 
 
 @dataclass
@@ -1622,27 +1626,26 @@ def _command_review_inspect(
                 after_success={"instruction": "A later fresh verifier may start Verification."},
             )
         else:
+            consequences = human_review_consequence_metadata(item.get("resume_status"))
+            approval_consequence = consequences["approval"]
             spec = template_action(
-                kind="record-human-decision",
-                command="record-human-decision",
-                positional=(item["operation_id"],),
-                options=(
-                    ("--detail", "<Marco's exact decision and reasoning>"),
-                    ("--resume-status", item["resume_status"] or "pending-verification"),
-                    ("--expected-task-gid", item["task_gid"]),
-                    ("--expected-cycle-id", item["cycle_id"]),
-                    ("--expected-hold-identity", item["hold_identity"]),
-                ),
+                kind="approve-human-review",
+                command="review-approve",
+                positional=(item["review_id"],),
+                options=(("--reason", "<Marco's decision and brief reason>"),),
                 prompt_fields=(
                     PromptField(
-                        "detail",
-                        "Marco's exact decision and reasoning",
-                        "<Marco's exact decision and reasoning>",
+                        "reason",
+                        "Marco's decision and brief reason",
+                        "<Marco's decision and brief reason>",
                     ),
                 ),
-                summary="Record Marco's exact decision and release the Human Review hold.",
-                effect="This records the decision only; it does not edit or authorize governed fields.",
-                after_success={"instruction": "A later fresh verifier may resume the stored operation."},
+                summary="Approve this Human Review decision and release the hold.",
+                effect=(
+                    "Dish records Marco's substantive decision and follows the hold's stored resume route; "
+                    "it does not silently edit governed fields."
+                ),
+                after_success=approval_consequence,
             )
         data.update(spec.payload())
         if item["item_type"] == "human_review":
@@ -1657,7 +1660,7 @@ def _command_review_inspect(
                     "Preserve the escalation and dismissal reason in the audit trail, record no Marco decision, "
                     "and release the unchanged task to fresh Verification."
                 ),
-                after_success={"instruction": "A later fresh verifier must reassess the dismissed premise from evidence."},
+                after_success=human_review_consequence_metadata(item.get("resume_status"))["dismissal"],
             )
             data["human_actions"] = [
                 data["human_action"],
@@ -1671,7 +1674,7 @@ def _command_review_inspect(
 
 
 def _command_review_approve(
-    self, *, trace: AdminTrace, proposal_id: str, reason: str, detail: str | None = None
+    self, *, trace: AdminTrace, proposal_id: str, reason: str | None = None, detail: str | None = None
 ) -> dict[str, Any]:
     if self.backend is None:
         raise DishRuleError(
@@ -1684,21 +1687,30 @@ def _command_review_approve(
     clean_id = _clean_required(proposal_id, rule="review_item_id_required", label="review item ID")
     item = resolve_review_item(self.conn, clean_id)
     if item["item_type"] == "verification_hold":
-        return _command_resolved(self, trace=trace, submission_id=item["operation_id"])
+        result = _command_resolved(self, trace=trace, submission_id=item["operation_id"])
+        result["command"] = "review-approve"
+        result.setdefault("data", {}).update({
+            "effect": "The Verification hold was released without editing or approving the candidate.",
+            "next_step": "A later fresh verifier may start Verification.",
+        })
+        return result
     if item["item_type"] == "human_review":
-        clean_detail = str(detail or "").strip()
+        legacy_semantic_default = "Approved after reviewing the exact linked change bundle."
+        clean_detail = str(detail or reason or "").strip()
+        if clean_detail == legacy_semantic_default and not str(detail or "").strip():
+            clean_detail = ""
         if not clean_detail:
             raise DishRuleError(
                 "INVALID_ARGUMENT",
-                "Human Review approval requires Marco's exact decision and reasoning",
+                "Human Review approval requires Marco's decision",
                 rule="human_review_detail_required",
                 details={
                     "review_id": item["review_id"],
-                    "required_input": "Pass --detail with Marco's complete decision and reasoning.",
+                    "required_input": "Pass --reason with Marco's decision and brief reasoning.",
                     "inspect_command": f"dish-admin review-inspect {item['review_id']}",
                 },
             )
-        return _command_record_human_decision(
+        result = _command_record_human_decision(
             self,
             trace=trace,
             submission_id=item["operation_id"],
@@ -1708,6 +1720,29 @@ def _command_review_approve(
             expected_cycle_id=item["cycle_id"],
             expected_hold_identity=item["hold_identity"],
         )
+        # review-approve is the public wrapper Marco invoked. Keep the internal
+        # hold-resolution event identity in audit/state, not in the outer result.
+        result["command"] = "review-approve"
+        actual_resume = result.get("data", {}).get("resume_status")
+        consequence = human_review_consequence_metadata(actual_resume)["approval"]
+        if actual_resume == "pending-research":
+            effect = (
+                "Marco's substantive decision was recorded. The task returned to Research and the held "
+                "Verification operation completed; no governed field was edited or authorized."
+            )
+            next_step = "Continue the task through Research; do not treat this as a fresh Verification release."
+        else:
+            effect = (
+                "Marco's substantive decision was recorded and the unchanged candidate was released to a fresh "
+                "Verification cycle; no governed field was edited or authorized."
+            )
+            next_step = "A later fresh verifier may start Verification."
+        result.setdefault("data", {}).update({
+            "effect": effect,
+            "next_step": next_step,
+            "approval_consequence": consequence,
+        })
+        return result
     row = self.conn.execute(
         "SELECT * FROM semantic_proposals WHERE proposal_id=?", (item["proposal_id"],)
     ).fetchone()
@@ -1715,12 +1750,13 @@ def _command_review_approve(
     live = read_complete_task(
         self.backend, task_gid=row["task_gid"], project_gid=COOKING_PROJECT_GID
     )
+    clean_reason = str(reason or "").strip() or "Approved after reviewing the exact linked change bundle."
     approved = approve_semantic_proposal(
         self.conn,
         proposal_id=clean_id,
         live_title=live.title,
         live_notes=live.notes,
-        reason=reason,
+        reason=clean_reason,
     )
     trace.task_gid = approved["task_gid"]
     trace.submission_id = approved["operation_id"]

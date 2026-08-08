@@ -206,9 +206,34 @@ bounded response is intentionally small and observable:
   is queued. It does not decide that a textual change is semantically trivial: the agent restores
   accidental text exactly or explicitly confirms that the governed field was intentionally changed.
 
+A subsequent live two-task review showed that these controls were still too ceremonial: the default
+answer dumped protocol mechanics at Marco, a numeric fat concern was not presented as a concise
+threshold consequence, and unknowable fish-head edible yield was treated as a precision blocker. The
+next bounded usability correction therefore keeps the same authority model while changing judgment
+and presentation:
+
+- Verification uses a reasonable defensible estimate with stated assumptions for unknowable
+  yield/portion facts when one exists, and does not invent false precision when one does not; the
+  durable structured threshold blocker represents one estimate versus its limit and excess/shortfall;
+- if the exact governed repair is already known (for example a scoped exemption), Verification uses
+  the existing Large-correction semantic-proposal path so Marco reviews the exact change instead of
+  answering an open-ended Human Review hold;
+- genuine Human Review items are handled through `review-queue`/`review-inspect` with a compact
+  decision-oriented summary and `review-approve`/`review-reject`; low-level hold-resolution commands
+  are no longer the normal operator-facing path;
+- substantive Human Review approval follows the hold's stored resume route, while dismissal of an
+  invalid/unanswered escalation always returns the unchanged candidate to fresh Verification; the
+  public result keeps the wrapper command identity Marco invoked;
+- semantic-proposal `review-inspect` stays compact but always shows the complete linked candidate
+  change set before the approve command; verbose mode is for rationale/evidence/mechanics, not hidden
+  approval consequences;
+- connected-agent guidance defaults to one short block per reviewed task and keeps evidence, IDs and
+  protocol mechanics behind inspect/on-demand detail;
+- no-effect intent confirmations remain `CONFIRMATION_REQUIRED` rather than being misclassified as
+  uncertain backend execution.
+
 These mechanisms are deliberately not generalized into risk scoring, automated repair selection, or
-issue-dedup infrastructure yet. Use them in real single-user operation first and observe whether they
-actually improve agent judgment.
+issue-dedup infrastructure.
 
 ## Parked ideas and external analogues
 

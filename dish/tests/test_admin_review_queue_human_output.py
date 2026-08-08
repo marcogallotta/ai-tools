@@ -48,6 +48,6 @@ def test_review_queue_renderer_prints_exact_commands_and_explains_row_numbers():
     rendered = render_admin_result(result, profile="prod")
 
     assert f"Inspect: dish-admin review-inspect {proposal_id}" in rendered
-    assert f"Approve: dish-admin review-approve {proposal_id}" in rendered
+    assert f"Approve: dish-admin review-approve {proposal_id}" not in rendered
     assert f"Reject: dish-admin review-reject {proposal_id}" in rendered
     assert "Queue numbers are accepted only for the current queue view" in rendered

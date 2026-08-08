@@ -409,6 +409,18 @@ def proposal_payload(
     item["explanation"] = json.loads(item.pop("explanation_json"))
     item["linked_changes"] = json.loads(item.pop("linked_changes_json"))
     item["changes"] = list(proposal_changes(conn, item["proposal_id"]))
+    changed_fields = [str(change.get("field") or "").strip() for change in item["changes"]]
+    changed_fields = [field for field in changed_fields if field]
+    item["review_summary"] = {
+        "outcome": "needs Marco review" if item.get("status") == "pending" else str(item.get("status") or "proposal"),
+        "issue": str(item.get("proposal_reason") or "").strip(),
+        "governed_changes": changed_fields,
+        "simplest_next_step": (
+            "Approve or reject this exact stored change bundle."
+            if item.get("status") == "pending"
+            else None
+        ),
+    }
     # The frozen protocol text is already durably bound to the referenced
     # Verification cycle.  It is not review-queue content and can be very
     # large, so never expose it through operator/agent proposal payloads.

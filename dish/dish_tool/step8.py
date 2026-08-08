@@ -762,22 +762,34 @@ def _human_review_preflight(*, route: str, reason: str, confirmed=False, basis=N
         details={
             "unresolved_issue": reason,
             "quantified_blocker": quantified_blocker,
+            "decision_standard": (
+                "Use a reasonable defensible estimate, with its assumptions stated, when an exact yield, portion, or "
+                "similar value is unknowable. Do not invent a midpoint when no single estimate is defensible. Uncertainty "
+                "alone is not a blocker: escalate only when it could materially change a safety, nutrition, settled-intent, "
+                "or executability conclusion. A structured numeric threshold blocker must state one defensible estimate, "
+                "the limit, and the material excess or shortfall."
+            ),
+            "exact_resolution_route": (
+                "If the verifier can already construct one exact governed candidate that resolves the concern, do not "
+                "ask Marco an open-ended Human Review question. Submit that candidate as a Large correction so Dish "
+                "queues the exact semantic proposal for Marco to approve or reject."
+            ),
             "questions": [
-                "Is the blocker supported by evidence strong enough to rely on?",
+                "After a reasonable defensible estimate, is this still materially blocking?",
                 "Can the task be repaired while preserving Marco's existing decisions and locks?",
-                "What plausible repair routes did you actually consider, and why are they inadequate?",
-                "What specific unresolved choice, waiver, classification, or authority remains for Marco?",
+                "Can you construct the exact governed fix now and send it through the semantic-proposal review flow?",
+                "What specific unresolved choice remains that only Marco can answer before an exact candidate exists?",
             ],
             "human_review_is_allowed": (
-                "Human Review is appropriate when a genuine unresolved human choice remains. "
-                "Do not avoid escalation merely because alternatives exist if those alternatives "
-                "materially change settled intent, require a waiver, or cannot be resolved with sufficient confidence."
+                "Human Review is appropriate when a genuine unresolved human choice remains after reasonable "
+                "estimation and within-authority repair. It is not a precision fallback for facts that can be "
+                "estimated well enough to make the decision."
             ),
             "retry": {
                 "fresh_request_id": True,
                 "human_review_confirmed": True,
-                "human_review_basis": "<the specific unresolved human choice/waiver/authority and supporting evidence>",
-                "repairs_considered": "<specific repair routes considered and why they do not resolve it>",
+                "human_review_basis": "<one concise Marco-only decision that must be answered before an exact candidate can exist>",
+                "repairs_considered": "<specific repairs/approximations considered and why the material issue remains>",
             },
         },
     )
@@ -1104,6 +1116,8 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         "decision_status": document.state.values["Status"],
         "verification_hold": verification_hold,
         "quantified_blocker": quantified_blocker,
+        "human_review_basis": str(human_review_basis or "").strip() or None,
+        "repairs_considered": str(repairs_considered or "").strip() or None,
         "actor_agent": agent,
         "actor_run_id": run_id,
         "actor_attestation": authority_attestation,
@@ -1158,7 +1172,7 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         else:
             new_cycle = None
         complete_operation_step(conn, operation_id, route_phase_step)
-        record_audit(conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id, event_type="verification.rejected", actor_agent=agent, details={"cycle_id": cycle["cycle_id"], "route": route, "reason": reason, "quantified_blocker": quantified_blocker, "verification_hold": verification_hold, "identity": confirmed.identity}, result_code="OK", result_ok=True, governed_kind="decision", before_state={"outcome": None, "reviewed_identity": cycle["reviewed_identity"], "status": "pending-verification"}, after_state={"outcome": outcome, "route": route, "resume_state": document.state.values["Resume status"], "status": document.state.values["Status"]}, actor_run_id=run_id, actor_attestation=authority_attestation)
+        record_audit(conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id, event_type="verification.rejected", actor_agent=agent, details={"cycle_id": cycle["cycle_id"], "route": route, "reason": reason, "quantified_blocker": quantified_blocker, "human_review_basis": str(human_review_basis or "").strip() or None, "repairs_considered": str(repairs_considered or "").strip() or None, "verification_hold": verification_hold, "identity": confirmed.identity}, result_code="OK", result_ok=True, governed_kind="decision", before_state={"outcome": None, "reviewed_identity": cycle["reviewed_identity"], "status": "pending-verification"}, after_state={"outcome": outcome, "route": route, "resume_state": document.state.values["Resume status"], "status": document.state.values["Status"]}, actor_run_id=run_id, actor_attestation=authority_attestation)
     return {
         "operation_id": operation_id,
         "route": route,
@@ -1859,7 +1873,7 @@ def resolve_hold(
         values = dict(candidate.state.values)
         values.update({
             "Status": resume_status,
-            "Status detail": "None",
+            "Status detail": clean_detail if resume_status == "pending-research" else "None",
             "Resume status": "None",
             "Verified by": "None",
             "Verification protocol release": snapshot.identity if resume_status == "pending-verification" else "None",
@@ -1875,6 +1889,7 @@ def resolve_hold(
     else:
         values = dict(resumed(before_doc.state.values).values)
         values["Status"] = resume_status
+        values["Status detail"] = clean_detail if resume_status == "pending-research" else "None"
         values["Verification protocol release"] = "None" if resume_status == "pending-research" else cycle["protocol_release"]
         authorization_decisions = tuple(before_doc.decisions)
         decisions = authorization_decisions

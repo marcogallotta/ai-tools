@@ -752,6 +752,13 @@ def test_service_rejects_bundle_and_exposes_fresh_verification_round(tmp_path):
         }, principal=proposer,
     )
     proposal_id = queued["data"]["proposal_id"]
+    queue = service.execute_admin(
+        "review-queue", {}, principal=ServicePrincipal(owner_id="marco-preview", run_id="marco-preview-run")
+    )
+    summary = queue["data"]["review_items"][0]["review_summary"]
+    assert summary["outcome"] == "needs Marco review"
+    assert summary["governed_changes"] == ["Locks"]
+    assert summary["simplest_next_step"] == "Approve or reject this exact stored change bundle."
 
     rejected = service.execute_admin(
         "review-reject", {

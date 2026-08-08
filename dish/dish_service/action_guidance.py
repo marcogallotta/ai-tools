@@ -20,15 +20,15 @@ def _text(value: object) -> str | None:
 
 def _human_action_instruction(action: Mapping[str, Any]) -> str:
     shell = _text(action.get("shell_command"))
-    if shell:
-        return (
-            "Relay data.human_action to Marco, including its summary, details, effect, "
-            "required input, and after_success. Relay its shell_command exactly; do not "
-            "reconstruct or alter the admin command."
-        )
+    suffix = (
+        " Keep the exact shell command available, but do not print it unless Marco asks how to execute the action."
+        if shell
+        else " Do not synthesize an admin command."
+    )
     return (
-        "Relay data.human_action to Marco, including its summary, details, effect, "
-        "required input, and after_success. Do not synthesize an admin command."
+        "Keep the Marco-facing Human Review result compact: decision first, then any quantified blocker, "
+        "then the simplest available options and what each does. Do not dump raw details, IDs, protocol "
+        "mechanics, evidence notes, or resume state unless Marco asks for them." + suffix
     )
 
 
@@ -40,6 +40,10 @@ def action_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
     actions = [str(item) for item in (result.get("allowed_actions") or [])]
     data_value = result.get("data")
     data = data_value if isinstance(data_value, Mapping) else {}
+    errors_value = result.get("errors")
+    errors = errors_value if isinstance(errors_value, list) else []
+    first_error = errors[0] if errors and isinstance(errors[0], Mapping) else {}
+    error_rule = _text(first_error.get("rule"))
 
     instructions: list[str] = [
         "Treat this Dish result as workflow authority. Use only allowed_actions and exact "
@@ -53,6 +57,18 @@ def action_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
             "attempt another mutation to bypass the uncertain state."
         )
     else:
+        if error_rule == "governed_change_intent_confirmation_required":
+            instructions.append(
+                "No workflow or external effect was committed. Restore any incidental governed-text edit, or "
+                "explicitly declare the intended governed field, then retry the corrected request with a fresh request ID."
+            )
+        if error_rule == "human_review_preflight_required":
+            instructions.append(
+                "Do the escalation preflight yourself rather than dumping its questions on Marco. Use a reasonable defensible "
+                "estimate, with assumptions stated, where exact values are unknowable; uncertainty alone is not a blocker. If you can already "
+                "construct the exact governed fix, use a Large correction so Dish queues that exact proposal for review. "
+                "Escalate to Human Review only when a material Marco-only choice remains before an exact candidate can exist."
+            )
         legal_next = _text(data.get("legal_next_step"))
         if legal_next:
             instructions.append(legal_next)
@@ -105,7 +121,12 @@ def action_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
 
         if command == "start" and "inspect" in actions:
             instructions.append(
-                "Inspect this Verification candidate before making any semantic approval or rejection decision."
+                "Inspect this Verification candidate before making any semantic approval or rejection decision. "
+                "Use a reasonable defensible estimate with stated assumptions for unknowable yield/portion values; do not "
+                "invent false precision when no single estimate is defensible. Uncertainty is blocking only when it could "
+                "materially change a safety, nutrition, settled-intent, or executability conclusion. A structured threshold "
+                "blocker must give one defensible estimate versus the limit and the material excess/shortfall. For multi-task review, report one short block per task: "
+                "outcome, quantified material issue if any, simplest fix, and only the Marco decision actually needed."
             )
 
         if command == "approve" and "submit" in actions:
@@ -121,6 +142,12 @@ def action_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
             instructions.append(
                 "Proposal application installs the stored bundle and opens fresh Verification; it does "
                 "not itself sign or submit the candidate. Follow the returned allowed_actions."
+            )
+
+        if error_rule == "semantic_proposal_queued":
+            instructions.append(
+                "Report only that this task needs Marco review, the material issue, and the exact governed field(s) proposed. "
+                "Do not dump the candidate, linked evidence, IDs, or admin command unless Marco asks for detail."
             )
 
         if data.get("batch_may_continue") is True:

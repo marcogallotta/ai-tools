@@ -39,23 +39,58 @@ def test_human_review_hold_appears_in_review_queue_and_can_be_resolved_by_number
     inspected = admin.execute("review-inspect", proposal_id="1")
     assert inspected["ok"]
     assert inspected["data"]["review_item"]["review_id"] == item["review_id"]
+    missing_decision = admin.execute("review-approve", proposal_id="1")
+    assert missing_decision["ok"] is False
+    assert missing_decision["code"] == "INVALID_ARGUMENT"
+    assert missing_decision["errors"][0]["rule"] == "human_review_detail_required"
     assert inspected["data"]["admin_command"].startswith(
-        f"dish-admin record-human-decision {operation_id}"
+        f"dish-admin review-approve {item['review_id']}"
     )
-
-    missing = admin.execute("review-approve", proposal_id="1", reason="approved")
-    assert missing["code"] == "INVALID_ARGUMENT"
-    assert missing["errors"][0]["rule"] == "human_review_detail_required"
+    assert inspected["data"]["review_item"]["review_summary"]["outcome"] == "needs Marco decision"
+    assert "Only Marco can resolve" in inspected["data"]["review_item"]["review_summary"]["decision"]
+    approval = inspected["data"]["human_action"]
+    assert approval["command"] == "review-approve"
+    assert approval["after_success"]["resume_status"] == "pending-verification"
+    assert approval["after_success"]["next_stage"] == "verification"
+    dismissal = next(action for action in inspected["data"]["human_actions"] if action["command"] == "review-reject")
+    assert dismissal["after_success"]["resume_status"] == "pending-verification"
+    assert dismissal["after_success"]["next_stage"] == "verification"
 
     resolved = admin.execute(
         "review-approve",
         proposal_id="1",
-        reason="approved",
-        detail="Marco confirms this is a non-main tasting portion.",
+        reason="Marco confirms this is a non-main tasting portion.",
     )
     assert resolved["ok"]
+    assert resolved["command"] == "review-approve"
+    assert resolved["data"]["resume_status"] == "pending-verification"
+    assert resolved["data"]["approval_consequence"]["next_stage"] == "verification"
     assert "Status: pending-verification" in backend.notes
     assert admin.execute("review-queue", status="pending")["data"]["count"] == 0
+
+
+@pytest.mark.smoke
+def test_review_approve_human_review_rejects_legacy_semantic_default_reason(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review_and_inspect(app, agent="codex", run_id="legacy-default")
+    held = app.execute(
+        "reject", agent="codex", submission_id=operation_id, route="human-review",
+        reason="Marco must choose.", resume_status="pending-verification",
+        human_review_confirmed=True, human_review_basis="Only Marco can choose.",
+        repairs_considered="No exact governed repair exists before Marco chooses.", run_id="legacy-default",
+    )
+    assert held["ok"]
+    cycle_id = app.conn.execute(
+        "SELECT cycle_id FROM verification_cycles WHERE operation_id=? ORDER BY cycle_number DESC LIMIT 1",
+        (operation_id,),
+    ).fetchone()[0]
+    admin = DishAdminApplication(app.conn, backend=backend, release_loader=lambda: app._load_release("verification"))
+    result = admin.execute(
+        "review-approve", proposal_id=cycle_id,
+        reason="Approved after reviewing the exact linked change bundle.",
+    )
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert result["errors"][0]["rule"] == "human_review_detail_required"
 
 
 @pytest.mark.smoke
@@ -125,12 +160,12 @@ def test_service_review_queue_resolves_human_hold_by_current_row_number(tmp_path
         "review-approve",
         {
             "proposal_id": "1",
-            "reason": "Marco decided after reviewing the hold.",
-            "detail": "Marco confirms this is a non-main tasting portion.",
+            "reason": "Marco confirms this is a non-main tasting portion.",
         },
         principal=marco,
     )
     assert resolved["ok"]
+    assert resolved["command"] == "review-approve"
     assert "Status: pending-verification" in backend.notes
 
 
@@ -152,6 +187,12 @@ def test_review_reject_dismisses_unanswered_human_review_without_recording_decis
         human_review_confirmed=True,
         human_review_basis="The estimate appears to require a nutrition exemption.",
         repairs_considered="No repair was accepted before escalation.",
+        blocker_metric="fat",
+        blocker_actual=51,
+        blocker_limit=40,
+        blocker_delta=11,
+        blocker_unit="g",
+        blocker_basis="served-edible estimate",
     )
     assert held["ok"]
     cycle_id = app.conn.execute(
@@ -162,9 +203,18 @@ def test_review_reject_dismisses_unanswered_human_review_without_recording_decis
     admin = DishAdminApplication(
         app.conn, backend=backend, release_loader=lambda: app._load_release("verification")
     )
+    queue = admin.execute("review-queue", status="pending")
+    summary = queue["data"]["review_items"][0]["review_summary"]
+    assert summary["outcome"] == "needs Marco decision"
+    assert summary["decision"] == "The estimate appears to require a nutrition exemption."
+    assert summary["quantified_blocker"] == "fat: 51 g vs 40 g (+11 g)"
+
     inspected = admin.execute("inspect", submission_id=operation_id)
     kinds = [item["kind"] for item in inspected["data"]["human_actions"]]
-    assert kinds == ["record-human-decision", "dismiss-human-review"]
+    assert kinds == ["review-human-decision", "dismiss-human-review"]
+    dismiss_action = next(action for action in inspected["data"]["human_actions"] if action["command"] == "review-reject")
+    assert dismiss_action["after_success"]["resume_status"] == "pending-verification"
+    assert dismiss_action["after_success"]["next_stage"] == "verification"
 
     dismissed = admin.execute(
         "review-reject",
@@ -172,6 +222,7 @@ def test_review_reject_dismisses_unanswered_human_review_without_recording_decis
         reason="The 51 g estimate incorrectly treated raw whole-bird fat as served fat and is not a defensible blocker.",
     )
     assert dismissed["ok"]
+    assert dismissed["command"] == "review-reject"
     assert dismissed["data"]["resolution_mode"] == "dismissal"
     assert dismissed["data"]["new_cycle_id"]
     after_doc = __import__("dish_tool.task_document", fromlist=["parse_task_document"]).parse_task_document(
@@ -201,6 +252,68 @@ def test_review_reject_dismisses_unanswered_human_review_without_recording_decis
     assert context[-1]["original_issue"].startswith("51 g fat")
     assert "raw whole-bird fat" in context[-1]["dismissal_reason"]
     assert "Do not carry its premise forward" in context[-1]["instruction"]
+
+@pytest.mark.smoke
+def test_review_approve_pending_research_human_review_advertises_and_returns_research(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review_and_inspect(app, agent="codex", run_id="research-route-review")
+    held = app.execute(
+        "reject",
+        agent="codex",
+        submission_id=operation_id,
+        route="human-review",
+        reason="Marco must decide whether this concern should return to Research.",
+        resume_status="pending-research",
+        run_id="research-route-review",
+        human_review_confirmed=True,
+        human_review_basis="Only Marco can decide whether the research premise should change.",
+        repairs_considered="Verification cannot construct the exact research change without Marco's choice.",
+    )
+    assert held["ok"]
+    cycle_id = app.conn.execute(
+        "SELECT cycle_id FROM verification_cycles WHERE operation_id=? ORDER BY cycle_number DESC LIMIT 1",
+        (operation_id,),
+    ).fetchone()[0]
+
+    # Agent-facing continuation must distinguish approval (Research) from dismissal (Verification).
+    assert held["data"]["after_resolution"]["approval"]["resume_status"] == "pending-research"
+    assert held["data"]["after_resolution"]["approval"]["next_stage"] == "research"
+    assert held["data"]["after_resolution"]["dismissal"]["resume_status"] == "pending-verification"
+    assert held["data"]["after_resolution"]["dismissal"]["next_stage"] == "verification"
+
+    admin = DishAdminApplication(
+        app.conn, backend=backend, release_loader=lambda: app._load_release("verification")
+    )
+    inspected = admin.execute("review-inspect", proposal_id=cycle_id)
+    assert inspected["ok"]
+    assert inspected["data"]["human_action"]["after_success"]["next_stage"] == "research"
+
+    resolved = admin.execute(
+        "review-approve",
+        proposal_id=cycle_id,
+        reason="Marco requires another Research pass before Verification.",
+    )
+    assert resolved["ok"]
+    assert resolved["command"] == "review-approve"
+    assert resolved["data"]["resume_status"] == "pending-research"
+    assert resolved["data"]["new_cycle_id"] is None
+    assert resolved["data"]["approval_consequence"]["next_stage"] == "research"
+    assert "returned to Research" in resolved["data"]["effect"]
+
+    operation = app.conn.execute(
+        "SELECT status,phase,terminal_outcome FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()
+    assert dict(operation) == {
+        "status": "completed",
+        "phase": "terminal",
+        "terminal_outcome": "human_review_resolved_to_research",
+    }
+    doc = __import__("dish_tool.task_document", fromlist=["parse_task_document"]).parse_task_document(
+        f"{backend.title}\n{backend.notes}"
+    )
+    assert doc.state.values["Status"] == "pending-research"
+    assert doc.state.values["Resume status"] == "None"
+
 
 @pytest.mark.smoke
 def test_review_reject_pending_research_human_review_forces_fresh_verification(tmp_path):
@@ -237,12 +350,22 @@ def test_review_reject_pending_research_human_review_forces_fresh_verification(t
     admin = DishAdminApplication(
         app.conn, backend=backend, release_loader=lambda: app._load_release("verification")
     )
+    review = admin.execute("review-inspect", proposal_id=source_cycle_id)
+    assert review["ok"]
+    approval = review["data"]["human_action"]
+    assert approval["after_success"]["resume_status"] == "pending-research"
+    assert approval["after_success"]["next_stage"] == "research"
+    dismissal = next(action for action in review["data"]["human_actions"] if action["command"] == "review-reject")
+    assert dismissal["after_success"]["resume_status"] == "pending-verification"
+    assert dismissal["after_success"]["next_stage"] == "verification"
+
     dismissed = admin.execute(
         "review-reject",
         proposal_id=source_cycle_id,
         reason="The escalation was invalid: its premise needs fresh Verification, not a Marco routing decision.",
     )
     assert dismissed["ok"]
+    assert dismissed["command"] == "review-reject"
     assert dismissed["data"]["resolution_mode"] == "dismissal"
     assert dismissed["data"]["resume_status"] == "pending-verification"
     assert dismissed["data"]["new_cycle_id"]

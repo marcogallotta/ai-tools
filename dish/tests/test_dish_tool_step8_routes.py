@@ -108,24 +108,22 @@ def test_human_review_route_reports_private_continuation_without_exposing_it(tmp
     )
     assert result["ok"]
     assert result["allowed_actions"] == []
-    assert result["data"]["required_admin_action"] == "record-human-decision"
+    assert result["data"]["required_admin_action"] == "review-inspect"
     assert "Status: pending-human-review" in backend.notes
-    assert result["data"]["admin_command_is_template"] is True
-    assert result["data"]["admin_command_template"] == result["data"]["admin_command"]
+    assert result["data"]["admin_command"].startswith("dish-admin review-inspect ")
     assert result["data"]["batch_may_continue"] is True
     assert result["data"]["parked_task_gid"] == "t"
     effect = result["data"]["resolution_effect"]
     assert effect == {
-        "records_human_decision": True,
-        "releases_hold": True,
-        "resumes_workflow": True,
+        "review_only": True,
+        "records_human_decision": False,
         "modifies_canonical_fields": False,
         "authorizes_governed_field_changes": False,
     }
     directive = result["data"]["directive"]
-    assert "does not edit or authorize any change to canonical governed fields" in directive
-    assert "authorize-governed-change" in directive
-    assert "do not describe the field change as approved or complete" in directive
+    assert "Keep the Marco-facing result short" in directive
+    assert "Do not dump hold IDs" in directive
+    assert "record-human-decision" in directive
 
 @pytest.mark.smoke
 def test_marco_reopen_requires_substantive_change_and_retains_cycles(tmp_path):

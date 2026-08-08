@@ -487,15 +487,21 @@ For leases:
 
 An agent attempting `reject --route human-review` must either supply the Human Review preflight
 fields or receive a non-mutating `CONFIRMATION_REQUIRED` response that asks for the evidence, repairs
-considered, and the specific unresolved Marco-only choice. The response explicitly states that
-Human Review remains appropriate when a genuine unresolved human choice, waiver, classification,
-or authority remains. Retrying the escalation uses a fresh request ID.
+considered, and the specific unresolved Marco-only choice. The preflight explicitly treats a
+reasonable defensible estimate with stated assumptions as valid when exact yield/portion facts are
+unknowable. Uncertainty alone is not a blocker, but Dish must not invent a midpoint or other false
+precision when no single estimate is defensible. The durable structured numeric blocker represents
+one estimate, its limit, and its excess/shortfall; it does not represent a range. If the exact governed repair can already be constructed,
+the agent should use a Large correction so Dish queues that exact semantic proposal instead of
+creating an open-ended Human Review hold. Retrying a genuine escalation uses a fresh request ID.
 
 Before a Large correction queues governed approval, Dish checks for small governed-text edits that
 may be incidental cleanup. Such an edit is not automatically declared non-semantic. Instead, Dish
 requires the agent either to restore the governed text exactly to the live baseline or explicitly
-name the intended governed field on the retry; the ordinary exact Human Review protections still
-apply to any intentionally changed governed field.
+name the intended governed field on the retry. This is a controlled no-effect
+`CONFIRMATION_REQUIRED` result, not `BACKEND_UNCERTAIN`; the corrected retry uses a fresh request ID.
+The ordinary exact governed-approval protections still apply to any intentionally changed governed
+field.
 
 When a Large correction needs governed authority, Dish validates the candidate as one semantic
 proposal. The response includes the full rationale and linked change set: why the candidate fails,
@@ -513,14 +519,25 @@ Evidence, or completed Large-correction handoff. In an explicit batch, the agent
 GIDs for that run and skips them if section pagination returns them again.
 
 `dish-admin review-queue` aggregates pending semantic proposals and Verification Human Review holds.
-`review-inspect` accepts either the durable UUID or the current queue number. Semantic bundles use
-`review-approve`/`review-reject`. For an unanswered Verification Human Review item, Marco has two
-distinct actions: record the substantive decision, or dismiss the agent-authored escalation itself
-as invalid with `review-reject ... --reason`. Recording a decision releases the hold and persists
-Marco's decision; dismissal releases the unchanged candidate back to fresh Verification, preserves
-the original issue and dismissal reason in audit/context, and does not fabricate a Marco decision.
-Neither path edits or authorizes governed fields. Approval of a semantic bundle is atomic across the
-complete displayed bundle and does not edit, approve, or submit the task.
+Each item carries a compact `review_summary`: outcome, material issue, quantified blocker when one was
+recorded, the decision where applicable, and the simplest next step. `review-inspect` accepts either
+the durable UUID or the current queue number. Semantic bundles use `review-approve`/`review-reject`.
+For an unanswered Verification Human Review item the normal operator surface is also the review flow:
+`review-inspect` presents `review-approve REVIEW_ID --reason '<Marco decision>'` or
+`review-reject REVIEW_ID --reason '<why the escalation is invalid>'`; low-level hold IDs and
+`record-human-decision` remain internal/compatibility mechanics rather than the normal UX. Substantive
+approval persists Marco's decision and follows the hold's stored resume route: `pending-verification`
+opens a fresh Verification cycle, while `pending-research` returns the task to Research and completes
+the held Verification operation. Dismissal is intentionally different: it always releases the
+unchanged candidate to fresh Verification regardless of stored resume status, preserves the original
+issue and dismissal reason in audit/context, and fabricates no Marco decision. The outer
+machine-readable command remains the public wrapper Marco invoked (`review-approve` or
+`review-reject`); lower-level compatibility command names remain internal audit/state semantics.
+Neither path silently edits or authorizes governed fields. For semantic proposals, normal
+`review-inspect` shows every linked candidate change covered by approval/application before the
+approve command; `--verbose` adds rationale, evidence/provenance, protocol mechanics, IDs and
+diagnostics. Approval is atomic across that exact displayed bundle and does not apply, sign, or submit
+the task.
 
 Approved proposals are detached from the proposing run. `dish proposals --agent AGENT` lists
 claimable approved bundles. A fresh invocation runs `dish apply-proposal PROPOSAL_ID --agent AGENT

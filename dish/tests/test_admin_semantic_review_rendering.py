@@ -54,6 +54,9 @@ def test_semantic_review_queue_commands_are_first_class_admin_commands():
     assert build_parser().parse_args(["review-inspect", proposal_id]).proposal_id == proposal_id
     approved = build_parser().parse_args(["review-approve", proposal_id])
     assert approved.command == "review-approve"
+    # The legacy CLI may still inject the semantic-proposal default reason. The
+    # application layer must reject that synthetic text for Human Review items.
+    assert approved.reason == "Approved after reviewing the exact linked change bundle."
     rejected = build_parser().parse_args([
         "review-reject", proposal_id, "--reason", "wrong interpretation"
     ])
@@ -111,7 +114,16 @@ def test_human_renderer_explains_semantic_proposal_before_approval_commands():
         "errors": [],
     }
     rendered = render_admin_result(result, profile="prod")
-    assert rendered.index("Problem:") < rendered.index("Governed changes requiring Marco approval")
+    assert "Governed changes" in rendered
     assert "Dish candidate" in rendered and "Locks" in rendered
     assert "Complete linked candidate change set" in rendered
+    assert '- title: "[Scallion greens] Vietnamese scallion egg" -> "Vietnamese scallion egg"' in rendered
+    assert '- planning.Locks: "Harvest home-grown greens" -> "Use shop-bought whole scallion"' in rendered
+    assert "Problem:" not in rendered
+    assert rendered.index("Governed changes") < rendered.index("Complete linked candidate change set")
     assert rendered.index("Complete linked candidate change set") < rendered.index("Approve: dish-admin review-approve")
+
+    verbose = render_admin_result(result, profile="prod", verbose=True)
+    assert "Problem: The title still requires home-grown scallion greens." in verbose
+    assert verbose.count("Complete linked candidate change set") == 1
+    assert verbose.index("Complete linked candidate change set") < verbose.index("Approve: dish-admin review-approve")

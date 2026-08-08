@@ -175,6 +175,11 @@ def test_human_review_requires_neutral_escalation_preflight_before_hold(tmp_path
     assert first["errors"][0]["rule"] == "human_review_preflight_required"
     details = first["errors"][0]
     assert details["human_review_is_allowed"].startswith("Human Review is appropriate")
+    assert "reasonable defensible estimate" in details["decision_standard"]
+    assert "must state one defensible estimate" in details["decision_standard"]
+    assert "range" not in details["decision_standard"].lower()
+    assert "Large correction" in details["exact_resolution_route"]
+    assert any("exact governed fix" in question for question in details["questions"])
     assert details["retry"]["human_review_confirmed"] is True
     assert app.conn.execute(
         "SELECT phase FROM operations WHERE operation_id=?", (operation_id,)
@@ -270,3 +275,65 @@ def test_intentional_small_governed_text_edit_can_be_explicitly_confirmed(tmp_pa
     )
     assert queued["code"] == "VALIDATION_FAILED"
     assert queued["errors"][0]["rule"] == "semantic_proposal_queued"
+
+
+def test_service_keeps_no_effect_governed_intent_challenge_as_confirmation_required(tmp_path):
+    import uuid
+
+    from dish_service.leases import ServicePrincipal
+    from tests.support.service_leases import _service
+    from tests.support.verification import Backend, TASK
+
+    backend = Backend()
+    service = _service(tmp_path, backend)
+    constructor = ServicePrincipal(owner_id="constructor", run_id="constructor-run")
+    started = service.execute_agent(
+        "start", {"agent": "gpt", "task_gid": "t", "kind": "initial"},
+        principal=constructor, request_id=str(uuid.uuid4()),
+    )
+    assert service.execute_agent(
+        "prepare", {
+            "agent": "gpt", "model": "gpt-5.6-sol",
+            "submission_id": started["submission_id"], "file_text": TASK,
+        }, principal=constructor, request_id=str(uuid.uuid4()),
+    )["ok"]
+    verifier = ServicePrincipal(owner_id="verifier", run_id="verification-run")
+    assert service.execute_agent(
+        "start", {
+            "agent": "codex", "task_gid": "t", "kind": "verification",
+            "independence_attestation": "independent",
+        }, principal=verifier, request_id=str(uuid.uuid4()),
+    )["ok"]
+    assert service.execute_agent(
+        "inspect", {"agent": "codex", "submission_id": started["submission_id"]},
+        principal=verifier, request_id=str(uuid.uuid4()),
+    )["ok"]
+
+    candidate = (
+        TASK.replace("100 g test ingredient", "120 g test ingredient")
+        .replace("Purpose: Compare texture", "Purpose: Comparé texture")
+    )
+    first_request = str(uuid.uuid4())
+    challenged = service.execute_agent(
+        "reject", {
+            "agent": "codex", "model": "gpt-5.6-sol",
+            "submission_id": started["submission_id"], "route": "large",
+            "reason": "Correct the ingredient quantity.", "file_text": candidate,
+        }, principal=verifier, request_id=first_request,
+    )
+    assert challenged["code"] == "CONFIRMATION_REQUIRED"
+    assert challenged["errors"][0]["rule"] == "governed_change_intent_confirmation_required"
+    assert challenged["errors"][0]["fresh_request_id"] is True
+    assert challenged["code"] != "BACKEND_UNCERTAIN"
+    assert backend.writes == 1  # constructor write only; the challenged correction wrote nothing
+
+    corrected = TASK.replace("100 g test ingredient", "120 g test ingredient")
+    retried = service.execute_agent(
+        "reject", {
+            "agent": "codex", "model": "gpt-5.6-sol",
+            "submission_id": started["submission_id"], "route": "large",
+            "reason": "Correct the ingredient quantity.", "file_text": corrected,
+        }, principal=verifier, request_id=str(uuid.uuid4()),
+    )
+    assert retried["ok"]
+    assert "120 g test ingredient" in backend.notes

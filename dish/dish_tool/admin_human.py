@@ -181,22 +181,30 @@ def render_admin_result(
                 }.get(item_type, "REVIEW")
                 lines.append(f"{index}. [{status}] [{label}] {title}")
                 lines.append(f"   Review ID: {proposal_id}")
-                reason = _clean(proposal.get("proposal_reason"))
-                if reason:
-                    lines.append(f"   Why: {reason}")
+                summary = proposal.get("review_summary") if isinstance(proposal.get("review_summary"), Mapping) else {}
+                issue = _clean(summary.get("issue") or proposal.get("proposal_reason"))
+                if issue:
+                    lines.append(f"   Issue: {issue}")
+                blocker = _clean(summary.get("quantified_blocker"))
+                if blocker:
+                    lines.append(f"   Blocker: {blocker}")
+                decision = _clean(summary.get("decision"))
+                if decision and decision != issue:
+                    lines.append(f"   Decision: {decision}")
                 changes = proposal.get("changes") if isinstance(proposal.get("changes"), list) else []
-                if changes:
-                    fields = ", ".join(str(item.get("field")) for item in changes if isinstance(item, Mapping))
-                    if fields:
-                        lines.append(f"   Changes: {fields}")
+                fields = _clean(", ".join(str(item.get("field")) for item in changes if isinstance(item, Mapping)))
+                if fields:
+                    lines.append(f"   Changes: {fields}")
                 lines.append(f"   Inspect: dish-admin review-inspect {proposal_id}")
                 if item_type == "semantic_proposal" and status == "PENDING":
-                    lines.append(f"   Approve: dish-admin review-approve {proposal_id}")
+                    # Approval binds the complete linked candidate bundle, which is shown only
+                    # by review-inspect. Do not offer approval from this compact queue summary.
                     lines.append(f"   Reject: dish-admin review-reject {proposal_id} --reason '<why>'")
                 elif item_type == "human_review":
                     lines.append(
-                        f"   Decide: dish-admin review-approve {proposal_id} --detail '<Marco decision and reasoning>'"
+                        f"   Decide: dish-admin review-approve {proposal_id} --reason '<Marco decision>'"
                     )
+                    lines.append(f"   Dismiss: dish-admin review-reject {proposal_id} --reason '<why escalation is invalid>'")
                 elif item_type == "verification_hold":
                     lines.append(f"   Release: dish-admin review-approve {proposal_id}")
             if items:
@@ -205,23 +213,35 @@ def render_admin_result(
         else:
             proposal = data.get("review_item") if isinstance(data.get("review_item"), Mapping) else data.get("proposal") if isinstance(data.get("proposal"), Mapping) else {}
             proposal_id = _clean(proposal.get("review_id") or proposal.get("proposal_id")) or "unknown"
-            lines.append(f"Proposal {proposal_id}")
+            item_type = _clean(proposal.get("item_type")) or "semantic_proposal"
+            heading = "Human Review" if item_type == "human_review" else "Review"
+            lines.append(f"{heading} {proposal_id}")
             lines.append(f"Status: {_clean(proposal.get('status')) or 'unknown'}")
-            explanation = proposal.get("explanation") if isinstance(proposal.get("explanation"), Mapping) else {}
-            for label, key in (("Problem", "problem"), ("Cause", "cause"), ("Why this route", "why_not_ordinary_correction"), ("Recommended", "recommended_resolution"), ("Scope", "scope"), ("After approval", "after_success")):
-                value = _clean(explanation.get(key))
-                if value:
-                    lines.append(f"{label}: {value}")
+            summary = proposal.get("review_summary") if isinstance(proposal.get("review_summary"), Mapping) else {}
+            issue = _clean(summary.get("issue") or proposal.get("proposal_reason"))
+            if issue:
+                lines.append(f"Issue: {issue}")
+            blocker = _clean(summary.get("quantified_blocker"))
+            if blocker:
+                lines.append(f"Blocker: {blocker}")
+            decision = _clean(summary.get("decision"))
+            if decision and decision != issue:
+                lines.append(f"Decision: {decision}")
+            next_step = _clean(summary.get("simplest_next_step"))
+            if next_step:
+                lines.append(f"Next: {next_step}")
+
             changes = proposal.get("changes") if isinstance(proposal.get("changes"), list) else []
             if changes:
                 lines.append("")
-                lines.append("Governed changes requiring Marco approval")
+                lines.append("Governed changes")
                 for item in changes:
                     if not isinstance(item, Mapping):
                         continue
                     lines.append(f"- {item.get('field')}: {json.dumps(item.get('before'), ensure_ascii=False)} -> {json.dumps(item.get('after'), ensure_ascii=False)}")
+
             linked = proposal.get("linked_changes") if isinstance(proposal.get("linked_changes"), list) else []
-            if linked:
+            if item_type == "semantic_proposal" and linked:
                 lines.append("")
                 lines.append("Complete linked candidate change set")
                 for item in linked:
@@ -232,8 +252,19 @@ def render_admin_result(
                         f"- {path}: {json.dumps(item.get('before'), ensure_ascii=False)} "
                         f"-> {json.dumps(item.get('after'), ensure_ascii=False)}"
                     )
+
+            if verbose:
+                explanation = proposal.get("explanation") if isinstance(proposal.get("explanation"), Mapping) else {}
+                detail_rows = []
+                for label, key in (("Problem", "problem"), ("Cause", "cause"), ("Why this route", "why_not_ordinary_correction"), ("Recommended", "recommended_resolution"), ("Scope", "scope"), ("After approval", "after_success")):
+                    value = _clean(explanation.get(key))
+                    if value and value not in {issue, next_step}:
+                        detail_rows.append((label, value))
+                if detail_rows:
+                    lines.append("")
+                    lines.append("Detail")
+                    lines.extend(f"{label}: {value}" for label, value in detail_rows)
             status = _clean(proposal.get("status"))
-            item_type = _clean(proposal.get("item_type")) or "semantic_proposal"
             if status == "pending" and item_type == "semantic_proposal":
                 lines.append("")
                 lines.append(f"Approve: dish-admin review-approve {proposal_id}")
@@ -242,9 +273,9 @@ def render_admin_result(
                 lines.append("")
                 command = _clean(data.get("admin_command") or data.get("admin_command_template"))
                 if command:
-                    lines.append("Record decision:")
+                    lines.append("Decide:")
                     lines.append(command)
-                lines.append(f"Or run: dish-admin review-approve {proposal_id} --detail '<Marco decision and reasoning>'")
+                lines.append(f"Dismiss: dish-admin review-reject {proposal_id} --reason '<why escalation is invalid>'")
             elif status == "pending" and item_type == "verification_hold":
                 lines.append("")
                 lines.append(f"Release hold: dish-admin review-approve {proposal_id}")

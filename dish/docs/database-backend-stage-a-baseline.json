@@ -72,12 +72,12 @@
     "dish_tool/database_initialization.py": "1205caa574c78fd7fe73c2be017218d10543a53f1acc66463f96963a7cd06def",
     "dish_tool/database_schema.py": "be03973ca4f11ec634aa2f9e6fc82112659c08fc9570014df40d4beecb0ac460",
     "dish_tool/workflow_policy.py": "8f0a5833a0bc888a1f2f01fe67ead870969b1d00e84c351bfad9732d64e297ba",
-    "docs/runtime-contract.md": "54b66ae99172d5b32f19c130192096c17d57bd68cecfcff6ad92b061e9731422",
+    "docs/runtime-contract.md": "b768a92cf4d78c8f6bc416c31bc381b29991e9144455b88c574468e69d5d7fff",
     "openapi/dish-action.openapi.json": "2f9123c560612058e48e4f5f4e75600a0a3f215074528d71b6c30d434b834eb5",
     "scripts/dish-pg-acceptance": "d7b30b7f45a9ff38b1106aa868065449bea879f71ce30f2428b1333aa0ec43d4",
     "scripts/dish-pg-stage-a-baseline": "fe86091089d0324f46edb5397decf517f2846c3138cd6c31edd22dc7ae19b5fa"
   },
-  "last_rebaseline_reason": "Stage B6 package-boundary cleanup: move canonical agent/admin CLI presentation into dish_service and transfer governed admin CLI source identity",
+  "last_rebaseline_reason": "Correct Human Review continuation consequences and public wrapper identity, show every linked semantic-proposal candidate change before approval, and align estimation guidance with the durable single-estimate blocker representation; PostgreSQL target authority remains unchanged.",
   "notes": [
     "The baseline records current source authority only; PostgreSQL is not production authority.",
     "Changes to governed source hashes or acceptance rules require explicit baseline review; ordinary test-file changes do not.",

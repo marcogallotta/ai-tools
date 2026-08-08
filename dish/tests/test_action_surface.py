@@ -396,3 +396,67 @@ def test_missing_inspect_request_id_explains_possible_stale_action_schema():
     assert exc.value.rule == "request_field_required"
     assert "records durable Verification evidence" in str(exc.value)
     assert "refresh or re-import the Dish Action schema" in str(exc.value)
+
+
+def test_action_guidance_treats_verification_uncertainty_as_defensible_estimation_not_perfection():
+    guidance = action_agent_guidance({
+        "ok": True,
+        "command": "start",
+        "code": "OK",
+        "allowed_actions": ["inspect"],
+        "data": {},
+    })
+    text = " ".join(guidance["instructions"])
+    assert "reasonable defensible estimate" in text
+    assert "do not invent false precision" in text
+    assert "Uncertainty is blocking only" in text
+    assert "one defensible estimate versus the limit" in text
+    assert "plausible range" not in text
+
+
+def test_action_guidance_keeps_human_review_compact_and_hides_protocol_mechanics():
+    guidance = action_agent_guidance({
+        "ok": True,
+        "command": "inspect",
+        "code": "OK",
+        "allowed_actions": [],
+        "data": {
+            "human_action": {
+                "summary": "Review decision",
+                "shell_command": "dish-admin review-inspect cycle-id",
+            }
+        },
+    })
+    text = " ".join(guidance["instructions"])
+    assert "decision first" in text
+    assert "Do not dump raw details" in text
+    assert "do not print it unless Marco asks" in text
+
+
+def test_action_guidance_explains_fresh_request_after_governed_intent_confirmation():
+    guidance = action_agent_guidance({
+        "ok": False,
+        "command": "reject",
+        "code": "CONFIRMATION_REQUIRED",
+        "allowed_actions": ["reject"],
+        "data": {},
+        "errors": [{"rule": "governed_change_intent_confirmation_required"}],
+    })
+    text = " ".join(guidance["instructions"])
+    assert "No workflow or external effect was committed" in text
+    assert "fresh request ID" in text
+
+
+def test_action_guidance_routes_exact_human_review_repairs_to_semantic_proposals():
+    guidance = action_agent_guidance({
+        "ok": False,
+        "command": "reject",
+        "code": "CONFIRMATION_REQUIRED",
+        "allowed_actions": ["reject"],
+        "data": {},
+        "errors": [{"rule": "human_review_preflight_required"}],
+    })
+    text = " ".join(guidance["instructions"])
+    assert "reasonable defensible estimate" in text
+    assert "Large correction" in text
+    assert "Marco-only choice remains" in text

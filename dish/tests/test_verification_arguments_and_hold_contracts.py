@@ -281,7 +281,7 @@ def test_quantity_forced_verification_is_audited_large_through_approval(tmp_path
     ("route", "phase", "admin_action"),
     [
         ("evidence", "held_evidence", "supply-evidence"),
-        ("human-review", "held_human", "record-human-decision"),
+        ("human-review", "held_human", "review-inspect"),
     ],
 )
 def test_blocked_start_preserves_held_operation_guidance(
@@ -332,7 +332,11 @@ def test_blocked_start_preserves_held_operation_guidance(
             "existing_submission_id": operation_id,
             "phase": phase,
             "required_admin_action": admin_action,
-            "resolver": f"Marco/admin {admin_action}",
+            "resolver": (
+                "Marco/admin review workflow"
+                if route == "human-review"
+                else f"Marco/admin {admin_action}"
+            ),
         }
 
 

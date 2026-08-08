@@ -797,6 +797,7 @@ class CurrentWorkflowService:
                 "CONFLICT",
                 "WRONG_STATE",
                 "AGENT_MISMATCH",
+                "CONFIRMATION_REQUIRED",
                 "BACKEND_REJECTED",
                 "NOT_FOUND",
             }

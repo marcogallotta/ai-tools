@@ -11,21 +11,92 @@ from .semantic_proposals import get_semantic_proposal, list_semantic_proposals, 
 _ACTIVE_PROPOSAL_STATUSES = ("pending", "approved", "claimed")
 
 
-def _hold_reason(conn: sqlite3.Connection, operation_id: str, cycle_id: str) -> str:
+def human_review_consequence_metadata(resume_status: object) -> dict[str, dict[str, Any]]:
+    """Describe operator-facing consequences for approval vs dismissal of a Verification Human Review."""
+    resume = str(resume_status or "pending-verification").strip()
+    if resume == "pending-research":
+        approval = {
+            "resume_status": "pending-research",
+            "next_stage": "research",
+            "operation_status": "completed",
+            "operation_phase": "terminal",
+            "instruction": (
+                "Marco's substantive decision returns the task to Research; the held Verification "
+                "operation completes rather than opening a fresh Verification cycle."
+            ),
+        }
+    else:
+        approval = {
+            "resume_status": "pending-verification",
+            "next_stage": "verification",
+            "operation_status": "open",
+            "operation_phase": "await_verification",
+            "instruction": (
+                "Marco's substantive decision releases the unchanged candidate to a fresh "
+                "Verification cycle."
+            ),
+        }
+    dismissal = {
+        "resume_status": "pending-verification",
+        "next_stage": "verification",
+        "operation_status": "open",
+        "operation_phase": "await_verification",
+        "instruction": (
+            "Dismissing the unanswered escalation releases the unchanged candidate to fresh "
+            "Verification; the escalation's stored resume status does not control dismissal."
+        ),
+    }
+    return {"approval": approval, "dismissal": dismissal}
+
+
+def _format_quantified_blocker(blocker: object) -> str | None:
+    if not isinstance(blocker, Mapping):
+        return None
+    metric = str(blocker.get("metric") or "").strip()
+    unit = str(blocker.get("unit") or "").strip()
+    try:
+        actual = float(blocker["actual"])
+        limit = float(blocker["limit"])
+        delta = float(blocker["delta"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+    def number(value: float) -> str:
+        return str(int(value)) if value.is_integer() else f"{value:g}"
+
+    sign = "+" if delta > 0 else ""
+    label = f"{metric}: " if metric else ""
+    suffix = f" {unit}" if unit else ""
+    return f"{label}{number(actual)}{suffix} vs {number(limit)}{suffix} ({sign}{number(delta)}{suffix})"
+
+
+def _hold_context(conn: sqlite3.Connection, operation_id: str, cycle_id: str) -> dict[str, Any]:
     row = conn.execute(
         """SELECT intended_json FROM operation_steps
              WHERE operation_id=? AND step_name=? AND completed_at IS NOT NULL""",
         (operation_id, f"route_cycle_finalize:{cycle_id}"),
     ).fetchone()
-    if row is None:
-        return "Marco's decision is required before this task can continue."
-    try:
-        intended = json.loads(row["intended_json"] or "{}")
-    except (TypeError, ValueError):
-        intended = {}
-    return str(intended.get("decision_reason") or "").strip() or (
+    intended: dict[str, Any] = {}
+    if row is not None:
+        try:
+            loaded = json.loads(row["intended_json"] or "{}")
+        except (TypeError, ValueError):
+            loaded = {}
+        if isinstance(loaded, dict):
+            intended = loaded
+    reason = str(intended.get("decision_reason") or "").strip() or (
         "Marco's decision is required before this task can continue."
     )
+    basis = str(intended.get("human_review_basis") or "").strip() or None
+    repairs = str(intended.get("repairs_considered") or "").strip() or None
+    blocker = intended.get("quantified_blocker")
+    return {
+        "reason": reason,
+        "human_review_basis": basis,
+        "repairs_considered": repairs,
+        "quantified_blocker": blocker if isinstance(blocker, Mapping) else None,
+        "quantified_blocker_summary": _format_quantified_blocker(blocker),
+    }
 
 
 def _human_review_items(conn: sqlite3.Connection) -> tuple[dict[str, Any], ...]:
@@ -52,7 +123,28 @@ def _human_review_items(conn: sqlite3.Connection) -> tuple[dict[str, Any], ...]:
     items: list[dict[str, Any]] = []
     for row in rows:
         kind = "verification_hold" if row["outcome"] == "verification-hold" else "human_review"
-        reason = _hold_reason(conn, row["operation_id"], row["cycle_id"])
+        context = _hold_context(conn, row["operation_id"], row["cycle_id"])
+        reason = context["reason"]
+        blocker_summary = context["quantified_blocker_summary"]
+        decision = context["human_review_basis"] or reason
+        consequences = human_review_consequence_metadata(row["resume_state"])
+        review_summary = {
+            "outcome": "needs Marco decision" if kind == "human_review" else "verification hold",
+            "issue": reason,
+            "quantified_blocker": blocker_summary,
+            "decision": decision if kind == "human_review" else None,
+            "simplest_next_step": (
+                (
+                    "Approve the substantive decision to return this task to "
+                    f"{consequences['approval']['next_stage'].title()}, or dismiss the invalid escalation "
+                    "to return the unchanged candidate to fresh Verification."
+                )
+                if kind == "human_review"
+                else "Release the unchanged candidate to a fresh Verification round."
+            ),
+            "approval_consequence": consequences["approval"] if kind == "human_review" else None,
+            "dismissal_consequence": consequences["dismissal"] if kind == "human_review" else None,
+        }
         items.append(
             {
                 "item_type": kind,
@@ -64,6 +156,10 @@ def _human_review_items(conn: sqlite3.Connection) -> tuple[dict[str, Any], ...]:
                 "cycle_id": row["cycle_id"],
                 "candidate_title": row["last_confirmed_title"],
                 "proposal_reason": reason,
+                "human_review_basis": context["human_review_basis"],
+                "repairs_considered": context["repairs_considered"],
+                "quantified_blocker": context["quantified_blocker"],
+                "review_summary": review_summary,
                 "resume_status": row["resume_state"],
                 "hold_identity": row["hold_identity"],
                 "created_at": row["cycle_created_at"] or row["created_at"],
@@ -88,7 +184,14 @@ def _human_review_items(conn: sqlite3.Connection) -> tuple[dict[str, Any], ...]:
                         if kind == "human_review"
                         else "The resolved command releases the unchanged candidate into a fresh Verification round."
                     ),
-                    "after_success": "A later fresh verifier may continue from the resumed operation.",
+                    "after_success": (
+                        consequences["approval"]["instruction"]
+                        if kind == "human_review"
+                        else "A later fresh verifier may continue from the resumed operation."
+                    ),
+                    "dismissal_after_success": (
+                        consequences["dismissal"]["instruction"] if kind == "human_review" else None
+                    ),
                 },
                 "changes": [],
                 "linked_changes": [],

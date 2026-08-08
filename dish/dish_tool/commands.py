@@ -34,6 +34,7 @@ from .models import (
 )
 from .results import error_envelope, result_envelope
 from .human_actions import PromptField, exact_action, relay_text, template_action
+from .review_queue import human_review_consequence_metadata
 from .validation_scope import scope_for_command
 
 
@@ -88,7 +89,9 @@ def _exposed_result_contract(
     if required_start_kind is not None:
         exposed_data["required_start_kind"] = required_start_kind
     required_admin_action = (
-        required_admin_action or view.get("required_admin_action")
+        exposed_data.get("required_admin_action")
+        or required_admin_action
+        or view.get("required_admin_action")
     )
     if required_admin_action is not None:
         exposed_data["required_admin_action"] = required_admin_action
@@ -319,6 +322,60 @@ def _evidence_hold_continuation(
         }
 
     op = conn.execute("SELECT task_gid FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
+    if admin_action == "record-human-decision" and cycle is not None:
+        consequences = human_review_consequence_metadata(resume_status)
+        approval_after_resolution = consequences["approval"]
+        dismissal_after_resolution = consequences["dismissal"]
+        review_spec = exact_action(
+            kind="review-human-decision",
+            command="review-inspect",
+            positional=(cycle["cycle_id"],),
+            summary="Review the one decision that is blocking this task.",
+            effect="Show the compact issue and let Marco approve the decision or dismiss an invalid escalation.",
+            after_success={"instruction": "Use the review action Dish returns; do not reconstruct hold-resolution commands."},
+        )
+        dismiss_spec = template_action(
+            kind="dismiss-human-review",
+            command="review-reject",
+            positional=(cycle["cycle_id"],),
+            options=(("--reason", "<why this escalation is invalid>"),),
+            prompt_fields=(PromptField("reason", "Why this escalation is invalid", "<why this escalation is invalid>"),),
+            summary="Dismiss this Human Review escalation as invalid.",
+            effect=(
+                "Preserve the escalation and dismissal reason, record no Marco decision or governed authorization, "
+                "and return the unchanged candidate to fresh Verification."
+            ),
+            after_success=dismissal_after_resolution,
+        )
+        return {
+            "phase": phase,
+            "submission_id": operation_id,
+            "existing_submission_id": operation_id,
+            "required_admin_action": "review-inspect",
+            "resolver": "Marco/admin review workflow",
+            "continuation_surface": "private-admin",
+            "connected_action_available": False,
+            **review_spec.payload(),
+            "human_actions": [
+                review_spec.payload()["human_action"] | {"shell_command": review_spec.shell_command()},
+                dismiss_spec.payload()["human_action"] | {"shell_command": dismiss_spec.shell_command()},
+            ],
+            "resolution_effect": {
+                "review_only": True,
+                "records_human_decision": False,
+                "modifies_canonical_fields": False,
+                "authorizes_governed_field_changes": False,
+            },
+            "directive": (
+                "Keep the Marco-facing result short: state the decision needed, quantify any threshold blocker, "
+                "and say that the item is available in Dish review. Do not dump hold IDs, resume state, evidence "
+                "detail, or a raw record-human-decision command unless Marco explicitly asks for protocol detail."
+            ),
+            "after_resolution": {
+                "approval": approval_after_resolution,
+                "dismissal": dismissal_after_resolution,
+            },
+        }
     options: list[tuple[str, object | None]] = [
         ("--detail", routes["detail_placeholder"]),
     ]
@@ -366,7 +423,7 @@ def _evidence_hold_continuation(
                 "Preserve the rejected escalation in the audit trail, record no Marco decision or governed authorization, "
                 "and resume the unchanged task so a fresh verifier can reassess it."
             ),
-            after_success=after_resolution,
+            after_success=human_review_consequence_metadata(resume_status)["dismissal"],
         )
         alternative_human_actions.append(
             dismiss_spec.payload()["human_action"] | {"shell_command": dismiss_spec.shell_command()}
