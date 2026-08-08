@@ -400,24 +400,23 @@ def _command_inspect(
             problem = "A permanent-run abandonment is active and must be reconciled."
     elif operation["status"] == "uncertain" or view.get("unresolved_attempts"):
         administrative_blocker = True
-        spec = template_action(
+        spec = exact_action(
             kind="reconcile-uncertain-effect",
             command="recover",
             positional=(operation_id,),
-            options=(
-                ("--outcome", "<inspect|not-applied|applied>"),
-                ("--reason", "<what the live reread proved>"),
+            summary="Automatically inspect and reconcile the interrupted effect.",
+            effect=(
+                "Settle only outcomes that fresh live evidence proves; stop without guessing "
+                "if the result remains ambiguous."
             ),
-            prompt_fields=(
-                PromptField("outcome", "Observed outcome", "<inspect|not-applied|applied>"),
-                PromptField("reason", "What the live reread proved", "<what the live reread proved>"),
+            details=(
+                "Automatic inspection is the normal recovery path.",
+                "Manual --outcome applied / not-applied are advanced assertions only.",
             ),
-            summary="Reconcile an interrupted external effect.",
-            effect="Record only what a fresh live reread proves.",
             after_success={"instruction": "Rerun dish-admin inspect."},
         )
         actions.append(spec.payload()["human_action"] | {"shell_command": spec.shell_command()})
-        problem = "An external write or movement has an unresolved outcome."
+        problem = "An interrupted external write or movement must be reconciled before work can continue."
     elif proposal is not None and proposal["status"] == "pending":
         administrative_blocker = True
         waiting_for = "Marco review of the queued semantic proposal"
@@ -560,20 +559,23 @@ def _command_inspect(
             if safe_reclaim is not None else set()
         )
         if failed_rules & recovery_rules:
-            spec = template_action(
+            spec = exact_action(
                 kind="reconcile-before-ownership-transfer",
                 command="recover",
                 positional=(operation_id,),
-                options=(("--outcome", "inspect"), ("--reason", "<what the recovery inspection proves>")),
-                prompt_fields=(
-                    PromptField("reason", "What the recovery inspection proves", "<what the recovery inspection proves>"),
+                summary="Automatically reconcile the interrupted execution before ownership moves.",
+                effect=(
+                    "Settle only recovery evidence that the fresh live inspection proves; "
+                    "leave ambiguous effects blocked."
                 ),
-                summary="Inspect and reconcile the interrupted execution before ownership moves.",
-                effect="Resolve uncertain execution/effect evidence; do not abandon or reclaim until it is terminal.",
+                details=(
+                    "Automatic inspection is the normal recovery path.",
+                    "Manual --outcome applied / not-applied are advanced assertions only.",
+                ),
                 after_success={"instruction": "Rerun dish-admin inspect."},
             )
             actions.append(spec.payload()["human_action"] | {"shell_command": spec.shell_command()})
-            problem = "The prior verifier is inactive, but unresolved execution evidence must be reconciled before ownership can move."
+            problem = "The prior verifier is inactive, but its interrupted execution must be reconciled before another run can take over."
         elif lease is not None:
             spec = template_action(
                 kind="abandon-dead-verifier",
@@ -615,24 +617,27 @@ def _command_inspect(
             if safe_reclaim is not None else set()
         )
         if failed_rules & recovery_rules:
-            spec = template_action(
+            spec = exact_action(
                 kind="reconcile-before-ownership-transfer",
                 command="recover",
                 positional=(operation_id,),
-                options=(("--outcome", "inspect"), ("--reason", "<what the recovery inspection proves>")),
-                prompt_fields=(
-                    PromptField("reason", "What the recovery inspection proves", "<what the recovery inspection proves>"),
+                summary="Automatically reconcile the interrupted execution before ownership moves.",
+                effect=(
+                    "Settle only recovery evidence that the fresh live inspection proves; "
+                    "leave ambiguous effects blocked."
                 ),
-                summary="Inspect and reconcile interrupted execution evidence.",
-                effect="Resolve uncertain execution/effect evidence before reclaim or abandonment.",
+                details=(
+                    "Automatic inspection is the normal recovery path.",
+                    "Manual --outcome applied / not-applied are advanced assertions only.",
+                ),
                 after_success={"instruction": "Rerun dish-admin inspect."},
             )
             actions.append(
                 spec.payload()["human_action"] | {"shell_command": spec.shell_command()}
             )
             problem = (
-                "The prior run is inactive, but unresolved execution evidence must be "
-                "reconciled before ownership can move."
+                "The prior run is inactive, but its interrupted execution must be reconciled "
+                "before ownership can move."
             )
         else:
             try:

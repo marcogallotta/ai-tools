@@ -49,5 +49,52 @@ def test_review_queue_renderer_prints_exact_commands_and_explains_row_numbers():
 
     assert f"Inspect: dish-admin review-inspect {proposal_id}" in rendered
     assert f"Approve: dish-admin review-approve {proposal_id}" not in rendered
-    assert f"Reject: dish-admin review-reject {proposal_id}" in rendered
+    assert f"Reject template: dish-admin review-reject {proposal_id}" in rendered
     assert "Queue numbers are accepted only for the current queue view" in rendered
+
+
+def test_human_review_renderer_marks_required_reason_commands_as_templates():
+    review_id = str(uuid.uuid4())
+    queue_result = {
+        "ok": True,
+        "command": "review-queue",
+        "code": "OK",
+        "state": "ok",
+        "retryable": False,
+        "allowed_actions": [],
+        "data": {
+            "review_items": [{
+                "item_type": "human_review",
+                "review_id": review_id,
+                "status": "pending",
+                "task_gid": "task-1",
+            }]
+        },
+        "errors": [],
+    }
+    rendered_queue = render_admin_result(queue_result, profile="prod")
+    assert f"Decision template: dish-admin review-approve {review_id}" in rendered_queue
+    assert f"Dismiss template: dish-admin review-reject {review_id}" in rendered_queue
+
+    inspect_result = {
+        "ok": True,
+        "command": "review-inspect",
+        "code": "OK",
+        "state": "pending",
+        "retryable": False,
+        "allowed_actions": [],
+        "data": {
+            "review_item": {
+                "item_type": "human_review",
+                "review_id": review_id,
+                "status": "pending",
+            },
+            "admin_command": (
+                f"dish-admin review-approve {review_id} --reason '<Marco decision>'"
+            ),
+        },
+        "errors": [],
+    }
+    rendered_inspect = render_admin_result(inspect_result, profile="prod")
+    assert f"Decision template: dish-admin review-approve {review_id}" in rendered_inspect
+    assert f"Dismiss template: dish-admin review-reject {review_id}" in rendered_inspect

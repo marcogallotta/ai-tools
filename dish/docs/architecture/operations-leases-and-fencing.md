@@ -29,6 +29,7 @@ Durable claim/lease identity determines which executor may continue a mutation. 
   the source and creates an exact linked successor rather than retargeting the old operation.
 - Recovery targets durable identity/evidence rather than an ambiguous "nearby" operation.
 - Terminal evidence is preserved even if later cleanup fails.
+- A recovery path that reports a usable continuation must also settle any recoverable execution evidence that the same fresh inspection has mechanically proved terminal; a subsequent inspect must not require the same recovery again.
 
 ## Process and transaction boundaries
 

@@ -110,26 +110,18 @@ LOG = logging.getLogger("dish.service.application")
 def _lease_recovery_details(
     operation_id: str, after_recovery_actions: list[str]
 ) -> dict[str, Any]:
-    spec = template_action(
+    spec = exact_action(
         kind="recover-expired-lease",
         command="recover-lease",
         positional=(operation_id,),
-        options=(("--reason", "<why the same run is resuming>"),),
-        prompt_fields=(
-            PromptField("reason", "Why the same run is resuming", "<why the same run is resuming>"),
-        ),
-        summary="Release an expired lease so the same durable run can resume.",
+        summary="Release the stale workflow lease so the same durable run can resume.",
         effect="This does not transfer workflow ownership to a different run.",
         after_success={"agent_actions": list(after_recovery_actions)},
     )
-    next_action = after_recovery_actions[0] if after_recovery_actions else None
-    directive = relay_text(
-        spec,
-        instruction=(
-            "Use this only when the original agent run will continue. Wait for confirmation; "
-            "do not start a replacement operation"
-            + (f". Resume this same submission with `{next_action}`." if next_action else ".")
-        ),
+    directive = (
+        "Tell Marco only that this task is blocked by a stale workflow lease and admin recovery "
+        "is required before the same run can continue. Keep the exact admin command available, "
+        "but do not print the command, lease mechanics, or ownership explanation unless Marco asks."
     )
     return {
         "recovery_required": True,

@@ -166,8 +166,12 @@ def test_supply_evidence_help_stays_route_specific(capsys):
     help_text = capsys.readouterr().out
     assert "governed" not in help_text
 
-def test_recover_parser_accepts_generated_inspect_outcome():
+def test_recover_parser_defaults_to_automatic_inspect_and_accepts_explicit_inspect():
     operation_id = str(uuid.uuid4())
+    defaulted = build_parser().parse_args(["recover", operation_id])
+    assert defaulted.outcome == "inspect"
+    assert defaulted.reason == "no reason given"
+
     parsed = build_parser().parse_args(
         [
             "recover",

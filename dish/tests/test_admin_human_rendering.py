@@ -90,10 +90,55 @@ def test_human_renderer_shows_governed_change_details_before_command():
 
     rendered = render_admin_result(result, profile="prod")
     assert rendered.index("Change this task's Exemptions") < rendered.index(
-        "Run: dish-admin authorize-governed-change"
+        "Template: dish-admin authorize-governed-change"
     )
     assert "Scope: this task, this operation" in rendered
     assert "does not edit the task or approve Verification" in rendered
+
+def test_human_renderer_labels_input_commands_as_templates_but_exact_recovery_as_runnable():
+    from dish_tool.admin_human import render_admin_result
+
+    template_result = {
+        "ok": True,
+        "command": "inspect",
+        "code": "OK",
+        "submission_id": "operation-1",
+        "allowed_actions": [],
+        "data": {
+            "problem": "Needs one fact.",
+            "human_actions": [{
+                "kind": "supply-evidence",
+                "summary": "Record the answer.",
+                "requires_input": [{"name": "detail"}],
+                "shell_command": "dish-admin supply-evidence operation-1 --detail '<answer>'",
+            }],
+        },
+        "errors": [],
+    }
+    rendered_template = render_admin_result(template_result, profile="prod")
+    assert "Template: dish-admin supply-evidence" in rendered_template
+    assert "Run: dish-admin supply-evidence" not in rendered_template
+
+    exact_result = {
+        "ok": True,
+        "command": "inspect",
+        "code": "OK",
+        "submission_id": "operation-1",
+        "allowed_actions": [],
+        "data": {
+            "problem": "Interrupted execution.",
+            "human_actions": [{
+                "kind": "reconcile-uncertain-effect",
+                "summary": "Recover automatically.",
+                "requires_input": [],
+                "shell_command": "dish-admin recover operation-1",
+            }],
+        },
+        "errors": [],
+    }
+    rendered_exact = render_admin_result(exact_result, profile="prod")
+    assert "Run: dish-admin recover operation-1" in rendered_exact
+
 
 def test_human_renderer_summarizes_global_attention_items():
     from dish_tool.admin_human import render_admin_result

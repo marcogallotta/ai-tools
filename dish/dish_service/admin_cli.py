@@ -142,9 +142,12 @@ def build_parser() -> JsonArgumentParser:
     recover.add_argument("submission_id", help=_submission_target_help)
     recover.add_argument(
         "--outcome",
-        required=True,
+        default="inspect",
         choices=("inspect", "not-applied", "applied"),
-        help="record only what the live reread proves; a contradictory outcome fails closed",
+        help=(
+            "default: inspect and reconcile only what fresh live evidence proves; "
+            "applied/not-applied are advanced manual assertions and fail closed on contradiction"
+        ),
     )
     recover.add_argument("--reason", default="no reason given")
 

@@ -85,6 +85,10 @@ def test_evidence_and_human_routes_require_protocol_reasons_and_resume(tmp_path)
     }
     assert good["data"]["admin_command_is_template"] is True
     assert good["data"]["admin_command_template"] == command
+    directive = good["data"]["directive"]
+    assert "actual missing fact in plain English" in directive
+    assert "supply-evidence command unless Marco asks" in directive
+    assert command not in directive
     assert good["data"]["resolution_effect"]["modifies_canonical_fields"] is False
     assert "authorizes_governed_field_changes" not in good["data"]["resolution_effect"]
     inspected = app.execute("inspect", agent="codex", submission_id=operation_id)

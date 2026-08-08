@@ -60,13 +60,14 @@ def _assert_expired_guidance(result, operation_id, *, view_path):
     assert data["required_admin_action"] == "recover-lease"
     assert data["resolver"] == "Marco/admin recover-lease"
     argv = shlex.split(data["admin_command"])
-    assert argv[:3] == ["dish-admin", "recover-lease", operation_id]
-    assert argv[argv.index("--reason") + 1] == "<why the same run is resuming>"
-    assert data["admin_command_is_template"] is True
+    assert argv == ["dish-admin", "recover-lease", operation_id]
+    assert data["admin_command_is_template"] is False
     assert data["human_action"]["effect"] == (
         "This does not transfer workflow ownership to a different run."
     )
-    assert "original agent run" in data["directive"]
+    assert "blocked by a stale workflow lease" in data["directive"]
+    assert data["admin_command"] not in data["directive"]
+    assert "unless Marco asks" in data["directive"]
     assert data["after_recovery"] == {"legal_actions": ["approve", "reject"]}
     assert data["service_access"]["state"] == "expired"
     assert data["service_access"]["rule"] == "service_lease_expired"

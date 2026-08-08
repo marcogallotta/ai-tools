@@ -10,7 +10,7 @@ from typing import Any, Mapping, Sequence
 from .errors import DishRuleError
 from .transactions import immediate_transaction
 from .models import ProcessIdentity, utc_now
-from .human_actions import PromptField, relay_text, template_action
+from .human_actions import exact_action
 from .recovery import current_process_identity, process_identity_is_live
 
 
@@ -25,29 +25,29 @@ class OperationExecutionClaim:
 
 
 def _recover_command_guidance(operation_id: str) -> dict[str, object]:
-    spec = template_action(
+    spec = exact_action(
         kind="reconcile-uncertain-effect",
         command="recover",
         positional=(operation_id,),
-        options=(
-            ("--outcome", "<inspect|not-applied|applied>"),
-            ("--reason", "<summarize what the live reread showed>"),
+        summary="Automatically inspect and reconcile the interrupted execution.",
+        effect=(
+            "Use fresh live evidence to settle only mechanically proven recovery state; "
+            "stop without guessing if the outcome remains ambiguous."
         ),
-        prompt_fields=(
-            PromptField("outcome", "Observed outcome", "<inspect|not-applied|applied>"),
-            PromptField("reason", "What the live reread showed", "<summarize what the live reread showed>"),
+        after_success={
+            "instruction": "Refresh the same operation and follow its returned continuation."
+        },
+        details=(
+            "Automatic inspection is the normal recovery path.",
+            "Manual --outcome applied / not-applied are advanced assertions only; never guess them.",
         ),
-        summary="Reconcile an interrupted external effect from a fresh live reread.",
-        effect="Record only the outcome proven by the live task; do not create a replacement operation.",
-        after_success={"instruction": "Refresh the same operation and follow its returned continuation."},
     )
     payload = spec.payload()
-    payload["directive"] = relay_text(
-        spec,
-        instruction=(
-            "Use `inspect` first when the live outcome is not yet known. Wait for confirmation "
-            "before continuing; do not create a replacement operation or change run identity."
-        ),
+    payload["directive"] = (
+        "Tell Marco only that an interrupted workflow execution needs admin recovery before "
+        "this operation can continue. Keep the exact admin command available, but do not print "
+        "it unless Marco asks how to run the recovery. Automatic inspection is the normal path; "
+        "never guess applied or not-applied."
     )
     return payload
 

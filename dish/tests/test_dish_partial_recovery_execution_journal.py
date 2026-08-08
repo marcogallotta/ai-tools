@@ -472,13 +472,11 @@ def test_dead_claim_with_local_state_change_requires_recover_without_pending_ste
             "dish-admin",
             "recover",
             operation_id,
-            "--outcome",
-            "<inspect|not-applied|applied>",
-            "--reason",
-            "<summarize what the live reread showed>",
         ]
-        assert "Tell Marco" in blocked.value.details["directive"]
-        assert blocked.value.details["admin_command"] in blocked.value.details["directive"]
+        assert blocked.value.details["admin_command_is_template"] is False
+        assert "interrupted workflow execution" in blocked.value.details["directive"]
+        assert blocked.value.details["admin_command"] not in blocked.value.details["directive"]
+        assert "never guess applied or not-applied" in blocked.value.details["directive"]
 
         recovery_claim = claim_operation_execution(
             application.conn,
@@ -496,7 +494,7 @@ def test_dead_claim_with_local_state_change_requires_recover_without_pending_ste
 
 
 
-def test_recover_inspect_does_not_finalize_requestless_uncertain_execution(tmp_path):
+def test_recover_inspect_settles_proven_requestless_execution_and_inspect_does_not_loop(tmp_path):
     application, backend, operation_id = _started_application(tmp_path)
     from dish_tool.operation_execution import (
         execution_recovery_state,
@@ -528,13 +526,24 @@ def test_recover_inspect_does_not_finalize_requestless_uncertain_execution(tmp_p
         backend,
         operation_id=operation_id,
         requested_outcome="inspect",
-        reason="read-only recovery inspection",
+        reason="automatic recovery inspection",
     )
 
-    assert result["resolved_local_execution_ids"] == []
+    assert result["resolved_local_execution_ids"] == [claim.execution_id]
     execution = application.conn.execute(
         "SELECT status,resolved_at FROM operation_executions WHERE execution_id=?",
         (claim.execution_id,),
     ).fetchone()
-    assert execution["status"] == "uncertain"
-    assert execution["resolved_at"] is None
+    assert execution["status"] == "completed"
+    assert execution["resolved_at"] is not None
+
+    inspected = DishAdminApplication(application.conn, backend=backend).execute(
+        "inspect", submission_id=operation_id
+    )
+    assert inspected["ok"] is True
+    recovery_commands = [
+        action.get("shell_command")
+        for action in inspected["data"].get("human_actions", [])
+        if isinstance(action, dict)
+    ]
+    assert all(not str(command or "").startswith("dish-admin recover ") for command in recovery_commands)

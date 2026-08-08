@@ -1476,13 +1476,11 @@ def _finish_operation_recovery(
         result_code="OK",
         result_ok=True,
     )
-    resolved: list[str] = []
-    if requested_outcome != "inspect":
-        from .operation_execution import resolve_recovered_unclaimed_local_executions
+    from .operation_execution import resolve_recovered_unclaimed_local_executions
 
-        resolved = resolve_recovered_unclaimed_local_executions(
-            conn, operation_id=operation_id
-        )
+    resolved = resolve_recovered_unclaimed_local_executions(
+        conn, operation_id=operation_id
+    )
     return {
         "operation_id": operation_id,
         "live_identity": live.identity,

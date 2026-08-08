@@ -433,6 +433,46 @@ def test_action_guidance_keeps_human_review_compact_and_hides_protocol_mechanics
     assert "do not print it unless Marco asks" in text
 
 
+def test_action_guidance_compresses_recovery_only_handoff():
+    guidance = action_agent_guidance({
+        "ok": True,
+        "command": "inspect",
+        "code": "OK",
+        "allowed_actions": [],
+        "data": {
+            "human_action": {
+                "kind": "recover-expired-lease",
+                "summary": "Release stale lease",
+                "shell_command": "dish-admin recover-lease operation-id",
+            }
+        },
+    })
+    text = " ".join(guidance["instructions"])
+    assert "one short blocker/status sentence" in text
+    assert "Do not explain leases" in text
+    assert "do not print it unless Marco asks" in text
+
+
+def test_action_guidance_turns_evidence_hold_into_plain_english_question():
+    guidance = action_agent_guidance({
+        "ok": True,
+        "command": "inspect",
+        "code": "OK",
+        "allowed_actions": [],
+        "data": {
+            "human_action": {
+                "kind": "supply-evidence",
+                "summary": "Record evidence",
+                "shell_command": "dish-admin supply-evidence operation-id --detail '<answer>'",
+            }
+        },
+    })
+    text = " ".join(guidance["instructions"])
+    assert "actual missing fact in plain English" in text
+    assert "route/scope/date/reason" in text
+    assert "do not print it unless Marco asks" in text
+
+
 def test_action_guidance_explains_fresh_request_after_governed_intent_confirmation():
     guidance = action_agent_guidance({
         "ok": False,

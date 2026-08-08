@@ -462,12 +462,11 @@ def _evidence_hold_continuation(
             "modifies_canonical_fields": False,
         }
         directive = (
-            "Tell the human what fact is missing (see this task's Status detail), then ask them "
-            "to run the following command after replacing the angle-bracketed detail text with "
-            "that answer:\n"
-            f"{command}\n"
-            "Then wait for confirmation it succeeded before continuing — do not start a new "
-            "operation; resume this same submission" + resume_clause
+            "Ask Marco the actual missing fact in plain English using this task's Status detail. "
+            "Do not list hold IDs, resume state, protocol field names, or the supply-evidence "
+            "command unless Marco asks how to record the answer. After he answers, use the "
+            "returned admin continuation and wait for confirmation before continuing — do not "
+            "start a new operation; resume this same submission" + resume_clause
         )
     return {
         "phase": phase,

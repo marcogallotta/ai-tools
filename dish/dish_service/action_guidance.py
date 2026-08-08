@@ -25,6 +25,18 @@ def _human_action_instruction(action: Mapping[str, Any]) -> str:
         if shell
         else " Do not synthesize an admin command."
     )
+    kind = _text(action.get("kind")) or ""
+    if kind in {"recover-expired-lease", "reconcile-uncertain-effect", "reconcile-before-ownership-transfer"}:
+        return (
+            "Keep the Marco-facing recovery handoff to one short blocker/status sentence and the "
+            "fact that admin recovery is required. Do not explain leases, execution journals, ownership "
+            "transfer, or recovery outcome mechanics unless Marco asks." + suffix
+        )
+    if kind == "supply-evidence":
+        return (
+            "Ask Marco the actual missing fact in plain English. Do not turn route/scope/date/reason "
+            "fields, hold IDs, or evidence-recording mechanics into Marco's task." + suffix
+        )
     return (
         "Keep the Marco-facing Human Review result compact: decision first, then any quantified blocker, "
         "then the simplest available options and what each does. Do not dump raw details, IDs, protocol "

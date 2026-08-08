@@ -30,6 +30,7 @@ Command specifications currently provide shared identity/exposure metadata. Work
 - Command identity and replay classification should not be independently redefined in every surface.
 - Overlapping capabilities across agent/admin/frontend surfaces are allowed when exposure and authorization are explicit.
 - Do not claim that the deployed connected GPT can call a command solely because CLI/application code or source Action metadata supports it. Source exposure and deployed capability are distinct facts; deployed capability must be verified separately when making claims about the live surface.
+- Normal human-facing recovery and hold handoffs present the meaningful blocker or decision first and keep lease/execution/hold identifiers, protocol plumbing, and exact admin mechanics in inspect/admin detail unless the human asks how to execute them. Commands presented as directly runnable must be runnable as shown; templates must be labeled as templates.
 
 ## Process and transaction boundaries
 

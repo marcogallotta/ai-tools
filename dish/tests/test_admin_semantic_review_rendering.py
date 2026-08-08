@@ -122,6 +122,8 @@ def test_human_renderer_explains_semantic_proposal_before_approval_commands():
     assert "Problem:" not in rendered
     assert rendered.index("Governed changes") < rendered.index("Complete linked candidate change set")
     assert rendered.index("Complete linked candidate change set") < rendered.index("Approve: dish-admin review-approve")
+    assert f"Reject template: dish-admin review-reject {proposal_id}" in rendered
+    assert f"Reject: dish-admin review-reject {proposal_id}" not in rendered
 
     verbose = render_admin_result(result, profile="prod", verbose=True)
     assert "Problem: The title still requires home-grown scallion greens." in verbose

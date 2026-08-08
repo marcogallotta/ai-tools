@@ -18,6 +18,11 @@ def _command_from_action(action: Mapping[str, Any]) -> str | None:
     )
 
 
+def _command_label(action: Mapping[str, Any]) -> str:
+    requires_input = action.get("requires_input")
+    return "Template" if isinstance(requires_input, list) and requires_input else "Run"
+
+
 def _actions(
     data: Mapping[str, Any], errors: Iterable[Mapping[str, Any]] = ()
 ) -> list[Mapping[str, Any]]:
@@ -199,12 +204,12 @@ def render_admin_result(
                 if item_type == "semantic_proposal" and status == "PENDING":
                     # Approval binds the complete linked candidate bundle, which is shown only
                     # by review-inspect. Do not offer approval from this compact queue summary.
-                    lines.append(f"   Reject: dish-admin review-reject {proposal_id} --reason '<why>'")
+                    lines.append(f"   Reject template: dish-admin review-reject {proposal_id} --reason '<why>'")
                 elif item_type == "human_review":
                     lines.append(
-                        f"   Decide: dish-admin review-approve {proposal_id} --reason '<Marco decision>'"
+                        f"   Decision template: dish-admin review-approve {proposal_id} --reason '<Marco decision>'"
                     )
-                    lines.append(f"   Dismiss: dish-admin review-reject {proposal_id} --reason '<why escalation is invalid>'")
+                    lines.append(f"   Dismiss template: dish-admin review-reject {proposal_id} --reason '<why escalation is invalid>'")
                 elif item_type == "verification_hold":
                     lines.append(f"   Release: dish-admin review-approve {proposal_id}")
             if items:
@@ -268,14 +273,13 @@ def render_admin_result(
             if status == "pending" and item_type == "semantic_proposal":
                 lines.append("")
                 lines.append(f"Approve: dish-admin review-approve {proposal_id}")
-                lines.append(f"Reject: dish-admin review-reject {proposal_id} --reason '<why>'")
+                lines.append(f"Reject template: dish-admin review-reject {proposal_id} --reason '<why>'")
             elif status == "pending" and item_type == "human_review":
                 lines.append("")
                 command = _clean(data.get("admin_command") or data.get("admin_command_template"))
                 if command:
-                    lines.append("Decide:")
-                    lines.append(command)
-                lines.append(f"Dismiss: dish-admin review-reject {proposal_id} --reason '<why escalation is invalid>'")
+                    lines.append(f"Decision template: {command}")
+                lines.append(f"Dismiss template: dish-admin review-reject {proposal_id} --reason '<why escalation is invalid>'")
             elif status == "pending" and item_type == "verification_hold":
                 lines.append("")
                 lines.append(f"Release hold: dish-admin review-approve {proposal_id}")
@@ -366,7 +370,7 @@ def render_admin_result(
                     if summary:
                         lines.append(f"   Next: {summary}")
                     if shell:
-                        lines.append(f"   Run: {shell}")
+                        lines.append(f"   {_command_label(action)}: {shell}")
     elif command == "holds" and ok:
         holds = data.get("holds") if isinstance(data.get("holds"), list) else []
         lines.append(f"Open holds: {len(holds)}")
@@ -387,7 +391,7 @@ def render_admin_result(
                 if summary:
                     lines.append(f"   Action: {summary}")
                 if shell:
-                    lines.append(f"   Run: {shell}")
+                    lines.append(f"   {_command_label(action)}: {shell}")
     elif command == "inspect" and ok:
         lines.append("Status")
         lines.append(_clean(data.get("problem")) or "No administrative blocker is recorded.")
@@ -435,7 +439,7 @@ def render_admin_result(
             if effect:
                 lines.append(f"   This will: {effect}")
             if shell:
-                lines.append(f"   Run: {shell}")
+                lines.append(f"   {_command_label(action)}: {shell}")
 
     agent_actions = data.get("agent_actions_now")
     if not isinstance(agent_actions, list):
