@@ -1,6 +1,6 @@
 # PostgreSQL dark-launch runbook
 
-**Status: implementation complete; production preflight has not been executed.**
+**Status: live in production. Preflight passed; capture and shadow execution are both enabled.**
 
 The dark launch leaves SQLite and Asana authoritative. The production service captures completed
 legacy commands into an owner-only local spool; a separate worker delivers and evaluates eligible
@@ -263,6 +263,64 @@ exits before reading more work whenever the kill switch is engaged.
 
 Inspect status repeatedly. Mismatches and gaps are evidence, not permission to change live authority.
 Do not enable projection effects, writer fencing, PostgreSQL admission, or production routing.
+
+## Investigating dark launch
+
+When Marco says "check dark launch status/logs," start with the read-only status command in
+"Enable capture first" above — it is safe to run at any time and does not change capture, worker,
+or kill-switch state.
+
+Delivery and comparison state is authoritative in PostgreSQL, not in the spool. The local SQLite
+spool (`DISH_DARK_LAUNCH_SPOOL_PATH`) only tracks capture registrations; it has no delivery or
+comparison outcome. For root cause on a specific failure or mismatch, query PostgreSQL directly:
+`shadow_envelopes` (captured input/outcome, `pinned_inputs`), `shadow_deliveries` (`state`,
+`attempts`, `last_error`), `shadow_comparisons` (`parity_class`, `differences`), and `shadow_gaps`
+(`gap_kind`, `state`, `details`).
+
+Read worker/service logs without an interactive sudo password:
+
+```sh
+systemctl status dish-shadow-worker.service --no-pager -l   # no sudo needed
+sudo /usr/bin/systemctl status dish-service-prod.service    # passwordless, exact form only
+```
+
+Plain `journalctl` requires an interactive password and does not work non-interactively.
+
+Recovering a delivery stuck in a terminal `failed` state (open `delivery_failure` gap) requires
+proof the shadow attempt had no external effect — always true for dark launch, since shadow
+execution never has external effects enabled:
+
+```sh
+scripts/dish-pg-dark-launch gap-resolve \
+  --database-url "$DISH_PG_DATABASE_URL" \
+  --gap-id "$GAP_ID" \
+  --reason "operator reason"
+```
+
+This resolves the gap and requeues the delivery as `pending` for the worker to retry.
+
+Known non-bug: `parity_class=gap` alone is not evidence of a problem. `rollout_mode` is pinned into
+each envelope's `pinned_inputs` at the moment of capture; an envelope captured while the service was
+in `capture` mode is permanently and correctly evaluated as an uncomparable gap, even after the
+service later switches to `execute` mode. Check `envelope.pinned_inputs.rollout_mode` before
+treating a `gap` as a defect.
+
+Two identity/config values must stay synchronized with the active baseline, and drifting silently
+breaks delivery or preflight rather than erroring loudly:
+
+- `DISH_DARK_LAUNCH_SOURCE_GENERATION`, in the production service environment (`prod.env`), must
+  exactly match the active baseline's source-generation label. If unset it silently defaults to
+  `legacy-sqlite`, and every captured envelope permanently fails delivery with "shadow envelope
+  source generation does not match baseline."
+- `DISH_DARK_LAUNCH_BASELINE_ID`, in the worker environment (`dark-launch.env`, a different file
+  from `prod.env`), must be updated after any resync/rewipe that creates a new baseline, or the
+  read-only readiness preflight fails with "shadow baseline is absent, closed, stale, or
+  source-mismatched" even though everything else is correct.
+
+`systemctl start` on an already-active unit is a no-op — it does not restart the process or reload
+code. After any code change intended to reach the running worker or service, use `restart`, not
+`start`; confirm with `systemctl status` that the reported "Active: active (running) since" time
+moved forward before trusting that a fix is live.
 
 ## Immediate disable and rollback
 
