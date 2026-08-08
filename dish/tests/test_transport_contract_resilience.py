@@ -4,8 +4,11 @@ import http.client
 import json
 import math
 import socket
+import subprocess
+import sys
 import uuid
 from dataclasses import replace
+from pathlib import Path
 from urllib.parse import urlsplit
 
 import pytest
@@ -28,6 +31,29 @@ from tests.support.action_http import _running as _running_action, _stop
 RUN_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 REQUEST_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
 OPERATION_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_client_submodule_import_does_not_eagerly_load_service_application():
+    probe = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; import dish_service.client; "
+                "assert 'dish_service.application' not in sys.modules; "
+                "assert 'dish_tool.backend' not in sys.modules; "
+                "from dish_service import DishService, ServiceConfig; "
+                "assert DishService.__module__ == 'dish_service.application'; "
+                "assert ServiceConfig.__module__ == 'dish_service.config'"
+            ),
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert probe.returncode == 0, probe.stderr
 
 
 def _config(tmp_path, **updates):
