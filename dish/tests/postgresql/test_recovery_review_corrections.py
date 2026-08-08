@@ -10,10 +10,12 @@ from sqlalchemy import select
 from dish_pg import models
 from dish_pg import stage5_models as projection_models
 from dish_pg import stage6_models as release_models
+from dish_pg.candidate_manifest import revalidate_candidate_manifest
 from dish_pg.recovery_control import (
     RestoreControlError,
     promote_restored_generation,
 )
+from dish_pg.repositories import RegistryRepository
 from dish_pg import recovery_rehearsal
 from dish_pg.recovery_rehearsal import _cleanup_rehearsal, _source_manifest
 from tests.support.postgresql.core import NOW, core_db
@@ -91,6 +93,117 @@ def test_exact_activated_candidate_can_promote(core_db):
             clock=lambda: NOW + timedelta(minutes=2),
         )
         assert result.predecessor_generation_id == context["generation_id"]
+
+
+def test_activated_candidate_recovery_authority_survives_runtime_mapping_evolution(core_db):
+    factory, ids = core_db
+    with factory() as session:
+        context, _, candidate = _setup(session, ids, candidate_status="approved")
+        _activate_candidate(session, candidate)
+        project = session.scalar(select(models.GovernedProject))
+        alias = session.scalar(select(models.ProjectExternalAlias))
+        assert project is not None and alias is not None
+        session.add(
+            projection_models.ProjectProjectionMapping(
+                mapping_id=next(ids),
+                generation_id=candidate.generation_id,
+                projection_epoch_id=candidate.projection_epoch_id,
+                project_id=project.project_id,
+                alias_id=alias.alias_id,
+                state="active",
+                mapping_revision=1,
+                bound_at=NOW + timedelta(seconds=1),
+                retired_at=None,
+            )
+        )
+        session.commit()
+        revalidation = revalidate_candidate_manifest(
+            session,
+            uuid_factory=lambda: next(ids),
+            candidate=candidate,
+            revalidated_at=NOW + timedelta(seconds=2),
+        )
+        assert revalidation.result == "stale"
+        session.commit()
+
+        state = _physical_state()
+        result = promote_restored_generation(
+            session,
+            _control(context, ids, state),
+            recovered_state=state,
+            clock=lambda: NOW + timedelta(minutes=2),
+        )
+
+        assert result.predecessor_generation_id == context["generation_id"]
+
+
+def test_recovery_rejects_active_registry_drift_from_approval_identity(core_db):
+    factory, ids = core_db
+    with factory() as session:
+        context, _, candidate = _setup(session, ids, candidate_status="approved")
+        _activate_candidate(session, candidate)
+        active = session.get(models.ActiveSectionRegistry, candidate.generation_id)
+        assert active is not None
+        source = session.get(models.SectionRegistryVersion, active.registry_version_id)
+        assert source is not None
+        entries = session.scalars(
+            select(models.SectionRegistryEntry).where(
+                models.SectionRegistryEntry.registry_version_id == source.registry_version_id
+            )
+        ).all()
+        version_id = next(ids)
+        activation_id = next(ids)
+        repo = RegistryRepository(session)
+        repo.add_registry_version(
+            models.SectionRegistryVersion(
+                registry_version_id=version_id,
+                generation_id=candidate.generation_id,
+                version_number=source.version_number + 1,
+                import_run_id=source.import_run_id,
+                contract_binding_id=source.contract_binding_id,
+                registry_sha256=source.registry_sha256,
+                created_at=NOW + timedelta(seconds=1),
+            ),
+            [
+                models.SectionRegistryEntry(
+                    registry_version_id=version_id,
+                    section_id=entry.section_id,
+                    ordinal=entry.ordinal,
+                    display_name=entry.display_name,
+                    workflow_role=entry.workflow_role,
+                )
+                for entry in entries
+            ],
+        )
+        repo.activate_registry(
+            activation=models.SectionRegistryActivation(
+                registry_activation_id=activation_id,
+                generation_id=candidate.generation_id,
+                registry_version_id=version_id,
+                activation_route="import",
+                import_run_id=source.import_run_id,
+                command_execution_id=None,
+                registry_revision=active.registry_revision + 1,
+                activated_at=NOW + timedelta(seconds=1),
+            ),
+            current=models.ActiveSectionRegistry(
+                generation_id=candidate.generation_id,
+                registry_version_id=version_id,
+                registry_activation_id=activation_id,
+                registry_revision=active.registry_revision + 1,
+                updated_at=NOW + timedelta(seconds=1),
+            ),
+        )
+        session.commit()
+
+        state = _physical_state()
+        with pytest.raises(RestoreControlError, match="historical identity is inconsistent"):
+            promote_restored_generation(
+                session,
+                _control(context, ids, state),
+                recovered_state=state,
+                clock=lambda: NOW + timedelta(minutes=2),
+            )
 
 
 def test_cleanup_failure_retains_resources_and_fails_report(tmp_path):

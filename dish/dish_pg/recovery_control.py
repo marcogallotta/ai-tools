@@ -22,12 +22,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import candidate_manifest_models as manifest_models
-from .candidate_manifest import revalidate_candidate_manifest
 from . import models
 from . import stage5_models as projection_models
 from . import stage6_models as release_models
 from .release import ALEMBIC_HEAD
-from .release_evidence import ReleaseAuthorityError, sha256_json
+from .release_evidence import sha256_json
 from .repositories import AuthorityRepository, RegistryRepository
 from .transition import ProjectionService
 
@@ -76,6 +75,32 @@ def _same_instant(left: datetime, right: datetime) -> bool:
         return value.astimezone(timezone.utc)
 
     return normalized(left) == normalized(right)
+
+
+def _stored_manifest_fingerprint(
+    manifest: manifest_models.ReleaseCandidateManifest,
+) -> str:
+    """Recompute only the immutable approval-time manifest row, not live corpora."""
+    return sha256_json(
+        {
+            "manifest_version": manifest.manifest_version,
+            "candidate_id": str(manifest.candidate_id),
+            "generation_id": str(manifest.generation_id),
+            "source_import_batch_id": str(manifest.source_import_batch_id),
+            "source_import_run_id": str(manifest.source_import_run_id),
+            "shadow_baseline_id": str(manifest.shadow_baseline_id),
+            "projection_epoch_id": str(manifest.projection_epoch_id),
+            "registry_version_id": str(manifest.registry_version_id),
+            "honest_binding_id": str(manifest.honest_binding_id),
+            "builder_contract_version": manifest.builder_contract_version,
+            "mapping_membership_sha256": manifest.mapping_membership_sha256,
+            "import_completion_sha256": manifest.import_completion_sha256,
+            "typed_import_linkage_sha256": manifest.typed_import_linkage_sha256,
+            "reconciliation_evidence_sha256": manifest.reconciliation_evidence_sha256,
+            "readiness_inventory_sha256": manifest.readiness_inventory_sha256,
+            "readiness_completion_sha256": manifest.readiness_completion_sha256,
+        }
+    )
 
 
 @dataclass(frozen=True)
@@ -360,8 +385,8 @@ def _authorized_release_candidate(
     *,
     active: models.AuthorityGeneration,
     control: RestoreControl,
-    revalidated_at: datetime,
 ) -> release_models.ReleaseCandidate:
+    """Prove the immutable historical authority transition used by recovery."""
     candidates = session.scalars(
         select(release_models.ReleaseCandidate).where(
             release_models.ReleaseCandidate.generation_id == active.generation_id,
@@ -435,28 +460,54 @@ def _authorized_release_candidate(
     manifest = None if binding is None else session.get(
         manifest_models.ReleaseCandidateManifest, binding.manifest_id
     )
+    batch = session.get(
+        projection_models.SourceImportBatch, candidate.source_import_batch_id
+    )
+    baseline = session.get(
+        projection_models.ShadowBaseline, candidate.shadow_baseline_id
+    )
+    epoch = session.get(
+        projection_models.ProjectionEpoch, candidate.projection_epoch_id
+    )
+    registry = None if manifest is None else session.get(
+        models.SectionRegistryVersion, manifest.registry_version_id
+    )
+    active_registry = session.get(models.ActiveSectionRegistry, active.generation_id)
     if (
         binding is None
         or binding.candidate_id != candidate.candidate_id
         or manifest is None
         or manifest.candidate_id != candidate.candidate_id
         or manifest.generation_id != active.generation_id
+        or manifest.manifest_version != binding.manifest_version
         or manifest.canonical_fingerprint != binding.canonical_fingerprint
+        or not _same_instant(binding.bound_at, approval.approved_at)
+        or not _same_instant(manifest.built_at, approval.approved_at)
     ):
         raise RestoreControlError("authorized release candidate manifest binding is inconsistent")
-    try:
-        revalidation = revalidate_candidate_manifest(
-            session,
-            uuid_factory=uuid.uuid4,
-            candidate=candidate,
-            revalidated_at=revalidated_at,
-        )
-    except ReleaseAuthorityError as exc:
+    if _stored_manifest_fingerprint(manifest) != manifest.canonical_fingerprint:
+        raise RestoreControlError("authorized release candidate manifest fingerprint is corrupt")
+    if (
+        batch is None
+        or batch.generation_id != candidate.generation_id
+        or manifest.source_import_batch_id != candidate.source_import_batch_id
+        or manifest.source_import_run_id != batch.import_run_id
+        or manifest.shadow_baseline_id != candidate.shadow_baseline_id
+        or baseline is None
+        or baseline.generation_id != candidate.generation_id
+        or manifest.projection_epoch_id != candidate.projection_epoch_id
+        or epoch is None
+        or epoch.generation_id != candidate.generation_id
+        or active_registry is None
+        or active_registry.registry_version_id != manifest.registry_version_id
+        or registry is None
+        or registry.generation_id != candidate.generation_id
+        or registry.import_run_id != manifest.source_import_run_id
+        or registry.contract_binding_id != manifest.honest_binding_id
+    ):
         raise RestoreControlError(
-            "authorized release candidate manifest could not be revalidated"
-        ) from exc
-    if revalidation.result != "matched":
-        raise RestoreControlError("authorized release candidate manifest is stale")
+            "authorized release candidate historical identity is inconsistent"
+        )
     if candidate.status == "activated":
         activations = session.scalars(
             select(models.AuthorityActivation).where(
@@ -470,13 +521,9 @@ def _authorized_release_candidate(
                 "activated release candidate lacks one exact activation evidence row"
             )
         activation = activations[0]
-        batch = session.get(
-            projection_models.SourceImportBatch, candidate.source_import_batch_id
-        )
         if (
-            batch is None
-            or candidate.terminal_at is None
-            or activation.import_run_id != batch.import_run_id
+            candidate.terminal_at is None
+            or activation.import_run_id != manifest.source_import_run_id
             or activation.projection_epoch != candidate.projection_epoch_id
             or activation.schema_head != candidate.schema_head
             or activation.dish_release != candidate.dish_release
@@ -519,6 +566,34 @@ def _assert_physical_recovery_binding(
         raise RestoreControlError("restore control recovery evidence digest mismatch")
 
 
+def _current_recovery_generation(
+    session: Session,
+    *,
+    control: RestoreControl,
+    recovered_state: RecoveredPhysicalState,
+) -> models.AuthorityGeneration:
+    """Validate the recovered state that must be healthy for promotion now."""
+    _assert_physical_recovery_binding(control, recovered_state)
+    if recovered_state.schema_head != ALEMBIC_HEAD:
+        raise RestoreControlError(
+            "recovered schema head does not match the current migration head"
+        )
+    active = session.scalar(
+        select(models.AuthorityGeneration)
+        .where(models.AuthorityGeneration.status == "active")
+        .with_for_update()
+    )
+    if active is None or active.generation_id != control.predecessor_generation_id:
+        raise RestoreControlError(
+            "restore control predecessor is not the recovered active generation"
+        )
+    if active.schema_head != control.schema_head or active.dish_release != control.dish_release:
+        raise RestoreControlError(
+            "recovered active generation release provenance does not match control"
+        )
+    return active
+
+
 def promote_restored_generation(
     session: Session,
     control: RestoreControl,
@@ -533,29 +608,14 @@ def promote_restored_generation(
         raise RestoreControlError("restore promotion clock must be timezone-aware")
     if control.issued_at > at:
         raise RestoreControlError("restore control was issued in the future")
-    _assert_physical_recovery_binding(control, recovered_state)
-    if recovered_state.schema_head != ALEMBIC_HEAD:
-        raise RestoreControlError(
-            "recovered schema head does not match the current migration head"
-        )
 
     authority = AuthorityRepository(session)
-    active = session.scalar(
-        select(models.AuthorityGeneration)
-        .where(models.AuthorityGeneration.status == "active")
-        .with_for_update()
+    active = _current_recovery_generation(
+        session,
+        control=control,
+        recovered_state=recovered_state,
     )
-    if active is None or active.generation_id != control.predecessor_generation_id:
-        raise RestoreControlError(
-            "restore control predecessor is not the recovered active generation"
-        )
-    if active.schema_head != control.schema_head or active.dish_release != control.dish_release:
-        raise RestoreControlError(
-            "recovered active generation release provenance does not match control"
-        )
-    _authorized_release_candidate(
-        session, active=active, control=control, revalidated_at=at
-    )
+    _authorized_release_candidate(session, active=active, control=control)
     if session.get(models.AuthorityGeneration, control.generation_id) is not None:
         raise RestoreControlError("restore generation already exists")
 

@@ -40,6 +40,8 @@ Admit request, execute canonical mutation, record outcome/audit/projection inten
 
 Runtime recovery relies on durable request/claim/effect identities. Reconciliation is coordinated by `start_reconciliation`, `record_reconciliation_item`, and `complete_reconciliation` paths. Native PostgreSQL is required to certify behavior that depends specifically on PostgreSQL locks/DDL/process semantics; other tests can still provide useful non-final evidence.
 
+Destructive-recovery authorization separates immutable historical authority from current recovery health. Historical proof uses the exact generation/candidate, CutoverApproval and evidence bundle, approval-to-manifest binding, source/import lineage, and activation/rollback-burn evidence where applicable. Recovery does not require mutable mapping, reconciliation, readiness, or import-linkage corpora to reproduce their approval-time manifest values merely to prove that historical authority transition. Physical restore identity, current schema/release fencing, active-generation identity, registry viability, and other operation-specific recovery checks still fail closed against the recovered state as it exists now.
+
 ## Change routing
 
 Keep canonical mutation authority, projection/effect settlement, and operational release controls conceptually distinct even if module boundaries evolve. Avoid building a second workflow/replay implementation merely to satisfy a worker or transport.
