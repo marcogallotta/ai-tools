@@ -7,6 +7,7 @@ from typing import Any, Mapping, Sequence
 
 from .errors import DishRuleError
 from .semantic_proposals import get_semantic_proposal, list_semantic_proposals, proposal_payload
+from .workflow_policy import hold_resolution_outcome
 
 _ACTIVE_PROPOSAL_STATUSES = ("pending", "approved", "claimed")
 
@@ -14,33 +15,28 @@ _ACTIVE_PROPOSAL_STATUSES = ("pending", "approved", "claimed")
 def human_review_consequence_metadata(resume_status: object) -> dict[str, dict[str, Any]]:
     """Describe operator-facing consequences for approval vs dismissal of a Verification Human Review."""
     resume = str(resume_status or "pending-verification").strip()
-    if resume == "pending-research":
-        approval = {
-            "resume_status": "pending-research",
-            "next_stage": "research",
-            "operation_status": "completed",
-            "operation_phase": "terminal",
-            "instruction": (
-                "Marco's substantive decision returns the task to Research; the held Verification "
-                "operation completes rather than opening a fresh Verification cycle."
-            ),
-        }
-    else:
-        approval = {
-            "resume_status": "pending-verification",
-            "next_stage": "verification",
-            "operation_status": "open",
-            "operation_phase": "await_verification",
-            "instruction": (
-                "Marco's substantive decision releases the unchanged candidate to a fresh "
-                "Verification cycle."
-            ),
-        }
+    approval_state = hold_resolution_outcome(
+        "pending-research" if resume == "pending-research" else "pending-verification"
+    )
+    approval = {
+        "resume_status": approval_state.resume_status,
+        "next_stage": approval_state.next_stage,
+        "operation_status": approval_state.operation_status,
+        "operation_phase": approval_state.operation_phase,
+        "instruction": (
+            "Marco's substantive decision returns the task to Research; the held Verification "
+            "operation completes rather than opening a fresh Verification cycle."
+            if approval_state.next_stage == "research"
+            else "Marco's substantive decision releases the unchanged candidate to a fresh "
+            "Verification cycle."
+        ),
+    }
+    dismissal_state = hold_resolution_outcome("pending-verification")
     dismissal = {
-        "resume_status": "pending-verification",
-        "next_stage": "verification",
-        "operation_status": "open",
-        "operation_phase": "await_verification",
+        "resume_status": dismissal_state.resume_status,
+        "next_stage": dismissal_state.next_stage,
+        "operation_status": dismissal_state.operation_status,
+        "operation_phase": dismissal_state.operation_phase,
         "instruction": (
             "Dismissing the unanswered escalation releases the unchanged candidate to fresh "
             "Verification; the escalation's stored resume status does not control dismissal."

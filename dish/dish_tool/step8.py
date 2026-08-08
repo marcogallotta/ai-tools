@@ -48,6 +48,7 @@ from .governed_diff import (
 )
 from .step7 import approve_live, assert_verifier_authority
 from .human_actions import exact_action, relay_text
+from .workflow_policy import hold_resolution_outcome
 from .semantic_proposals import (
     claim_semantic_proposal, get_semantic_proposal, mark_semantic_proposal_applied,
     proposal_payload, queue_semantic_proposal, release_semantic_proposal_claim,
@@ -1714,6 +1715,7 @@ def resolve_hold(
         resume_status = "pending-verification"
     if resume_status not in {"pending-research", "pending-verification"}:
         raise DishRuleError("INVALID_ARGUMENT", "invalid hold resume status", rule="resume_status_required")
+    resolution_outcome = hold_resolution_outcome(resume_status)
     clean_detail = str(detail or "").strip()
     if not clean_detail:
         raise DishRuleError("INVALID_ARGUMENT", "resolution detail is required", rule="resolution_detail_required")
@@ -1919,15 +1921,28 @@ def resolve_hold(
             "role": "material_editor", "agent": editor, "run_id": run_id,
             "candidate_identity": intended_identity,
         })
-    if resume_status == "pending-verification":
+    if resolution_outcome.operation_phase == "await_verification":
         if snapshot is None:
             next_release, next_text = cycle["protocol_release"], cycle["protocol_text"]
         else:
             next_release, next_text = snapshot.identity, snapshot.text
         declare_operation_step(conn, operation_id, "hold_resolution_cycle", {"protocol_release": next_release, "protocol_text": next_text})
-        declare_operation_step(conn, operation_id, "hold_resolution_phase", {"phase": "await_verification", "status": "open"})
+        declare_operation_step(
+            conn, operation_id, "hold_resolution_phase",
+            {
+                "phase": resolution_outcome.operation_phase,
+                "status": resolution_outcome.operation_status,
+            },
+        )
     else:
-        declare_operation_step(conn, operation_id, "hold_resolution_phase", {"phase": "terminal", "status": "completed", "terminal_outcome": f"{resolution_kind}_resolved_to_research"})
+        declare_operation_step(
+            conn, operation_id, "hold_resolution_phase",
+            {
+                "phase": resolution_outcome.operation_phase,
+                "status": resolution_outcome.operation_status,
+                "terminal_outcome": f"{resolution_kind}_resolved_to_research",
+            },
+        )
     confirmed = _write_document(conn, backend, op, live, document, schema=schema, authorization_ids=authorization_ids)
     complete_operation_step(conn, operation_id, "hold_resolution_write")
     record_audit(
@@ -1953,9 +1968,11 @@ def resolve_hold(
         )
         complete_operation_step(conn, operation_id, "hold_resolution_actor")
 
-    if resume_status == "pending-research":
+    if resolution_outcome.operation_phase == "terminal":
         transition_operation(
-            conn, operation_id, phase="terminal", status="completed",
+            conn, operation_id,
+            phase=resolution_outcome.operation_phase,
+            status=resolution_outcome.operation_status,
             terminal_outcome=f"{resolution_kind}_resolved_to_research",
         )
         new_cycle = None
@@ -1980,7 +1997,7 @@ def resolve_hold(
             "UPDATE operations SET verifier_agent=NULL, independence_attestation=NULL WHERE operation_id=?",
             (operation_id,),
         )
-        transition_operation(conn, operation_id, phase="await_verification")
+        transition_operation(conn, operation_id, phase=resolution_outcome.operation_phase)
         complete_operation_step(conn, operation_id, "hold_resolution_phase")
     return {
         "operation_id": operation_id,

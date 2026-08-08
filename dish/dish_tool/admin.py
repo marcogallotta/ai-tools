@@ -1730,7 +1730,7 @@ def _command_review_approve(
         result["command"] = "review-approve"
         actual_resume = result.get("data", {}).get("resume_status")
         consequence = human_review_consequence_metadata(actual_resume)["approval"]
-        if actual_resume == "pending-research":
+        if consequence["next_stage"] == "research":
             effect = (
                 "Marco's substantive decision was recorded. The task returned to Research and the held "
                 "Verification operation completed; no governed field was edited or authorized."

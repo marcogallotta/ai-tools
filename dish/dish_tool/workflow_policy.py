@@ -37,6 +37,33 @@ class WorkflowSnapshot:
     abandonment_continuation_ready: bool = False
 
 
+@dataclass(frozen=True)
+class HoldResolutionOutcome:
+    resume_status: str
+    operation_status: str
+    operation_phase: str
+    next_stage: str
+
+
+def hold_resolution_outcome(resume_status: str) -> HoldResolutionOutcome:
+    """Classify the durable workflow state produced by resolving a hold."""
+    if resume_status == "pending-research":
+        return HoldResolutionOutcome(
+            resume_status=resume_status,
+            operation_status="completed",
+            operation_phase="terminal",
+            next_stage="research",
+        )
+    if resume_status == "pending-verification":
+        return HoldResolutionOutcome(
+            resume_status=resume_status,
+            operation_status="open",
+            operation_phase="await_verification",
+            next_stage="verification",
+        )
+    raise ValueError(f"unsupported hold resume status: {resume_status}")
+
+
 def legal_actions(snapshot: WorkflowSnapshot) -> list[str]:
     """Return actions that are executable against the same authoritative snapshot."""
     if snapshot.operation_status != "open":
