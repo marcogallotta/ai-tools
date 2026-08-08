@@ -35,6 +35,7 @@ from dish_tool.database import (
 import dish_tool.database_initialization as database_initialization
 from dish_tool.transactions import immediate_transaction, savepoint_transaction
 from dish_tool.errors import BackendFailure, DishRuleError
+from dish_tool.identifiers import require_asana_gid, require_dish_uuid
 from dish_tool.invocation_audit import record_invocation_audit
 from dish_tool.models import (
     SectionRegistry,
@@ -72,7 +73,6 @@ from .backup_creation_journal import (
 )
 from .config import ServiceConfig
 from .shadow_capture import LegacyShadowCapture, ShadowCaptureSettings
-from .identifiers import require_asana_gid, require_dish_uuid
 from .leases import LeaseManager, ServicePrincipal
 from .maintenance import MaintenanceGate
 from .planning_intent import (

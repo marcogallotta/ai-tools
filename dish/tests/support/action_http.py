@@ -22,7 +22,7 @@ from dish_service.config import ServiceConfig
 
 from dish_service.http import build_server
 
-from dish_service.identifiers import validate_identifier_fields
+from dish_tool.identifiers import validate_identifier_fields
 
 
 from dish_tool.backend import map_backend_exception

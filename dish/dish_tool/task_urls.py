@@ -1,4 +1,4 @@
-"""Strict parsing for the narrow Asana task URLs accepted by Dish admin tools."""
+"""Strict parsing for the narrow Asana task URLs accepted by Dish."""
 
 from __future__ import annotations
 

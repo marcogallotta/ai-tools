@@ -11,6 +11,7 @@ This is a descriptive package map and dependency-direction guide. It does not fr
 ## Authoritative implementation
 
 Current packages are `dish_tool/`, `dish_service/`, `dish_shadow/`, `dish_pg/`, `test_selection/`, plus entry points and scripts. Agent/admin CLI presentation implementations live in `dish_service/cli.py` and `dish_service/admin_cli.py`; `dish_tool` retains the lower application/domain components they consume.
+Reusable identifier grammar and narrow Asana task-URL parsing are lower-layer primitives owned by `dish_tool/identifiers.py` and `dish_tool/task_urls.py`; service transports and clients consume those primitives rather than owning them.
 
 ## Actors, processes, and stores
 

@@ -14,7 +14,7 @@ from dish_service import client as client_module
 from dish_service.client import DishAdminServiceClient
 from dish_service.http import DishHTTPServer, build_server
 from dish_service.leases import LeaseManager
-from dish_service.task_urls import task_gid_from_url
+from dish_tool.task_urls import task_gid_from_url
 from dish_tool.database import initialize_database
 from dish_tool.errors import DishRuleError
 from tests.support.thread_teardown import join_thread, start_server_thread, stop_server

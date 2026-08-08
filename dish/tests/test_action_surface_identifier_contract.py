@@ -10,7 +10,7 @@ from dish_service.application import DishService
 from dish_service.client import DishActionClient, DishAdminServiceClient, DishServiceClient
 from dish_service.config import ServiceConfig
 from dish_service.http import build_server
-from dish_service.identifiers import validate_identifier_fields
+from dish_tool.identifiers import validate_identifier_fields
 from dish_tool.backend import map_backend_exception
 from dish_tool.errors import BackendFailure, DishRuleError
 from dish_tool.models import RequestPhase

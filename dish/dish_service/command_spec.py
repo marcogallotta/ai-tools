@@ -6,13 +6,13 @@ from dataclasses import dataclass
 from typing import Any, Literal, Mapping
 
 from dish_tool.errors import DishRuleError
-from dish_tool.models import validate_actor_model, validate_independence_attestation
-from .identifiers import (
+from dish_tool.identifiers import (
     CANONICAL_DISH_UUID_SCHEMA,
     MAX_ASANA_GID_LENGTH,
     require_asana_gid,
     require_dish_uuid,
 )
+from dish_tool.models import validate_actor_model, validate_independence_attestation
 
 ActionPrincipal = Literal["reader", "agent", "verification"]
 ActionRoute = Literal["agent", "lease"]

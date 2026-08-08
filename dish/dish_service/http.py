@@ -13,13 +13,13 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from dish_tool.errors import DishRuleError
+from dish_tool.identifiers import require_asana_gid, require_dish_uuid, validate_identifier_fields
 from dish_tool.results import error_envelope
 from .action_guidance import attach_action_agent_guidance
 
 from .application import DishService
 from .application import _ADMIN_OPERATION_TARGET_COMMANDS
 from .auth import authenticate_bearer
-from .identifiers import require_asana_gid, require_dish_uuid, validate_identifier_fields
 from .http_routing import resolve_post_route
 from .leases import ServicePrincipal
 from .legacy_writer_fence import assert_legacy_writer_mutation_allowed

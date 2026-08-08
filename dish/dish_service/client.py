@@ -11,10 +11,10 @@ from urllib.parse import urlsplit
 
 from dish_tool.constants import EXIT_STATUS_BY_CODE
 from dish_tool.errors import DishRuleError
+from dish_tool.identifiers import require_asana_gid, require_dish_uuid
 from dish_tool.results import RESULT_ENVELOPE_FIELD_SET, result_envelope
 
 from .command_spec import REPLAY_SAFE_COMMANDS
-from .identifiers import require_asana_gid, require_dish_uuid
 
 
 _AMBIGUOUS_RESPONSE_REPLAY_COMMANDS = frozenset({"inspect", "apply-proposal", "safe-reclaim"})

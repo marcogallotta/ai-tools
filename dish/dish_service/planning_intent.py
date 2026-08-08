@@ -15,11 +15,11 @@ from collections.abc import Mapping
 from typing import Any
 
 from dish_tool.errors import DishRuleError
+from dish_tool.identifiers import require_dish_uuid
 from dish_tool.models import agent_family, utc_now
 from dish_tool.results import result_envelope
 from dish_tool.transactions import require_transaction
 
-from .identifiers import require_dish_uuid
 from .leases import ServicePrincipal
 
 _INTENT_FIELDS = frozenset(

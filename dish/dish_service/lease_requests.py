@@ -7,11 +7,11 @@ from collections.abc import Callable, Mapping
 from typing import Any, ContextManager, Protocol
 
 from dish_tool.errors import DishRuleError
+from dish_tool.identifiers import require_asana_gid, require_dish_uuid
 from dish_tool.operation_execution import live_operation_execution_claim
 from dish_tool.results import error_envelope, result_envelope
 from dish_tool.transactions import immediate_transaction
 
-from .identifiers import require_asana_gid, require_dish_uuid
 from .leases import LeaseManager, ServicePrincipal
 from .request_replay import RequestReplayPort
 

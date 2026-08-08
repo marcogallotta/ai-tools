@@ -2122,8 +2122,8 @@ def transition_operation(conn: sqlite3.Connection, operation_id: str, *, phase: 
 def _admin_target_task_gid(raw: Any) -> str | None:
     """Classify an admin CLI target as an Asana task GID/URL, or None if it is
     already an exact dish identifier (operation/abandonment ID)."""
-    from dish_service.identifiers import require_asana_gid
-    from dish_service.task_urls import task_gid_from_url
+    from dish_tool.identifiers import require_asana_gid
+    from dish_tool.task_urls import task_gid_from_url
 
     clean = str(raw or "").strip()
     if not clean:

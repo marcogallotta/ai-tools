@@ -24,15 +24,15 @@ from dish_tool.admin_command_spec import (
     ADMIN_COMMAND_SPECS,
     RESOLVED_OPERATION_TARGET_COMMANDS as _OPERATION_ADMIN_COMMANDS,
 )
+from dish_tool.admin_human import render_admin_result
+from dish_tool.errors import DishRuleError
+from dish_tool.identifiers import require_asana_gid, require_dish_uuid
 from dish_tool.releases import configured_honest_path, resolve_release
+from dish_tool.results import error_envelope, exit_status
+from dish_tool.task_urls import task_gid_from_url
 from dish_service.client import DishAdminServiceClient
 from dish_service.database_ownership import ServiceDatabaseOwnership, database_process_lock_path
 from dish_service.process_lock import DatabaseProcessLock
-from dish_service.identifiers import require_asana_gid, require_dish_uuid
-from dish_service.task_urls import task_gid_from_url
-from dish_tool.errors import DishRuleError
-from dish_tool.results import error_envelope, exit_status
-from dish_tool.admin_human import render_admin_result
 
 
 

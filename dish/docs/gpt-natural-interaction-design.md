@@ -102,7 +102,7 @@ deferred (see status above) and kept here only as reference design.
    - percent-encoded path separators or numeric segments are rejected, not decoded into a second
      interpretation;
    - every extracted GID-shaped path segment (workspace, project, and task) must pass the existing
-     `dish_service.identifiers.require_asana_gid` validator — numeric only, no leading zero, within
+     `dish_tool.identifiers.require_asana_gid` validator — numeric only, no leading zero, within
      the supported Asana GID range — not merely match a digit pattern; the resolver still returns
      only the validated task GID, but validating every GID-shaped segment keeps accepted URL forms
      structurally genuine rather than accepting a shape that later fails deeper in the stack;

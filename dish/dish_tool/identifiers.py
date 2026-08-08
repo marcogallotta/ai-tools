@@ -1,4 +1,4 @@
-"""Strict validation for identifiers supplied across the HTTP trust boundary."""
+"""Strict reusable validation for Dish and Asana identifiers."""
 
 from __future__ import annotations
 
