@@ -509,12 +509,18 @@ def _command_inspect(
     elif operation["phase"] in {"held_evidence", "held_human"}:
         administrative_blocker = True
         continuation = _evidence_hold_continuation(self.conn, operation_id, view)
-        human_action = continuation.get("human_action")
-        if isinstance(human_action, dict):
-            actions.append(dict(human_action) | {
-                "shell_command": continuation.get("admin_command")
-                or continuation.get("admin_command_template")
-            })
+        continuation_actions = continuation.get("human_actions")
+        if isinstance(continuation_actions, list):
+            for item in continuation_actions:
+                if isinstance(item, dict):
+                    actions.append(dict(item))
+        else:
+            human_action = continuation.get("human_action")
+            if isinstance(human_action, dict):
+                actions.append(dict(human_action) | {
+                    "shell_command": continuation.get("admin_command")
+                    or continuation.get("admin_command_template")
+                })
         problem = "The operation is waiting for Marco-supplied evidence or a binding decision."
     elif view.get("destination_repair_required"):
         administrative_blocker = True
@@ -1473,6 +1479,7 @@ def _resolve_protocol_hold(
     expected_task_gid: str | None = None,
     expected_cycle_id: str | None = None,
     expected_hold_identity: str | None = None,
+    record_human_decision: bool = True,
 ) -> dict[str, Any]:
     if self.backend is None or self.release_loader is None:
         raise DishRuleError("INTERNAL_ERROR", "hold resolution requires backend and Honest release", rule="hold_resolution_unavailable")
@@ -1484,7 +1491,11 @@ def _resolve_protocol_hold(
     release = self.release_loader()
     trace.submission_id = operation_id
     trace.task_gid = row["task_gid"]
-    action = "supply-evidence" if resolution_kind == "evidence" else "record-human-decision"
+    action = (
+        "supply-evidence" if resolution_kind == "evidence"
+        else "record-human-decision" if record_human_decision
+        else "review-reject"
+    )
     data, view = self.operation_service.current.resolve_hold(
         operation_id, action,
         lambda: resolve_hold(
@@ -1493,6 +1504,7 @@ def _resolve_protocol_hold(
             schema=release.schema, file_path=file_path, editor=editor, model=model, run_id=run_id,
             expected_task_gid=expected_task_gid, expected_cycle_id=expected_cycle_id,
             expected_hold_identity=expected_hold_identity,
+            record_human_decision=record_human_decision,
         ),
         schema=release.schema,
     )
@@ -1633,6 +1645,24 @@ def _command_review_inspect(
                 after_success={"instruction": "A later fresh verifier may resume the stored operation."},
             )
         data.update(spec.payload())
+        if item["item_type"] == "human_review":
+            dismiss_spec = template_action(
+                kind="dismiss-human-review",
+                command="review-reject",
+                positional=(item["review_id"],),
+                options=(("--reason", "<why this escalation is invalid>"),),
+                prompt_fields=(PromptField("reason", "Why this escalation is invalid", "<why this escalation is invalid>"),),
+                summary="Dismiss this Human Review escalation as invalid.",
+                effect=(
+                    "Preserve the escalation and dismissal reason in the audit trail, record no Marco decision, "
+                    "and release the unchanged task to fresh Verification."
+                ),
+                after_success={"instruction": "A later fresh verifier must reassess the dismissed premise from evidence."},
+            )
+            data["human_actions"] = [
+                data["human_action"],
+                dismiss_spec.payload()["human_action"] | {"shell_command": dismiss_spec.shell_command()},
+            ]
     return result_envelope(
         command="review-inspect", task_gid=item["task_gid"],
         submission_id=item["operation_id"], state=item["status"],
@@ -1725,16 +1755,34 @@ def _command_review_reject(
 
     clean_id = _clean_required(proposal_id, rule="review_item_id_required", label="review item ID")
     item = resolve_review_item(self.conn, clean_id)
-    if item["item_type"] != "semantic_proposal":
+    if item["item_type"] == "verification_hold":
         raise DishRuleError(
             "INVALID_ARGUMENT",
-            "Human Review items require a concrete decision, not proposal rejection",
-            rule="human_review_reject_unsupported",
-            details={
-                "review_id": item["review_id"],
-                "inspect_command": f"dish-admin review-inspect {item['review_id']}",
-            },
+            "the three-round Verification hold uses resolved/reopen, not review rejection",
+            rule="verification_hold_reject_unsupported",
+            details={"review_id": item["review_id"]},
         )
+    if item["item_type"] == "human_review":
+        result = _resolve_protocol_hold(
+            self, trace=trace, submission_id=item["operation_id"],
+            resolution_kind="human_review", detail=reason,
+            # Dismissing the escalation is not resolving its claimed issue. Always
+            # return the unchanged candidate to fresh Verification; the rejected
+            # escalation's requested downstream route has no authority here.
+            resume_status="pending-verification",
+            expected_task_gid=item["task_gid"], expected_cycle_id=item["cycle_id"],
+            expected_hold_identity=item["hold_identity"], record_human_decision=False,
+        )
+        result.setdefault("data", {}).update({
+            "effect": (
+                "The Human Review escalation was dismissed as invalid. No Marco decision or "
+                "governed authorization was recorded; the unchanged candidate was released to fresh Verification."
+            ),
+            "next_step": (
+                "A later fresh verifier should reassess the original issue and must not treat the dismissed finding as settled fact."
+            ),
+        })
+        return result
     clean_id = item["proposal_id"]
     row = self.conn.execute(
         "SELECT * FROM semantic_proposals WHERE proposal_id=?", (clean_id,)

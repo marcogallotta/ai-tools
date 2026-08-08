@@ -252,6 +252,9 @@ def test_connected_advertised_workflow_actions_are_callable(
             reason="Human review is required before construction.",
             route="human-review",
             resume_status="pending-research",
+            human_review_confirmed=True,
+            human_review_basis="Only Marco can resolve the remaining choice within settled authority.",
+            repairs_considered="Plausible within-authority repairs were considered and do not resolve the choice.",
         )
 
     assert result["ok"] is True

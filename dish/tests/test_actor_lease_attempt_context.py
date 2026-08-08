@@ -130,6 +130,11 @@ def test_preconstruction_reject_reclaims_same_stage_actor_without_cycle_context(
             "route": route,
             "reason": "Need authoritative source before construction",
             "resume_status": "pending-research",
+            **({
+                "human_review_confirmed": True,
+                "human_review_basis": "The remaining pre-construction choice requires Marco's authority.",
+                "repairs_considered": "Within-authority research routes were considered and cannot settle that choice.",
+            } if route == "human-review" else {}),
         },
         principal=fresh_run,
         request_id=str(uuid.uuid4()),
@@ -146,6 +151,11 @@ def test_preconstruction_reject_reclaims_same_stage_actor_without_cycle_context(
             "route": route,
             "reason": "Need authoritative source before construction",
             "resume_status": "pending-research",
+            **({
+                "human_review_confirmed": True,
+                "human_review_basis": "The remaining pre-construction choice requires Marco's authority.",
+                "repairs_considered": "Within-authority research routes were considered and cannot settle that choice.",
+            } if route == "human-review" else {}),
         },
         principal=researcher,
         request_id=str(uuid.uuid4()),

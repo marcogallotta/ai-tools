@@ -194,6 +194,11 @@ def test_hold_rejection_inherits_persisted_attestation(route, tmp_path):
         reason="Marco must resolve the blocker",
         resume_status="pending-verification",
         run_id="hold-attestation",
+        **({
+            "human_review_confirmed": True,
+            "human_review_basis": "A genuine Marco-only choice remains after evidence review.",
+            "repairs_considered": "Within-authority repairs were considered and do not resolve that choice.",
+        } if route == "human-review" else {}),
     )
     assert held["ok"]
     audit = app.conn.execute(
@@ -302,6 +307,11 @@ def test_blocked_start_preserves_held_operation_guidance(
         reason="Marco must resolve the blocker",
         resume_status="pending-verification",
         run_id="hold-review",
+        **({
+            "human_review_confirmed": True,
+            "human_review_basis": "A genuine Marco-only choice remains after evidence review.",
+            "repairs_considered": "Within-authority repairs were considered and do not resolve that choice.",
+        } if route == "human-review" else {}),
     )
     assert held["ok"]
 

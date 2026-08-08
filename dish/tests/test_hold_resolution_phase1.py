@@ -98,6 +98,9 @@ def test_resolution_rejects_mismatched_stable_hold_binding(tmp_path):
         route="human-review",
         reason="Marco must decide",
         resume_status="pending-verification",
+        human_review_confirmed=True,
+        human_review_basis="Only Marco can resolve the remaining choice within settled authority.",
+        repairs_considered="Plausible within-authority repairs were considered and do not resolve the choice.",
         run_id="review",
     )
     assert held["ok"]
@@ -146,3 +149,124 @@ def test_resolution_rejects_mismatched_stable_hold_binding(tmp_path):
     )
     assert wrong_identity["code"] == "CONFLICT"
     assert wrong_identity["errors"][0]["rule"] == "hold_identity_mismatch"
+
+
+def test_human_review_requires_neutral_escalation_preflight_before_hold(tmp_path):
+    from tests.support.verification import make_app, review_and_inspect
+
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review_and_inspect(app)
+    first = app.execute(
+        "reject",
+        agent="codex",
+        submission_id=operation_id,
+        route="human-review",
+        reason="Estimated fat may exceed the protocol ceiling.",
+        resume_status="pending-verification",
+        run_id="review",
+        blocker_metric="fat",
+        blocker_actual=51,
+        blocker_limit=40,
+        blocker_delta=11,
+        blocker_unit="g",
+        blocker_basis="rough comparison-recipe extrapolation",
+    )
+    assert first["code"] == "CONFIRMATION_REQUIRED"
+    assert first["errors"][0]["rule"] == "human_review_preflight_required"
+    details = first["errors"][0]
+    assert details["human_review_is_allowed"].startswith("Human Review is appropriate")
+    assert details["retry"]["human_review_confirmed"] is True
+    assert app.conn.execute(
+        "SELECT phase FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()[0] == "await_verification"
+    assert "Status: pending-verification" in backend.notes
+
+    held = app.execute(
+        "reject",
+        agent="codex",
+        submission_id=operation_id,
+        route="human-review",
+        reason="Estimated fat may exceed the protocol ceiling.",
+        resume_status="pending-verification",
+        run_id="review",
+        blocker_metric="fat",
+        blocker_actual=51,
+        blocker_limit=40,
+        blocker_delta=11,
+        blocker_unit="g",
+        blocker_basis="validated served-edible calculation",
+        human_review_confirmed=True,
+        human_review_basis="Meeting the ceiling would require Marco to change the settled construction or grant an exemption.",
+        repairs_considered="Recalculated served edible fat and tested lower retained oil; neither resolves the ceiling without changing a settled lock.",
+    )
+    assert held["ok"]
+    assert "Status: pending-human-review" in backend.notes
+
+
+def test_small_incidental_governed_text_edit_is_challenged_before_proposal(tmp_path):
+    from tests.support.verification import TASK, make_app, review_and_inspect
+
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review_and_inspect(app, agent="codex", run_id="review")
+    candidate = tmp_path / "incidental-governed.txt"
+    candidate.write_text(
+        TASK.replace("100 g test ingredient", "120 g test ingredient")
+        .replace("Purpose: Compare texture", "Purpose: Comparé texture")
+    )
+
+    first = app.execute(
+        "reject",
+        agent="codex",
+        model="gpt-5.6-sol",
+        submission_id=operation_id,
+        route="large",
+        reason="Correct the ingredient quantity.",
+        file_path=str(candidate),
+        run_id="review",
+    )
+    assert first["code"] == "CONFIRMATION_REQUIRED"
+    assert first["errors"][0]["rule"] == "governed_change_intent_confirmation_required"
+    flagged = first["errors"][0]["governed_changes_needing_confirmation"]
+    assert [item["field"] for item in flagged] == ["Purpose"]
+    assert app.conn.execute("SELECT COUNT(*) FROM semantic_proposals").fetchone()[0] == 0
+    assert "120 g" not in backend.notes
+
+    corrected = tmp_path / "corrected.txt"
+    corrected.write_text(TASK.replace("100 g test ingredient", "120 g test ingredient"))
+    applied = app.execute(
+        "reject",
+        agent="codex",
+        model="gpt-5.6-sol",
+        submission_id=operation_id,
+        route="large",
+        reason="Correct the ingredient quantity.",
+        file_path=str(corrected),
+        run_id="review",
+    )
+    assert applied["ok"]
+    assert "120 g test ingredient" in backend.notes
+    assert "Purpose: Compare texture" in backend.notes
+    assert app.conn.execute("SELECT COUNT(*) FROM semantic_proposals").fetchone()[0] == 0
+
+
+def test_intentional_small_governed_text_edit_can_be_explicitly_confirmed(tmp_path):
+    from tests.support.verification import TASK, make_app, review_and_inspect
+
+    app, _backend, operation_id, _ = make_app(tmp_path)
+    review_and_inspect(app, agent="codex", run_id="review")
+    candidate = tmp_path / "intentional-governed.txt"
+    candidate.write_text(TASK.replace("Purpose: Compare texture", "Purpose: Comparé texture"))
+
+    queued = app.execute(
+        "reject",
+        agent="codex",
+        model="gpt-5.6-sol",
+        submission_id=operation_id,
+        route="large",
+        reason="Marco intentionally changed this exact Purpose wording.",
+        file_path=str(candidate),
+        run_id="review",
+        governed_change_fields=["Purpose"],
+    )
+    assert queued["code"] == "VALIDATION_FAILED"
+    assert queued["errors"][0]["rule"] == "semantic_proposal_queued"

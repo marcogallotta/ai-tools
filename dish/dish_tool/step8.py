@@ -6,6 +6,7 @@ import difflib
 import json
 import re
 import sqlite3
+import unicodedata
 import uuid
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,7 @@ from .task_store import read_complete_task, write_exact_content
 from .releases import current_verification_protocol_release
 from .governed_diff import (
     canonical_diff,
+    GOVERNED_FIELDS,
     governed_changes,
     require_governed_authorization,
     preserve_material_change_history,
@@ -745,6 +747,120 @@ def _resume_rejected_cycle(
     }
 
 
+
+def _human_review_preflight(*, route: str, reason: str, confirmed=False, basis=None, repairs_considered=None, quantified_blocker=None) -> None:
+    if route != "human-review":
+        return
+    clean_basis = str(basis or "").strip()
+    clean_repairs = str(repairs_considered or "").strip()
+    if confirmed and clean_basis and clean_repairs:
+        return
+    raise DishRuleError(
+        "CONFIRMATION_REQUIRED",
+        "Human Review needs a deliberate escalation preflight before Dish parks the task",
+        rule="human_review_preflight_required",
+        details={
+            "unresolved_issue": reason,
+            "quantified_blocker": quantified_blocker,
+            "questions": [
+                "Is the blocker supported by evidence strong enough to rely on?",
+                "Can the task be repaired while preserving Marco's existing decisions and locks?",
+                "What plausible repair routes did you actually consider, and why are they inadequate?",
+                "What specific unresolved choice, waiver, classification, or authority remains for Marco?",
+            ],
+            "human_review_is_allowed": (
+                "Human Review is appropriate when a genuine unresolved human choice remains. "
+                "Do not avoid escalation merely because alternatives exist if those alternatives "
+                "materially change settled intent, require a waiver, or cannot be resolved with sufficient confidence."
+            ),
+            "retry": {
+                "fresh_request_id": True,
+                "human_review_confirmed": True,
+                "human_review_basis": "<the specific unresolved human choice/waiver/authority and supporting evidence>",
+                "repairs_considered": "<specific repair routes considered and why they do not resolve it>",
+            },
+        },
+    )
+
+
+def _governed_change_needs_intent_confirmation(change) -> bool:
+    if not isinstance(change.before, str) or not isinstance(change.after, str):
+        return False
+    before = change.before.strip()
+    after = change.after.strip()
+    if before == after:
+        return False
+
+    def deaccent(value: str) -> str:
+        decomposed = unicodedata.normalize("NFKD", value)
+        return " ".join(
+            "".join(ch for ch in decomposed if not unicodedata.combining(ch)).casefold().split()
+        )
+
+    # Diacritic/case/spacing-only differences and tiny edits inside a longer
+    # governed text are exactly where an accidental cleanup can masquerade as
+    # a human-authority change. Dish does not declare them non-semantic; it
+    # asks the agent to explicitly say the change was intended.
+    if deaccent(before) == deaccent(after):
+        return True
+    if max(len(before), len(after)) >= 40:
+        return difflib.SequenceMatcher(None, before, after).ratio() >= 0.97
+    return False
+
+
+def _confirm_intended_governed_changes(before_document, document, declared_fields) -> tuple[dict[str, Any], ...]:
+    changes = governed_changes(before_document, document)
+    if not changes:
+        return ()
+    actual_fields = tuple(change.field for change in changes)
+    declared = tuple(dict.fromkeys(str(field).strip() for field in (declared_fields or ()) if str(field).strip()))
+    unknown = sorted(set(declared) - set(GOVERNED_FIELDS))
+    if unknown:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "governed_change_fields contains unsupported field names",
+            rule="governed_change_field_invalid",
+            details={"unsupported": unknown, "allowed": list(GOVERNED_FIELDS)},
+        )
+    non_actual = sorted(set(declared) - set(actual_fields))
+    if non_actual:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "governed_change_fields names fields that are unchanged in the candidate",
+            rule="governed_change_field_not_changed",
+            details={"unchanged": non_actual, "actual_fields": list(actual_fields)},
+        )
+    suspicious = tuple(
+        change for change in changes
+        if _governed_change_needs_intent_confirmation(change)
+    )
+    missing = tuple(change for change in suspicious if change.field not in declared)
+    if missing:
+        payload = tuple(
+            {"field": change.field, "before": change.before, "after": change.after}
+            for change in missing
+        )
+        raise DishRuleError(
+            "CONFIRMATION_REQUIRED",
+            "candidate contains small governed-text edits that may be incidental cleanup",
+            rule="governed_change_intent_confirmation_required",
+            details={
+                "governed_changes_needing_confirmation": list(payload),
+                "all_governed_fields_changed": list(actual_fields),
+                "declared_fields": list(declared),
+                "instruction": (
+                    "Restore incidental governed-field edits exactly to the live baseline and retry. "
+                    "If a listed small edit is genuinely intended, retry with governed_change_fields naming that field. "
+                    "Dish is asking for intent, not deciding that the edit is semantically trivial."
+                ),
+                "fresh_request_id": True,
+            },
+        )
+    return tuple(
+        {"field": change.field, "before": change.before, "after": change.after}
+        for change in changes
+    )
+
 def _validated_quantified_blocker(*, metric=None, actual=None, limit=None, delta=None, unit=None, basis=None):
     values = {"metric": metric, "actual": actual, "limit": limit, "delta": delta, "unit": unit, "basis": basis}
     present = {key: value for key, value in values.items() if value is not None and str(value).strip() != ""}
@@ -762,7 +878,7 @@ def _validated_quantified_blocker(*, metric=None, actual=None, limit=None, delta
     return {"metric": str(metric).strip(), "actual": actual_n, "limit": limit_n, "delta": delta_n, "unit": str(unit).strip(), "basis": str(basis).strip()}
 
 
-def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, model: str | None = None, route: str, reason: str, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, request_id: str | None = None, schema=None, honest_root=None, blocker_metric=None, blocker_actual=None, blocker_limit=None, blocker_delta=None, blocker_unit=None, blocker_basis=None):
+def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, model: str | None = None, route: str, reason: str, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, request_id: str | None = None, schema=None, honest_root=None, blocker_metric=None, blocker_actual=None, blocker_limit=None, blocker_delta=None, blocker_unit=None, blocker_basis=None, human_review_confirmed: bool = False, human_review_basis: str | None = None, repairs_considered: str | None = None, governed_change_fields=None):
 
     route = str(route or "").strip()
     reason = validate_rejection_reason(reason)
@@ -775,6 +891,11 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         file_path=file_path,
         resume_status=resume_status,
         independence_attestation=independence_attestation,
+    )
+    _human_review_preflight(
+        route=route, reason=reason, confirmed=human_review_confirmed,
+        basis=human_review_basis, repairs_considered=repairs_considered,
+        quantified_blocker=quantified_blocker,
     )
     resumed = _resume_rejected_cycle(
         conn, backend, operation_id=operation_id, agent=agent, route=route,
@@ -877,9 +998,8 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
     except DishRuleError as exc:
         if exc.rule != "governed_change_unauthorized" or route != "large":
             raise
-        changes_for_proposal = tuple(
-            {"field": item.field, "before": item.before, "after": item.after}
-            for item in governed_changes(before_document, document)
+        changes_for_proposal = _confirm_intended_governed_changes(
+            before_document, document, governed_change_fields
         )
         linked_for_proposal = tuple(
             {"path": path, "before": old, "after": new}
@@ -1558,16 +1678,26 @@ def resolve_hold(
     expected_task_gid: str | None = None,
     expected_cycle_id: str | None = None,
     expected_hold_identity: str | None = None,
+    record_human_decision: bool = True,
 ):
     """Resolve an Evidence or Human Review hold from exact live state.
 
-    Resume-to-Research terminates the held operation so a fresh Research/change
-    operation can be claimed. Resume-to-Verification creates a new cycle; a
-    supplied candidate is treated as a material edit and freezes the current
-    Verification release.
+    A substantive resolution may resume to Research or Verification according
+    to its stored route. Dismissal rejects the Human Review escalation itself
+    and always returns the unchanged candidate to fresh Verification. A supplied
+    candidate is treated as a material edit and freezes the current Verification
+    release.
     """
     if resolution_kind not in {"evidence", "human_review"}:
         raise DishRuleError("INVALID_ARGUMENT", "invalid hold resolution kind", rule="invalid_hold_resolution")
+    if not record_human_decision and resolution_kind != "human_review":
+        raise DishRuleError("INVALID_ARGUMENT", "only Human Review holds can be dismissed", rule="hold_dismissal_kind_invalid")
+    resolution_mode = "decision" if record_human_decision else "dismissal"
+    if not record_human_decision:
+        # Dismissal rejects the escalation itself; it does not resolve the issue
+        # that the verifier claimed required Research or another human decision.
+        # The only legal continuation is therefore a fresh Verification round.
+        resume_status = "pending-verification"
     if resume_status not in {"pending-research", "pending-verification"}:
         raise DishRuleError("INVALID_ARGUMENT", "invalid hold resume status", rule="resume_status_required")
     clean_detail = str(detail or "").strip()
@@ -1594,6 +1724,12 @@ def resolve_hold(
         (operation_id,),
     ).fetchone()
     if preconstruction is not None:
+        if not record_human_decision:
+            raise DishRuleError(
+                "WRONG_STATE",
+                "pre-construction Human Review holds are not review-queue dismissals",
+                rule="preconstruction_human_review_dismissal_unsupported",
+            )
         hold_record = json.loads(preconstruction["intended_json"])
         if hold_record.get("route") != (
             "evidence" if resolution_kind == "evidence" else "human-review"
@@ -1692,8 +1828,24 @@ def resolve_hold(
     expected_status = "pending-evidence" if resolution_kind == "evidence" else "pending-human-review"
     if before_doc.state.values["Status"] != expected_status:
         raise DishRuleError("WRONG_STATE", "live task does not match the persisted hold", rule="hold_state_mismatch")
+    original_reason = ""
+    route_step = conn.execute(
+        "SELECT intended_json FROM operation_steps WHERE operation_id=? AND step_name=? AND completed_at IS NOT NULL",
+        (operation_id, f"route_cycle_finalize:{cycle['cycle_id']}"),
+    ).fetchone()
+    if route_step is not None:
+        try:
+            original_reason = str(json.loads(route_step["intended_json"] or "{}").get("decision_reason") or "").strip()
+        except (TypeError, ValueError):
+            original_reason = ""
 
     material = bool(file_path)
+    if material and not record_human_decision:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "dismissing an invalid Human Review hold cannot install candidate content",
+            rule="human_review_dismissal_candidate_forbidden",
+        )
     snapshot = None
     if material:
         if not editor or editor not in {"gpt", "codex", "claude"}:
@@ -1713,21 +1865,23 @@ def resolve_hold(
             "Verification protocol release": snapshot.identity if resume_status == "pending-verification" else "None",
             "Self-verified": material_editor_line(editor, model, utc_now()[:10]),
         })
-        decision = f"Human — Marco: {resolution_kind} resolved — {clean_detail}"
         authorization_decisions = tuple(candidate.decisions)
         decisions = authorization_decisions
-        if decision not in decisions:
-            decisions += (decision,)
+        if record_human_decision:
+            decision = f"Human — Marco: {resolution_kind} resolved — {clean_detail}"
+            if decision not in decisions:
+                decisions += (decision,)
         document = dataclasses.replace(candidate, state=TaskState(values), decisions=decisions)
     else:
         values = dict(resumed(before_doc.state.values).values)
         values["Status"] = resume_status
         values["Verification protocol release"] = "None" if resume_status == "pending-research" else cycle["protocol_release"]
-        decision = f"Human — Marco: {resolution_kind} resolved — {clean_detail}"
         authorization_decisions = tuple(before_doc.decisions)
         decisions = authorization_decisions
-        if decision not in decisions:
-            decisions += (decision,)
+        if record_human_decision:
+            decision = f"Human — Marco: {resolution_kind} resolved — {clean_detail}"
+            if decision not in decisions:
+                decisions += (decision,)
         document = dataclasses.replace(before_doc, state=TaskState(values), decisions=decisions)
 
     precheck = validate_task_document(document, expected_schema_version=op["schema_version"], schema=schema)
@@ -1738,8 +1892,12 @@ def resolve_hold(
         conn, before_doc, authorization_document, task_gid=op["task_gid"], operation_id=operation_id
     )
     intended_title, intended_notes = _render(document)
-    declare_operation_step(conn, operation_id, "hold_resolution_write", {"title": intended_title, "notes": intended_notes, "resolution_kind": resolution_kind})
-    declare_operation_step(conn, operation_id, "hold_resolution_decision", {"detail": clean_detail, "resume_status": resume_status, "material": material})
+    declare_operation_step(conn, operation_id, "hold_resolution_write", {"title": intended_title, "notes": intended_notes, "resolution_kind": resolution_kind, "resolution_mode": resolution_mode})
+    declare_operation_step(conn, operation_id, "hold_resolution_decision", {
+        "detail": clean_detail, "resume_status": resume_status, "material": material,
+        "resolution_kind": resolution_kind, "resolution_mode": resolution_mode,
+        "source_cycle_id": cycle["cycle_id"], "original_reason": original_reason,
+    })
     if material:
         intended_identity = content_identity(intended_title, intended_notes).digest
         declare_operation_step(conn, operation_id, "hold_resolution_actor", {
@@ -1759,12 +1917,18 @@ def resolve_hold(
     complete_operation_step(conn, operation_id, "hold_resolution_write")
     record_audit(
         conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id,
-        event_type="hold.resolved", actor_agent=editor if editor in {"gpt", "codex", "claude"} else None,
-        details={"kind": resolution_kind, "detail": clean_detail, "resume_status": resume_status, "material": material, "identity": confirmed.identity},
-        result_code="OK", result_ok=True, governed_kind="decision",
+        event_type="hold.resolved" if record_human_decision else "human_review.dismissed",
+        actor_agent=editor if editor in {"gpt", "codex", "claude"} else None,
+        details={
+            "kind": resolution_kind, "mode": resolution_mode, "detail": clean_detail,
+            "original_reason": original_reason, "source_cycle_id": cycle["cycle_id"],
+            "resume_status": resume_status, "material": material, "identity": confirmed.identity,
+        },
+        result_code="OK", result_ok=True, governed_kind="decision" if record_human_decision else None,
         before_state={"status": expected_status, "resume_status": before_doc.state.values["Resume status"]},
-        after_state={"status": resume_status, "identity": confirmed.identity},
-        actor_run_id=run_id, actor_source="marco-hold-resolution",
+        after_state={"status": resume_status, "identity": confirmed.identity, "human_decision_recorded": record_human_decision},
+        actor_run_id=run_id,
+        actor_source="marco-hold-resolution" if record_human_decision else "human-review-dismissal",
     )
     complete_operation_step(conn, operation_id, "hold_resolution_decision")
     if material:
@@ -1806,6 +1970,9 @@ def resolve_hold(
     return {
         "operation_id": operation_id,
         "resolution_kind": resolution_kind,
+        "resolution_mode": resolution_mode,
+        "dismissed_reason": None if record_human_decision else clean_detail,
+        "dismissed_original_issue": None if record_human_decision else original_reason,
         "resume_status": resume_status,
         "material": material,
         "new_cycle_id": None if new_cycle is None else new_cycle["cycle_id"],

@@ -246,7 +246,7 @@ Admin recovery remains specific rather than generic:
   lease or releases a replacement lease;
 - `repair-destination` changes only the canonical Planning destination after an unrecoverable final movement failure, preserving the original approval and creating linked repair evidence for a later movement-only `submit`;
 - `discard` cancels only a provably unapplied operation;
-- `supply-evidence`, `record-human-decision`, and `reopen` retain their existing protocol meanings.
+- `supply-evidence`, `record-human-decision`, and `reopen` retain their existing protocol meanings; an unanswered Verification Human Review escalation may also be dismissed with `review-reject`, which records the dismissal reason without creating a Marco decision or governed authorization and always returns the unchanged candidate to fresh Verification, irrespective of the escalation's requested downstream resume status.
 
 There is intentionally no general-purpose `unblock` mutation for workflow state.
 
@@ -485,6 +485,18 @@ For leases:
 - an open Verification cycle bound to an unavailable run exposes no `approve` or `reject`;
 - `inspect` exposes safe reclaim when mechanically proven, deterministic recovery first when execution/effect evidence is unresolved, and formal abandonment only when that remains the correct recovery route.
 
+An agent attempting `reject --route human-review` must either supply the Human Review preflight
+fields or receive a non-mutating `CONFIRMATION_REQUIRED` response that asks for the evidence, repairs
+considered, and the specific unresolved Marco-only choice. The response explicitly states that
+Human Review remains appropriate when a genuine unresolved human choice, waiver, classification,
+or authority remains. Retrying the escalation uses a fresh request ID.
+
+Before a Large correction queues governed approval, Dish checks for small governed-text edits that
+may be incidental cleanup. Such an edit is not automatically declared non-semantic. Instead, Dish
+requires the agent either to restore the governed text exactly to the live baseline or explicitly
+name the intended governed field on the retry; the ordinary exact Human Review protections still
+apply to any intentionally changed governed field.
+
 When a Large correction needs governed authority, Dish validates the candidate as one semantic
 proposal. The response includes the full rationale and linked change set: why the candidate fails,
 the concrete cause, why ordinary correction is not preferred, why the proposal follows Marco's
@@ -502,10 +514,13 @@ GIDs for that run and skips them if section pagination returns them again.
 
 `dish-admin review-queue` aggregates pending semantic proposals and Verification Human Review holds.
 `review-inspect` accepts either the durable UUID or the current queue number. Semantic bundles use
-`review-approve`/`review-reject`; Human Review items require Marco's exact decision through
-`review-approve ... --detail`. Approval of a semantic bundle is atomic across the complete displayed
-bundle and does not edit, approve, or submit the task. Resolving a Human Review item records the
-decision and releases its hold; it still does not edit or authorize governed fields.
+`review-approve`/`review-reject`. For an unanswered Verification Human Review item, Marco has two
+distinct actions: record the substantive decision, or dismiss the agent-authored escalation itself
+as invalid with `review-reject ... --reason`. Recording a decision releases the hold and persists
+Marco's decision; dismissal releases the unchanged candidate back to fresh Verification, preserves
+the original issue and dismissal reason in audit/context, and does not fabricate a Marco decision.
+Neither path edits or authorizes governed fields. Approval of a semantic bundle is atomic across the
+complete displayed bundle and does not edit, approve, or submit the task.
 
 Approved proposals are detached from the proposing run. `dish proposals --agent AGENT` lists
 claimable approved bundles. A fresh invocation runs `dish apply-proposal PROPOSAL_ID --agent AGENT

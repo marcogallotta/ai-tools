@@ -1345,6 +1345,26 @@
                           },
                           "file_text": {
                             "type": "string"
+                          },
+                          "governed_change_fields": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "enum": [
+                                "Dish candidate",
+                                "Purpose",
+                                "Role",
+                                "Priors",
+                                "Locks",
+                                "Exemptions",
+                                "Research emphasis",
+                                "Destination section",
+                                "Decisions",
+                                "Researched by"
+                              ]
+                            },
+                            "uniqueItems": true,
+                            "description": "On a Large-correction retry, name only small governed-text fields Dish asked the agent to confirm as intentionally changed."
                           }
                         }
                       },
@@ -1467,6 +1487,18 @@
                           },
                           "blocker_basis": {
                             "type": "string"
+                          },
+                          "human_review_confirmed": {
+                            "type": "boolean",
+                            "description": "Set true only after completing Dish's Human Review escalation preflight."
+                          },
+                          "human_review_basis": {
+                            "type": "string",
+                            "description": "The specific unresolved choice, waiver, classification, or authority that remains for Marco."
+                          },
+                          "repairs_considered": {
+                            "type": "string",
+                            "description": "Specific plausible repairs considered and why they do not resolve the issue within existing authority."
                           }
                         }
                       }

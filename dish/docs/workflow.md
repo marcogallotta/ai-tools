@@ -187,6 +187,29 @@ Existing lease termination and `abandon-operation` remain distinct; safe reclaim
 action for the case where state is already mechanically safe, so it does not go through
 `abandon-operation` first.
 
+## Current bounded Human Review quality changes
+
+Recent real cases exposed three concrete failure modes: a weak nutrition extrapolation jumped
+straight to Human Review before ordinary repairs were explored; Marco had no clean way to dismiss
+that erroneous unanswered escalation; and an incidental `Purpose` spelling change (`duòjiāo` →
+`duǒjiāo`) could enter the governed proposal path merely because the field was protected. The
+bounded response is intentionally small and observable:
+
+- the first `human-review` escalation attempt can return a **neutral preflight** asking for the
+  evidence, repairs actually considered, and the specific unresolved Marco-only choice. It
+  explicitly says legitimate Human Review is appropriate when such a choice really remains;
+- an unanswered Verification Human Review escalation can be **dismissed as invalid** by Marco. The
+  original finding and dismissal reason remain auditable, no substantive Marco decision is
+  fabricated, and fresh Verification receives that dismissal context so it reassesses rather than
+  carrying the premise forward as settled;
+- a **small governed-text intent check** catches likely incidental cleanup before a semantic proposal
+  is queued. It does not decide that a textual change is semantically trivial: the agent restores
+  accidental text exactly or explicitly confirms that the governed field was intentionally changed.
+
+These mechanisms are deliberately not generalized into risk scoring, automated repair selection, or
+issue-dedup infrastructure yet. Use them in real single-user operation first and observe whether they
+actually improve agent judgment.
+
 ## Parked ideas and external analogues
 
 These are research notes, **not committed implementation work**. Dish is a single-user system, and
@@ -194,24 +217,12 @@ workflow machinery should stay legible to Marco. Borrow the smallest useful mech
 behavioral intervention at a time, observe it in real agent use, and only then decide whether another
 layer is justified. Do not hide agent mistakes behind increasingly clever automation.
 
-### Human Review escalation quality and correction
+### Human Review ideas deliberately left parked
 
-Recent real cases exposed three related problems: a weak nutrition extrapolation was escalated as a
-binding Human Review blocker before ordinary repairs were explored; there was no clean way to dismiss
-that erroneous hold before Marco acted; and a cosmetic `Purpose` spelling change (`duòjiāo` →
-`duǒjiāo`) elevated an otherwise substantive proposal merely because the field was governed. Parked
-ideas to test separately:
-
-- a **neutral escalation preflight** that asks the verifier to state the unresolved issue, evidence
-  quality, plausible repairs considered, and why a genuine Marco choice/waiver/change of settled
-  intent remains. This must explicitly permit legitimate Human Review rather than discourage it;
-- **repair before escalation** when an ordinary correction can preserve settled intent;
-- a first-class **dismiss/reject erroneous pre-human hold** path that preserves audit history, records
-  why the escalation was invalid, and resumes Verification without fabricating a substantive Marco
-  decision;
-- **semantic anti-pettiness** for governed fields: formatting, spelling, normalization, or other
-  non-semantic changes should not independently create Human Review merely because bytes inside a
-  governed field changed.
+The bounded implementation above does **not** attempt to generate or rank repair plans for the agent,
+score escalation risk, infer semantic equivalence automatically, or deduplicate repeated findings as
+a generalized issue system. Those remain candidates only if observed use shows the simpler controls
+are insufficient.
 
 Useful analogues:
 

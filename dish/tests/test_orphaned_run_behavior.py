@@ -337,7 +337,10 @@ def test_hold_resolution_does_not_grant_a_fresh_run_authority(tmp_path):
         "reject",
         {"agent": "gpt", "submission_id": operation_id, "route": "human-review",
          "reason": "Need Marco's decision before construction",
-         "resume_status": "pending-research"},
+         "resume_status": "pending-research",
+         "human_review_confirmed": True,
+         "human_review_basis": "Only Marco can resolve the remaining choice within settled authority.",
+         "repairs_considered": "Plausible within-authority repairs were considered and do not resolve the choice."},
         principal=researcher,
     )
     assert held["ok"]

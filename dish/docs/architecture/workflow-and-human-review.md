@@ -33,6 +33,9 @@ Human approval is the authorization for the exact governed changes in an approve
 - Proposal validity/actionability is evaluated against governed semantic facts rather than irrelevant cosmetic/task metadata.
 - Verification/review evidence stays bound to the exact subject it reviewed.
 - Human Review and recovery continuations target durable recorded work rather than an ambiguous nearby operation.
+- Before an agent-created Verification Human Review hold is persisted, Dish may require a neutral escalation preflight that identifies the evidence, repairs considered, and the unresolved Marco-only choice. The preflight must not imply that legitimate Human Review is undesirable.
+- An unanswered agent-created Verification Human Review hold may be dismissed by Marco as an invalid escalation. Dismissal preserves the original finding and reason, records the dismissal reason, resumes Verification, and does not create a substantive Marco decision or governed authorization.
+- Small governed-text edits that may be incidental cleanup require explicit agent intent before they can enter the governed proposal path. This is an intent check, not a semantic classifier: the agent must restore incidental text exactly or explicitly identify an intended governed edit.
 - "Allowed actions" are a derived view of authority, not a second state machine.
 
 ## Process and transaction boundaries
@@ -48,6 +51,8 @@ For semantic proposals, the durable lifecycle is:
 3. retain the approved object without changing canonical task content;
 4. later claim/application work rereads and revalidates the same approved proposal against current authoritative facts;
 5. apply that proposal unchanged, or fail/reconcile if it is no longer applicable.
+
+For Verification Human Review, the agent first states the unresolved issue and, when challenged, the supporting basis and repair routes considered. If a genuine Marco-only choice remains, Dish parks the exact held cycle. Marco may then either record a substantive decision or dismiss the unanswered escalation itself as invalid. A dismissal returns the unchanged candidate to fresh Verification and carries the original issue plus dismissal reason forward as context; later verifiers must reassess rather than treating the dismissed premise as settled fact.
 
 More generally, workflow execution reads authoritative state, derives legal transitions, executes the selected transition through the owning application path, persists its outcome/evidence, then exposes resulting state/actions to callers.
 

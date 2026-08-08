@@ -17,6 +17,9 @@ def test_human_review_hold_appears_in_review_queue_and_can_be_resolved_by_number
         route="human-review",
         reason="Marco must choose whether this is a tasting portion or a complete main meal.",
         resume_status="pending-verification",
+        human_review_confirmed=True,
+        human_review_basis="Only Marco can resolve the remaining choice within settled authority.",
+        repairs_considered="Plausible within-authority repairs were considered and do not resolve the choice.",
         run_id="human-review-author",
     )
     assert held["ok"]
@@ -106,6 +109,9 @@ def test_service_review_queue_resolves_human_hold_by_current_row_number(tmp_path
             "route": "human-review",
             "reason": "Marco must choose whether this is a tasting portion or a complete meal.",
             "resume_status": "pending-verification",
+            "human_review_confirmed": True,
+            "human_review_basis": "Only Marco can resolve the remaining choice within settled authority.",
+            "repairs_considered": "Plausible within-authority repairs were considered and do not resolve the choice.",
         },
         principal=verifier,
     )
@@ -126,3 +132,166 @@ def test_service_review_queue_resolves_human_hold_by_current_row_number(tmp_path
     )
     assert resolved["ok"]
     assert "Status: pending-verification" in backend.notes
+
+
+@pytest.mark.smoke
+def test_review_reject_dismisses_unanswered_human_review_without_recording_decision(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review_and_inspect(app, agent="codex", run_id="bad-review")
+    before_decisions = tuple(__import__("dish_tool.task_document", fromlist=["parse_task_document"]).parse_task_document(
+        f"{backend.title}\n{backend.notes}"
+    ).decisions)
+    held = app.execute(
+        "reject",
+        agent="codex",
+        submission_id=operation_id,
+        route="human-review",
+        reason="51 g fat per portion based on raw whole-bird extrapolation.",
+        resume_status="pending-verification",
+        run_id="bad-review",
+        human_review_confirmed=True,
+        human_review_basis="The estimate appears to require a nutrition exemption.",
+        repairs_considered="No repair was accepted before escalation.",
+    )
+    assert held["ok"]
+    cycle_id = app.conn.execute(
+        "SELECT cycle_id FROM verification_cycles WHERE operation_id=? ORDER BY cycle_number DESC LIMIT 1",
+        (operation_id,),
+    ).fetchone()[0]
+
+    admin = DishAdminApplication(
+        app.conn, backend=backend, release_loader=lambda: app._load_release("verification")
+    )
+    inspected = admin.execute("inspect", submission_id=operation_id)
+    kinds = [item["kind"] for item in inspected["data"]["human_actions"]]
+    assert kinds == ["record-human-decision", "dismiss-human-review"]
+
+    dismissed = admin.execute(
+        "review-reject",
+        proposal_id=cycle_id,
+        reason="The 51 g estimate incorrectly treated raw whole-bird fat as served fat and is not a defensible blocker.",
+    )
+    assert dismissed["ok"]
+    assert dismissed["data"]["resolution_mode"] == "dismissal"
+    assert dismissed["data"]["new_cycle_id"]
+    after_doc = __import__("dish_tool.task_document", fromlist=["parse_task_document"]).parse_task_document(
+        f"{backend.title}\n{backend.notes}"
+    )
+    assert tuple(after_doc.decisions) == before_decisions
+    assert after_doc.state.values["Status"] == "pending-verification"
+    audit = app.conn.execute(
+        "SELECT event_type,details,governed_kind,json_extract(actor_provenance,'$.source') AS actor_source FROM audit_events WHERE operation_id=? AND event_type='human_review.dismissed' ORDER BY created_at DESC LIMIT 1",
+        (operation_id,),
+    ).fetchone()
+    assert audit is not None
+    assert audit["event_type"] == "human_review.dismissed"
+    assert audit["governed_kind"] is None
+    assert audit["actor_source"] == "human-review-dismissal"
+
+    next_review = app.execute(
+        "start",
+        agent="gpt",
+        task_gid="t",
+        kind="verification",
+        run_id="fresh-after-dismissal",
+        independence_attestation="independent",
+    )
+    assert next_review["ok"]
+    context = next_review["data"]["dismissed_human_review"]
+    assert context[-1]["original_issue"].startswith("51 g fat")
+    assert "raw whole-bird fat" in context[-1]["dismissal_reason"]
+    assert "Do not carry its premise forward" in context[-1]["instruction"]
+
+@pytest.mark.smoke
+def test_review_reject_pending_research_human_review_forces_fresh_verification(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review_and_inspect(app, agent="codex", run_id="bad-review-research")
+    parse_task_document = __import__(
+        "dish_tool.task_document", fromlist=["parse_task_document"]
+    ).parse_task_document
+    before_doc = parse_task_document(f"{backend.title}\n{backend.notes}")
+    before_decisions = tuple(before_doc.decisions)
+    authorizations_before = app.conn.execute(
+        "SELECT COUNT(*) FROM marco_authorizations WHERE operation_id=?",
+        (operation_id,),
+    ).fetchone()[0]
+
+    held = app.execute(
+        "reject",
+        agent="codex",
+        submission_id=operation_id,
+        route="human-review",
+        reason="The nutrition estimate may require more Research before Verification can continue.",
+        resume_status="pending-research",
+        run_id="bad-review-research",
+        human_review_confirmed=True,
+        human_review_basis="The verifier treated the estimate as needing a Marco-only route choice.",
+        repairs_considered="The verifier did not establish a defensible repair before escalating.",
+    )
+    assert held["ok"]
+    source_cycle_id = app.conn.execute(
+        "SELECT cycle_id FROM verification_cycles WHERE operation_id=? ORDER BY cycle_number DESC LIMIT 1",
+        (operation_id,),
+    ).fetchone()[0]
+
+    admin = DishAdminApplication(
+        app.conn, backend=backend, release_loader=lambda: app._load_release("verification")
+    )
+    dismissed = admin.execute(
+        "review-reject",
+        proposal_id=source_cycle_id,
+        reason="The escalation was invalid: its premise needs fresh Verification, not a Marco routing decision.",
+    )
+    assert dismissed["ok"]
+    assert dismissed["data"]["resolution_mode"] == "dismissal"
+    assert dismissed["data"]["resume_status"] == "pending-verification"
+    assert dismissed["data"]["new_cycle_id"]
+
+    after_doc = parse_task_document(f"{backend.title}\n{backend.notes}")
+    assert after_doc.state.values["Status"] == "pending-verification"
+    assert after_doc.state.values["Resume status"] == "None"
+    assert tuple(after_doc.decisions) == before_decisions
+
+    operation = app.conn.execute(
+        "SELECT status,phase FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()
+    assert dict(operation) == {"status": "open", "phase": "await_verification"}
+    new_cycle = app.conn.execute(
+        "SELECT cycle_id,route,outcome FROM verification_cycles WHERE cycle_id=?",
+        (dismissed["data"]["new_cycle_id"],),
+    ).fetchone()
+    assert new_cycle is not None
+    assert new_cycle["cycle_id"] != source_cycle_id
+    assert new_cycle["route"] is None
+    assert new_cycle["outcome"] is None
+
+    authorizations_after = app.conn.execute(
+        "SELECT COUNT(*) FROM marco_authorizations WHERE operation_id=?",
+        (operation_id,),
+    ).fetchone()[0]
+    assert authorizations_after == authorizations_before
+    audit = app.conn.execute(
+        "SELECT event_type,details,governed_kind,json_extract(actor_provenance,'$.source') AS actor_source FROM audit_events "
+        "WHERE operation_id=? AND event_type='human_review.dismissed' "
+        "ORDER BY created_at DESC,rowid DESC LIMIT 1",
+        (operation_id,),
+    ).fetchone()
+    assert audit is not None
+    assert audit["event_type"] == "human_review.dismissed"
+    assert audit["governed_kind"] is None
+    assert audit["actor_source"] == "human-review-dismissal"
+
+    fresh = app.execute(
+        "start",
+        agent="gpt",
+        task_gid="t",
+        kind="verification",
+        run_id="fresh-after-research-dismissal",
+        independence_attestation="independent",
+    )
+    assert fresh["ok"]
+    context = fresh["data"]["dismissed_human_review"]
+    assert context[-1]["source_cycle_id"] == source_cycle_id
+    assert "nutrition estimate" in context[-1]["original_issue"]
+    assert "premise needs fresh Verification" in context[-1]["dismissal_reason"]
+    assert "reassess" in context[-1]["instruction"]

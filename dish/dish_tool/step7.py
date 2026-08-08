@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import sqlite3
 from typing import Any, Mapping
 
@@ -294,6 +295,33 @@ def record_current_dish_inspect(
     return {key: fact[key] for key in fact.keys()}
 
 
+
+def dismissed_human_review_context(conn: sqlite3.Connection, operation_id: str) -> list[dict[str, Any]]:
+    """Return durable dismissed Human Review findings for later verifiers."""
+    rows = conn.execute(
+        """SELECT details,created_at FROM audit_events
+             WHERE operation_id=? AND event_type='human_review.dismissed' AND result_ok=1
+             ORDER BY created_at, rowid""",
+        (operation_id,),
+    ).fetchall()
+    context: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            details = json.loads(row["details"] or "{}")
+        except (TypeError, ValueError):
+            details = {}
+        context.append({
+            "source_cycle_id": details.get("source_cycle_id"),
+            "original_issue": details.get("original_reason"),
+            "dismissal_reason": details.get("detail"),
+            "dismissed_at": row["created_at"],
+            "instruction": (
+                "This prior agent-authored Human Review escalation was dismissed by Marco. "
+                "Do not carry its premise forward as settled fact; reassess it from evidence before raising it again."
+            ),
+        })
+    return context
+
 def verification_read(
     conn: sqlite3.Connection,
     backend: Any,
@@ -464,6 +492,7 @@ def verification_read(
         "verification_lineage": verification_lineage(
             conn, operation_id, current_run_id=run_id
         ),
+        "dismissed_human_review": dismissed_human_review_context(conn, operation_id),
     }
 
 
@@ -558,6 +587,7 @@ def replay_verification_read(
         "verification_lineage": verification_lineage(
             conn, operation_id, current_run_id=run_id
         ),
+        "dismissed_human_review": dismissed_human_review_context(conn, operation_id),
     }
 
 _INHERIT_ATTESTATION = object()

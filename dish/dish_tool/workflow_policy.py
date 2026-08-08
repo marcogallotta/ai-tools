@@ -123,7 +123,7 @@ def legal_actions(snapshot: WorkflowSnapshot) -> list[str]:
         if snapshot.latest_cycle_outcome == "verification-hold":
             return ["resolved", "reopen"]
         if snapshot.latest_cycle_route == "human_review":
-            return ["record-human-decision"]
+            return ["record-human-decision", "review-reject"]
         return []
     return list(snapshot.persisted_actions)
 

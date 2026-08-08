@@ -123,6 +123,14 @@ def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
         assert "file_text" not in props
         assert "model" not in props
         assert "independence_attestation" not in props
+    assert "governed_change_fields" in variants["large"]["properties"]
+    assert set(variants["large"]["properties"]["governed_change_fields"]["items"]["enum"]) >= {
+        "Purpose", "Locks", "Decisions"
+    }
+    human_review_props = variants["human-review"]["properties"]
+    for name in ("human_review_confirmed", "human_review_basis", "repairs_considered"):
+        assert name in human_review_props
+        assert name not in variants["human-review"]["required"]
 
     start = spec["paths"]["/v1/action/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
     start_variants = {item["properties"]["kind"]["const"]: item for item in start["oneOf"]}

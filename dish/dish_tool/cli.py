@@ -351,6 +351,22 @@ def build_parser() -> JsonArgumentParser:
     )
     reject.add_argument("--file", dest="file_path")
     reject.add_argument("--resume-status", choices=("pending-verification", "pending-research"))
+    reject.add_argument(
+        "--human-review-confirmed", action="store_true",
+        help="confirm Human Review after considering whether the issue can be repaired within existing authority",
+    )
+    reject.add_argument(
+        "--human-review-basis",
+        help="for a confirmed Human Review escalation, explain what remaining choice or authority only Marco can supply",
+    )
+    reject.add_argument(
+        "--repairs-considered",
+        help="for a confirmed Human Review escalation, summarize plausible repairs considered and why they are inadequate",
+    )
+    reject.add_argument(
+        "--governed-change-field", dest="governed_change_fields", action="append", default=[],
+        help="for a Large correction, explicitly confirm one governed field whose candidate change is intentional; repeat as needed",
+    )
     reject.add_argument("--run-id")
 
     submit = subparsers.add_parser(

@@ -71,17 +71,20 @@ def _human_review_items(conn: sqlite3.Connection) -> tuple[dict[str, Any], ...]:
                     "problem": reason,
                     "cause": "Verification reached a durable Human Review stop.",
                     "why_not_ordinary_correction": (
-                        "Dish recorded this as a decision that only Marco may settle; "
-                        "the agent may not infer the answer or mutate governed fields from it."
+                        "The verifier reported that a Marco-only choice remained, so Dish parked the operation. "
+                        "The agent may not infer Marco's answer or mutate governed fields from that report."
                     ),
                     "recommended_resolution": (
-                        "Record Marco's exact decision and reasoning, then resume the stored operation."
+                        "If the escalation is valid, record Marco's exact decision and reasoning. "
+                        "If the agent-authored escalation itself is invalid and Marco has not made a substantive decision, "
+                        "dismiss it with a reason and resume Verification."
                         if kind == "human_review"
                         else "Release the three-round Verification hold into a fresh round."
                     ),
                     "scope": "This task and this exact held Verification cycle only.",
                     "command_effect": (
-                        "The decision command records the decision and releases the hold; it does not edit or authorize governed fields."
+                        "Recording a decision persists Marco's substantive decision; dismissing the escalation records only why the prior "
+                        "agent-authored hold was invalid. Neither path edits or authorizes governed fields."
                         if kind == "human_review"
                         else "The resolved command releases the unchanged candidate into a fresh Verification round."
                     ),

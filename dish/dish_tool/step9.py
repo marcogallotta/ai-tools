@@ -1375,9 +1375,10 @@ def _recover_workflow_step_group_4(
         actions.append({'kind': 'workflow_step', 'step': 'research_preconstruction_hold_resolution', 'outcome': 'confirmed'})
         return True, live
     if step['step_name'] == 'hold_resolution_decision':
-        prior = conn.execute("SELECT 1 FROM audit_events WHERE operation_id=? AND event_type='hold.resolved' LIMIT 1", (operation_id,)).fetchone()
+        event_type = 'human_review.dismissed' if intended.get('resolution_mode') == 'dismissal' else 'hold.resolved'
+        prior = conn.execute("SELECT 1 FROM audit_events WHERE operation_id=? AND event_type=? LIMIT 1", (operation_id, event_type)).fetchone()
         if prior is None:
-            record_audit(conn, submission_id=None, task_gid=op['task_gid'], operation_id=operation_id, event_type='hold.resolved', actor_agent=None, details=dict(intended), result_code='OK', result_ok=True, governed_kind='decision', actor_source='recovery')
+            record_audit(conn, submission_id=None, task_gid=op['task_gid'], operation_id=operation_id, event_type=event_type, actor_agent=None, details=dict(intended), result_code='OK', result_ok=True, governed_kind=None if event_type == 'human_review.dismissed' else 'decision', actor_source='recovery')
         complete_operation_step(conn, operation_id, 'hold_resolution_decision')
         actions.append({'kind': 'workflow_step', 'step': 'hold_resolution_decision', 'outcome': 'confirmed'})
         return True, live

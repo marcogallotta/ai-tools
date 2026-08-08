@@ -112,7 +112,7 @@ def build_parser() -> JsonArgumentParser:
 
     review_reject = subparsers.add_parser(
         _admin_name("review-reject"),
-        help="reject one pending semantic change bundle without editing the task",
+        help="reject a pending semantic bundle or dismiss an unanswered Human Review escalation",
     )
     review_reject.add_argument("proposal_id")
     review_reject.add_argument("--reason", required=True)

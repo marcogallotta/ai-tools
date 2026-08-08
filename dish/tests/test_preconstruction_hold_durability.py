@@ -49,6 +49,11 @@ def test_initial_research_can_hold_before_prepare_and_resume_same_operation(
         route=route,
         reason="Need authoritative input before constructing a candidate",
         resume_status="pending-research",
+        **({
+            "human_review_confirmed": True,
+            "human_review_basis": "The remaining pre-construction choice requires Marco's authority.",
+            "repairs_considered": "Within-authority research routes were considered and cannot settle that choice.",
+        } if route == "human-review" else {}),
     )
     assert held["ok"]
     assert held["data"]["description"] == "Research blocked before construction"

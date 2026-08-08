@@ -303,6 +303,27 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             "blocker_delta": {"type": "number"},
             "blocker_unit": {"type": "string"},
             "blocker_basis": {"type": "string"},
+            "human_review_confirmed": {
+                "type": "boolean",
+                "description": "Set true only after completing Dish's Human Review escalation preflight.",
+            },
+            "human_review_basis": {
+                "type": "string",
+                "description": "The specific unresolved choice, waiver, classification, or authority that remains for Marco.",
+            },
+            "repairs_considered": {
+                "type": "string",
+                "description": "Specific plausible repairs considered and why they do not resolve the issue within existing authority.",
+            },
+            "governed_change_fields": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": ["Dish candidate", "Purpose", "Role", "Priors", "Locks", "Exemptions", "Research emphasis", "Destination section", "Decisions", "Researched by"],
+                },
+                "uniqueItems": True,
+                "description": "On a Large-correction retry, name only small governed-text fields Dish asked the agent to confirm as intentionally changed.",
+            },
             "resume_status": {
                 "type": "string",
                 "enum": ["pending-research", "pending-verification"],
@@ -458,7 +479,7 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
         "oneOf": [
             variant(
                 "large",
-                extra=("model", "file_text"),
+                extra=("model", "file_text", "governed_change_fields"),
                 required=("model", "file_text"),
             ),
             variant(
@@ -468,7 +489,7 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
             ),
             variant(
                 "human-review",
-                extra=("resume_status", *blocker_fields),
+                extra=("resume_status", *blocker_fields, "human_review_confirmed", "human_review_basis", "repairs_considered"),
                 required=("resume_status",),
             ),
         ],

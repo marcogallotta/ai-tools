@@ -1769,7 +1769,7 @@ _OPERATION_PHASE_ACTIONS = {
     "prepare_required": ("prepare", "reject"),
     "await_verification": ("verify", "approve", "reject"),
     "held_evidence": ("supply-evidence",),
-    "held_human": ("record-human-decision",),
+    "held_human": ("record-human-decision", "review-reject"),
     "await_submission": ("submit",),
     "ready_move_failed": ("submit", "repair-destination"),
     "terminal": (),

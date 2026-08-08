@@ -353,6 +353,24 @@ def _evidence_hold_continuation(
         after_success=after_resolution,
     )
     command = spec.shell_command()
+    alternative_human_actions = [spec.payload()["human_action"]]
+    if admin_action == "record-human-decision" and cycle is not None:
+        dismiss_spec = template_action(
+            kind="dismiss-human-review",
+            command="review-reject",
+            positional=(cycle["cycle_id"],),
+            options=(("--reason", "<why this escalation is invalid>"),),
+            prompt_fields=(PromptField("reason", "Why this escalation is invalid", "<why this escalation is invalid>"),),
+            summary="Dismiss this Human Review escalation as invalid.",
+            effect=(
+                "Preserve the rejected escalation in the audit trail, record no Marco decision or governed authorization, "
+                "and resume the unchanged task so a fresh verifier can reassess it."
+            ),
+            after_success=after_resolution,
+        )
+        alternative_human_actions.append(
+            dismiss_spec.payload()["human_action"] | {"shell_command": dismiss_spec.shell_command()}
+        )
     next_action = after_resolution["legal_actions"][0] if after_resolution["legal_actions"] else None
     resume_clause = f" with `{next_action}`." if next_action else "."
     if admin_action == "record-human-decision":
@@ -403,6 +421,7 @@ def _evidence_hold_continuation(
         "continuation_surface": "private-admin",
         "connected_action_available": False,
         **spec.payload(),
+        "human_actions": alternative_human_actions,
         "resolution_effect": resolution_effect,
         "directive": directive,
         "after_resolution": after_resolution,
@@ -1259,7 +1278,7 @@ def _step8_approve(self, *, trace: CommandTrace, agent: str, model: str | None =
         validation_scope=trace.validation_scope,
     )
 
-def _step8_reject(self, *, trace: CommandTrace, agent: str, model: str | None = None, submission_id: str, reason: str, route: str | None = None, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, blocker_metric: str | None = None, blocker_actual: float | None = None, blocker_limit: float | None = None, blocker_delta: float | None = None, blocker_unit: str | None = None, blocker_basis: str | None = None) -> dict[str, Any]:
+def _step8_reject(self, *, trace: CommandTrace, agent: str, model: str | None = None, submission_id: str, reason: str, route: str | None = None, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, blocker_metric: str | None = None, blocker_actual: float | None = None, blocker_limit: float | None = None, blocker_delta: float | None = None, blocker_unit: str | None = None, blocker_basis: str | None = None, human_review_confirmed: bool = False, human_review_basis: str | None = None, repairs_considered: str | None = None, governed_change_fields=None) -> dict[str, Any]:
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
     reason = validate_rejection_reason(reason)
     route_release = self._load_release(None)
@@ -1292,7 +1311,7 @@ def _step8_reject(self, *, trace: CommandTrace, agent: str, model: str | None = 
     trace.submission_id = operation_id; trace.task_gid = exists["task_gid"]; trace.state = "open"
     data, view = self.operation_service.current.reject(
         operation_id,
-        lambda: reject_route(self.conn, self.backend, operation_id=operation_id, agent=agent, model=model, route=route, reason=reason, file_path=file_path, resume_status=resume_status, run_id=run_id, independence_attestation=clean_attestation, request_id=self.invocation_request_id, schema=release.schema, honest_root=release.root, blocker_metric=blocker_metric, blocker_actual=blocker_actual, blocker_limit=blocker_limit, blocker_delta=blocker_delta, blocker_unit=blocker_unit, blocker_basis=blocker_basis),
+        lambda: reject_route(self.conn, self.backend, operation_id=operation_id, agent=agent, model=model, route=route, reason=reason, file_path=file_path, resume_status=resume_status, run_id=run_id, independence_attestation=clean_attestation, request_id=self.invocation_request_id, schema=release.schema, honest_root=release.root, blocker_metric=blocker_metric, blocker_actual=blocker_actual, blocker_limit=blocker_limit, blocker_delta=blocker_delta, blocker_unit=blocker_unit, blocker_basis=blocker_basis, human_review_confirmed=human_review_confirmed, human_review_basis=human_review_basis, repairs_considered=repairs_considered, governed_change_fields=governed_change_fields),
         schema=release.schema,
     )
     trace.state = view["status"]
