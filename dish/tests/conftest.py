@@ -593,6 +593,7 @@ def isolate_dish_client_profile_env(monkeypatch):
 def current_database_template(tmp_path_factory):
     """Build the current empty schema once for tests that do not test migration."""
     from dish_tool import database_schema
+    from dish_tool.database_schema_validation import validate_current_database
 
     path = tmp_path_factory.mktemp("dish-db-template") / "current.sqlite"
     conn = sqlite3.connect(path, isolation_level=None)
@@ -601,7 +602,7 @@ def current_database_template(tmp_path_factory):
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA synchronous = OFF")
         database_schema.migrate_database(conn)
-        database_schema.validate_current_database(conn)
+        validate_current_database(conn)
     finally:
         conn.close()
     return path

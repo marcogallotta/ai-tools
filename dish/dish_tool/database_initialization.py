@@ -16,11 +16,9 @@ from .database_schema import (
     WAL_RETRY_SLEEP_BASE_SECONDS,
     WAL_RETRY_SLEEP_CAP_SECONDS,
     _backup_legacy_database,
-    validate_current_database,
-    validate_current_schema,
-    validate_runtime_schema_state,
     migrate_database,
 )
+from .database_schema_validation import validate_current_database, validate_runtime_schema_state
 from .errors import DishRuleError
 
 

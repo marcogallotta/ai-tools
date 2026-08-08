@@ -14,7 +14,7 @@ from typing import Any, Callable, Mapping
 
 from dish_tool.constants import SCHEMA_VERSION
 from dish_tool.database_initialization import initialize_database
-from dish_tool.database_schema import validate_current_database
+from dish_tool.database_schema_validation import validate_current_database
 from dish_tool.errors import DishRuleError
 
 from .restore_plan import RestorePlan
