@@ -15,10 +15,9 @@ import json
 import re
 import secrets
 from datetime import datetime, timezone
-from typing import Any, Iterable
+from typing import Any
 from uuid import UUID
 
-_ROUTE_RE = re.compile(r"r1([st])-([A-Za-z0-9_-]{27})")
 _CURSOR_RE = re.compile(r"c1\.([A-Za-z0-9_-]{40,4096})")
 _MIN_SECRET_BYTES = 32
 _NONCE_BYTES = 16
@@ -70,39 +69,6 @@ def route_identity(*, secret: bytes, environment: str, kind: str, object_id: UUI
     )
     digest = hmac.new(secret, material, hashlib.sha256).digest()[:_ROUTE_DIGEST_BYTES]
     return f"r1{tag}-{_b64encode(digest)}"
-
-
-def validate_route_identity(value: str, *, kind: str) -> str:
-    if not isinstance(value, str) or len(value) > 64:
-        raise ValueError("route identity is malformed")
-    match = _ROUTE_RE.fullmatch(value)
-    expected = "t" if kind == "task" else "s" if kind == "section" else None
-    if match is None or expected is None or match.group(1) != expected:
-        raise ValueError("route identity is malformed or has the wrong type")
-    return value
-
-
-def resolve_route_identity(
-    value: str,
-    *,
-    secret: bytes,
-    environment: str,
-    kind: str,
-    candidates: Iterable[UUID],
-) -> UUID | None:
-    """Resolve one route identity only across a caller-supplied bounded candidate set."""
-
-    validate_route_identity(value, kind=kind)
-    matched: UUID | None = None
-    for object_id in candidates:
-        candidate = route_identity(
-            secret=secret, environment=environment, kind=kind, object_id=object_id
-        )
-        if hmac.compare_digest(candidate, value):
-            if matched is not None:
-                raise ValueError("route identity collision within candidate set")
-            matched = object_id
-    return matched
 
 
 def opaque_digest(*, secret: bytes, environment: str, purpose: str, payload: Any) -> str:

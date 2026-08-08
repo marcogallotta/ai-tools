@@ -12,7 +12,6 @@ from dish_service.frontend_tokens import (
     open_cursor,
     route_identity,
     seal_cursor,
-    validate_route_identity,
 )
 
 SECRET = b"stage-3-test-token-secret-32-bytes-minimum"
@@ -31,9 +30,6 @@ def test_route_identity_is_stable_typed_environment_scoped_and_non_raw() -> None
     assert first != production
     assert str(task_id) not in first
     assert task_id.hex not in first
-    assert validate_route_identity(first, kind="task") == first
-    with pytest.raises(ValueError):
-        validate_route_identity(first, kind="section")
 
 
 def test_cursor_is_opaque_tamper_resistant_and_environment_bound() -> None:
