@@ -1,11 +1,12 @@
 from pathlib import Path
 
 
-def test_responsibility_modules_and_compatibility_facades_exist():
+def test_responsibility_modules_and_database_compatibility_facades_exist():
     from dish_tool import command_support, content_validation, database_schema, schema_validation
     from dish_tool.database import MIGRATIONS, initialize_database
     from dish_tool.database_initialization import initialize_database as owned_initialize_database
-    from dish_tool.validation import validate_manifest_shape, validate_note
+    from dish_tool.content_validation import validate_note
+    from dish_tool.schema_validation import validate_manifest_shape
 
     assert command_support.CommandTrace
     assert content_validation.validate_note is validate_note

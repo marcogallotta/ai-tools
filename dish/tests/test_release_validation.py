@@ -7,7 +7,7 @@ import pytest
 
 from dish_tool.errors import ReleaseResolutionError
 from dish_tool.releases import resolve_release
-from dish_tool.validation import validate_note
+from dish_tool.content_validation import validate_note
 
 
 FIXTURE_RELEASE_DIR = Path(__file__).resolve().parent / "fixtures" / "dish-version-current"

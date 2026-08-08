@@ -31,7 +31,7 @@ from dish_tool.constants import (
     TASK_SCHEMA_FILENAME,
 )
 from dish_tool.releases import parse_dish_version
-from dish_tool.validation import validate_task_schema_shape
+from dish_tool.schema_validation import validate_task_schema_shape
 
 from . import models
 from .database import DatabaseSettings, create_database_engine, session_factory, session_scope

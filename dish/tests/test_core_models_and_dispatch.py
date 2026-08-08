@@ -51,7 +51,7 @@ from dish_tool.recovery import (
 )
 from dish_tool.releases import resolve_release
 from dish_tool.results import exit_status, result_envelope
-from dish_tool.validation import validate_note
+from dish_tool.content_validation import validate_note
 
 
 @pytest.mark.smoke

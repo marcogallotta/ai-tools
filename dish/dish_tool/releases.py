@@ -22,7 +22,7 @@ from .constants import (
 )
 from .errors import ReleaseResolutionError
 from .models import ReadOnlyLegacyAdapter, ResolvedRelease, VerificationProtocolSnapshot
-from .validation import validate_task_schema_shape
+from .schema_validation import validate_task_schema_shape
 
 _VERSION_KEYS = ("PROTOCOL_VERSION", "SCHEMA_VERSION")
 _GIT_RELEASE_RE = re.compile(r"^(?:git:)?(?P<commit>[0-9a-f]{7,64})$")

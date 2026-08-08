@@ -370,12 +370,3 @@ def validate_note(note: str, manifest: Mapping[str, Any]) -> ValidationResult:
         destination_name=destination_name,
         destination_gid=destination_gid,
     )
-
-# Step 2 canonical document APIs; legacy manifest validation remains above for
-# commands that are converted in later stages.
-from .task_document import (  # noqa: E402,F401
-    parse_planning_brief,
-    parse_task_document,
-    validate_planning_brief,
-    validate_task_document,
-)
