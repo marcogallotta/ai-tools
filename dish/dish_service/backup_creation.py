@@ -11,7 +11,6 @@ from dish_tool.transactions import immediate_transaction
 
 from .backup import BackupManager, BackupRecord
 from .backup_creation_journal import (
-    complete_backup_creation,
     creation_for_request,
     finish_backup_creation,
     reserve_backup_creation,
@@ -81,8 +80,12 @@ class BackupCreationCoordinator:
 
         try:
             with immediate_transaction(conn, "complete_backup_creation_request"):
-                complete_backup_creation(
-                    conn, request_id=request_id, record=record
+                finish_backup_creation(
+                    conn,
+                    request_id=request_id,
+                    outcome="confirmed",
+                    reason="rename_and_directory_fsync_confirmed",
+                    record=record,
                 )
                 authoritative = self._complete_replay(
                     conn, request_id=request_id, result=result

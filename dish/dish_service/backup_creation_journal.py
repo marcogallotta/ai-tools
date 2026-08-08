@@ -136,15 +136,3 @@ def finish_backup_creation(
         )
     return creation_for_request(conn, request_id)
 
-
-def complete_backup_creation(
-    conn: sqlite3.Connection, *, request_id: str, record: BackupRecord
-) -> None:
-    """Compatibility entry point for a confirmed durable snapshot."""
-    finish_backup_creation(
-        conn,
-        request_id=request_id,
-        outcome="confirmed",
-        reason="rename_and_directory_fsync_confirmed",
-        record=record,
-    )
