@@ -197,6 +197,26 @@ lane; it never hides a failed inner phase behind one final aggregate result.
 pass. These commands complement, rather than replace, changed-path focused tests and the ordinary
 full-suite integration checkpoint.
 
+Both variables point at a disposable local PostgreSQL role/database on the system-wide PG17 cluster
+from the "Local PostgreSQL 17 server binaries" section below (port 5432). Provision or reset it with:
+
+```sh
+sudo -u postgres psql -c "DROP DATABASE IF EXISTS dish_test;"
+sudo -u postgres psql -c "DROP ROLE IF EXISTS dish_test;"
+sudo -u postgres psql -c "CREATE ROLE dish_test LOGIN PASSWORD '<password>' CREATEDB;"
+sudo -u postgres psql -c "CREATE DATABASE dish_test OWNER dish_test;"
+```
+
+then export the DSN in the same shell before running the lane above:
+
+```sh
+export DISH_TEST_POSTGRESQL_DSN='postgresql+psycopg://dish_test:<password>@localhost:5432/dish_test'
+export DISH_PG_TEST_URL="$DISH_TEST_POSTGRESQL_DSN"
+```
+
+The native branch of `tests/support/postgresql/core.py` drops and recreates the disposable `public`
+schema before each test, so the role only needs ordinary ownership of `dish_test`, not superuser.
+
 `parallel-safe` is an explicit allowlist, not a general pytest mode. The exact 565-test inventory
 passed static isolation review and three clean runs each at `-n 2`, `-n 4`, and `-n 8` on 2026-08-08.
 The measured local wall times were approximately 15.6-17.4s (`-n 2`), 14.2-14.4s (`-n 4`), and
