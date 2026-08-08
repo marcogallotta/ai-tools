@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from dish_tool.database import initialize_database
+from dish_tool.database_initialization import initialize_database
 from dish_tool.constants import SCHEMA_VERSION
 from dish_tool.governed_diff import explicit_material_reasons, require_small_scope
 from dish_tool.task_document import (
@@ -153,7 +153,7 @@ def test_verification_hold_reset_rejects_future_target_without_replacement():
 def test_start_returns_environment_specific_runtime_context(tmp_path, monkeypatch):
     from dish_tool.commands import DishApplication
     from dish_tool.models import ResolvedRelease
-    from dish_tool.database import initialize_database
+    from dish_tool.database_initialization import initialize_database
     backend = Backend()
     honest = tmp_path / "honest"; honest.mkdir()
     (honest / "dish-verification-protocol.md").write_text("# Verification\n")

@@ -7,7 +7,8 @@ import pytest
 from dish_tool.admin import DishAdminApplication
 from dish_tool.commands import DishApplication
 from dish_tool.constants import COOKING_PROJECT_GID
-from dish_tool.database import confirm_task_content, initialize_database
+from dish_tool.database import confirm_task_content
+from dish_tool.database_initialization import initialize_database
 from dish_tool.models import ResolvedRelease
 from tests.support.step5 import (
     Backend,

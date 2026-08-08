@@ -8,7 +8,8 @@ import pytest
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "upgrade"
 
 from dish_tool.constants import COOKING_PROJECT_GID
-from dish_tool.database import content_identity, initialize_database
+from dish_tool.database import content_identity
+from dish_tool.database_initialization import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.step9 import recover_operation
 from tests.support.asana_backend import StatefulAsanaBackend

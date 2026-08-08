@@ -25,13 +25,13 @@ from dish_tool.commands import DishApplication, expose_authoritative_view
 from dish_tool.constants import COOKING_PROJECT_GID, SCHEMA_VERSION
 from dish_tool.operation_execution import _recover_command_guidance
 from dish_tool.database import (
-    initialize_database,
     planning_reopen_attempt_by_request,
     process_command_audit_repairs,
     resolve_admin_abandonment_target,
     resolve_admin_operation_target,
     unresolved_planning_reopen_attempts,
 )
+from dish_tool.database_initialization import initialize_database
 import dish_tool.database_initialization as database_initialization
 from dish_tool.transactions import immediate_transaction, savepoint_transaction
 from dish_tool.errors import BackendFailure, DishRuleError

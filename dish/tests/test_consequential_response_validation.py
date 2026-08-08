@@ -7,7 +7,7 @@ import pytest
 from dish_service.client import DishActionClient, DishServiceClient
 from dish_service.http import build_server
 from dish_service import cli
-from dish_tool.database import initialize_database
+from dish_tool.database_initialization import initialize_database
 from dish_tool.errors import DishRuleError
 from tests.support.lost_response import (
     ReplaceFirstResponseHTTPConnection,

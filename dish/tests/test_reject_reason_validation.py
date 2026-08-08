@@ -7,7 +7,8 @@ import pytest
 from dish_service.application import DishService
 from dish_service.config import ServiceConfig
 from dish_service.leases import ServicePrincipal
-from dish_tool.database import confirm_task_content, initialize_database
+from dish_tool.database import confirm_task_content
+from dish_tool.database_initialization import initialize_database
 from dish_tool.task_document import parse_task_document, validate_task_document
 from tests.support.service_foundation import _release_loader
 from tests.support.request_restore import Backend

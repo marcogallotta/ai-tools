@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 
 from dish_service.request_replay import begin_request, complete_request
-from dish_tool.database import initialize_database
+from dish_tool.database_initialization import initialize_database
 from dish_tool.results import result_envelope, error_envelope
 from dish_tool.errors import DishRuleError
 

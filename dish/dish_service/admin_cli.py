@@ -17,7 +17,7 @@ from dish_tool.client_profiles import (
     resolve_client_profile,
 )
 from dish_tool.constants import DB_PATH
-from dish_tool.database import initialize_database
+from dish_tool.database_initialization import initialize_database
 from dish_tool.backend import AsanaBackend
 from dish_tool.admin_command_spec import (
     ADMIN_COMMANDS as _ADMIN_COMMANDS,

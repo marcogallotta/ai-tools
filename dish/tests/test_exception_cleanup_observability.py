@@ -14,7 +14,8 @@ from dish_service.application import (
 )
 from dish_service.leases import LeaseManager, ServicePrincipal
 from dish_tool.admin import DishAdminApplication
-from dish_tool.database import confirm_task_content, create_operation, initialize_database
+from dish_tool.database import confirm_task_content, create_operation
+from dish_tool.database_initialization import initialize_database
 from dish_tool.errors import DishRuleError
 from tests.support.verification import make_app
 

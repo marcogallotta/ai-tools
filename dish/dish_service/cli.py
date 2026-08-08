@@ -18,7 +18,7 @@ from dish_tool.client_profiles import (
 )
 from dish_tool.commands import DishApplication
 from dish_tool.constants import DB_PATH
-from dish_tool.database import initialize_database
+from dish_tool.database_initialization import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.releases import configured_honest_path, resolve_release
 from dish_service.client import DishServiceClient

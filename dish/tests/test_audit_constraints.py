@@ -3,7 +3,8 @@ import sqlite3
 
 import pytest
 
-from dish_tool.database import confirm_task_content, create_operation, initialize_database, record_audit
+from dish_tool.database import confirm_task_content, create_operation, record_audit
+from dish_tool.database_initialization import initialize_database
 from dish_tool.models import OperationActors
 
 

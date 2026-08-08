@@ -274,7 +274,7 @@ def test_connected_action_can_execute_advertised_safe_reclaim(tmp_path, running_
     )
     assert started["ok"] is True
 
-    from dish_tool.database import initialize_database
+    from dish_tool.database_initialization import initialize_database
 
     conn = initialize_database(tmp_path / "shared.db")
     try:

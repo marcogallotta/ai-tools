@@ -251,7 +251,7 @@ def test_destination_repair_rejects_queue_and_retry_safe_failure(tmp_path):
 def test_destination_repair_evidence_survives_restart(tmp_path):
     from dish_tool.admin import DishAdminApplication
     from dish_tool.commands import DishApplication
-    from dish_tool.database import initialize_database
+    from dish_tool.database_initialization import initialize_database
 
     application, backend, operation_id = _signed(tmp_path)
     backend.sections = [row for row in backend.sections if row["gid"] != "12345"]

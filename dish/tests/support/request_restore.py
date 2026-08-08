@@ -18,7 +18,7 @@ from dish_service.request_replay import begin_request
 
 from dish_tool.commands import DishApplication
 
-from dish_tool.database import initialize_database
+from dish_tool.database_initialization import initialize_database
 
 from dish_tool.database_schema import MIGRATIONS, _execute_script_statements
 from tests.support.service_foundation import _release_loader

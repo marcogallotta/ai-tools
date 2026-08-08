@@ -7,7 +7,7 @@ from pathlib import Path
 from dish_service.cli import build_parser
 from dish_service.admin_cli import build_parser as build_admin_parser
 from dish_tool.constants import EXIT_STATUS_BY_CODE
-from dish_tool.database import initialize_database
+from dish_tool.database_initialization import initialize_database
 
 ROOT = Path(__file__).resolve().parents[1]
 ACTIVATION = ROOT / "docs" / "runtime-contract.md"

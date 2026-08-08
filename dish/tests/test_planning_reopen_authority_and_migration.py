@@ -16,8 +16,8 @@ from dish_tool.constants import COOKING_PROJECT_GID
 from dish_tool.database import (
     begin_planning_reopen_attempt,
     finish_planning_reopen_attempt,
-    initialize_database,
 )
+from dish_tool.database_initialization import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.results import error_envelope
 from dish_tool.database_schema import MIGRATIONS, _execute_script_statements

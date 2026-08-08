@@ -4,9 +4,9 @@ from dish_tool.errors import DishRuleError
 from dish_tool.database import (
     confirm_task_content,
     create_operation,
-    initialize_database,
     transition_operation,
 )
+from dish_tool.database_initialization import initialize_database
 from dish_tool.lifecycle import assert_transition, hold, resumed
 from dish_tool.models import OperationActors
 

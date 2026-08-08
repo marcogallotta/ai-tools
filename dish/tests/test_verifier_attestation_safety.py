@@ -6,7 +6,7 @@ import uuid
 import pytest
 
 from dish_service.command_spec import validate_action_request
-from dish_tool.database import initialize_database
+from dish_tool.database_initialization import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.models import validate_independence_attestation
 from tests.support.action_http import _raw_post, _running, _stop

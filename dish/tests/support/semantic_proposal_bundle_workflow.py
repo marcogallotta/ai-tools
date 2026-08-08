@@ -9,7 +9,7 @@ from tests.support.verification import TASK, make_app, review_and_inspect
 
 def _case_test_service_fresh_invocation_claims_approved_bundle_without_old_run_identity(tmp_path):
     from dish_service.leases import ServicePrincipal
-    from dish_tool.database import initialize_database
+    from dish_tool.database_initialization import initialize_database
     from tests.support.service_leases import _service
 
     backend = __import__("tests.support.verification", fromlist=["Backend"]).Backend()

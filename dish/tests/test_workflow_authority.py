@@ -147,7 +147,8 @@ def test_non_material_checkin_requires_exact_local_signed_baseline(tmp_path):
     assert approved["ok"]
 
     from dish_tool.commands import DishApplication
-    from dish_tool.database import confirm_task_content, initialize_database
+    from dish_tool.database import confirm_task_content
+    from dish_tool.database_initialization import initialize_database
     fresh = DishApplication(
         initialize_database(tmp_path / "fresh.db"), backend,
         release_loader=lambda role=None: source_app._load_release(role),

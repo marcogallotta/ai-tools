@@ -53,7 +53,7 @@ AGENT_ARGUMENTS = {
 
 
 def test_inspect_exact_replay_returns_first_result_without_duplicate_evidence(tmp_path):
-    from dish_tool.database import initialize_database
+    from dish_tool.database_initialization import initialize_database
     from tests.support.service_leases import _service
     from tests.support.verification import Backend as VerificationBackend, TASK
 
@@ -232,7 +232,7 @@ def test_malformed_request_id_is_not_recorded_and_identifies_field(tmp_path):
             "expected_format": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
         }
     ]
-    from dish_tool.database import initialize_database
+    from dish_tool.database_initialization import initialize_database
     conn = initialize_database(service.config.db_path)
     try:
         assert conn.execute("SELECT COUNT(*) FROM service_requests").fetchone()[0] == 0
@@ -281,7 +281,7 @@ def test_nil_client_identities_are_rejected_before_request_journaling(
     ]
     assert backend.writes == 0
 
-    from dish_tool.database import initialize_database
+    from dish_tool.database_initialization import initialize_database
 
     conn = initialize_database(service.config.db_path)
     try:

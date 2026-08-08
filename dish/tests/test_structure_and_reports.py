@@ -1,10 +1,16 @@
 from pathlib import Path
 
 
-def test_responsibility_modules_and_database_compatibility_facades_exist():
-    from dish_tool import command_support, content_validation, database_schema, schema_validation
-    from dish_tool.database import MIGRATIONS, initialize_database
-    from dish_tool.database_initialization import initialize_database as owned_initialize_database
+def test_responsibility_modules_expose_authoritative_owners():
+    from dish_tool import (
+        command_support,
+        content_validation,
+        database_initialization,
+        database_schema,
+        schema_validation,
+    )
+    from dish_tool.database_initialization import initialize_database
+    from dish_tool.database_schema import MIGRATIONS
     from dish_tool.content_validation import validate_note
     from dish_tool.schema_validation import validate_manifest_shape
 
@@ -12,7 +18,7 @@ def test_responsibility_modules_and_database_compatibility_facades_exist():
     assert content_validation.validate_note is validate_note
     assert schema_validation.validate_manifest_shape is validate_manifest_shape
     assert database_schema.MIGRATIONS is MIGRATIONS
-    assert initialize_database is owned_initialize_database
+    assert database_initialization.initialize_database is initialize_database
     assert not hasattr(database_schema, "initialize_database")
 
 

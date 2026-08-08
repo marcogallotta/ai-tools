@@ -13,7 +13,7 @@ from dish_service.leases import ServicePrincipal
 from dish_service.request_replay import begin_request
 from dish_tool.admin import DishAdminApplication
 from dish_tool.commands import DishApplication
-from dish_tool.database import initialize_database
+from dish_tool.database_initialization import initialize_database
 from dish_tool.execution_provenance import operation_execution_provenance
 from dish_tool.operation_execution import claim_operation_execution
 from dish_tool.step6 import prepare_live

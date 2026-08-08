@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dish_service.application import DishService
 from dish_service.leases import ServicePrincipal
-from dish_tool.database import initialize_database
+from dish_tool.database_initialization import initialize_database
 from tests.support.planning_intent import confirmed_planning_start
 from tests.support.request_restore import Backend, restart_service
 

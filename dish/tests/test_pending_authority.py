@@ -13,8 +13,8 @@ from dish_tool.database import (
     create_verification_cycle,
     finalize_confirmed_movement_attempt,
     finalize_confirmed_write_attempt,
-    initialize_database,
 )
+from dish_tool.database_initialization import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.models import OperationActors
 

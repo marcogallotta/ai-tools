@@ -10,7 +10,7 @@ import pytest
 
 from dish_service import application as application_module
 from dish_tool import database_schema as database_schema_module
-from dish_tool.database import initialize_database
+from dish_tool.database_initialization import initialize_database
 from tests.support.service_scenarios import (
     REQUEST_ID,
     RUN_ID,

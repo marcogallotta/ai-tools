@@ -12,7 +12,8 @@ from dish_service.leases import LeaseManager, ServicePrincipal
 from dish_tool.backend import AsanaBackend
 from dish_tool.commands import DishApplication
 from dish_tool.constants import COOKING_PROJECT_GID
-from dish_tool.database import confirm_task_content, content_identity, create_operation, initialize_database
+from dish_tool.database import confirm_task_content, content_identity, create_operation
+from dish_tool.database_initialization import initialize_database
 from dish_tool.errors import BackendFailure, DishRuleError
 from dish_tool.models import OperationActors, ResolvedRelease
 from dish_tool.results import result_envelope

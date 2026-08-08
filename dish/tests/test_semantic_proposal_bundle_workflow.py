@@ -787,7 +787,7 @@ def test_action_apply_proposal_exact_replay_does_not_apply_bundle_twice(tmp_path
 
     from dish_service.client import DishActionClient
     from dish_service.http import build_server
-    from dish_tool.database import initialize_database
+    from dish_tool.database_initialization import initialize_database
     from tests.support.thread_teardown import start_server_thread, stop_server
 
     service, backend, proposal_id, task_gid = _approved_service_proposal_runtime(tmp_path)

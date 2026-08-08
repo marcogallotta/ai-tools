@@ -7,7 +7,7 @@ from dish_service.application import DishService
 from dish_service.config import ServiceConfig
 from dish_service.leases import LeaseManager, ServicePrincipal
 from dish_tool.commands import DishApplication
-from dish_tool.database import initialize_database
+from dish_tool.database_initialization import initialize_database
 from dish_tool.errors import DishRuleError
 from tests.support.thread_teardown import join_thread, managed_thread
 from tests.support.service_foundation import _release_loader

@@ -20,7 +20,8 @@ from dish_service.leases import ServicePrincipal
 
 from dish_tool.constants import SCHEMA_VERSION
 
-from dish_tool.database import initialize_database, record_command_audit_repair
+from dish_tool.database import record_command_audit_repair
+from dish_tool.database_initialization import initialize_database
 
 from dish_tool.errors import DishRuleError
 

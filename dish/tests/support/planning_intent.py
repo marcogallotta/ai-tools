@@ -6,7 +6,7 @@ from typing import Any
 from dish_service.application import DishService
 from dish_service.config import ServiceConfig
 from dish_service.leases import ServicePrincipal
-from dish_tool.database import initialize_database
+from dish_tool.database_initialization import initialize_database
 from tests.support.planning import Backend, release
 
 

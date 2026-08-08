@@ -11,7 +11,8 @@ from dish_service.config import ServiceConfig
 from dish_service.http import build_server
 from dish_service.leases import ServicePrincipal
 from dish_tool.constants import SCHEMA_VERSION
-from dish_tool.database import initialize_database, record_command_audit_repair
+from dish_tool.database import record_command_audit_repair
+from dish_tool.database_initialization import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.results import result_envelope
 from tests.support.thread_teardown import join_thread, start_server_thread, stop_server, managed_thread

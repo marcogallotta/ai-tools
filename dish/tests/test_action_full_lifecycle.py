@@ -10,7 +10,7 @@ from dish_service.client import DishActionClient
 from dish_service.config import ServiceConfig
 from dish_service.http import build_action_server
 from dish_tool.backend import AsanaBackend, close_asana_sdk_client
-from dish_tool.database import initialize_database
+from dish_tool.database_initialization import initialize_database
 from tests.support.thread_teardown import join_thread, start_server_thread, stop_server
 from tests.support.placement import StatefulAsanaTransport, _release
 from tests.support.planning import PLANNING, TASK

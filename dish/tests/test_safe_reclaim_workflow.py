@@ -4,7 +4,8 @@ import json
 import uuid
 
 from dish_service.application import DishService
-from dish_tool.database import initialize_database, record_marco_authorization
+from dish_tool.database import record_marco_authorization
+from dish_tool.database_initialization import initialize_database
 from tests.support.lease_authority import _principal, _service, _start
 from tests.support.service_leases import Clock
 from tests.support.verification import TASK

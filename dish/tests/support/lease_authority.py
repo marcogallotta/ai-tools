@@ -10,7 +10,7 @@ from dish_service.config import ServiceConfig
 
 from dish_service.leases import LeaseManager, ServicePrincipal
 
-from dish_tool.database import initialize_database
+from dish_tool.database_initialization import initialize_database
 from tests.support.service_foundation import _release_loader
 from tests.support.service_leases import Clock
 from tests.support.verification import Backend, TASK

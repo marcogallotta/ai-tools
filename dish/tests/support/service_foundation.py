@@ -22,7 +22,7 @@ from dish_service.leases import ServicePrincipal
 
 from dish_tool.commands import DishApplication
 
-from dish_tool.database import initialize_database
+from dish_tool.database_initialization import initialize_database
 
 from dish_tool.errors import DishRuleError
 

@@ -290,7 +290,7 @@ def test_service_database_ownership_marker_survives_reinstantiation(tmp_path):
 
 def test_private_admin_http_and_cli_cover_authorization_recovery_and_migration(tmp_path, capsys):
     from dish_service.leases import ServicePrincipal
-    from dish_tool.database import initialize_database
+    from dish_tool.database_initialization import initialize_database
 
     service, _backend, server, thread, url = _running_service(tmp_path)
     owner = ServicePrincipal("agent", "33333333-3333-4333-8333-333333333333")

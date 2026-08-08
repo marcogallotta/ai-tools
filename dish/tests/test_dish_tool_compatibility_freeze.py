@@ -4,7 +4,7 @@ import pytest
 
 from dish_tool.application_service import OperationApplicationService
 from dish_tool.constants import SUPPORTED_PROTOCOL_VERSION
-from dish_tool.database import initialize_database
+from dish_tool.database_initialization import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.legacy_adapter import LegacyReadOnlyAdapter
 

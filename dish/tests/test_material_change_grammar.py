@@ -75,7 +75,7 @@ def test_material_change_field_count_findings_echo_the_complete_entry():
 
 
 def test_material_change_approval_finalizes_pending_entry_and_survives_restart(tmp_path):
-    from dish_tool.database import initialize_database
+    from dish_tool.database_initialization import initialize_database
     from dish_tool.task_document import parse_task_document
 
     application, backend, initial_operation, _ = make_app(tmp_path)

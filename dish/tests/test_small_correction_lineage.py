@@ -10,7 +10,8 @@ import dish_tool.application_service as application_service
 import dish_tool.step8 as step8
 from dish_service.leases import ServicePrincipal
 from dish_tool.admin import DishAdminApplication
-from dish_tool.database import content_identity, initialize_database
+from dish_tool.database import content_identity
+from dish_tool.database_initialization import initialize_database
 from dish_tool.database_schema import _validate_semantic_evidence
 from dish_tool.errors import DishRuleError
 from dish_tool.models import utc_now
