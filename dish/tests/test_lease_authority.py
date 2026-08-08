@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shlex
 import uuid
 
 from dish_service.application import DishService
@@ -96,7 +95,7 @@ def test_expired_recovery_releases_admin_and_original_run_may_reclaim(tmp_path):
 
 
 
-def test_fresh_run_cannot_see_terminal_actions_for_prior_owned_verification_cycle(tmp_path):
+def test_fresh_run_sees_only_safe_reclaim_for_prior_owned_verification_cycle(tmp_path):
     clock = Clock()
     service, backend = _service(tmp_path, clock=clock, ttl=30)
     constructor = _principal("action", "constructor-run")
@@ -146,15 +145,16 @@ def test_fresh_run_cannot_see_terminal_actions_for_prior_owned_verification_cycl
         {"agent": "gpt", "submission_id": operation_id},
         principal=fresh,
     )
-    assert fresh_view["allowed_actions"] == []
-    assert fresh_view["data"]["service_access"]["state"] == (
-        "owned_by_inactive_verifier_run"
-    )
-    assert fresh_view["data"]["required_admin_action"] == "abandon-operation"
-    argv = shlex.split(fresh_view["data"]["admin_command"])
-    assert argv[:3] == ["dish-admin", "abandon-operation", operation_id]
-    assert "--lease-id" in argv
-    assert "--reason" in argv
+    assert fresh_view["allowed_actions"] == ["safe-reclaim"]
+    assert fresh_view["data"]["service_access"]["state"] == "safe_reclaim_available"
+    assert fresh_view["data"]["agent_action"] == {
+        "command": "safe-reclaim",
+        "arguments": {
+            "submission_id": operation_id,
+            "lease_id": fresh_view["data"]["service_access"]["lease_id"],
+            "agent": "gpt",
+        },
+    }
 
     forbidden = service.execute_agent(
         "reject",
@@ -171,10 +171,10 @@ def test_fresh_run_cannot_see_terminal_actions_for_prior_owned_verification_cycl
     assert forbidden["code"] == "AGENT_MISMATCH"
     error = forbidden["errors"][0]
     assert error["rule"] == "service_lease_claim_forbidden"
-    assert error["required_admin_action"] == "abandon-operation"
-    assert shlex.split(error["admin_command"])[:3] == [
-        "dish-admin", "abandon-operation", operation_id
-    ]
+    assert forbidden["allowed_actions"] == ["safe-reclaim"]
+    assert forbidden["data"]["legal_next_actions"] == ["safe-reclaim"]
+    assert forbidden["data"]["agent_action"] == fresh_view["data"]["agent_action"]
+    assert "required_admin_action" not in error
     assert backend.writes == 1
 
 def test_authorization_does_not_take_or_replace_live_actor_lease(tmp_path):

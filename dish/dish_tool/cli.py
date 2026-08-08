@@ -32,6 +32,7 @@ from dish_service.command_spec import (
     PROPOSALS_COMMAND,
     READ_COMMAND,
     REJECT_COMMAND,
+    SAFE_RECLAIM_COMMAND,
     SECTIONS_COMMAND,
     SECTION_TASKS_COMMAND,
     START_COMMAND,
@@ -213,6 +214,17 @@ def build_parser() -> JsonArgumentParser:
     apply_proposal.add_argument("--model", required=True)
     apply_proposal.add_argument("--run-id")
     apply_proposal.add_argument("--request-id")
+
+    safe_reclaim = subparsers.add_parser(
+        SAFE_RECLAIM_COMMAND.name,
+        help="replace one mechanically clean inactive agent attempt with a linked successor",
+    )
+    safe_reclaim.add_argument("submission_id")
+    safe_reclaim.add_argument("--lease-id", required=True)
+    safe_reclaim.add_argument(
+        "--agent", required=True, choices=_canonical_enum_choices(SAFE_RECLAIM_COMMAND, "agent")
+    )
+    safe_reclaim.add_argument("--request-id")
 
     start = subparsers.add_parser(
         START_COMMAND.name,
@@ -421,7 +433,7 @@ def _argument_context(argv: Sequence[str]) -> dict[str, str | None]:
     if command in {"read", "start"} and len(argv) > 1 and not argv[1].startswith("-"):
         task_gid = argv[1]
     if (
-        command in {"inspect", "prepare", "approve", "reject", "submit"}
+        command in {"inspect", "safe-reclaim", "prepare", "approve", "reject", "submit"}
         and len(argv) > 1
         and not argv[1].startswith("-")
     ):

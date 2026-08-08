@@ -99,7 +99,7 @@ from .restore_request_journal import RestoreRequestJournal
 
 _READ_ONLY_AGENT_COMMANDS = {"sections", "section-tasks", "read", "inspect", "proposals"}
 _LEASED_AGENT_COMMANDS = {"prepare", "approve", "reject", "submit", "apply-proposal"}
-_MUTATING_AGENT_COMMANDS = {"create", "start", *_LEASED_AGENT_COMMANDS}
+_MUTATING_AGENT_COMMANDS = {"create", "start", "safe-reclaim", *_LEASED_AGENT_COMMANDS}
 _REPLAYED_AGENT_COMMANDS = _MUTATING_AGENT_COMMANDS | {"inspect"}
 _RUN_ID_AGENT_COMMANDS = {"start", "prepare", "approve", "reject", "apply-proposal"}
 _HANDOFF_PHASES = {"await_verification", "held_evidence", "held_human"}
@@ -1209,6 +1209,21 @@ class DishService:
         command path. Active, completed-without-result, and partial executions
         remain fail-closed.
         """
+        if command == "safe-reclaim":
+            from dish_tool.safe_reclaim import safe_reclaim_result_data
+            durable = safe_reclaim_result_data(conn, request_id=request_id)
+            if durable is not None:
+                result = result_envelope(
+                    command="safe-reclaim",
+                    task_gid=durable.get("task_gid"),
+                    submission_id=durable["source_operation_id"],
+                    state="reclaimed",
+                    allowed_actions=["start"],
+                    data={**durable, "request_id": request_id, "request_replayed": True},
+                )
+                complete_request(conn, request_id=request_id, result=result)
+                return result
+
         recovery = execution_recovery_state(
             conn, request_id=request_id, include_completed=True
         )
@@ -1486,6 +1501,7 @@ class DishService:
         operation_id: str | None,
         principal: ServicePrincipal,
         agent: str | None = None,
+        backend: Any | None = None,
     ) -> dict[str, Any]:
         if not operation_id:
             return result
@@ -1627,81 +1643,149 @@ class DishService:
             elif leases.is_owned_by(active, principal):
                 access = {"state": "owned"}
             else:
-                actions = []
-                access_guidance = _admin_inspect_guidance(
-                    operation_id,
-                    summary=(
-                        "Inspect an expired operation lease owned by another run."
-                        if leases.is_expired(active)
-                        else "Inspect an operation currently owned by another agent run."
-                    ),
-                    effect=(
-                        "Dish will show whether Marco should wait, expire the lease, or abandon "
-                        "the unavailable run. A different run cannot use recover-lease."
-                    ),
-                )
-                access = {
-                    "state": (
-                        "expired_other_run"
-                        if leases.is_expired(active)
-                        else "held_by_other_run"
-                    ),
-                    "rule": (
-                        "service_lease_expired_other_run"
-                        if leases.is_expired(active)
-                        else "service_lease_owner_mismatch"
-                    ),
-                    "owner_id": active["owner_id"],
-                    "run_id": active["run_id"],
-                    "expires_at": active["expires_at"],
-                    "required_admin_action": access_guidance["required_admin_action"],
-                }
-                data["recovery_required"] = True
-        else:
-            filtered: list[str] = []
-            for action in actions:
-                if action == "start":
-                    filtered.append(action)
-                elif action in _LEASED_AGENT_COMMANDS and self._may_claim_missing_lease(
-                    conn, operation_id, principal, action, agent=agent
-                ):
-                    filtered.append(action)
-            actions = filtered
-            if actions:
-                access = {"state": "claimable_by_run"}
-            elif op["phase"] == "await_verification":
-                cycle = conn.execute(
-                    """SELECT run_id FROM verification_cycles
-                         WHERE operation_id=? AND completed_at IS NULL
-                         ORDER BY cycle_number DESC LIMIT 1""",
-                    (operation_id,),
-                ).fetchone()
-                bound_run = None if cycle is None else str(cycle["run_id"] or "").strip() or None
-                if bound_run is not None and bound_run != principal.run_id:
-                    access_guidance = _abandon_dead_verifier_guidance(conn, operation_id)
+                reclaim = None
+                if leases.is_expired(active) and backend is not None:
+                    from dish_tool.safe_reclaim import safe_reclaim_eligibility
+                    reclaim = safe_reclaim_eligibility(
+                        conn, backend, operation_id=operation_id,
+                        requested_owner_id=principal.owner_id,
+                        requested_run_id=principal.run_id,
+                        lease_id=active["lease_id"],
+                        now=leases.now(),
+                    )
+                if reclaim is not None and reclaim.eligible:
+                    actions = ["safe-reclaim"]
+                    data["safe_reclaim"] = reclaim.to_dict()
+                    reclaim_arguments = {
+                        "submission_id": operation_id,
+                        "lease_id": reclaim.lease_id,
+                    }
+                    if agent:
+                        reclaim_arguments["agent"] = agent
+                    data["agent_action"] = {
+                        "command": "safe-reclaim",
+                        "arguments": reclaim_arguments,
+                    }
                     access = {
-                        "state": "owned_by_inactive_verifier_run",
-                        "rule": "verification_run_ownership_required",
-                        "run_id": bound_run,
+                        "state": "safe_reclaim_available",
+                        "previous_owner_id": reclaim.previous_owner_id,
+                        "previous_run_id": reclaim.previous_run_id,
+                        "lease_id": reclaim.lease_id,
+                    }
+                else:
+                    actions = []
+                    if reclaim is not None:
+                        data["safe_reclaim"] = reclaim.to_dict()
+                    access_guidance = _admin_inspect_guidance(
+                        operation_id,
+                        summary=(
+                            "Inspect an expired operation lease owned by another run."
+                            if leases.is_expired(active)
+                            else "Inspect an operation currently owned by another agent run."
+                        ),
+                        effect=(
+                            "Dish will show the safe continuation. A different run cannot use "
+                            "recover-lease, and unsafe state must be reconciled before ownership moves."
+                        ),
+                    )
+                    access = {
+                        "state": (
+                            "expired_other_run"
+                            if leases.is_expired(active)
+                            else "held_by_other_run"
+                        ),
+                        "rule": (
+                            "service_lease_expired_other_run"
+                            if leases.is_expired(active)
+                            else "service_lease_owner_mismatch"
+                        ),
+                        "owner_id": active["owner_id"],
+                        "run_id": active["run_id"],
+                        "expires_at": active["expires_at"],
                         "required_admin_action": access_guidance["required_admin_action"],
                     }
                     data["recovery_required"] = True
-                else:
-                    access = {"state": "handoff"}
-            elif op["phase"] in {"held_evidence", "held_human"}:
-                access = {"state": "handoff"}
-            else:
-                access_guidance = _admin_inspect_guidance(
-                    operation_id,
-                    summary="Inspect an operation whose durable ownership is missing.",
-                    effect="Dish will identify the safe recovery route; recover-lease is not valid without a lease.",
+        else:
+            reclaim = None
+            latest_lease = conn.execute(
+                """SELECT * FROM service_leases
+                     WHERE operation_id=? AND lease_kind='actor'
+                     ORDER BY actor_attempt_seq DESC LIMIT 1""",
+                (operation_id,),
+            ).fetchone()
+            if latest_lease is not None and backend is not None:
+                from dish_tool.safe_reclaim import safe_reclaim_eligibility
+                reclaim = safe_reclaim_eligibility(
+                    conn, backend, operation_id=operation_id,
+                    requested_owner_id=principal.owner_id,
+                    requested_run_id=principal.run_id,
+                    lease_id=latest_lease["lease_id"],
+                    now=leases.now(),
                 )
-                access = {
-                    "state": "recovery_required",
-                    "rule": "service_lease_missing",
-                    "required_admin_action": access_guidance["required_admin_action"],
+            if reclaim is not None and reclaim.eligible:
+                actions = ["safe-reclaim"]
+                data["safe_reclaim"] = reclaim.to_dict()
+                reclaim_arguments = {
+                    "submission_id": operation_id,
+                    "lease_id": reclaim.lease_id,
                 }
-                data["recovery_required"] = True
+                if agent:
+                    reclaim_arguments["agent"] = agent
+                data["agent_action"] = {
+                    "command": "safe-reclaim",
+                    "arguments": reclaim_arguments,
+                }
+                access = {
+                    "state": "safe_reclaim_available",
+                    "previous_owner_id": reclaim.previous_owner_id,
+                    "previous_run_id": reclaim.previous_run_id,
+                    "lease_id": reclaim.lease_id,
+                }
+            else:
+                filtered: list[str] = []
+                for action in actions:
+                    if action == "start":
+                        filtered.append(action)
+                    elif action in _LEASED_AGENT_COMMANDS and self._may_claim_missing_lease(
+                        conn, operation_id, principal, action, agent=agent
+                    ):
+                        filtered.append(action)
+                actions = filtered
+                if actions:
+                    access = {"state": "claimable_by_run"}
+                elif op["phase"] == "await_verification":
+                    cycle = conn.execute(
+                        """SELECT run_id FROM verification_cycles
+                             WHERE operation_id=? AND completed_at IS NULL
+                             ORDER BY cycle_number DESC LIMIT 1""",
+                        (operation_id,),
+                    ).fetchone()
+                    bound_run = None if cycle is None else str(cycle["run_id"] or "").strip() or None
+                    if bound_run is not None and bound_run != principal.run_id:
+                        access_guidance = _abandon_dead_verifier_guidance(conn, operation_id)
+                        access = {
+                            "state": "owned_by_inactive_verifier_run",
+                            "rule": "verification_run_ownership_required",
+                            "run_id": bound_run,
+                            "required_admin_action": access_guidance["required_admin_action"],
+                        }
+                        data["recovery_required"] = True
+                    else:
+                        access = {"state": "handoff"}
+                elif op["phase"] in {"held_evidence", "held_human"}:
+                    access = {"state": "handoff"}
+                else:
+                    access_guidance = _admin_inspect_guidance(
+                        operation_id,
+                        summary="Inspect an operation whose durable ownership is missing.",
+                        effect="Dish will identify the safe recovery route; recover-lease is not valid without a lease.",
+                    )
+                    access = {
+                        "state": "recovery_required",
+                        "rule": "service_lease_missing",
+                        "required_admin_action": access_guidance["required_admin_action"],
+                    }
+                    data["recovery_required"] = True
 
         self._synchronize_exposed_actions(result, actions)
         data["service_access"] = access
@@ -2102,6 +2186,7 @@ class DishService:
             result, conn=conn, leases=leases, operation_id=operation_id,
             principal=principal,
             agent=str(arguments.get("agent") or "") or None,
+            backend=app.backend,
         )
         if kind == "planning":
             with immediate_transaction(conn, "complete_planning_start_replay"):
@@ -2206,23 +2291,32 @@ class DishService:
         )
         if command == "start" and prepared.get("prepared_operation_id"):
             authority = state.conn.execute(
-                """SELECT abandonment.abandoned_owner_id, abandonment.abandoned_run_id
+                """SELECT abandonment.abandoned_owner_id AS previous_owner_id,
+                          abandonment.abandoned_run_id AS previous_run_id,
+                          'abandonment' AS replacement_kind
                      FROM operation_successions AS succession
                      JOIN abandonment_attempts AS abandonment
                        ON abandonment.abandonment_id=succession.abandonment_id
-                    WHERE succession.successor_operation_id=?""",
-                (state.operation_id,),
+                    WHERE succession.successor_operation_id=?
+                    UNION ALL
+                   SELECT reclaim.previous_owner_id, reclaim.previous_run_id,
+                          'safe_reclaim' AS replacement_kind
+                     FROM safe_reclaims AS reclaim
+                    WHERE reclaim.successor_operation_id=?""",
+                (state.operation_id, state.operation_id),
             ).fetchone()
             if (
                 authority is not None
-                and authority["abandoned_owner_id"] == state.principal.owner_id
-                and authority["abandoned_run_id"] == state.principal.run_id
+                and authority["previous_owner_id"] == state.principal.owner_id
+                and authority["previous_run_id"] == state.principal.run_id
             ):
-                raise DishRuleError(
-                    "AGENT_MISMATCH",
-                    "the abandoned client run cannot claim its replacement attempt",
-                    rule="abandoned_run_claim_forbidden",
-                )
+                if authority["replacement_kind"] == "abandonment":
+                    message = "the abandoned client run cannot claim its replacement attempt"
+                    rule = "abandoned_run_claim_forbidden"
+                else:
+                    message = "the reclaimed client run cannot claim its safe-reclaim successor"
+                    rule = "safe_reclaim_previous_run_forbidden"
+                raise DishRuleError("AGENT_MISMATCH", message, rule=rule)
         if command == "start" and prepared.get("kind") == "verification":
             from dish_tool.step7 import resolve_verification_start_target
 
@@ -2236,14 +2330,16 @@ class DishService:
             state.verification_start_cycle_id = str(target_cycle["cycle_id"])
             if (
                 authority is not None
-                and authority["abandoned_owner_id"] == state.principal.owner_id
-                and authority["abandoned_run_id"] == state.principal.run_id
+                and authority["previous_owner_id"] == state.principal.owner_id
+                and authority["previous_run_id"] == state.principal.run_id
             ):
-                raise DishRuleError(
-                    "AGENT_MISMATCH",
-                    "the abandoned client run cannot claim its replacement Verification attempt",
-                    rule="abandoned_run_claim_forbidden",
-                )
+                if authority["replacement_kind"] == "abandonment":
+                    message = "the abandoned client run cannot claim its replacement Verification attempt"
+                    rule = "abandoned_run_claim_forbidden"
+                else:
+                    message = "the reclaimed client run cannot claim its safe-reclaim Verification successor"
+                    rule = "safe_reclaim_previous_run_forbidden"
+                raise DishRuleError("AGENT_MISMATCH", message, rule=rule)
         if state.operation_id and command in _MUTATING_AGENT_COMMANDS:
             self._assert_connected_abandonment_access(
                 state.conn,
@@ -2291,15 +2387,50 @@ class DishService:
                     agent=str(prepared.get("agent") or "") or None,
                     proposal_id=str(prepared.get("proposal_id") or "").strip() or None,
                 ):
-                    guidance = (
-                        _abandon_dead_verifier_guidance(state.conn, operation_id)
-                        if operation["phase"] == "await_verification"
-                        else _admin_inspect_guidance(
-                            operation_id,
-                            summary="Inspect an operation whose durable ownership belongs elsewhere.",
-                            effect="Dish will identify the safe recovery route before any mutation is retried.",
+                    reclaim = None
+                    if state.backend is not None:
+                        from dish_tool.safe_reclaim import safe_reclaim_eligibility
+
+                        reclaim = safe_reclaim_eligibility(
+                            state.conn,
+                            state.backend,
+                            operation_id=operation_id,
+                            requested_owner_id=state.principal.owner_id,
+                            requested_run_id=state.principal.run_id,
+                            now=state.leases.now(),
                         )
-                    )
+                    if reclaim is not None and reclaim.eligible:
+                        reclaim_arguments: dict[str, Any] = {
+                            "submission_id": operation_id,
+                            "lease_id": reclaim.lease_id,
+                        }
+                        reclaim_agent = str(prepared.get("agent") or "").strip()
+                        if reclaim_agent:
+                            reclaim_arguments["agent"] = reclaim_agent
+                        guidance = {
+                            "safe_reclaim": reclaim.to_dict(),
+                            "agent_action": {
+                                "command": "safe-reclaim",
+                                "arguments": reclaim_arguments,
+                            },
+                            "service_access": {
+                                "state": "safe_reclaim_available",
+                                "previous_owner_id": reclaim.previous_owner_id,
+                                "previous_run_id": reclaim.previous_run_id,
+                                "lease_id": reclaim.lease_id,
+                            },
+                            "legal_next_actions": ["safe-reclaim"],
+                        }
+                    else:
+                        guidance = (
+                            _abandon_dead_verifier_guidance(state.conn, operation_id)
+                            if operation["phase"] == "await_verification"
+                            else _admin_inspect_guidance(
+                                operation_id,
+                                summary="Inspect an operation whose durable ownership belongs elsewhere.",
+                                effect="Dish will identify the safe recovery route before any mutation is retried.",
+                            )
+                        )
                     raise DishRuleError(
                         "AGENT_MISMATCH",
                         (
@@ -2379,6 +2510,33 @@ class DishService:
                 data={**data, "authoritative_view": view},
                 validation_scope=scope_for_command("submit"),
             )
+        if command == "safe-reclaim":
+            if state.request_row is None or not state.operation_id:
+                raise DishRuleError(
+                    "INTERNAL_ERROR",
+                    "safe reclaim lacks durable request or operation identity",
+                    rule="safe_reclaim_request_binding_missing",
+                )
+            from dish_tool.safe_reclaim import execute_safe_reclaim
+            data = execute_safe_reclaim(
+                state.conn, state.backend,
+                operation_id=state.operation_id,
+                lease_id=str(state.prepared_arguments.get("lease_id") or ""),
+                requested_owner_id=state.principal.owner_id,
+                requested_run_id=state.principal.run_id,
+                requested_agent=str(state.prepared_arguments.get("agent") or ""),
+                request_id=str(state.request_row["request_id"]),
+                now=state.leases.now(),
+            )
+            return result_envelope(
+                command="safe-reclaim",
+                task_gid=data.get("task_gid"),
+                submission_id=state.operation_id,
+                state="reclaimed",
+                allowed_actions=["start"],
+                data=data,
+            )
+
         with self._candidate_file(state.prepared_arguments) as prepared:
             if command == "start" and prepared.get("kind") == "planning":
                 prepared = dict(prepared)
@@ -2401,6 +2559,11 @@ class DishService:
             request_id_consumed=bool(request_id and state.replay_started),
         )
         prepared = state.prepared_arguments
+        if command == "safe-reclaim":
+            if request_id:
+                result.setdefault("data", {})["request_id"] = request_id
+                state.replay.complete(state.conn, request_id=request_id, result=result)
+            return result
         if (
             command == "start"
             and prepared.get("kind") != "verification"
@@ -2474,6 +2637,7 @@ class DishService:
             operation_id=result_operation_id,
             principal=state.principal,
             agent=str(prepared.get("agent") or "") or None,
+            backend=state.backend,
         )
         if result.get("data", {}).get("service_recovery_required"):
             result["allowed_actions"] = []
@@ -2586,6 +2750,23 @@ class DishService:
             data["service_recovery_required"] = True
             self._synchronize_exposed_actions(result, [])
             result["retryable"] = False
+        if error.rule == "service_lease_claim_forbidden":
+            action = error.details.get("agent_action")
+            if (
+                isinstance(action, dict)
+                and action.get("command") == "safe-reclaim"
+                and isinstance(action.get("arguments"), dict)
+            ):
+                data = result.setdefault("data", {})
+                data["agent_action"] = dict(action)
+                if isinstance(error.details.get("safe_reclaim"), dict):
+                    data["safe_reclaim"] = dict(error.details["safe_reclaim"])
+                if isinstance(error.details.get("service_access"), dict):
+                    data["service_access"] = dict(error.details["service_access"])
+                self._synchronize_exposed_actions(
+                    result, ["safe-reclaim"], ensure_legal_next=True
+                )
+                result["retryable"] = False
         if error.rule == "service_lease_expired":
             view = (
                 self._exposed_operation_view(

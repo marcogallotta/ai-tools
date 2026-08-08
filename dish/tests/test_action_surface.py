@@ -10,6 +10,7 @@ from dish_service.action_guidance import action_agent_guidance
 from dish_service.application import DishService
 from dish_service.client import DishActionClient, DishAdminServiceClient, DishServiceClient
 from dish_service.config import ServiceConfig
+from dish_service.command_spec import validate_action_request
 from dish_service.http import build_server
 from dish_service.identifiers import validate_identifier_fields
 from dish_tool.backend import map_backend_exception
@@ -256,6 +257,68 @@ def test_connected_advertised_workflow_actions_are_callable(
     assert result["ok"] is True
 
 
+
+@pytest.mark.smoke
+def test_connected_action_can_execute_advertised_safe_reclaim(tmp_path, running_server):
+    _backend, _server, _thread, url = running_server()
+    old = DishActionClient(
+        url,
+        token="action-secret",
+        run_id="9b85f42f-94f7-4c89-9e58-660fa8502a85",
+    )
+    started = old.execute(
+        "start", agent="gpt", task_gid="123456789", kind="initial"
+    )
+    assert started["ok"] is True
+
+    from dish_tool.database import initialize_database
+
+    conn = initialize_database(tmp_path / "shared.db")
+    try:
+        lease = conn.execute(
+            "SELECT lease_id FROM service_leases WHERE operation_id=? AND lease_kind='actor' ORDER BY actor_attempt_seq DESC LIMIT 1",
+            (started["submission_id"],),
+        ).fetchone()
+        assert lease is not None
+        lease_id = lease["lease_id"]
+    finally:
+        conn.close()
+
+    admin = DishAdminServiceClient(
+        url,
+        token="admin-secret",
+        run_id="c99033ef-f29c-4a65-80fc-440d523ee9a3",
+    )
+    expired = admin.expire_lease(
+        lease_id=lease_id,
+        reason="test old run is gone",
+        request_id=str(uuid.uuid4()),
+    )
+    assert expired["ok"] is True
+
+    fresh = DishActionClient(
+        url,
+        token="action-secret",
+        run_id="cd05b35a-f384-4ca7-946a-f3b8b3400e91",
+    )
+    discovered = fresh.execute("read", agent="gpt", task_gid="123456789")
+    assert discovered["allowed_actions"] == ["safe-reclaim"]
+    action = discovered["data"]["agent_action"]
+    assert action == {
+        "command": "safe-reclaim",
+        "arguments": {
+            "submission_id": started["submission_id"],
+            "lease_id": lease_id,
+            "agent": "gpt",
+        },
+    }
+
+    reclaimed = fresh.execute("safe-reclaim", **action["arguments"])
+    assert reclaimed["ok"] is True
+    assert reclaimed["state"] == "reclaimed"
+    assert reclaimed["allowed_actions"] == ["start"]
+
+
 def test_service_refuses_to_advertise_non_callable_connected_action():
     result = {"ok": True, "allowed_actions": [], "data": {}}
     with pytest.raises(DishRuleError) as exc:
@@ -290,3 +353,43 @@ def test_action_guidance_fails_closed_on_backend_uncertainty():
     })
 
     assert any("Stop." in item and "new request ID" in item for item in guidance["instructions"])
+
+
+def test_action_guidance_points_to_exact_returned_agent_action():
+    guidance = action_agent_guidance({
+        "ok": True,
+        "command": "read",
+        "code": "OK",
+        "allowed_actions": ["safe-reclaim"],
+        "data": {
+            "agent_action": {
+                "command": "safe-reclaim",
+                "arguments": {
+                    "submission_id": "11111111-1111-4111-8111-111111111111",
+                    "lease_id": "22222222-2222-4222-8222-222222222222",
+                },
+            }
+        },
+    })
+    assert any(
+        instruction.startswith("Call safe-reclaim with the target arguments in data.agent_action.arguments exactly")
+        and "add only caller/request fields required by the current Action schema" in instruction
+        for instruction in guidance["instructions"]
+    )
+
+
+def test_missing_inspect_request_id_explains_possible_stale_action_schema():
+    with pytest.raises(DishRuleError) as exc:
+        validate_action_request(
+            "inspect",
+            {
+                "client": {"run_id": "11111111-1111-4111-8111-111111111111"},
+                "arguments": {
+                    "agent": "gpt",
+                    "submission_id": "22222222-2222-4222-8222-222222222222",
+                },
+            },
+        )
+    assert exc.value.rule == "request_field_required"
+    assert "records durable Verification evidence" in str(exc.value)
+    assert "refresh or re-import the Dish Action schema" in str(exc.value)

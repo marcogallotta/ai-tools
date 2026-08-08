@@ -45,6 +45,7 @@ _SHADOW_ONLY_OVERRIDES: dict[str, tuple[Treatment, str]] = {
     "repair-destination": ("capture_only", "projection-attempt identity is target-specific"),
     "proposals": ("excluded", "read-only source semantic-proposal queue"),
     "apply-proposal": ("capture_only", "target semantic-proposal authority is not implemented"),
+    "safe-reclaim": ("capture_only", "target safe-reclaim authority is not implemented"),
     "review-queue": ("excluded", "read-only source semantic-proposal queue"),
     "review-inspect": ("excluded", "read-only source semantic-proposal detail"),
     "review-approve": ("capture_only", "target semantic-proposal authority is not implemented"),

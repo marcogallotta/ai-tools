@@ -2728,7 +2728,186 @@ WHEN NOT (
 BEGIN SELECT RAISE(ABORT, 'service request completion or resolution is invalid'); END;
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31, 32: _MIGRATION_32, 33: _MIGRATION_33, 34: _MIGRATION_34, 35: _MIGRATION_35, 36: _MIGRATION_36, 37: _MIGRATION_37, 38: _MIGRATION_38, 39: _MIGRATION_39}
+
+_MIGRATION_40 = """
+CREATE TABLE safe_reclaims (
+    reclaim_id TEXT PRIMARY KEY,
+    task_gid TEXT NOT NULL CHECK(length(trim(task_gid)) > 0),
+    source_operation_id TEXT NOT NULL UNIQUE REFERENCES operations(operation_id),
+    request_id TEXT NOT NULL UNIQUE REFERENCES service_requests(request_id),
+    source_lease_id TEXT NOT NULL REFERENCES service_leases(lease_id),
+    previous_owner_id TEXT NOT NULL CHECK(length(trim(previous_owner_id)) > 0),
+    previous_run_id TEXT NOT NULL CHECK(length(trim(previous_run_id)) > 0),
+    source_cycle_id TEXT REFERENCES verification_cycles(cycle_id),
+    requested_owner_id TEXT NOT NULL CHECK(length(trim(requested_owner_id)) > 0),
+    requested_run_id TEXT NOT NULL CHECK(length(trim(requested_run_id)) > 0),
+    successor_operation_id TEXT NOT NULL UNIQUE REFERENCES operations(operation_id),
+    successor_cycle_id TEXT REFERENCES verification_cycles(cycle_id),
+    source_content_version_id TEXT NOT NULL REFERENCES content_versions(content_version_id),
+    successor_content_version_id TEXT NOT NULL REFERENCES content_versions(content_version_id),
+    stage TEXT NOT NULL CHECK(stage IN ('planning','research','verification')),
+    reason TEXT NOT NULL CHECK(reason IN ('expired_actor_lease','terminated_actor_lease')),
+    status TEXT NOT NULL CHECK(status IN ('prepared','claimed')),
+    created_at TEXT NOT NULL,
+    claimed_at TEXT,
+    CHECK(previous_run_id != requested_run_id),
+    CHECK((status='prepared' AND claimed_at IS NULL)
+       OR (status='claimed' AND claimed_at IS NOT NULL)),
+    CHECK((stage='verification' AND source_cycle_id IS NOT NULL AND successor_cycle_id IS NOT NULL)
+       OR (stage IN ('planning','research') AND source_cycle_id IS NULL AND successor_cycle_id IS NULL))
+);
+CREATE INDEX safe_reclaims_task_idx ON safe_reclaims(task_gid, created_at);
+
+CREATE TRIGGER safe_reclaims_binding_insert
+BEFORE INSERT ON safe_reclaims
+WHEN NOT EXISTS (
+        SELECT 1 FROM operations AS source
+         WHERE source.operation_id=NEW.source_operation_id
+           AND source.task_gid=NEW.task_gid
+           AND source.status='cancelled'
+           AND source.phase='terminal'
+           AND source.terminal_outcome='safe_reclaimed'
+     )
+  OR NOT EXISTS (
+        SELECT 1 FROM operations AS successor
+         WHERE successor.operation_id=NEW.successor_operation_id
+           AND successor.task_gid=NEW.task_gid
+           AND successor.status='open'
+           AND successor.phase!='terminal'
+           AND successor.successor_claim_mode IN ('stage_actor','verifier')
+           AND successor.content_write_completed_at IS NULL
+     )
+  OR NOT EXISTS (
+        SELECT 1 FROM service_leases AS lease
+         WHERE lease.lease_id=NEW.source_lease_id
+           AND lease.operation_id=NEW.source_operation_id
+           AND lease.task_gid=NEW.task_gid
+           AND lease.owner_id=NEW.previous_owner_id
+           AND lease.run_id=NEW.previous_run_id
+           AND lease.lease_kind='actor'
+           AND lease.context_cycle_id IS NEW.source_cycle_id
+           AND (lease.released_at IS NOT NULL OR julianday(lease.expires_at) <= julianday(NEW.created_at))
+     )
+  OR NOT EXISTS (
+        SELECT 1 FROM service_requests AS request
+         WHERE request.request_id=NEW.request_id
+           AND request.command='safe-reclaim'
+           AND request.owner_id=NEW.requested_owner_id
+           AND request.run_id=NEW.requested_run_id
+           AND request.status='pending'
+     )
+  OR NOT EXISTS (
+        SELECT 1
+          FROM content_versions AS source_version
+          JOIN content_versions AS successor_version
+            ON successor_version.content_version_id=NEW.successor_content_version_id
+         WHERE source_version.content_version_id=NEW.source_content_version_id
+           AND source_version.task_gid=NEW.task_gid
+           AND source_version.confirmed=1
+           AND successor_version.task_gid=NEW.task_gid
+           AND successor_version.operation_id=NEW.successor_operation_id
+           AND successor_version.boundary='successor_baseline'
+           AND successor_version.confirmed=1
+           AND successor_version.identity=source_version.identity
+           AND successor_version.title=source_version.title
+           AND successor_version.notes=source_version.notes
+     )
+  OR (NEW.source_cycle_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM verification_cycles AS cycle
+         WHERE cycle.cycle_id=NEW.source_cycle_id
+           AND cycle.operation_id=NEW.source_operation_id
+           AND cycle.task_gid=NEW.task_gid
+           AND cycle.run_id=NEW.previous_run_id
+           AND cycle.outcome='safe_reclaimed'
+           AND cycle.completed_at IS NOT NULL
+     ))
+  OR (NEW.successor_cycle_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM verification_cycles AS cycle
+         WHERE cycle.cycle_id=NEW.successor_cycle_id
+           AND cycle.operation_id=NEW.successor_operation_id
+           AND cycle.task_gid=NEW.task_gid
+           AND cycle.completed_at IS NULL
+           AND cycle.outcome IS NULL
+     ))
+BEGIN SELECT RAISE(ABORT, 'safe reclaim binding is invalid'); END;
+
+CREATE TRIGGER safe_reclaims_identity_immutable_update
+BEFORE UPDATE ON safe_reclaims
+WHEN NEW.reclaim_id IS NOT OLD.reclaim_id
+  OR NEW.task_gid IS NOT OLD.task_gid
+  OR NEW.source_operation_id IS NOT OLD.source_operation_id
+  OR NEW.request_id IS NOT OLD.request_id
+  OR NEW.source_lease_id IS NOT OLD.source_lease_id
+  OR NEW.previous_owner_id IS NOT OLD.previous_owner_id
+  OR NEW.previous_run_id IS NOT OLD.previous_run_id
+  OR NEW.source_cycle_id IS NOT OLD.source_cycle_id
+  OR NEW.requested_owner_id IS NOT OLD.requested_owner_id
+  OR NEW.requested_run_id IS NOT OLD.requested_run_id
+  OR NEW.successor_operation_id IS NOT OLD.successor_operation_id
+  OR NEW.successor_cycle_id IS NOT OLD.successor_cycle_id
+  OR NEW.source_content_version_id IS NOT OLD.source_content_version_id
+  OR NEW.successor_content_version_id IS NOT OLD.successor_content_version_id
+  OR NEW.stage IS NOT OLD.stage
+  OR NEW.reason IS NOT OLD.reason
+  OR NEW.created_at IS NOT OLD.created_at
+BEGIN SELECT RAISE(ABORT, 'safe reclaim identity is immutable'); END;
+
+CREATE TRIGGER safe_reclaims_status_transition_update
+BEFORE UPDATE OF status,claimed_at ON safe_reclaims
+WHEN NOT (OLD.status='prepared' AND NEW.status='claimed' AND NEW.claimed_at IS NOT NULL)
+BEGIN SELECT RAISE(ABORT, 'safe reclaim claim transition is invalid'); END;
+CREATE TRIGGER safe_reclaims_append_only_delete
+BEFORE DELETE ON safe_reclaims
+BEGIN SELECT RAISE(ABORT, 'safe reclaims are append-only'); END;
+
+CREATE TRIGGER verification_cycles_safe_reclaimed_insert
+BEFORE INSERT ON verification_cycles
+WHEN NEW.outcome='safe_reclaimed'
+BEGIN SELECT RAISE(ABORT, 'safe-reclaimed Verification outcome must close an existing incomplete cycle'); END;
+CREATE TRIGGER verification_cycles_safe_reclaimed_update
+BEFORE UPDATE OF outcome,completed_at,signed_content_version_id,signed_identity ON verification_cycles
+WHEN NEW.outcome='safe_reclaimed' AND (
+     OLD.completed_at IS NOT NULL OR OLD.outcome IS NOT NULL
+     OR NEW.completed_at IS NULL
+     OR NEW.signed_content_version_id IS NOT NULL OR NEW.signed_identity IS NOT NULL
+     OR NOT EXISTS (
+        SELECT 1 FROM operations AS operation
+         WHERE operation.operation_id=NEW.operation_id
+           AND operation.status='cancelled'
+           AND operation.terminal_outcome='safe_reclaimed'
+     )
+)
+BEGIN SELECT RAISE(ABORT, 'safe-reclaimed Verification cycle binding is invalid'); END;
+
+CREATE TRIGGER operations_safe_reclaimed_immutable_update
+BEFORE UPDATE ON operations
+WHEN OLD.status='cancelled' AND OLD.terminal_outcome='safe_reclaimed'
+BEGIN SELECT RAISE(ABORT, 'safe-reclaimed operation is immutable'); END;
+CREATE TRIGGER safe_reclaimed_operation_steps_insert
+BEFORE INSERT ON operation_steps
+WHEN EXISTS (SELECT 1 FROM operations WHERE operation_id=NEW.operation_id AND status='cancelled' AND terminal_outcome='safe_reclaimed')
+BEGIN SELECT RAISE(ABORT, 'safe-reclaimed operation cannot receive workflow steps'); END;
+CREATE TRIGGER safe_reclaimed_actor_facts_insert
+BEFORE INSERT ON operation_actor_facts
+WHEN EXISTS (SELECT 1 FROM operations WHERE operation_id=NEW.operation_id AND status='cancelled' AND terminal_outcome='safe_reclaimed')
+BEGIN SELECT RAISE(ABORT, 'safe-reclaimed operation cannot receive actor facts'); END;
+CREATE TRIGGER safe_reclaimed_write_attempts_insert
+BEFORE INSERT ON write_attempts
+WHEN EXISTS (SELECT 1 FROM operations WHERE operation_id=NEW.operation_id AND status='cancelled' AND terminal_outcome='safe_reclaimed')
+BEGIN SELECT RAISE(ABORT, 'safe-reclaimed operation cannot receive write attempts'); END;
+CREATE TRIGGER safe_reclaimed_movement_attempts_insert
+BEFORE INSERT ON movement_attempts
+WHEN EXISTS (SELECT 1 FROM operations WHERE operation_id=NEW.operation_id AND status='cancelled' AND terminal_outcome='safe_reclaimed')
+BEGIN SELECT RAISE(ABORT, 'safe-reclaimed operation cannot receive movement attempts'); END;
+CREATE TRIGGER safe_reclaimed_content_versions_insert
+BEFORE INSERT ON content_versions
+WHEN NEW.operation_id IS NOT NULL AND EXISTS (
+    SELECT 1 FROM operations WHERE operation_id=NEW.operation_id AND status='cancelled' AND terminal_outcome='safe_reclaimed'
+)
+BEGIN SELECT RAISE(ABORT, 'safe-reclaimed operation cannot receive content versions'); END;
+"""
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31, 32: _MIGRATION_32, 33: _MIGRATION_33, 34: _MIGRATION_34, 35: _MIGRATION_35, 36: _MIGRATION_36, 37: _MIGRATION_37, 38: _MIGRATION_38, 39: _MIGRATION_39, 40: _MIGRATION_40}
 
 
 def _backup_legacy_database(db_path: Path) -> None:
@@ -2875,6 +3054,7 @@ _SEMANTIC_RECORD_SELECTORS = {
     "operation_executions": "execution_id",
     "abandonment_attempts": "abandonment_id",
     "operation_successions": "succession_id",
+    "safe_reclaims": "reclaim_id",
     "verification_hold_resets": "reset_id",
 }
 _SEMANTIC_PROVENANCE_FIELDS = (
@@ -3454,6 +3634,110 @@ def _semantic_relationship(
             "required_predicate": (
                 "an abandoned verification cycle is completed, has no signed identity/version, and belongs to "
                 "an agent-abandoned cancelled operation"
+            ),
+        },
+        "safe_reclaim_binding": {
+            "source_fields": [
+                "reclaim_id", "task_gid", "source_operation_id", "successor_operation_id",
+                "source_lease_id", "request_id", "previous_owner_id", "previous_run_id",
+                "requested_owner_id", "requested_run_id", "source_content_version_id",
+                "successor_content_version_id",
+            ],
+            "targets": [
+                {
+                    "record_type": "operations",
+                    "selector_fields": ["source_operation_id", "successor_operation_id"],
+                    "fields": ["task_gid", "status", "terminal_outcome"],
+                },
+                {
+                    "record_type": "service_leases",
+                    "selector": _semantic_selector(row, "source_lease_id"),
+                    "fields": ["operation_id", "owner_id", "run_id"],
+                },
+                {
+                    "record_type": "service_requests",
+                    "selector": _semantic_selector(row, "request_id"),
+                    "fields": ["command", "owner_id", "run_id"],
+                },
+                {
+                    "record_type": "content_versions",
+                    "selector_fields": ["source_content_version_id", "successor_content_version_id"],
+                    "fields": ["operation_id", "task_gid", "identity", "title", "notes", "boundary", "confirmed"],
+                },
+            ],
+            "required_predicate": (
+                "safe reclaim binds one cancelled source, its exact inactive lease/request authority, "
+                "one successor, and byte-equivalent confirmed source/successor content baselines"
+            ),
+        },
+        "safe_reclaim_prepared_successor_binding": {
+            "source_fields": ["successor_operation_id", "stage", "status"],
+            "targets": [{
+                "record_type": "operations",
+                "selector": _semantic_selector(row, "successor_operation_id"),
+                "fields": ["successor_claim_mode", "status"],
+            }],
+            "required_predicate": (
+                "a prepared safe-reclaim successor advertises verifier claim mode for Verification "
+                "or stage_actor claim mode for Planning/Research"
+            ),
+        },
+        "safe_reclaim_claimed_successor_binding": {
+            "source_fields": ["successor_operation_id", "status", "claimed_at"],
+            "targets": [{
+                "record_type": "operations",
+                "selector": _semantic_selector(row, "successor_operation_id"),
+                "fields": ["successor_claim_mode"],
+            }],
+            "required_predicate": "a claimed safe-reclaim successor has consumed its prepared claim mode",
+        },
+        "safe_reclaim_cycle_binding": {
+            "source_fields": [
+                "stage", "source_operation_id", "successor_operation_id",
+                "source_cycle_id", "successor_cycle_id",
+            ],
+            "targets": [{
+                "record_type": "verification_cycles",
+                "selector_fields": ["source_cycle_id", "successor_cycle_id"],
+                "fields": ["operation_id", "outcome", "completed_at"],
+            }],
+            "required_predicate": (
+                "Verification safe reclaim closes the exact source cycle as safe_reclaimed and creates "
+                "a successor cycle bound to the successor operation"
+            ),
+        },
+        "safe_reclaimed_source_terminal_binding": {
+            "source_fields": ["operation_id", "status", "terminal_outcome"],
+            "targets": [
+                {
+                    "record_type": "safe_reclaims",
+                    "selector_fields": ["source_operation_id=operation_id"],
+                    "fields": ["reclaim_id", "successor_operation_id"],
+                },
+                {
+                    "record_type": "operation_steps/write_attempts/movement_attempts",
+                    "selector": _semantic_selector(row, "operation_id"),
+                    "fields": ["completed_at", "outcome"],
+                },
+            ],
+            "required_predicate": (
+                "a safe-reclaimed source has one reclaim lineage, no incomplete workflow step, and no "
+                "started or uncertain external-effect attempt"
+            ),
+        },
+        "safe_reclaimed_verification_cycle_binding": {
+            "source_fields": [
+                "cycle_id", "operation_id", "outcome", "completed_at",
+                "signed_content_version_id", "signed_identity",
+            ],
+            "targets": [{
+                "record_type": "operations",
+                "selector": _semantic_selector(row, "operation_id"),
+                "fields": ["status", "terminal_outcome"],
+            }],
+            "required_predicate": (
+                "a safe-reclaimed Verification cycle is completed, unsigned, and belongs to the exact "
+                "safe-reclaimed cancelled source operation"
             ),
         },
     }
@@ -4221,6 +4505,129 @@ def _validate_abandonment_attempt_evidence(
                     related_record_id=row["current_execution_id"],
                 ))
 
+
+def _validate_safe_reclaim_evidence(
+    conn: sqlite3.Connection, problems: list[dict[str, Any]]
+) -> None:
+    for row in conn.execute("SELECT * FROM safe_reclaims"):
+        source = conn.execute(
+            "SELECT * FROM operations WHERE operation_id=?", (row["source_operation_id"],)
+        ).fetchone()
+        successor = conn.execute(
+            "SELECT * FROM operations WHERE operation_id=?", (row["successor_operation_id"],)
+        ).fetchone()
+        lease = conn.execute(
+            "SELECT * FROM service_leases WHERE lease_id=?", (row["source_lease_id"],)
+        ).fetchone()
+        request = conn.execute(
+            "SELECT * FROM service_requests WHERE request_id=?", (row["request_id"],)
+        ).fetchone()
+        source_version = conn.execute(
+            "SELECT * FROM content_versions WHERE content_version_id=?",
+            (row["source_content_version_id"],),
+        ).fetchone()
+        successor_version = conn.execute(
+            "SELECT * FROM content_versions WHERE content_version_id=?",
+            (row["successor_content_version_id"],),
+        ).fetchone()
+        invalid = (
+            source is None
+            or successor is None
+            or lease is None
+            or request is None
+            or source_version is None
+            or successor_version is None
+            or source["task_gid"] != row["task_gid"]
+            or source["status"] != "cancelled"
+            or source["terminal_outcome"] != "safe_reclaimed"
+            or successor["task_gid"] != row["task_gid"]
+            or lease["operation_id"] != row["source_operation_id"]
+            or lease["owner_id"] != row["previous_owner_id"]
+            or lease["run_id"] != row["previous_run_id"]
+            or request["command"] != "safe-reclaim"
+            or request["owner_id"] != row["requested_owner_id"]
+            or request["run_id"] != row["requested_run_id"]
+            or source_version["task_gid"] != row["task_gid"]
+            or source_version["confirmed"] != 1
+            or successor_version["operation_id"] != row["successor_operation_id"]
+            or successor_version["boundary"] != "successor_baseline"
+            or successor_version["confirmed"] != 1
+            or successor_version["identity"] != source_version["identity"]
+            or successor_version["title"] != source_version["title"]
+            or successor_version["notes"] != source_version["notes"]
+        )
+        if invalid:
+            problems.append(_semantic_problem(
+                conn, "safe_reclaim_binding", "safe_reclaims", row["reclaim_id"]
+            ))
+            continue
+        expected_mode = "verifier" if row["stage"] == "verification" else "stage_actor"
+        if row["status"] == "prepared" and successor["successor_claim_mode"] != expected_mode:
+            problems.append(_semantic_problem(
+                conn, "safe_reclaim_prepared_successor_binding", "safe_reclaims", row["reclaim_id"]
+            ))
+        if row["status"] == "claimed" and successor["successor_claim_mode"] != "none":
+            problems.append(_semantic_problem(
+                conn, "safe_reclaim_claimed_successor_binding", "safe_reclaims", row["reclaim_id"]
+            ))
+        if row["stage"] == "verification":
+            source_cycle = conn.execute(
+                "SELECT * FROM verification_cycles WHERE cycle_id=?", (row["source_cycle_id"],)
+            ).fetchone()
+            successor_cycle = conn.execute(
+                "SELECT * FROM verification_cycles WHERE cycle_id=?", (row["successor_cycle_id"],)
+            ).fetchone()
+            if (
+                source_cycle is None
+                or source_cycle["operation_id"] != row["source_operation_id"]
+                or source_cycle["outcome"] != "safe_reclaimed"
+                or source_cycle["completed_at"] is None
+                or successor_cycle is None
+                or successor_cycle["operation_id"] != row["successor_operation_id"]
+            ):
+                problems.append(_semantic_problem(
+                    conn, "safe_reclaim_cycle_binding", "safe_reclaims", row["reclaim_id"]
+                ))
+
+    for row in conn.execute(
+        "SELECT operation_id FROM operations WHERE status='cancelled' AND terminal_outcome='safe_reclaimed'"
+    ):
+        reclaim = conn.execute(
+            "SELECT 1 FROM safe_reclaims WHERE source_operation_id=?", (row["operation_id"],)
+        ).fetchone()
+        pending = conn.execute(
+            "SELECT 1 FROM operation_steps WHERE operation_id=? AND completed_at IS NULL LIMIT 1",
+            (row["operation_id"],),
+        ).fetchone()
+        unresolved = conn.execute(
+            """SELECT 1 FROM write_attempts WHERE operation_id=? AND outcome IN ('started','uncertain')
+               UNION ALL
+               SELECT 1 FROM movement_attempts WHERE operation_id=? AND outcome IN ('started','uncertain')
+               LIMIT 1""",
+            (row["operation_id"], row["operation_id"]),
+        ).fetchone()
+        if reclaim is None or pending is not None or unresolved is not None:
+            problems.append(_semantic_problem(
+                conn, "safe_reclaimed_source_terminal_binding", "operations", row["operation_id"]
+            ))
+
+    for row in conn.execute("SELECT * FROM verification_cycles WHERE outcome='safe_reclaimed'"):
+        operation = conn.execute(
+            "SELECT status,terminal_outcome FROM operations WHERE operation_id=?",
+            (row["operation_id"],),
+        ).fetchone()
+        if (
+            row["completed_at"] is None
+            or row["signed_content_version_id"] is not None
+            or row["signed_identity"] is not None
+            or operation is None
+            or operation["status"] != "cancelled"
+            or operation["terminal_outcome"] != "safe_reclaimed"
+        ):
+            problems.append(_semantic_problem(
+                conn, "safe_reclaimed_verification_cycle_binding", "verification_cycles", row["cycle_id"]
+            ))
+
 def _validate_succession_evidence(
     conn: sqlite3.Connection, problems: list[dict[str, Any]]
 ) -> None:
@@ -4307,18 +4714,27 @@ def _validate_succession_evidence(
             "SELECT * FROM operation_successions WHERE successor_operation_id=?",
             (row["operation_id"],),
         ).fetchone()
+        reclaim = conn.execute(
+            "SELECT * FROM safe_reclaims WHERE successor_operation_id=? AND status='prepared'",
+            (row["operation_id"],),
+        ).fetchone()
         active_lease = conn.execute(
             "SELECT 1 FROM service_leases WHERE operation_id=? AND released_at IS NULL",
             (row["operation_id"],),
         ).fetchone()
-        if succession is None or row["status"] != "open" or active_lease is not None:
+        if (succession is None and reclaim is None) or row["status"] != "open" or active_lease is not None:
+            related_type = "safe_reclaims" if reclaim is not None else "operation_successions"
+            related_id = (
+                reclaim["reclaim_id"] if reclaim is not None
+                else (None if succession is None else succession["succession_id"])
+            )
             problems.append(_semantic_problem(
                 conn,
                 "prepared_successor_authority_binding",
                 "operations",
                 row["operation_id"],
-                related_record_type="operation_successions",
-                related_record_id=None if succession is None else succession["succession_id"],
+                related_record_type=related_type,
+                related_record_id=related_id,
             ))
 
     for row in conn.execute("SELECT * FROM verification_cycles WHERE outcome='abandoned'"):
@@ -4351,6 +4767,7 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
     _validate_backup_and_reset_evidence(conn, problems)
     _validate_abandonment_attempt_evidence(conn, problems)
     _validate_succession_evidence(conn, problems)
+    _validate_safe_reclaim_evidence(conn, problems)
     if problems:
         raise DishRuleError(
             "VALIDATION_FAILED", "database durable evidence is semantically inconsistent",
@@ -4396,7 +4813,7 @@ def validate_current_schema(conn: sqlite3.Connection) -> None:
     user_version, ledger_version = _schema_version_state(conn)
     if user_version != current or ledger_version != current:
         raise DishRuleError("VALIDATION_FAILED", "database did not converge to the current schema", rule="database_schema_not_current", details={"user_version": user_version, "ledger_version": ledger_version, "current": current})
-    required = {"operations", "operation_steps", "operation_actor_facts", "verification_cycles", "write_attempts", "movement_attempts", "task_content_state", "content_versions", "audit_events", "marco_authorizations", "service_leases", "service_requests", "operation_execution_claims", "operation_executions", "dish_inspect_facts", "planning_reopen_attempts", "backup_creations", "abandonment_attempts", "operation_successions", "planning_intent_challenges"}
+    required = {"operations", "operation_steps", "operation_actor_facts", "verification_cycles", "write_attempts", "movement_attempts", "task_content_state", "content_versions", "audit_events", "marco_authorizations", "service_leases", "service_requests", "operation_execution_claims", "operation_executions", "dish_inspect_facts", "planning_reopen_attempts", "backup_creations", "abandonment_attempts", "operation_successions", "safe_reclaims", "planning_intent_challenges"}
     actual = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     missing = sorted(required - actual)
     if missing:

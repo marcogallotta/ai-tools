@@ -10,6 +10,7 @@ from .database import (
     record_audit, transition_operation, assert_fresh_verifier,
     record_actor_fact, declare_operation_step, complete_operation_step, content_identity,
     record_dish_inspect_fact, complete_abandonment_in_transaction,
+    mark_safe_reclaim_claimed,
 )
 from .transactions import savepoint_transaction
 from .errors import DishRuleError
@@ -65,12 +66,11 @@ def verification_start_abandonment_authority(
     operation_id: str,
     cycle_id: str,
 ):
-    """Return the abandonment authority that made this exact start actionable.
+    """Return replacement authority that made this exact start actionable.
 
-    Prepared Verification successors remain fenced by an awaiting abandonment.
-    Route-preserved continuations are bound by the completed abandonment that
-    selected the exact operation/cycle pair. Ordinary Verification starts have
-    no abandonment authority row and remain untargeted-compatible.
+    Prepared successors may come from formal abandonment or from a mechanically
+    safe reclaim. Route-preserved continuations remain abandonment-specific.
+    Ordinary Verification starts have no replacement authority.
     """
 
     prepared = conn.execute(
@@ -87,8 +87,33 @@ def verification_start_abandonment_authority(
         (operation_id, cycle_id),
     ).fetchone()
     if prepared is not None:
-        return prepared
-    return conn.execute(
+        payload = dict(prepared)
+        payload.update({
+            "replacement_kind": "abandonment",
+            "authority_id": prepared["abandonment_id"],
+            "previous_owner_id": prepared["abandoned_owner_id"],
+            "previous_run_id": prepared["abandoned_run_id"],
+        })
+        return payload
+    reclaim = conn.execute(
+        """SELECT reclaim.*
+             FROM safe_reclaims AS reclaim
+             JOIN operations AS successor
+               ON successor.operation_id=reclaim.successor_operation_id
+            WHERE reclaim.successor_operation_id=?
+              AND reclaim.successor_cycle_id=?
+              AND reclaim.status='prepared'
+              AND successor.successor_claim_mode='verifier'""",
+        (operation_id, cycle_id),
+    ).fetchone()
+    if reclaim is not None:
+        payload = dict(reclaim)
+        payload.update({
+            "replacement_kind": "safe_reclaim",
+            "authority_id": reclaim["reclaim_id"],
+        })
+        return payload
+    preserved = conn.execute(
         """SELECT * FROM abandonment_attempts
             WHERE status='completed'
               AND outcome='route_preserved'
@@ -97,6 +122,16 @@ def verification_start_abandonment_authority(
             ORDER BY completed_at DESC, rowid DESC LIMIT 1""",
         (operation_id, cycle_id),
     ).fetchone()
+    if preserved is None:
+        return None
+    payload = dict(preserved)
+    payload.update({
+        "replacement_kind": "abandonment",
+        "authority_id": preserved["abandonment_id"],
+        "previous_owner_id": preserved["abandoned_owner_id"],
+        "previous_run_id": preserved["abandoned_run_id"],
+    })
+    return payload
 
 
 def resolve_verification_start_target(
@@ -290,12 +325,14 @@ def verification_read(
         conn, operation_id=operation_id, cycle_id=cycle["cycle_id"]
     )
     if abandonment is not None:
-        if str(run_id or "").strip() == str(abandonment["abandoned_run_id"] or "").strip():
-            raise DishRuleError(
-                "AGENT_MISMATCH",
-                "the abandoned run cannot claim its replacement Verification attempt",
-                rule="abandoned_run_claim_forbidden",
-            )
+        if str(run_id or "").strip() == str(abandonment["previous_run_id"] or "").strip():
+            if abandonment["replacement_kind"] == "abandonment":
+                message = "the abandoned run cannot claim its replacement Verification attempt"
+                rule = "abandoned_run_claim_forbidden"
+            else:
+                message = "the reclaimed run cannot claim its safe-reclaim Verification successor"
+                rule = "safe_reclaim_previous_run_forbidden"
+            raise DishRuleError("AGENT_MISMATCH", message, rule=rule)
     handoff = conn.execute("SELECT completed_at FROM operation_steps WHERE operation_id=? AND step_name='verification_handoff'", (operation_id,)).fetchone()
     if handoff is not None and handoff["completed_at"] is None:
         raise DishRuleError("WRONG_STATE", "Verification handoff is incomplete", rule="verification_handoff_incomplete")
@@ -336,14 +373,16 @@ def verification_read(
             cycle_id=current_cycle["cycle_id"],
         )
         if abandonment is not None:
-            expected_claim_mode = (
-                "verifier"
-                if abandonment["status"] == "awaiting_successor_claim"
-                else "none"
+            prepared_replacement = (
+                (abandonment["replacement_kind"] == "abandonment"
+                 and abandonment["status"] == "awaiting_successor_claim")
+                or (abandonment["replacement_kind"] == "safe_reclaim"
+                    and abandonment["status"] == "prepared")
             )
+            expected_claim_mode = "verifier" if prepared_replacement else "none"
             if (
                 current_abandonment is None
-                or current_abandonment["abandonment_id"] != abandonment["abandonment_id"]
+                or current_abandonment["authority_id"] != abandonment["authority_id"]
                 or current_op["successor_claim_mode"] != expected_claim_mode
             ):
                 raise DishRuleError(
@@ -390,24 +429,31 @@ def verification_read(
             result_code="OK", result_ok=True, actor_run_id=run_id,
             actor_attestation=clean_attestation,
         )
-        if (
-            abandonment is not None
-            and abandonment["status"] == "awaiting_successor_claim"
+        if abandonment is not None and (
+            (abandonment["replacement_kind"] == "abandonment"
+             and abandonment["status"] == "awaiting_successor_claim")
+            or (abandonment["replacement_kind"] == "safe_reclaim"
+                and abandonment["status"] == "prepared")
         ):
-            completion_result = {
-                "abandonment_id": abandonment["abandonment_id"],
-                "operation_id": operation_id,
-                "cycle_id": cycle["cycle_id"],
-                "outcome": "restarted",
-            }
-            complete_abandonment_in_transaction(
-                conn,
-                abandonment_id=abandonment["abandonment_id"],
-                outcome="restarted",
-                result=completion_result,
-                continuation_operation_id=operation_id,
-                continuation_cycle_id=cycle["cycle_id"],
-            )
+            if abandonment["replacement_kind"] == "safe_reclaim":
+                mark_safe_reclaim_claimed(
+                    conn, successor_operation_id=operation_id
+                )
+            else:
+                completion_result = {
+                    "abandonment_id": abandonment["authority_id"],
+                    "operation_id": operation_id,
+                    "cycle_id": cycle["cycle_id"],
+                    "outcome": "restarted",
+                }
+                complete_abandonment_in_transaction(
+                    conn,
+                    abandonment_id=abandonment["authority_id"],
+                    outcome="restarted",
+                    result=completion_result,
+                    continuation_operation_id=operation_id,
+                    continuation_cycle_id=cycle["cycle_id"],
+                )
     return {
         "operation_id": operation_id,
         "cycle_id": cycle["cycle_id"],

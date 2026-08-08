@@ -13,6 +13,7 @@
     "read",
     "proposals",
     "apply-proposal",
+    "safe-reclaim",
     "inspect",
     "start",
     "prepare",
@@ -64,19 +65,19 @@
   ],
   "governing_source_sha256": {
     "dish_pg/release.py": "7ed6a52d7f7abdd0d93ddd3294a7db08b734e77a2ce4b44759ea00465e6a0459",
-    "dish_service/application.py": "2efbbba0aff5985128b0642e1f812b6b5a9584c86a792caa5d4f2ad435625a64",
-    "dish_service/command_spec.py": "66d01053cf08a010f63882a07d01279a43297ed91d7bdbdf8d0674bc2556db42",
+    "dish_service/application.py": "333f5c6759bd8ae7e71e616a8f9ed2286f9c90c25085dd84a0ab73cb306962fe",
+    "dish_service/command_spec.py": "476592a7ab6a594bed3d9e56937eb69613fad2d1f7f25eda93740a8f630e8311",
     "dish_tool/admin_cli.py": "95596c168798415cc12b1f2bdeee9a0f76f796b9bca20f0ece03e12170f293bc",
     "dish_tool/admin_command_spec.py": "7b34dbb187bcfc98fe08f1056711e2a2e90304f2455a4e43a45aed4f735bc907",
     "dish_tool/database_initialization.py": "1205caa574c78fd7fe73c2be017218d10543a53f1acc66463f96963a7cd06def",
-    "dish_tool/database_schema.py": "5e92bc0172fc6be231e91db0e6dfcfd5c7174a0de2c0868cd78502412ee98aa8",
+    "dish_tool/database_schema.py": "be03973ca4f11ec634aa2f9e6fc82112659c08fc9570014df40d4beecb0ac460",
     "dish_tool/workflow_policy.py": "ffd0204632c5cc537b8edf2be2e72463f18b1f466435d9d5c060ee221e478709",
-    "docs/runtime-contract.md": "436166310b5c47c6e5b357d3c082eaf1dd75816a49a04b8c72c3f3120dfb9adb",
-    "openapi/dish-action.openapi.json": "244ae8dcfec2d5fc739197b1e2eb60f3dc13f335785f356933d02e12f797d969",
+    "docs/runtime-contract.md": "82a79be3f5d321812a5e62d04d24176404776664d766163798b2ab8a5b1e0c10",
+    "openapi/dish-action.openapi.json": "d940190d8b4cafd73039b9b05d438a3117d92a73d524fceaca77c51180fc1765",
     "scripts/dish-pg-acceptance": "d7b30b7f45a9ff38b1106aa868065449bea879f71ce30f2428b1333aa0ec43d4",
     "scripts/dish-pg-stage-a-baseline": "fe86091089d0324f46edb5397decf517f2846c3138cd6c31edd22dc7ae19b5fa"
   },
-  "last_rebaseline_reason": "Stage A cleanup: remove frozen test-corpus hashes and derive baseline inventories from executable owners",
+  "last_rebaseline_reason": "Classify safe-reclaim as source-only for the P0 recovery-reliability implementation and refresh the frozen source inventory; PostgreSQL target authority remains unchanged.",
   "notes": [
     "The baseline records current source authority only; PostgreSQL is not production authority.",
     "Changes to governed source hashes or acceptance rules require explicit baseline review; ordinary test-file changes do not.",
@@ -93,7 +94,8 @@
     "review-approve",
     "review-inspect",
     "review-queue",
-    "review-reject"
+    "review-reject",
+    "safe-reclaim"
   ],
   "sqlite_tables": [
     "abandonment_attempts",
@@ -113,6 +115,7 @@
     "operations",
     "planning_intent_challenges",
     "planning_reopen_attempts",
+    "safe_reclaims",
     "schema_migrations",
     "semantic_proposal_changes",
     "semantic_proposals",

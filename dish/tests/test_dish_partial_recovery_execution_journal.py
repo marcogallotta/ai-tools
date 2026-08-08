@@ -494,3 +494,47 @@ def test_dead_claim_with_local_state_change_requires_recover_without_pending_ste
     assert json.loads(prior["evidence_json"])["local_state_committed"] is True
     finish_operation_execution(application.conn, recovery_claim, status="completed")
 
+
+
+def test_recover_inspect_does_not_finalize_requestless_uncertain_execution(tmp_path):
+    application, backend, operation_id = _started_application(tmp_path)
+    from dish_tool.operation_execution import (
+        execution_recovery_state,
+        finish_operation_execution,
+    )
+    from dish_tool.step9 import recover_operation
+
+    claim = claim_operation_execution(
+        application.conn,
+        operation_id=operation_id,
+        command="prepare",
+        request_id=None,
+    )
+    evidence = execution_recovery_state(
+        application.conn,
+        execution_id=claim.execution_id,
+        failure_rule="simulated_process_loss",
+    )
+    assert evidence is not None
+    finish_operation_execution(
+        application.conn,
+        claim,
+        status="uncertain",
+        evidence=evidence,
+    )
+
+    result = recover_operation(
+        application.conn,
+        backend,
+        operation_id=operation_id,
+        requested_outcome="inspect",
+        reason="read-only recovery inspection",
+    )
+
+    assert result["resolved_local_execution_ids"] == []
+    execution = application.conn.execute(
+        "SELECT status,resolved_at FROM operation_executions WHERE execution_id=?",
+        (claim.execution_id,),
+    ).fetchone()
+    assert execution["status"] == "uncertain"
+    assert execution["resolved_at"] is None

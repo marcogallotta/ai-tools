@@ -19,6 +19,7 @@ EXPECTED_ACTION_COMMANDS = (
     "read",
     "reject",
     "renew-lease",
+    "safe-reclaim",
     "section-tasks",
     "sections",
     "start",

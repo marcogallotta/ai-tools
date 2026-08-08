@@ -69,20 +69,17 @@ little operational benefit. Revisit only if manual Planning reopens become frequ
 frontend could expose the existing private operation without granting ordinary agents that
 authority.
 
-### expired-lease-vs-permanent-abandonment-wont-fix
+### unsafe-abandonment-remains-private-wont-fix
 
-Expired lease recovery and permanent run abandonment are separate authorities. `dish-admin
-recover-lease` releases only lease liveness and is correct when the same durable run will return. It
-never transfers workflow ownership. When the original chat/run is permanently unavailable, Marco
-uses `dish-admin abandon-operation`; Dish verifies the latest expired or released actor attempt and
-then either creates a clean exact-target successor, preserves/finalizes a committed route, preserves
-a governed hold, or blocks for `dish-admin reconcile-abandonment`. The abandoned owner/run cannot
-claim the successor or continuation.
+Same-run expired lease recovery, clean different-run safe reclaim, and formal abandonment are
+separate authorities. `dish-admin recover-lease` remains private and resumes only the same durable
+run. A different run may use connected `safe-reclaim` when Dish proves the exact inactive attempt is
+mechanically clean; that path creates and fences a linked successor without Marco intervention.
 
-Agent-facing responses never expose these private commands as connected `allowed_actions`. They
-return the exact admin command and relay instruction. After Marco confirms success, the agent must
-refresh the authoritative Dish action and follow the exact continuation returned. Partial, uncertain,
-or contradictory external effects remain fenced rather than being guessed or compensated.
+`dish-admin abandon-operation` remains private for genuinely unsafe or uncertain dead-run recovery.
+Partial, pending, uncertain, or contradictory effects are reconciled/fenced rather than being
+guessed or converted into safe reclaim. This private unsafe-recovery authority is intentionally not
+exposed as an ordinary connected action.
 
 ### private-evidence-human-review-resolution-wont-fix
 

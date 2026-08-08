@@ -516,6 +516,107 @@
         }
       }
     },
+    "/v1/action/safe-reclaim": {
+      "post": {
+        "operationId": "dish_safe_reclaim",
+        "x-openai-isConsequential": true,
+        "summary": "Run dish safe-reclaim",
+        "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "client": {
+                    "type": "object",
+                    "required": [
+                      "run_id",
+                      "request_id"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "run_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "minLength": 36,
+                        "maxLength": 36,
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID."
+                      },
+                      "request_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "minLength": 36,
+                        "maxLength": 36,
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution."
+                      }
+                    }
+                  },
+                  "arguments": {
+                    "required": [
+                      "submission_id",
+                      "lease_id",
+                      "agent"
+                    ],
+                    "properties": {
+                      "submission_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "minLength": 36,
+                        "maxLength": 36
+                      },
+                      "lease_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "minLength": 36,
+                        "maxLength": 36
+                      },
+                      "agent": {
+                        "type": "string",
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ]
+                      }
+                    },
+                    "type": "object",
+                    "additionalProperties": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Canonical dish workflow result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/action/inspect": {
       "post": {
         "operationId": "dish_inspect",

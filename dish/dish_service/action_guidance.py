@@ -73,6 +73,17 @@ def action_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
                 "returned and wait for Marco to confirm success before continuing."
             )
 
+        agent_action = data.get("agent_action")
+        if isinstance(agent_action, Mapping):
+            action_command = _text(agent_action.get("command"))
+            if action_command and action_command in actions:
+                instructions.append(
+                    f"Call {action_command} with the target arguments in "
+                    "data.agent_action.arguments exactly as returned; add only caller/request "
+                    "fields required by the current Action schema, and do not reconstruct target "
+                    "identifiers."
+                )
+
         required_start_kind = _text(data.get("required_start_kind"))
         if "start" in actions and required_start_kind:
             instructions.append(

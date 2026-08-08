@@ -28,8 +28,16 @@ def test_attention_lists_dead_released_attempt_without_mutating_workflow():
     item = result["data"]["attention_items"][0]
     assert item["operation_id"] == source["operation_id"]
     assert item["category"] == "multi_step_safe"
-    assert item["human_actions"][0]["kind"] == "abandon-dead-agent"
-    assert lease["lease_id"] in item["human_actions"][0]["shell_command"]
+    assert item["human_actions"] == []
+    assert item["agent_actions_now"] == [
+        {
+            "command": "safe-reclaim",
+            "arguments": {
+                "submission_id": source["operation_id"],
+                "lease_id": lease["lease_id"],
+            },
+        }
+    ]
     # The command writes only its invocation audit; workflow rows are unchanged.
     assert conn.execute(
         "SELECT status,phase FROM operations WHERE operation_id=?",

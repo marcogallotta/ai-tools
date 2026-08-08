@@ -36,7 +36,7 @@ from tests.support.abandonment_scenarios import (
 
 def test_schema_33_adds_abandonment_lineage_and_prepared_claim_state():
     conn = initialize_database(":memory:")
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 39
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 40
     tables = {
         row[0]
         for row in conn.execute(

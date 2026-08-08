@@ -353,6 +353,13 @@ def _command_inspect(
         (operation["task_gid"],),
     ).fetchone()
     proposal = active_proposal_for_operation(self.conn, operation_id)
+    safe_reclaim = None
+    if active_lease is None and latest_lease is not None:
+        from .safe_reclaim import safe_reclaim_eligibility
+        safe_reclaim = safe_reclaim_eligibility(
+            self.conn, self.backend, operation_id=operation_id,
+            lease_id=latest_lease["lease_id"],
+        )
 
     actions: list[dict[str, Any]] = []
     agent_actions_override: list[dict[str, Any] | str] | None = None
@@ -484,6 +491,21 @@ def _command_inspect(
         )
         actions.append(spec.payload()["human_action"] | {"shell_command": spec.shell_command()})
         problem = "An agent run currently holds the operation lease."
+    elif safe_reclaim is not None and safe_reclaim.eligible:
+        waiting_for = "a fresh agent to reclaim the inactive clean attempt"
+        problem = (
+            "The prior agent run is inactive and committed state is mechanically safe "
+            "for a different run to reclaim."
+        )
+        agent_actions_override = [
+            {
+                "command": "safe-reclaim",
+                "arguments": {
+                    "submission_id": operation_id,
+                    "lease_id": safe_reclaim.lease_id,
+                },
+            }
+        ]
     elif operation["phase"] in {"held_evidence", "held_human"}:
         administrative_blocker = True
         continuation = _evidence_hold_continuation(self.conn, operation_id, view)
@@ -517,7 +539,32 @@ def _command_inspect(
             cycle_id=cycle["cycle_id"],
             run_id=cycle["run_id"],
         )
-        if lease is not None:
+        recovery_rules = {
+            "safe_reclaim_unresolved_external_effect",
+            "safe_reclaim_execution_claim_live",
+            "safe_reclaim_execution_unsettled",
+            "safe_reclaim_request_unsettled",
+        }
+        failed_rules = (
+            {item.get("rule") for item in safe_reclaim.failed_clauses}
+            if safe_reclaim is not None else set()
+        )
+        if failed_rules & recovery_rules:
+            spec = template_action(
+                kind="reconcile-before-ownership-transfer",
+                command="recover",
+                positional=(operation_id,),
+                options=(("--outcome", "inspect"), ("--reason", "<what the recovery inspection proves>")),
+                prompt_fields=(
+                    PromptField("reason", "What the recovery inspection proves", "<what the recovery inspection proves>"),
+                ),
+                summary="Inspect and reconcile the interrupted execution before ownership moves.",
+                effect="Resolve uncertain execution/effect evidence; do not abandon or reclaim until it is terminal.",
+                after_success={"instruction": "Rerun dish-admin inspect."},
+            )
+            actions.append(spec.payload()["human_action"] | {"shell_command": spec.shell_command()})
+            problem = "The prior verifier is inactive, but unresolved execution evidence must be reconciled before ownership can move."
+        elif lease is not None:
             spec = template_action(
                 kind="abandon-dead-verifier",
                 command="abandon-operation",
@@ -547,43 +594,74 @@ def _command_inspect(
             )
     elif latest_lease is not None:
         administrative_blocker = True
-        try:
-            lease = _select_abandonment_lease(
-                self.conn, operation_id=operation_id, lease_id=None
+        recovery_rules = {
+            "safe_reclaim_unresolved_external_effect",
+            "safe_reclaim_execution_claim_live",
+            "safe_reclaim_execution_unsettled",
+            "safe_reclaim_request_unsettled",
+        }
+        failed_rules = (
+            {item.get("rule") for item in safe_reclaim.failed_clauses}
+            if safe_reclaim is not None else set()
+        )
+        if failed_rules & recovery_rules:
+            spec = template_action(
+                kind="reconcile-before-ownership-transfer",
+                command="recover",
+                positional=(operation_id,),
+                options=(("--outcome", "inspect"), ("--reason", "<what the recovery inspection proves>")),
+                prompt_fields=(
+                    PromptField("reason", "What the recovery inspection proves", "<what the recovery inspection proves>"),
+                ),
+                summary="Inspect and reconcile interrupted execution evidence.",
+                effect="Resolve uncertain execution/effect evidence before reclaim or abandonment.",
+                after_success={"instruction": "Rerun dish-admin inspect."},
             )
-        except DishRuleError:
+            actions.append(
+                spec.payload()["human_action"] | {"shell_command": spec.shell_command()}
+            )
             problem = (
-                "The operation has no active lease, but its historical attempts do not "
-                "identify one safe automatic abandonment authority."
-            )
-            operator_instruction = (
-                "Dish cannot safely generate an abandonment command. Do not choose a lease from "
-                "raw records; rerun inspect with --verbose and report the result for repair."
+                "The prior run is inactive, but unresolved execution evidence must be "
+                "reconciled before ownership can move."
             )
         else:
-            spec = template_action(
-                kind="abandon-dead-agent",
-                command="abandon-operation",
-                positional=(operation_id,),
-                options=(
-                    ("--lease-id", lease["lease_id"]),
-                    ("--reason", "<why the agent run is permanently unavailable>"),
-                ),
-                prompt_fields=(
-                    PromptField(
-                        "reason",
-                        "Why the agent run is permanently unavailable",
-                        "<why the agent run is permanently unavailable>",
+            try:
+                lease = _select_abandonment_lease(
+                    self.conn, operation_id=operation_id, lease_id=None
+                )
+            except DishRuleError:
+                problem = (
+                    "The operation has no active lease, but its historical attempts do not "
+                    "identify one safe automatic abandonment authority."
+                )
+                operator_instruction = (
+                    "Dish cannot safely generate an abandonment command. Do not choose a lease from "
+                    "raw records; rerun inspect with --verbose and report the result for repair."
+                )
+            else:
+                spec = template_action(
+                    kind="abandon-dead-agent",
+                    command="abandon-operation",
+                    positional=(operation_id,),
+                    options=(
+                        ("--lease-id", lease["lease_id"]),
+                        ("--reason", "<why the agent run is permanently unavailable>"),
                     ),
-                ),
-                summary="Abandon the dead agent attempt.",
-                effect="Preserve confirmed work and prepare the stage's safe successor.",
-                after_success={
-                    "instruction": "Follow the exact continuation returned by Dish."
-                },
-            )
-            actions.append(spec.payload()["human_action"])
-            problem = "The operation belongs to a prior agent run with no active lease."
+                    prompt_fields=(
+                        PromptField(
+                            "reason",
+                            "Why the agent run is permanently unavailable",
+                            "<why the agent run is permanently unavailable>",
+                        ),
+                    ),
+                    summary="Abandon the dead agent attempt.",
+                    effect="Preserve confirmed work and prepare the stage's safe successor.",
+                    after_success={
+                        "instruction": "Follow the exact continuation returned by Dish."
+                    },
+                )
+                actions.append(spec.payload()["human_action"])
+                problem = "The operation belongs to a prior agent run with no active lease."
     trace.submission_id = operation_id
     trace.task_gid = operation["task_gid"]
     trace.state = operation["status"]
@@ -709,6 +787,17 @@ def _attention_category(data: Mapping[str, Any]) -> tuple[str, str]:
         return "needs_marco", "the workflow is waiting for Marco's evidence or decision"
     if view.get("destination_repair_required"):
         return "needs_marco", "the approved destination requires an explicit Marco repair"
+
+    agent_actions = data.get("agent_actions_now")
+    if not isinstance(agent_actions, list):
+        agent_actions = []
+    agent_commands = {
+        str(action.get("command") or "")
+        for action in agent_actions
+        if isinstance(action, Mapping)
+    }
+    if "safe-reclaim" in agent_commands:
+        return "multi_step_safe", "a fresh agent can safely reclaim the inactive clean attempt"
 
     actions = data.get("human_actions")
     if not isinstance(actions, list):

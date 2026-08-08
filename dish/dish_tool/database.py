@@ -1364,6 +1364,44 @@ def apply_operation_abandonment_succession_in_transaction(
 
 
 
+def mark_safe_reclaim_claimed(
+    conn: sqlite3.Connection, *, successor_operation_id: str, claimed_at: str | None = None
+) -> None:
+    """Mark the exact prepared safe-reclaim lineage claimed inside the caller transaction."""
+
+    row = conn.execute(
+        "SELECT * FROM safe_reclaims WHERE successor_operation_id=? AND status='prepared'",
+        (successor_operation_id,),
+    ).fetchone()
+    if row is None:
+        return
+    stamp = claimed_at or utc_now()
+    cursor = conn.execute(
+        "UPDATE safe_reclaims SET status='claimed',claimed_at=? WHERE reclaim_id=? AND status='prepared'",
+        (stamp, row["reclaim_id"]),
+    )
+    if cursor.rowcount != 1:
+        raise DishRuleError(
+            "CONFLICT",
+            "safe reclaim successor was claimed concurrently",
+            rule="safe_reclaim_successor_claimed",
+        )
+    record_audit(
+        conn,
+        submission_id=None,
+        task_gid=row["task_gid"],
+        operation_id=successor_operation_id,
+        event_type="operation.safe_reclaim_claimed",
+        actor_agent=None,
+        details={
+            "safe_reclaim_id": row["reclaim_id"],
+            "source_operation_id": row["source_operation_id"],
+        },
+        result_code="OK",
+        result_ok=True,
+    )
+
+
 def claim_prepared_stage_successor_in_transaction(
     conn: sqlite3.Connection,
     *,
@@ -1383,15 +1421,26 @@ def claim_prepared_stage_successor_in_transaction(
 
     _require_writer_transaction(conn, operation="prepared stage successor claim")
     row = conn.execute(
-        """SELECT successor.*, succession.abandonment_id,
-                  abandonment.abandoned_run_id, abandonment.status AS abandonment_status
+        """SELECT successor.*, succession.abandonment_id AS authority_id,
+                  abandonment.abandoned_run_id AS previous_run_id,
+                  abandonment.status AS authority_status,
+                  'abandonment' AS replacement_kind
              FROM operations AS successor
              JOIN operation_successions AS succession
                ON succession.successor_operation_id=successor.operation_id
              JOIN abandonment_attempts AS abandonment
                ON abandonment.abandonment_id=succession.abandonment_id
+            WHERE successor.operation_id=?
+            UNION ALL
+           SELECT successor.*, reclaim.reclaim_id AS authority_id,
+                  reclaim.previous_run_id AS previous_run_id,
+                  reclaim.status AS authority_status,
+                  'safe_reclaim' AS replacement_kind
+             FROM operations AS successor
+             JOIN safe_reclaims AS reclaim
+               ON reclaim.successor_operation_id=successor.operation_id
             WHERE successor.operation_id=?""",
-        (prepared_operation_id,),
+        (prepared_operation_id, prepared_operation_id),
     ).fetchone()
     if row is None:
         raise DishRuleError(
@@ -1400,13 +1449,17 @@ def claim_prepared_stage_successor_in_transaction(
             rule="prepared_successor_not_found",
             details={"prepared_operation_id": prepared_operation_id},
         )
+    authority_ready = (
+        (row["replacement_kind"] == "abandonment" and row["authority_status"] == "awaiting_successor_claim")
+        or (row["replacement_kind"] == "safe_reclaim" and row["authority_status"] == "prepared")
+    )
     if (
         row["task_gid"] != task_gid
         or row["operation_kind"] != operation_kind
         or row["status"] != "open"
         or row["phase"] != "prepare_required"
         or row["successor_claim_mode"] != "stage_actor"
-        or row["abandonment_status"] != "awaiting_successor_claim"
+        or not authority_ready
     ):
         raise DishRuleError(
             "WRONG_STATE",
@@ -1421,12 +1474,14 @@ def claim_prepared_stage_successor_in_transaction(
             "a connected run ID is required to claim a prepared successor",
             rule="service_run_required",
         )
-    if clean_run == str(row["abandoned_run_id"] or "").strip():
-        raise DishRuleError(
-            "AGENT_MISMATCH",
-            "the abandoned run cannot claim its replacement attempt",
-            rule="abandoned_run_claim_forbidden",
-        )
+    if clean_run == str(row["previous_run_id"] or "").strip():
+        if row["replacement_kind"] == "abandonment":
+            message = "the abandoned run cannot claim its replacement attempt"
+            rule = "abandoned_run_claim_forbidden"
+        else:
+            message = "the reclaimed run cannot claim its safe-reclaim successor"
+            rule = "safe_reclaim_previous_run_forbidden"
+        raise DishRuleError("AGENT_MISMATCH", message, rule=rule)
     if row["expected_identity"] != live_identity or row["expected_section_gid"] != live_section_gid:
         drift = {
             "expected_identity": row["expected_identity"],
@@ -1434,17 +1489,27 @@ def claim_prepared_stage_successor_in_transaction(
             "expected_section_gid": row["expected_section_gid"],
             "actual_section_gid": live_section_gid,
         }
+        if row["replacement_kind"] == "safe_reclaim":
+            raise DishRuleError(
+                "CONFLICT",
+                "prepared safe-reclaim successor baseline or placement changed",
+                rule="prepared_successor_drift",
+                details={
+                    **drift,
+                    "safe_reclaim_id": row["authority_id"],
+                    "required_admin_action": "inspect",
+                },
+            )
         spec = exact_action(
             kind="reconcile-abandonment",
             command="reconcile-abandonment",
-            positional=(row["abandonment_id"],),
+            positional=(row["authority_id"],),
             summary="Reconcile a prepared successor whose baseline changed before claim.",
             effect="Reclassify the abandonment against the current live task before any agent continues.",
             after_success={"instruction": "Refresh Dish and follow the returned continuation."},
         )
-        command = spec.shell_command()
         blocked_result = {
-            "abandonment_id": row["abandonment_id"],
+            "abandonment_id": row["authority_id"],
             "classification": {
                 "outcome": "blocked_manual_reconciliation",
                 "stage": "planning" if operation_kind == "planning" else "research",
@@ -1454,7 +1519,7 @@ def claim_prepared_stage_successor_in_transaction(
             "required_action": {
                 "surface": "private-admin",
                 "command": "reconcile-abandonment",
-                "arguments": {"abandonment_id": row["abandonment_id"]},
+                "arguments": {"abandonment_id": row["authority_id"]},
                 **spec.payload(),
                 "relay_text": relay_text(
                     spec,
@@ -1471,7 +1536,7 @@ def claim_prepared_stage_successor_in_transaction(
         }
         mark_abandonment_blocked_in_transaction(
             conn,
-            abandonment_id=row["abandonment_id"],
+            abandonment_id=row["authority_id"],
             result=blocked_result,
         )
         raise DishRuleError(
@@ -1480,7 +1545,7 @@ def claim_prepared_stage_successor_in_transaction(
             rule="prepared_successor_drift",
             details={
                 **drift,
-                "abandonment_id": row["abandonment_id"],
+                "abandonment_id": row["authority_id"],
                 "required_admin_action": "reconcile-abandonment",
                 **spec.payload(),
                 "relay_text": relay_text(
@@ -1582,14 +1647,19 @@ def claim_prepared_stage_successor_in_transaction(
         "SELECT * FROM operations WHERE operation_id=?",
         (prepared_operation_id,),
     ).fetchone()
-    complete_abandonment_in_transaction(
-        conn,
-        abandonment_id=row["abandonment_id"],
-        outcome="restarted",
-        result=result,
-        continuation_operation_id=prepared_operation_id,
-        completed_at=stamp,
-    )
+    if row["replacement_kind"] == "safe_reclaim":
+        mark_safe_reclaim_claimed(
+            conn, successor_operation_id=prepared_operation_id, claimed_at=stamp
+        )
+    else:
+        complete_abandonment_in_transaction(
+            conn,
+            abandonment_id=row["authority_id"],
+            outcome="restarted",
+            result=result,
+            continuation_operation_id=prepared_operation_id,
+            completed_at=stamp,
+        )
     record_audit(
         conn,
         submission_id=None,
@@ -1599,7 +1669,11 @@ def claim_prepared_stage_successor_in_transaction(
         actor_agent=agent,
         actor_run_id=clean_run,
         details={
-            "abandonment_id": row["abandonment_id"],
+            **(
+                {"abandonment_id": row["authority_id"]}
+                if row["replacement_kind"] == "abandonment"
+                else {"safe_reclaim_id": row["authority_id"]}
+            ),
             "operation_kind": operation_kind,
             "previous_schema_version": prior_schema_version,
             "claimed_schema_version": schema_version,

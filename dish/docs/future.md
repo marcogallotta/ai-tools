@@ -8,9 +8,8 @@ item still requires Marco's explicit approval and should be justified by real us
 For the implemented system, read [architecture index](architecture/index.md),
 [`../README.md`](../README.md), and [`runtime-contract.md`](runtime-contract.md).
 
-For decided (but not yet implemented) workflow and administration design — Human Review lifecycle,
-safe reclaim, Marco override, whole-version rollback, and connected-agent execution updates — see
-[`workflow.md`](workflow.md).
+For decided workflow and administration design — including the implemented safe-reclaim model and
+parked Human Review/Marco override/rollback/execution-update ideas — see [`workflow.md`](workflow.md).
 
 ## Already implemented — do not re-propose as future work
 
@@ -21,7 +20,7 @@ The current release already includes:
 - deterministic material-category enforcement for Small and post-signoff changes;
 - explicit task-schema migration and historical database migration/reconciliation;
 - durable write/movement attempts with `confirmed`, `not_applied`, and `uncertain` outcomes;
-- recovery, audit repair, task operation locks, client/run leases, backup, and restore;
+- recovery, audit repair, task operation locks, client/run leases, clean cross-run safe reclaim, backup, and restore;
 - the laptop-hosted shared service and bounded GPT Action surface;
 - private CLI/admin and public Action listener separation;
 - real generated Asana SDK contract tests and live test-project smoke procedure.

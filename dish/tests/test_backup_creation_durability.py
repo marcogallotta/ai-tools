@@ -479,6 +479,6 @@ def test_schema_39_migrates_backup_reservations_and_completed_rows(tmp_path):
         assert rows[completed_request]["resolution_reason"] == "migrated_confirmed"
         assert rows[reserved_request]["status"] == "reserved"
         assert rows[reserved_request]["resolution_reason"] is None
-        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 39
+        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 40
     finally:
         upgraded.close()

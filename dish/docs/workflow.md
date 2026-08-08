@@ -1,8 +1,8 @@
 # Dish workflow and administration design
 
-Decided product/workflow design, not yet implemented — same status as other `*-design.md`
-documents referenced from [`future.md`](future.md). It defines how Human Review, safe reclaim,
-Marco override, whole-version rollback, and connected-agent execution updates should behave.
+Product/workflow design with mixed implementation status. The safe-reclaim section describes the
+current SQLite/service workflow; Human Review refinements, Marco override, whole-version rollback,
+and connected-agent execution updates remain design unless another current document says otherwise.
 It is not an implementation plan and does not authorize repository changes by itself.
 
 This document is about the workflow and administration model, not about PostgreSQL or any other
@@ -56,8 +56,8 @@ This introduces a third action, distinct from the two Part I already ships
 
 - **`recover-lease`** — the same run resumes the same operation after a recoverable lease
   interruption. Unchanged by this design.
-- **Safe reclaim (new)** — a different run takes over after lease expiry or explicit termination,
-  creating a new linked operation and fencing the old owner. This is the mechanism described below.
+- **Safe reclaim** — a different run takes over after lease expiry or explicit termination when the
+  committed mechanical predicate passes, creating a new linked operation and fencing the old owner.
 - **`abandon-operation`** — reserved for genuinely unsafe or uncertain recovery states, where safe
   reclaim's predicate (below) does not hold. Unchanged by this design.
 
@@ -183,9 +183,83 @@ Whatever backend eventually carries this, `dish-admin` needs to expose:
 - safe-reclaim eligibility inspection, with reasons when reclaim isn't currently legal;
 - display of Marco's exact approval or override evidence (his words, not just an agent's summary).
 
-Existing lease termination and `abandon-operation` stay as-is; safe reclaim (above) is a new third
-action for the case where state is already mechanically safe, so it should not need to go through
+Existing lease termination and `abandon-operation` remain distinct; safe reclaim is the third
+action for the case where state is already mechanically safe, so it does not go through
 `abandon-operation` first.
+
+## Parked ideas and external analogues
+
+These are research notes, **not committed implementation work**. Dish is a single-user system, and
+workflow machinery should stay legible to Marco. Borrow the smallest useful mechanism, introduce one
+behavioral intervention at a time, observe it in real agent use, and only then decide whether another
+layer is justified. Do not hide agent mistakes behind increasingly clever automation.
+
+### Human Review escalation quality and correction
+
+Recent real cases exposed three related problems: a weak nutrition extrapolation was escalated as a
+binding Human Review blocker before ordinary repairs were explored; there was no clean way to dismiss
+that erroneous hold before Marco acted; and a cosmetic `Purpose` spelling change (`duòjiāo` →
+`duǒjiāo`) elevated an otherwise substantive proposal merely because the field was governed. Parked
+ideas to test separately:
+
+- a **neutral escalation preflight** that asks the verifier to state the unresolved issue, evidence
+  quality, plausible repairs considered, and why a genuine Marco choice/waiver/change of settled
+  intent remains. This must explicitly permit legitimate Human Review rather than discourage it;
+- **repair before escalation** when an ordinary correction can preserve settled intent;
+- a first-class **dismiss/reject erroneous pre-human hold** path that preserves audit history, records
+  why the escalation was invalid, and resumes Verification without fabricating a substantive Marco
+  decision;
+- **semantic anti-pettiness** for governed fields: formatting, spelling, normalization, or other
+  non-semantic changes should not independently create Human Review merely because bytes inside a
+  governed field changed.
+
+Useful analogues:
+
+- OpenAI Agents SDK HITL uses explicit approve/reject decisions and resumable interruptions:
+  https://openai.github.io/openai-agents-python/human_in_the_loop/
+- LangChain HITL exposes approve/edit/reject/respond as distinct review outcomes:
+  https://reference.langchain.com/python/langchain/agents/middleware/human_in_the_loop
+- Learning-to-Defer treats referral to a human as a decision distinct from the underlying model
+  prediction: https://proceedings.mlr.press/v119/mozannar20b.html
+- Clinical decision-support literature on alert fatigue supports tiering and useful corrective
+  actions instead of interrupting on every low-value finding:
+  https://pubmed.ncbi.nlm.nih.gov/35613913/ ,
+  https://pubmed.ncbi.nlm.nih.gov/31206159/ ,
+  https://pubmed.ncbi.nlm.nih.gov/27350464/
+
+### Other workflow patterns worth revisiting only if real use needs them
+
+- **Redrive/restart with preserved history:** AWS Step Functions redrive and Azure Durable Task
+  instance management support resuming/restarting failed work without pretending prior completed work
+  never happened. This is useful background for reclaim/recovery, not a reason to copy their machinery:
+  https://docs.aws.amazon.com/step-functions/latest/dg/redrive-executions.html and
+  https://learn.microsoft.com/en-us/azure/durable-task/common/durable-task-instance-management
+- **Server-advertised executable continuations:** keep pushing exact callable actions/targets in Dish
+  responses so agents do not reconstruct workflow from protocol prose. The current Action registry and
+  `allowed_actions` model already provide the local foundation; no extra hypermedia framework is
+  proposed.
+- **Repeated evidence deduplication:** PagerDuty's `dedup_key` model is a useful analogy for “same
+  substantive concern again is not a new interruption.” Consider an issue/evidence identity only if
+  repeated reopening remains a real problem: https://support.pagerduty.com/main/docs/alerts
+- **Approval staleness bound to the approved material:** GitHub can dismiss approvals when the code
+  diff changes rather than for unrelated metadata. This supports Dish's existing canonical-content
+  scoped staleness direction:
+  https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets
+- **Explicit override/bypass:** GitHub deployment protection uses a distinct bypass action with an
+  explanation rather than disguising bypass as ordinary approval. Revisit when implementing Marco
+  override: https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/review-deployments
+- **Structural separation of approval:** GitHub environments can prevent the initiator from approving
+  the deployment, reinforcing Dish's existing real-run Verification independence model:
+  https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments
+- **Restorative rollback:** `git revert` is the useful analogy for whole-version rollback: add a new
+  restorative history entry rather than erase prior history: https://git-scm.com/docs/git-revert
+- **Exact-state mutation preconditions:** HTTP conditional requests/ETags are a useful analogy for
+  Dish's exact hold/proposal/cycle/content identities: https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Conditional_requests
+
+Potentially useful but deliberately **not** scheduled now: broader contract-versioning of long-lived
+pending approvals, richer fencing generations beyond the exact source/successor lineage already
+needed for safe reclaim, and generalized issue-dedup infrastructure. Add those only after observed
+single-user failures justify the extra state and mental model.
 
 ## Deliberately out of scope here
 

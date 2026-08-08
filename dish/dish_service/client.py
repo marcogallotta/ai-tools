@@ -17,7 +17,7 @@ from .command_spec import REPLAY_SAFE_COMMANDS
 from .identifiers import require_asana_gid, require_dish_uuid
 
 
-_AMBIGUOUS_RESPONSE_REPLAY_COMMANDS = frozenset({"inspect", "apply-proposal"})
+_AMBIGUOUS_RESPONSE_REPLAY_COMMANDS = frozenset({"inspect", "apply-proposal", "safe-reclaim"})
 
 
 class _AmbiguousResponseError(Exception):

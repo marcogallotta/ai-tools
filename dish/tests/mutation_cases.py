@@ -76,14 +76,15 @@ CASES = (
         ),
         invariant="cancelled operations receive terminal completion evidence",
     ),    MutationCase(
-        mutation_id="abandonment-abandoned-run-claim",
+        mutation_id="replacement-previous-run-claim",
         target="dish_tool/database.py",
-        before='if clean_run == str(row["abandoned_run_id"] or "").strip():',
+        before='if clean_run == str(row["previous_run_id"] or "").strip():',
         after="if False:",
         tests=(
             "tests/test_abandonment_stage_successors.py::test_prepared_planning_claim_rejects_abandoned_run_then_binds_fresh_run",
+            "tests/test_safe_reclaim_workflow.py::test_different_run_can_safe_reclaim_clean_expired_verification_attempt",
         ),
-        invariant="an abandoned run cannot claim the successor attempt created to replace it",
+        invariant="a replaced run cannot claim the successor attempt created to replace it",
     ),
     MutationCase(
         mutation_id="planning-intent-single-use",

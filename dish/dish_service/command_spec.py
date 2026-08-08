@@ -56,6 +56,7 @@ SECTION_TASKS_COMMAND = _action("section-tasks", "reader", request_id=False)
 READ_COMMAND = _action("read", "reader", request_id=False)
 PROPOSALS_COMMAND = _action("proposals", "reader", request_id=False)
 APPLY_PROPOSAL_COMMAND = _action("apply-proposal", "agent", request_id=True, workflow_action="apply-proposal")
+SAFE_RECLAIM_COMMAND = _action("safe-reclaim", "agent", request_id=True)
 INSPECT_COMMAND = _action("inspect", "verification", request_id=True)
 START_COMMAND = _action("start", "agent", request_id=True)
 PREPARE_COMMAND = _action("prepare", "agent", request_id=True, workflow_action="prepare")
@@ -73,6 +74,7 @@ ACTION_COMMAND_SPECS = (
     READ_COMMAND,
     PROPOSALS_COMMAND,
     APPLY_PROPOSAL_COMMAND,
+    SAFE_RECLAIM_COMMAND,
     INSPECT_COMMAND,
     START_COMMAND,
     PREPARE_COMMAND,
@@ -180,6 +182,14 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             "proposal_id": dict(DISH_UUID_SCHEMA),
             "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
             "model": {"type": "string"},
+        },
+    },
+    SAFE_RECLAIM_COMMAND.name: {
+        "required": ["submission_id", "lease_id", "agent"],
+        "properties": {
+            "submission_id": dict(DISH_UUID_SCHEMA),
+            "lease_id": dict(DISH_UUID_SCHEMA),
+            "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
         },
     },
     START_COMMAND.name: {
@@ -558,8 +568,15 @@ def validate_action_request(command: str, request: Mapping[str, Any]) -> tuple[d
     if command in REPLAY_SAFE_COMMANDS and (
         not isinstance(request_id, str) or not request_id.strip()
     ):
+        message = "client.request_id is required for mutations"
+        if command == "inspect":
+            message = (
+                "client.request_id is required for inspect because inspect records durable "
+                "Verification evidence. If the connected GPT Action schema does not expose "
+                "client.request_id for inspect, refresh or re-import the Dish Action schema."
+            )
         raise _argument_error(
-            "client.request_id is required for mutations",
+            message,
             "request_field_required",
             field="client.request_id",
         )
