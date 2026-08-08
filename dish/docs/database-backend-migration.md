@@ -6,6 +6,8 @@ Role: this document defines how authority moves from the current Asana/SQLite sy
 
 Architecture is governed by `database-backend.md`. Storage and service mechanics are governed by `database-backend-imp.md`.
 
+Retention classes for current state and evidence (permanent live invariants, retained transition history, cutover/stabilization evidence, one-shot tooling), and the live plan for what precedes and follows cutover, are maintained in `postgresql-cutover.md` §6.5 and §11 — not duplicated here.
+
 ## 1. Migration objective
 
 Move authority without:

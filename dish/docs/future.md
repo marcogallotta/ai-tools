@@ -56,6 +56,24 @@ Serving the Honest repository to agents is orthogonal to task storage and can pr
 at any time. Public Action rate limiting has no activation evidence justifying it regardless of
 sequencing.
 
+### Overall program sequencing: dark launch through cutover
+
+The intended order across the whole PostgreSQL program:
+
+1. complete dark-launch activation and collect real evidence;
+2. complete near-term frontend/read-path activation work that remains non-authoritative;
+3. code-cleanup consolidation (`docs/code-cleanup-consolidation.md`);
+4. code-cleanup maintainability (`docs/code-cleanup-maintainability.md`), as ongoing scheduled
+   maintenance rather than a hard blocking phase;
+5. cutover Phase 0 revalidation against whatever architecture survives the code-cleanup work
+   (`docs/postgresql-cutover.md` §11);
+6. PostgreSQL cutover, only when Marco explicitly chooses.
+
+Code-cleanup work may simplify current cutover/evidence machinery before cutover when real
+invariants and lifecycle prove it safe, but must not silently change authority or deployment policy.
+Cutover planning must not preserve migration-era complexity merely because it already exists —
+Phase 0 revalidates what is still load-bearing after the code-cleanup work.
+
 ### Lightweight dish metadata and fast filtering
 
 Independent of the backend-authority decision: add a small Dish-owned metadata layer (destination

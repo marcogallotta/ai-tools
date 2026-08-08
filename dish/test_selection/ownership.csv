@@ -230,6 +230,8 @@ docs/architecture/system-context.md,documentation,1,1,architecture; documentatio
 docs/architecture/testing-boundaries.md,documentation,1,1,architecture; documentation,tests/test_architecture_knowledge_base.py,,none,,,,
 docs/architecture/workflow-and-human-review.md,documentation,1,1,architecture; documentation,tests/test_architecture_knowledge_base.py,,none,,,,
 docs/database-backend-dark-launch-runbook.md,documentation,1,1,documentation,,,none,,,,
+docs/code-cleanup-consolidation.md,documentation,1,1,documentation,,,none,,,,
+docs/code-cleanup-maintainability.md,documentation,1,1,documentation,,,none,,,,
 docs/database-backend-dark-launch.md,documentation,1,1,documentation,,,none,,,,
 docs/database-backend-imp.md,documentation,1,1,documentation,,,none,,,,
 docs/database-backend-migration.md,documentation,1,1,documentation,,,none,,,,

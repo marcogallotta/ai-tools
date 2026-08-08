@@ -1,6 +1,8 @@
-# PostgreSQL schema contract: revisions 0019–0027
+# PostgreSQL schema contract: revisions 0019–0027 (pattern unchanged through 0030)
 
 This is the narrow durable interface for release, cutover, import, reconciliation, readiness, and runtime agents. It lists stable schema names, database-enforced behavior, application-computed values, and required transitions. It is not general architecture documentation.
+
+Detailed per-revision entries below stop at 0027. Revisions 0028–0030 (`0028_consumed_first_request_open_admission`, `0029_cutover_authority_admission_fixes`, `0030_validation_failure_admission`) continue the same admission/authority-fixes pattern this contract already documents and do not introduce a new kind of durable interface; they are not separately broken out here.
 
 ## Linear revision sequence
 
@@ -12,7 +14,8 @@ This is the narrow durable interface for release, cutover, import, reconciliatio
 6. `0023_legacy_request_tombstones` → `0024_typed_import_linkage`
 7. `0024_typed_import_linkage` → `0025_reconciliation_observation_boundary`
 8. `0025_reconciliation_observation_boundary` → `0026_typed_worker_readiness_evidence`
-9. `0026_typed_worker_readiness_evidence` → `0027_server_default_alignment` (head)
+9. `0026_typed_worker_readiness_evidence` → `0027_server_default_alignment`
+10. `0027_server_default_alignment` → `0028_consumed_first_request_open_admission` → `0029_cutover_authority_admission_fixes` → `0030_validation_failure_admission` (head, not separately detailed below — see note above)
 
 ## 0019 — exact service-run ownership
 

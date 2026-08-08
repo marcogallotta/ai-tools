@@ -10,6 +10,10 @@ Read `README.md` for repository purpose and host integration. For every change u
 - Dark launch is evidence collection only. SQLite and Asana remain authoritative until an explicit, fenced cutover. Read-only status checks are permitted; operating procedure is in `dish/docs/database-backend-dark-launch-runbook.md`.
 - A pasted live GPT transcript may refer to the deployed Action. Verify current state read-only before acting on an existing operation.
 
+## Scheduled reviews
+
+- **Transition-records cleanup** (`dish/docs/postgresql-cutover.md` Addendum B #11): when working on Dish, if today's date is on or after 2026-11-08, tell Marco that this review is due. Marco must either perform/reassess the cleanup work or explicitly move the review date forward. Never delete transition records automatically or solely because the review date has passed.
+
 ## Development and evidence
 
 Create a repository-local environment with the current interpreter; do not assume an uploaded virtual environment is executable:

@@ -65,16 +65,16 @@ The goal is not to redesign the permanent Stage B system yet. The goal is to pro
 # 2. Findings That Drive This Design
 
 
-### Phase 1 authorization verification gate
+### Standing authorization verification requirement
 
-Before Phase 1 completes:
+Before any admission-gate or schema-reduction work begins:
 
 - inspect planning challenge/override behavior across service, CLI, GPT Actions, agent instructions, and tests;
 - prove that it only permits planning to begin;
 - prove that it cannot satisfy, imply, or be reused as mutation authorization;
 - add regression tests binding mutation approval to Marco’s explicit words, exact proposal, and candidate version.
 
-Phase 2 must not begin until this verification passes.
+This is a standing requirement, not a one-time phase gate. It applies to any future structural or schema-reduction work, whenever it is scheduled.
 
 ## 2.1 Sound foundations to preserve
 
@@ -395,7 +395,9 @@ Retain the underlying guarantees, though implementation may be simplified:
 - projection epoch and external-effect switch;
 - generation fencing.
 
-## 6.2 Collapse into the minimal model
+## 6.2 Candidate simplification targets (subject to dependency proof)
+
+These are candidates for later simplification, not a required-before-runtime or required-before-dark-launch collapse. The real runtime and dark launch were built and went live directly on the current, unreduced schema (see §11). Any collapse below happens only as code-cleanup consolidation (CC5, `docs/code-cleanup-consolidation.md`) or cutover Phase 0 revalidation, when writer/reader lifecycle proof shows it is safe.
 
 | Current concept | Proposed destination |
 |---|---|
@@ -422,6 +424,8 @@ Retain the underlying guarantees, though implementation may be simplified:
 
 ## 6.3 Delete unless a concrete requirement is established
 
+Same timing as §6.2: these are deletion candidates for code-cleanup consolidation/maintainability or cutover Phase 0, not a precondition already blocking live work.
+
 - evidence certifying other evidence;
 - typed worker-probe inventory / requirement / evidence / completion layers;
 - database-backed rehearsal checkpoint bureaucracy;
@@ -444,6 +448,17 @@ Subject to final dependency confirmation:
 - unimplemented readiness and audit-fulfillment structures.
 
 A table should not remain solely because tests can construct it.
+
+## 6.5 Retention classes for current state and evidence
+
+Every piece of retained state and evidence falls into one of four classes:
+
+- **A. Permanent live invariants.** Request-ID tombstones, admission/authority/generation state, writer-fence state. Never deleted; not subject to any scheduled review.
+- **B. Explicitly retained transition history.** Kept until Marco decides otherwise (Addendum B decision 11). Subject to a scheduled human review, never automatic deletion (see `/home/marco/ai-tools/CLAUDE.md`, "Scheduled reviews").
+- **C. Cutover/stabilization evidence.** Retained through cutover and the agreed stabilization window; disposition reconsidered after that window closes.
+- **D. One-shot implementation/tooling.** Candidate-manifest generators, readiness orchestration, rehearsal scripts. Removable once their event is over and no consumer remains.
+
+A one-shot Class D *procedure* may disappear while the durable Class A *fact* that an irreversible boundary was crossed remains permanent — deleting the tool that ran a rehearsal does not delete the record that the rehearsal happened.
 
 ---
 
@@ -699,90 +714,36 @@ It should not freeze:
 
 ---
 
-# 11. Execution Sequence and Gates
+# 11. Live Plan and Historical Execution Note
 
-## Phase 0 — Immediate live fixes
+## Historical note
 
-1. Fix `inspect`.
-2. Fix `apply-proposal`.
-3. Add end-to-end tests.
-4. Confirm current live system remains green.
+An earlier version of this document sequenced work as Phase 0 through Phase 6, with Phase 2 ("reduce control plane and schema": squash the migration history and collapse the Stage 6–8 control plane) required to complete before Phase 3 (build the real runtime) and Phase 4 (dark launch).
 
-**Gate:** no further structural work until these fixes are merged.
+In practice, Phase 2 was never executed. Phase 3 and Phase 4 were built and dark launch went live directly on the full, unreduced schema, which has continued to grow since (migration revision 0030 as of this writing). Phase 0 and Phase 1 substance mostly happened, in decision form, as Addendum B. That phased plan was overtaken by the implementation strategy itself, not merely by wording drift, and is removed here rather than left alongside the live plan below. Git history preserves the original text if it is ever needed.
 
-## Phase 1 — Scope freeze and contract approval
+## Current state
 
-1. Freeze new certification/evidence growth.
-2. Write and approve the minimum Stage A behavioral contract.
-3. Approve the target schema and subsystem disposition.
-4. Specify the canonical Dish `create` response and identify every consumer of the old Asana-oriented response.
-5. Specify Human Review, safe reclaim, approval evidence, rollback, request replay, projection, and cutover transitions.
-6. Complete hidden-consumer discovery and the master issue disposition matrix.
-7. Verify planning challenge/override cannot authorize mutation.
+- Live defect fixes (§2.2) and the minimum Stage A contract (§4) are complete.
+- The real PostgreSQL runtime, GPT Actions contract migration, Asana projection adapter, reconciliation adapter, and semantic-proposal/Human Review port (§8) are built and live.
+- Dark launch is running on the full, unreduced schema (migration revision 0030).
+- Cutover (§5, §9.4 validation, Addendum B) has not happened.
 
-**Gate:** no schema reduction until the contract, target schema, consumer migration plan, and issue dispositions are approved.
+## Before cutover
 
-## Phase 2 — Reduce control plane and schema
+- Code-cleanup consolidation (CC5, `docs/code-cleanup-consolidation.md`) may simplify the schema and evidence machinery described in §6.2 before cutover, when writer/reader lifecycle proof shows a concept is safe to collapse or remove.
+- No such simplification is a prerequisite for cutover. Cutover proceeds against whatever schema and control plane are live and validated at the time, per §9.4 and Addendum B.
+- Immediately before cutover, revalidate which §12 items are still open against then-current code, and which §6.2/§6.3 candidates still apply.
 
-1. Implement minimal admission gate.
-2. Implement immutable cutover record model.
-3. Remove/collapse approved Stage 6–8 concepts.
-4. Remove inert schema.
-5. Consolidate command contract.
-6. Squash migrations.
-7. Rebuild disposable PostgreSQL.
+## Cutover
 
-**Gate:** clean schema, contract, and core tests pass.
+Execute per §5 (target minimal cutover control model, as implemented), §9.4 (validation), and Addendum B's approved decisions: verified backup/restore, mechanical writer fence, exact final import and reconciliation, approved cutover record, controlled first request, then general admission.
 
-## Phase 3 — Complete real runtime
+## After cutover and stabilization
 
-1. Build PostgreSQL service composition.
-2. Implement the approved GPT Actions contract migration and update all known `create` consumers.
-3. Build production Asana projection adapter.
-4. Build reconciliation adapter.
-5. Port semantic proposals and asynchronous Human Review semantics.
-6. Implement canonical Dish creation returning `dish_id` and optional configured `url`.
-7. Implement truthful production baseline capture.
-
-**Gate:** complete end-to-end rehearsal against disposable real PostgreSQL and isolated Asana targets.
-
-## Phase 4 — Dark launch
-
-1. Import production baseline.
-2. Enable fail-open capture.
-3. Run shadow worker.
-4. Monitor backlog, gaps, lag, and mismatches.
-5. Exercise all retained commands.
-6. resolve discrepancies.
-7. collect sufficient representative evidence.
-
-**Gate:** approved dark-launch exit criteria met.
-
-## Phase 5 — Cutover
-
-1. Verify backup and independent restore.
-2. Enter maintenance window.
-3. resolve in-flight operations.
-4. fence all legacy writers.
-5. capture final source bundle and Asana corpus.
-6. import into clean target generation.
-7. run exact final reconciliation.
-8. approve cutover record.
-9. activate PostgreSQL with admission `exact_request`.
-10. execute and verify first request.
-11. open general admission.
-12. monitor closely.
-
-## Phase 6 — Stabilization and deletion
-
-After an agreed stability and retention period:
-
-- remove shadow capture and spool;
-- remove import bootstrap machinery;
-- remove obsolete cutover tooling;
-- remove legacy mutation paths;
-- archive final cutover evidence;
-- begin Stage B data-model and usability redesign.
+- Retire one-shot cutover/dark-launch tooling per the Class D disposition in §6.5, once each tool's event has closed with no remaining consumer.
+- Reassess Class B (explicitly retained transition history) and Class C (cutover/stabilization evidence) per §6.5 and Addendum B decision 11, at the scheduled review (see `/home/marco/ai-tools/CLAUDE.md`, "Scheduled reviews").
+- Continue code-cleanup maintainability work (`docs/code-cleanup-maintainability.md`) as ongoing scheduled maintenance, not a cutover blocker.
 
 ---
 
@@ -804,43 +765,33 @@ Every item from the original handoff and `ops-issues.md` must be entered into a 
 
 No issue is silently dropped.
 
-Initial disposition examples:
+Disposition, reconciled against current code (confirmed rows verified by direct code inspection; remaining rows carried forward, reworded to remove the abandoned squash-gating from §11's historical note):
 
 | Issue | Disposition |
 |---|---|
-| Correct migration-head helper | Confirm and derive from one source |
-| Clean migration rehearsal | Rerun after squash |
-| Native PostgreSQL certification | Retain, rerun after squash |
-| Backup/restore rehearsal | Required before cutover |
-| Full PITR matrix | Product decision based on RPO |
-| First-live-request rehearsal | Retain concept; repoint to minimal gate |
-| Post-request reconciliation | Retain concept; implement real adapter |
-| Production-shaped rehearsal | Required after real runtime exists |
-| Stage A baseline evidence | Redesign to avoid test-layout hashing |
-| Legacy-writer inventory | Retain as part of fence report |
-| Stage 6 runbook command checks | Supersede after control-plane replacement |
-| Typed readiness writers missing | Remove typed subsystem or implement one report |
-| Import evidence not produced | Fix canonical import path |
-| Invocation audit not fulfilled | Integrate or remove obligation |
-| Stale lock/kill-switch/final-gate claims | Mark fixed/disproved |
+| Correct migration-head helper | Confirm and derive from one source — still open |
+| Clean migration rehearsal | **Confirmed resolved.** Standing rehearsal/certification lanes exist (`scripts/dish-pg-native-certification`, `native-concurrency` test lane per `docs/testing.md`); not squash-gated |
+| Native PostgreSQL certification | **Confirmed resolved.** Same standing lanes as above; not squash-gated |
+| Backup/restore rehearsal | Required before cutover — still open |
+| Full PITR matrix | Product decision based on RPO — still open |
+| First-live-request rehearsal | Retain concept; repoint to the implemented admission gate (§5.1) — still open |
+| Post-request reconciliation | Reconciliation adapter is implemented (§8.4); confirm production coverage is complete — still open |
+| Production-shaped rehearsal | Runtime exists (§8); rehearsal itself still outstanding — see `docs/database-backend-imp.md` outstanding-work list |
+| Stage A baseline evidence | **Confirmed resolved.** Redesigned to `dish-stage-a-baseline-v2`; hashes only production source files, excludes test files (`docs/database-backend-stage-a-baseline.json`) |
+| Legacy-writer inventory | Retain as part of fence report — still open |
+| Stage 6 runbook command checks | Reconcile against the live control plane (§5–§6.1); not squash-gated — still open |
+| Typed readiness writers missing | Remove typed subsystem or implement one report — still open |
+| Import evidence not produced | **Confirmed resolved.** Produced via `dish_pg/candidate_manifest.py`'s `_import_completion_digest()`, wired into production candidate-manifest generation. Caveat: confirmed only via the SQLite/PGlite test lane (`tests/postgresql/test_0022_candidate_state_manifest_import_linkage.py`); native-PostgreSQL execution of this path is not separately confirmed |
+| Invocation audit not fulfilled | **Confirmed resolved.** `dish_tool/invocation_audit.py` is wired into `dish_service/application.py` and live in the production application service |
+| Stale lock/kill-switch/final-gate claims | **Confirmed not stale.** Already accurately tracked with dates and code verification in `docs/ops-issues.md`; this row is superseded by that file's own maintained tracking, not by the underlying claims being false |
 
 ---
 
-# 13. Expected Reduction
+# 13. Expected Reduction (historical)
 
-Exact numbers require the final disposition pass, but the likely reduction sources are:
+This section described a reduction target tied to the abandoned Phase 2 squash-and-collapse plan (see §11's historical note). That plan was not executed; dark launch and the real runtime were built directly on the full schema instead, so the target below never applied to a live decision.
 
-- most of the 27 release/cutover/support tables;
-- much of the Stage 6 release/certification Python;
-- large rehearsal scripts;
-- 29-revision migration history;
-- revision-specific fixtures;
-- PostgreSQL SQLite-compatibility DDL;
-- duplicated command registries;
-- test-governance bookkeeping;
-- inert schema and repositories.
-
-The objective is not a cosmetic line target. The objective is to remove entire concepts and ownership surfaces. A permanent post-cutover system near 20,000–25,000 lines remains plausible because legacy, import, shadow, and cutover scaffolding can eventually disappear.
+It is not an active goal. Any future schema/evidence reduction is tracked as code-cleanup consolidation/maintainability work (`docs/code-cleanup-consolidation.md`, `docs/code-cleanup-maintainability.md`) or as cutover Phase 0 revalidation (§11), not as a fixed line-count target.
 
 ---
 
@@ -854,9 +805,9 @@ Control:
 - native tests remain for concurrency and database semantics;
 - no removal based only on line count.
 
-## Risk: migration squash hides behavior regressions
+## Risk: future schema/migration simplification hides behavior regressions
 
-Control:
+Applies if code-cleanup consolidation (CC5) or cutover Phase 0 later squashes migration history or collapses schema (§6.2, §11). Control:
 
 - no data to preserve;
 - archive old history;
@@ -888,7 +839,7 @@ Control:
 
 - preserve reports and useful scripts;
 - reuse low-level checks;
-- repoint them at the minimal model;
+- repoint them at whichever §6.2/§6.5 candidates are actually adopted;
 - rerun only evidence invalidated by structural changes.
 
 ---
@@ -907,11 +858,11 @@ This recovery plan is successful when:
 - one canonical command contract prevents registry drift;
 - the Stage A contract is explicit and approved;
 - the schema contains no required evidence without a production writer;
-- PostgreSQL migrations are reset to a clean supported baseline;
+- the migration history and schema are validated against §12's disposition, whether or not it has since been simplified;
 - the PostgreSQL authority service is deployable;
 - real Asana projection and reconciliation work;
 - retained commands have approved parity or retirement treatment;
-- production dark launch runs against the simplified system;
+- production dark launch runs cleanly, on the schema live at the time, with dark-launch exit criteria met (Addendum B decision 13);
 - cutover can be completed through a bounded, comprehensible procedure;
 - transition machinery has a documented deletion point;
 - future changes no longer require 1,500–2,000-line diffs to add one safety rule.
@@ -1121,7 +1072,7 @@ If that first write fails after authority switches, remain in maintenance mode, 
 
 ## Final verification status
 
-The planning challenge/override verification is a mandatory Phase 1 gate. Phase 2 cannot begin until it passes.
+The planning challenge/override verification (§2, "Standing authorization verification requirement") is a mandatory standing requirement. No admission-gate or schema-reduction work may begin until it passes.
 
 ## Implementation clarifications
 
@@ -1143,4 +1094,4 @@ The following are not assumed complete by this proposal:
 - discovery of hidden consumers of tables proposed for deletion;
 - the full disposition matrix for every `ops-issues.md` and handoff item.
 
-These must be completed during Phase 0/1 before destructive schema work or migration squashing proceeds.
+These must be completed before destructive schema work or migration squashing proceeds, regardless of when that work is scheduled.
