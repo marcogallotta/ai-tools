@@ -455,6 +455,11 @@ def _parser() -> argparse.ArgumentParser:
     disable.add_argument("--reason", required=True)
     enable = sub.add_parser("enable-capture")
     enable.add_argument("--kill-switch", required=True, type=Path)
+    resolve = sub.add_parser("gap-resolve")
+    resolve.add_argument("--database-url", required=True)
+    resolve.add_argument("--gap-id", required=True, type=uuid.UUID)
+    resolve.add_argument("--reason", required=True)
+    resolve.add_argument("--waive", action="store_true")
     return parser
 
 
@@ -494,6 +499,20 @@ def main(argv: list[str] | None = None) -> int:
                     created_at=_now(),
                 )
                 value = {"shadow_baseline_id": str(baseline.shadow_baseline_id)}
+        elif args.command == "gap-resolve":
+            with session_scope(factory) as session:
+                gap = ShadowService(session).resolve_gap(
+                    gap_id=args.gap_id,
+                    resolution={"delivery_outcome": "not_applied", "reason": args.reason},
+                    resolved_at=_now(),
+                    waived=args.waive,
+                )
+                value = {
+                    "gap_id": str(gap.gap_id),
+                    "state": gap.state,
+                    "gap_kind": gap.gap_kind,
+                    "resolved_at": gap.resolved_at.isoformat() if gap.resolved_at else None,
+                }
         else:
             thresholds = StatusThresholds(
                 warning_backlog=args.warning_backlog,
