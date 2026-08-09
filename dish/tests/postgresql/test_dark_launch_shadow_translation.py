@@ -590,6 +590,656 @@ def test_shadow_identifier_translation_ignores_sibling_comparison_bindings_witho
             )
 
 
+def _add_irrelevant_sibling_deliveries(session, service, baseline, ids, *, current_sequence):
+    """Populate failed/pending siblings around a current envelope; resolvers must ignore them."""
+    for sequence, state in (
+        (current_sequence - 2, "failed"),
+        (current_sequence - 1, "pending"),
+        (current_sequence + 1, "pending"),
+    ):
+        sibling = service.capture_envelope(
+            shadow_baseline_id=baseline.shadow_baseline_id,
+            command_name="start",
+            source_request_identity=f"irrelevant-sibling-{current_sequence}-{sequence}",
+            canonical_input={"command": "start", "arguments": {}},
+            source_outcome={"ok": state != "failed"},
+            source_post_state={"phase": "irrelevant"},
+            rollout_sequence=sequence,
+            source_authority_generation="legacy-1",
+            captured_at=NOW,
+        )
+        delivery = session.scalar(
+            select(tx.ShadowDelivery).where(tx.ShadowDelivery.envelope_id == sibling.envelope_id)
+        )
+        assert delivery is not None
+        if state == "failed":
+            delivery.state = "failed"
+            delivery.last_error = "irrelevant sibling failed"
+            delivery.terminal_at = NOW
+
+
+def test_patch_b_actor_lease_resolves_from_envelope_local_lineage_with_bad_siblings(workflow_db):
+    factory, ids, context, task_id = workflow_db
+    source_operation = uuid.uuid4()
+    source_lease = uuid.uuid4()
+    source_request_id = "legacy-lease-source-start"
+    source_run_id = "source-author-run"
+    with session_scope(factory) as session:
+        task_gid = _source_task_gid(session, task_id)
+        service = ShadowService(session, uuid_factory=lambda: _next(ids))
+        baseline = service.create_baseline(
+            generation_id=context["generation_id"],
+            source_generation_identity="legacy-1",
+            source_commit="worktree",
+            created_at=NOW,
+        )
+        envelope = service.capture_envelope(
+            shadow_baseline_id=baseline.shadow_baseline_id,
+            command_name="renew-lease",
+            source_request_identity="legacy-renew",
+            canonical_input={"command": "renew-lease", "arguments": {}},
+            source_outcome={"ok": True},
+            source_pre_state={
+                "selected_tables": ["operations", "service_leases", "service_requests"],
+                "lineage_scope": {
+                    "operation_ids": [str(source_operation)],
+                    "lease_ids": [str(source_lease)],
+                    "cycle_ids": [],
+                    "challenge_ids": [],
+                    "abandonment_ids": [],
+                    "explicit_request_ids": [],
+                },
+                "tables": {
+                    "operations": [{
+                        "operation_id": str(source_operation),
+                        "task_gid": task_gid,
+                        "operation_kind": "initial",
+                        "created_at": NOW.isoformat(),
+                    }],
+                    "service_requests": [_source_creator_request_row(
+                        request_id=source_request_id,
+                        operation_id=source_operation,
+                        task_gid=task_gid,
+                        kind="initial",
+                    )],
+                    "service_leases": [{
+                        "lease_id": str(source_lease),
+                        "operation_id": str(source_operation),
+                        "task_gid": task_gid,
+                        "owner_id": "owner-1",
+                        "run_id": source_run_id,
+                        "lease_kind": "actor",
+                        "actor_attempt_seq": 1,
+                        "context_cycle_id": None,
+                    }],
+                },
+            },
+            source_post_state={"phase": "research"},
+            rollout_sequence=3,
+            source_authority_generation="legacy-1",
+            pinned_inputs={"capture_schema": 3, "rollout_mode": "execute"},
+            captured_at=NOW,
+        )
+        _add_irrelevant_sibling_deliveries(
+            session, service, baseline, ids, current_sequence=3
+        )
+
+        target_run_id = _shadow_uuid(
+            envelope, label="run", value=f"owner-1:{source_run_id}"
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=target_run_id,
+            owner="owner-1",
+            agent="claude",
+        )
+        target_start = _port(session, ids).execute(
+            _call(
+                "start",
+                run_id=target_run_id,
+                request_id=_shadow_uuid(envelope, label="request", value=source_request_id),
+                owner="owner-1",
+                arguments={"task_id": str(task_id), "kind": "initial", "agent": "claude"},
+            )
+        )
+        assert target_start.ok
+
+        assert _translate_workflow_identifiers(
+            session, envelope, {"lease_id": str(source_lease)}
+        ) == {"lease_id": target_start.data["lease_id"]}
+
+
+def test_patch_b_verification_cycle_resolves_from_envelope_local_lineage_with_bad_siblings(workflow_db):
+    factory, ids, context, task_id = workflow_db
+    source_operation = uuid.uuid4()
+    source_cycle = uuid.uuid4()
+    source_request_id = "legacy-cycle-source-start"
+    source_run_id = "source-author-run"
+    with session_scope(factory) as session:
+        task_gid = _source_task_gid(session, task_id)
+        service = ShadowService(session, uuid_factory=lambda: _next(ids))
+        baseline = service.create_baseline(
+            generation_id=context["generation_id"],
+            source_generation_identity="legacy-1",
+            source_commit="worktree",
+            created_at=NOW,
+        )
+        envelope = service.capture_envelope(
+            shadow_baseline_id=baseline.shadow_baseline_id,
+            command_name="start",
+            source_request_identity="legacy-verification-continuation",
+            canonical_input={"command": "start", "arguments": {}},
+            source_outcome={"ok": True},
+            source_pre_state={
+                "selected_tables": ["operations", "service_requests", "verification_cycles"],
+                "lineage_scope": {
+                    "operation_ids": [str(source_operation)],
+                    "lease_ids": [],
+                    "cycle_ids": [str(source_cycle)],
+                    "challenge_ids": [],
+                    "abandonment_ids": [],
+                    "explicit_request_ids": [],
+                },
+                "tables": {
+                    "operations": [{
+                        "operation_id": str(source_operation),
+                        "task_gid": task_gid,
+                        "operation_kind": "initial",
+                        "created_at": NOW.isoformat(),
+                    }],
+                    "service_requests": [_source_creator_request_row(
+                        request_id=source_request_id,
+                        operation_id=source_operation,
+                        task_gid=task_gid,
+                        kind="initial",
+                    )],
+                    "verification_cycles": [{
+                        "cycle_id": str(source_cycle),
+                        "operation_id": str(source_operation),
+                        "task_gid": task_gid,
+                        "cycle_number": 1,
+                    }],
+                },
+            },
+            source_post_state={"phase": "await_verification"},
+            rollout_sequence=3,
+            source_authority_generation="legacy-1",
+            pinned_inputs={"capture_schema": 3, "rollout_mode": "execute"},
+            captured_at=NOW,
+        )
+        _add_irrelevant_sibling_deliveries(
+            session, service, baseline, ids, current_sequence=3
+        )
+
+        author_run = _shadow_uuid(envelope, label="run", value=f"owner-1:{source_run_id}")
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=author_run,
+            owner="owner-1",
+            agent="claude",
+        )
+        _add_verification_queue(session, ids, context)
+        port = _port(session, ids)
+        started = port.execute(
+            _call(
+                "start",
+                run_id=author_run,
+                request_id=_shadow_uuid(envelope, label="request", value=source_request_id),
+                owner="owner-1",
+                arguments={"task_id": str(task_id), "kind": "initial", "agent": "claude"},
+            )
+        )
+        assert started.ok
+        _prepare_for_verification(
+            port, ids, task_id=task_id, operation_id=started.data["operation_id"], run_id=author_run
+        )
+        target_cycle = session.scalar(
+            select(wf.VerificationCycle).where(
+                wf.VerificationCycle.operation_id == uuid.UUID(started.data["operation_id"]),
+                wf.VerificationCycle.cycle_sequence == 1,
+            )
+        )
+        assert target_cycle is not None
+
+        assert _translate_workflow_identifiers(
+            session, envelope, {"target_cycle_id": str(source_cycle)}
+        ) == {"target_cycle_id": str(target_cycle.cycle_id)}
+
+
+def test_patch_b_planning_challenge_resolves_from_envelope_local_lineage_with_bad_siblings(workflow_db):
+    factory, ids, context, task_id = workflow_db
+    source_challenge = uuid.uuid4()
+    source_issue_request = "legacy-planning-challenge-issue"
+    source_owner = "owner-1"
+    source_run = "source-planning-run"
+    with session_scope(factory) as session:
+        task_gid = _source_task_gid(session, task_id)
+        service = ShadowService(session, uuid_factory=lambda: _next(ids))
+        baseline = service.create_baseline(
+            generation_id=context["generation_id"],
+            source_generation_identity="legacy-1",
+            source_commit="worktree",
+            created_at=NOW,
+        )
+        envelope = service.capture_envelope(
+            shadow_baseline_id=baseline.shadow_baseline_id,
+            command_name="start",
+            source_request_identity="legacy-planning-confirmed",
+            canonical_input={"command": "start", "arguments": {}},
+            source_outcome={"ok": True},
+            source_pre_state={
+                "selected_tables": ["planning_intent_challenges", "service_requests"],
+                "lineage_scope": {
+                    "operation_ids": [],
+                    "lease_ids": [],
+                    "cycle_ids": [],
+                    "challenge_ids": [str(source_challenge)],
+                    "abandonment_ids": [],
+                    "explicit_request_ids": [source_issue_request],
+                },
+                "tables": {
+                    "planning_intent_challenges": [{
+                        "challenge_id": str(source_challenge),
+                        "created_request_id": source_issue_request,
+                        "owner_id": source_owner,
+                        "run_id": source_run,
+                        "task_gid": task_gid,
+                        "agent": "claude",
+                        "target_hash": "source-target-hash",
+                        "status": "issued",
+                        "claimed_request_id": None,
+                        "operation_id": None,
+                    }],
+                    "service_requests": [{
+                        "request_id": source_issue_request,
+                        "owner_id": source_owner,
+                        "run_id": source_run,
+                        "command": "start",
+                        "status": "completed",
+                        "operation_id": None,
+                        "task_gid": task_gid,
+                    }],
+                },
+            },
+            source_post_state={"phase": "planning"},
+            rollout_sequence=3,
+            source_authority_generation="legacy-1",
+            pinned_inputs={"capture_schema": 3, "rollout_mode": "execute"},
+            captured_at=NOW,
+        )
+        _add_irrelevant_sibling_deliveries(
+            session, service, baseline, ids, current_sequence=3
+        )
+
+        target_run = _shadow_uuid(envelope, label="run", value=f"{source_owner}:{source_run}")
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=target_run,
+            owner=source_owner,
+            agent="claude",
+        )
+        issued = _port(session, ids).execute(
+            _call(
+                "start",
+                run_id=target_run,
+                request_id=_shadow_uuid(envelope, label="request", value=source_issue_request),
+                owner=source_owner,
+                arguments={"task_id": str(task_id), "kind": "planning", "agent": "claude"},
+            )
+        )
+        assert not issued.ok and issued.code == "CONFIRMATION_REQUIRED"
+
+        assert _translate_workflow_identifiers(
+            session, envelope, {"intent_challenge_id": str(source_challenge)}
+        ) == {"intent_challenge_id": issued.data["intent_challenge_id"]}
+
+
+def test_patch_b_abandonment_resolves_from_envelope_local_lineage_with_bad_siblings(workflow_db):
+    factory, ids, context, task_id = workflow_db
+    source_operation = uuid.uuid4()
+    source_lease = uuid.uuid4()
+    source_abandonment = uuid.uuid4()
+    source_start_request = "legacy-abandon-source-start"
+    source_abandon_request = "legacy-abandon-request"
+    source_execution = "legacy-abandon-execution"
+    source_actor_owner = "owner-1"
+    source_actor_run = "source-actor-run"
+    source_admin_run = "source-admin-run"
+    with session_scope(factory) as session:
+        task_gid = _source_task_gid(session, task_id)
+        service = ShadowService(session, uuid_factory=lambda: _next(ids))
+        baseline = service.create_baseline(
+            generation_id=context["generation_id"],
+            source_generation_identity="legacy-1",
+            source_commit="worktree",
+            created_at=NOW,
+        )
+        envelope = service.capture_envelope(
+            shadow_baseline_id=baseline.shadow_baseline_id,
+            command_name="reconcile-abandonment",
+            source_request_identity="legacy-reconcile-abandonment",
+            canonical_input={"command": "reconcile-abandonment", "arguments": {}},
+            source_outcome={"ok": True},
+            source_pre_state={
+                "selected_tables": [
+                    "operations", "service_leases", "service_requests",
+                    "abandonment_attempts", "audit_events", "operation_executions",
+                ],
+                "lineage_scope": {
+                    "operation_ids": [str(source_operation)],
+                    "lease_ids": [str(source_lease)],
+                    "cycle_ids": [],
+                    "challenge_ids": [],
+                    "abandonment_ids": [str(source_abandonment)],
+                    "explicit_request_ids": [source_abandon_request],
+                },
+                "tables": {
+                    "operations": [{
+                        "operation_id": str(source_operation),
+                        "task_gid": task_gid,
+                        "operation_kind": "initial",
+                        "created_at": NOW.isoformat(),
+                    }],
+                    "service_leases": [{
+                        "lease_id": str(source_lease),
+                        "operation_id": str(source_operation),
+                        "task_gid": task_gid,
+                        "owner_id": source_actor_owner,
+                        "run_id": source_actor_run,
+                        "lease_kind": "actor",
+                        "actor_attempt_seq": 1,
+                        "context_cycle_id": None,
+                    }],
+                    "service_requests": [
+                        _source_creator_request_row(
+                            request_id=source_start_request,
+                            operation_id=source_operation,
+                            task_gid=task_gid,
+                            kind="initial",
+                        ),
+                        {
+                            "request_id": source_abandon_request,
+                            "owner_id": "Marco",
+                            "run_id": source_admin_run,
+                            "command": "abandon-operation",
+                            "status": "completed",
+                            "operation_id": str(source_operation),
+                            "task_gid": task_gid,
+                        },
+                    ],
+                    "operation_executions": [{
+                        "execution_id": source_execution,
+                        "operation_id": str(source_operation),
+                        "request_id": source_abandon_request,
+                        "command": "abandon-operation",
+                    }],
+                    "audit_events": [{
+                        "event_id": "source-abandon-audit",
+                        "operation_id": str(source_operation),
+                        "event_type": "operation.abandonment_started",
+                        "operation_execution_id": source_execution,
+                        "details": {
+                            "abandonment_id": str(source_abandonment),
+                            "source_lease_id": str(source_lease),
+                        },
+                    }],
+                    "abandonment_attempts": [{
+                        "abandonment_id": str(source_abandonment),
+                        "task_gid": task_gid,
+                        "source_operation_id": str(source_operation),
+                        "source_lease_id": str(source_lease),
+                        "abandoned_owner_id": source_actor_owner,
+                        "abandoned_run_id": source_actor_run,
+                        "attempt_cycle_id": None,
+                    }],
+                },
+            },
+            source_post_state={"phase": "abandonment"},
+            rollout_sequence=3,
+            source_authority_generation="legacy-1",
+            pinned_inputs={"capture_schema": 3, "rollout_mode": "execute"},
+            captured_at=NOW,
+        )
+        _add_irrelevant_sibling_deliveries(
+            session, service, baseline, ids, current_sequence=3
+        )
+
+        actor_run = _shadow_uuid(envelope, label="run", value=f"{source_actor_owner}:{source_actor_run}")
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=actor_run,
+            owner=source_actor_owner,
+            agent="claude",
+        )
+        port = _port(session, ids)
+        started = port.execute(
+            _call(
+                "start",
+                run_id=actor_run,
+                request_id=_shadow_uuid(envelope, label="request", value=source_start_request),
+                owner=source_actor_owner,
+                arguments={"task_id": str(task_id), "kind": "initial", "agent": "claude"},
+            )
+        )
+        assert started.ok
+        admin_run = _shadow_uuid(envelope, label="run", value=f"Marco:{source_admin_run}")
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=admin_run,
+            owner="Marco",
+            agent="claude",
+        )
+        abandoned = port.execute(
+            _call(
+                "abandon-operation",
+                run_id=admin_run,
+                request_id=_shadow_uuid(envelope, label="request", value=source_abandon_request),
+                owner="Marco",
+                principal="admin",
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                    "lease_id": started.data["lease_id"],
+                    "reason": "run permanently unavailable",
+                },
+            )
+        )
+        assert abandoned.ok
+
+        assert _translate_workflow_identifiers(
+            session, envelope, {"abandonment_id": str(source_abandonment)}
+        ) == {"abandonment_id": abandoned.data["abandonment_id"]}
+
+
+def test_patch_b_abandonment_continuation_pair_uses_local_succession(workflow_db):
+    factory, ids, context, task_id = workflow_db
+    source_operation = uuid.uuid4()
+    source_successor = uuid.uuid4()
+    source_successor_cycle = uuid.uuid4()
+    source_request_id = "legacy-abandonment-source-start"
+    source_run_id = "source-author-run"
+    with session_scope(factory) as session:
+        task_gid = _source_task_gid(session, task_id)
+        service = ShadowService(session, uuid_factory=lambda: _next(ids))
+        baseline = service.create_baseline(
+            generation_id=context["generation_id"],
+            source_generation_identity="legacy-1",
+            source_commit="worktree",
+            created_at=NOW,
+        )
+        envelope = service.capture_envelope(
+            shadow_baseline_id=baseline.shadow_baseline_id,
+            command_name="start",
+            source_request_identity="legacy-successor-verification",
+            canonical_input={"command": "start", "arguments": {}},
+            source_outcome={"ok": True},
+            source_pre_state={
+                "selected_tables": [
+                    "operations", "service_requests", "verification_cycles", "operation_successions",
+                ],
+                "lineage_scope": {
+                    "operation_ids": [str(source_operation), str(source_successor)],
+                    "lease_ids": [],
+                    "cycle_ids": [str(source_successor_cycle)],
+                    "challenge_ids": [],
+                    "abandonment_ids": [],
+                    "explicit_request_ids": [],
+                },
+                "tables": {
+                    "operations": [
+                        {
+                            "operation_id": str(source_operation),
+                            "task_gid": task_gid,
+                            "operation_kind": "initial",
+                            "created_at": NOW.isoformat(),
+                        },
+                        {
+                            "operation_id": str(source_successor),
+                            "task_gid": task_gid,
+                            "operation_kind": "initial",
+                            "created_at": (NOW + timedelta(seconds=2)).isoformat(),
+                        },
+                    ],
+                    "service_requests": [_source_creator_request_row(
+                        request_id=source_request_id,
+                        operation_id=source_operation,
+                        task_gid=task_gid,
+                        kind="initial",
+                    )],
+                    "verification_cycles": [{
+                        "cycle_id": str(source_successor_cycle),
+                        "operation_id": str(source_successor),
+                        "task_gid": task_gid,
+                        "cycle_number": 2,
+                    }],
+                    "operation_successions": [{
+                        "succession_id": str(uuid.uuid4()),
+                        "task_gid": task_gid,
+                        "source_operation_id": str(source_operation),
+                        "successor_operation_id": str(source_successor),
+                        "source_cycle_id": str(uuid.uuid4()),
+                        "successor_cycle_id": str(source_successor_cycle),
+                    }],
+                },
+            },
+            source_post_state={"phase": "await_verification"},
+            pinned_inputs={"capture_schema": 3, "rollout_mode": "execute"},
+            rollout_sequence=3,
+            source_authority_generation="legacy-1",
+            captured_at=NOW,
+        )
+        _add_irrelevant_sibling_deliveries(
+            session, service, baseline, ids, current_sequence=3
+        )
+
+        author_run = _shadow_uuid(envelope, label="run", value=f"owner-1:{source_run_id}")
+        verifier_run = _next(ids)
+        admin_run = _next(ids)
+        _register_run(
+            session, generation_id=context["generation_id"], run_id=author_run,
+            owner="owner-1", agent="claude",
+        )
+        _register_run(
+            session, generation_id=context["generation_id"], run_id=verifier_run,
+            owner="old-verifier", agent="gpt",
+        )
+        _register_run(
+            session, generation_id=context["generation_id"], run_id=admin_run,
+            owner="Marco", agent="claude",
+        )
+        _add_verification_queue(session, ids, context)
+        port = _port(session, ids)
+        started = port.execute(
+            _call(
+                "start",
+                run_id=author_run,
+                request_id=_shadow_uuid(envelope, label="request", value=source_request_id),
+                owner="owner-1",
+                arguments={"task_id": str(task_id), "kind": "initial", "agent": "claude"},
+            )
+        )
+        assert started.ok
+        _prepare_for_verification(
+            port, ids, task_id=task_id, operation_id=started.data["operation_id"], run_id=author_run,
+        )
+        verification = _start_verification(
+            port, ids, task_id=task_id, operation_id=started.data["operation_id"],
+            run_id=verifier_run, owner="old-verifier", agent="gpt",
+        )
+        abandoned = port.execute(
+            _call(
+                "abandon-operation",
+                run_id=admin_run,
+                request_id=_next(ids),
+                owner="Marco",
+                principal="admin",
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                    "lease_id": verification.data["lease_id"],
+                    "reason": "verifier permanently unavailable",
+                },
+            )
+        )
+        assert abandoned.ok
+        edge = session.scalar(select(wf.OperationSuccessionEdge))
+        assert edge is not None and edge.prepared_cycle_id is not None
+
+        assert _translate_workflow_identifiers(
+            session,
+            envelope,
+            {
+                "target_operation_id": str(source_successor),
+                "target_cycle_id": str(source_successor_cycle),
+            },
+        ) == {
+            "target_operation_id": str(edge.successor_operation_id),
+            "target_cycle_id": str(edge.prepared_cycle_id),
+        }
+
+
+@pytest.mark.parametrize(
+    ("field", "family"),
+    [
+        ("lease_id", "lease"),
+        ("target_cycle_id", "verification_cycle"),
+        ("intent_challenge_id", "planning_challenge"),
+        ("abandonment_id", "abandonment"),
+    ],
+)
+def test_patch_b_missing_or_historical_lineage_fails_closed(workflow_db, field, family):
+    factory, ids, context, _task_id = workflow_db
+    source_value = uuid.uuid4()
+    with session_scope(factory) as session:
+        service = ShadowService(session, uuid_factory=lambda: _next(ids))
+        baseline = service.create_baseline(
+            generation_id=context["generation_id"],
+            source_generation_identity="legacy-1",
+            source_commit="worktree",
+            created_at=NOW,
+        )
+        for schema, identity in ((3, "missing-local-lineage"), (2, "historical-envelope")):
+            envelope = service.capture_envelope(
+                shadow_baseline_id=baseline.shadow_baseline_id,
+                command_name="start",
+                source_request_identity=f"{identity}-{field}",
+                canonical_input={"command": "start", "arguments": {}},
+                source_outcome={"ok": True},
+                source_pre_state={"selected_tables": [], "tables": {}},
+                source_post_state={},
+                rollout_sequence=None,
+                source_authority_generation="legacy-1",
+                pinned_inputs={"capture_schema": schema, "rollout_mode": "capture"},
+                captured_at=NOW,
+            )
+            with pytest.raises(ShadowIdentityMappingError, match=f"no unique target {family}"):
+                _translate_workflow_identifiers(session, envelope, {field: str(source_value)})
+
 def test_real_shadow_evaluator_compares_legacy_start_semantically(workflow_db):
     from dish_pg.shadow_worker import CommandPortShadowEvaluator
     from tests.support.postgresql.core import HASH_A

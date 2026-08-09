@@ -331,10 +331,8 @@ def test_snapshot_captures_all_operation_linked_service_requests_for_creator_pro
     assert {row["request_id"] for row in requests} == {
         "creator-request", "later-request"
     }
-    assert snapshot["lineage_scope"] == {
-        "operation_ids": [operation_id],
-        "explicit_request_ids": [],
-    }
+    assert snapshot["lineage_scope"]["operation_ids"] == [operation_id]
+    assert snapshot["lineage_scope"]["explicit_request_ids"] == []
 
 
 def test_snapshot_expands_operation_succession_lineage_for_operation_resolution(tmp_path):
@@ -400,10 +398,8 @@ def test_snapshot_expands_operation_succession_lineage_for_operation_resolution(
         request_id=None,
     )
 
-    assert snapshot["lineage_scope"] == {
-        "operation_ids": ["source-op", "successor-op"],
-        "explicit_request_ids": [],
-    }
+    assert snapshot["lineage_scope"]["operation_ids"] == ["source-op", "successor-op"]
+    assert snapshot["lineage_scope"]["explicit_request_ids"] == []
     assert {
         row["operation_id"] for row in snapshot["tables"]["operations"]
     } == {"source-op", "successor-op"}
@@ -442,3 +438,304 @@ def test_completion_capacity_guard_kills_capture_and_retains_only_gap(tmp_path):
     assert item is not None
     assert item.state in {"reserved", "gap"}
     assert item.source_outcome is None
+
+
+
+def test_patch_b_snapshot_expands_verification_continuation_cycle_lineage(tmp_path):
+    from dish_service.shadow_capture import authoritative_snapshot
+
+    db = tmp_path / "continuation-cycle.sqlite3"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE operations(
+            operation_id TEXT PRIMARY KEY,
+            task_gid TEXT NOT NULL,
+            operation_kind TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE service_requests(
+            request_id TEXT PRIMARY KEY,
+            owner_id TEXT,
+            run_id TEXT,
+            command TEXT NOT NULL,
+            request_hash TEXT,
+            status TEXT NOT NULL,
+            operation_id TEXT,
+            task_gid TEXT,
+            result_json TEXT,
+            resolution_result_json TEXT,
+            created_at TEXT NOT NULL,
+            completed_at TEXT
+        );
+        CREATE TABLE verification_cycles(
+            cycle_id TEXT PRIMARY KEY,
+            operation_id TEXT NOT NULL,
+            task_gid TEXT NOT NULL,
+            cycle_number INTEGER NOT NULL
+        );
+        CREATE TABLE operation_successions(
+            succession_id TEXT PRIMARY KEY,
+            task_gid TEXT NOT NULL,
+            source_operation_id TEXT NOT NULL,
+            successor_operation_id TEXT NOT NULL,
+            source_cycle_id TEXT,
+            successor_cycle_id TEXT,
+            abandonment_id TEXT
+        );
+        """
+    )
+    conn.executemany(
+        "INSERT INTO operations VALUES (?,?,?,?)",
+        [
+            ("source-op", "task-1", "initial", "2026-08-09T08:00:00+00:00"),
+            ("successor-op", "task-1", "initial", "2026-08-09T08:02:00+00:00"),
+        ],
+    )
+    conn.execute(
+        "INSERT INTO service_requests VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "creator-request", "owner", "run", "start", "hash", "completed",
+            "source-op", "task-1", "{}", None,
+            "2026-08-09T07:59:59+00:00", "2026-08-09T08:00:01+00:00",
+        ),
+    )
+    conn.executemany(
+        "INSERT INTO verification_cycles VALUES (?,?,?,?)",
+        [
+            ("source-cycle", "source-op", "task-1", 1),
+            ("successor-cycle", "successor-op", "task-1", 2),
+        ],
+    )
+    conn.execute(
+        "INSERT INTO operation_successions VALUES (?,?,?,?,?,?,?)",
+        (
+            "succession-1", "task-1", "source-op", "successor-op",
+            "source-cycle", "successor-cycle", None,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    snapshot = authoritative_snapshot(
+        db,
+        arguments={
+            "target_operation_id": "successor-op",
+            "target_cycle_id": "successor-cycle",
+        },
+        request_id=None,
+    )
+
+    assert snapshot["lineage_scope"]["operation_ids"] == ["source-op", "successor-op"]
+    assert snapshot["lineage_scope"]["cycle_ids"] == ["source-cycle", "successor-cycle"]
+    assert {
+        row["cycle_id"] for row in snapshot["tables"]["verification_cycles"]
+    } == {"source-cycle", "successor-cycle"}
+
+
+def test_patch_b_snapshot_captures_direct_actor_lease_lineage(tmp_path):
+    from dish_service.shadow_capture import authoritative_snapshot
+
+    db = tmp_path / "lease-lineage.sqlite3"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE operations(
+            operation_id TEXT PRIMARY KEY,
+            task_gid TEXT NOT NULL,
+            operation_kind TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE service_leases(
+            lease_id TEXT PRIMARY KEY,
+            operation_id TEXT NOT NULL,
+            task_gid TEXT NOT NULL,
+            owner_id TEXT NOT NULL,
+            run_id TEXT NOT NULL,
+            lease_kind TEXT,
+            actor_attempt_seq INTEGER,
+            context_cycle_id TEXT
+        );
+        CREATE TABLE service_requests(
+            request_id TEXT PRIMARY KEY,
+            command TEXT NOT NULL,
+            status TEXT NOT NULL,
+            operation_id TEXT,
+            task_gid TEXT
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO operations VALUES (?,?,?,?)",
+        ("operation-1", "task-1", "initial", "2026-08-09T08:00:00+00:00"),
+    )
+    conn.execute(
+        "INSERT INTO service_leases VALUES (?,?,?,?,?,?,?,?)",
+        ("lease-1", "operation-1", "task-1", "owner", "run", "actor", 3, None),
+    )
+    conn.commit()
+    conn.close()
+
+    snapshot = authoritative_snapshot(
+        db,
+        arguments={"lease_id": "lease-1"},
+        request_id=None,
+    )
+
+    assert snapshot["lineage_scope"]["lease_ids"] == ["lease-1"]
+    assert snapshot["lineage_scope"]["operation_ids"] == ["operation-1"]
+    assert snapshot["tables"]["service_leases"][0]["lease_id"] == "lease-1"
+
+
+def test_patch_b_snapshot_captures_planning_challenge_creator_request_lineage(tmp_path):
+    from dish_service.shadow_capture import authoritative_snapshot
+
+    db = tmp_path / "planning-challenge.sqlite3"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE planning_intent_challenges(
+            challenge_id TEXT PRIMARY KEY,
+            created_request_id TEXT NOT NULL,
+            claimed_request_id TEXT,
+            owner_id TEXT NOT NULL,
+            run_id TEXT NOT NULL,
+            task_gid TEXT NOT NULL,
+            agent TEXT NOT NULL,
+            target_hash TEXT NOT NULL,
+            status TEXT NOT NULL,
+            operation_id TEXT
+        );
+        CREATE TABLE service_requests(
+            request_id TEXT PRIMARY KEY,
+            command TEXT NOT NULL,
+            status TEXT NOT NULL,
+            operation_id TEXT,
+            task_gid TEXT
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO service_requests VALUES (?,?,?,?,?)",
+        ("issue-request", "start", "completed", None, "task-1"),
+    )
+    conn.execute(
+        "INSERT INTO planning_intent_challenges VALUES (?,?,?,?,?,?,?,?,?,?)",
+        (
+            "challenge-1", "issue-request", None, "owner", "run", "task-1",
+            "claude", "target-hash", "issued", None,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    snapshot = authoritative_snapshot(
+        db,
+        arguments={"intent_challenge_id": "challenge-1"},
+        request_id=None,
+    )
+
+    assert snapshot["lineage_scope"]["challenge_ids"] == ["challenge-1"]
+    assert snapshot["lineage_scope"]["explicit_request_ids"] == ["issue-request"]
+    assert snapshot["tables"]["planning_intent_challenges"][0]["challenge_id"] == "challenge-1"
+    assert snapshot["tables"]["service_requests"][0]["request_id"] == "issue-request"
+
+
+def test_patch_b_snapshot_captures_abandonment_creation_request_lineage(tmp_path):
+    from dish_service.shadow_capture import authoritative_snapshot
+
+    db = tmp_path / "abandonment-lineage.sqlite3"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE operations(
+            operation_id TEXT PRIMARY KEY,
+            task_gid TEXT NOT NULL,
+            operation_kind TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE service_leases(
+            lease_id TEXT PRIMARY KEY,
+            operation_id TEXT NOT NULL,
+            task_gid TEXT NOT NULL,
+            context_cycle_id TEXT
+        );
+        CREATE TABLE abandonment_attempts(
+            abandonment_id TEXT PRIMARY KEY,
+            task_gid TEXT NOT NULL,
+            source_operation_id TEXT NOT NULL,
+            source_lease_id TEXT NOT NULL,
+            successor_operation_id TEXT,
+            continuation_operation_id TEXT,
+            attempt_cycle_id TEXT,
+            successor_cycle_id TEXT,
+            continuation_cycle_id TEXT
+        );
+        CREATE TABLE operation_executions(
+            execution_id TEXT PRIMARY KEY,
+            operation_id TEXT NOT NULL,
+            request_id TEXT,
+            command TEXT NOT NULL
+        );
+        CREATE TABLE audit_events(
+            event_id TEXT PRIMARY KEY,
+            operation_id TEXT,
+            event_type TEXT NOT NULL,
+            operation_execution_id TEXT,
+            details TEXT NOT NULL
+        );
+        CREATE TABLE service_requests(
+            request_id TEXT PRIMARY KEY,
+            command TEXT NOT NULL,
+            status TEXT NOT NULL,
+            operation_id TEXT,
+            task_gid TEXT
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO operations VALUES (?,?,?,?)",
+        ("operation-1", "task-1", "initial", "2026-08-09T08:00:00+00:00"),
+    )
+    conn.execute(
+        "INSERT INTO service_leases VALUES (?,?,?,?)",
+        ("lease-1", "operation-1", "task-1", None),
+    )
+    conn.execute(
+        "INSERT INTO service_requests VALUES (?,?,?,?,?)",
+        ("abandon-request", "abandon-operation", "completed", "operation-1", "task-1"),
+    )
+    conn.execute(
+        "INSERT INTO operation_executions VALUES (?,?,?,?)",
+        ("abandon-execution", "operation-1", "abandon-request", "abandon-operation"),
+    )
+    conn.execute(
+        "INSERT INTO audit_events VALUES (?,?,?,?,?)",
+        (
+            "audit-1", "operation-1", "operation.abandonment_started",
+            "abandon-execution",
+            '{"abandonment_id":"abandonment-1","source_lease_id":"lease-1"}',
+        ),
+    )
+    conn.execute(
+        "INSERT INTO abandonment_attempts VALUES (?,?,?,?,?,?,?,?,?)",
+        (
+            "abandonment-1", "task-1", "operation-1", "lease-1", None, None,
+            None, None, None,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    snapshot = authoritative_snapshot(
+        db,
+        arguments={"abandonment_id": "abandonment-1"},
+        request_id=None,
+    )
+
+    assert snapshot["lineage_scope"]["abandonment_ids"] == ["abandonment-1"]
+    assert snapshot["lineage_scope"]["lease_ids"] == ["lease-1"]
+    assert snapshot["lineage_scope"]["operation_ids"] == ["operation-1"]
+    assert snapshot["lineage_scope"]["explicit_request_ids"] == ["abandon-request"]
+    assert snapshot["tables"]["operation_executions"][0]["request_id"] == "abandon-request"
+    assert snapshot["tables"]["service_requests"][0]["request_id"] == "abandon-request"

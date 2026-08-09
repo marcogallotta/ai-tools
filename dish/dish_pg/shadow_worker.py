@@ -221,6 +221,19 @@ def _snapshot_rows(snapshot: Mapping[str, Any], table: str) -> list[Mapping[str,
     return [row for row in rows if isinstance(row, Mapping)]
 
 
+def _lineage_scope_contains(
+    envelope: tx.ShadowEnvelope, *, key: str, source_value: str
+) -> bool:
+    snapshot = envelope.source_pre_state
+    if not isinstance(snapshot, Mapping):
+        return False
+    scope = snapshot.get("lineage_scope")
+    if not isinstance(scope, Mapping):
+        return False
+    values = scope.get(key)
+    return isinstance(values, list) and source_value in {str(item) for item in values}
+
+
 def _source_timestamp(value: Any) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
@@ -504,6 +517,480 @@ def _resolve_operation_identity_binding(
     )
 
 
+
+def _live_verification_cycle_identity_binding(
+    session,
+    envelope: tx.ShadowEnvelope,
+    *,
+    source_value: str,
+) -> str | None:
+    if _capture_schema(envelope) < 3 or not _lineage_scope_contains(
+        envelope, key="cycle_ids", source_value=source_value
+    ):
+        return None
+    snapshot = envelope.source_pre_state
+    if not isinstance(snapshot, Mapping):
+        return None
+    source_cycles = [
+        row
+        for row in _snapshot_rows(snapshot, "verification_cycles")
+        if str(row.get("cycle_id") or "") == source_value
+    ]
+    if len(source_cycles) != 1:
+        return None
+    source_cycle = source_cycles[0]
+    source_operation_id = str(source_cycle.get("operation_id") or "")
+    target_operation = _resolve_operation_identity_binding(
+        session, envelope, source_value=source_operation_id
+    )
+    if target_operation is None:
+        return None
+    try:
+        target_operation_id = uuid.UUID(target_operation)
+    except ValueError:
+        return None
+
+    successor_edges = [
+        row
+        for row in _snapshot_rows(snapshot, "operation_successions")
+        if str(row.get("successor_operation_id") or "") == source_operation_id
+        and str(row.get("successor_cycle_id") or "") == source_value
+    ]
+    if len(successor_edges) > 1:
+        return None
+    target_cycle = None
+    if successor_edges:
+        source_predecessor = str(successor_edges[0].get("source_operation_id") or "")
+        target_predecessor = _resolve_operation_identity_binding(
+            session, envelope, source_value=source_predecessor
+        )
+        if target_predecessor is None:
+            return None
+        try:
+            target_predecessor_id = uuid.UUID(target_predecessor)
+        except ValueError:
+            return None
+        target_edges = list(
+            session.scalars(
+                select(wf.OperationSuccessionEdge).where(
+                    wf.OperationSuccessionEdge.source_operation_id == target_predecessor_id,
+                    wf.OperationSuccessionEdge.successor_operation_id == target_operation_id,
+                )
+            )
+        )
+        if len(target_edges) != 1 or target_edges[0].prepared_cycle_id is None:
+            return None
+        target_cycle = session.get(wf.VerificationCycle, target_edges[0].prepared_cycle_id)
+    else:
+        try:
+            cycle_sequence = int(source_cycle.get("cycle_number"))
+        except (TypeError, ValueError):
+            return None
+        if cycle_sequence <= 0:
+            return None
+        target_cycles = list(
+            session.scalars(
+                select(wf.VerificationCycle).where(
+                    wf.VerificationCycle.operation_id == target_operation_id,
+                    wf.VerificationCycle.cycle_sequence == cycle_sequence,
+                )
+            )
+        )
+        if len(target_cycles) != 1:
+            return None
+        target_cycle = target_cycles[0]
+
+    baseline = _baseline_for_envelope(session, envelope)
+    if target_cycle is None or baseline is None:
+        return None
+    target_task_id = _target_task_id_for_source_gid(
+        session, str(source_cycle.get("task_gid") or "")
+    )
+    if (
+        target_cycle.generation_id != baseline.generation_id
+        or target_cycle.import_run_id is not None
+        or target_task_id is None
+        or target_cycle.task_id != target_task_id
+        or target_cycle.operation_id != target_operation_id
+    ):
+        return None
+    return str(target_cycle.cycle_id)
+
+
+def _live_or_imported_cycle_identity_binding(
+    session,
+    envelope: tx.ShadowEnvelope,
+    *,
+    source_value: str,
+) -> str | None:
+    imported = _imported_identity_binding(
+        session, envelope, family="verification_cycle", source_value=source_value
+    )
+    if imported is not None:
+        return imported
+    return _live_verification_cycle_identity_binding(
+        session, envelope, source_value=source_value
+    )
+
+
+def _live_actor_lease_identity_binding(
+    session,
+    envelope: tx.ShadowEnvelope,
+    *,
+    source_value: str,
+) -> str | None:
+    if _capture_schema(envelope) < 3 or not _lineage_scope_contains(
+        envelope, key="lease_ids", source_value=source_value
+    ):
+        return None
+    snapshot = envelope.source_pre_state
+    if not isinstance(snapshot, Mapping):
+        return None
+    source_leases = [
+        row
+        for row in _snapshot_rows(snapshot, "service_leases")
+        if str(row.get("lease_id") or "") == source_value
+    ]
+    if len(source_leases) != 1:
+        return None
+    source_lease = source_leases[0]
+    if str(source_lease.get("lease_kind") or "") != "actor":
+        return None
+    try:
+        attempt_sequence = int(source_lease.get("actor_attempt_seq"))
+    except (TypeError, ValueError):
+        return None
+    if attempt_sequence <= 0:
+        return None
+
+    target_operation = _resolve_operation_identity_binding(
+        session,
+        envelope,
+        source_value=str(source_lease.get("operation_id") or ""),
+    )
+    if target_operation is None:
+        return None
+    try:
+        target_operation_id = uuid.UUID(target_operation)
+    except ValueError:
+        return None
+    target_task_id = _target_task_id_for_source_gid(
+        session, str(source_lease.get("task_gid") or "")
+    )
+    baseline = _baseline_for_envelope(session, envelope)
+    if target_task_id is None or baseline is None:
+        return None
+    targets = list(
+        session.scalars(
+            select(wf.ServiceLease).where(
+                wf.ServiceLease.generation_id == baseline.generation_id,
+                wf.ServiceLease.task_id == target_task_id,
+                wf.ServiceLease.actor_attempt_sequence == attempt_sequence,
+            )
+        )
+    )
+    if len(targets) != 1:
+        return None
+    target = targets[0]
+    owner_id = str(source_lease.get("owner_id") or "")
+    source_run_id = str(source_lease.get("run_id") or "")
+    if not owner_id or not source_run_id:
+        return None
+    expected_run_id = _shadow_uuid(
+        envelope, label="run", value=f"{owner_id}:{source_run_id}"
+    )
+    if (
+        target.import_run_id is not None
+        or target.lease_kind != "actor"
+        or target.operation_id != target_operation_id
+        or target.owner_id != owner_id
+        or target.run_id != expected_run_id
+    ):
+        return None
+    source_cycle = str(source_lease.get("context_cycle_id") or "").strip()
+    if source_cycle:
+        target_cycle = _live_or_imported_cycle_identity_binding(
+            session, envelope, source_value=source_cycle
+        )
+        if target_cycle is None or target.verification_cycle_id != uuid.UUID(target_cycle):
+            return None
+    elif target.verification_cycle_id is not None:
+        return None
+    return str(target.lease_id)
+
+
+def _live_or_imported_lease_identity_binding(
+    session,
+    envelope: tx.ShadowEnvelope,
+    *,
+    source_value: str,
+) -> str | None:
+    imported = _imported_identity_binding(
+        session, envelope, family="lease", source_value=source_value
+    )
+    if imported is not None:
+        return imported
+    return _live_actor_lease_identity_binding(
+        session, envelope, source_value=source_value
+    )
+
+
+def _live_planning_challenge_identity_binding(
+    session,
+    envelope: tx.ShadowEnvelope,
+    *,
+    source_value: str,
+) -> str | None:
+    if _capture_schema(envelope) < 3 or not _lineage_scope_contains(
+        envelope, key="challenge_ids", source_value=source_value
+    ):
+        return None
+    snapshot = envelope.source_pre_state
+    if not isinstance(snapshot, Mapping):
+        return None
+    source_rows = [
+        row
+        for row in _snapshot_rows(snapshot, "planning_intent_challenges")
+        if str(row.get("challenge_id") or "") == source_value
+    ]
+    if len(source_rows) != 1:
+        return None
+    source = source_rows[0]
+    source_request_id = str(source.get("created_request_id") or "").strip()
+    source_task_gid = str(source.get("task_gid") or "").strip()
+    source_owner_id = str(source.get("owner_id") or "").strip()
+    source_run_id = str(source.get("run_id") or "").strip()
+    source_agent = str(source.get("agent") or "").strip()
+    if not all((source_request_id, source_task_gid, source_owner_id, source_run_id, source_agent)):
+        return None
+
+    if not _lineage_scope_contains(
+        envelope, key="explicit_request_ids", source_value=source_request_id
+    ):
+        return None
+    source_requests = [
+        row
+        for row in _snapshot_rows(snapshot, "service_requests")
+        if str(row.get("request_id") or "") == source_request_id
+        and row.get("command") == "start"
+        and row.get("status") == "completed"
+        and str(row.get("task_gid") or "") == source_task_gid
+        and str(row.get("owner_id") or "") == source_owner_id
+        and str(row.get("run_id") or "") == source_run_id
+    ]
+    if len(source_requests) != 1:
+        return None
+
+    baseline = _baseline_for_envelope(session, envelope)
+    target_task_id = _target_task_id_for_source_gid(session, source_task_gid)
+    if baseline is None or target_task_id is None:
+        return None
+    target_request_id = _shadow_uuid(envelope, label="request", value=source_request_id)
+    target_request = session.get(wf.ServiceRequest, target_request_id)
+    if (
+        target_request is None
+        or target_request.generation_id != baseline.generation_id
+        or target_request.command_name != "start"
+    ):
+        return None
+    targets = list(
+        session.scalars(
+            select(wf.PlanningIntentChallenge).where(
+                wf.PlanningIntentChallenge.generation_id == baseline.generation_id,
+                wf.PlanningIntentChallenge.issuing_request_id == target_request_id,
+            )
+        )
+    )
+    if len(targets) != 1:
+        return None
+    target = targets[0]
+    expected_run_id = _shadow_uuid(
+        envelope, label="run", value=f"{source_owner_id}:{source_run_id}"
+    )
+    if (
+        target.task_id != target_task_id
+        or target.owner_id != source_owner_id
+        or target.run_id != expected_run_id
+        or target.agent != source_agent
+        or target.target_kind != "planning"
+    ):
+        return None
+    return str(target.challenge_id)
+
+
+def _source_json_mapping(value: Any) -> Mapping[str, Any] | None:
+    if isinstance(value, Mapping):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = json.loads(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, Mapping) else None
+
+
+def _source_abandonment_creator_request_id(
+    envelope: tx.ShadowEnvelope, source_value: str
+) -> str | None:
+    if _capture_schema(envelope) < 3 or not _lineage_scope_contains(
+        envelope, key="abandonment_ids", source_value=source_value
+    ):
+        return None
+    snapshot = envelope.source_pre_state
+    if not isinstance(snapshot, Mapping):
+        return None
+    source_rows = [
+        row
+        for row in _snapshot_rows(snapshot, "abandonment_attempts")
+        if str(row.get("abandonment_id") or "") == source_value
+    ]
+    if len(source_rows) != 1:
+        return None
+    source = source_rows[0]
+    source_operation_id = str(source.get("source_operation_id") or "").strip()
+    source_lease_id = str(source.get("source_lease_id") or "").strip()
+    if not source_operation_id or not source_lease_id:
+        return None
+
+    execution_ids: set[str] = set()
+    for event in _snapshot_rows(snapshot, "audit_events"):
+        if (
+            event.get("event_type") != "operation.abandonment_started"
+            or str(event.get("operation_id") or "") != source_operation_id
+        ):
+            continue
+        details = _source_json_mapping(event.get("details"))
+        if details is None:
+            continue
+        if (
+            str(details.get("abandonment_id") or "") != source_value
+            or str(details.get("source_lease_id") or "") != source_lease_id
+        ):
+            continue
+        execution_id = str(event.get("operation_execution_id") or "").strip()
+        if execution_id:
+            execution_ids.add(execution_id)
+    if len(execution_ids) != 1:
+        return None
+    execution_id = next(iter(execution_ids))
+    executions = [
+        row
+        for row in _snapshot_rows(snapshot, "operation_executions")
+        if str(row.get("execution_id") or "") == execution_id
+        and str(row.get("operation_id") or "") == source_operation_id
+        and row.get("command") == "abandon-operation"
+    ]
+    if len(executions) != 1:
+        return None
+    request_id = str(executions[0].get("request_id") or "").strip()
+    if not request_id:
+        return None
+    if not _lineage_scope_contains(
+        envelope, key="explicit_request_ids", source_value=request_id
+    ):
+        return None
+    requests = [
+        row
+        for row in _snapshot_rows(snapshot, "service_requests")
+        if str(row.get("request_id") or "") == request_id
+        and row.get("command") == "abandon-operation"
+        and row.get("status") == "completed"
+        and str(row.get("operation_id") or "") == source_operation_id
+        and str(row.get("task_gid") or "") == str(source.get("task_gid") or "")
+    ]
+    return request_id if len(requests) == 1 else None
+
+
+def _live_abandonment_identity_binding(
+    session,
+    envelope: tx.ShadowEnvelope,
+    *,
+    source_value: str,
+) -> str | None:
+    source_request_id = _source_abandonment_creator_request_id(envelope, source_value)
+    if source_request_id is None:
+        return None
+    snapshot = envelope.source_pre_state
+    assert isinstance(snapshot, Mapping)
+    source_rows = [
+        row
+        for row in _snapshot_rows(snapshot, "abandonment_attempts")
+        if str(row.get("abandonment_id") or "") == source_value
+    ]
+    if len(source_rows) != 1:
+        return None
+    source = source_rows[0]
+
+    baseline = _baseline_for_envelope(session, envelope)
+    if baseline is None:
+        return None
+    target_request_id = _shadow_uuid(envelope, label="request", value=source_request_id)
+    target_request = session.get(wf.ServiceRequest, target_request_id)
+    if (
+        target_request is None
+        or target_request.generation_id != baseline.generation_id
+        or target_request.command_name != "abandon-operation"
+    ):
+        return None
+    targets = list(
+        session.scalars(
+            select(wf.AbandonmentAttempt).where(
+                wf.AbandonmentAttempt.generation_id == baseline.generation_id,
+                wf.AbandonmentAttempt.request_id == target_request_id,
+            )
+        )
+    )
+    if len(targets) != 1:
+        return None
+    target = targets[0]
+
+    source_operation = str(source.get("source_operation_id") or "").strip()
+    source_lease = str(source.get("source_lease_id") or "").strip()
+    target_operation = _resolve_operation_identity_binding(
+        session, envelope, source_value=source_operation
+    )
+    target_lease = _live_or_imported_lease_identity_binding(
+        session, envelope, source_value=source_lease
+    )
+    if target_operation is None or target_lease is None:
+        return None
+    source_task_gid = str(source.get("task_gid") or "").strip()
+    target_task_id = _target_task_id_for_source_gid(session, source_task_gid)
+    source_owner_id = str(source.get("abandoned_owner_id") or "").strip()
+    source_run_id = str(source.get("abandoned_run_id") or "").strip()
+    if target_task_id is None or not source_owner_id or not source_run_id:
+        return None
+    expected_run_id = _shadow_uuid(
+        envelope, label="run", value=f"{source_owner_id}:{source_run_id}"
+    )
+    try:
+        target_operation_id = uuid.UUID(target_operation)
+        target_lease_id = uuid.UUID(target_lease)
+    except ValueError:
+        return None
+    if (
+        target.task_id != target_task_id
+        or target.source_operation_id != target_operation_id
+        or target.source_lease_id != target_lease_id
+        or target.source_owner_id != source_owner_id
+        or target.source_run_id != expected_run_id
+    ):
+        return None
+    source_cycle = str(source.get("attempt_cycle_id") or "").strip()
+    if source_cycle:
+        target_cycle = _live_or_imported_cycle_identity_binding(
+            session, envelope, source_value=source_cycle
+        )
+        if target_cycle is None or target.source_cycle_id != uuid.UUID(target_cycle):
+            return None
+    elif target.source_cycle_id is not None:
+        return None
+    target_execution = session.get(wf.CommandExecution, target.command_execution_id)
+    if target_execution is None or target_execution.request_id != target_request_id:
+        return None
+    return str(target.abandonment_id)
+
 def _resolve_identifier_binding(
     session,
     envelope: tx.ShadowEnvelope,
@@ -513,6 +1000,22 @@ def _resolve_identifier_binding(
 ) -> str | None:
     if family == "operation":
         return _resolve_operation_identity_binding(
+            session, envelope, source_value=source_value
+        )
+    if family == "verification_cycle":
+        return _live_or_imported_cycle_identity_binding(
+            session, envelope, source_value=source_value
+        )
+    if family == "lease":
+        return _live_or_imported_lease_identity_binding(
+            session, envelope, source_value=source_value
+        )
+    if family == "planning_challenge":
+        return _live_planning_challenge_identity_binding(
+            session, envelope, source_value=source_value
+        )
+    if family == "abandonment":
+        return _live_abandonment_identity_binding(
             session, envelope, source_value=source_value
         )
     return _imported_identity_binding(

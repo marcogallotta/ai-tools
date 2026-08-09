@@ -57,36 +57,44 @@ def authoritative_snapshot(
     result: Mapping[str, Any] | None = None,
     busy_timeout_ms: int = 50,
 ) -> dict[str, Any]:
-    """Capture bounded SQLite lineage needed for live operation translation.
+    """Capture bounded SQLite lineage needed for live identifier translation.
 
-    The closure follows operation succession relationships so a captured
-    successor operation also carries the predecessor operation and the complete
-    set of source requests linked to either operation.  It deliberately does
-    not perform an independent Asana read or choose a creator request.
+    Patch A owns operation/service-request/succession lineage. Patch B extends
+    that same envelope-local closure only for actor leases, verification cycles,
+    planning challenges, and abandonment/Verification-continuation identity.
+    Capture never chooses a target binding and never performs an Asana read.
     """
     sources = [arguments]
     if isinstance(result, Mapping):
         sources.append(result)
         if isinstance(result.get("data"), Mapping):
             sources.append(result["data"])
-    task_gids = {
-        str(source.get("task_gid") or "").strip()
-        for source in sources
-        if str(source.get("task_gid") or "").strip()
-    }
-    operation_keys = (
+
+    def values_for(keys: tuple[str, ...]) -> set[str]:
+        return {
+            str(source.get(key) or "").strip()
+            for source in sources
+            for key in keys
+            if str(source.get(key) or "").strip()
+        }
+
+    task_gids = values_for(("task_gid",))
+    requested_operation_ids = values_for((
         "submission_id", "operation_id", "existing_submission_id",
         "prepared_operation_id", "successor_operation_id",
         "continuation_operation_id", "source_operation_id", "target_operation_id",
-    )
-    requested_operation_ids = {
-        str(source.get(key) or "").strip()
-        for source in sources
-        for key in operation_keys
-        if str(source.get(key) or "").strip()
-    }
+    ))
     operation_ids = set(requested_operation_ids)
+    lease_ids = values_for(("lease_id", "source_lease_id", "abandoned_lease_id"))
+    cycle_ids = values_for((
+        "cycle_id", "target_cycle_id", "expected_cycle_id", "verification_cycle_id",
+        "new_cycle_id", "prepared_cycle_id", "source_cycle_id", "successor_cycle_id",
+        "continuation_cycle_id", "attempt_cycle_id",
+    ))
+    challenge_ids = values_for(("intent_challenge_id", "challenge_id"))
+    abandonment_ids = values_for(("abandonment_id",))
     explicit_request_ids = {str(request_id).strip()} if request_id else set()
+
     uri = f"file:{Path(db_path).expanduser().resolve()}?mode=ro"
     conn = sqlite3.connect(uri, uri=True, timeout=busy_timeout_ms / 1000)
     conn.row_factory = sqlite3.Row
@@ -101,20 +109,30 @@ def authoritative_snapshot(
 
         changed = True
         while changed:
-            before = (frozenset(task_gids), frozenset(operation_ids))
+            before = (
+                frozenset(task_gids),
+                frozenset(operation_ids),
+                frozenset(lease_ids),
+                frozenset(cycle_ids),
+                frozenset(challenge_ids),
+                frozenset(abandonment_ids),
+                frozenset(explicit_request_ids),
+            )
+
             if "operations" in tables:
-                for candidate in tuple(operation_ids):
-                    for row in _rows(conn, "operations", "operation_id=?", (candidate,)):
+                for operation_id in tuple(operation_ids):
+                    for row in _rows(conn, "operations", "operation_id=?", (operation_id,)):
                         task_gid = str(row.get("task_gid") or "").strip()
                         if task_gid:
                             task_gids.add(task_gid)
+
             if "operation_successions" in tables:
-                for candidate in tuple(operation_ids):
+                for operation_id in tuple(operation_ids):
                     for row in _rows(
                         conn,
                         "operation_successions",
                         "source_operation_id=? OR successor_operation_id=?",
-                        (candidate, candidate),
+                        (operation_id, operation_id),
                     ):
                         task_gid = str(row.get("task_gid") or "").strip()
                         if task_gid:
@@ -123,18 +141,127 @@ def authoritative_snapshot(
                             value = str(row.get(key) or "").strip()
                             if value:
                                 operation_ids.add(value)
-            changed = before != (frozenset(task_gids), frozenset(operation_ids))
+                        for key in ("source_cycle_id", "successor_cycle_id"):
+                            value = str(row.get(key) or "").strip()
+                            if value:
+                                cycle_ids.add(value)
+
+            if "service_leases" in tables:
+                for lease_id in tuple(lease_ids):
+                    for row in _rows(conn, "service_leases", "lease_id=?", (lease_id,)):
+                        task_gid = str(row.get("task_gid") or "").strip()
+                        operation_id = str(row.get("operation_id") or "").strip()
+                        context_cycle_id = str(row.get("context_cycle_id") or "").strip()
+                        if task_gid:
+                            task_gids.add(task_gid)
+                        if operation_id:
+                            operation_ids.add(operation_id)
+                        if context_cycle_id:
+                            cycle_ids.add(context_cycle_id)
+
+            if "verification_cycles" in tables:
+                for cycle_id in tuple(cycle_ids):
+                    for row in _rows(conn, "verification_cycles", "cycle_id=?", (cycle_id,)):
+                        task_gid = str(row.get("task_gid") or "").strip()
+                        operation_id = str(row.get("operation_id") or "").strip()
+                        if task_gid:
+                            task_gids.add(task_gid)
+                        if operation_id:
+                            operation_ids.add(operation_id)
+
+            if "planning_intent_challenges" in tables:
+                for challenge_id in tuple(challenge_ids):
+                    for row in _rows(
+                        conn, "planning_intent_challenges", "challenge_id=?", (challenge_id,)
+                    ):
+                        task_gid = str(row.get("task_gid") or "").strip()
+                        created_request_id = str(row.get("created_request_id") or "").strip()
+                        if task_gid:
+                            task_gids.add(task_gid)
+                        if created_request_id:
+                            explicit_request_ids.add(created_request_id)
+
+            if "abandonment_attempts" in tables:
+                for abandonment_id in tuple(abandonment_ids):
+                    for row in _rows(
+                        conn, "abandonment_attempts", "abandonment_id=?", (abandonment_id,)
+                    ):
+                        task_gid = str(row.get("task_gid") or "").strip()
+                        if task_gid:
+                            task_gids.add(task_gid)
+                        value = str(row.get("source_operation_id") or "").strip()
+                        if value:
+                            operation_ids.add(value)
+                        value = str(row.get("source_lease_id") or "").strip()
+                        if value:
+                            lease_ids.add(value)
+                        value = str(row.get("attempt_cycle_id") or "").strip()
+                        if value:
+                            cycle_ids.add(value)
+
+                        source_operation_id = str(row.get("source_operation_id") or "").strip()
+                        source_lease_id = str(row.get("source_lease_id") or "").strip()
+                        if (
+                            source_operation_id
+                            and source_lease_id
+                            and "audit_events" in tables
+                            and "operation_executions" in tables
+                        ):
+                            for event in _rows(
+                                conn,
+                                "audit_events",
+                                "operation_id=? AND event_type=?",
+                                (source_operation_id, "operation.abandonment_started"),
+                            ):
+                                try:
+                                    details = json.loads(str(event.get("details") or "{}"))
+                                except (TypeError, ValueError):
+                                    continue
+                                if not isinstance(details, Mapping):
+                                    continue
+                                if (
+                                    str(details.get("abandonment_id") or "") != abandonment_id
+                                    or str(details.get("source_lease_id") or "") != source_lease_id
+                                ):
+                                    continue
+                                execution_id = str(event.get("operation_execution_id") or "").strip()
+                                if not execution_id:
+                                    continue
+                                for execution in _rows(
+                                    conn,
+                                    "operation_executions",
+                                    "execution_id=?",
+                                    (execution_id,),
+                                ):
+                                    request_value = str(execution.get("request_id") or "").strip()
+                                    if request_value:
+                                        explicit_request_ids.add(request_value)
+
+            after = (
+                frozenset(task_gids),
+                frozenset(operation_ids),
+                frozenset(lease_ids),
+                frozenset(cycle_ids),
+                frozenset(challenge_ids),
+                frozenset(abandonment_ids),
+                frozenset(explicit_request_ids),
+            )
+            changed = after != before
 
         task_gids_sorted = sorted(task_gids)
         operation_ids_sorted = sorted(operation_ids)
-        requested_operation_ids_sorted = sorted(requested_operation_ids)
+        lease_ids_sorted = sorted(lease_ids)
+        cycle_ids_sorted = sorted(cycle_ids)
+        challenge_ids_sorted = sorted(challenge_ids)
+        abandonment_ids_sorted = sorted(abandonment_ids)
         explicit_request_ids_sorted = sorted(explicit_request_ids)
+
         snapshot: dict[str, Any] = {
             "schema_version": conn.execute("PRAGMA user_version").fetchone()[0],
             "task_gid": task_gids_sorted[0] if task_gids_sorted else None,
             "operation_id": (
-                requested_operation_ids_sorted[0]
-                if requested_operation_ids_sorted
+                sorted(requested_operation_ids)[0]
+                if requested_operation_ids
                 else (operation_ids_sorted[0] if operation_ids_sorted else None)
             ),
             "task_gids": task_gids_sorted,
@@ -142,6 +269,10 @@ def authoritative_snapshot(
             "request_id": request_id,
             "lineage_scope": {
                 "operation_ids": operation_ids_sorted,
+                "lease_ids": lease_ids_sorted,
+                "cycle_ids": cycle_ids_sorted,
+                "challenge_ids": challenge_ids_sorted,
+                "abandonment_ids": abandonment_ids_sorted,
                 "explicit_request_ids": explicit_request_ids_sorted,
             },
             "selected_tables": [],
@@ -172,9 +303,21 @@ def authoritative_snapshot(
                 "source_operation_id=? OR successor_operation_id=?",
                 (operation_id, operation_id),
             ))
+        for lease_id in lease_ids_sorted:
+            selectors.append(("service_leases", "lease_id=?", (lease_id,)))
+        for cycle_id in cycle_ids_sorted:
+            selectors.append(("verification_cycles", "cycle_id=?", (cycle_id,)))
+        for challenge_id in challenge_ids_sorted:
+            selectors.append((
+                "planning_intent_challenges", "challenge_id=?", (challenge_id,)
+            ))
+        for abandonment_id in abandonment_ids_sorted:
+            selectors.append(("abandonment_attempts", "abandonment_id=?", (abandonment_id,)))
         for explicit_request_id in explicit_request_ids_sorted:
-            for table in ("service_requests", "backup_creations"):
-                selectors.append((table, "request_id=?", (explicit_request_id,)))
+            selectors.append(("service_requests", "request_id=?", (explicit_request_id,)))
+        if request_id:
+            selectors.append(("backup_creations", "request_id=?", (request_id,)))
+
         seen: set[tuple[str, str, tuple[Any, ...]]] = set()
         for selector in selectors:
             if selector in seen or selector[0] not in tables:
