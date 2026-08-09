@@ -63,3 +63,49 @@ Live service topology, ports, env file locations, and credential loading
 are documented once in `/home/marco/ai-tools/CLAUDE.md` under "Live Dish
 rehearsal credentials" — not duplicated here. Confirmed on 2026-08-04:
 `dish-shadow-worker.service` is not installed on this host.
+
+## Private authenticated frontend
+
+- **What**: the local private frontend authenticates against the separate writable
+  `dish_frontend_auth_test` database on the test PostgreSQL instance and observes
+  production dark-launch task data in `dish_stage_a_prod` through the
+  `dish_frontend_observer` role. The observer has `SELECT` but no task-table
+  mutation privileges and has `default_transaction_read_only=on`. PostgreSQL task
+  data remains non-authoritative during dark launch.
+- **Configuration**: owner-only environment file
+  `/home/marco/.config/dish-service/frontend-local.env`; HTTPS configuration
+  `deploy/caddy/dish-frontend-local.Caddyfile`. The Caddy listener and Dish private
+  listener bind loopback only. Password provisioning and rotation remain explicit
+  `scripts/dish-frontend-security` operations; service startup does not migrate a
+  database or change security generation.
+- **Services**: `dish-frontend-private.service` owns the frontend `dish-service`
+  process, and `dish-frontend-caddy.service` owns HTTPS. The optional
+  `dish-frontend.target` starts both. PostgreSQL remains an explicit prerequisite:
+  the authentication container still uses the legacy `postgresql` Compose project,
+  while production observation PostgreSQL is already independently service-owned.
+  The target must not start a competing test Compose project on port 55432. Stopping
+  the frontend target stops its frontend/Caddy members and intentionally leaves both
+  PostgreSQL instances running.
+- **Install/update**:
+
+  ```sh
+  sudo install -m 0644 deploy/systemd/dish-frontend-private.service /etc/systemd/system/
+  sudo install -m 0644 deploy/systemd/dish-frontend-caddy.service /etc/systemd/system/
+  sudo install -m 0644 deploy/systemd/dish-frontend.target /etc/systemd/system/
+  sudo systemctl daemon-reload
+  sudo systemctl enable --now dish-frontend.target
+  ```
+
+- **Operate**:
+
+  ```sh
+  sudo systemctl status dish-frontend.target dish-frontend-private dish-frontend-caddy
+  sudo systemctl restart dish-frontend-private
+  sudo systemctl restart dish-frontend-caddy
+  sudo systemctl stop dish-frontend.target
+  journalctl -u dish-frontend-private -u dish-frontend-caddy
+  ```
+
+- **URL**: `https://127.0.0.1:4443/`. The Caddy internal root currently trusted by
+  the local browser remains under `/home/marco/.local/share/caddy`; the managed
+  Caddy unit reuses that state rather than issuing from another local CA.
