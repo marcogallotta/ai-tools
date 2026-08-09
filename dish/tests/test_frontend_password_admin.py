@@ -102,3 +102,19 @@ def test_password_admin_rejects_configured_secret_equality(tmp_path: Path) -> No
 
     with pytest.raises(FrontendSecurityConfigurationError, match="configured.*secret"):
         provision(settings, "agent-secret-not-password")
+
+
+def test_password_admin_remains_bound_to_writable_frontend_database(tmp_path: Path) -> None:
+    auth_db_path = tmp_path / "frontend-security.sqlite3"
+    observation_db_path = tmp_path / "frontend-observation.sqlite3"
+    fence_path = tmp_path / "frontend-security.fence"
+    _migrate(auth_db_path)
+    create_restore_fence(fence_path)
+    env = _env(auth_db_path, fence_path)
+    env["DISH_FRONTEND_OBSERVATION_DATABASE_URL"] = f"sqlite+pysqlite:///{observation_db_path}"
+
+    settings = FrontendPasswordAdminSettings.from_mapping(env)
+    provision(settings, "correct horse battery staple")
+
+    assert settings.database_url == f"sqlite+pysqlite:///{auth_db_path}"
+    assert not observation_db_path.exists()

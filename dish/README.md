@@ -108,17 +108,22 @@ change task/workflow authority. PostgreSQL remains non-authoritative for task da
 The authenticated frontend reuses the existing private `DishHTTPServer`; the Action listener returns 404
 for frontend routes. Enabling authentication alone serves an authenticated fixture shell. Real Stage 3/4
 PostgreSQL observation reads require the separate `DISH_FRONTEND_POSTGRESQL_READS_ENABLED=1` activation and
-an explicitly approved `DISH_FRONTEND_PROJECTION_DELAY_SECONDS`.
+an explicitly approved `DISH_FRONTEND_PROJECTION_DELAY_SECONDS`. During dark launch, frontend security and task observation use **physically distinct PostgreSQL databases**:
+`DISH_FRONTEND_DATABASE_URL` is the separate writable frontend password/session/throttle/audit database, while
+`DISH_FRONTEND_OBSERVATION_DATABASE_URL` is the dark-launch task database used only for Stage 3/4 reads and
+should use SELECT-only credentials. Startup verifies server-reported database identity and fails closed if the
+two URLs resolve to the same database. Both database passwords must remain distinct from the frontend security
+secrets.
 
 Before any enabled test deployment, populate the full frontend variable inventory from the environment-specific
-systemd example, apply the current migration head, create the restore fence outside PostgreSQL, and provision
-the password without placing it on a command line:
+systemd example, apply the current migration head to the separate database named by
+`DISH_FRONTEND_DATABASE_URL` (not the dark-launch observation database), create the restore fence outside
+PostgreSQL, and provision the password without placing it on a command line:
 
 ```sh
-.venv/bin/alembic -c alembic.ini upgrade head
 export DISH_FRONTEND_RESTORE_FENCE_PATH=/home/marco/.local/state/dish/test/frontend-restore-fence
 scripts/dish-frontend-security fence-init
-# With DISH_FRONTEND_DATABASE_URL and the reviewed Argon2 policy variables exported:
+# With the writable DISH_FRONTEND_DATABASE_URL and reviewed Argon2 policy variables exported:
 scripts/dish-frontend-security provision
 npm --prefix frontend run build
 ```

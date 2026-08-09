@@ -4,6 +4,8 @@ import base64
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import create_engine, select
@@ -13,8 +15,10 @@ from sqlalchemy.pool import StaticPool
 from dish_pg.frontend_security_models import FrontendLoginEvent, FrontendSecurityState, FrontendSession
 from dish_pg.models import Base
 from dish_service import frontend_auth as auth_module
+from dish_service import frontend_private_runtime as private_runtime_module
 from dish_service.frontend_admission import MAX_LOGIN_BODY_BYTES
 from dish_service.frontend_auth import FrontendAuthFailure, FrontendAuthService
+from dish_service.frontend_private_runtime import FrontendPrivateRuntime
 from dish_service.frontend_security import (
     Argon2Policy,
     FrontendSecurityConfigurationError,
@@ -187,15 +191,22 @@ def test_frontend_settings_fail_closed_and_keep_postgresql_reads_explicit(tmp_pa
     settings = FrontendRuntimeSettings.from_mapping(env, dish_root=tmp_path)
     assert settings.enabled
     assert not settings.postgresql_reads_enabled
+    assert settings.observation_database_url is None
     assert settings.projection_delay_seconds is None
 
     enabled_reads = {**env, "DISH_FRONTEND_POSTGRESQL_READS_ENABLED": "1"}
+    with pytest.raises(FrontendSecurityConfigurationError, match="OBSERVATION_DATABASE_URL"):
+        FrontendRuntimeSettings.from_mapping(enabled_reads, dish_root=tmp_path)
+    enabled_reads["DISH_FRONTEND_OBSERVATION_DATABASE_URL"] = (
+        "postgresql+psycopg://dish_observer:observation-secret@127.0.0.1/dish_observation"
+    )
     with pytest.raises(FrontendSecurityConfigurationError, match="PROJECTION_DELAY"):
         FrontendRuntimeSettings.from_mapping(enabled_reads, dish_root=tmp_path)
     enabled_reads["DISH_FRONTEND_PROJECTION_DELAY_SECONDS"] = "900"
     settings = FrontendRuntimeSettings.from_mapping(enabled_reads, dish_root=tmp_path)
     assert settings.postgresql_reads_enabled
     assert settings.projection_delay_seconds == 900
+    assert settings.observation_database_url == enabled_reads["DISH_FRONTEND_OBSERVATION_DATABASE_URL"]
 
 
 def test_frontend_settings_require_explicit_database_url(tmp_path: Path) -> None:
@@ -229,6 +240,156 @@ def test_frontend_settings_reject_database_password_reuse(tmp_path: Path) -> Non
     env["DISH_FRONTEND_DATABASE_URL"] = f"postgresql+psycopg://dish:{env['DISH_FRONTEND_TOKEN_SECRET']}@127.0.0.1/dish"
     with pytest.raises(FrontendSecurityConfigurationError, match="existing service/database secrets"):
         FrontendRuntimeSettings.from_mapping(env, dish_root=tmp_path)
+
+
+def test_frontend_settings_reject_observation_database_password_reuse(tmp_path: Path) -> None:
+    env = enabled_env()
+    env["DISH_FRONTEND_OBSERVATION_DATABASE_URL"] = (
+        f"postgresql+psycopg://dish_observer:{env['DISH_FRONTEND_TOKEN_SECRET']}@127.0.0.1/dish_observation"
+    )
+    with pytest.raises(FrontendSecurityConfigurationError, match="existing service/database secrets"):
+        FrontendRuntimeSettings.from_mapping(env, dish_root=tmp_path)
+
+
+def test_private_runtime_routes_auth_and_observation_to_distinct_factories(
+    monkeypatch, tmp_path: Path
+) -> None:
+    static_root = tmp_path / "dist"
+    static_root.mkdir()
+    (static_root / "index.html").write_text("<!doctype html>", encoding="utf-8")
+    settings = FrontendRuntimeSettings(
+        enabled=True,
+        database_url="postgresql+psycopg://auth:secret@127.0.0.1/auth",
+        observation_database_url="postgresql+psycopg://observer:secret@127.0.0.1/observation",
+        static_root=static_root,
+        restore_fence_path=tmp_path / "fence",
+        token_secret=b"t" * 32,
+        session_secret=b"s" * 32,
+        csrf_secret=b"c" * 32,
+        peer_secret=b"p" * 32,
+        postgresql_reads_enabled=True,
+        projection_delay_seconds=900,
+    )
+    auth_engine, observation_engine = MagicMock(), MagicMock()
+    auth_factory, observation_factory = MagicMock(), MagicMock()
+    monkeypatch.setattr(
+        private_runtime_module,
+        "create_database_engine",
+        MagicMock(side_effect=[auth_engine, observation_engine]),
+    )
+    monkeypatch.setattr(
+        private_runtime_module,
+        "session_factory",
+        MagicMock(side_effect=[auth_factory, observation_factory]),
+    )
+    auth = MagicMock()
+    monkeypatch.setattr(private_runtime_module, "FrontendAuthService", MagicMock(return_value=auth))
+
+    auth_startup, observation_startup = MagicMock(), MagicMock()
+    auth_startup.get_bind.return_value = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+    observation_startup.get_bind.return_value = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+    auth_identity = MagicMock()
+    auth_identity.one.return_value = ("frontend_auth", 101)
+    observation_identity = MagicMock()
+    observation_identity.one.return_value = ("dark_launch", 202)
+    auth_startup.execute.return_value = auth_identity
+    observation_startup.execute.side_effect = [MagicMock(), observation_identity]
+    observation_factory.begin.return_value.__enter__.return_value = observation_startup
+    auth_factory.begin.return_value.__enter__.return_value = auth_startup
+    board_session, detail_session = MagicMock(), MagicMock()
+    board_session.begin.return_value.__enter__.return_value = board_session
+    detail_session.begin.return_value.__enter__.return_value = detail_session
+    observation_factory.side_effect = [board_session, detail_session]
+    board_service, detail_service = MagicMock(), MagicMock()
+    board_service.bootstrap.return_value = {"source": "observation"}
+    detail_service.capture.return_value = {"facts": True}
+    detail_service.present.return_value = {"source": "observation-detail"}
+    board_query = MagicMock()
+    detail_query = MagicMock()
+    monkeypatch.setattr(private_runtime_module, "FrontendBoardQuery", board_query)
+    monkeypatch.setattr(private_runtime_module, "FrontendBoardService", MagicMock(return_value=board_service))
+    monkeypatch.setattr(private_runtime_module, "FrontendDetailQuery", detail_query)
+    monkeypatch.setattr(private_runtime_module, "FrontendDetailService", MagicMock(return_value=detail_service))
+
+    runtime = FrontendPrivateRuntime(settings)
+    runtime.startup_check()
+    assert runtime.auth_factory is auth_factory
+    assert runtime.observation_factory is observation_factory
+    assert runtime.board() == {"source": "observation"}
+    assert runtime.detail(task_route_id="r1t-task") == {"source": "observation-detail"}
+    board_query.assert_called_once_with(board_session)
+    detail_query.assert_called_once_with(detail_session)
+    assert any(
+        "SET TRANSACTION READ ONLY" in str(call.args[0])
+        for call in observation_startup.execute.call_args_list
+    )
+    auth_factory.assert_not_called()
+    runtime.close()
+    auth_engine.dispose.assert_called_once_with()
+    observation_engine.dispose.assert_called_once_with()
+
+
+
+def test_private_runtime_rejects_same_physical_database_despite_distinct_urls(
+    monkeypatch, tmp_path: Path
+) -> None:
+    static_root = tmp_path / "dist"
+    static_root.mkdir()
+    (static_root / "index.html").write_text("<!doctype html>", encoding="utf-8")
+    settings = FrontendRuntimeSettings(
+        enabled=True,
+        database_url="postgresql+psycopg://auth:auth-secret@localhost:5432/shared",
+        observation_database_url=(
+            "postgresql+psycopg://observer:observation-secret@127.0.0.1:5432/shared"
+            "?options=-c%20default_transaction_read_only%3Don"
+        ),
+        static_root=static_root,
+        restore_fence_path=tmp_path / "fence",
+        token_secret=b"t" * 32,
+        session_secret=b"s" * 32,
+        csrf_secret=b"c" * 32,
+        peer_secret=b"p" * 32,
+        postgresql_reads_enabled=True,
+        projection_delay_seconds=900,
+    )
+    auth_engine, observation_engine = MagicMock(), MagicMock()
+    auth_factory, observation_factory = MagicMock(), MagicMock()
+    monkeypatch.setattr(
+        private_runtime_module,
+        "create_database_engine",
+        MagicMock(side_effect=[auth_engine, observation_engine]),
+    )
+    monkeypatch.setattr(
+        private_runtime_module,
+        "session_factory",
+        MagicMock(side_effect=[auth_factory, observation_factory]),
+    )
+    monkeypatch.setattr(
+        private_runtime_module, "FrontendAuthService", MagicMock(return_value=MagicMock())
+    )
+
+    auth_startup, observation_startup = MagicMock(), MagicMock()
+    for startup in (auth_startup, observation_startup):
+        startup.get_bind.return_value = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+    auth_identity = MagicMock()
+    auth_identity.one.return_value = ("shared", 777)
+    observation_identity = MagicMock()
+    observation_identity.one.return_value = ("shared", 777)
+    auth_startup.execute.return_value = auth_identity
+    observation_startup.execute.side_effect = [MagicMock(), observation_identity]
+    auth_factory.begin.return_value.__enter__.return_value = auth_startup
+    observation_factory.begin.return_value.__enter__.return_value = observation_startup
+
+    runtime = FrontendPrivateRuntime(settings)
+    try:
+        with pytest.raises(FrontendSecurityConfigurationError, match="different physical PostgreSQL databases"):
+            runtime.startup_check()
+        assert any(
+            "SET TRANSACTION READ ONLY" in str(call.args[0])
+            for call in observation_startup.execute.call_args_list
+        )
+    finally:
+        runtime.close()
 
 
 def test_peer_throttle_remains_blocked_for_full_interval_after_threshold(auth_state) -> None:

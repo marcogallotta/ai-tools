@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session, sessionmaker
 
 from dish_pg.database import DatabaseSettings, create_database_engine, session_factory
 from dish_pg.frontend_board_query import BoardReadUnavailable, FrontendBoardQuery
@@ -19,6 +21,20 @@ from .frontend_security import FrontendSecurityConfigurationError
 from .frontend_settings import FrontendRuntimeSettings
 
 _PRIVATE_ENVIRONMENT = "private-postgresql-observation"
+
+
+@dataclass(frozen=True, slots=True)
+class _PostgreSQLDatabaseIdentity:
+    database_name: str
+    database_oid: int
+
+    def is_same_physical_database(self, other: "_PostgreSQLDatabaseIdentity") -> bool:
+        # The intended topology uses different database names. Comparing the
+        # server-reported catalog identity is deliberately conservative across
+        # servers and fails closed instead of trusting textual DSN differences.
+        return (self.database_name, self.database_oid) == (
+            other.database_name, other.database_oid
+        )
 
 
 class FrontendDataReadsDisabled(RuntimeError):
@@ -36,10 +52,17 @@ class FrontendPrivateRuntime:
         if not root.is_dir() or not (root / "index.html").is_file():
             raise FrontendSecurityConfigurationError(f"frontend build directory is incomplete: {root}")
         self.static_root = root
-        self.engine = create_database_engine(DatabaseSettings(url=settings.database_url))  # type: ignore[arg-type]
-        self.factory = session_factory(self.engine)
+        self.auth_engine = create_database_engine(DatabaseSettings(url=settings.database_url))  # type: ignore[arg-type]
+        self.auth_factory = session_factory(self.auth_engine)
+        self.observation_engine = None
+        self.observation_factory = None
+        if settings.postgresql_reads_enabled:
+            self.observation_engine = create_database_engine(
+                DatabaseSettings(url=settings.observation_database_url)  # type: ignore[arg-type]
+            )
+            self.observation_factory = session_factory(self.observation_engine)
         self.auth = FrontendAuthService(
-            self.factory,
+            self.auth_factory,
             restore_fence_path=settings.restore_fence_path,
             session_secret=settings.session_secret,  # type: ignore[arg-type]
             csrf_secret=settings.csrf_secret,  # type: ignore[arg-type]
@@ -70,13 +93,21 @@ class FrontendPrivateRuntime:
 
     def startup_check(self) -> None:
         self.auth.startup_check()
-        try:
-            with self.factory.begin() as session:
-                if session.get_bind().dialect.name != "postgresql":
-                    raise FrontendSecurityConfigurationError("private frontend requires PostgreSQL")
-                session.execute(text("SELECT 1"))
-        except SQLAlchemyError as exc:
-            raise FrontendSecurityConfigurationError("private frontend PostgreSQL is unavailable") from exc
+        auth_identity = self._validate_database_connection(
+            self.auth_factory,
+            unavailable_message="private frontend authentication PostgreSQL is unavailable",
+        )
+        if self.settings.postgresql_reads_enabled:
+            observation_identity = self._validate_database_connection(
+                self._required_observation_factory(),
+                read_only=True,
+                unavailable_message="private frontend observation PostgreSQL is unavailable",
+            )
+            if auth_identity.is_same_physical_database(observation_identity):
+                raise FrontendSecurityConfigurationError(
+                    "frontend authentication and observation data must use different "
+                    "physical PostgreSQL databases"
+                )
 
     def board(self) -> dict[str, Any]:
         return self._board_read(lambda service: service.bootstrap())
@@ -86,7 +117,7 @@ class FrontendPrivateRuntime:
 
     def detail(self, *, task_route_id: str) -> dict[str, Any]:
         config = self._required_board_config()
-        session = self.factory()
+        session = self._required_observation_factory()()
         try:
             with session.begin():
                 session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
@@ -110,16 +141,54 @@ class FrontendPrivateRuntime:
         return json.loads(self.frontend_openapi.read_text(encoding="utf-8"))
 
     def close(self) -> None:
-        self.engine.dispose()
+        if self.observation_engine is not None:
+            self.observation_engine.dispose()
+        self.auth_engine.dispose()
 
     def _required_board_config(self) -> FrontendBoardConfig:
         if self.board_config is None:
             raise FrontendDataReadsDisabled("private PostgreSQL observation reads are not activated")
         return self.board_config
 
+    def _required_observation_factory(self) -> sessionmaker[Session]:
+        if self.observation_factory is None:
+            raise FrontendDataReadsDisabled("private PostgreSQL observation reads are not activated")
+        return self.observation_factory
+
+    @staticmethod
+    def _validate_database_connection(
+        factory: sessionmaker[Session],
+        *,
+        read_only: bool = False,
+        unavailable_message: str,
+    ) -> _PostgreSQLDatabaseIdentity:
+        try:
+            with factory.begin() as session:
+                if session.get_bind().dialect.name != "postgresql":
+                    raise FrontendSecurityConfigurationError("private frontend requires PostgreSQL")
+                if read_only:
+                    session.execute(text("SET TRANSACTION READ ONLY"))
+                row = session.execute(
+                    text(
+                        "SELECT current_database(), "
+                        "(SELECT oid::bigint FROM pg_database WHERE datname = current_database())"
+                    )
+                ).one()
+                database_oid = row[1]
+                if database_oid is None:
+                    raise FrontendSecurityConfigurationError(
+                        "private frontend could not determine PostgreSQL database identity"
+                    )
+                return _PostgreSQLDatabaseIdentity(
+                    database_name=str(row[0]),
+                    database_oid=int(database_oid),
+                )
+        except SQLAlchemyError as exc:
+            raise FrontendSecurityConfigurationError(unavailable_message) from exc
+
     def _board_read(self, operation):
         config = self._required_board_config()
-        session = self.factory()
+        session = self._required_observation_factory()()
         try:
             with session.begin():
                 session.execute(text("SET TRANSACTION READ ONLY"))

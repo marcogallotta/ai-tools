@@ -72,6 +72,7 @@ class FrontendRuntimeSettings:
     origin: str | None = None
     action_origin: str | None = None
     database_url: str | None = None
+    observation_database_url: str | None = None
     static_root: Path | None = None
     restore_fence_path: Path | None = None
     token_secret: bytes | None = None
@@ -104,14 +105,19 @@ class FrontendRuntimeSettings:
                     raise FrontendSecurityConfigurationError("frontend security secrets must be pairwise distinct")
         frontend_secret_text = tuple(_required(env, f"DISH_FRONTEND_{name.upper()}_SECRET") for name in names)
         database_url = _required(env, "DISH_FRONTEND_DATABASE_URL")
-        database_password = unquote(urlsplit(database_url).password or "")
+        reads_enabled = _flag(env, "DISH_FRONTEND_POSTGRESQL_READS_ENABLED")
+        observation_database_url = None
+        if reads_enabled or env.get("DISH_FRONTEND_OBSERVATION_DATABASE_URL"):
+            observation_database_url = _required(env, "DISH_FRONTEND_OBSERVATION_DATABASE_URL")
+        database_passwords = [unquote(urlsplit(database_url).password or "")]
+        if observation_database_url is not None:
+            database_passwords.append(unquote(urlsplit(observation_database_url).password or ""))
         existing_secrets = [
             str(env[field])
             for field in ("DISH_SERVICE_AGENT_TOKEN", "DISH_SERVICE_ADMIN_TOKEN", "DISH_SERVICE_ACTION_TOKEN")
             if env.get(field)
         ]
-        if database_password:
-            existing_secrets.append(database_password)
+        existing_secrets.extend(password for password in database_passwords if password)
         if any(hmac.compare_digest(frontend, existing) for frontend in frontend_secret_text for existing in existing_secrets):
             raise FrontendSecurityConfigurationError("frontend security secrets must differ from existing service/database secrets")
         policy = Argon2Policy(
@@ -127,7 +133,6 @@ class FrontendRuntimeSettings:
             min_parallelism=_positive_int(env, "DISH_FRONTEND_ARGON2_MIN_PARALLELISM"),
             max_parallelism=_positive_int(env, "DISH_FRONTEND_ARGON2_MAX_PARALLELISM"),
         )
-        reads_enabled = _flag(env, "DISH_FRONTEND_POSTGRESQL_READS_ENABLED")
         projection_delay = (
             _positive_int(env, "DISH_FRONTEND_PROJECTION_DELAY_SECONDS")
             if reads_enabled else None
@@ -139,6 +144,7 @@ class FrontendRuntimeSettings:
             origin=origin,
             action_origin=action_origin,
             database_url=database_url,
+            observation_database_url=observation_database_url,
             static_root=static_root,
             restore_fence_path=restore_path,
             token_secret=secrets["token"],

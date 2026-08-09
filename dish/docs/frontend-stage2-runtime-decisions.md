@@ -118,4 +118,10 @@ acceptance/deployment blockers:
 
 `DISH_FRONTEND_ENABLED` remains disabled by default. Enabling authentication does not automatically enable
 Stage 3/4 PostgreSQL observation reads; those require the separate
-`DISH_FRONTEND_POSTGRESQL_READS_ENABLED` activation and its still-gated read-surface configuration.
+`DISH_FRONTEND_POSTGRESQL_READS_ENABLED` activation and its still-gated read-surface configuration. During dark launch the private runtime keeps those concerns on **physically distinct PostgreSQL databases**:
+`DISH_FRONTEND_DATABASE_URL` is the separate writable frontend-security/session/throttle/audit database used by
+password administration, while `DISH_FRONTEND_OBSERVATION_DATABASE_URL` is the dark-launch database required
+only for enabled Stage 3/4 reads and is intended for SELECT-only credentials. Startup compares server-reported
+database identity and fails closed when both connections resolve to the same database, regardless of different
+roles, aliases, or read-only connection options. Board/detail transactions remain explicitly read-only; this
+split does not transfer task authority to PostgreSQL.
