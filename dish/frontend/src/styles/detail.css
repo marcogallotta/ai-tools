@@ -135,3 +135,14 @@
   font-size: 0.8rem;
   line-height: 1.5;
 }
+
+/* Dynamic detail text is isolated from surrounding application chrome. */
+.task-detail__header h2,
+.task-detail__header .eyebrow,
+.detail-fact dd,
+.detail-content,
+.detail-disclosures p,
+.detail-projection,
+.detail-next-step p {
+  unicode-bidi: isolate;
+}

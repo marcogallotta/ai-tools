@@ -11,8 +11,8 @@ export function effectiveTaskContributions(board, detail = null) {
   if (!detail) return contributions;
   const withoutSelectedCard = contributions.filter((item) => item.taskId !== detail.id);
   const detailContributions = detail.attention.map((code) => ({ code, taskId: detail.id }));
-  if (detail.contentMode === "plain_text_fallback") {
-    detailContributions.push({ code: "rendering_fallback", taskId: detail.id });
+  if (detail.bodyPresentation?.state === "plain_text_fallback" || detail.contentMode === "plain_text_fallback") {
+    detailContributions.push({ code: "render_rejected", taskId: detail.id });
   }
   return [...withoutSelectedCard, ...detailContributions];
 }

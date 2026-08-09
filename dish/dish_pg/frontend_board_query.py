@@ -90,7 +90,7 @@ class FrontendBoardQuery:
         self.session = session
 
     def bootstrap_registry(self) -> BoardRegistryFacts:
-        context = self._context()
+        context = self.context()
         return BoardRegistryFacts(context=context, sections=self._sections(context))
 
     def bootstrap_cards(
@@ -144,7 +144,7 @@ class FrontendBoardQuery:
             raise ValueError("page_size must be positive")
         if projection_delay <= timedelta(0):
             raise ValueError("projection_delay must be positive")
-        context = self._context()
+        context = self.context()
         rows = list(
             self.session.execute(
                 self._continuation_statement(
@@ -163,7 +163,7 @@ class FrontendBoardQuery:
             has_more=len(rows) > page_size,
         )
 
-    def _context(self) -> BoardContext:
+    def context(self) -> BoardContext:
         statement = (
             select(
                 models.AuthorityGeneration.generation_id,
@@ -218,7 +218,7 @@ class FrontendBoardQuery:
         )
         return tuple(SectionFact(**dict(row)) for row in self.session.execute(statement).mappings())
 
-    def _attention_columns(
+    def attention_columns(
         self,
         *,
         generation_id: UUID,
@@ -391,7 +391,7 @@ class FrontendBoardQuery:
     ) -> Select:
         task_id = models.DishTask.task_id
         sort_title = func.lower(models.ContentVersion.title)
-        attention = self._attention_columns(
+        attention = self.attention_columns(
             generation_id=context.generation_id,
             task_id=task_id,
             evaluation_time=context.evaluation_time,

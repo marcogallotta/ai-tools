@@ -14,6 +14,11 @@ export function renderSafeContent(host, detail) {
     host.append(warning, pre);
     return "fallback";
   }
+  if (presentation.mode === "sanitized") {
+    // Only api-detail-model validated backend-rendered body HTML reaches this branch.
+    host.innerHTML = presentation.html;
+    return "sanitized";
+  }
 
   let list = null;
   for (const block of presentation.blocks) {
@@ -32,5 +37,5 @@ export function renderSafeContent(host, detail) {
     element.textContent = block.text;
     host.append(element);
   }
-  return "rendered";
+  return "fixture";
 }

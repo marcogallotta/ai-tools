@@ -8,8 +8,10 @@ This packet maps the approved frontend fields against the current PostgreSQL mod
 and frontend contracts. It is reconciled to checked-in Alembic head
 `0032_imported_operation_history`. PostgreSQL remains a non-authoritative dark-launch target: the
 frontend read core may be implemented and exercised locally against it without transferring authority.
-Gate B still must pass before the Stage 3 production/private HTTP/browser surface is activated. The Stage 4 portion must
-be reviewed again immediately before Delivery Stage 4.
+Gate B still must pass before the Stage 3 production/private HTTP/browser surface is activated. A
+read-only Stage 4 detail/deep-link candidate may be exercised only through the same explicit
+loopback local observation boundary; the Stage 4 portion still requires independent acceptance before
+production/private activation.
 
 No predicate marked **unresolved** below may be guessed in a query, browser component, label mapper,
 or DTO builder. The Stage 3 implementation therefore emits only the durable subset currently mapped;
@@ -21,7 +23,9 @@ than inferred.
 - Product and implementation contracts: `frontend.md`, `frontend-imp.md`.
 - PostgreSQL authority models: `dish_pg/models.py`, `dish_pg/stage3_models.py`,
   `dish_pg/stage5_models.py`, and `dish_pg/stage6_models.py`.
-- Current PostgreSQL read surfaces: `dish_pg/read_model.py` and the Stage 3 candidate `dish_pg/frontend_board_query.py`.
+- Current PostgreSQL read surfaces: `dish_pg/read_model.py`, the Stage 3 candidate
+  `dish_pg/frontend_board_query.py`, and the Stage 4 local candidates
+  `dish_pg/frontend_detail_query.py` / `dish_pg/frontend_projection_query.py`.
 - PostgreSQL transition and projection code under `dish_pg/`.
 - Architecture entrypoint `docs/architecture/index.md` and the routed PostgreSQL, authority, package, and testing-boundary documents under `docs/architecture/`, plus operational migration/testing documents in `docs/`.
 - Workflow-policy and recovery implementation under `dish_tool/`, used only to identify current
@@ -44,8 +48,8 @@ HTTP/browser activation.
 | B-05 | Verification **failed** and **disputed** remain unresolved. The candidate query emits only durable open human-review attention. | Name exact failed/disputed/current-cycle predicates and add policy-equivalence tests. |
 | B-06 | A task-scoped recovery candidate is now mapped as `CommandExecution.status='uncertain'` without a corresponding `RequestUncertaintyResolution`; equivalence with governing recovery semantics is not yet accepted. | Review and accept/reject that mapping before HTTP activation; no new support table is currently required. |
 | B-07 | The candidate query can flag open drift, live-origin blocked/uncertain outbox work, and explicitly configured delayed live-origin work, but the full projection presentation reducer and precedence remain unaccepted. | Accept the reducer, delay threshold source, readiness input, and precedence before exposing final projection presentation. |
-| B-08 | The current `task_view()` remains unsuitable for Stage 4 browser detail. | Add a dedicated frontend detail query/factual service in Stage 4; do not serialize `TaskCurrentView`. |
-| B-09 | A versioned Stage 3 board operation/phase/attention registry now exists in `dish_service/frontend_contract.py`; detail disclosure/advisory/projection registries remain pending and normalization/collation equivalence is unresolved. | Review board registry coverage and normalization; finish detail registries in Stage 4. |
+| B-08 | The current `task_view()` remains unsuitable for Stage 4 browser detail. A dedicated local candidate now captures a bounded immutable detail fact bundle in `dish_pg/frontend_detail_query.py` and derives the browser DTO in `dish_service/frontend_detail.py`; this has not been accepted for production/private activation. | Review the candidate against native PostgreSQL, current eligibility/workflow policy, and response bounds; do not serialize `TaskCurrentView`. |
+| B-09 | Versioned board/detail presentation registries and local candidate disclosure/advisory/projection/rendering services now exist. Their policy equivalence, destination source, projection reducer acceptance, and normalization/collation equivalence remain unresolved. | Review and accept the detail registries/services against the governing policy and native runtime before production/private activation. |
 | B-10 | Focused tests prove a fixed three-statement bootstrap in the SQLite-rendered test fixture, but native PostgreSQL `EXPLAIN`, transaction-isolation/coherence, response-size, and execution-time evidence remain outstanding. | Record native PostgreSQL bounded-work evidence and enforce the chosen short coherent read transaction before HTTP activation. |
 | B-11 | Stateless retry-safe cursor, section continuity, and board snapshot candidates now exist in `dish_service/frontend_tokens.py` and `dish_service/frontend_board.py`; they deliberately do not promise a frozen task snapshot. | Review token secret lifecycle, expiry, compatibility semantics, and keyset boundary behavior before HTTP activation. |
 | B-12 | Independent Gate B review has not occurred. | A reviewer must validate this map against the deployed dark-launch schema/runtime and governing policy, then record scope-specific acceptance. |
@@ -86,7 +90,8 @@ read-only owners rather than alter it into a browser DTO service:
 | Proposed owner | Responsibility |
 |---|---|
 | `dish_pg/frontend_board_query.py` | One coherent bootstrap query, section continuation query, card fact aggregation, attention inputs, and internal snapshot/continuity inputs. |
-| `dish_pg/frontend_detail_query.py` | One coherent eligible-task fact bundle containing canonical content and every disclosure/advisory/projection input. |
+| `dish_pg/frontend_detail_query.py` | One coherent eligible-task fact bundle containing canonical content and disclosure/advisory inputs for the local Stage 4 candidate. |
+| `dish_pg/frontend_projection_query.py` | Bounded abnormal-projection fact capture used by the local Stage 4 candidate; final reducer/threshold semantics remain B-07-gated. |
 | `dish_service/frontend_tokens.py` | Stateless bounded typed/environment-scoped route identities, opaque digests, and retry-safe expiring cursor tokens; no raw UUID/GID exposure. |
 | `dish_service/frontend_contract.py` | Versioned Stage 3 operation/phase/attention labels, severities, normalization candidate, and deterministic registry order. |
 | `dish_service/frontend_board.py` | Closed board DTO builder, capacity/configuration validation, notices, snapshot/continuity identities, and stateless cursor lifecycle. |
@@ -94,8 +99,11 @@ read-only owners rather than alter it into a browser DTO service:
 | `dish_service/frontend_projection.py` | Versioned projection state reducer and human presentation, using captured durable facts plus one optional readiness sample. |
 | `dish_service/frontend_advisory.py` | Non-authorizing factual next-step advisory derived from the same captured workflow facts as the authority layer. |
 | `dish_service/frontend_renderer.py` | Pinned bounded renderer/sanitizer and inert fallback over captured canonical body source. |
+| `dish_service/frontend_detail.py` | Closed local Stage 4 detail DTO builder, bounded opaque-route resolution, rendering/disclosure/advisory/projection composition, and cross-field validation. |
 
-The Stage 3 owner names above are the checked-in candidate implementation. Stage 4 names remain implementation proposals. Their separation and authority limits are required.
+The Stage 3 owners and the listed Stage 4 read-only owners are checked-in candidate implementations.
+They remain non-authoritative and do not constitute production/private activation or Gate B acceptance;
+their separation and authority limits are required.
 
 ## Board-bootstrap field map
 
@@ -195,23 +203,23 @@ valid tokens map to `cursor_stale`.
 | Browser/result field | Canonical source and join | Selection/evaluation/precedence | Required support and proof | Status |
 |---|---|---|---|---|
 | Task route identity | Internal `DishTask.task_id` | Normalize accepted legacy identity before committing visible state/history. | Shared route-identity service. | Support required B-03 |
-| Eligibility | Same canonical predicate as board | Freshly evaluated; missing identity → `task_not_found`, known but completed/retired/out-of-registry → `task_ineligible`. | Detail eligibility query and race tests. | Partially mapped |
-| Canonical title/body | Current authority head → activation → `ContentVersion.title/body` | One current version in same coherent snapshot; raw body remains server-side during normal rendering. | Set-oriented detail bundle. | Mapped |
-| Project label | Current placement → governed section → governed project | Current logical label. | Join and bounded text tests. | Mapped |
-| Section label | Current placement → active registry entry | Current active display label. | Join and registry-coherence test. | Mapped |
+| Eligibility | Same canonical predicate as board | Freshly evaluated; missing identity → `task_not_found`, known but completed/retired/out-of-registry → `task_ineligible`. | Local detail eligibility query and focused race/eligibility tests; native-runtime acceptance pending. | Implemented local candidate |
+| Canonical title/body | Current authority head → activation → `ContentVersion.title/body` | One current version in the local coherent read; raw body remains server-side during normal rendering. | Dedicated detail fact bundle plus rendering tests. | Implemented local candidate |
+| Project label | Current placement → governed section → governed project | Current logical label. | Dedicated detail join and bounded response tests. | Implemented local candidate |
+| Section label | Current placement → active registry entry | Current active display label. | Dedicated detail join and registry-coherence tests. | Implemented local candidate |
 | Destination label | Governing current workflow destination fact | The current models do not expose one generic destination relation. It may be represented by operation-specific persisted workflow facts or policy-derived current snapshot; phase/body text is not authority. | Name exact canonical destination source per operation kind or add a frontend factual projection. | **Unresolved.** |
-| Workflow status | Current open `WorkflowOperation` | Same status mapping as cards. | Shared status registry/equivalence. | Partially mapped |
-| Lease disclosures | Accepted current/relevant `ServiceLease` facts | Approved owner/role, state label, and human-readable expiry only; stable backend order. Active attention must have at least one matching item. | Disclosure registry; redact raw owner if it is not an approved human label. | Predicate/presentation review required |
-| Verification disclosures | Current relevant `VerificationCycle` and human-review fact | Approved state and summary only; identify latest/current cycle by exact operation/cycle precedence. | Disclosure registry and policy equivalence. | Partially mapped |
-| Hold disclosures | Accepted open/relevant `EvidenceHold` and/or two-pass `HumanReviewRequirement` | Approved kind/state and summary, not raw question/reason unless explicitly approved and bounded. | Registry and source decision. | Candidate |
-| Recovery disclosures | Named durable recovery support state | Must correspond to every `recovery_required` attention. | New support state/service. | Blocked B-06 |
-| Abandonment disclosures | `AbandonmentAttempt` | Approved kind/state and summary; no raw IDs, request evidence, owner IDs, or executable continuation. | Registry and bounded formatter. | Mapped candidate |
-| Succession disclosures | `OperationSuccessionEdge` plus accepted active predicate | Approved kind/state and summary; no raw source/successor IDs. | Registry and bounded formatter. | Candidate |
-| Projection object | Accepted projection reducer inputs | Emit only abnormal state/message/optional observation time. Healthy and not-configured omitted. | Projection reducer B-07. | Blocked |
-| Advisory code/message | Same immutable workflow/recovery facts captured for detail | Backend factual service only; stable non-sensitive code, workflow perspective, `invokable_by_frontend=false`; never serialize `legal_actions`. | New advisory service with equivalence corpus. | Support required |
-| Rendered body | Captured `ContentVersion.body` | Pinned bounded renderer/sanitizer after transaction; normal branch only sanitized allowed HTML. | New renderer/sanitizer and security corpus. | Support required Stage 4 |
-| Plain-text fallback | Same captured canonical body | Only when valid bounded content cannot be rendered safely; inserted as text; one task-targeted `render_rejected` notice. Capacity/dependency failures remain errors. | Failure taxonomy tests. | Support required Stage 4 |
-| Detail notices | Accepted detail attention/projection/rendering contributions | Bounded closed registry; active attention must have matching disclosure/projection object. | DTO cross-field validator. | Depends on registries |
+| Workflow status | Current open `WorkflowOperation` | Same status mapping as cards. | Shared closed status registry; policy-equivalence acceptance pending. | Implemented local candidate B-09 |
+| Lease disclosures | Accepted current/relevant `ServiceLease` facts | Local candidate reuses the exact Stage 3 latest-actor-attempt/current-open-operation predicate and emits role/state/expiry without raw owner identity. Active attention must have a matching item. | Disclosure registry and policy-equivalence review. | Implemented local candidate; B-04 remains unresolved |
+| Verification disclosures | Current relevant `VerificationCycle` and open human-review fact | Local candidate emits bounded lifecycle/outcome-presence facts or a generic awaiting-human-review disclosure; it does not invent failed/disputed semantics. | Disclosure registry and policy equivalence. | Implemented local candidate; B-05 remains unresolved |
+| Hold disclosures | Accepted open/relevant `EvidenceHold` and/or two-pass `HumanReviewRequirement` | Local candidate emits bounded kind/state summaries and no raw question/reason. | Registry/source-equivalence review. | Implemented local candidate |
+| Recovery disclosures | Current B-06 candidate: task-scoped uncertain `CommandExecution` without a recorded `RequestUncertaintyResolution` | Local candidate emits only a bounded factual summary and matches every current `recovery_required` attention. | Accept/reject B-06 equivalence. | Implemented local candidate; blocked for acceptance by B-06 |
+| Abandonment disclosures | `AbandonmentAttempt` | Local candidate emits bounded state only; no raw IDs, request evidence, owner IDs, or executable continuation. | Registry/policy-equivalence review. | Implemented local candidate |
+| Succession disclosures | `OperationSuccessionEdge` plus current active predicate | Local candidate emits a bounded active-succession fact; no raw source/successor IDs. | Registry/policy-equivalence review. | Implemented local candidate |
+| Projection object | Current B-07 candidate inputs from drift and live-origin outbox facts | Local reducer emits only `drifted`, `failed`, `unknown`, or configured `delayed`; healthy/not-present is omitted. | Accept reducer, threshold source, readiness input, and precedence under B-07. | Implemented local candidate; blocked for acceptance by B-07 |
+| Advisory code/message | Same immutable workflow facts captured for detail | Local backend factual service emits a closed non-sensitive code/message, workflow perspective, `invokable_by_frontend=false`; never serializes `legal_actions`. | Policy-equivalence corpus/review. | Implemented local candidate B-09 |
+| Rendered body | Captured `ContentVersion.body` | Local bounded renderer runs after the read transaction; all source text is escaped and only its closed generated subset becomes `sanitized_html`. | Security corpus and production acceptance. | Implemented local candidate B-09 |
+| Plain-text fallback | Same captured canonical body | Render rejection falls back to literal text plus one task-targeted `render_rejected` notice; capacity failure remains an error. | Failure taxonomy tests and production acceptance. | Implemented local candidate B-09 |
+| Detail notices | Current detail attention/projection/rendering contributions | Closed bounded local registry; active attention must have matching disclosure and projection attention must have a projection object. | DTO cross-field validator and policy-equivalence review. | Implemented local candidate B-09 |
 
 ### Current `task_view()` gap
 

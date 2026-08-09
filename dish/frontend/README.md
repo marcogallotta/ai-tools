@@ -41,9 +41,9 @@ placement, completion, projection, or content-mutation authority.
 ## Current delivery status
 
 Delivery Stage 0 and fixture-backed Delivery Stage 1A–1F are implemented. The Stage 3 PostgreSQL
-read core can now be exercised through an explicit loopback-only local observation mode. Real
-authentication, production frontend routing, and authoritative PostgreSQL activation remain absent
-and governed by their readiness gates.
+board and the Stage 4 read-only task-detail/deep-link candidate can now be exercised through an
+explicit loopback-only local observation mode. Real authentication, production frontend routing, and
+authoritative PostgreSQL activation remain absent and governed by their readiness gates.
 ## Integration readiness
 
 - Gate A authoring review: `../docs/frontend-gate-a-readiness.md`
@@ -53,7 +53,7 @@ and governed by their readiness gates.
 
 Gate A is not passed until an independent reviewer accepts the packet and its material findings are
 resolved. Gate B is not passed until its source predicates are reconciled against the final migrated
-schema and independently accepted. The local Stage 3 PostgreSQL observation path does not pass or
+schema and independently accepted. The local Stage 3/4 PostgreSQL observation path does not pass or
 bypass either gate and is not production activation.
 
 
@@ -70,11 +70,12 @@ configuration or authority:
 The unit suite checks these files against the frontend OpenAPI and checked-in model/migration source so
 schema or contract drift must be reconciled explicitly.
 
-## Local PostgreSQL observation board
+## Local PostgreSQL observation frontend
 
-The Stage 3 board can be served locally from PostgreSQL without changing production routing or
-backend authority. This is an observation/offload surface only: SQLite and Asana remain authoritative
-until an explicit cutover, and the local server exposes no mutation routes.
+The Stage 3 board and Stage 4 read-only task detail can be served locally from PostgreSQL without
+changing production routing or backend authority. This is an observation/offload surface only:
+SQLite and Asana remain authoritative until an explicit cutover, and the local server exposes no
+mutation routes.
 
 Start the repository Compose PostgreSQL target from `dish/`:
 
@@ -96,7 +97,12 @@ npm --prefix frontend run build
 ```
 
 Open `http://127.0.0.1:4173/?source=postgresql`. Without `source=postgresql` the same build remains
-fixture-backed. `review=1` always forces fixture mode and blocks frontend API requests.
+fixture-backed. `review=1` always forces fixture mode and blocks frontend API requests. In PostgreSQL
+mode, selecting a task opens fresh read-only detail and normalizes the URL to
+`/tasks/<opaque-task-route>/<decorative-title-slug>?source=postgresql`; the opaque route identity is
+authoritative and the slug is decorative. Direct load/reload and Back/Forward restore that local
+detail state without exposing the task UUID. Destination remains omitted until Gate B names an
+accepted canonical source.
 
 The local server defaults to `postgresql+psycopg://dish:dish@127.0.0.1:55432/dish_stage_a_test`.
 Override it only for another intentional local target with `DISH_FRONTEND_LOCAL_DATABASE_URL` or
@@ -109,7 +115,8 @@ path remains legacy SQLite/location evidence through `scripts/dish-pg-export-leg
 `scripts/dish-pg-bootstrap-initial`, then `scripts/dish-pg-import-legacy`. Bootstrap is
 empty-target-only; test fixture helpers are not runtime population tooling.
 
-With the server running against a populated local database, exercise the real browser path with:
+With the server running against a populated local database, exercise the real board/detail browser
+path (including detail open, deep-link reload, UUID non-exposure, and close) with:
 
 ```sh
 DISH_FRONTEND_LOCAL_URL='http://127.0.0.1:4173/?source=postgresql' \

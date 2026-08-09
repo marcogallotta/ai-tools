@@ -1142,28 +1142,6 @@
           }
         }
       },
-      "ContentBlock": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "kind",
-          "text"
-        ],
-        "properties": {
-          "kind": {
-            "type": "string",
-            "enum": [
-              "paragraph",
-              "heading",
-              "list_item"
-            ]
-          },
-          "text": {
-            "type": "string",
-            "maxLength": 10000
-          }
-        }
-      },
       "Disclosure": {
         "type": "object",
         "additionalProperties": false,
@@ -1175,8 +1153,14 @@
         "properties": {
           "code": {
             "type": "string",
-            "minLength": 1,
-            "maxLength": 64
+            "enum": [
+              "lease",
+              "verification",
+              "hold",
+              "recovery",
+              "abandonment",
+              "succession"
+            ]
           },
           "label": {
             "type": "string",
@@ -1200,10 +1184,11 @@
           "section_label",
           "workflow_status",
           "attention_codes",
-          "content",
-          "content_mode",
+          "body_presentation",
           "disclosures",
-          "next_step"
+          "advisory",
+          "projection",
+          "notices"
         ],
         "properties": {
           "task_id": {
@@ -1244,19 +1229,8 @@
               "$ref": "#/components/schemas/AttentionCode"
             }
           },
-          "content": {
-            "type": "array",
-            "maxItems": 500,
-            "items": {
-              "$ref": "#/components/schemas/ContentBlock"
-            }
-          },
-          "content_mode": {
-            "type": "string",
-            "enum": [
-              "rendered",
-              "plain_text_fallback"
-            ]
+          "body_presentation": {
+            "$ref": "#/components/schemas/BodyPresentation"
           },
           "disclosures": {
             "type": "array",
@@ -1265,10 +1239,189 @@
               "$ref": "#/components/schemas/Disclosure"
             }
           },
-          "next_step": {
+          "advisory": {
+            "$ref": "#/components/schemas/Advisory"
+          },
+          "projection": {
+            "$ref": "#/components/schemas/ProjectionDetail"
+          },
+          "notices": {
+            "type": "array",
+            "maxItems": 9,
+            "items": {
+              "$ref": "#/components/schemas/DetailNotice"
+            }
+          }
+        }
+      },
+      "BodyPresentation": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "state",
+              "html"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "sanitized_html"
+                ]
+              },
+              "html": {
+                "type": "string",
+                "maxLength": 300000
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "state",
+              "text"
+            ],
+            "properties": {
+              "state": {
+                "type": "string",
+                "enum": [
+                  "plain_text_fallback"
+                ]
+              },
+              "text": {
+                "type": "string",
+                "maxLength": 100000
+              }
+            }
+          }
+        ]
+      },
+      "Advisory": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "message",
+          "perspective",
+          "invokable_by_frontend"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "message": {
             "type": "string",
             "minLength": 1,
             "maxLength": 1000
+          },
+          "perspective": {
+            "type": "string",
+            "enum": [
+              "workflow"
+            ]
+          },
+          "invokable_by_frontend": {
+            "type": "boolean",
+            "const": false
+          }
+        }
+      },
+      "ProjectionDetail": {
+        "type": [
+          "object",
+          "null"
+        ],
+        "additionalProperties": false,
+        "required": [
+          "state",
+          "message"
+        ],
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "delayed",
+              "failed",
+              "drifted",
+              "unknown",
+              "unavailable"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "observation_time": {
+            "type": "string",
+            "format": "date-time",
+            "maxLength": 64
+          }
+        }
+      },
+      "DetailNoticeTarget": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "type",
+          "route_identity"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "task"
+            ]
+          },
+          "route_identity": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          }
+        }
+      },
+      "DetailNotice": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "severity",
+          "message",
+          "target"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "isolated",
+              "lease_attention",
+              "verification_attention",
+              "hold_active",
+              "recovery_required",
+              "abandonment_active",
+              "succession_active",
+              "projection_abnormal",
+              "render_rejected"
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "warning",
+              "error"
+            ]
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          },
+          "target": {
+            "$ref": "#/components/schemas/DetailNoticeTarget"
           }
         }
       }

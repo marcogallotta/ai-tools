@@ -14,19 +14,24 @@ from typing import Any, Protocol
 from urllib.parse import parse_qsl, unquote, urlsplit
 
 from dish_pg.frontend_board_query import BoardReadUnavailable
+from dish_pg.frontend_detail_query import TaskDetailIneligible
 from dish_service.frontend_board import BoardCapacityExceeded, BoardConfigurationInvalid
 from dish_service.frontend_contract import FRONTEND_CONTRACT_VERSION
+from dish_service.frontend_detail import DetailCapacityExceeded, TaskNotFound
 from dish_service.frontend_tokens import CursorInvalid, CursorStale
 
 LOG = logging.getLogger("dish.frontend.local")
 _MAX_STATIC_BYTES = 10 * 1024 * 1024
 _SECTION_ROUTE_RE = re.compile(r"r1s-[A-Za-z0-9_-]{27}")
+_TASK_ROUTE_RE = re.compile(r"r1t-[A-Za-z0-9_-]{27}")
 
 
 class LocalBoardBackend(Protocol):
     def bootstrap(self) -> dict[str, Any]: ...
 
     def continuation(self, *, section_route_id: str, cursor: str) -> dict[str, Any]: ...
+
+    def detail(self, *, task_route_id: str) -> dict[str, Any]: ...
 
 
 class FrontendLocalServer(ThreadingHTTPServer):
@@ -84,6 +89,10 @@ class FrontendLocalRequestHandler(BaseHTTPRequestHandler):
         parsed = urlsplit(self.path)
         if parsed.path == "/frontend/board":
             self._board(parsed.query)
+            return
+        task_route = _task_route_from_path(parsed.path)
+        if task_route is not None:
+            self._task_detail(task_route, parsed.query)
             return
         section_route = _section_route_from_path(parsed.path)
         if section_route is not None:
@@ -226,6 +235,39 @@ class FrontendLocalRequestHandler(BaseHTTPRequestHandler):
                 "Board data could not be loaded.",
             )
 
+
+    def _task_detail(self, task_route_id: str, query: str) -> None:
+        if not self._require_contract():
+            return
+        if query or _TASK_ROUTE_RE.fullmatch(task_route_id) is None:
+            self._write_api_error(HTTPStatus.BAD_REQUEST, "request_invalid", "Task request is invalid.")
+            return
+        try:
+            self._write_api_json(HTTPStatus.OK, self.server.backend.detail(task_route_id=task_route_id))
+        except TaskNotFound:
+            self._write_api_error(HTTPStatus.NOT_FOUND, "task_not_found", "Task was not found.")
+        except TaskDetailIneligible:
+            self._write_api_error(HTTPStatus.CONFLICT, "task_ineligible", "Task is not eligible for this board.")
+        except DetailCapacityExceeded:
+            self._write_api_error(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                "detail_capacity_exceeded",
+                "Task detail exceeds the configured local capacity.",
+            )
+        except BoardReadUnavailable:
+            self._write_api_error(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                "service_unavailable",
+                "Task detail is temporarily unavailable.",
+            )
+        except Exception as exc:
+            LOG.error("local frontend detail read failed type=%s", type(exc).__name__)
+            self._write_api_error(
+                HTTPStatus.SERVICE_UNAVAILABLE,
+                "internal_error",
+                "Task detail could not be loaded.",
+            )
+
     def _require_contract(self) -> bool:
         values = self.headers.get_all("X-Dish-Frontend-Contract", [])
         if values == [FRONTEND_CONTRACT_VERSION]:
@@ -338,6 +380,14 @@ class FrontendLocalRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; "
+            "font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'; "
+            "frame-src 'none'; worker-src 'none'; media-src 'none'; manifest-src 'none'; "
+            "frame-ancestors 'none'; form-action 'self'",
+        )
         self.send_header("Connection", "close")
         for name, value in (extra_headers or {}).items():
             self.send_header(name, value)
@@ -345,6 +395,15 @@ class FrontendLocalRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
         self.close_connection = True
 
+
+def _task_route_from_path(path: str) -> str | None:
+    prefix = "/frontend/tasks/"
+    if not path.startswith(prefix):
+        return None
+    encoded = path[len(prefix):]
+    if not encoded or "/" in encoded:
+        return None
+    return unquote(encoded)
 
 def _section_route_from_path(path: str) -> str | None:
     prefix = "/frontend/sections/"

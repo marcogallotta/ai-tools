@@ -27,9 +27,11 @@ test("same-origin client sends contract header and binds continuation cursor", a
   });
   await client.board();
   await client.sectionTasks("r1s-safe", "c1.cursor/value");
+  await client.taskDetail("r1t-safe/value");
   assert.equal(calls[0].path, "/frontend/board");
   assert.equal(calls[0].options.headers["X-Dish-Frontend-Contract"], FRONTEND_CONTRACT_VERSION);
   assert.equal(calls[1].path, "/frontend/sections/r1s-safe/tasks?cursor=c1.cursor%2Fvalue");
+  assert.equal(calls[2].path, "/frontend/tasks/r1t-safe%2Fvalue");
   assert.equal(calls[0].options.credentials, "same-origin");
   assert.equal(calls[0].options.redirect, "manual");
 });
@@ -99,4 +101,16 @@ test("non-JSON success responses fail closed", async () => {
     fetchImpl: async () => response({ ok: true }, { contentType: "text/plain" }),
   });
   await assert.rejects(client.board(), FrontendContractMismatch);
+});
+
+
+test("task detail errors are status-bound", async () => {
+  const missing = new FrontendHttpClient({
+    fetchImpl: async () => response({ error: { code: "task_not_found", message: "Missing." } }, { status: 404 }),
+  });
+  await assert.rejects(missing.taskDetail("r1t-safe"), (error) => error instanceof FrontendApiError && error.code === "task_not_found");
+  const wrong = new FrontendHttpClient({
+    fetchImpl: async () => response({ error: { code: "task_ineligible", message: "No." } }, { status: 404 }),
+  });
+  await assert.rejects(wrong.taskDetail("r1t-safe"), FrontendContractMismatch);
 });

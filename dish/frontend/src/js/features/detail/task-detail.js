@@ -91,12 +91,22 @@ export function openTaskDetail(detail, origin, { onRequestClose, focusFallback }
   content.dataset.renderMode = renderSafeContent(content, detail);
   body.append(facts, contentHeading, content);
   renderDisclosures(body, detail.disclosures);
+  if (detail.projection) {
+    const projection = document.createElement("section");
+    projection.className = "detail-projection";
+    const projectionHeading = document.createElement("h3");
+    projectionHeading.textContent = `Projection — ${detail.projection.state}`;
+    const projectionText = document.createElement("p");
+    projectionText.textContent = detail.projection.message;
+    projection.append(projectionHeading, projectionText);
+    body.append(projection);
+  }
   const next = document.createElement("section");
   next.className = "detail-next-step";
   const nextHeading = document.createElement("h3");
   nextHeading.textContent = "What needs to happen next";
   const nextText = document.createElement("p");
-  nextText.textContent = detail.nextStep;
+  nextText.textContent = detail.advisory?.message ?? detail.nextStep;
   next.append(nextHeading, nextText);
   body.append(next);
   panel.append(header, body);

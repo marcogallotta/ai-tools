@@ -7,7 +7,7 @@ export const noticeRegistry = Object.freeze({
   abandonment_active: { label: "Abandonment active", severity: "error" },
   succession_active: { label: "Succession active", severity: "error" },
   projection_abnormal: { label: "Asana projection issue", severity: "warning" },
-  rendering_fallback: { label: "Task content shown as inert plain text", severity: "warning" },
+  render_rejected: { label: "Task content shown as inert plain text", severity: "warning" },
   initial_load_failed: { label: "Board unavailable", severity: "error" },
   service_unavailable: { label: "Refresh unavailable", severity: "warning" },
 });

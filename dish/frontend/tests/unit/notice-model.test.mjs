@@ -18,7 +18,7 @@ test("fresh detail supersedes the selected card contribution", () => {
   const contributions = effectiveTaskContributions(structuredClone(boardFixture), detail);
   assert.equal(contributions.some((item) => item.taskId === detail.id && item.code === "lease_attention"), false);
   assert.equal(contributions.some((item) => item.taskId === detail.id && item.code === "hold_active"), true);
-  assert.equal(contributions.some((item) => item.code === "rendering_fallback"), true);
+  assert.equal(contributions.some((item) => item.code === "render_rejected"), true);
 });
 
 test("unknown notice codes fail closed", () => {

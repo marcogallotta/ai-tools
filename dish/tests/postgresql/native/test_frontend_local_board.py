@@ -35,3 +35,31 @@ def test_local_frontend_backend_reads_native_postgresql_without_raw_ids(core_db)
     assert board["sections"][0]["section_id"].startswith("r1s-")
     assert board["sections"][0]["cards"][0]["task_id"].startswith("r1t-")
     assert str(task_id) not in repr(board)
+
+
+def test_local_frontend_backend_reads_native_postgresql_task_detail_without_raw_ids(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(
+            session,
+            ids,
+            generation_status="active",
+            schema_head="0032_imported_operation_history",
+        )
+        task_id = _next(ids)
+        _import_one(session, ids, context, task_id=task_id)
+
+    backend = PostgresLocalBoardBackend(
+        factory,
+        token_secret=b"native-stage4-local-detail-test-secret",
+        config=FrontendBoardConfig(projection_delay=timedelta(minutes=15)),
+    )
+    board = backend.bootstrap()
+    task_route_id = board["sections"][0]["cards"][0]["task_id"]
+    detail = backend.detail(task_route_id=task_route_id)
+
+    assert detail["task_id"] == task_route_id
+    assert detail["title"] == "[ready] Exact imported task"
+    assert detail["body_presentation"]["state"] == "sanitized_html"
+    assert detail["advisory"]["invokable_by_frontend"] is False
+    assert str(task_id) not in repr(detail)

@@ -16,7 +16,9 @@ from sqlalchemy.orm import sessionmaker
 
 from dish_pg.database import DatabaseSettings, create_database_engine, session_factory
 from dish_pg.frontend_board_query import BoardReadUnavailable, FrontendBoardQuery
+from dish_pg.frontend_detail_query import FrontendDetailQuery
 from dish_service.frontend_board import FrontendBoardConfig, FrontendBoardService
+from dish_service.frontend_detail import FrontendDetailConfig, FrontendDetailService
 from dish_service.frontend_local_http import (
     FrontendLocalServer,
     LocalBoardBackend,
@@ -38,6 +40,7 @@ class LocalFrontendSettings:
     first_page_size: int = 50
     continuation_page_size: int = 50
     max_sections: int = 100
+    max_detail_route_candidates: int = 5000
 
     def __post_init__(self) -> None:
         if not is_loopback_host(self.host):
@@ -46,6 +49,8 @@ class LocalFrontendSettings:
             raise ValueError("local frontend port must be between 0 and 65535")
         # Reuse the Stage 3 service's closed bounds instead of maintaining a
         # second local-only capacity policy.
+        if self.max_detail_route_candidates <= 0:
+            raise ValueError("max detail route candidates must be positive")
         FrontendBoardConfig(
             first_page_size=self.first_page_size,
             continuation_page_size=self.continuation_page_size,
@@ -63,10 +68,12 @@ class PostgresLocalBoardBackend:
         *,
         token_secret: bytes | None = None,
         config: FrontendBoardConfig,
+        max_detail_route_candidates: int = 5000,
     ) -> None:
         self.factory = factory
         self.token_secret = token_secret or secrets.token_bytes(32)
         self.config = config
+        self.max_detail_route_candidates = max_detail_route_candidates
 
     def bootstrap(self) -> dict[str, Any]:
         return self._read(lambda service: service.bootstrap())
@@ -78,6 +85,32 @@ class PostgresLocalBoardBackend:
                 cursor=cursor,
             )
         )
+
+    def detail(self, *, task_route_id: str) -> dict[str, Any]:
+        session = self.factory()
+        try:
+            with session.begin():
+                if session.get_bind().dialect.name != "postgresql":
+                    raise BoardReadUnavailable("local frontend requires PostgreSQL")
+                # Stage 4 detail captures all factual inputs from one coherent local snapshot.
+                # This is local observation wiring, not evidence that the production 3D
+                # coherent-read gate has been accepted.
+                session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"))
+                service = FrontendDetailService(
+                    FrontendDetailQuery(session),
+                    environment=_LOCAL_ENVIRONMENT,
+                    token_secret=self.token_secret,
+                    config=FrontendDetailConfig(
+                        projection_delay=self.config.projection_delay,
+                        max_route_candidates=self.max_detail_route_candidates,
+                    ),
+                )
+                facts = service.capture(task_route_id)
+            return service.present(facts)
+        except SQLAlchemyError as exc:
+            raise BoardReadUnavailable("local PostgreSQL read is unavailable") from exc
+        finally:
+            session.close()
 
     def _read(self, operation):
         session = self.factory()
@@ -114,6 +147,7 @@ def build_local_server(
             max_sections=settings.max_sections,
             projection_delay=settings.projection_delay,
         ),
+        max_detail_route_candidates=settings.max_detail_route_candidates,
     )
     try:
         server = FrontendLocalServer(
@@ -130,7 +164,7 @@ def build_local_server(
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="dish-frontend-local",
-        description="Serve the Stage 3 board from non-authoritative local PostgreSQL.",
+        description="Serve the Stage 3/4 read-only frontend from non-authoritative local PostgreSQL.",
     )
     parser.add_argument(
         "--database-url",
@@ -152,6 +186,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--first-page-size", type=int, default=50)
     parser.add_argument("--continuation-page-size", type=int, default=50)
     parser.add_argument("--max-sections", type=int, default=100)
+    parser.add_argument("--max-detail-route-candidates", type=int, default=5000)
     parser.add_argument(
         "--projection-delay-seconds",
         type=int,
@@ -175,10 +210,11 @@ def main(argv: list[str] | None = None) -> int:
         first_page_size=args.first_page_size,
         continuation_page_size=args.continuation_page_size,
         max_sections=args.max_sections,
+        max_detail_route_candidates=args.max_detail_route_candidates,
     )
     server, engine = build_local_server(settings, static_root=args.static_root)
     host, port = server.server_address[:2]
-    print(f"Dish local PostgreSQL board: http://{host}:{port}/?source=postgresql")
+    print(f"Dish local PostgreSQL frontend: http://{host}:{port}/?source=postgresql")
     print(
         "PostgreSQL is a non-authoritative local observation source; "
         "this server has no mutation routes."

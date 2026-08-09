@@ -1,6 +1,6 @@
 # Dish private frontend implementation contract
 
-**Status: staged implementation contract. Delivery Stages 0 and 1 are available after explicit authorization. Delivery Stage 3 read-core implementation and loopback-only local PostgreSQL observation wiring are explicitly authorized behind a non-production boundary; Delivery Stage 2 and production/private Stage 3 HTTP/browser activation remain readiness-gated, and later stages remain conditionally specified.**
+**Status: staged implementation contract. Delivery Stages 0 and 1 are available after explicit authorization. Delivery Stage 3 read-core/local observation and Delivery Stage 4 read-only detail/deep-link candidate implementation are explicitly authorized behind the loopback-only non-production PostgreSQL observation boundary; Delivery Stage 2 and production/private Stage 3/4 HTTP/browser activation remain readiness-gated, and later stages remain conditionally specified.**
 
 This document defines how to realize the approved product in
 [`frontend.md`](frontend.md). The product behavior and authority outcomes in `frontend.md` are
@@ -1112,10 +1112,13 @@ canonical task data. Delivery Stage 2 remains blocked until Gate A passes. By ex
 authorization, Delivery Stage 3's read-only PostgreSQL query, DTO, route-identity, cursor core, and explicit
 loopback-only local observation harness may proceed behind a non-production boundary while Gate B is
 refreshed, including reading the non-authoritative dark-launch database as an operational observation
-surface. The local harness is development evidence, not Stage 3D activation. Gate B must pass before
-that real board is exposed through the production/private frontend HTTP/browser routes. Stage 4 and later remain gated by the
-applicable accepted source map. A prior stage review cannot waive an activation gate or authorize
-guessed semantics.
+surface. The local harness is development evidence, not Stage 3D activation. By separate explicit
+project authorization, Delivery Stage 4's read-only detail, rendering/disclosure/advisory candidate,
+and deep-link behavior may also be implemented and exercised only through that same loopback local
+observation boundary while its Gate B map is refined. Gate B must still pass before either real-data
+stage is exposed through production/private frontend HTTP/browser routes. Stage 5 and later remain
+gated by the applicable accepted source map. A prior stage review cannot waive an activation gate or
+authorize guessed semantics.
 
 #### Gate A — complete contract and runtime readiness review
 
@@ -1249,7 +1252,7 @@ tests land with this stage.
 
 ### 11.7 Delivery Stage 4 — real task detail and deep links
 
-**Entry condition:** Gate B has been extended and independently accepted for every detail, disclosure, advisory, rendering-input, and projection field introduced by this stage.
+**Entry condition:** Gate B has been extended and independently accepted for every detail, disclosure, advisory, rendering-input, and projection field introduced by this stage. The explicitly authorized loopback-only local observation candidate may be implemented and exercised before that acceptance, but it does not satisfy or bypass the production/private entry condition and must leave unresolved fields omitted rather than guessed.
 
 Deliver the complete read-only side panel:
 

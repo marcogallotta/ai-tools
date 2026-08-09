@@ -65,3 +65,14 @@ test("accepted bootstrap replacement invalidates older continuation work", () =>
   assert.equal(state.acceptBootstrap(secondGeneration), true);
   assert.equal(state.currentContinuationSection(request, board(current)), null);
 });
+
+
+test("newer detail requests fence stale detail responses and close invalidates in-flight work", () => {
+  const state = new LocalBoardRequestState();
+  const first = state.beginDetail("r1t-" + "a".repeat(27));
+  const second = state.beginDetail("r1t-" + "b".repeat(27));
+  assert.equal(state.isCurrentDetail(first), false);
+  assert.equal(state.isCurrentDetail(second), true);
+  state.cancelDetail();
+  assert.equal(state.isCurrentDetail(second), false);
+});

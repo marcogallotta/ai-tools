@@ -5,7 +5,7 @@ const routePatterns = Object.freeze({
   section: /^r1s-[A-Za-z0-9_-]{27}$/,
 });
 const attentionOrder = Object.freeze(Object.keys(noticeRegistry).filter((code) => (
-  !["rendering_fallback", "initial_load_failed", "service_unavailable"].includes(code)
+  !["render_rejected", "initial_load_failed", "service_unavailable"].includes(code)
 )));
 export const WORKFLOW_OPERATION_LABELS = Object.freeze([
   "Planning",

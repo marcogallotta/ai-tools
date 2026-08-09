@@ -7,6 +7,12 @@ export function detailStatusText(detail) {
 }
 
 export function contentPresentation(detail) {
+  if (detail.bodyPresentation?.state === "sanitized_html") {
+    return { mode: "sanitized", html: detail.bodyPresentation.html };
+  }
+  if (detail.bodyPresentation?.state === "plain_text_fallback") {
+    return { mode: "fallback", text: detail.bodyPresentation.text };
+  }
   if (detail.contentMode === "plain_text_fallback") {
     return { mode: "fallback", text: detail.fallbackText ?? "Content is unavailable." };
   }

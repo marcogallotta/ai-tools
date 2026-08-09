@@ -34,6 +34,8 @@ class FakeBackend:
         self.bootstrap_calls = 0
         self.continuation_calls: list[tuple[str, str]] = []
         self.fail_bootstrap = False
+        self.detail_calls: list[str] = []
+        self.detail_outcome = "ok"
 
     def bootstrap(self):
         self.bootstrap_calls += 1
@@ -74,6 +76,34 @@ class FakeBackend:
             "cards": [],
             "next_cursor": None,
             "notices": [],
+        }
+
+    def detail(self, *, task_route_id: str):
+        from dish_pg.frontend_detail_query import TaskDetailIneligible
+        from dish_service.frontend_detail import DetailCapacityExceeded, TaskNotFound
+
+        self.detail_calls.append(task_route_id)
+        if self.detail_outcome == "not_found":
+            raise TaskNotFound("opaque detail")
+        if self.detail_outcome == "ineligible":
+            raise TaskDetailIneligible("opaque detail")
+        if self.detail_outcome == "capacity":
+            raise DetailCapacityExceeded("opaque detail")
+        if self.detail_outcome == "failed":
+            raise RuntimeError("database-password=must-not-leak")
+        return {
+            "task_id": task_route_id,
+            "title": "[ready] Exact imported task",
+            "project_label": "Cooking",
+            "section_label": "Research Queue",
+            "destination_label": None,
+            "workflow_status": {"state": "no_active_operation"},
+            "attention_codes": ["isolated"],
+            "body_presentation": {"state": "sanitized_html", "html": "<p>Canonical</p>"},
+            "disclosures": [],
+            "advisory": {"code": "workflow.none", "message": "No next step is currently available.", "perspective": "workflow", "invokable_by_frontend": False},
+            "projection": None,
+            "notices": [{"code": "isolated", "severity": "warning", "message": "Visible isolated task.", "target": {"type": "task", "route_identity": task_route_id}}],
         }
 
 
@@ -339,3 +369,84 @@ def test_unexpected_backend_failure_returns_closed_503_without_exception_text(lo
     payload = json_body(body)
     assert payload["error"]["code"] == "internal_error"
     assert b"database-password" not in body
+
+
+def test_task_detail_http_is_contract_bound_and_closed(local_server) -> None:
+    server, backend = local_server
+    status, headers, body = request(server, "GET", f"/frontend/tasks/{TASK_ID}")
+    assert status == 200
+    assert headers["X-Dish-Frontend-Contract"] == FRONTEND_CONTRACT_VERSION
+    assert json_body(body)["task_id"] == TASK_ID
+    assert backend.detail_calls == [TASK_ID]
+
+    status, _, body = request(server, "GET", f"/frontend/tasks/{TASK_ID}?extra=1")
+    assert status == 400
+    assert json_body(body)["error"]["code"] == "request_invalid"
+    assert backend.detail_calls == [TASK_ID]
+
+    status, _, body = request(server, "POST", f"/frontend/tasks/{TASK_ID}")
+    assert status == 405
+    assert json_body(body)["error"]["code"] == "request_invalid"
+
+
+def test_task_detail_http_maps_expected_failures_without_leakage(local_server) -> None:
+    server, backend = local_server
+    expected = {
+        "not_found": (404, "task_not_found"),
+        "ineligible": (409, "task_ineligible"),
+        "capacity": (503, "detail_capacity_exceeded"),
+        "failed": (503, "internal_error"),
+    }
+    for outcome, (status_expected, code_expected) in expected.items():
+        backend.detail_outcome = outcome
+        status, _, body = request(server, "GET", f"/frontend/tasks/{TASK_ID}")
+        assert status == status_expected
+        payload = json_body(body)
+        assert payload["error"]["code"] == code_expected
+        assert "password" not in body.decode("utf-8").lower()
+
+
+def test_postgresql_detail_backend_uses_repeatable_read_and_presents_after_transaction(monkeypatch) -> None:
+    events: list[str] = []
+
+    class FakeSession:
+        def begin(self):
+            events.append("begin")
+            class Context:
+                def __enter__(self): return None
+                def __exit__(self, *_args): events.append("transaction-close")
+            return Context()
+        def get_bind(self): return SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+        def execute(self, statement): events.append(str(statement))
+        def close(self): events.append("session-close")
+
+    session = FakeSession()
+    class FakeDetailService:
+        def __init__(self, query, **_kwargs):
+            assert query is session
+            events.append("detail-service")
+        def capture(self, route):
+            events.append(f"capture:{route}")
+            return {"fact": True}
+        def present(self, facts):
+            assert facts == {"fact": True}
+            events.append("present")
+            return {"ok": True}
+
+    monkeypatch.setattr(frontend_local, "FrontendDetailQuery", lambda current: current)
+    monkeypatch.setattr(frontend_local, "FrontendDetailService", FakeDetailService)
+    backend = PostgresLocalBoardBackend(
+        lambda: session,
+        token_secret=b"local-detail-test-secret-at-least-32",
+        config=FrontendBoardConfig(projection_delay=timedelta(minutes=15)),
+    )
+    assert backend.detail(task_route_id=TASK_ID) == {"ok": True}
+    assert events == [
+        "begin",
+        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY",
+        "detail-service",
+        f"capture:{TASK_ID}",
+        "transaction-close",
+        "present",
+        "session-close",
+    ]

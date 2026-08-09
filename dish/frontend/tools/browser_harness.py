@@ -33,7 +33,7 @@ def browser_executable() -> str:
     return executable
 
 
-def module_bundle(entry: Path) -> str:
+def module_bundle(entries: tuple[Path, ...]) -> str:
     visited: set[Path] = set()
     ordered: list[str] = []
 
@@ -56,7 +56,8 @@ def module_bundle(entry: Path) -> str:
             label = resolved.name
         ordered.append(f"\n// {label}\n{source}")
 
-    visit(entry)
+    for entry in entries:
+        visit(entry)
     return "\n".join(ordered)
 
 
@@ -64,7 +65,10 @@ def prepare_page(page, view: str, task_id: str | None = None, review_mode: bool 
     page.set_content('<main id="app" class="app-root" aria-live="polite"></main>')
     css = "\n".join((SRC / "styles" / name).read_text(encoding="utf-8") for name in STYLE_FILES)
     page.add_style_tag(content=css)
-    bundle = module_bundle(SRC / "js" / "boot.js")
+    bundle = module_bundle((
+        SRC / "js" / "shell" / "login-shell.js",
+        SRC / "js" / "prototype" / "prototype-app.js",
+    ))
     page.add_script_tag(content=bundle)
     if view == "login":
         page.evaluate("renderLoginShell(document.querySelector('#app'))")
@@ -94,6 +98,7 @@ def assert_shells(browser) -> None:
     page.get_by_role("button", name=re.compile("Chicken biryani")).click()
     assert page.get_by_role("dialog").is_visible()
     assert page.get_by_text("What needs to happen next").is_visible()
+    assert page.locator(".detail-content").evaluate("node => getComputedStyle(node).unicodeBidi") == "isolate"
     assert page.locator("body").get_attribute("data-prototype-route") == "/task/task-biryani"
     page.keyboard.press("Escape")
     assert page.get_by_role("dialog").count() == 0
@@ -164,8 +169,18 @@ def assert_local_postgresql(browser) -> None:
     page.locator('#app[data-shell-state="local-postgresql-board"]').wait_for()
     assert page.get_by_text("LOCAL POSTGRESQL — NON-AUTHORITATIVE", exact=True).is_visible()
     assert page.get_by_text(expected_title, exact=True).is_visible()
+    page.get_by_role("button", name=re.compile(re.escape(expected_title))).click()
+    page.locator('#app[data-shell-state="local-postgresql-detail"]').wait_for()
+    page.get_by_role("heading", name=expected_title, exact=True).wait_for()
+    detail_path = page.locator("body").evaluate("() => location.pathname")
+    assert re.match(r"^/tasks/r1t-[A-Za-z0-9_-]{27}/[^/]+$", detail_path)
+    page.reload(wait_until="networkidle")
+    page.get_by_role("heading", name=expected_title, exact=True).wait_for()
+    assert page.locator("body").evaluate("() => location.pathname") == detail_path
     content = page.locator("body").inner_text()
     assert not re.search(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b", content, re.I)
+    page.get_by_role("button", name="Close task detail").click()
+    page.locator('#app[data-shell-state="local-postgresql-board"]').wait_for()
     page.close()
 
 def capture_shells(browser) -> None:
@@ -213,7 +228,7 @@ def main() -> None:
                 print("Playwright shell and visual-resilience checks passed")
             elif args.mode == "local-postgresql":
                 assert_local_postgresql(browser)
-                print("Local PostgreSQL board browser smoke passed")
+                print("Local PostgreSQL board/detail browser smoke passed")
             else:
                 capture_shells(browser)
                 print(f"Captured frontend screenshots in {SCREENSHOTS}")

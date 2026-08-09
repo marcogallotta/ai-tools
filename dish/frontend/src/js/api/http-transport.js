@@ -48,6 +48,14 @@ const SECTION_ERROR_CODES = Object.freeze({
   ]),
 });
 
+const DETAIL_ERROR_CODES = Object.freeze({
+  400: new Set(["request_invalid"]),
+  403: new Set(["client_update_required"]),
+  404: new Set(["task_not_found"]),
+  409: new Set(["task_ineligible"]),
+  503: new Set(["detail_capacity_exceeded", "service_unavailable", "internal_error"]),
+});
+
 export class FrontendContractMismatch extends Error {
   constructor(message = "Frontend response contract mismatch") {
     super(message);
@@ -137,5 +145,11 @@ export class FrontendHttpClient {
     return readFrontendJson(await this.client.getFrontendSectionTasks(sectionId, {
       query: { cursor },
     }), { errorCodesByStatus: SECTION_ERROR_CODES });
+  }
+
+  async taskDetail(taskId) {
+    return readFrontendJson(await this.client.getFrontendTaskDetail(taskId), {
+      errorCodesByStatus: DETAIL_ERROR_CODES,
+    });
   }
 }
