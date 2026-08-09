@@ -39,6 +39,7 @@ from .release_evidence import (
     _is_sha256,
     _require_nonblank,
     _require_sha256,
+    canonical_utc_isoformat,
     sha256_json,
 )
 
@@ -178,7 +179,7 @@ class CutoverControlAuthority:
             "regular_file": True,
             "verification_result": verification_result,
             "observation_contract_version": observation_contract_version,
-            "observed_at": observed_at.isoformat(),
+            "observed_at": canonical_utc_isoformat(observed_at),
         }
         digest = sha256_json(evidence_payload)
         existing = self.session.scalar(

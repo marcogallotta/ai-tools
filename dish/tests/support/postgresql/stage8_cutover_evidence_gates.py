@@ -42,8 +42,10 @@ from tests.support.postgresql.release import (
     _writer_fence_proof,
 )
 
-def _burn_rollback(session, ids, context, task_id):
-    service, candidate_id = _prepare_candidate(session, ids, context, task_id)
+def _burn_rollback(session, ids, context, task_id, *, dish_release="dish-pg-stage6"):
+    service, candidate_id = _prepare_candidate(
+        session, ids, context, task_id, dish_release=dish_release
+    )
     bundle = service.build_evidence_bundle(
         candidate_id=candidate_id,
         bundle_kind="release_candidate",
@@ -140,8 +142,12 @@ def _record_runtime_and_worker_readiness(session, ids, service, candidate_id, co
         worker_identity="projection-worker@stage8-test",
     )
 
-def _prepare_fenced_recertified_cutover(session, ids, context, task_id):
-    service, candidate_id = _prepare_candidate(session, ids, context, task_id)
+def _prepare_fenced_recertified_cutover(
+    session, ids, context, task_id, *, dish_release="dish-pg-stage6"
+):
+    service, candidate_id = _prepare_candidate(
+        session, ids, context, task_id, dish_release=dish_release
+    )
     bundle = service.build_evidence_bundle(
         candidate_id=candidate_id,
         bundle_kind="release_candidate",

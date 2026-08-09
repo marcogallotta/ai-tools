@@ -2,7 +2,7 @@ from __future__ import annotations
 import io
 import json
 import runpy
-from datetime import timedelta
+from datetime import timedelta, timezone
 from pathlib import Path
 import pytest
 from alembic import command
@@ -207,6 +207,51 @@ def test_prepared_writer_fence_digest_matches_deployed_manifest_bytes(
             engaged_at=NOW,
         )
         assert engaged.state == "engaged"
+
+
+def test_writer_fence_observation_digest_canonicalizes_timestamp_to_utc(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        service, candidate_id = _prepare_candidate(session, ids, context, task_id)
+        fence = service.prepare_writer_fence(
+            candidate_id=candidate_id,
+            target_identity="legacy-service@timezone-bound",
+            mechanism="fail-closed-file",
+            manifest={"path": "/tmp/timezone-bound-writer-fence.json"},
+            prepared_at=NOW,
+        )
+        observed_at = NOW.astimezone(timezone(timedelta(hours=2)))
+        observation = service.record_writer_fence_artifact_observation(
+            fence_id=fence.fence_id,
+            artifact_generation_identity="timezone-bound-fixture-v1",
+            canonical_path="/tmp/timezone-bound-writer-fence.json",
+            content_sha256=fence.manifest_sha256,
+            filesystem_device=1,
+            filesystem_inode=(fence.fence_id.int % 2_000_000_000) + 1,
+            verification_result="matched",
+            observation_contract_version="writer-fence-fixture-v1",
+            observed_at=observed_at,
+            recorded_at=observed_at,
+        )
+        assert observation.evidence_sha256 == sha256_json(
+            {
+                "fence_id": str(fence.fence_id),
+                "candidate_id": str(candidate_id),
+                "artifact_generation_identity": "timezone-bound-fixture-v1",
+                "canonical_path": "/tmp/timezone-bound-writer-fence.json",
+                "content_sha256": fence.manifest_sha256,
+                "filesystem_device": 1,
+                "filesystem_inode": (fence.fence_id.int % 2_000_000_000) + 1,
+                "file_type": "regular",
+                "regular_file": True,
+                "verification_result": "matched",
+                "observation_contract_version": "writer-fence-fixture-v1",
+                "observed_at": NOW.astimezone(timezone.utc).isoformat(),
+            }
+        )
+
 
 def test_writer_fence_engagement_rejects_deployed_manifest_digest_mismatch(
     workflow_db,

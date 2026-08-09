@@ -71,6 +71,7 @@ def _prepare_candidate(
     evidence_contracts=EXPECTED_RELEASE_EVIDENCE,
     rehearsal_kinds=EXPECTED_REHEARSALS,
     rehearsal_checkpoints=EXPECTED_REHEARSAL_CHECKPOINTS,
+    dish_release="dish-pg-stage6",
 ):
     # Base.metadata fixtures do not normally carry Alembic's version table.
     session.execute(text("CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(64) NOT NULL)"))
@@ -186,7 +187,7 @@ def _prepare_candidate(
         source_commit="42619b9",
         ledger_through_commit="42619b9",
         schema_head=ALEMBIC_HEAD,
-        dish_release="dish-pg-stage6",
+        dish_release=dish_release,
         honest_release="honest-1",
         protocol_release="protocol-1",
         openapi_release="openapi-stage4",

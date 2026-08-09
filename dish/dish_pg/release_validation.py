@@ -16,7 +16,11 @@ from . import models
 from . import stage5_models as tx
 from . import stage6_models as rel
 from .cutover_chronology import _utc_comparable
-from .release_evidence import ReleaseAuthorityError, sha256_json
+from .release_evidence import (
+    ReleaseAuthorityError,
+    canonical_utc_isoformat,
+    sha256_json,
+)
 
 RECONCILIATION_FRESHNESS_WINDOW = timedelta(hours=1)
 SUPPORTED_RECONCILIATION_ADAPTERS = {
@@ -331,11 +335,7 @@ def validate_writer_fence_observation(
         "regular_file": True,
         "verification_result": "matched",
         "observation_contract_version": observation.observation_contract_version,
-        "observed_at": (
-            observation.observed_at
-            if observation.observed_at.tzinfo is not None
-            else observation.observed_at.replace(tzinfo=timezone.utc)
-        ).isoformat(),
+        "observed_at": canonical_utc_isoformat(observation.observed_at),
     }
     if (
         observation.fence_id != fence.fence_id

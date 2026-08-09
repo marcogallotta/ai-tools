@@ -5,18 +5,58 @@ from __future__ import annotations
 import hashlib
 from datetime import timedelta
 
-from sqlalchemy import select
+import pytest
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import Session, sessionmaker
 
-from dish_pg import candidate_manifest_models as manifest_models
 from dish_pg import models
 from dish_pg import stage5_models as projection_models
 from dish_pg import stage6_models as release_models
-from dish_pg.candidate_manifest import bind_approval_manifest
+from dish_pg.database import session_scope
 from dish_pg.recovery_control import RecoveredPhysicalState, RestoreControl
 from dish_pg.release import ALEMBIC_HEAD
-from dish_pg.release_evidence import sha256_json
 from dish_pg.transition import ProjectionService
-from tests.support.postgresql.core import NOW, _bootstrap_registry, _next
+from tests.support.postgresql.core import (
+    NOW,
+    _bootstrap_registry,
+    _import_one,
+    _next,
+    _uuid_stream,
+)
+
+
+@pytest.fixture
+def recovery_db(tmp_path):
+    """File-backed recovery baseline with immutable generation provenance at schema head."""
+    path = tmp_path / "recovery-control.sqlite3"
+    engine = create_engine(
+        f"sqlite+pysqlite:///{path}",
+        future=True,
+        connect_args={"timeout": 30, "check_same_thread": False},
+    )
+
+    @event.listens_for(engine, "connect")
+    def _configure(dbapi_connection, _connection_record) -> None:
+        dbapi_connection.execute("PRAGMA foreign_keys = ON")
+        dbapi_connection.execute("PRAGMA journal_mode = WAL")
+        dbapi_connection.execute("PRAGMA busy_timeout = 30000")
+
+    models.Base.metadata.create_all(engine)
+    factory = sessionmaker(
+        bind=engine,
+        class_=Session,
+        autoflush=False,
+        expire_on_commit=False,
+        future=True,
+    )
+    ids = _uuid_stream()
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(
+            session, ids, generation_status="active", schema_head=ALEMBIC_HEAD
+        )
+        task = _import_one(session, ids, context)
+    yield factory, ids, context, task.task_id
+    engine.dispose()
 
 
 def _physical_state(**overrides) -> RecoveredPhysicalState:
@@ -34,6 +74,7 @@ def _physical_state(**overrides) -> RecoveredPhysicalState:
     }
     values.update(overrides)
     return RecoveredPhysicalState(**values)
+
 
 def _control(context, ids, state: RecoveredPhysicalState) -> RestoreControl:
     return RestoreControl(
@@ -61,7 +102,9 @@ def _control(context, ids, state: RecoveredPhysicalState) -> RestoreControl:
         issued_at=NOW + timedelta(minutes=1),
     )
 
-def _candidate(session, ids, context, epoch_id, *, status: str):
+
+def _inject_synthetic_candidate_state(session, ids, context, epoch_id, *, status: str):
+    """Inject candidate rows for impossible/restored-state tests only."""
     batch_id, baseline_id, candidate_id = _next(ids), _next(ids), _next(ids)
     session.add_all(
         [
@@ -139,128 +182,9 @@ def _candidate(session, ids, context, epoch_id, *, status: str):
         session.flush()
     return candidate
 
-def _approve_candidate(session, ids, candidate) -> None:
-    active_registry = session.get(models.ActiveSectionRegistry, candidate.generation_id)
-    reconciliation = projection_models.ProjectionReconciliationRun(
-        reconciliation_run_id=_next(ids),
-        generation_id=candidate.generation_id,
-        projection_epoch_id=candidate.projection_epoch_id,
-        corpus_identity=f"recovery-approval:{candidate.candidate_id}",
-        candidate_id=candidate.candidate_id,
-        registry_version_id=active_registry.registry_version_id,
-        observation_started_at=NOW,
-        observation_completed_at=NOW,
-        external_snapshot_identity="recovery-approval-snapshot",
-        external_high_water=None,
-        corpus_manifest_sha256="e" * 64,
-        scope_complete=True,
-        adapter_contract_version="asana-snapshot-v1",
-        evidence_recorded_at=NOW,
-        status="complete",
-        expected_items=0,
-        processed_items=0,
-        started_at=NOW,
-        completed_at=NOW,
-    )
-    session.add(reconciliation)
-    session.flush()
-    manifest = {"candidate_id": str(candidate.candidate_id), "authorized": True}
-    digest = sha256_json(manifest)
-    bundle = release_models.EvidenceBundle(
-        bundle_id=_next(ids),
-        candidate_id=candidate.candidate_id,
-        bundle_kind="release_candidate",
-        bundle_revision=1,
-        manifest=manifest,
-        manifest_sha256=digest,
-        built_at=NOW,
-    )
-    candidate.status = "validated"
-    candidate.candidate_revision = 2
-    candidate.validation_bundle_sha256 = digest
-    candidate.validated_at = NOW
-    session.add(bundle)
-    session.commit()
-    approval_payload = {"candidate_id": str(candidate.candidate_id)}
-    approval_body = {
-        "candidate_id": str(candidate.candidate_id),
-        "evidence_bundle_sha256": bundle.manifest_sha256,
-        "approver": "section2-test",
-        "statement": "Authorize exact validated candidate.",
-        "payload": approval_payload,
-        "approved_at": NOW.isoformat(),
-    }
-    approval = release_models.CutoverApproval(
-        approval_id=_next(ids),
-        candidate_id=candidate.candidate_id,
-        evidence_bundle_id=bundle.bundle_id,
-        approver=approval_body["approver"],
-        approval_statement=approval_body["statement"],
-        approval_payload=approval_payload,
-        approval_sha256=sha256_json(approval_body),
-        approved_at=NOW,
-    )
-    session.add(approval)
-    session.commit()
-    bind_approval_manifest(
-        session,
-        uuid_factory=lambda: _next(ids),
-        approval=approval,
-        candidate=candidate,
-        bound_at=NOW,
-    )
-    session.commit()
-    candidate = session.get(release_models.ReleaseCandidate, candidate.candidate_id)
-    candidate.status = "approved"
-    candidate.candidate_revision = 3
-    candidate.approved_at = NOW
-    session.flush()
 
-
-def _activate_candidate(
-    session,
-    ids,
-    candidate,
-    *,
-    burned_at=NOW,
-    legacy_bundle_id: str = "section2-activated-candidate",
-) -> models.AuthorityActivation:
-    approval = session.scalar(
-        select(release_models.CutoverApproval).where(
-            release_models.CutoverApproval.candidate_id == candidate.candidate_id
-        )
-    )
-    manifest = session.scalar(
-        select(manifest_models.ReleaseCandidateManifest).where(
-            manifest_models.ReleaseCandidateManifest.candidate_id == candidate.candidate_id
-        )
-    )
-    assert approval is not None and manifest is not None
-    activation = models.AuthorityActivation(
-        activation_id=_next(ids),
-        generation_id=candidate.generation_id,
-        import_run_id=manifest.source_import_run_id,
-        cutover_approval_id=str(approval.approval_id),
-        legacy_bundle_id=legacy_bundle_id,
-        schema_head=candidate.schema_head,
-        dish_release=candidate.dish_release,
-        honest_release=candidate.honest_release,
-        protocol_release=candidate.protocol_release,
-        openapi_release=candidate.openapi_release,
-        routing_release=candidate.routing_release,
-        projection_epoch=candidate.projection_epoch_id,
-        outcome="activated",
-        rollback_burned_at=burned_at,
-        recorded_at=burned_at,
-    )
-    candidate.status = "activated"
-    candidate.candidate_revision += 1
-    candidate.terminal_at = burned_at
-    session.add(activation)
-    session.commit()
-    return activation
-
-def _setup(session, ids, *, candidate_status="approved"):
+def _setup_synthetic_recovery_state(session, ids, *, candidate_status="assembling"):
+    """Build synthetic recovery state; never use as proof of legitimate authority."""
     context = _bootstrap_registry(
         session,
         ids,
@@ -273,12 +197,8 @@ def _setup(session, ids, *, candidate_status="approved"):
         created_at=NOW,
         external_effects_enabled=True,
     )
-    candidate = _candidate(
+    candidate = _inject_synthetic_candidate_state(
         session, ids, context, epoch.projection_epoch_id, status=candidate_status
     )
-    session.commit()
-    if candidate_status == "approved":
-        candidate = session.get(release_models.ReleaseCandidate, candidate.candidate_id)
-        _approve_candidate(session, ids, candidate)
-        session.commit()
+    session.flush()
     return context, epoch, candidate

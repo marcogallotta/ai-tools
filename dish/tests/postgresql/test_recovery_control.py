@@ -12,6 +12,7 @@ from dish_pg import models
 from dish_pg import stage5_models as projection_models
 from dish_pg import stage6_models as release_models
 from dish_pg.candidate_manifest import bind_approval_manifest
+from dish_pg.database import session_scope
 from dish_pg.recovery_control import (
     RecoveredPhysicalState,
     _authorized_release_candidate,
@@ -38,17 +39,33 @@ from tests.support.postgresql.workflow import (
 )
 
 from tests.support.postgresql.recovery_control import (
-    _activate_candidate,
     _control,
     _physical_state,
-    _setup,
+    _setup_synthetic_recovery_state,
+    recovery_db,
 )
 
 from tests.support.postgresql.release import (
     _complete_active_mapping_reconciliation,
     _record_runtime_and_worker_readiness_report,
 )
-from tests.support.postgresql.stage8_cutover_evidence_gates import _burn_rollback
+from tests.support.postgresql.stage8_cutover_evidence_gates import (
+    _burn_rollback,
+    _prepare_fenced_recertified_cutover,
+)
+
+
+def _control_for_candidate(context, ids, state, candidate):
+    return replace(
+        _control(context, ids, state),
+        schema_head=candidate.schema_head,
+        dish_release=candidate.dish_release,
+        honest_release=candidate.honest_release,
+        protocol_release=candidate.protocol_release,
+        openapi_release=candidate.openapi_release,
+        routing_release=candidate.routing_release,
+    )
+
 
 
 @pytest.mark.parametrize(
@@ -102,7 +119,7 @@ def test_restore_promotion_rejects_aggregate_recovery_digest_mismatch(core_db):
 def test_unauthorized_release_candidate_state_cannot_promote(core_db, status):
     factory, ids = core_db
     with factory() as session:
-        context, _, _ = _setup(session, ids, candidate_status=status)
+        context, _, _ = _setup_synthetic_recovery_state(session, ids, candidate_status=status)
         state = _physical_state()
         with pytest.raises(RestoreControlError, match="not rollback-burned"):
             promote_restored_generation(
@@ -112,14 +129,14 @@ def test_unauthorized_release_candidate_state_cannot_promote(core_db, status):
                 clock=lambda: NOW + timedelta(minutes=2),
             )
 
-def test_ambiguous_duplicate_release_candidates_cannot_promote(core_db):
+def test_synthetic_ambiguous_duplicate_release_candidates_cannot_promote(core_db):
     factory, ids = core_db
     with factory() as session:
         if session.get_bind().dialect.name == "postgresql":
             pytest.skip(
                 "PostgreSQL candidate guards prevent constructing duplicate live authority"
             )
-        context, epoch, first = _setup(session, ids, candidate_status="activated")
+        context, epoch, first = _setup_synthetic_recovery_state(session, ids, candidate_status="activated")
         duplicate = release_models.ReleaseCandidate(
             candidate_id=_next(ids),
             generation_id=context["generation_id"],
@@ -185,25 +202,25 @@ def _assert_promotion_state(session, context, control, result) -> None:
     assert migration.migration_code_sha256 == migration_revision_sha256(ALEMBIC_HEAD)
     assert migration.details["recovery_evidence_sha256"] == control.recovery_evidence_sha256
 
-def _assert_bootstrap_fencing(session, ids, context, control) -> None:
+def _assert_bootstrap_fencing(session, ids, context, control, *, now=NOW) -> None:
     service = WorkflowAuthorityService(session)
     with pytest.raises(StaleAuthorityError, match="generation is not active"):
         service.register_run(
             run_id=_next(ids), generation_id=context["generation_id"],
             owner_id="pre-restore", agent="service",
-            capability_digest=hashlib.sha256(b"stale").digest(), registered_at=NOW,
+            capability_digest=hashlib.sha256(b"stale").digest(), registered_at=now,
         )
     with pytest.raises(StaleAuthorityError, match="requires external bootstrap"):
         service.register_run(
             run_id=_next(ids), generation_id=control.generation_id,
             owner_id="self-register", agent="service",
-            capability_digest=hashlib.sha256(b"stale").digest(), registered_at=NOW,
+            capability_digest=hashlib.sha256(b"stale").digest(), registered_at=now,
         )
     run = service.register_run(
         run_id=_next(ids), generation_id=control.generation_id,
         owner_id="post-restore", agent="service",
         capability_digest=control.bootstrap_capability_digest,
-        bootstrap_id=control.bootstrap_id, registered_at=NOW + timedelta(minutes=3),
+        bootstrap_id=control.bootstrap_id, registered_at=now + timedelta(minutes=3),
     )
     with pytest.raises(MutationAdmissionClosed, match="deliberate reissue control"):
         service.admit_request(
@@ -212,7 +229,7 @@ def _assert_bootstrap_fencing(session, ids, context, control) -> None:
                 run_id=run.run_id, owner_id=run.owner_id, principal_class="service",
                 command_name="post_restore_mutation", canonical_payload={"allowed": False},
                 protocol_release="protocol-1", dish_release="dish-42619b9",
-                admitted_at=NOW + timedelta(minutes=3),
+                admitted_at=now + timedelta(minutes=3),
             )
         )
     with pytest.raises(StaleAuthorityError, match="already consumed"):
@@ -220,84 +237,124 @@ def _assert_bootstrap_fencing(session, ids, context, control) -> None:
             run_id=_next(ids), generation_id=control.generation_id,
             owner_id="replay", agent="service",
             capability_digest=control.bootstrap_capability_digest,
-            bootstrap_id=control.bootstrap_id, registered_at=NOW + timedelta(minutes=4),
+            bootstrap_id=control.bootstrap_id, registered_at=now + timedelta(minutes=4),
         )
 
-def test_corrupt_release_approval_digest_cannot_promote(core_db):
-    factory, ids = core_db
+def test_synthetic_corrupt_release_approval_digest_cannot_promote(recovery_db):
+    factory, ids, context, task_id = recovery_db
+    with session_scope(factory) as session:
+        generation = session.get(models.AuthorityGeneration, context["generation_id"])
+        assert generation is not None
+        dish_release = generation.dish_release
+        _service, candidate_id, _cutover_run_id = _burn_rollback(
+            session, ids, context, task_id, dish_release=dish_release
+        )
+
     with factory() as session:
-        context, _, candidate = _setup(session, ids)
-        _activate_candidate(session, ids, candidate)
+        candidate = session.get(release_models.ReleaseCandidate, candidate_id)
+        assert candidate is not None
         approval = session.scalar(
             select(release_models.CutoverApproval).where(
-                release_models.CutoverApproval.candidate_id == candidate.candidate_id
+                release_models.CutoverApproval.candidate_id == candidate_id
             )
         )
+        assert approval is not None
         approval.approval_sha256 = "0" * 64
         state = _physical_state()
         with pytest.raises(RestoreControlError, match="approval digest is corrupt"):
             promote_restored_generation(
                 session,
-                _control(context, ids, state),
+                _control_for_candidate(context, ids, state, candidate),
                 recovered_state=state,
-                clock=lambda: NOW + timedelta(minutes=2),
+                clock=lambda: WORKFLOW_NOW + timedelta(minutes=8),
             )
 
-def test_approved_but_unburned_candidate_cannot_promote(core_db):
-    factory, ids = core_db
+
+def test_approved_but_unburned_candidate_cannot_promote(recovery_db):
+    factory, ids, context, task_id = recovery_db
+    with session_scope(factory) as session:
+        generation = session.get(models.AuthorityGeneration, context["generation_id"])
+        assert generation is not None
+        dish_release = generation.dish_release
+        service, candidate_id, _closure, _run, _fence = (
+            _prepare_fenced_recertified_cutover(
+                session, ids, context, task_id, dish_release=dish_release
+            )
+        )
+        assert service._candidate(candidate_id).status == "approved"
+
     with factory() as session:
-        context, _, _ = _setup(session, ids)
+        candidate = session.get(release_models.ReleaseCandidate, candidate_id)
+        assert candidate is not None
         state = _physical_state()
-        control = _control(context, ids, state)
+        control = _control_for_candidate(context, ids, state, candidate)
         with pytest.raises(RestoreControlError, match="not rollback-burned: approved"):
             promote_restored_generation(
                 session,
                 control,
                 recovered_state=state,
-                clock=lambda: NOW + timedelta(minutes=2),
+                clock=lambda: WORKFLOW_NOW + timedelta(minutes=8),
                 uuid_factory=lambda: _next(ids),
             )
 
 
-def test_exact_burned_candidate_promotes_and_bootstraps_once(core_db):
-    factory, ids = core_db
-    with factory() as session:
-        context, _, candidate = _setup(session, ids)
-        _activate_candidate(session, ids, candidate)
-        assert session.scalar(
-            select(release_models.RuntimeReleaseAttestation).where(
-                release_models.RuntimeReleaseAttestation.candidate_id == candidate.candidate_id
+
+def test_legitimate_burned_candidate_promotes_and_bootstraps_once(recovery_db):
+    factory, ids, context, task_id = recovery_db
+    with session_scope(factory) as session:
+        generation = session.get(models.AuthorityGeneration, context["generation_id"])
+        assert generation is not None
+        dish_release = generation.dish_release
+        service, candidate_id, cutover_run_id = _burn_rollback(
+            session, ids, context, task_id, dish_release=dish_release
+        )
+        candidate = service._candidate(candidate_id)
+        assert candidate.status == "activated"
+        assert session.get(release_models.CutoverRun, cutover_run_id).state == "rollback_burned"
+        activation = session.scalar(
+            select(models.AuthorityActivation).where(
+                models.AuthorityActivation.generation_id == context["generation_id"]
             )
-        ) is None
-        assert session.scalar(
-            select(release_models.CutoverRun).where(
-                release_models.CutoverRun.candidate_id == candidate.candidate_id
-            )
-        ) is None
-        assert session.scalar(
-            select(release_models.EvidenceBundle).where(
-                release_models.EvidenceBundle.candidate_id == candidate.candidate_id,
-                release_models.EvidenceBundle.bundle_kind == "cutover_final",
-            )
-        ) is None
+        )
+        assert activation is not None
+        assert activation.rollback_burned_at == candidate.terminal_at
+
+    with session_scope(factory) as session:
+        candidate = session.get(release_models.ReleaseCandidate, candidate_id)
+        assert candidate is not None
         state = _physical_state()
-        control = _control(context, ids, state)
+        control = _control_for_candidate(context, ids, state, candidate)
         result = promote_restored_generation(
             session,
             control,
             recovered_state=state,
-            clock=lambda: NOW + timedelta(minutes=2),
+            clock=lambda: WORKFLOW_NOW + timedelta(minutes=8),
             uuid_factory=lambda: _next(ids),
         )
         _assert_promotion_state(session, context, control, result)
-        _assert_bootstrap_fencing(session, ids, context, control)
+        _assert_bootstrap_fencing(
+            session, ids, context, control, now=WORKFLOW_NOW + timedelta(minutes=8)
+        )
 
-def test_wrong_release_and_future_control_fail_before_promotion(core_db):
-    factory, ids = core_db
+
+def test_wrong_release_and_future_control_fail_before_promotion(recovery_db):
+    factory, ids, context, task_id = recovery_db
+    with session_scope(factory) as session:
+        generation = session.get(models.AuthorityGeneration, context["generation_id"])
+        assert generation is not None
+        dish_release = generation.dish_release
+        service, candidate_id, _closure, _run, _fence = (
+            _prepare_fenced_recertified_cutover(
+                session, ids, context, task_id, dish_release=dish_release
+            )
+        )
+        assert service._candidate(candidate_id).status == "approved"
+
     with factory() as session:
-        context, _, _ = _setup(session, ids)
+        candidate = session.get(release_models.ReleaseCandidate, candidate_id)
+        assert candidate is not None
         state = _physical_state()
-        control = _control(context, ids, state)
+        control = _control_for_candidate(context, ids, state, candidate)
         with pytest.raises(RestoreControlError, match="issued in the future"):
             promote_restored_generation(session, control, recovered_state=state, clock=lambda: NOW)
         with pytest.raises(RestoreControlError, match="exactly one candidate"):
@@ -305,8 +362,9 @@ def test_wrong_release_and_future_control_fail_before_promotion(core_db):
                 session,
                 replace(control, protocol_release="wrong-protocol"),
                 recovered_state=state,
-                clock=lambda: NOW + timedelta(minutes=2),
+                clock=lambda: WORKFLOW_NOW + timedelta(minutes=8),
             )
+
 
 def test_retired_generation_lease_cannot_be_renewed(workflow_db):
     factory, ids, context, task_id = workflow_db
@@ -345,11 +403,14 @@ def test_retired_generation_lease_cannot_be_renewed(workflow_db):
             )
 
 
-def test_recovery_remains_valid_after_legitimate_post_burn_readiness(workflow_db):
-    factory, ids, context, task_id = workflow_db
+def test_recovery_remains_valid_after_legitimate_post_burn_readiness(recovery_db):
+    factory, ids, context, task_id = recovery_db
     with factory() as session:
+        generation = session.get(models.AuthorityGeneration, context["generation_id"])
+        assert generation is not None
+        dish_release = generation.dish_release
         service, candidate_id, _cutover_run_id = _burn_rollback(
-            session, ids, context, task_id
+            session, ids, context, task_id, dish_release=dish_release
         )
         reconciliation = _complete_active_mapping_reconciliation(
             session,

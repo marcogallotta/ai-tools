@@ -1,6 +1,7 @@
 """Typed, digest-bound evidence contracts for Stage A release authority."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import hashlib
 import json
 import re
@@ -161,3 +162,10 @@ def canonical_json(value: Any) -> bytes:
 
 def sha256_json(value: Any) -> str:
     return hashlib.sha256(canonical_json(value)).hexdigest()
+
+
+def canonical_utc_isoformat(value: datetime) -> str:
+    normalized = (
+        value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    )
+    return normalized.astimezone(timezone.utc).isoformat()
