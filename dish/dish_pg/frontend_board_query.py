@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from sqlalchemy import Select, and_, exists, func, literal, or_, select
+from sqlalchemy import Select, and_, case, exists, func, literal, or_, select
 from sqlalchemy.orm import Session, aliased
 
 from dish_pg import models
@@ -199,7 +199,23 @@ class FrontendBoardQuery:
             select(
                 models.SectionRegistryEntry.section_id,
                 models.SectionRegistryEntry.ordinal,
-                models.SectionRegistryEntry.display_name.label("section_label"),
+                case(
+                    (
+                        and_(
+                            models.SectionRegistryEntry.display_name.like("Imported section %"),
+                            models.SectionRegistryEntry.workflow_role == "research_queue",
+                        ),
+                        literal("Research Queue"),
+                    ),
+                    (
+                        and_(
+                            models.SectionRegistryEntry.display_name.like("Imported section %"),
+                            models.SectionRegistryEntry.workflow_role == "verification_queue",
+                        ),
+                        literal("Verification Queue"),
+                    ),
+                    else_=models.SectionRegistryEntry.display_name,
+                ).label("section_label"),
                 models.GovernedSection.project_id,
                 models.GovernedProject.logical_name.label("project_label"),
                 models.GovernedSection.lifecycle.label("section_lifecycle"),

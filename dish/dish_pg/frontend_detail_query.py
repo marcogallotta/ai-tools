@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import and_, select
+from sqlalchemy import and_, case, literal, select
 from sqlalchemy.orm import Session
 
 from dish_pg import models
@@ -154,7 +154,23 @@ class FrontendDetailQuery:
                 models.DishTask.existence_state,
                 models.ContentVersion.title,
                 models.ContentVersion.body,
-                models.SectionRegistryEntry.display_name.label("section_label"),
+                case(
+                    (
+                        and_(
+                            models.SectionRegistryEntry.display_name.like("Imported section %"),
+                            models.SectionRegistryEntry.workflow_role == "research_queue",
+                        ),
+                        literal("Research Queue"),
+                    ),
+                    (
+                        and_(
+                            models.SectionRegistryEntry.display_name.like("Imported section %"),
+                            models.SectionRegistryEntry.workflow_role == "verification_queue",
+                        ),
+                        literal("Verification Queue"),
+                    ),
+                    else_=models.SectionRegistryEntry.display_name,
+                ).label("section_label"),
                 models.GovernedProject.logical_name.label("project_label"),
                 workflow.WorkflowOperation.operation_id,
                 workflow.WorkflowOperation.kind.label("operation_kind"),

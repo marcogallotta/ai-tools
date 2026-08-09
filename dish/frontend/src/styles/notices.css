@@ -45,3 +45,26 @@
   font-size: 0.7rem;
   line-height: 1.3;
 }
+
+.notice-banner__tasks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-2);
+}
+
+.notice-banner__task {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 720;
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
+}
+
+.notice-banner__task:hover {
+  text-decoration-thickness: 2px;
+}

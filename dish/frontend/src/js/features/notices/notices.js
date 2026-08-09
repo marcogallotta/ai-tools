@@ -1,6 +1,6 @@
 import { noticeHeading } from "./notice-model.js";
 
-export function renderNotices(host, notices) {
+export function renderNotices(host, notices, { onSelectTask = null } = {}) {
   host.replaceChildren();
   host.className = "notice-stack";
   host.setAttribute("aria-label", "Current notices");
@@ -17,6 +17,19 @@ export function renderNotices(host, notices) {
     const detail = document.createElement("p");
     detail.textContent = notice.message ?? "Review the current factual state before continuing.";
     text.append(heading, detail);
+    if (notice.tasks?.length && onSelectTask) {
+      const tasks = document.createElement("div");
+      tasks.className = "notice-banner__tasks";
+      for (const task of notice.tasks) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "notice-banner__task";
+        button.textContent = task.title;
+        button.addEventListener("click", () => onSelectTask(task.id));
+        tasks.append(button);
+      }
+      text.append(tasks);
+    }
     banner.append(text);
     host.append(banner);
   }

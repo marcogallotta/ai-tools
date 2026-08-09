@@ -88,6 +88,8 @@ def _bootstrap_registry(
     *,
     generation_status: str = "pending",
     schema_head: str = "0002_core_authority_model",
+    section_display_name: str = "Research Queue",
+    section_workflow_role: str = "research_queue",
 ) -> dict[str, uuid.UUID]:
     authority = AuthorityRepository(session)
     contracts = ContractBindingRepository(session)
@@ -210,8 +212,8 @@ def _bootstrap_registry(
                 registry_version_id=registry_version_id,
                 section_id=section_id,
                 ordinal=0,
-                display_name="Research Queue",
-                workflow_role="research_queue",
+                display_name=section_display_name,
+                workflow_role=section_workflow_role,
             )
         ],
     )

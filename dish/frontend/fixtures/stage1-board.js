@@ -6,7 +6,7 @@ const idle = { state: "no_active_operation" };
 export const attentionLabels = Object.freeze({
   isolated: "ISOLATED",
   lease_attention: "Lease needs attention",
-  verification_attention: "Verification needs attention",
+  verification_attention: "PENDING REVIEW",
   hold_active: "On hold",
   recovery_required: "Recovery required",
   abandonment_active: "Abandonment active",

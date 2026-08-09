@@ -146,3 +146,28 @@
 .detail-next-step p {
   unicode-bidi: isolate;
 }
+
+.detail-technical {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface-muted);
+}
+
+.detail-technical > summary {
+  padding: var(--space-3);
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 720;
+}
+
+.detail-technical[open] > summary {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.detail-technical > :not(summary) {
+  margin-inline: var(--space-3);
+}
+
+.detail-technical > :last-child {
+  margin-bottom: var(--space-3);
+}

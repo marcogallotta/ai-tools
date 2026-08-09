@@ -12,9 +12,12 @@ export function createTaskCard(card, { attentionLabels, onSelect }) {
   title.className = "task-card__title";
   title.textContent = card.title;
 
-  const status = document.createElement("span");
-  status.className = "task-card__status";
-  status.textContent = workflowStatusText(card.status);
+  const statusText = workflowStatusText(card.status);
+  const status = statusText ? document.createElement("span") : null;
+  if (status) {
+    status.className = "task-card__status";
+    status.textContent = statusText;
+  }
 
   const indicators = document.createElement("span");
   indicators.className = "task-card__attention";
@@ -27,6 +30,8 @@ export function createTaskCard(card, { attentionLabels, onSelect }) {
     indicators.append(indicator);
   }
 
-  button.append(title, status, indicators);
+  button.append(title);
+  if (status) button.append(status);
+  button.append(indicators);
   return button;
 }

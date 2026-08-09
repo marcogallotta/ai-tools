@@ -28,7 +28,7 @@ class AttentionPresentation:
 ATTENTION_PRESENTATIONS: tuple[AttentionPresentation, ...] = (
     AttentionPresentation("isolated", "ISOLATED", "warning", "This task is isolated and remains visible for review."),
     AttentionPresentation("lease_attention", "Lease needs attention", "warning", "The current task lease needs attention."),
-    AttentionPresentation("verification_attention", "Verification needs attention", "warning", "The current Verification state needs attention."),
+    AttentionPresentation("verification_attention", "PENDING REVIEW", "warning", "This task is pending human review."),
     AttentionPresentation("hold_active", "On hold", "warning", "The current workflow has an active hold."),
     AttentionPresentation("recovery_required", "Recovery required", "error", "The current task requires recovery before normal workflow can continue."),
     AttentionPresentation("abandonment_active", "Abandonment active", "error", "An abandonment workflow is active for this task."),

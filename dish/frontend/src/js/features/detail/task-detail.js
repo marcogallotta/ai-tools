@@ -82,24 +82,34 @@ export function openTaskDetail(detail, origin, { onRequestClose, focusFallback }
   body.className = "task-detail__body";
   const facts = document.createElement("dl");
   facts.className = "detail-facts";
-  facts.append(definitionRow("Status", detailStatusText(detail)));
+  const statusText = detailStatusText(detail);
+  if (statusText) facts.append(definitionRow("Status", statusText));
   if (detail.destinationLabel) facts.append(definitionRow("Destination", detail.destinationLabel));
   const contentHeading = document.createElement("h3");
   contentHeading.textContent = "Current canonical content";
   const content = document.createElement("div");
   content.className = "detail-content";
   content.dataset.renderMode = renderSafeContent(content, detail);
-  body.append(facts, contentHeading, content);
-  renderDisclosures(body, detail.disclosures);
-  if (detail.projection) {
-    const projection = document.createElement("section");
-    projection.className = "detail-projection";
-    const projectionHeading = document.createElement("h3");
-    projectionHeading.textContent = `Projection — ${detail.projection.state}`;
-    const projectionText = document.createElement("p");
-    projectionText.textContent = detail.projection.message;
-    projection.append(projectionHeading, projectionText);
-    body.append(projection);
+  if (facts.childElementCount) body.append(facts);
+  body.append(contentHeading, content);
+  if (detail.disclosures?.length || detail.projection) {
+    const technical = document.createElement("details");
+    technical.className = "detail-technical";
+    const summary = document.createElement("summary");
+    summary.textContent = "Technical details";
+    technical.append(summary);
+    renderDisclosures(technical, detail.disclosures);
+    if (detail.projection) {
+      const projection = document.createElement("section");
+      projection.className = "detail-projection";
+      const projectionHeading = document.createElement("h3");
+      projectionHeading.textContent = `Projection — ${detail.projection.state}`;
+      const projectionText = document.createElement("p");
+      projectionText.textContent = detail.projection.message;
+      projection.append(projectionHeading, projectionText);
+      technical.append(projection);
+    }
+    body.append(technical);
   }
   const next = document.createElement("section");
   next.className = "detail-next-step";

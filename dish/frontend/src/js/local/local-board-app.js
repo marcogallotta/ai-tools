@@ -85,7 +85,16 @@ export async function renderLocalPostgresqlBoard(
 
   const renderCurrentNotices = () => {
     const lifecycle = selectedDetail?.notices?.map((notice) => ({ code: notice.code, taskId: notice.taskId, message: notice.message })) ?? [];
-    renderNotices(noticeHost, groupNotices(effectiveTaskContributions(board, selectedDetail), lifecycle));
+    renderNotices(
+      noticeHost,
+      groupNotices(effectiveTaskContributions(board, selectedDetail), lifecycle),
+      {
+        onSelectTask: (taskId) => {
+          const origin = document.querySelector(`.task-card[data-task-id="${CSS.escape(taskId)}"]`);
+          void openDetail(taskId, origin, { navigation: selectedDetail ? "replace" : "push", fromBoard: !selectedDetail });
+        },
+      },
+    );
   };
 
   const normalizeBoardRoute = (mode = "replace") => writePostgresRoute(BOARD_ROUTE, mode, {});

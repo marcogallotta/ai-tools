@@ -226,6 +226,24 @@ def test_board_includes_isolated_and_paginates_without_consuming_retry(core_db) 
         assert _task_route(nonmember.task_id) not in returned
 
 
+def test_import_placeholder_uses_canonical_workflow_role_section_name(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        _bootstrap_registry(
+            session,
+            ids,
+            generation_status="active",
+            schema_head="0032_imported_operation_history",
+            section_display_name="Imported section 1216891250619908",
+            section_workflow_role="research_queue",
+        )
+
+    with session_scope(factory) as session:
+        board = _service(session).bootstrap()
+
+    assert board["sections"][0]["section_label"] == "Research Queue"
+
+
 def test_snapshot_identity_ignores_randomized_cursor_bytes(core_db) -> None:
     factory, ids = core_db
     with session_scope(factory) as session:

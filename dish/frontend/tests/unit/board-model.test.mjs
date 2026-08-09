@@ -24,7 +24,7 @@ test("continuation appends once and becomes terminal", () => {
 
 test("card labels remain factual and concise", () => {
   const card = boardFixture.sections[0].cards[0];
-  assert.equal(workflowStatusText(card.status), "No active operation");
+  assert.equal(workflowStatusText(card.status), "");
   assert.match(cardAccessibleName(card, attentionLabels), /Lease needs attention/);
   assert.equal(loadedTaskText(1, true), "1 task loaded; more available");
 });

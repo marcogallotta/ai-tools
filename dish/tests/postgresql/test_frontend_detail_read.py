@@ -72,6 +72,25 @@ def test_detail_query_reads_current_eligible_content_and_isolated_state(core_db)
     assert str(imported.task_id) not in str(payload)
 
 
+def test_detail_uses_canonical_workflow_role_name_for_import_placeholder(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(
+            session,
+            ids,
+            generation_status="active",
+            schema_head="0032_imported_operation_history",
+            section_display_name="Imported section 1216891250619908",
+            section_workflow_role="research_queue",
+        )
+        imported = _import(session, ids, context, title="Named section", asana_gid="4003")
+
+    with session_scope(factory) as session:
+        payload = _service(session).present(_service(session).capture(_route(imported.task_id)))
+
+    assert payload["section_label"] == "Research Queue"
+
+
 def test_detail_query_rejects_completed_task_after_route_resolution(core_db) -> None:
     factory, ids = core_db
     with session_scope(factory) as session:
