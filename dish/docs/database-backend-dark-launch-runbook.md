@@ -299,6 +299,25 @@ scripts/dish-pg-dark-launch gap-resolve \
 
 This resolves the gap and requeues the delivery as `pending` for the worker to retry.
 
+If the failed delivery is genuinely terminal and must never be retried or evaluated, Marco may
+explicitly void that one delivery instead:
+
+```sh
+scripts/dish-pg-dark-launch void-failed-delivery \
+  --database-url "$DISH_PG_DATABASE_URL" \
+  --delivery-id "$DELIVERY_ID" \
+  --reason "operator reason" \
+  --comparator-release "$DISH_DARK_LAUNCH_COMPARATOR_RELEASE"
+```
+
+This command accepts only a terminal `failed` delivery. It permanently gives up evaluating that
+envelope, settles the delivery as `delivered` only so strict rollout ordering can advance, records a
+`parity_class=gap` comparison whose target is explicitly `not_evaluated`, and opens a
+`delivery_failure` gap with `audit_kind=operator_voided`. The existing schema's allowed gap kinds do
+not include a separate `operator_voided` value; the audit subtype and gap identity distinguish this
+operator action from both the original delivery failure and ordinary capture-time `uncomparable`
+skips. It does not enable external effects or transfer authority.
+
 Known non-bug: `parity_class=gap` alone is not evidence of a problem. `rollout_mode` is pinned into
 each envelope's `pinned_inputs` at the moment of capture; an envelope captured while the service was
 in `capture` mode is permanently and correctly evaluated as an uncomparable gap, even after the

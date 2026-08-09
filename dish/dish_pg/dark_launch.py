@@ -460,6 +460,19 @@ def _parser() -> argparse.ArgumentParser:
     resolve.add_argument("--gap-id", required=True, type=uuid.UUID)
     resolve.add_argument("--reason", required=True)
     resolve.add_argument("--waive", action="store_true")
+    void_failed = sub.add_parser(
+        "void-failed-delivery",
+        help="Permanently give up evaluating one terminal failed shadow delivery.",
+        description=(
+            "Permanently gives up on evaluating the selected terminal failed shadow delivery, "
+            "settles it only to unblock later rollout-sequence deliveries, and records an "
+            "operator-voided gap. This does not record a real comparison or transfer authority."
+        ),
+    )
+    void_failed.add_argument("--database-url", required=True)
+    void_failed.add_argument("--delivery-id", required=True, type=uuid.UUID)
+    void_failed.add_argument("--reason", required=True)
+    void_failed.add_argument("--comparator-release", required=True)
     return parser
 
 
@@ -512,6 +525,34 @@ def main(argv: list[str] | None = None) -> int:
                     "state": gap.state,
                     "gap_kind": gap.gap_kind,
                     "resolved_at": gap.resolved_at.isoformat() if gap.resolved_at else None,
+                }
+        elif args.command == "void-failed-delivery":
+            with session_scope(factory) as session:
+                comparison = ShadowService(session).void_failed_delivery(
+                    delivery_id=args.delivery_id,
+                    reason=args.reason,
+                    comparator_release=args.comparator_release,
+                    completed_at=_now(),
+                )
+                delivery = session.get(tx.ShadowDelivery, args.delivery_id)
+                audit = comparison.differences[0]
+                gap = session.scalar(
+                    select(tx.ShadowGap).where(
+                        tx.ShadowGap.envelope_id == comparison.envelope_id,
+                        tx.ShadowGap.gap_identity == audit["gap_identity"],
+                    )
+                )
+                value = {
+                    "action": "void_failed_delivery",
+                    "delivery_id": str(args.delivery_id),
+                    "delivery_state": None if delivery is None else delivery.state,
+                    "comparison_id": str(comparison.comparison_id),
+                    "parity_class": comparison.parity_class,
+                    "evaluation_abandoned": True,
+                    "reason": audit["reason"],
+                    "gap_id": None if gap is None else str(gap.gap_id),
+                    "gap_kind": None if gap is None else gap.gap_kind,
+                    "gap_audit_kind": None if gap is None else gap.details.get("audit_kind"),
                 }
         else:
             thresholds = StatusThresholds(

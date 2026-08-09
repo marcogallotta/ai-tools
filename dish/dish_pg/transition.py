@@ -703,6 +703,113 @@ class ShadowService:
         self.session.flush()
         return comparison
 
+    def void_failed_delivery(
+        self,
+        *,
+        delivery_id: uuid.UUID,
+        reason: str,
+        comparator_release: str,
+        completed_at: datetime,
+    ) -> tx.ShadowComparison:
+        """Operator-settle one terminal failed delivery as abandoned evaluation evidence."""
+        baseline, delivery, envelope = self._lock_delivery_path(delivery_id)
+        generation = self.session.get(models.AuthorityGeneration, baseline.generation_id)
+        if baseline.status != "open" or generation is None or generation.status != "active":
+            raise TransitionAuthorityError("shadow delivery baseline authority is no longer current")
+        reason = reason.strip()
+        if not reason:
+            raise TransitionAuthorityError("shadow delivery operator void reason is required")
+        if delivery.state != "failed":
+            raise TransitionAuthorityError(
+                "shadow delivery operator void requires terminal failed state; "
+                f"current state is {delivery.state}"
+            )
+
+        failed_revision = delivery.delivery_revision
+        failed_at = delivery.terminal_at
+        voided_revision = failed_revision + 1
+        gap_identity = (
+            f"operator_voided:delivery:{delivery.delivery_id}:revision:{voided_revision}"
+        )
+        audit = {
+            "audit_kind": "operator_voided",
+            "reason": reason,
+            "evaluation_abandoned": True,
+            "failed_delivery_revision": failed_revision,
+            "voided_delivery_revision": voided_revision,
+            "failed_at": None if failed_at is None else failed_at.isoformat(),
+            "failed_error": delivery.last_error,
+            "gap_identity": gap_identity,
+            "source_request_identity": envelope.source_request_identity,
+        }
+        target = {
+            "shadow_execution": "not_evaluated",
+            "settlement": "operator_voided",
+            "evaluation_abandoned": True,
+        }
+        comparison = tx.ShadowComparison(
+            comparison_id=self.uuid_factory(),
+            envelope_id=envelope.envelope_id,
+            target_result=target,
+            target_result_sha256=sha256_json(target),
+            parity_class="gap",
+            differences=[audit],
+            comparator_release=comparator_release,
+            compared_at=completed_at,
+        )
+        result = self.session.execute(
+            update(tx.ShadowDelivery)
+            .where(
+                tx.ShadowDelivery.delivery_id == delivery.delivery_id,
+                tx.ShadowDelivery.envelope_id == envelope.envelope_id,
+                tx.ShadowDelivery.state == "failed",
+                tx.ShadowDelivery.delivery_revision == failed_revision,
+                tx.ShadowDelivery.claim_owner.is_(None),
+                tx.ShadowDelivery.claim_token.is_(None),
+                tx.ShadowDelivery.claim_expires_at.is_(None),
+                tx.ShadowDelivery.terminal_at == failed_at,
+            )
+            .values(
+                state="delivered",
+                delivery_revision=voided_revision,
+                terminal_at=completed_at,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if result.rowcount != 1:
+            raise TransitionAuthorityError(
+                "shadow delivery operator void lost current failed authority"
+            )
+        self.session.expire(delivery)
+        self.session.add(comparison)
+        self._open_gap(
+            baseline_id=envelope.shadow_baseline_id,
+            envelope_id=envelope.envelope_id,
+            identity=gap_identity,
+            kind="delivery_failure",
+            details=audit,
+            at=completed_at,
+        )
+        original_gap_identity = f"delivery:{envelope.source_request_identity}:revision:{failed_revision}"
+        original_gap = self.session.scalar(
+            select(tx.ShadowGap).where(
+                tx.ShadowGap.shadow_baseline_id == envelope.shadow_baseline_id,
+                tx.ShadowGap.gap_identity == original_gap_identity,
+                tx.ShadowGap.state == "open",
+            )
+        )
+        if original_gap is not None:
+            original_gap.state = "resolved"
+            original_gap.resolution = {
+                "delivery_outcome": "operator_voided",
+                "reason": reason,
+                "void_comparison_id": str(comparison.comparison_id),
+                "void_gap_identity": gap_identity,
+            }
+            original_gap.resolved_at = completed_at
+        self.session.flush()
+        return comparison
+
     def fail_delivery(
         self,
         *,
