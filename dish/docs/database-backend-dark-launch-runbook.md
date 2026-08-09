@@ -310,13 +310,22 @@ scripts/dish-pg-dark-launch void-failed-delivery \
   --comparator-release "$DISH_DARK_LAUNCH_COMPARATOR_RELEASE"
 ```
 
-This command accepts only a terminal `failed` delivery. It permanently gives up evaluating that
-envelope, settles the delivery as `delivered` only so strict rollout ordering can advance, records a
-`parity_class=gap` comparison whose target is explicitly `not_evaluated`, and opens a
-`delivery_failure` gap with `audit_kind=operator_voided`. The existing schema's allowed gap kinds do
+This command accepts only a terminal `failed` delivery whose baseline is still `open` and whose
+generation is still `active` (the same liveness check `skip_delivery`/`fail_delivery` apply). It
+permanently gives up evaluating that envelope, settles the delivery as `delivered` only so strict
+rollout ordering can advance, records a `parity_class=gap` comparison whose target is explicitly
+`not_evaluated`, and opens a new `delivery_failure` gap with `audit_kind=operator_voided`. It also
+resolves the original `delivery_failure` gap opened when the delivery first failed, linking its
+resolution to the new gap's identity — so an operator reviewing open gap counts sees one gap close
+and one open, not two open gaps for the same delivery. The existing schema's allowed gap kinds do
 not include a separate `operator_voided` value; the audit subtype and gap identity distinguish this
 operator action from both the original delivery failure and ordinary capture-time `uncomparable`
 skips. It does not enable external effects or transfer authority.
+
+Use `gap-resolve` (above), not `void-failed-delivery`, when the failure was transient or
+infrastructure-related (e.g. a schema mismatch since fixed) rather than genuinely unresolvable —
+`gap-resolve` requeues the delivery as `pending` for a real retry, while `void-failed-delivery`
+permanently gives up on it.
 
 Known non-bug: `parity_class=gap` alone is not evidence of a problem. `rollout_mode` is pinned into
 each envelope's `pinned_inputs` at the moment of capture; an envelope captured while the service was
