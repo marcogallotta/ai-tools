@@ -256,6 +256,7 @@ class HonestContractBinding(Base):
             "AND migration_metadata_sha256 IS NULL) OR "
             "(binding_kind = 'migration' AND migration_id IS NOT NULL "
             "AND source_schema_version IS NOT NULL AND target_schema_version IS NOT NULL "
+            "AND migration_metadata_sha256 IS NOT NULL "
             "AND length(migration_metadata_sha256) = 64)",
             name="migration_fields_match_kind",
         ),

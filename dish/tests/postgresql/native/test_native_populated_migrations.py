@@ -40,7 +40,7 @@ def test_native_postgresql_upgrades_matching_cutover_candidate_lineage(
     database = native_migration_database
     database.initialize(CUTOVER_PREDECESSOR_REVISION)
     seed_candidate_dependency_predecessor(database, mismatched=False)
-    database.upgrade(CUTOVER_TARGET_REVISION)
+    database.upgrade(ALEMBIC_HEAD)
     database.assert_revision(ALEMBIC_HEAD)
 
 

@@ -445,7 +445,8 @@ class ServiceLease(Base):
         CheckConstraint("expires_at > issued_at", name="positive_duration"),
         CheckConstraint(
             "(import_run_id IS NULL AND run_id IS NOT NULL AND source_run_id IS NULL) OR "
-            "(import_run_id IS NOT NULL AND run_id IS NULL AND length(trim(source_run_id)) > 0)",
+            "(import_run_id IS NOT NULL AND run_id IS NULL AND source_run_id IS NOT NULL "
+            "AND length(trim(source_run_id)) > 0)",
             name="provenance_exact",
         ),
         CheckConstraint(

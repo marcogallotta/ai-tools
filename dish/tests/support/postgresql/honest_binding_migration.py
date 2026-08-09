@@ -35,13 +35,25 @@ honest_contract_bindings = sa.Table(
     sa.Column("provenance", sa.JSON(), nullable=False),
     sa.Column("resolved_at", sa.DateTime(timezone=True), nullable=False),
     sa.CheckConstraint(
-        "(binding_kind IN ('release','task_schema') "
-        "AND migration_id IS NULL AND source_schema_version IS NULL "
-        "AND target_schema_version IS NULL AND migration_metadata_sha256 IS NULL) OR "
+        "binding_kind IN ('release','task_schema','migration')",
+        name="ck_honest_contract_bindings_binding_kind_allowed",
+    ),
+    sa.CheckConstraint(
+        "length(protocol_sha256) = 64",
+        name="ck_honest_contract_bindings_protocol_hash_length",
+    ),
+    sa.CheckConstraint(
+        "length(schema_sha256) = 64",
+        name="ck_honest_contract_bindings_schema_hash_length",
+    ),
+    sa.CheckConstraint(
+        "(binding_kind <> 'migration' AND migration_id IS NULL "
+        "AND source_schema_version IS NULL AND target_schema_version IS NULL "
+        "AND migration_metadata_sha256 IS NULL) OR "
         "(binding_kind = 'migration' AND migration_id IS NOT NULL "
         "AND source_schema_version IS NOT NULL AND target_schema_version IS NOT NULL "
-        "AND migration_metadata_sha256 IS NOT NULL)",
-        name="ck_honest_binding_kind_payload_consistent",
+        "AND length(migration_metadata_sha256) = 64)",
+        name="ck_honest_contract_bindings_migration_fields_match_kind",
     ),
     sa.UniqueConstraint(
         "binding_kind",

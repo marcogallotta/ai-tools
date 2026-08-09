@@ -200,6 +200,6 @@ def test_rollback_bundle_identity_migration_adds_nonblank_constraint(tmp_path: P
         assert "trim(legacy_bundle_id)" in checks[
             "ck_authority_activations_legacy_bundle_nonblank"
         ]
-        assert ALEMBIC_HEAD == "0034_cc5_schema_repair"
+        assert ALEMBIC_HEAD == "0035_persistence_constraint_integrity"
     finally:
         engine.dispose()
