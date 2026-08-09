@@ -9,12 +9,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, select, text
 
 from dish_pg import models
 from dish_pg import stage3_models as workflow_models
 from dish_pg import stage5_models as projection_models
 from dish_pg import stage6_models as release_models
+from dish_pg.release import ALEMBIC_HEAD
 from dish_pg.recovery_rehearsal import (
     BackupEvidence,
     CommandTimeout,
@@ -22,6 +23,7 @@ from dish_pg.recovery_rehearsal import (
     RehearsalError,
     Runner,
     _backup_evidence,
+    _commit_rollback_burn,
     _copy_backup_with_interruption,
     _interrupted_backup_fault,
     _record_bundle,
@@ -37,6 +39,17 @@ from dish_pg.recovery_rehearsal import (
 )
 
 SYSTEM_ID = "7600000000000000000"
+
+
+def _stamp_rehearsal_head(engine) -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            text("CREATE TABLE alembic_version (version_num VARCHAR(64) NOT NULL)")
+        )
+        connection.execute(
+            text("INSERT INTO alembic_version(version_num) VALUES (:head)"),
+            {"head": ALEMBIC_HEAD},
+        )
 
 
 def _fake_backup(path: Path, *, marker: str = "original") -> None:
@@ -388,11 +401,105 @@ def test_archive_helpers_reject_conflicts_and_restore_exact_wal(tmp_path):
     assert restored.read_bytes() == b"first-wal-segment"
 
 
+def test_rehearsal_commits_rollback_burn_authority_before_post_burn_boundaries(tmp_path):
+    engine = create_engine(
+        f"sqlite+pysqlite:///{tmp_path / 'recovery-burn.sqlite3'}", future=True
+    )
+    models.Base.metadata.create_all(engine)
+    _stamp_rehearsal_head(engine)
+    try:
+        context = _seed_baseline(
+            engine, tmp_path / "evidence", dish_commit="e" * 40
+        )
+        with engine.connect() as connection:
+            candidate = connection.execute(
+                select(release_models.ReleaseCandidate.status).where(
+                    release_models.ReleaseCandidate.candidate_id == context.candidate_id
+                )
+            ).scalar_one()
+            activations = connection.execute(
+                select(models.AuthorityActivation.activation_id).where(
+                    models.AuthorityActivation.generation_id == context.generation_id,
+                    models.AuthorityActivation.outcome == "activated",
+                )
+            ).all()
+        assert candidate == "approved"
+        assert activations == []
+
+        _commit_rollback_burn(engine, context)
+
+        with engine.connect() as connection:
+            row = connection.execute(
+                select(
+                    release_models.ReleaseCandidate.status,
+                    release_models.ReleaseCandidate.terminal_at,
+                ).where(
+                    release_models.ReleaseCandidate.candidate_id == context.candidate_id
+                )
+            ).one()
+            cutover = connection.execute(
+                select(
+                    release_models.CutoverRun.cutover_run_id,
+                    release_models.CutoverRun.state,
+                ).where(release_models.CutoverRun.candidate_id == context.candidate_id)
+            ).one()
+            checkpoints = connection.scalars(
+                select(release_models.CutoverCheckpoint.checkpoint_kind)
+                .where(
+                    release_models.CutoverCheckpoint.cutover_run_id
+                    == cutover.cutover_run_id
+                )
+                .order_by(release_models.CutoverCheckpoint.sequence)
+            ).all()
+            fence_state = connection.scalar(
+                select(release_models.LegacyWriterFence.state).where(
+                    release_models.LegacyWriterFence.candidate_id == context.candidate_id
+                )
+            )
+            recertification_count = len(
+                connection.execute(
+                    select(release_models.CutoverRecertification.recertification_id).where(
+                        release_models.CutoverRecertification.candidate_id
+                        == context.candidate_id
+                    )
+                ).all()
+            )
+            activation = connection.execute(
+                select(
+                    models.AuthorityActivation.import_run_id,
+                    models.AuthorityActivation.projection_epoch,
+                    models.AuthorityActivation.rollback_burned_at,
+                    models.AuthorityActivation.recorded_at,
+                ).where(
+                    models.AuthorityActivation.generation_id == context.generation_id,
+                    models.AuthorityActivation.outcome == "activated",
+                )
+            ).one()
+        assert row.status == "activated"
+        assert row.terminal_at is not None
+        assert cutover.state == "rollback_burned"
+        assert checkpoints == [
+            "cutover_prepared",
+            "legacy_writers_fenced",
+            "authority_activated_admission_closed",
+            "rollback_burned",
+        ]
+        assert fence_state == "verified"
+        assert recertification_count == 1
+        assert activation.import_run_id == context.import_run_id
+        assert activation.projection_epoch == context.projection_epoch_id
+        assert activation.rollback_burned_at == row.terminal_at
+        assert activation.recorded_at == row.terminal_at
+    finally:
+        engine.dispose()
+
+
 def test_boundary_bundle_records_temporal_state_with_authorized_candidate(tmp_path):
     engine = create_engine(
         f"sqlite+pysqlite:///{tmp_path / 'recovery-state.sqlite3'}", future=True
     )
     models.Base.metadata.create_all(engine)
+    _stamp_rehearsal_head(engine)
     try:
         context = _seed_baseline(
             engine, tmp_path / "evidence", dish_commit="e" * 40
@@ -418,7 +525,7 @@ def test_boundary_bundle_records_temporal_state_with_authorized_candidate(tmp_pa
                     )
                 )
             )
-        assert {"baseline", "boundary_a"}.issubset(outcome_labels)
+        assert outcome_labels == {"baseline"}
         assert {"baseline", "boundary_a"}.issubset(projection_labels)
         assert {"baseline", "boundary_a"}.issubset(release_labels)
     finally:

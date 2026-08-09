@@ -68,55 +68,18 @@ def _lsn(value: object, field: str) -> str:
     return lsn
 
 
+def _utc_instant(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _same_instant(left: datetime, right: datetime) -> bool:
-    def normalized(value: datetime) -> datetime:
-        if value.tzinfo is None or value.utcoffset() is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
-
-    return normalized(left) == normalized(right)
+    return _utc_instant(left) == _utc_instant(right)
 
 
-def _stored_manifest_fingerprint(
-    manifest: manifest_models.ReleaseCandidateManifest,
-) -> str:
-    """Recompute the stored manifest under its original immutable contract."""
-    payload = {
-        "manifest_version": manifest.manifest_version,
-        "candidate_id": str(manifest.candidate_id),
-        "generation_id": str(manifest.generation_id),
-        "source_import_batch_id": str(manifest.source_import_batch_id),
-        "source_import_run_id": str(manifest.source_import_run_id),
-        "shadow_baseline_id": str(manifest.shadow_baseline_id),
-        "projection_epoch_id": str(manifest.projection_epoch_id),
-        "registry_version_id": str(manifest.registry_version_id),
-        "honest_binding_id": str(manifest.honest_binding_id),
-        "builder_contract_version": manifest.builder_contract_version,
-        "mapping_membership_sha256": manifest.mapping_membership_sha256,
-        "import_completion_sha256": manifest.import_completion_sha256,
-        "typed_import_linkage_sha256": manifest.typed_import_linkage_sha256,
-        "reconciliation_evidence_sha256": manifest.reconciliation_evidence_sha256,
-    }
-    if manifest.manifest_version == 2:
-        payload.update(
-            {
-                "readiness_inventory_sha256": manifest.readiness_inventory_sha256,
-                "readiness_completion_sha256": manifest.readiness_completion_sha256,
-            }
-        )
-    elif manifest.manifest_version == 3:
-        if manifest.approval_reconciliation_run_id is None:
-            raise RestoreControlError(
-                "stored v3 candidate manifest lacks approval reconciliation identity"
-            )
-        payload["approval_reconciliation_run_id"] = str(
-            manifest.approval_reconciliation_run_id
-        )
-    else:
-        raise RestoreControlError(
-            f"unsupported stored candidate manifest version: {manifest.manifest_version}"
-        )
-    return sha256_json(payload)
+def _at_or_before(left: datetime, right: datetime) -> bool:
+    return _utc_instant(left) <= _utc_instant(right)
 
 
 @dataclass(frozen=True)
@@ -419,16 +382,22 @@ def _authorized_release_candidate(
             "recovered release authority does not identify exactly one candidate"
         )
     candidate = candidates[0]
-    if candidate.status not in {"approved", "activated"}:
+    if candidate.status != "activated":
         raise RestoreControlError(
-            f"recovered release candidate state is not authorized: {candidate.status}"
+            f"recovered release candidate state is not rollback-burned: {candidate.status}"
         )
     if (
         candidate.validation_bundle_sha256 is None
         or candidate.validated_at is None
         or candidate.approved_at is None
+        or candidate.terminal_at is None
+        or not _at_or_before(candidate.validated_at, candidate.approved_at)
+        or not _at_or_before(candidate.approved_at, candidate.terminal_at)
     ):
-        raise RestoreControlError("authorized release candidate lacks validation chronology")
+        raise RestoreControlError(
+            "rollback-burned release candidate lacks valid validation/approval/burn chronology"
+        )
+
     bundles = session.scalars(
         select(release_models.EvidenceBundle).where(
             release_models.EvidenceBundle.candidate_id == candidate.candidate_id,
@@ -438,10 +407,15 @@ def _authorized_release_candidate(
         )
     ).all()
     if len(bundles) != 1:
-        raise RestoreControlError("authorized release candidate lacks one exact validation bundle")
+        raise RestoreControlError(
+            "rollback-burned release candidate lacks one exact validation bundle"
+        )
     bundle = bundles[0]
     if sha256_json(bundle.manifest) != bundle.manifest_sha256:
-        raise RestoreControlError("authorized release candidate validation bundle is corrupt")
+        raise RestoreControlError(
+            "rollback-burned release candidate validation bundle is corrupt"
+        )
+
     approval = session.scalar(
         select(release_models.CutoverApproval).where(
             release_models.CutoverApproval.candidate_id == candidate.candidate_id
@@ -452,12 +426,10 @@ def _authorized_release_candidate(
         or approval.evidence_bundle_id != bundle.bundle_id
         or not _same_instant(approval.approved_at, candidate.approved_at)
     ):
-        raise RestoreControlError("authorized release candidate approval evidence is inconsistent")
-    approval_at = approval.approved_at
-    if approval_at.tzinfo is None or approval_at.utcoffset() is None:
-        approval_at = approval_at.replace(tzinfo=timezone.utc)
-    else:
-        approval_at = approval_at.astimezone(timezone.utc)
+        raise RestoreControlError(
+            "rollback-burned release candidate approval evidence is inconsistent"
+        )
+    approval_at = _utc_instant(approval.approved_at)
     approval_body = {
         "candidate_id": str(candidate.candidate_id),
         "evidence_bundle_sha256": bundle.manifest_sha256,
@@ -467,91 +439,69 @@ def _authorized_release_candidate(
         "approved_at": approval_at.isoformat(),
     }
     if sha256_json(approval_body) != approval.approval_sha256:
-        raise RestoreControlError("authorized release candidate approval digest is corrupt")
+        raise RestoreControlError(
+            "rollback-burned release candidate approval digest is corrupt"
+        )
+
     binding = session.scalar(
         select(manifest_models.CutoverApprovalManifestBinding).where(
-            manifest_models.CutoverApprovalManifestBinding.approval_id == approval.approval_id
+            manifest_models.CutoverApprovalManifestBinding.approval_id
+            == approval.approval_id
         )
     )
-    manifest = None if binding is None else session.get(
-        manifest_models.ReleaseCandidateManifest, binding.manifest_id
+    manifest = (
+        None
+        if binding is None
+        else session.get(manifest_models.ReleaseCandidateManifest, binding.manifest_id)
     )
-    batch = session.get(
-        projection_models.SourceImportBatch, candidate.source_import_batch_id
-    )
-    baseline = session.get(
-        projection_models.ShadowBaseline, candidate.shadow_baseline_id
-    )
-    epoch = session.get(
-        projection_models.ProjectionEpoch, candidate.projection_epoch_id
-    )
-    registry = None if manifest is None else session.get(
-        models.SectionRegistryVersion, manifest.registry_version_id
-    )
-    active_registry = session.get(models.ActiveSectionRegistry, active.generation_id)
     if (
         binding is None
         or binding.candidate_id != candidate.candidate_id
         or manifest is None
         or manifest.candidate_id != candidate.candidate_id
-        or manifest.generation_id != active.generation_id
+        or manifest.generation_id != candidate.generation_id
         or manifest.manifest_version != binding.manifest_version
         or manifest.canonical_fingerprint != binding.canonical_fingerprint
+        or manifest.source_import_batch_id != candidate.source_import_batch_id
+        or manifest.projection_epoch_id != candidate.projection_epoch_id
         or not _same_instant(binding.bound_at, approval.approved_at)
         or not _same_instant(manifest.built_at, approval.approved_at)
     ):
-        raise RestoreControlError("authorized release candidate manifest binding is inconsistent")
-    if _stored_manifest_fingerprint(manifest) != manifest.canonical_fingerprint:
-        raise RestoreControlError("authorized release candidate manifest fingerprint is corrupt")
+        raise RestoreControlError(
+            "rollback-burned release candidate manifest binding is inconsistent"
+        )
+
+    activations = session.scalars(
+        select(models.AuthorityActivation).where(
+            models.AuthorityActivation.generation_id == active.generation_id,
+            models.AuthorityActivation.outcome == "activated",
+        )
+    ).all()
+    if len(activations) != 1:
+        raise RestoreControlError(
+            "rollback-burned release candidate lacks one exact activation evidence row"
+        )
+    activation = activations[0]
     if (
-        batch is None
-        or batch.generation_id != candidate.generation_id
-        or manifest.source_import_batch_id != candidate.source_import_batch_id
-        or manifest.source_import_run_id != batch.import_run_id
-        or manifest.shadow_baseline_id != candidate.shadow_baseline_id
-        or baseline is None
-        or baseline.generation_id != candidate.generation_id
-        or manifest.projection_epoch_id != candidate.projection_epoch_id
-        or epoch is None
-        or epoch.generation_id != candidate.generation_id
-        or active_registry is None
-        or active_registry.registry_version_id != manifest.registry_version_id
-        or registry is None
-        or registry.generation_id != candidate.generation_id
-        or registry.import_run_id != manifest.source_import_run_id
-        or registry.contract_binding_id != manifest.honest_binding_id
+        activation.generation_id != candidate.generation_id
+        or activation.cutover_approval_id != str(approval.approval_id)
+        or activation.import_run_id != manifest.source_import_run_id
+        or activation.projection_epoch != candidate.projection_epoch_id
+        or activation.schema_head != candidate.schema_head
+        or activation.dish_release != candidate.dish_release
+        or activation.honest_release != candidate.honest_release
+        or activation.protocol_release != candidate.protocol_release
+        or activation.openapi_release != candidate.openapi_release
+        or activation.routing_release != candidate.routing_release
+        or not isinstance(activation.legacy_bundle_id, str)
+        or not activation.legacy_bundle_id.strip()
+        or activation.rollback_burned_at is None
+        or not _same_instant(activation.rollback_burned_at, candidate.terminal_at)
+        or not _same_instant(activation.recorded_at, candidate.terminal_at)
     ):
         raise RestoreControlError(
-            "authorized release candidate historical identity is inconsistent"
+            "rollback-burned release candidate lacks exact activation evidence"
         )
-    if candidate.status == "activated":
-        activations = session.scalars(
-            select(models.AuthorityActivation).where(
-                models.AuthorityActivation.generation_id == active.generation_id,
-                models.AuthorityActivation.outcome == "activated",
-                models.AuthorityActivation.cutover_approval_id == str(approval.approval_id),
-            )
-        ).all()
-        if len(activations) != 1:
-            raise RestoreControlError(
-                "activated release candidate lacks one exact activation evidence row"
-            )
-        activation = activations[0]
-        if (
-            candidate.terminal_at is None
-            or activation.import_run_id != manifest.source_import_run_id
-            or activation.projection_epoch != candidate.projection_epoch_id
-            or activation.schema_head != candidate.schema_head
-            or activation.dish_release != candidate.dish_release
-            or activation.honest_release != candidate.honest_release
-            or activation.protocol_release != candidate.protocol_release
-            or activation.openapi_release != candidate.openapi_release
-            or activation.routing_release != candidate.routing_release
-            or activation.rollback_burned_at is None
-            or not _same_instant(activation.rollback_burned_at, candidate.terminal_at)
-            or not _same_instant(activation.recorded_at, candidate.terminal_at)
-        ):
-            raise RestoreControlError("activated release candidate lacks exact activation evidence")
     return candidate
 
 

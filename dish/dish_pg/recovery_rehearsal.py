@@ -27,12 +27,11 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 from sqlalchemy import Engine, create_engine, select, text
 from sqlalchemy.orm import Session
 
-from . import candidate_manifest_models as manifest_models
+from . import import_link_models
 from . import models
 from . import stage3_models as wf
 from . import stage5_models as transition_models
 from . import stage6_models as release_models
-from .candidate_manifest import bind_approval_manifest
 from .bootstrap import (
     HonestCheckout,
     InitialBootstrapSpec,
@@ -49,11 +48,18 @@ from .recovery_control import (
     migration_revision_sha256,
     promote_restored_generation,
 )
-from .release import ALEMBIC_HEAD
-from .release_evidence import sha256_json as release_sha256_json
+from .release import ALEMBIC_HEAD, ReleaseCandidateService
+from .release_evidence import (
+    EVIDENCE_ARTIFACT_KINDS,
+    REHEARSAL_CHECKPOINT_EVIDENCE_KINDS,
+    REQUIRED_EVIDENCE,
+    REQUIRED_REHEARSAL_CHECKPOINTS,
+    REQUIRED_REHEARSALS,
+    sha256_json as release_sha256_json,
+)
 from .release_validation import active_mapping_membership, reconciliation_corpus_sha256
 from .services import CoreAuthorityService, ImportedTaskSpec
-from .transition import ProjectionService
+from .transition import ProjectionService, SourceImportService
 from .workflow import (
     ExecutionSpec,
     MutationAdmissionClosed,
@@ -560,131 +566,250 @@ def _engine(dsn: str) -> Engine:
     )
 
 
-def _authorize_release_candidate(
-    session: Session, candidate: release_models.ReleaseCandidate, *, approved_at: datetime
-) -> None:
-    """Seed the existing immutable release approval contract for recovery evidence."""
-    manifest = {
-        "schema": "dish-section2-release-evidence-v1",
-        "candidate_id": str(candidate.candidate_id),
-        "generation_id": str(candidate.generation_id),
-        "schema_head": candidate.schema_head,
-        "release": {
-            "dish": candidate.dish_release,
-            "honest": candidate.honest_release,
-            "protocol": candidate.protocol_release,
-            "openapi": candidate.openapi_release,
-            "routing": candidate.routing_release,
-        },
-    }
-    bundle_digest = release_sha256_json(manifest)
-    bundle = release_models.EvidenceBundle(
-        bundle_id=uuid.uuid4(),
-        candidate_id=candidate.candidate_id,
-        bundle_kind="release_candidate",
-        bundle_revision=1,
-        manifest=manifest,
-        manifest_sha256=bundle_digest,
-        built_at=approved_at,
+def _rehearsal_setup_release_service(session: Session) -> ReleaseCandidateService:
+    """Keep fixture timestamps coherent inside the long seed transaction."""
+    return ReleaseCandidateService(
+        session, clock=lambda: utc_now() + timedelta(seconds=1)
     )
-    candidate.status = "validated"
-    candidate.candidate_revision = 2
-    candidate.validation_bundle_sha256 = bundle_digest
-    candidate.validated_at = approved_at
-    session.add(bundle)
-    session.flush()
-    approval_payload = {
-        "purpose": "section2 native recovery authorization",
-        "candidate_id": str(candidate.candidate_id),
-        "evidence_bundle_sha256": bundle_digest,
-    }
-    approval_body = {
-        "candidate_id": str(candidate.candidate_id),
-        "evidence_bundle_sha256": bundle_digest,
-        "approver": "section2-recovery-rehearsal",
-        "statement": "Authorize this exact validated release candidate for recovery rehearsal.",
-        "payload": approval_payload,
-        "approved_at": approved_at.isoformat(),
-    }
-    approval = release_models.CutoverApproval(
-        approval_id=uuid.uuid4(),
-        candidate_id=candidate.candidate_id,
-        evidence_bundle_id=bundle.bundle_id,
-        approver="section2-recovery-rehearsal",
-        approval_statement=approval_body["statement"],
-        approval_payload=approval_payload,
-        approval_sha256=release_sha256_json(approval_body),
-        approved_at=approved_at,
-    )
-    session.add(approval)
-    session.flush()
-    bind_approval_manifest(
-        session,
-        uuid_factory=uuid.uuid4,
-        approval=approval,
-        candidate=candidate,
-        bound_at=approved_at,
-    )
-    candidate.status = "approved"
-    candidate.candidate_revision = 3
-    candidate.approved_at = approved_at
-    session.flush()
 
 
-def _seed_approval_reconciliation(
+def _record_candidate_acceptance_evidence(
     session: Session,
     candidate: release_models.ReleaseCandidate,
     *,
-    observed_at: datetime,
+    evidence_dir: Path,
+    recorded_at: datetime,
 ) -> None:
-    active_registry = session.get(models.ActiveSectionRegistry, candidate.generation_id)
-    if active_registry is None:
-        raise RehearsalError("approval reconciliation requires an active registry")
-    membership = active_mapping_membership(session, candidate=candidate)
-    if not membership:
-        raise RehearsalError("approval reconciliation requires active projection mappings")
-    run = transition_models.ProjectionReconciliationRun(
-        reconciliation_run_id=uuid.uuid4(),
-        generation_id=candidate.generation_id,
-        projection_epoch_id=candidate.projection_epoch_id,
-        corpus_identity="section2-approval-reconciliation",
-        candidate_id=candidate.candidate_id,
-        registry_version_id=active_registry.registry_version_id,
-        observation_started_at=observed_at,
-        observation_completed_at=observed_at,
-        external_snapshot_identity=None,
-        external_high_water="section2-baseline-high-water",
-        corpus_manifest_sha256=reconciliation_corpus_sha256(
-            candidate=candidate,
-            membership=membership,
-        ),
-        scope_complete=True,
-        adapter_contract_version="asana-high-water-v1",
-        evidence_recorded_at=observed_at,
-        status="complete",
-        expected_items=len(membership),
-        processed_items=len(membership),
-        started_at=observed_at,
-        completed_at=observed_at,
-    )
-    session.add(run)
-    session.flush()
-    for ordinal, (entity_kind, mapping_id) in enumerate(
-        sorted(membership, key=lambda item: (item[0], str(item[1])))
-    ):
-        session.add(
-            transition_models.ProjectionReconciliationItem(
-                reconciliation_item_id=uuid.uuid4(),
-                reconciliation_run_id=run.reconciliation_run_id,
-                item_identity=f"{ordinal}:{entity_kind}:{mapping_id}",
-                entity_kind=entity_kind,
-                mapping_id=mapping_id,
-                outcome="matched",
-                evidence={"boundary": "section2-baseline-high-water"},
-                recorded_at=observed_at,
-            )
+    """Seed the production release gates that rollback burn must re-evaluate."""
+    service = _rehearsal_setup_release_service(session)
+    artifact_dir = evidence_dir / "cutover-acceptance"
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+
+    def artifact(label: str) -> tuple[str, str]:
+        path = artifact_dir / f"{label}.json"
+        path.write_text(label + "\n", encoding="utf-8")
+        return str(path), sha256_file(path)
+
+    for category, key in REQUIRED_EVIDENCE:
+        path, digest = artifact(f"evidence-{category}-{key}")
+        service.record_evidence(
+            candidate_id=candidate.candidate_id,
+            category=category,
+            evidence_key=key,
+            outcome="pass",
+            payload={
+                "artifact_kind": EVIDENCE_ARTIFACT_KINDS[(category, key)],
+                "artifact_identity": f"section2:{category}:{key}",
+                "artifact_path": path,
+                "artifact_sha256": digest,
+                "source_manifest_sha256": "a" * 64,
+                "gate_name": f"{category}:{key}",
+                "gate_result": "pass",
+            },
+            recorded_at=recorded_at,
         )
-    session.flush()
+
+    for kind in REQUIRED_REHEARSALS:
+        rehearsal = service.start_rehearsal(
+            candidate_id=candidate.candidate_id,
+            rehearsal_kind=kind,
+            environment_identity="section2-native-recovery-rehearsal",
+            source_manifest_sha256="a" * 64,
+            started_at=recorded_at,
+        )
+        checkpoints: list[dict[str, str]] = []
+        for checkpoint_kind in REQUIRED_REHEARSAL_CHECKPOINTS[kind]:
+            path, digest = artifact(f"checkpoint-{kind}-{checkpoint_kind}")
+            checkpoint = service.record_rehearsal_checkpoint(
+                rehearsal_id=rehearsal.rehearsal_id,
+                checkpoint_kind=checkpoint_kind,
+                payload={
+                    "rehearsal_kind": kind,
+                    "checkpoint_kind": checkpoint_kind,
+                    "evidence_kind": REHEARSAL_CHECKPOINT_EVIDENCE_KINDS[kind][
+                        checkpoint_kind
+                    ],
+                    "artifact_identity": f"section2:{kind}:{checkpoint_kind}",
+                    "artifact_path": path,
+                    "artifact_sha256": digest,
+                    "source_manifest_sha256": "a" * 64,
+                    "gate_result": "pass",
+                },
+                recorded_at=recorded_at,
+            )
+            checkpoints.append(
+                {
+                    "checkpoint_kind": checkpoint.checkpoint_kind,
+                    "payload_sha256": checkpoint.payload_sha256,
+                }
+            )
+        service.finish_rehearsal(
+            rehearsal_id=rehearsal.rehearsal_id,
+            passed=True,
+            report={
+                "rehearsal_kind": kind,
+                "source_manifest_sha256": "a" * 64,
+                "result": "passed",
+                "checkpoint_manifest_sha256": release_sha256_json(checkpoints),
+            },
+            measured_rpo_seconds=0.0 if kind == "restore" else None,
+            measured_rto_seconds=12.5 if kind == "restore" else None,
+            completed_at=recorded_at,
+        )
+
+
+def _authorize_release_candidate(
+    session: Session,
+    candidate: release_models.ReleaseCandidate,
+    *,
+    approved_at: datetime,
+) -> uuid.UUID:
+    """Use the production validation/approval path before exercising cutover."""
+    service = _rehearsal_setup_release_service(session)
+    bundle = service.build_evidence_bundle(
+        candidate_id=candidate.candidate_id,
+        bundle_kind="release_candidate",
+        built_at=approved_at,
+    )
+    service.validate_candidate(
+        candidate_id=candidate.candidate_id,
+        evidence_bundle_id=bundle.bundle_id,
+        validated_at=approved_at,
+    )
+    closure = service.record_final_asana_closure(
+        candidate_id=candidate.candidate_id,
+        capture_manifest_sha256="a" * 64,
+        observation_high_water="section2-pre-cutover-high-water",
+        watcher_identity="section2-recovery-rehearsal",
+        interval_started_at=approved_at,
+        closed_through_at=approved_at,
+        payload={"purpose": "section2 rollback-burn approval binding"},
+        recorded_at=approved_at,
+    )
+    service.approve_candidate(
+        candidate_id=candidate.candidate_id,
+        evidence_bundle_id=bundle.bundle_id,
+        approver="section2-recovery-rehearsal",
+        approval_statement=(
+            "Authorize this exact validated release candidate for recovery rehearsal."
+        ),
+        approval_payload={
+            "purpose": "section2 native recovery authorization",
+            "candidate_id": str(candidate.candidate_id),
+            "evidence_bundle_sha256": bundle.manifest_sha256,
+            "final_asana_closure_id": str(closure.closure_id),
+            "final_asana_closure_sha256": closure.closure_sha256,
+        },
+        approved_at=approved_at,
+    )
+    return closure.closure_id
+
+
+def _commit_rollback_burn(engine: Engine, context: SeedContext) -> int:
+    """Drive the real guarded cutover path through the committed rollback burn."""
+    factory = session_factory(engine)
+    with session_scope(factory) as session:
+        candidate = session.get(release_models.ReleaseCandidate, context.candidate_id)
+        if candidate is None or candidate.status != "approved":
+            raise RehearsalError(
+                "rollback-burn rehearsal requires the exact approved candidate"
+            )
+        service = (
+            ReleaseCandidateService(session)
+            if session.get_bind().dialect.name == "postgresql"
+            else _rehearsal_setup_release_service(session)
+        )
+        writer_target = "legacy-service@section2-recovery-rehearsal"
+        prepared_at = service._trusted_now()
+        fence = service.prepare_writer_fence(
+            candidate_id=candidate.candidate_id,
+            target_identity=writer_target,
+            mechanism="fail-closed-file",
+            manifest={"path": "/tmp/dish-section2-recovery-writer-fence.json"},
+            prepared_at=prepared_at,
+        )
+        run = service.prepare_cutover(
+            candidate_id=candidate.candidate_id,
+            started_at=prepared_at,
+        )
+        observation = service.record_writer_fence_artifact_observation(
+            fence_id=fence.fence_id,
+            artifact_generation_identity="section2-recovery-writer-fence-v1",
+            canonical_path="/tmp/dish-section2-recovery-writer-fence.json",
+            content_sha256=fence.manifest_sha256,
+            filesystem_device=1,
+            filesystem_inode=(fence.fence_id.int % 2_000_000_000) + 1,
+            verification_result="matched",
+            observation_contract_version="section2-recovery-rehearsal-v1",
+            observed_at=prepared_at,
+            recorded_at=prepared_at,
+        )
+        service.engage_writer_fence(
+            fence_id=fence.fence_id,
+            artifact_observation_id=observation.observation_id,
+            engaged_at=prepared_at,
+        )
+        writer_inventory = {writer_target}
+        service.verify_writer_fence(
+            fence_id=fence.fence_id,
+            proof={
+                "probe_kind": "authenticated_mutation_rejected_before_body_parse",
+                "candidate_id": str(candidate.candidate_id),
+                "target_identity": fence.target_identity,
+                "fence_manifest_sha256": fence.manifest_sha256,
+                "request_token_sha256": "f" * 64,
+                "http_status": 409,
+                "response_code": "CONFLICT",
+                "response_rule": "legacy_writer_fenced",
+                "response_retryable": False,
+                "body_loaded": False,
+                "result": "pass",
+            },
+            verified_at=prepared_at,
+            required_writer_inventory=writer_inventory,
+        )
+        service.mark_fenced(
+            cutover_run_id=run.cutover_run_id,
+            recorded_at=prepared_at,
+            required_writer_inventory=writer_inventory,
+        )
+        closure = service.record_final_asana_closure(
+            candidate_id=candidate.candidate_id,
+            capture_manifest_sha256="a" * 64,
+            observation_high_water="section2-post-fence-high-water",
+            watcher_identity="section2-recovery-rehearsal",
+            interval_started_at=prepared_at,
+            closed_through_at=prepared_at,
+            payload={"purpose": "section2 post-writer-fence final closure"},
+            recorded_at=prepared_at,
+        )
+        service.recertify_candidate(
+            candidate_id=candidate.candidate_id,
+            closure_id=closure.closure_id,
+            approver="section2-recovery-rehearsal",
+            recertification_statement="Final closure remains exact after writer fencing.",
+            payload={"cutover_run_id": str(run.cutover_run_id)},
+            recertified_at=prepared_at,
+        )
+        service.activate_authority(
+            cutover_run_id=run.cutover_run_id,
+            final_asana_closure_id=closure.closure_id,
+            activated_at=prepared_at,
+            required_writer_inventory=writer_inventory,
+        )
+        burned_at = service._trusted_now()
+        service.burn_rollback(
+            cutover_run_id=run.cutover_run_id,
+            legacy_bundle_id="section2-recovery-rehearsal-rollback-burn",
+            burned_at=burned_at,
+            required_writer_inventory=writer_inventory,
+        )
+        transaction_id = (
+            int(session.scalar(text("SELECT txid_current()")))
+            if session.get_bind().dialect.name == "postgresql"
+            else 0
+        )
+    return transaction_id
 
 
 def _seed_baseline(engine: Engine, evidence_dir: Path, *, dish_commit: str) -> SeedContext:
@@ -817,30 +942,8 @@ def _seed_baseline(engine: Engine, evidence_dir: Path, *, dish_commit: str) -> S
             ),
             invocation_metadata={"label": "baseline", "required": True},
         )
-        for future_label, future_revision in (
-            ("boundary_a", 2),
-            ("boundary_b", 3),
-            ("after_boundary_b", 4),
-        ):
-            future_payload = {"label": future_label, "revision": future_revision}
-            session.add(
-                wf.ServiceRequest(
-                    request_id=uuid.uuid5(
-                        uuid.NAMESPACE_URL, f"dish-section2-request-{future_label}"
-                    ),
-                    generation_id=result.generation_id,
-                    run_id=run_id,
-                    owner_id="section2-pre-restore-service",
-                    principal_class="service",
-                    command_name="section2_recovery_marker",
-                    canonical_payload_sha256=sha256_json(future_payload),
-                    canonical_payload=future_payload,
-                    protocol_release=result.protocol_release,
-                    dish_release=result.dish_release,
-                    admitted_at=utc_now(),
-                )
-            )
         session.flush()
+        baseline_terminal_at = utc_now()
         session.add(
             transition_models.ProjectionOutboxEvent(
                 projection_event_id=uuid.uuid5(
@@ -859,13 +962,13 @@ def _seed_baseline(engine: Engine, evidence_dir: Path, *, dish_commit: str) -> S
                 ).hexdigest(),
                 intent_payload=baseline_payload,
                 intent_sha256=sha256_json(baseline_payload),
-                state="pending",
+                state="applied",
                 claim_owner=None,
                 claim_token=None,
                 claim_expires_at=None,
                 outbox_revision=1,
                 created_at=utc_now(),
-                terminal_at=None,
+                terminal_at=baseline_terminal_at,
             )
         )
         execution_id = uuid.uuid4()
@@ -912,41 +1015,111 @@ def _seed_baseline(engine: Engine, evidence_dir: Path, *, dish_commit: str) -> S
             issued_at=utc_now(),
             expires_at=utc_now() + timedelta(days=365),
         )
+        execution = session.get(wf.CommandExecution, execution_id)
+        operation = session.get(wf.WorkflowOperation, operation_id)
+        lease = session.get(wf.ServiceLease, lease_id)
+        obligation = session.scalar(
+            select(wf.InvocationAuditObligation).where(
+                wf.InvocationAuditObligation.request_id == baseline_request_id
+            )
+        )
+        if execution is None or operation is None or lease is None or obligation is None:
+            raise RehearsalError("baseline recovery-fencing rows are incomplete")
+        execution.status = "committed"
+        execution.execution_revision += 1
+        execution.terminal_at = baseline_terminal_at
+        operation.lifecycle = "completed"
+        operation.terminal_outcome = "section2-baseline-complete"
+        operation.operation_revision += 1
+        operation.terminal_at = baseline_terminal_at
+        lease.state = "released"
+        lease.lease_revision += 1
+        lease.terminal_at = baseline_terminal_at
+        obligation.state = "fulfilled"
+        obligation.terminal_at = baseline_terminal_at
         import_batch_id = uuid.uuid4()
         baseline_id = uuid.uuid4()
         candidate_id = uuid.uuid4()
-        session.add_all(
-            [
-                transition_models.SourceImportBatch(
+        source_import = SourceImportService(session)
+        imported_at = utc_now()
+        source_import.start_batch(
+            import_batch_id=import_batch_id,
+            generation_id=result.generation_id,
+            import_run_id=result.import_run_id,
+            source_release="section2-source",
+            source_commit="3" * 40,
+            source_database_sha256="4" * 64,
+            source_sidecars={"purpose": "section2 recovery"},
+            ledger_through_commit="5" * 40,
+            expected_entities=4,
+            started_at=imported_at,
+        )
+        content_version_id = session.scalar(
+            select(models.ContentVersion.content_version_id).where(
+                models.ContentVersion.task_id == task_id,
+                models.ContentVersion.import_run_id == result.import_run_id,
+            )
+        )
+        if content_version_id is None:
+            raise RehearsalError("baseline import omitted representative content provenance")
+        imported_targets = (
+            ("project", "governed_project", result.project_id, "project_id"),
+            ("section", "governed_section", result.sections[0].section_id, "section_id"),
+            ("task", "dish_task", task_id, "task_id"),
+            ("content", "task_content_version", content_version_id, "content_version_id"),
+        )
+        for entity_kind, target_type, target_id, target_field in imported_targets:
+            evidence = source_import.record_entity(
+                import_batch_id=import_batch_id,
+                entity_kind=entity_kind,
+                source_identity=f"section2:{entity_kind}:{target_id}",
+                source_sha256="4" * 64,
+                target_entity_type=target_type,
+                target_entity_id=target_id,
+                provenance={"purpose": "section2 recovery rehearsal"},
+                imported_at=imported_at,
+            )
+            typed_target = {
+                "project_id": None,
+                "section_id": None,
+                "task_id": None,
+                "content_version_id": None,
+                "request_tombstone_id": None,
+            }
+            typed_target[target_field] = target_id
+            session.add(
+                import_link_models.SourceImportNativeLink(
+                    link_id=uuid.uuid4(),
+                    evidence_id=evidence.evidence_id,
                     import_batch_id=import_batch_id,
-                    generation_id=result.generation_id,
                     import_run_id=result.import_run_id,
-                    source_release="section2-source",
-                    source_commit="3" * 40,
-                    source_database_sha256="4" * 64,
-                    source_sidecars={"purpose": "section2 recovery"},
-                    ledger_through_commit="5" * 40,
-                    expected_entities=1,
-                    imported_entities=1,
-                    status="complete",
-                    started_at=utc_now(),
-                    completed_at=utc_now(),
-                ),
-                transition_models.ShadowBaseline(
-                    shadow_baseline_id=baseline_id,
-                    generation_id=result.generation_id,
-                    source_generation_identity="section2-source-generation",
-                    source_commit="3" * 40,
-                    baseline_sequence=1,
-                    status="closed",
-                    disqualification_reason=None,
-                    created_at=utc_now(),
-                    terminal_at=utc_now(),
-                ),
-            ]
+                    entity_kind=entity_kind,
+                    linked_at=imported_at,
+                    **typed_target,
+                )
+            )
+        source_import.complete_batch(
+            import_batch_id=import_batch_id, completed_at=imported_at
+        )
+        session.add(
+            transition_models.ShadowBaseline(
+                shadow_baseline_id=baseline_id,
+                generation_id=result.generation_id,
+                source_generation_identity="section2-source-generation",
+                source_commit="3" * 40,
+                baseline_sequence=1,
+                status="closed",
+                disqualification_reason=None,
+                created_at=imported_at,
+                terminal_at=imported_at,
+            )
         )
         session.flush()
-        candidate = release_models.ReleaseCandidate(
+        projection.bind_imported_mappings(
+            generation_id=result.generation_id, bound_at=imported_at
+        )
+        service = _rehearsal_setup_release_service(session)
+        candidate = service.create_candidate(
             candidate_id=candidate_id,
             generation_id=result.generation_id,
             source_import_batch_id=import_batch_id,
@@ -961,19 +1134,58 @@ def _seed_baseline(engine: Engine, evidence_dir: Path, *, dish_commit: str) -> S
             protocol_release=result.protocol_release,
             openapi_release="section2-openapi",
             routing_release="section2-routing",
-            status="assembling",
-            candidate_revision=1,
-            validation_bundle_sha256=None,
             created_at=utc_now(),
-            validated_at=None,
-            approved_at=None,
-            terminal_at=None,
         )
-        session.add(candidate)
         session.flush()
-        approved_at = utc_now()
-        _seed_approval_reconciliation(session, candidate, observed_at=approved_at)
-        _authorize_release_candidate(session, candidate, approved_at=approved_at)
+        reconciliation_at = utc_now()
+        membership = active_mapping_membership(session, candidate=candidate)
+        reconciliation = transition_models.ProjectionReconciliationRun(
+            reconciliation_run_id=uuid.uuid4(),
+            generation_id=result.generation_id,
+            projection_epoch_id=epoch.projection_epoch_id,
+            corpus_identity=f"section2-recovery-approval:{candidate_id}",
+            candidate_id=candidate_id,
+            registry_version_id=result.registry_version_id,
+            observation_started_at=reconciliation_at,
+            observation_completed_at=reconciliation_at,
+            external_snapshot_identity=None,
+            external_high_water="section2-recovery-approval-high-water",
+            corpus_manifest_sha256=reconciliation_corpus_sha256(
+                candidate=candidate, membership=membership
+            ),
+            scope_complete=True,
+            adapter_contract_version="asana-high-water-v1",
+            evidence_recorded_at=reconciliation_at,
+            status="complete",
+            expected_items=len(membership),
+            processed_items=len(membership),
+            started_at=reconciliation_at,
+            completed_at=reconciliation_at,
+        )
+        session.add(reconciliation)
+        session.flush()
+        for ordinal, (entity_kind, mapping_id) in enumerate(
+            sorted(membership, key=lambda item: (item[0], str(item[1])))
+        ):
+            session.add(
+                transition_models.ProjectionReconciliationItem(
+                    reconciliation_item_id=uuid.uuid4(),
+                    reconciliation_run_id=reconciliation.reconciliation_run_id,
+                    item_identity=f"{ordinal}:{entity_kind}:{mapping_id}",
+                    entity_kind=entity_kind,
+                    mapping_id=mapping_id,
+                    outcome="matched",
+                    evidence={"source": "section2 recovery rehearsal"},
+                    recorded_at=reconciliation_at,
+                )
+            )
+        session.flush()
+        _record_candidate_acceptance_evidence(
+            session,
+            candidate,
+            evidence_dir=evidence_dir,
+            recorded_at=reconciliation_at,
+        )
         baseline_evidence = {"label": "baseline", "revision": 1}
         session.add(
             release_models.ReleaseEvidenceItem(
@@ -1006,6 +1218,7 @@ def _seed_baseline(engine: Engine, evidence_dir: Path, *, dish_commit: str) -> S
             )
         )
         session.flush()
+        _authorize_release_candidate(session, candidate, approved_at=utc_now())
         baseline_transaction_id = (
             int(session.scalar(text("SELECT txid_current()")))
             if session.get_bind().dialect.name == "postgresql"
@@ -1032,36 +1245,6 @@ def _record_bundle(engine: Engine, context: SeedContext, label: str, revision: i
     factory = session_factory(engine)
     with session_scope(factory) as session:
         payload = {"label": label, "revision": revision}
-        request_id = uuid.uuid5(uuid.NAMESPACE_URL, f"dish-section2-request-{label}")
-        workflow = WorkflowAuthorityService(session)
-        request = session.get(wf.ServiceRequest, request_id)
-        if (
-            request is None
-            or request.generation_id != context.generation_id
-            or request.canonical_payload_sha256 != sha256_json(payload)
-        ):
-            raise RehearsalError(f"pre-admitted PITR request identity is missing for {label}")
-        workflow.repo.record_outcome(
-            request_id=request_id,
-            outcome=StoredOutcome(
-                outcome_id=uuid.uuid5(uuid.NAMESPACE_URL, f"dish-section2-outcome-{label}"),
-                outcome_class="success",
-                result_code=f"section2.{label}",
-                http_status=200,
-                result_payload=payload,
-                immutable_success=True,
-                recorded_at=utc_now(),
-            ),
-            execution_id=None,
-            audit_event_id=uuid.uuid5(uuid.NAMESPACE_URL, f"dish-section2-audit-{label}"),
-            audit_event_type="section2_recovery_boundary",
-            actor="section2-rehearsal",
-            audit_payload=payload,
-            task_id=context.task_id,
-            operation_id=None,
-            obligation_id=uuid.uuid5(uuid.NAMESPACE_URL, f"dish-section2-obligation-{label}"),
-            invocation_metadata={**payload, "required": True},
-        )
         session.add(
             transition_models.ProjectionOutboxEvent(
                 projection_event_id=uuid.uuid5(
@@ -1275,13 +1458,21 @@ def _verify_state(
     for evidence_kind, labels in (
         ("release", release_labels),
         ("projection", projection_labels),
-        ("request outcome", set(observed["outcome_labels"])),
-        ("audit obligation", set(observed["audit_labels"])),
     ):
         if not expected.issubset(labels):
             failures.append(
                 f"missing {evidence_kind} labels {sorted(expected - labels)}"
             )
+        if labels.intersection(absent):
+            failures.append(
+                f"unexpected {evidence_kind} labels {sorted(labels.intersection(absent))}"
+            )
+    for evidence_kind, labels in (
+        ("request outcome", set(observed["outcome_labels"])),
+        ("audit obligation", set(observed["audit_labels"])),
+    ):
+        if "baseline" not in labels:
+            failures.append(f"missing baseline {evidence_kind} preservation evidence")
         if labels.intersection(absent):
             failures.append(
                 f"unexpected {evidence_kind} labels {sorted(labels.intersection(absent))}"
@@ -1904,6 +2095,42 @@ def _assert_promotion_fault(
         faults[name] = {"passed": True, "error": str(exc)}
     else:
         raise RehearsalError(f"{name} did not fail closed")
+
+
+def _exercise_preburn_rejection(
+    engine: Engine,
+    control_path: Path,
+    *,
+    recovered_state: RecoveredPhysicalState,
+) -> dict[str, Any]:
+    control = load_restore_control(control_path)
+    factory = session_factory(engine)
+    with session_scope(factory) as session:
+        try:
+            promote_restored_generation(
+                session, control, recovered_state=recovered_state
+            )
+        except RestoreControlError as exc:
+            if "not rollback-burned: approved" not in str(exc):
+                raise RehearsalError(
+                    "pre-burn recovery rejected for the wrong authority reason: " + str(exc)
+                ) from exc
+            return {"passed": True, "error": str(exc)}
+    raise RehearsalError("pre-burn recovery point incorrectly authorized promotion")
+
+
+def _exercise_promotion_once(
+    engine: Engine,
+    control_path: Path,
+    *,
+    recovered_state: RecoveredPhysicalState,
+) -> dict[str, str]:
+    control = load_restore_control(control_path)
+    factory = session_factory(engine)
+    with session_scope(factory) as session:
+        return promote_restored_generation(
+            session, control, recovered_state=recovered_state
+        ).as_json()
 
 
 def _exercise_promotion(
@@ -2650,6 +2877,11 @@ def _run(
                 system_identifier,
                 inject_rename_fault=True,
             )
+            rollback_burn_txid = _commit_rollback_burn(source_engine, context)
+            rollback_burn = _record_boundary(
+                source_engine, "rollback_burn", ["baseline"], rollback_burn_txid
+            )
+            rollback_burn_wal = _force_archive(source_engine, archive_dir)
             boundary_a_txid = _record_bundle(source_engine, context, "boundary_a", 2)
             boundary_a = _record_boundary(
                 source_engine, "boundary_a", ["baseline", "boundary_a"], boundary_a_txid
@@ -2721,23 +2953,22 @@ def _run(
                     mode=0o600,
                 )
                 control_receipt_sha256 = sha256_file(control_path)
-                promotion_started = time.perf_counter()
-                promotion = _exercise_promotion(
+                pre_burn_authority_rejection = _exercise_preburn_rejection(
                     restored_engine,
                     control_path,
                     recovered_state=recovered_state,
-                    context=context,
                 )
-                promotion["duration_seconds"] = time.perf_counter() - promotion_started
-                faults.update(promotion.pop("faults"))
-                promotion["external_control_receipt_sha256"] = control_receipt_sha256
+                pre_burn_authority_rejection[
+                    "external_control_receipt_sha256"
+                ] = control_receipt_sha256
             finally:
                 control_path.unlink(missing_ok=True)
                 restored_engine.dispose()
 
             pitr_results: list[dict[str, Any]] = []
+            promotion: dict[str, Any] | None = None
             all_after = ["baseline", "boundary_a", "boundary_b", "after_boundary_b"]
-            for index, boundary in enumerate((boundary_a, boundary_b), start=1):
+            for index, boundary in enumerate((rollback_burn, boundary_b), start=1):
                 target = Cluster(
                     name=f"pitr-{index}",
                     data_dir=work_root / f"pitr-{index}",
@@ -2772,6 +3003,39 @@ def _run(
                         recovery_target_type="lsn",
                         recovery_target_lsn=boundary.lsn,
                     )
+                    pitr_control_path = evidence_dir / f"restore-control-pitr-{index}.json"
+                    atomic_json(
+                        pitr_control_path,
+                        _control_payload(context, physical_state),
+                        mode=0o600,
+                    )
+                    try:
+                        authority_started = time.perf_counter()
+                        if boundary.label == "rollback_burn":
+                            authority_promotion = _exercise_promotion(
+                                target_engine,
+                                pitr_control_path,
+                                recovered_state=physical_state,
+                                context=context,
+                            )
+                            faults.update(authority_promotion.pop("faults"))
+                            promotion = authority_promotion
+                        else:
+                            authority_promotion = {
+                                "promotion": _exercise_promotion_once(
+                                    target_engine,
+                                    pitr_control_path,
+                                    recovered_state=physical_state,
+                                )
+                            }
+                        authority_promotion["duration_seconds"] = (
+                            time.perf_counter() - authority_started
+                        )
+                        authority_promotion["external_control_receipt_sha256"] = (
+                            sha256_file(pitr_control_path)
+                        )
+                    finally:
+                        pitr_control_path.unlink(missing_ok=True)
                     recovery_duration = time.perf_counter() - recovery_started
                 finally:
                     target_engine.dispose()
@@ -2780,6 +3044,7 @@ def _run(
                         "target": asdict(boundary),
                         "duration_seconds": recovery_duration,
                         "promotion": promotion_evidence,
+                        "authority_promotion": authority_promotion,
                         "observed": observed,
                         "recovered_physical_state": physical_state.evidence_payload(),
                         "recovery_evidence_sha256": physical_state.evidence_sha256,
@@ -2845,7 +3110,7 @@ def _run(
                 latest.committed_at.replace("Z", "+00:00")
             )
             selected_recovery_point_age = []
-            for boundary in (boundary_a, boundary_b):
+            for boundary in (rollback_burn, boundary_b):
                 target_time = datetime.fromisoformat(
                     boundary.committed_at.replace("Z", "+00:00")
                 )
@@ -2861,6 +3126,10 @@ def _run(
                             if label not in boundary.expected_labels
                         ],
                     }
+                )
+            if promotion is None:
+                raise RehearsalError(
+                    "immediate post-burn PITR did not exercise authority promotion"
                 )
             report.update(
                 {
@@ -2902,12 +3171,19 @@ def _run(
                     },
                     "boundaries": [
                         asdict(baseline),
+                        asdict(rollback_burn),
                         asdict(boundary_a),
                         asdict(boundary_b),
                         asdict(latest),
                     ],
-                    "wal_evidence": [boundary_a_wal, boundary_b_wal, latest_wal],
+                    "wal_evidence": [
+                        rollback_burn_wal,
+                        boundary_a_wal,
+                        boundary_b_wal,
+                        latest_wal,
+                    ],
                     "pitr": pitr_results,
+                    "pre_burn_authority_rejection": pre_burn_authority_rejection,
                     "generation_and_fencing": promotion,
                     "faults": faults,
                     "measurements": {

@@ -5,6 +5,9 @@ from __future__ import annotations
 import hashlib
 from datetime import timedelta
 
+from sqlalchemy import select
+
+from dish_pg import candidate_manifest_models as manifest_models
 from dish_pg import models
 from dish_pg import stage5_models as projection_models
 from dish_pg import stage6_models as release_models
@@ -212,6 +215,50 @@ def _approve_candidate(session, ids, candidate) -> None:
     candidate.candidate_revision = 3
     candidate.approved_at = NOW
     session.flush()
+
+
+def _activate_candidate(
+    session,
+    ids,
+    candidate,
+    *,
+    burned_at=NOW,
+    legacy_bundle_id: str = "section2-activated-candidate",
+) -> models.AuthorityActivation:
+    approval = session.scalar(
+        select(release_models.CutoverApproval).where(
+            release_models.CutoverApproval.candidate_id == candidate.candidate_id
+        )
+    )
+    manifest = session.scalar(
+        select(manifest_models.ReleaseCandidateManifest).where(
+            manifest_models.ReleaseCandidateManifest.candidate_id == candidate.candidate_id
+        )
+    )
+    assert approval is not None and manifest is not None
+    activation = models.AuthorityActivation(
+        activation_id=_next(ids),
+        generation_id=candidate.generation_id,
+        import_run_id=manifest.source_import_run_id,
+        cutover_approval_id=str(approval.approval_id),
+        legacy_bundle_id=legacy_bundle_id,
+        schema_head=candidate.schema_head,
+        dish_release=candidate.dish_release,
+        honest_release=candidate.honest_release,
+        protocol_release=candidate.protocol_release,
+        openapi_release=candidate.openapi_release,
+        routing_release=candidate.routing_release,
+        projection_epoch=candidate.projection_epoch_id,
+        outcome="activated",
+        rollback_burned_at=burned_at,
+        recorded_at=burned_at,
+    )
+    candidate.status = "activated"
+    candidate.candidate_revision += 1
+    candidate.terminal_at = burned_at
+    session.add(activation)
+    session.commit()
+    return activation
 
 def _setup(session, ids, *, candidate_status="approved"):
     context = _bootstrap_registry(session, ids, generation_status="active")

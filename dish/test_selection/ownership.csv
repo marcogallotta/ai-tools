@@ -518,6 +518,7 @@ tests/postgresql/native/test_projection_attempt_concurrency.py,test,1,7,isolated
 tests/postgresql/native/test_projection_epoch_lifecycle_concurrency.py,test,1,7,isolated-test; native-pg; transaction-boundary,,,none,,exact changed test/module; native PostgreSQL certification,,
 tests/postgresql/native/test_projection_worker.py,test,1,7,isolated-test; native-pg; transaction-boundary,,,none,,exact changed test/module; native PostgreSQL certification,,
 tests/postgresql/native/test_reconciliation_worker.py,test,1,7,isolated-test; native-pg; transaction-boundary,,,none,,exact changed test/module; native PostgreSQL certification,,
+tests/postgresql/native/test_recovery_authority_transition.py,test,1,5,authority; isolated-test; native-pg; recovery-filesystem; transaction-boundary,,,none,,exact changed test/module; native PostgreSQL certification,,
 tests/postgresql/native/test_runtime_wiring_rehearsal.py,test,1,7,isolated-test; native-pg; process-boundary; projection-lifecycle; transaction-boundary,,,none,,exact changed test/module; native PostgreSQL certification,,
 tests/postgresql/native/test_shadow_baseline_concurrency.py,test,1,7,isolated-test; native-pg; transaction-boundary,,,none,,exact changed test/module; native PostgreSQL certification,,
 tests/postgresql/native/test_stage_a_concurrency.py,test,1,7,flake-stress; isolated-test; native-pg; transaction-boundary,,,none,,exact changed test/module; flake diagnostics; native PostgreSQL certification,,

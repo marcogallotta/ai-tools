@@ -8,7 +8,6 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import select
 
-from dish_pg import candidate_manifest_models as manifest_models
 from dish_pg import models
 from dish_pg import stage5_models as projection_models
 from dish_pg import stage6_models as release_models
@@ -16,14 +15,12 @@ from dish_pg.candidate_manifest import bind_approval_manifest
 from dish_pg.recovery_control import (
     RecoveredPhysicalState,
     _authorized_release_candidate,
-    _stored_manifest_fingerprint,
     RestoreControl,
     RestoreControlError,
     migration_revision_sha256,
     promote_restored_generation,
 )
 from dish_pg.release import ALEMBIC_HEAD
-from dish_pg.release_evidence import sha256_json
 from dish_pg.transition import ProjectionService
 from dish_pg.workflow import (
     MutationAdmissionClosed,
@@ -41,6 +38,7 @@ from tests.support.postgresql.workflow import (
 )
 
 from tests.support.postgresql.recovery_control import (
+    _activate_candidate,
     _control,
     _physical_state,
     _setup,
@@ -106,7 +104,7 @@ def test_unauthorized_release_candidate_state_cannot_promote(core_db, status):
     with factory() as session:
         context, _, _ = _setup(session, ids, candidate_status=status)
         state = _physical_state()
-        with pytest.raises(RestoreControlError, match="not authorized"):
+        with pytest.raises(RestoreControlError, match="not rollback-burned"):
             promote_restored_generation(
                 session,
                 _control(context, ids, state),
@@ -229,6 +227,7 @@ def test_corrupt_release_approval_digest_cannot_promote(core_db):
     factory, ids = core_db
     with factory() as session:
         context, _, candidate = _setup(session, ids)
+        _activate_candidate(session, ids, candidate)
         approval = session.scalar(
             select(release_models.CutoverApproval).where(
                 release_models.CutoverApproval.candidate_id == candidate.candidate_id
@@ -244,10 +243,43 @@ def test_corrupt_release_approval_digest_cannot_promote(core_db):
                 clock=lambda: NOW + timedelta(minutes=2),
             )
 
-def test_exact_approved_candidate_promotes_and_bootstraps_once(core_db):
+def test_approved_but_unburned_candidate_cannot_promote(core_db):
     factory, ids = core_db
     with factory() as session:
         context, _, _ = _setup(session, ids)
+        state = _physical_state()
+        control = _control(context, ids, state)
+        with pytest.raises(RestoreControlError, match="not rollback-burned: approved"):
+            promote_restored_generation(
+                session,
+                control,
+                recovered_state=state,
+                clock=lambda: NOW + timedelta(minutes=2),
+                uuid_factory=lambda: _next(ids),
+            )
+
+
+def test_exact_burned_candidate_promotes_and_bootstraps_once(core_db):
+    factory, ids = core_db
+    with factory() as session:
+        context, _, candidate = _setup(session, ids)
+        _activate_candidate(session, ids, candidate)
+        assert session.scalar(
+            select(release_models.RuntimeReleaseAttestation).where(
+                release_models.RuntimeReleaseAttestation.candidate_id == candidate.candidate_id
+            )
+        ) is None
+        assert session.scalar(
+            select(release_models.CutoverRun).where(
+                release_models.CutoverRun.candidate_id == candidate.candidate_id
+            )
+        ) is None
+        assert session.scalar(
+            select(release_models.EvidenceBundle).where(
+                release_models.EvidenceBundle.candidate_id == candidate.candidate_id,
+                release_models.EvidenceBundle.bundle_kind == "cutover_final",
+            )
+        ) is None
         state = _physical_state()
         control = _control(context, ids, state)
         result = promote_restored_generation(
@@ -311,54 +343,6 @@ def test_retired_generation_lease_cannot_be_renewed(workflow_db):
                 owner_id="owner-1", now=NOW + timedelta(minutes=2),
                 new_expiry=NOW + timedelta(hours=2),
             )
-
-
-def test_historical_v2_manifest_fingerprint_keeps_original_contract():
-    values = [uuid.uuid4() for _ in range(8)]
-    hash_values = [hashlib.sha256(str(index).encode()).hexdigest() for index in range(6)]
-    manifest = manifest_models.ReleaseCandidateManifest(
-        manifest_id=uuid.uuid4(),
-        candidate_id=values[0],
-        manifest_version=2,
-        canonical_fingerprint="f" * 64,
-        generation_id=values[1],
-        source_import_batch_id=values[2],
-        source_import_run_id=values[3],
-        shadow_baseline_id=values[4],
-        projection_epoch_id=values[5],
-        registry_version_id=values[6],
-        honest_binding_id=values[7],
-        approval_reconciliation_run_id=None,
-        mapping_membership_sha256=hash_values[0],
-        import_completion_sha256=hash_values[1],
-        typed_import_linkage_sha256=hash_values[2],
-        reconciliation_evidence_sha256=hash_values[3],
-        readiness_inventory_sha256=hash_values[4],
-        readiness_completion_sha256=hash_values[5],
-        builder_contract_version="candidate-authority-v2",
-        built_at=NOW,
-    )
-    expected = sha256_json(
-        {
-            "manifest_version": 2,
-            "candidate_id": str(values[0]),
-            "generation_id": str(values[1]),
-            "source_import_batch_id": str(values[2]),
-            "source_import_run_id": str(values[3]),
-            "shadow_baseline_id": str(values[4]),
-            "projection_epoch_id": str(values[5]),
-            "registry_version_id": str(values[6]),
-            "honest_binding_id": str(values[7]),
-            "builder_contract_version": "candidate-authority-v2",
-            "mapping_membership_sha256": hash_values[0],
-            "import_completion_sha256": hash_values[1],
-            "typed_import_linkage_sha256": hash_values[2],
-            "reconciliation_evidence_sha256": hash_values[3],
-            "readiness_inventory_sha256": hash_values[4],
-            "readiness_completion_sha256": hash_values[5],
-        }
-    )
-    assert _stored_manifest_fingerprint(manifest) == expected
 
 
 def test_recovery_remains_valid_after_legitimate_post_burn_readiness(workflow_db):
