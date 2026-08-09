@@ -6,6 +6,8 @@ import os
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from dish_service.frontend_security import FrontendSecurityConfigurationError, create_restore_fence
 from dish_tool.frontend_password_admin import (
     FrontendPasswordAdminSettings,

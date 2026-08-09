@@ -72,8 +72,8 @@ export function loginLocationForCurrentPage() {
 
 export class PrivateSessionLifecycle {
   constructor(root, client, {
-    setTimer = globalThis.setTimeout,
-    clearTimer = globalThis.clearTimeout,
+    setTimer = globalThis.setTimeout.bind(globalThis),
+    clearTimer = globalThis.clearTimeout.bind(globalThis),
     channelFactory = (name) => new BroadcastChannel(name),
   } = {}) {
     this.root = root;

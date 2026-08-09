@@ -8,7 +8,6 @@ import {
 } from "../features/auth/session.js";
 import { parsePostgresTaskRoute, parseTaskRoute } from "../features/routing/routes.js";
 import { renderLocalPostgresqlBoard } from "../local/local-board-app.js";
-import { renderFixturePrototype } from "../prototype/prototype-app.js";
 import { renderLoginShell, renderLogoutPendingShell } from "../shell/login-shell.js";
 
 function navigateToLogin(root) {
@@ -120,6 +119,7 @@ export async function bootPrivateFrontend(root, { mode, fetchImpl = globalThis.f
       onAuthenticationLost,
     });
   } else {
+    const { renderFixturePrototype } = await import("../prototype/prototype-app.js");
     renderFixturePrototype(root, "board", parseTaskRoute(window.location.pathname), { reviewMode: false });
   }
   if (!root.hidden) installLogout(root, lifecycle, client);

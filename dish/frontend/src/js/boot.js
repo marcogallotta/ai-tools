@@ -1,5 +1,4 @@
 import { DOCUMENT_TITLE } from "./config.js";
-import { renderFixturePrototype } from "./prototype/prototype-app.js";
 import { installFixtureReviewBoundary } from "./review/review-boundary.js";
 import { isReviewScenario, scenarioTaskId } from "./review/review-catalog.js";
 import { createReviewToolbar } from "./review/review-toolbar.js";
@@ -30,13 +29,13 @@ export function resolveInitialView(search = window.location.search, pathname = w
   };
 }
 
-export function boot(root = document.querySelector("#app")) {
+export async function boot(root = document.querySelector("#app")) {
   if (!root) throw new Error("Dish frontend root element is missing");
   document.title = DOCUMENT_TITLE;
   const mode = runtimeMode();
   if (mode === "private-fixture" || mode === "private-postgresql") {
     document.documentElement.dataset.reviewMode = "false";
-    void bootPrivateFrontend(root, { mode });
+    await bootPrivateFrontend(root, { mode });
     return;
   }
 
@@ -52,7 +51,8 @@ export function boot(root = document.querySelector("#app")) {
     void renderLocalPostgresqlBoard(root, { initialTaskId: initial.postgresTaskId });
     return;
   }
+  const { renderFixturePrototype } = await import("./prototype/prototype-app.js");
   renderFixturePrototype(root, initial.scenario, initial.taskId, { reviewMode: initial.reviewMode });
 }
 
-boot();
+void boot();
