@@ -20,7 +20,10 @@ pytestmark = [pytest.mark.postgresql, pytest.mark.native_postgresql]
 
 def test_native_rollback_burn_requires_guarded_transition_and_is_immutable(core_db) -> None:
     factory, ids = core_db
-    with session_scope(factory) as session:
+    # _setup() owns intermediate commits while assembling and approving the
+    # candidate, so it must use a plain test session rather than session_scope(),
+    # whose contract owns one outer transaction and commit.
+    with factory() as session:
         context, _epoch, candidate = _setup(session, ids, candidate_status="approved")
         candidate_id = candidate.candidate_id
         generation_id = context["generation_id"]
@@ -28,7 +31,7 @@ def test_native_rollback_burn_requires_guarded_transition_and_is_immutable(core_
     engine = factory.kw["bind"]
     raw = engine.raw_connection()
     try:
-        raw.autocommit = True
+        raw.driver_connection.autocommit = True
         with pytest.raises(
             psycopg.errors.RaiseException,
             match="candidate activation lacks fresh matched manifest revalidation",
@@ -91,8 +94,11 @@ def test_native_rollback_burn_requires_guarded_transition_and_is_immutable(core_
 
     raw = engine.raw_connection()
     try:
-        raw.autocommit = True
-        with pytest.raises(psycopg.errors.RaiseException, match="illegal release candidate transition"):
+        raw.driver_connection.autocommit = True
+        with pytest.raises(
+            psycopg.errors.RaiseException,
+            match="release candidate identity is immutable",
+        ):
             raw.execute(
                 "UPDATE release_candidates SET source_release='tampered' WHERE candidate_id=%s",
                 (candidate_id,),

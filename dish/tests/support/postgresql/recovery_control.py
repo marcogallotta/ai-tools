@@ -261,9 +261,12 @@ def _activate_candidate(
     return activation
 
 def _setup(session, ids, *, candidate_status="approved"):
-    context = _bootstrap_registry(session, ids, generation_status="active")
-    generation = session.get(models.AuthorityGeneration, context["generation_id"])
-    generation.schema_head = ALEMBIC_HEAD
+    context = _bootstrap_registry(
+        session,
+        ids,
+        generation_status="active",
+        schema_head=ALEMBIC_HEAD,
+    )
     epoch = ProjectionService(session, uuid_factory=lambda: _next(ids)).activate_epoch(
         generation_id=context["generation_id"],
         activation_reason="pre-restore live epoch",
