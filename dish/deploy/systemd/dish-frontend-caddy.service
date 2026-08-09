@@ -1,0 +1,33 @@
+[Unit]
+Description=Dish private frontend HTTPS endpoint
+After=network-online.target dish-frontend-private.service
+Wants=network-online.target
+Requires=dish-frontend-private.service
+PartOf=dish-frontend.target
+
+[Service]
+Type=notify
+User=marco
+WorkingDirectory=/home/marco/ai-tools/dish
+Environment=XDG_CONFIG_HOME=/home/marco/.config
+Environment=XDG_DATA_HOME=/home/marco/.local/share
+ExecStart=/usr/bin/caddy run --config /home/marco/ai-tools/dish/deploy/caddy/dish-frontend-local.Caddyfile --adapter caddyfile
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=5min
+NoNewPrivileges=true
+UMask=0077
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/marco/.config/caddy /home/marco/.local/share/caddy
+
+[Install]
+WantedBy=dish-frontend.target

@@ -1,0 +1,7 @@
+[Unit]
+Description=Dish private authenticated frontend stack
+Requires=dish-frontend-private.service dish-frontend-caddy.service
+After=dish-frontend-private.service dish-frontend-caddy.service
+
+[Install]
+WantedBy=multi-user.target

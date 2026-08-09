@@ -1,0 +1,29 @@
+[Unit]
+Description=Dish private authenticated frontend
+After=network-online.target
+Wants=network-online.target
+PartOf=dish-frontend.target
+
+[Service]
+Type=notify
+User=marco
+WorkingDirectory=/home/marco/ai-tools/dish
+EnvironmentFile=/home/marco/.config/dish-service/frontend-local.env
+UnsetEnvironment=ASANA_PAT
+ExecStart=/home/marco/ai-tools/dish/dish-service
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=10min
+NoNewPrivileges=true
+UMask=0077
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/marco/.local/state/dish/frontend-local-auth
