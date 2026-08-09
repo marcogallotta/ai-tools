@@ -10,10 +10,10 @@ import {
 const contract = JSON.parse(await readFile(new URL("../../contracts/stage2-security-contract.json", import.meta.url)));
 const openapi = JSON.parse(await readFile(new URL("../../openapi/frontend.openapi.json", import.meta.url)));
 
-test("Stage 2 security contract remains closed and blocked", () => {
+test("Stage 2 security implementation candidate remains Gate A blocked", () => {
   assert.equal(contract.contract_version, openapi.info.version);
   assert.equal(contract.gate, "A");
-  assert.equal(contract.status, "design-closed-implementation-blocked");
+  assert.equal(contract.status, "implementation-candidate-gate-a-not-passed");
   assert.deepEqual(Object.keys(contract.blockers), Array.from({ length: 12 }, (_, index) => `A-${String(index + 1).padStart(2, "0")}`));
   assert.ok(Object.values(contract.blockers).every((value) => !value.includes("resolved")));
 });
@@ -32,7 +32,7 @@ test("Stage 2 route contract covers exactly the current frontend API paths", () 
     ...contract.route_families.protected_api,
     ...contract.route_families.lifecycle,
     ...contract.route_families.unauthenticated,
-  ].filter((route) => route.includes("/frontend/") && !route.includes("/frontend/assets/")).map((route) => route.split(" ")[1]));
+  ].filter((route) => route.includes("/frontend/")).map((route) => route.split(" ")[1]));
   const expected = new Set(Object.keys(openapi.paths));
   assert.deepEqual([...apiRoutes].sort(), [...expected].sort());
 });
@@ -45,7 +45,7 @@ test("initial authority policy does not trust forwarded identity", () => {
 });
 
 const stage3 = JSON.parse(await readFile(new URL("../../contracts/stage3-read-contract.json", import.meta.url)));
-const migrationHead = await readFile(new URL("../../../dish_pg/migrations/versions/0032_imported_operation_history.py", import.meta.url), "utf8");
+const migrationHead = await readFile(new URL("../../../dish_pg/migrations/versions/0033_frontend_security.py", import.meta.url), "utf8");
 const modelSources = await Promise.all([
   "../../../dish_pg/models.py",
   "../../../dish_pg/stage3_models.py",
@@ -55,8 +55,8 @@ const modelSources = await Promise.all([
 const allModels = modelSources.join("\n");
 
 test("Stage 3 contract is reconciled to the checked-in migration head", () => {
-  assert.match(migrationHead, /revision\s*=\s*["']0032_imported_operation_history["']/);
-  assert.equal(stage3.checked_in_schema.alembic_head, "0032_imported_operation_history");
+  assert.match(migrationHead, /revision\s*=\s*["']0033_frontend_security["']/);
+  assert.equal(stage3.checked_in_schema.alembic_head, "0033_frontend_security");
   assert.equal(stage3.checked_in_schema.production_status, "dark-launch-target-non-authoritative");
 });
 
@@ -79,12 +79,12 @@ test("WorkflowStatus OpenAPI and browser validation share the closed presentatio
   assert.equal(active.properties.phase.maxLength, WORKFLOW_LABEL_MAX_LENGTH);
 });
 
-test("frontend support-table inventory matches the current Stage 3 contract", () => {
-  const futureTables = [
-    ...stage3.frontend_migration_requirements.stage2,
-    ...stage3.frontend_migration_requirements.stage3,
-  ];
-  for (const table of futureTables) {
+test("frontend support-table inventory matches the current Stage 3 contract", async () => {
+  const securityModels = await readFile(new URL("../../../dish_pg/frontend_security_models.py", import.meta.url), "utf8");
+  for (const table of stage3.frontend_migration_requirements.stage2_present) {
+    assert.ok(securityModels.includes(`__tablename__ = "${table}"`), `${table} must exist in frontend security models`);
+  }
+  for (const table of stage3.frontend_migration_requirements.stage3) {
     assert.ok(!allModels.includes(`__tablename__ = "${table}"`), `${table} unexpectedly exists; update the reconciliation contract`);
   }
   assert.equal(stage3.blockers["B-12"], "independent-review-pending");
@@ -94,7 +94,7 @@ const stage2Cases = JSON.parse(await readFile(new URL("../../contracts/stage2-ac
 const stage3Cases = JSON.parse(await readFile(new URL("../../contracts/stage3-acceptance-cases.json", import.meta.url)));
 
 function assertAcceptanceManifest(manifest, prefix, allowedBlockers) {
-  assert.match(manifest.status, /scaffold-only/);
+  assert.match(manifest.status, /(scaffold-only|implementation-candidate)/);
   assert.ok(manifest.cases.length >= 15);
   const ids = manifest.cases.map((item) => item.id);
   assert.equal(new Set(ids).size, ids.length);
@@ -107,7 +107,7 @@ function assertAcceptanceManifest(manifest, prefix, allowedBlockers) {
   }
 }
 
-test("Stage 2 acceptance scaffold covers only Gate A dependencies", () => {
+test("Stage 2 acceptance manifest covers only Gate A dependencies", () => {
   assertAcceptanceManifest(stage2Cases, "S2-", new Set(Object.keys(contract.blockers)));
 });
 
@@ -117,9 +117,10 @@ test("Stage 3 acceptance scaffold covers only Gate B dependencies", () => {
 
 const readiness = JSON.parse(await readFile(new URL("../../contracts/pre-db-readiness.json", import.meta.url)));
 
-test("pre-database readiness authorizes only the isolated Stage 3 read core", () => {
+test("pre-database readiness keeps Stage 2 candidate and Stage 3 activation gated", () => {
   assert.equal(readiness.checked_in_postgresql_head, stage3.checked_in_schema.alembic_head);
   assert.equal(readiness.authorization.stage2, false);
+  assert.equal(readiness.authorization.stage2_implementation_candidate, true);
   assert.equal(readiness.authorization.stage3_read_core, true);
   assert.equal(readiness.authorization.stage3_http_activation, false);
   assert.ok(readiness.stage2_go_conditions.length >= 5);

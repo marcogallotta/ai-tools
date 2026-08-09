@@ -1,23 +1,159 @@
 {
   "suite": "frontend-stage2-authentication",
-  "status": "scaffold-only-gate-a-blocked",
+  "status": "implementation-candidate-evidence-incomplete",
   "cases": [
-    {"id": "S2-HTTP-001", "level": "http", "blockers": ["A-01", "A-02"], "assertion": "Every frontend route is private-listener-only and returns 404 on the Action listener."},
-    {"id": "S2-HTTP-002", "level": "http", "blockers": ["A-01", "A-06"], "assertion": "Duplicate Host, Origin, contract, CSRF, or frontend-session values fail before authentication or application dispatch."},
-    {"id": "S2-HTTP-003", "level": "http", "blockers": ["A-01", "A-03"], "assertion": "Cross-origin, malformed, oversized, wrong-media-type, or throttled login requests cannot invoke Argon2 verification."},
-    {"id": "S2-AUTH-001", "level": "postgresql-integration", "blockers": ["A-03", "A-04", "A-09"], "assertion": "A correct password creates one fixed seven-day session only after durable limiter and security-audit updates succeed."},
-    {"id": "S2-AUTH-002", "level": "postgresql-integration", "blockers": ["A-03", "A-04"], "assertion": "Five peer failures and thirty global failures within fifteen minutes enforce the defined windows across ordinary restart."},
-    {"id": "S2-AUTH-003", "level": "postgresql-integration", "blockers": ["A-04"], "assertion": "Limiter read or outcome-write failure returns service_unavailable without verifying a password or issuing a cookie."},
-    {"id": "S2-SESSION-001", "level": "http", "blockers": ["A-03", "A-04", "A-06"], "assertion": "Login replacement atomically supersedes the represented old session and emits one unambiguous frontend cookie."},
-    {"id": "S2-SESSION-002", "level": "http", "blockers": ["A-03", "A-04"], "assertion": "Session bootstrap returns only expires_at, remaining_seconds, and csrf_proof and does not extend or replace authority."},
-    {"id": "S2-SESSION-003", "level": "restore-integration", "blockers": ["A-04", "A-05"], "assertion": "Ordinary restart preserves valid sessions while destructive restore or PITR cannot revive expired, revoked, or superseded sessions."},
-    {"id": "S2-SESSION-004", "level": "concurrency", "blockers": ["A-03", "A-04"], "assertion": "A protected response whose session becomes invalid before response release withholds protected payload."},
-    {"id": "S2-LOGOUT-001", "level": "http", "blockers": ["A-03", "A-04", "A-06"], "assertion": "Logout requires the represented lifecycle cookie plus exact CSRF proof and is idempotent after a lost successful response."},
-    {"id": "S2-LOGOUT-002", "level": "concurrency", "blockers": ["A-03", "A-04"], "assertion": "A stale logout response cannot revoke, clear, or overwrite a newer replacement login."},
-    {"id": "S2-BROWSER-001", "level": "playwright", "blockers": ["A-08"], "assertion": "Login, reload, fixed local expiry, explicit logout retry, and return-target restoration preserve concealment rules."},
-    {"id": "S2-BROWSER-002", "level": "playwright", "blockers": ["A-08"], "assertion": "Local logout or replacement clears active same-origin tabs within two seconds; page restore and suspension return bootstrap before reveal."},
-    {"id": "S2-SECURITY-001", "level": "http", "blockers": ["A-02", "A-06", "A-10"], "assertion": "CSP, no-store, nosniff, CORP, COOP, referrer, permissions, cookie, HTTPS, and redirect behavior match the closed runtime contract."},
-    {"id": "S2-OPENAPI-001", "level": "contract", "blockers": ["A-07"], "assertion": "Served frontend schema, generated client, implemented routes, cookie security scheme, CSRF header, and contract header remain synchronized without changing Action OpenAPI."},
-    {"id": "S2-PASSWORD-001", "level": "operator-integration", "blockers": ["A-09", "A-11"], "assertion": "Provisioning and rotation share Unicode-code-point bounds, reject configured-secret equality, store only Argon2id verifier state, and invalidate all sessions transactionally."}
+    {
+      "id": "S2-HTTP-001",
+      "level": "http",
+      "blockers": [
+        "A-01",
+        "A-02"
+      ],
+      "assertion": "Every frontend route is private-listener-only and returns 404 on the Action listener."
+    },
+    {
+      "id": "S2-HTTP-002",
+      "level": "http",
+      "blockers": [
+        "A-01",
+        "A-06"
+      ],
+      "assertion": "Duplicate Host, Origin, contract, CSRF, or frontend-session values fail before authentication or application dispatch."
+    },
+    {
+      "id": "S2-HTTP-003",
+      "level": "http",
+      "blockers": [
+        "A-01",
+        "A-03"
+      ],
+      "assertion": "Cross-origin, malformed, oversized, wrong-media-type, or throttled login requests cannot invoke Argon2 verification."
+    },
+    {
+      "id": "S2-AUTH-001",
+      "level": "postgresql-integration",
+      "blockers": [
+        "A-03",
+        "A-04",
+        "A-09"
+      ],
+      "assertion": "A correct password creates one fixed seven-day session only after durable limiter and security-audit updates succeed."
+    },
+    {
+      "id": "S2-AUTH-002",
+      "level": "postgresql-integration",
+      "blockers": [
+        "A-03",
+        "A-04"
+      ],
+      "assertion": "Five peer failures and thirty global failures within fifteen minutes enforce the defined windows across ordinary restart."
+    },
+    {
+      "id": "S2-AUTH-003",
+      "level": "postgresql-integration",
+      "blockers": [
+        "A-04"
+      ],
+      "assertion": "Limiter read or outcome-write failure returns service_unavailable without verifying a password or issuing a cookie."
+    },
+    {
+      "id": "S2-SESSION-001",
+      "level": "http",
+      "blockers": [
+        "A-03",
+        "A-04",
+        "A-06"
+      ],
+      "assertion": "Login replacement atomically supersedes the represented old session and emits one unambiguous frontend cookie."
+    },
+    {
+      "id": "S2-SESSION-002",
+      "level": "http",
+      "blockers": [
+        "A-03",
+        "A-04"
+      ],
+      "assertion": "Session bootstrap returns only expires_at, remaining_seconds, and csrf_proof and does not extend or replace authority."
+    },
+    {
+      "id": "S2-SESSION-003",
+      "level": "restore-integration",
+      "blockers": [
+        "A-04",
+        "A-05"
+      ],
+      "assertion": "Ordinary restart preserves valid sessions while destructive restore or PITR cannot revive expired, revoked, or superseded sessions."
+    },
+    {
+      "id": "S2-SESSION-004",
+      "level": "concurrency",
+      "blockers": [
+        "A-03",
+        "A-04"
+      ],
+      "assertion": "A protected response whose session becomes invalid before response release withholds protected payload."
+    },
+    {
+      "id": "S2-LOGOUT-001",
+      "level": "http",
+      "blockers": [
+        "A-03",
+        "A-04",
+        "A-06"
+      ],
+      "assertion": "Logout requires the represented lifecycle cookie plus exact CSRF proof and is idempotent after a lost successful response."
+    },
+    {
+      "id": "S2-LOGOUT-002",
+      "level": "concurrency",
+      "blockers": [
+        "A-03",
+        "A-04"
+      ],
+      "assertion": "A stale logout response cannot revoke, clear, or overwrite a newer replacement login."
+    },
+    {
+      "id": "S2-BROWSER-001",
+      "level": "playwright",
+      "blockers": [
+        "A-08"
+      ],
+      "assertion": "Login, reload, fixed local expiry, explicit logout retry, and return-target restoration preserve concealment rules."
+    },
+    {
+      "id": "S2-BROWSER-002",
+      "level": "playwright",
+      "blockers": [
+        "A-08"
+      ],
+      "assertion": "Local logout or replacement clears active same-origin tabs within two seconds; page restore and suspension return bootstrap before reveal."
+    },
+    {
+      "id": "S2-SECURITY-001",
+      "level": "http",
+      "blockers": [
+        "A-02",
+        "A-06",
+        "A-10"
+      ],
+      "assertion": "CSP, no-store, nosniff, CORP, COOP, referrer, permissions, cookie, HTTPS, and redirect behavior match the closed runtime contract."
+    },
+    {
+      "id": "S2-OPENAPI-001",
+      "level": "contract",
+      "blockers": [
+        "A-07"
+      ],
+      "assertion": "Served frontend schema, generated client, implemented routes, cookie security scheme, CSRF header, and contract header remain synchronized without changing Action OpenAPI."
+    },
+    {
+      "id": "S2-PASSWORD-001",
+      "level": "operator-integration",
+      "blockers": [
+        "A-09",
+        "A-11"
+      ],
+      "assertion": "Provisioning and rotation share Unicode-code-point bounds, reject configured-secret equality, store only Argon2id verifier state, and invalidate all sessions transactionally."
+    }
   ]
 }

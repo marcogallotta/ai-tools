@@ -25,6 +25,12 @@ from .leases import ServicePrincipal
 from .legacy_writer_fence import assert_legacy_writer_mutation_allowed
 from .command_spec import ACTION_COMMANDS, REPLAY_SAFE_COMMANDS, validate_action_request
 from .openapi import action_openapi
+from .frontend_http import (
+    dispatch_get as dispatch_frontend_get,
+    dispatch_post as dispatch_frontend_post,
+    is_frontend_get,
+    is_frontend_post,
+)
 
 LOG = logging.getLogger("dish.service")
 
@@ -90,11 +96,12 @@ class DishHTTPServer(ThreadingHTTPServer):
     daemon_threads = False
     block_on_close = True
 
-    def __init__(self, address, service: DishService, *, surface_mode: str = "combined"):
+    def __init__(self, address, service: DishService, *, surface_mode: str = "combined", frontend_runtime=None):
         if surface_mode not in {"combined", "private", "action"}:
             raise ValueError("invalid HTTP surface mode")
         self.service = service
         self.surface_mode = surface_mode
+        self.frontend_runtime = frontend_runtime
         self._stop_event = threading.Event()
         self._admission_lock = threading.Lock()
         self._pending_connections: set[socket.socket] = set()
@@ -190,6 +197,10 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             self.close_connection = True
 
     def log_message(self, fmt: str, *args: Any) -> None:
+        path = urlsplit(self.path).path
+        if is_frontend_get(path) or is_frontend_post(path):
+            LOG.info("frontend_http_request remote=%s status=%s", self.client_address[0], args[1] if len(args) > 1 else "unknown")
+            return
         LOG.info("http_request remote=%s message=%s", self.client_address[0], fmt % args)
 
     def _write_json(self, status: int, payload: Any) -> None:
@@ -332,6 +343,8 @@ class DishRequestHandler(BaseHTTPRequestHandler):
         return ServicePrincipal.from_values(credential.client_id, run_id)
 
     def do_GET(self) -> None:  # noqa: N802
+        if dispatch_frontend_get(self, self.server.frontend_runtime):
+            return
         path = urlsplit(self.path).path
         if path == "/health" and self.server.surface_mode != "action":
             payload = self.server.service.health()
@@ -344,6 +357,8 @@ class DishRequestHandler(BaseHTTPRequestHandler):
         self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
 
     def do_POST(self) -> None:  # noqa: N802
+        if dispatch_frontend_post(self, self.server.frontend_runtime):
+            return
         started = time.monotonic()
         self._request_body_consumed = False
         path = urlsplit(self.path).path
@@ -649,9 +664,12 @@ def build_server(service: DishService) -> DishHTTPServer:
     return DishHTTPServer((config.bind_host, config.port), service, surface_mode="combined")
 
 
-def build_private_server(service: DishService) -> DishHTTPServer:
+def build_private_server(service: DishService, *, frontend_runtime=None) -> DishHTTPServer:
     config = service.config
-    return DishHTTPServer((config.bind_host, config.port), service, surface_mode="private")
+    return DishHTTPServer(
+        (config.bind_host, config.port), service, surface_mode="private",
+        frontend_runtime=frontend_runtime,
+    )
 
 
 def build_action_server(service: DishService) -> DishHTTPServer:

@@ -3,8 +3,8 @@
   "gate": "B",
   "status": "implementation-in-progress-gate-b-pending",
   "checked_in_schema": {
-    "alembic_head": "0032_imported_operation_history",
-    "migration_file": "dish_pg/migrations/versions/0032_imported_operation_history.py",
+    "alembic_head": "0033_frontend_security",
+    "migration_file": "dish_pg/migrations/versions/0033_frontend_security.py",
     "production_status": "dark-launch-target-non-authoritative"
   },
   "eligibility_inputs_present": {
@@ -26,8 +26,12 @@
   },
   "attention_sources": {
     "isolated": {
-      "present": ["dish_tasks.existence_state"],
-      "exact_now": ["existence_state-isolated"],
+      "present": [
+        "dish_tasks.existence_state"
+      ],
+      "exact_now": [
+        "existence_state-isolated"
+      ],
       "unresolved": []
     },
     "lease_attention": {
@@ -44,50 +48,102 @@
         "relevant-actor-lease-state-expired",
         "relevant-actor-lease-state-active-but-past-evaluation-time"
       ],
-      "unresolved": ["invalid", "contested"]
+      "unresolved": [
+        "invalid",
+        "contested"
+      ]
     },
     "verification_attention": {
-      "present": ["human_review_requirements.route", "human_review_requirements.state"],
-      "exact_now": ["open-human-review-requirement"],
-      "unresolved": ["failed", "disputed"]
+      "present": [
+        "human_review_requirements.route",
+        "human_review_requirements.state"
+      ],
+      "exact_now": [
+        "open-human-review-requirement"
+      ],
+      "unresolved": [
+        "failed",
+        "disputed"
+      ]
     },
     "hold_attention": {
-      "present": ["evidence_holds.state", "human_review_requirements.route", "human_review_requirements.state"],
-      "exact_now": ["open-evidence-hold", "open-two-pass-hold-review"],
+      "present": [
+        "evidence_holds.state",
+        "human_review_requirements.route",
+        "human_review_requirements.state"
+      ],
+      "exact_now": [
+        "open-evidence-hold",
+        "open-two-pass-hold-review"
+      ],
       "unresolved": []
     },
     "recovery_required": {
-      "present": ["command_executions.status", "request_uncertainty_resolutions.request_id"],
-      "exact_now": ["task-scoped-uncertain-command-execution-without-resolution"],
-      "unresolved": ["equivalence-review-against-all-admin-recovery-paths"]
+      "present": [
+        "command_executions.status",
+        "request_uncertainty_resolutions.request_id"
+      ],
+      "exact_now": [
+        "task-scoped-uncertain-command-execution-without-resolution"
+      ],
+      "unresolved": [
+        "equivalence-review-against-all-admin-recovery-paths"
+      ]
     },
     "abandonment_active": {
-      "present": ["abandonment_attempts.state"],
-      "exact_now": ["preparing", "published", "blocked", "reconciling"],
+      "present": [
+        "abandonment_attempts.state"
+      ],
+      "exact_now": [
+        "preparing",
+        "published",
+        "blocked",
+        "reconciling"
+      ],
       "unresolved": []
     },
     "succession_active": {
-      "present": ["operation_succession_edges", "abandonment_attempts.state", "workflow_operations.lifecycle"],
-      "exact_now": ["published-abandonment-with-matching-open-successor-operation"],
+      "present": [
+        "operation_succession_edges",
+        "abandonment_attempts.state",
+        "workflow_operations.lifecycle"
+      ],
+      "exact_now": [
+        "published-abandonment-with-matching-open-successor-operation"
+      ],
       "unresolved": []
     },
     "projection_abnormal": {
-      "present": ["projection_drift_events.state", "projection_outbox_events.origin", "projection_outbox_events.state", "projection_outbox_events.created_at"],
-      "exact_now": ["open-drift", "live-blocked-outbox", "live-uncertain-outbox", "live-pending-or-claimed-outbox-older-than-configured-delay"],
-      "unresolved": ["accepted-delay-threshold", "full-reducer-precedence", "unavailable-readiness-source"]
+      "present": [
+        "projection_drift_events.state",
+        "projection_outbox_events.origin",
+        "projection_outbox_events.state",
+        "projection_outbox_events.created_at"
+      ],
+      "exact_now": [
+        "open-drift",
+        "live-blocked-outbox",
+        "live-uncertain-outbox",
+        "live-pending-or-claimed-outbox-older-than-configured-delay"
+      ],
+      "unresolved": [
+        "accepted-delay-threshold",
+        "full-reducer-precedence",
+        "unavailable-readiness-source"
+      ]
     }
   },
   "frontend_migration_requirements": {
-    "stage2": [
-      "frontend_security_generations",
-      "frontend_sessions",
-      "frontend_login_limiter_buckets",
-      "frontend_security_audit_events",
-      "frontend_password_state"
-    ],
+    "stage2": [],
     "stage3": [],
     "conditional": [
       "frontend_read_projection-if-query-plans-require-materialization"
+    ],
+    "stage2_present": [
+      "frontend_security_state",
+      "frontend_sessions",
+      "frontend_login_events",
+      "frontend_security_audit"
     ]
   },
   "stage3_read_core": {
@@ -108,7 +164,7 @@
     "normalization-and-database-collation-contract"
   ],
   "blockers": {
-    "B-01": "checked-in-0032-reconciled-production-remains-non-authoritative-dark-launch-target",
+    "B-01": "checked-in-0033-reconciled-frontend-security-only-production-remains-non-authoritative-dark-launch-target",
     "B-02": "frontend-board-query-candidate-implemented-review-pending",
     "B-03": "stateless-route-identity-candidate-implemented-review-pending",
     "B-04": "invalid-and-contested-lease-predicates-pending",

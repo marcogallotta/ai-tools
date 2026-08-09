@@ -98,6 +98,41 @@ fault, and recovery phases use explicit process barriers rather than timing slee
 execution. A local pass is recovery evidence for that exact corpus and build only, not a production
 RPO/RTO claim or production cutover authorization.
 
+## Private frontend authentication candidate
+
+Delivery Stage 2 now has a checked-in authentication/session implementation candidate. It remains
+**disabled by default** and does not itself pass Gate A or authorize public/private production exposure.
+Revision `0033_frontend_security` adds frontend-only password/session/limiter/audit support; it does not
+change task/workflow authority. PostgreSQL remains non-authoritative for task data during dark launch.
+
+The authenticated frontend reuses the existing private `DishHTTPServer`; the Action listener returns 404
+for frontend routes. Enabling authentication alone serves an authenticated fixture shell. Real Stage 3/4
+PostgreSQL observation reads require the separate `DISH_FRONTEND_POSTGRESQL_READS_ENABLED=1` activation and
+an explicitly approved `DISH_FRONTEND_PROJECTION_DELAY_SECONDS`.
+
+Before any enabled test deployment, populate the full frontend variable inventory from the environment-specific
+systemd example, apply the current migration head, create the restore fence outside PostgreSQL, and provision
+the password without placing it on a command line:
+
+```sh
+.venv/bin/alembic -c alembic.ini upgrade head
+export DISH_FRONTEND_RESTORE_FENCE_PATH=/home/marco/.local/state/dish/test/frontend-restore-fence
+scripts/dish-frontend-security fence-init
+# With DISH_FRONTEND_DATABASE_URL and the reviewed Argon2 policy variables exported:
+scripts/dish-frontend-security provision
+npm --prefix frontend run build
+```
+
+`provision` and `rotate-password` prompt twice through `getpass`; no plaintext password argument exists.
+`rotate-password` advances the frontend security generation and revokes every browser session.
+`rotate-restore-fence` advances the independently stored fence and also invalidates every session. A restored
+PostgreSQL database whose fence binding is stale therefore fails frontend startup/session validation closed.
+
+Do not enable `DISH_FRONTEND_ENABLED=1` until the dedicated HTTPS hostname/HSTS termination, production Argon2
+parameters, native PostgreSQL evidence, destructive restore/PITR evidence, browser lifecycle matrix, and
+independent Gate A review are accepted. See `docs/frontend-gate-a-readiness.md` and
+`docs/frontend-test-deployment-readiness.md`.
+
 ## Service-host configuration
 
 Start from `deploy/systemd/service-test.env.example` and `service-prod.env.example`. Each instance

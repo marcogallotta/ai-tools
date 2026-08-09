@@ -1,9 +1,9 @@
 # Frontend Stage 2 implementation checklist
 
-Status: prepared; execution blocked until Gate A passes.
+Status: implementation candidate present; Gate A acceptance and deployment evidence remain pending.
 
-This is the commit-planning checklist for real authentication. It is not an authorization to begin
-Stage 2 and contains no substitute persistence path.
+This checklist now tracks the checked-in Stage 2 authentication candidate and its remaining acceptance evidence.
+The implementation does not itself pass Gate A or authorize production exposure.
 
 ## 2A — configuration, admission, and private route framing
 
@@ -47,6 +47,8 @@ Exit evidence: `S2-BROWSER-*` and the complete Stage 2 Playwright matrix are gre
 
 ## Stage 2 handoff record
 
-Record exact migration head, build, Argon2 parameters, dedicated origin, restore-fence identity,
-accepted Gate A review, tests run, and any reopened dependency. Do not mark Stage 2 complete while a
-fixture transition can bypass server authentication.
+Record exact migration head, build, independently accepted Argon2 production parameters, dedicated origin,
+restore-fence identity, Gate A review, tests run, and any reopened dependency. The private runtime defaults
+to an authenticated fixture shell; PostgreSQL board/detail reads are a separate explicit activation. Do not
+mark Stage 2 complete until the native PostgreSQL, browser lifecycle, restore/PITR, HTTPS/HSTS, and independent
+review evidence required by Gate A is accepted.

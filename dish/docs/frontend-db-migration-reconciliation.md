@@ -1,7 +1,7 @@
 # Frontend database migration reconciliation
 
-Status: reconciled against checked-in Alembic head `0032_imported_operation_history`; PostgreSQL
-remains a non-authoritative dark-launch target and final production/runtime reconciliation remains pending.
+Status: reconciled against checked-in Alembic head `0033_frontend_security`; PostgreSQL remains a
+non-authoritative dark-launch target and final production/runtime reconciliation remains pending.
 
 This document turns Gate A/B database dependencies into a migration handoff. It records what the
 current Stage A PostgreSQL model already proves, what it cannot prove, and which frontend-owned support
@@ -10,8 +10,8 @@ state may be added without becoming task or workflow authority. The machine-read
 
 ## Reconciliation boundary
 
-The checked-in chain is `0001_stage_a_baseline` through
-`0032_imported_operation_history`. The database remains in dark-launch preparation and the migration
+The checked-in chain is `0001_stage_a_baseline` through `0033_frontend_security`. Revision `0033` adds
+frontend-only authentication/session support and does not change task/workflow authority. The database remains in dark-launch preparation and the migration
 contract does not claim authority cutover. Therefore:
 
 - schema statements here describe the checked-in production candidate, not live production;
@@ -69,16 +69,19 @@ These are frontend-owned support records, not additions to workflow authority.
 
 ### Stage 2 security support
 
-- `frontend_security_generations`: current global session-security generation and rotation evidence;
-- `frontend_sessions`: non-recoverable session verifier, fixed issue/expiry, revocation, generation,
-  and restore-fence binding;
-- `frontend_login_limiter_buckets`: durable peer/global failure-window state;
-- `frontend_security_audit_events`: bounded security outcomes without credentials or task content;
-- `frontend_password_state`: current Argon2 verifier metadata and security-generation binding, or an
-  equivalent transactionally rotatable owner.
+Revision `0033_frontend_security` now provides the accepted implementation candidate shape:
 
-The restore fence itself cannot live solely in the restored PostgreSQL database. The migration must
-store only its binding to an independently current value.
+- `frontend_security_state`: singleton current Argon2id verifier, monotonic frontend security generation,
+  and hash binding to the independently current restore fence;
+- `frontend_sessions`: non-recoverable token verifier, fixed issue/expiry, revocation, generation, peer
+  digest, and restore-fence binding;
+- `frontend_login_events`: durable bounded login outcomes used to reconstruct the fixed peer/global
+  throttling windows across ordinary restart;
+- `frontend_security_audit`: bounded security lifecycle/admin evidence without plaintext credentials or
+  protected task content.
+
+The restore fence itself remains outside PostgreSQL; `0033` stores only its SHA-256 binding. Native PostgreSQL,
+destructive-restore/PITR, and independent Gate A evidence remain required before acceptance.
 
 ### Stage 3 read support
 
@@ -138,7 +141,7 @@ Before Gate B review, fill in:
 - exact source commit/release:
 - production-change ledger closed through:
 - target environment schema fingerprint:
-- Stage 2 frontend support migration revision:
+- Stage 2 frontend support migration revision: `0033_frontend_security` (implementation candidate; Gate A acceptance pending)
 - Stage 3 frontend support migration revision: none currently required
 - accepted activation decisions 1–7 above:
 - final indexes and query-plan evidence location:

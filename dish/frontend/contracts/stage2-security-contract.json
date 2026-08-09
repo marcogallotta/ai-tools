@@ -1,16 +1,19 @@
 {
   "contract_version": "dish-frontend-v1",
   "gate": "A",
-  "status": "design-closed-implementation-blocked",
+  "status": "implementation-candidate-gate-a-not-passed",
   "route_families": {
     "unauthenticated": [
       "GET /login",
-      "GET /frontend/assets/{asset}",
+      "GET /assets/{asset}",
+      "GET /styles/{asset}",
+      "GET /js/{asset}",
       "POST /frontend/login"
     ],
     "protected_html": [
       "GET /",
-      "GET /task/{task_id}"
+      "GET /tasks/{task_id}/{slug}",
+      "GET /task/{fixture_id}"
     ],
     "protected_api": [
       "GET /frontend/session",
@@ -112,17 +115,17 @@
     "api_redirects": "rejected"
   },
   "blockers": {
-    "A-01": "design-closed-code-pending",
-    "A-02": "design-closed-code-pending",
-    "A-03": "partially-design-closed-code-and-db-pending",
-    "A-04": "database-migration-pending",
-    "A-05": "external-restore-fence-design-pending",
-    "A-06": "design-closed-code-pending",
-    "A-07": "design-closed-code-pending",
-    "A-08": "design-closed-code-pending",
-    "A-09": "dependency-and-tuning-review-pending",
-    "A-10": "deployment-provisioning-pending",
-    "A-11": "design-closed-code-and-db-pending",
+    "A-01": "implementation-candidate-review-pending",
+    "A-02": "implementation-candidate-review-pending",
+    "A-03": "implementation-candidate-native-evidence-pending",
+    "A-04": "0033-migration-candidate-native-evidence-pending",
+    "A-05": "restore-fence-implementation-candidate-destructive-restore-evidence-pending",
+    "A-06": "implementation-candidate-review-pending",
+    "A-07": "implementation-candidate-schema-sync-review-pending",
+    "A-08": "implementation-candidate-browser-matrix-pending",
+    "A-09": "argon2-dependency-pinned-production-parameters-review-pending",
+    "A-10": "deployment-provisioning-tls-hsts-pending",
+    "A-11": "password-admin-implementation-candidate-native-evidence-pending",
     "A-12": "independent-review-pending"
   }
 }

@@ -10,7 +10,7 @@ This document describes the PostgreSQL replacement architecture and current migr
 
 ## Authoritative implementation
 
-Current anchors include PostgreSQL models/migrations under `dish_pg/`, `dish_pg/command_port.py`, `dish_pg/postgres_service.py`, `dish_pg/transition.py`, workers, and release/cutover services. The current schema head includes `0032_imported_operation_history.py`.
+Current anchors include PostgreSQL models/migrations under `dish_pg/`, `dish_pg/command_port.py`, `dish_pg/postgres_service.py`, `dish_pg/transition.py`, workers, and release/cutover services. The current schema head includes `0033_frontend_security.py`, following `0032_imported_operation_history.py`; the latter remains the current task/workflow-history migration anchor.
 
 ## Actors, processes, and stores
 

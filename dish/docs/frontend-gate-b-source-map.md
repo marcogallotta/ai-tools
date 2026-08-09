@@ -6,7 +6,7 @@
 
 This packet maps the approved frontend fields against the current PostgreSQL models, read surfaces,
 and frontend contracts. It is reconciled to checked-in Alembic head
-`0032_imported_operation_history`. PostgreSQL remains a non-authoritative dark-launch target: the
+`0033_frontend_security`. PostgreSQL remains a non-authoritative dark-launch target: the
 frontend read core may be implemented and exercised locally against it without transferring authority.
 Gate B still must pass before the Stage 3 production/private HTTP/browser surface is activated. A
 read-only Stage 4 detail/deep-link candidate may be exercised only through the same explicit
@@ -33,7 +33,7 @@ than inferred.
 - Fixture frontend DTO shapes, notice registry, detail fixtures, and frontend OpenAPI document.
 
 The current checked-in models are treated as design evidence, not proof that the same schema is live in
-production. This map is reconciled to checked-in head `0032_imported_operation_history`; final
+production. This map is reconciled to checked-in head `0033_frontend_security`; final
 production rollout reconciliation and independent Gate B review remain mandatory before production/private
 HTTP/browser activation.
 
@@ -41,7 +41,7 @@ HTTP/browser activation.
 
 | ID | Finding | Required resolution |
 |---|---|---|
-| B-01 | The map is reconciled to checked-in Alembic head `0032_imported_operation_history`, while PostgreSQL remains a non-authoritative dark-launch target rather than production authority. | Reconcile again to the exact deployed dark-launch schema/runtime evidence before production/private HTTP/browser activation; authority transfer is not required for read-only use. |
+| B-01 | The map is reconciled to checked-in Alembic head `0033_frontend_security`, whose added tables are frontend-only security support, while PostgreSQL remains a non-authoritative dark-launch target rather than production authority. | Reconcile again to the exact deployed dark-launch schema/runtime evidence before production/private HTTP/browser activation; authority transfer is not required for read-only use. |
 | B-02 | A frontend-owned set-oriented board query candidate now exists in `dish_pg/frontend_board_query.py`; it is exposed only through the separately scoped loopback local observation harness, not the production/private frontend service, and it lacks native PostgreSQL plan/isolation evidence. | Review the query against native PostgreSQL, record bounded plans/isolation, and keep it read-only/no-network. |
 | B-03 | Stateless typed/environment-scoped route identities now exist in `dish_service/frontend_tokens.py`; secret lifetime/rotation is not yet accepted. | Review secret lifecycle, collision/bounds evidence, and deployment ownership before HTTP activation. |
 | B-04 | The English terms **invalid lease** and **contested lease** still have no exact named PostgreSQL predicate. The candidate query emits only durable expired-lease attention for the latest actor attempt on the current open operation. | Name durable predicates or amend the approved meaning; do not broaden non-active lease states heuristically. |

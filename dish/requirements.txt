@@ -3,3 +3,4 @@ SQLAlchemy==2.0.50
 alembic==1.18.4
 psycopg[binary]==3.2.9
 pydantic==2.13.4
+argon2-cffi==25.1.0

@@ -26,8 +26,37 @@ const SERVER_ERROR_CODES = new Set([
   "internal_error",
 ]);
 
+
+const LOGIN_ERROR_CODES = Object.freeze({
+  401: new Set(["login_invalid"]),
+  403: new Set(["client_update_required", "origin_rejected"]),
+  415: new Set(["media_type_unsupported"]),
+  422: new Set(["request_invalid"]),
+  429: new Set(["login_throttled"]),
+  503: new Set(["service_unavailable", "internal_error"]),
+});
+
+const SESSION_ERROR_CODES = Object.freeze({
+  400: new Set(["request_invalid"]),
+  401: new Set(["auth_required", "session_expired", "session_revoked"]),
+  403: new Set(["client_update_required", "origin_rejected"]),
+  422: new Set(["request_invalid"]),
+  503: new Set(["session_unavailable", "internal_error"]),
+});
+
+const LOGOUT_ERROR_CODES = Object.freeze({
+  401: new Set(["auth_required", "session_expired", "session_revoked"]),
+  403: new Set(["client_update_required", "origin_rejected", "csrf_rejected"]),
+  415: new Set(["media_type_unsupported"]),
+  422: new Set(["request_invalid"]),
+  503: new Set(["logout_unavailable", "session_unavailable", "internal_error"]),
+});
+
 const BOARD_ERROR_CODES = Object.freeze({
-  403: new Set(["client_update_required"]),
+  400: new Set(["request_invalid"]),
+  401: new Set(["auth_required", "session_expired", "session_revoked"]),
+  403: new Set(["client_update_required", "origin_rejected"]),
+  422: new Set(["request_invalid"]),
   503: new Set([
     "board_configuration_invalid",
     "board_capacity_exceeded",
@@ -38,8 +67,10 @@ const BOARD_ERROR_CODES = Object.freeze({
 
 const SECTION_ERROR_CODES = Object.freeze({
   400: new Set(["request_invalid", "cursor_invalid"]),
-  403: new Set(["client_update_required"]),
+  401: new Set(["auth_required", "session_expired", "session_revoked"]),
+  403: new Set(["client_update_required", "origin_rejected"]),
   409: new Set(["cursor_stale"]),
+  422: new Set(["request_invalid"]),
   503: new Set([
     "board_configuration_invalid",
     "board_capacity_exceeded",
@@ -50,9 +81,11 @@ const SECTION_ERROR_CODES = Object.freeze({
 
 const DETAIL_ERROR_CODES = Object.freeze({
   400: new Set(["request_invalid"]),
-  403: new Set(["client_update_required"]),
+  401: new Set(["auth_required", "session_expired", "session_revoked"]),
+  403: new Set(["client_update_required", "origin_rejected"]),
   404: new Set(["task_not_found"]),
   409: new Set(["task_ineligible"]),
+  422: new Set(["request_invalid"]),
   503: new Set(["detail_capacity_exceeded", "service_unavailable", "internal_error"]),
 });
 
@@ -98,8 +131,8 @@ function validateErrorEnvelope(payload, status, errorCodesByStatus) {
   if (error.retry_after_seconds !== undefined) {
     if (error.code !== "login_throttled"
       || !Number.isInteger(error.retry_after_seconds)
-      || error.retry_after_seconds < 0
-      || error.retry_after_seconds > 3600) {
+      || error.retry_after_seconds < 1
+      || error.retry_after_seconds > 900) {
       throw new FrontendContractMismatch();
     }
   }
@@ -133,6 +166,25 @@ export class FrontendHttpClient {
   constructor({ fetchImpl = globalThis.fetch } = {}) {
     const transport = new FrontendApiTransport({ fetchImpl });
     this.client = new GeneratedFrontendClient(transport);
+  }
+
+  async login(password) {
+    return readFrontendJson(await this.client.frontendLogin({ body: { password } }), {
+      errorCodesByStatus: LOGIN_ERROR_CODES,
+    });
+  }
+
+  async session() {
+    return readFrontendJson(await this.client.getFrontendSession(), {
+      errorCodesByStatus: SESSION_ERROR_CODES,
+    });
+  }
+
+  async logout(csrfProof) {
+    return readFrontendJson(await this.client.frontendLogout({
+      body: {},
+      headers: { "X-Dish-CSRF": csrfProof },
+    }), { errorCodesByStatus: LOGOUT_ERROR_CODES });
   }
 
   async board() {

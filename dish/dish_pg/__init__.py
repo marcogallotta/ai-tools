@@ -8,6 +8,7 @@ from .database import DatabaseSettings, create_database_engine, session_factory,
 from . import stage3_models as stage3_models  # register Stage 3 metadata
 from . import stage5_models as stage5_models  # register Stage 5 metadata
 from . import stage6_models as stage6_models  # register Stage 6 metadata
+from . import frontend_security_models as frontend_security_models  # register frontend security metadata
 from . import reservation_models as reservation_models  # register exact first-request authority
 from .services import CoreAuthorityService, ImportedTaskResult, ImportedTaskSpec
 from .command_port import CommandCall, CommandResult, PostgresCommandPort
@@ -47,6 +48,7 @@ __all__ = [
     "stage3_models",
     "stage5_models",
     "stage6_models",
+    "frontend_security_models",
     "reservation_models",
 ]
 

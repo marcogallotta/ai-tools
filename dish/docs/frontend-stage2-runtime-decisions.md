@@ -1,12 +1,12 @@
 # Frontend Stage 2 runtime decisions
 
-Status: implementation-local design closed; Stage 2 remains blocked by Gate A.
+Status: implementation candidate present; Gate A remains unpassed pending acceptance/deployment evidence.
 
 This document records the pre-database engineering choices that were left implementation-local by
 `frontend-imp.md`. The machine-readable counterpart is
-`../frontend/contracts/stage2-security-contract.json`. These decisions do not claim that authentication
-exists, do not pass Gate A, and do not waive any database, restore-fence, cryptographic, deployment, or
-independent-review requirement.
+`../frontend/contracts/stage2-security-contract.json`. The checked-in implementation now follows these decisions, but that implementation does not pass Gate A
+and does not waive native PostgreSQL, destructive-restore, cryptographic-parameter, browser-matrix, deployment,
+or independent-review requirements.
 
 ## Route and listener ownership
 
@@ -15,9 +15,10 @@ shutdown lifecycle is permitted.
 
 The initial route grammar is:
 
-- unauthenticated: `GET /login`, versioned files below `GET /frontend/assets/`, and
-  `POST /frontend/login`;
-- protected HTML: `GET /` and `GET /task/{task_id}`;
+- unauthenticated: `GET /login`, versioned/public files below `GET /assets/`, `GET /styles/`, and
+  `GET /js/`, plus `POST /frontend/login`;
+- protected HTML: `GET /`, canonical Stage 4 `GET /tasks/{opaque_task_route}/{decorative_slug}`, and the
+  authenticated fixture-only `GET /task/{fixture_id}` review path;
 - protected API: the six operations in `frontend/openapi/frontend.openapi.json` plus
   `GET /openapi/frontend.json`;
 - lifecycle exception: `POST /frontend/logout`, which may only revoke or confirm cleanup for the
@@ -103,13 +104,18 @@ not duplicated as proof that plaintext service access is safe.
 
 ## What remains blocked
 
-The following are not resolved by this document:
+The checked-in candidate now includes the PostgreSQL support migration, persistent limiter/session/audit
+records, external restore-fence binding, Argon2id dependency and verifier, guarded password administration,
+private-listener admission/response handling, and browser lifecycle implementation. The following remain
+acceptance/deployment blockers:
 
-- frontend session, limiter, security-generation, audit, and password-rotation persistence;
-- a restore/PITR fence that cannot be rolled back with PostgreSQL;
-- Argon2 dependency pinning and accepted production parameters;
-- route/parser/response implementation and browser lifecycle code;
+- native PostgreSQL migration/authentication evidence and restart/transaction evidence;
+- destructive restore/PITR evidence proving the independently current fence prevents revival;
+- independently accepted production Argon2 parameters;
+- the complete browser concurrency/lifecycle matrix, including real HTTPS cookie behavior;
 - actual dedicated-hostname/TLS/HSTS deployment;
 - independent Gate A review.
 
-Stage 2 may begin only after those items and every Gate A entry condition are satisfied.
+`DISH_FRONTEND_ENABLED` remains disabled by default. Enabling authentication does not automatically enable
+Stage 3/4 PostgreSQL observation reads; those require the separate
+`DISH_FRONTEND_POSTGRESQL_READS_ENABLED` activation and its still-gated read-surface configuration.

@@ -7,14 +7,15 @@
 This packet was prepared against the current `frontend.md`, `frontend-imp.md`, service runtime,
 PostgreSQL model set, deployment examples, frontend OpenAPI document, and fixture frontend. Gate A
 still requires an independent reviewer who did not author the implementation. It also has the
-material readiness findings listed below; Delivery Stage 2 must not begin until they are resolved and
-the reviewer records acceptance in `frontend-gate-a-review.md`.
+material acceptance/deployment findings listed below. A Stage 2 implementation candidate is now checked in,
+but it is not accepted for production exposure until those findings are resolved and the reviewer records
+acceptance in `frontend-gate-a-review.md`.
 
 Prepared against the repository state containing Delivery Stages 0 and 1A–1F. The pre-database
 implementation-local runtime decisions are recorded in `frontend-stage2-runtime-decisions.md` and
-`../frontend/contracts/stage2-security-contract.json`. The pending PostgreSQL production migration is
-treated as unfinished. This packet does not assume that currently checked-in
-PostgreSQL models are already the deployed production authority.
+`../frontend/contracts/stage2-security-contract.json`. Revision `0033_frontend_security` is now the checked-in
+frontend support migration candidate. This packet does not assume that the migration has native/deployed
+acceptance or that currently checked-in PostgreSQL models are the production task/workflow authority.
 
 ## Evidence inspected
 
@@ -36,21 +37,22 @@ PostgreSQL models are already the deployed production authority.
 
 | ID | Finding | Required resolution before Stage 2 |
 |---|---|---|
-| A-01 | Canonical-origin, no-forwarded-trust, and request-order decisions are now closed in `frontend-stage2-runtime-decisions.md`; no validating configuration or admission code exists yet. | Add validated environment configuration and the singleton-header admission component, then prove the recorded order and rejection behavior. |
-| A-02 | Route ownership and the frontend security-header policy are now closed in the Stage 2 runtime decisions; the service still has no implementing routes, static/HTML delivery, or response writer. | Add frontend routing under the existing private `DishHTTPServer`; prove the Action listener returns 404 for every frontend route and schema path. |
-| A-03 | Only bearer-token authentication exists. There is no Argon2id verifier dependency, shared-password provisioning/rotation path, cookie parser, session principal, CSRF proof, or browser lifecycle service. | Add pinned Argon2id support and the complete frontend authentication application boundary. |
-| A-04 | No frontend session, security-generation, throttling, or frontend-security-audit persistence exists in the checked-in PostgreSQL model set. | Finalize and migrate frontend-owned support tables against the target PostgreSQL authority before Stage 2 integration. |
-| A-05 | The required destructive-restore/PITR invalidation fence is not designed. Restoring session rows could otherwise revive superseded authority. | Select and test a restore-safe generation/fence whose current value cannot be rolled back solely by restoring PostgreSQL. |
-| A-06 | Frontend request ordering, singleton values, cookie behavior, and response headers are now specified in the Stage 2 runtime decisions, but the service still has only the generic JSON writer. | Add a frontend response writer and request parser separate from existing agent/admin/Action envelopes. |
-| A-07 | The Stage 0 frontend OpenAPI file and generated client are checked only inside `frontend/`; the service neither serves nor synchronizes that document. | Add private-session-protected schema serving and a repository synchronization test while leaving the Action generator unchanged. |
-| A-08 | The browser has only fixture shell state. It has no session bootstrap, safe fixed-expiry calculation, concealment boundary, logout retry state, or cross-tab invalidation. | Implement the Stage 2 browser session modules and browser acceptance cases after server readiness is complete. |
-| A-09 | The current dependency set contains no Argon2 implementation. | Pin an approved library and checked startup parameter floor/ceiling; add dependency and operational-cost tests. |
-| A-10 | The initial dedicated-origin and no-forwarded-trust posture is decided, but production hostname, HTTPS/HSTS termination, and deployment wiring are not provisioned or represented in operational evidence. | Add environment examples and deployment contract before any production-shaped auth test is accepted. |
-| A-11 | No password provisioning/rotation operator command exists, and no checked-in password-length/counting rule is shared with login validation. | Add one guarded operator path; reject equality with every configured secret and invalidate all sessions transactionally. |
+| A-01 | Validated canonical-origin configuration, no-forwarded-trust admission, bounded singleton/header/body parsing, and request ordering now have an implementation candidate. | Complete independent review and production-shaped admission evidence. |
+| A-02 | Private-listener frontend routing/static delivery/response security headers now have an implementation candidate; Action-listener isolation has focused HTTP coverage. | Complete regression/production-shaped isolation and response-header evidence. |
+| A-03 | The Argon2id shared-password/session/CSRF application boundary now exists as an implementation candidate and remains separate from bearer-token auth. | Complete native PostgreSQL, concurrency, restart, and independent security review evidence. |
+| A-04 | `0033_frontend_security` adds frontend-only security state, sessions, durable login events, and security audit persistence. | Certify the migration and lifecycle against native PostgreSQL and accept the support-state shape. |
+| A-05 | An owner-only external restore-fence file is now bound by hash into PostgreSQL security state and session validation fails closed on mismatch. | Prove destructive restore/PITR cannot revive session authority; independently review permissions/update/failure behavior. |
+| A-06 | A dedicated frontend parser/response writer now implements the closed request/error/cookie/header contract. | Complete ambiguity, malformed-input, cache, and production-shaped transport review. |
+| A-07 | The private authenticated runtime now serves the bounded frontend OpenAPI document and the generated client remains independently synchronized; Action OpenAPI remains unchanged. | Complete served-schema/runtime synchronization and isolation review. |
+| A-08 | Browser bootstrap, fixed-expiry concealment, logout retry, page-restore/suspension revalidation, opaque returns, and ephemeral cross-tab signalling now have an implementation candidate. | Complete the real HTTPS/Playwright multi-tab and lifecycle acceptance matrix. |
+| A-09 | `argon2-cffi` is pinned and startup validates an explicitly configured Argon2id policy without inventing production values. | Independently review/approve production time, memory, parallelism, hash, and salt parameters and operational cost. |
+| A-10 | Runtime configuration is fail-closed and environment examples keep frontend auth disabled by default. | Provision and verify the dedicated HTTPS hostname, HSTS termination, canonical origin, owner-only secrets/fence, and production deployment wiring. |
+| A-11 | `scripts/dish-frontend-security` now provides guarded fence initialization, password provisioning/rotation, and restore-fence rotation using the shared password bounds and global session invalidation. | Complete native/operator review and recovery/runbook evidence. |
 | A-12 | Independent Gate A review has not occurred. | A reviewer must verify every row and finding against current code, then record pass or required changes. |
 
-No code in Stages 0–1 is treated as security enforcement. The fixture review boundary is useful for
-visual review but is not a substitute for server authorization.
+No code in Stages 0–1 is treated as security enforcement. The new Stage 2 candidate is the security
+enforcement path, but its fixture mode and implementation status are not substitutes for Gate A acceptance
+or production HTTPS/deployment evidence.
 
 ## Authentication and runtime map
 
@@ -67,11 +69,11 @@ visual review but is not a substitute for server authorization.
 | Existing request limit | `DishRequestHandler._read_json()` bounds Content-Length and rejects malformed JSON/duplicates. | Reuse concepts, not the existing command envelope. Frontend schemas need their own smaller route-specific bounds and errors. |
 | Existing service readiness | `_run_configured_service()` validates configuration and calls `startup_check()` before listener construction. | Frontend origin, Argon2 parameters, security material, persistence, and restore fence join startup readiness. |
 
-### New server ownership proposed for Stage 2
+### Stage 2 server ownership candidate
 
-The following paths are proposed implementation boundaries, not existing capabilities:
+The following paths are now checked-in implementation boundaries pending Gate A acceptance:
 
-| Proposed module | Sole responsibility |
+| Candidate module | Sole responsibility |
 |---|---|
 | `dish_service/frontend_http.py` | Private-listener route recognition, frontend request/response framing, static/HTML delivery, security headers, and API dispatch. |
 | `dish_service/frontend_admission.py` | Canonical authority, Host, Origin, fetch metadata, singleton security headers/cookies, contract version, media type, and route body bounds before expensive work. |

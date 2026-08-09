@@ -66,10 +66,15 @@ function localErrorMessage(error) {
 
 export async function renderLocalPostgresqlBoard(
   root,
-  { fetchImpl = globalThis.fetch, initialTaskId = null } = {},
+  {
+    fetchImpl = globalThis.fetch,
+    initialTaskId = null,
+    prototypeLabel = "LOCAL POSTGRESQL — NON-AUTHORITATIVE",
+    onAuthenticationLost = () => false,
+  } = {},
 ) {
   const client = new FrontendHttpClient({ fetchImpl });
-  const { shell, main, noticeHost } = createApplicationFrame({ prototypeLabel: "LOCAL POSTGRESQL — NON-AUTHORITATIVE" });
+  const { shell, main, noticeHost } = createApplicationFrame({ prototypeLabel });
   const live = document.createElement("p");
   live.className = "sr-only"; live.setAttribute("aria-live", "polite"); shell.append(live);
   root.replaceChildren(shell); root.dataset.shellState = "local-postgresql-loading";
@@ -117,6 +122,7 @@ export async function renderLocalPostgresqlBoard(
       root.dataset.shellState = "local-postgresql-detail";
     } catch (error) {
       if (!requestState.isCurrentDetail(request)) return;
+      if (onAuthenticationLost(error)) return;
       if (error instanceof FrontendApiError && ["task_not_found", "task_ineligible"].includes(error.code)) {
         normalizeBoardRoute("replace");
         closeDetailForRoute({ restoreFocus: false });
@@ -149,6 +155,7 @@ export async function renderLocalPostgresqlBoard(
           live.textContent = `${page.cards.length} tasks added to ${currentSection.label}`;
         } catch (error) {
           if (!requestState.currentContinuationSection(request, board)) return;
+          if (onAuthenticationLost(error)) return;
           if (error instanceof FrontendApiError && ["cursor_invalid", "cursor_stale", "request_invalid"].includes(error.code)) {
             await loadBoard(); live.textContent = "The board was refreshed because the continuation cursor changed."; return;
           }
@@ -168,6 +175,7 @@ export async function renderLocalPostgresqlBoard(
       board = nextBoard; renderCurrent();
     } catch (error) {
       if (!requestState.isCurrentBootstrap(generation)) return;
+      if (onAuthenticationLost(error)) return;
       renderNotices(noticeHost, []); renderInitialErrorState(main, loadBoard, { description: localErrorMessage(error) });
       root.dataset.shellState = "local-postgresql-error";
     }

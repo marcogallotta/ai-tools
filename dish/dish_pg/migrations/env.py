@@ -9,6 +9,7 @@ from dish_pg.models import Base
 from dish_pg import stage3_models  # noqa: F401 -- register Stage 3 metadata
 from dish_pg import stage5_models  # noqa: F401 -- register Stage 5 metadata
 from dish_pg import stage6_models  # noqa: F401 -- register Stage 6 metadata
+from dish_pg import frontend_security_models  # noqa: F401 -- register frontend security metadata
 from dish_pg import reservation_models  # noqa: F401 -- register first-request reservation metadata
 from dish_pg import artifact_identity_models  # noqa: F401 -- register writer-fence artifact metadata
 from dish_pg import candidate_manifest_models  # noqa: F401 -- register candidate manifest metadata

@@ -1,0 +1,56 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import os
+import sys
+from pathlib import Path
+
+from dish_service.frontend_security import FrontendSecurityConfigurationError, create_restore_fence
+from dish_tool.frontend_password_admin import (
+    FrontendPasswordAdminSettings,
+    prompt_password,
+    provision,
+    rotate_password,
+    rotate_restore_fence,
+)
+
+
+def parser() -> argparse.ArgumentParser:
+    result = argparse.ArgumentParser(description="Provision or rotate private Dish frontend security state.")
+    sub = result.add_subparsers(dest="command", required=True)
+    sub.add_parser("fence-init", help="create the external restore fence before initial provisioning")
+    sub.add_parser("provision", help="provision the initial Argon2id shared-password verifier")
+    sub.add_parser("rotate-password", help="rotate the password and invalidate every frontend session")
+    sub.add_parser("rotate-restore-fence", help="advance the external restore fence and invalidate every session")
+    return result
+
+
+def main(argv=None) -> int:
+    args = parser().parse_args(argv)
+    try:
+        if args.command == "fence-init":
+            raw_path = str(os.environ.get("DISH_FRONTEND_RESTORE_FENCE_PATH", ""))
+            if not raw_path or raw_path != raw_path.strip():
+                raise FrontendSecurityConfigurationError("DISH_FRONTEND_RESTORE_FENCE_PATH is required without surrounding whitespace")
+            create_restore_fence(Path(raw_path).expanduser())
+            print("frontend restore fence created")
+            return 0
+        settings = FrontendPasswordAdminSettings.from_mapping(os.environ)
+        if args.command == "provision":
+            provision(settings, prompt_password())
+            print("frontend password provisioned")
+        elif args.command == "rotate-password":
+            generation = rotate_password(settings, prompt_password())
+            print(f"frontend password rotated; security generation={generation}")
+        else:
+            generation = rotate_restore_fence(settings)
+            print(f"frontend restore fence rotated; security generation={generation}")
+    except FrontendSecurityConfigurationError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

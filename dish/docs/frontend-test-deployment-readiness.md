@@ -1,10 +1,10 @@
 # Frontend test deployment readiness
 
-Status: checklist prepared; no authenticated frontend is deployable yet.
+Status: Stage 2 implementation candidate present; test deployment remains blocked on Gate A evidence.
 
-This checklist owns the first test-environment deployment after Gate A and the required PostgreSQL
-support migration are available. It does not authorize production exposure and must not be applied to
-the current fixture-only build as though it provided security.
+This checklist owns the first test-environment deployment after Gate A acceptance. The checked-in
+`0033_frontend_security` migration and authentication candidate provide the implementation surface, but
+this checklist does not authorize production exposure or treat unreviewed code as accepted security.
 
 ## Required topology
 
@@ -21,7 +21,7 @@ pass.
 
 ## Configuration inventory
 
-The Stage 2 implementation will require validated configuration for:
+The Stage 2 implementation candidate requires validated configuration for:
 
 - canonical `DISH_FRONTEND_ORIGIN`;
 - Argon2id verifier plus approved memory, time, and parallelism limits;

@@ -114,3 +114,24 @@ test("task detail errors are status-bound", async () => {
   });
   await assert.rejects(wrong.taskDetail("r1t-safe"), FrontendContractMismatch);
 });
+
+
+test("authentication client keeps password and CSRF in request bodies/headers only", async () => {
+  const calls = [];
+  const client = new FrontendHttpClient({
+    fetchImpl: async (path, options) => {
+      calls.push({ path, options });
+      if (path === "/frontend/session") return response({ expires_at: "2026-08-16T08:00:00Z", remaining_seconds: 10, csrf_proof: "A".repeat(43) });
+      return response({});
+    },
+  });
+  await client.login("shared-password-value");
+  await client.session();
+  await client.logout("csrf-proof-value");
+  assert.equal(calls[0].path, "/frontend/login");
+  assert.equal(calls[0].options.body, JSON.stringify({ password: "shared-password-value" }));
+  assert.equal(calls[1].path, "/frontend/session");
+  assert.equal(calls[2].path, "/frontend/logout");
+  assert.equal(calls[2].options.headers["X-Dish-CSRF"], "csrf-proof-value");
+  assert.equal(calls[2].options.body, "{}");
+});

@@ -17,6 +17,8 @@ from .application import DishService
 from .config import ServiceConfig
 from .database_ownership import ServiceDatabaseOwnership, database_process_lock_path
 from .http import DishHTTPServer, build_action_server, build_private_server
+from .frontend_private_runtime import FrontendPrivateRuntime
+from .frontend_settings import FrontendRuntimeSettings
 from .process_lock import DatabaseProcessLock
 from .sd_notify import notify as sd_notify
 from dish_tool.errors import DishRuleError
@@ -155,8 +157,12 @@ def _signal_handler(stop_event: threading.Event):
     return handle
 
 
-def _build_servers(service: DishService) -> tuple[DishHTTPServer, DishHTTPServer]:
-    private_server = build_private_server(service)
+def _build_servers(service: DishService, *, frontend_runtime=None) -> tuple[DishHTTPServer, DishHTTPServer]:
+    private_server = (
+        build_private_server(service)
+        if frontend_runtime is None
+        else build_private_server(service, frontend_runtime=frontend_runtime)
+    )
     try:
         action_server = build_action_server(service)
     except Exception:
@@ -180,23 +186,36 @@ def _run_configured_service(config: ServiceConfig) -> int:
                 "Asana health check failed; mutation endpoints will remain fail-closed"
             )
 
-        private_server, action_server = _build_servers(service)
-
-        stop_event = threading.Event()
-        handler = _signal_handler(stop_event)
-        previous: dict[int, Any] = {}
-        for signum in (signal.SIGTERM, signal.SIGINT):
-            previous[signum] = signal.getsignal(signum)
-            signal.signal(signum, handler)
+        frontend_runtime = None
         try:
-            return _run_servers(
-                private_server,
-                action_server,
-                stop_event=stop_event,
+            frontend_settings = FrontendRuntimeSettings.from_mapping(
+                os.environ, dish_root=Path(__file__).resolve().parents[1]
             )
+            if frontend_settings.enabled:
+                frontend_runtime = FrontendPrivateRuntime(frontend_settings)
+                frontend_runtime.startup_check()
+
+            private_server, action_server = _build_servers(
+                service, frontend_runtime=frontend_runtime
+            )
+            stop_event = threading.Event()
+            handler = _signal_handler(stop_event)
+            previous: dict[int, Any] = {}
+            for signum in (signal.SIGTERM, signal.SIGINT):
+                previous[signum] = signal.getsignal(signum)
+                signal.signal(signum, handler)
+            try:
+                return _run_servers(
+                    private_server,
+                    action_server,
+                    stop_event=stop_event,
+                )
+            finally:
+                for signum, prior in previous.items():
+                    signal.signal(signum, prior)
         finally:
-            for signum, prior in previous.items():
-                signal.signal(signum, prior)
+            if frontend_runtime is not None:
+                frontend_runtime.close()
 
 
 def _required_postgresql_runtime_argument(args, name: str):

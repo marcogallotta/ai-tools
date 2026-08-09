@@ -72,6 +72,24 @@
               }
             }
           },
+          "403": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "415": {
             "description": "Compatible response",
             "headers": {
@@ -185,6 +203,24 @@
               }
             }
           },
+          "400": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Compatible response",
             "headers": {
@@ -204,6 +240,24 @@
             }
           },
           "403": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
             "description": "Compatible response",
             "headers": {
               "X-Dish-Frontend-Contract": {
@@ -432,6 +486,24 @@
               }
             }
           },
+          "400": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "401": {
             "description": "Compatible response",
             "headers": {
@@ -451,6 +523,24 @@
             }
           },
           "403": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
             "description": "Compatible response",
             "headers": {
               "X-Dish-Frontend-Contract": {
@@ -619,6 +709,24 @@
               }
             }
           },
+          "422": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "503": {
             "description": "Compatible response",
             "headers": {
@@ -760,6 +868,24 @@
               }
             }
           },
+          "422": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
           "503": {
             "description": "Compatible response",
             "headers": {
@@ -828,8 +954,8 @@
           },
           "retry_after_seconds": {
             "type": "integer",
-            "minimum": 0,
-            "maximum": 3600
+            "minimum": 1,
+            "maximum": 900
           }
         }
       },

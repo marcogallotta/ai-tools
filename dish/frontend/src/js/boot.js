@@ -7,6 +7,11 @@ import { parsePostgresTaskRoute, parseTaskRoute } from "./features/routing/route
 import { renderLoginShell } from "./shell/login-shell.js";
 import { renderLocalPostgresqlBoard } from "./local/local-board-app.js";
 import { frontendDataSource } from "./local/source-selection.js";
+import { bootPrivateFrontend } from "./private/private-app.js";
+
+export function runtimeMode(documentRoot = document) {
+  return documentRoot.querySelector('meta[name="dish-runtime-mode"]')?.content ?? "fixture";
+}
 
 export function resolveInitialView(search = window.location.search, pathname = window.location.pathname) {
   const parameters = new URLSearchParams(search);
@@ -28,6 +33,13 @@ export function resolveInitialView(search = window.location.search, pathname = w
 export function boot(root = document.querySelector("#app")) {
   if (!root) throw new Error("Dish frontend root element is missing");
   document.title = DOCUMENT_TITLE;
+  const mode = runtimeMode();
+  if (mode === "private-fixture" || mode === "private-postgresql") {
+    document.documentElement.dataset.reviewMode = "false";
+    void bootPrivateFrontend(root, { mode });
+    return;
+  }
+
   const initial = resolveInitialView();
   if (initial.reviewMode) installFixtureReviewBoundary();
   document.documentElement.dataset.reviewMode = String(initial.reviewMode);
