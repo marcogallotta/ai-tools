@@ -48,7 +48,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0033_frontend_security"
+ALEMBIC_HEAD = "0034_cc5_schema_repair"
 
 
 class ReleaseCandidateService(

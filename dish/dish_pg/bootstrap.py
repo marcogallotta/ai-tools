@@ -39,7 +39,7 @@ from .repositories import AuthorityRepository, ContractBindingRepository, Regist
 
 DEFAULT_DISH_COMMIT = "9926e511297af94e3897eb65f02c902cadcc016f"
 DEFAULT_HONEST_COMMIT = "f4e16e369c4ea90fe287c13975a35ab0afd985d5"
-DEFAULT_SCHEMA_HEAD = "0033_frontend_security"
+DEFAULT_SCHEMA_HEAD = "0034_cc5_schema_repair"
 DEFAULT_DATABASE_NAME = "dish_stage_a_dark_test"
 DEFAULT_PROJECT_GID = "1216693403164366"
 DEFAULT_PROJECT_ID = uuid.UUID("1ae6e7ba-31e3-5dc5-9565-4ea37b49ac97")
