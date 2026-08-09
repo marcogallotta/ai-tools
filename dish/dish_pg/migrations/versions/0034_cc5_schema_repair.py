@@ -53,7 +53,7 @@ def _upgrade_manifest_contract() -> None:
             sa.Column("approval_reconciliation_run_id", sa.Uuid(), nullable=True)
         )
         batch.create_foreign_key(
-            "fk_release_candidate_manifests_approval_reconciliation_run_id_projection_reconciliation_runs",
+            "fk_rc_manifests_approval_reconciliation_run_id",
             "projection_reconciliation_runs",
             ["approval_reconciliation_run_id"],
             ["reconciliation_run_id"],
@@ -78,11 +78,11 @@ def _upgrade_manifest_contract() -> None:
             type_="check",
         )
         batch.create_check_constraint(
-            "ck_release_candidate_manifests_manifest_version_supported",
+            "manifest_version_supported",
             "manifest_version IN (2, 3)",
         )
         batch.create_check_constraint(
-            "ck_release_candidate_manifests_component_hash_lengths",
+            "component_hash_lengths",
             "length(mapping_membership_sha256) = 64 AND "
             "length(import_completion_sha256) = 64 AND "
             "length(typed_import_linkage_sha256) = 64 AND "
@@ -101,7 +101,7 @@ def _upgrade_manifest_contract() -> None:
             type_="check",
         )
         batch.create_check_constraint(
-            "ck_cutover_approval_manifest_bindings_manifest_version_supported",
+            "version_supported",
             "manifest_version IN (2, 3)",
         )
 
@@ -121,15 +121,15 @@ def _upgrade_manifest_contract() -> None:
             type_="check",
         )
         batch.drop_constraint(
-            "ck_candidate_manifest_revalidations_observed_component_hash_lengths",
+            "ck_candidate_manifest_revalidations_component_hash_lengths",
             type_="check",
         )
         batch.create_check_constraint(
-            "ck_candidate_manifest_revalidations_manifest_version_supported",
+            "manifest_version_supported",
             "manifest_version IN (2, 3)",
         )
         batch.create_check_constraint(
-            "ck_candidate_manifest_revalidations_observed_component_hash_lengths",
+            "component_hash_lengths",
             "length(observed_mapping_membership_sha256) = 64 AND "
             "length(observed_import_completion_sha256) = 64 AND "
             "length(observed_typed_import_linkage_sha256) = 64 AND "
@@ -210,13 +210,13 @@ def _create_worker_readiness_report() -> None:
             "length(trim(claim_execution_identity)) > 0 AND "
             "length(trim(exact_write_execution_identity)) > 0 AND "
             "length(trim(restart_execution_identity)) > 0",
-            name="ck_projection_worker_readiness_probe_execution_identities_nonblank",
+            name="ck_projection_worker_readiness_execution_identities_nonblank",
         ),
         sa.CheckConstraint(
             "length(trim(claim_evidence_identity)) > 0 AND "
             "length(trim(exact_write_evidence_identity)) > 0 AND "
             "length(trim(restart_evidence_identity)) > 0",
-            name="ck_projection_worker_readiness_probe_evidence_identities_nonblank",
+            name="ck_projection_worker_readiness_evidence_identities_nonblank",
         ),
         sa.CheckConstraint(
             "length(report_sha256) = 64",
@@ -231,13 +231,13 @@ def _create_worker_readiness_report() -> None:
         sa.ForeignKeyConstraint(
             ["projection_epoch_id"],
             ["projection_epochs.projection_epoch_id"],
-            name="fk_projection_worker_readiness_projection_epoch_id_projection_epochs",
+            name="fk_projection_worker_readiness_projection_epoch_id",
             ondelete="RESTRICT",
         ),
         sa.ForeignKeyConstraint(
             ["reconciliation_run_id"],
             ["projection_reconciliation_runs.reconciliation_run_id"],
-            name="fk_projection_worker_readiness_reconciliation_run_id_projection_reconciliation_runs",
+            name="fk_projection_worker_readiness_reconciliation_run_id",
             ondelete="RESTRICT",
         ),
         sa.PrimaryKeyConstraint(
@@ -555,7 +555,7 @@ def downgrade() -> None:
             type_="check",
         )
         batch.drop_constraint(
-            "ck_candidate_manifest_revalidations_observed_component_hash_lengths",
+            "ck_candidate_manifest_revalidations_component_hash_lengths",
             type_="check",
         )
         batch.alter_column(
@@ -569,11 +569,11 @@ def downgrade() -> None:
             nullable=False,
         )
         batch.create_check_constraint(
-            "ck_candidate_manifest_revalidations_manifest_version_two",
+            "manifest_version_two",
             "manifest_version = 2",
         )
         batch.create_check_constraint(
-            "ck_candidate_manifest_revalidations_observed_component_hash_lengths",
+            "component_hash_lengths",
             "length(observed_mapping_membership_sha256) = 64 AND "
             "length(observed_import_completion_sha256) = 64 AND "
             "length(observed_typed_import_linkage_sha256) = 64 AND "
@@ -584,11 +584,11 @@ def downgrade() -> None:
 
     with op.batch_alter_table("cutover_approval_manifest_bindings") as batch:
         batch.drop_constraint(
-            "ck_cutover_approval_manifest_bindings_manifest_version_supported",
+            "ck_cutover_approval_manifest_bindings_version_supported",
             type_="check",
         )
         batch.create_check_constraint(
-            "ck_cutover_approval_manifest_bindings_manifest_version_two",
+            "manifest_version_two",
             "manifest_version = 2",
         )
 
@@ -602,7 +602,7 @@ def downgrade() -> None:
             type_="check",
         )
         batch.drop_constraint(
-            "fk_release_candidate_manifests_approval_reconciliation_run_id_projection_reconciliation_runs",
+            "fk_rc_manifests_approval_reconciliation_run_id",
             type_="foreignkey",
         )
         batch.alter_column(
@@ -617,11 +617,11 @@ def downgrade() -> None:
         )
         batch.drop_column("approval_reconciliation_run_id")
         batch.create_check_constraint(
-            "ck_release_candidate_manifests_manifest_version_two",
+            "manifest_version_two",
             "manifest_version = 2",
         )
         batch.create_check_constraint(
-            "ck_release_candidate_manifests_component_hash_lengths",
+            "component_hash_lengths",
             "length(mapping_membership_sha256) = 64 AND "
             "length(import_completion_sha256) = 64 AND "
             "length(typed_import_linkage_sha256) = 64 AND "
