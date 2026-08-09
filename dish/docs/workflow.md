@@ -1,10 +1,13 @@
 # Dish workflow and administration design
 
-This is the canonical product/workflow design for Dish. It records the behavior Marco wants agents,
-Dish, `dish-admin`, and any later frontend to present, including behavior that is not implemented yet.
-Architecture and runtime documents describe current authority and mechanics; when current code differs
-from a settled decision here, that is an implementation/documentation gap to reconcile, not permission
-to silently reinterpret the product decision.
+This is the accepted product/workflow direction for Dish as of the review recorded below. It is the
+primary product-design reference for how Marco wants agents, Dish, `dish-admin`, and any later frontend
+to behave, including behavior that is not implemented yet. It is **not** a claim that every factual,
+implementation, or evidence statement in this file has been independently proved.
+
+Architecture and runtime documents describe current authority and mechanics. When current code differs
+from an explicitly settled product decision here, investigate and reconcile the discrepancy rather than
+silently treating whichever document was edited last as proof of intended behavior.
 
 This document is deliberately storage-agnostic. Before PostgreSQL cutover, Asana remains authoritative
 for live task content/placement and SQLite remains authoritative for Dish workflow/control state. After
@@ -14,25 +17,44 @@ cutover, PostgreSQL becomes authoritative and Asana is downstream. See
 
 ## Decision provenance and change discipline
 
-The major clarifications in this document were closed with Marco in an extended workflow review ending
-2026-08-09, after checking the current code, [`runtime-contract.md`](runtime-contract.md),
-[`future.md`](future.md), the architecture knowledge base, and the current Honest Planning, Research,
-and Verification protocols.
+The major clarifications in this document came from an extended workflow review ending 2026-08-09,
+combined with checks of current code, [`runtime-contract.md`](runtime-contract.md), [`future.md`](future.md),
+the architecture knowledge base, the current Honest Planning/Research/Verification protocols, a
+read-only production-history reconstruction, and supporting external workflow research.
 
-Paragraphs labelled **Marco decision — 2026-08-09** record points Marco explicitly settled in that
-review. Future agents must not replace those decisions with a more elaborate or theoretically cleaner
-model unless Marco explicitly reopens the point. Where an exact implementation shape was inferred from
-Marco's requirement plus an existing architecture invariant, it is labelled **design conclusion**
-rather than attributed to Marco verbatim.
+Use these labels deliberately.
 
-As of that review, there are **no outstanding Marco product questions for the current pre-cutover
-workflow/admin scope**. Items explicitly marked deferred in this document are future design work, not
-hidden blockers that should be re-asked before fixing the current workflow.
+Product-status labels:
+
+- **Marco decision — 2026-08-09** — Marco explicitly settled the product point in the review. Future
+  agents should not replace it with a more elaborate model unless Marco explicitly reopens it or new
+  evidence shows that the decision cannot be implemented safely as understood.
+- **Design conclusion** — an implementation/product shape inferred from Marco's requirement plus
+  current architecture or observed friction. It is accepted direction, not a fact logically forced by
+  the architecture.
+- **Reported need/proposal** — useful or plausible behavior reported during use but not established as
+  a production observation.
+- **Deferred question** — intentionally not settled and not a blocker to unrelated current work.
+
+When evidence matters, qualify its source rather than collapsing unlike evidence into one label:
+
+- **Production observation** — supported by durable live history or an authoritative live read.
+- **Code inspection** — supported by the supplied/current source.
+- **Reproduction/test evidence** — supported by a controlled reproduction or test.
+- **Reported use** — described during use but not preserved as a production observation.
+- **External research** — supporting primary-source analogue, never Dish product authority.
+
+This document therefore records the **accepted product direction**, not a verified factual transcript of
+every decision and incident. No known unanswered Marco question blocks the currently agreed pre-cutover
+workflow/admin work; explicitly deferred questions remain open and must not be silently invented away.
 
 ## 1. Core workflow principles
 
-- Marco is the final product authority. Agents may warn clearly, preserve evidence, and recommend a
-  safer/better route, but substantive agent judgment is not itself execution authority.
+- Marco is the final product authority for Dish preferences, governed product choices, and explicit
+  risk/exception decisions. Agents may warn clearly, preserve evidence, and recommend a safer/better
+  route, but substantive agent judgment is not itself execution authority. Marco's product authority
+  does not make a false factual claim true, fabricate Verification/signoff, erase contrary evidence, or
+  bypass mechanical integrity, fencing, replay, or recovery invariants.
 - Dish owns legal workflow actions. Agents read the task/current operation and follow the action Dish
   exposes; they do not reconstruct a state machine from protocol prose or invent transitions.
 - A tool pass is deterministic conformance, not culinary/research/Verification judgment. Conversely,
@@ -138,11 +160,15 @@ sides, not a gross sum of all raw ingredients entering the pot.
   because they appeared in the raw ingredient list.
 - Retained sauce, absorbed liquid, edible skin, finishing fat, and other components actually served
   do count.
-- When yield/retention is unknowable, use one reasonable defensible estimate with stated assumptions
-  when one exists. Do not invent false precision.
-- A shaky gross estimate cannot establish a hard-limit violation. Ordinary uncertainty near a limit
-  follows the protocol's non-blocking-note rule until there is defensible evidence of an actual
-  violation.
+- Use a common, reproducible estimation convention: calculate from the served portion; state the edible
+  yield/retention assumptions that materially affect the result; and make the basis clear enough that a
+  second honest agent can reproduce the arithmetic without guessing what was discarded or retained.
+- When a material yield/retention fact is uncertain, test a reasonable defensible range rather than
+  selecting one convenient point estimate. If plausible assumptions cross a hard threshold, record the
+  sensitivity and follow the protocol's near-threshold uncertainty treatment instead of manufacturing
+  a pass or violation from one arbitrary assumption.
+- A shaky gross estimate cannot establish a hard-limit violation. A hard violation needs defensible
+  evidence about the consumed serving, not merely a possible upper estimate.
 - Purchase-price Human Review is different: its thresholds intentionally use the purchased form as
   the protocol states; do not apply edible-yield logic to the purchase-price trigger.
 
@@ -172,15 +198,19 @@ Not every useful conversation with Marco is Human Review. Dish needs three level
 
 1. **Ordinary clarification or preference.** The agent asks Marco, receives the answer, and continues.
    Example: a preference between two ordinary ingredient routes. No admin ceremony is required.
-2. **Meaningful choice worth remembering.** The agent may durably record an attributed decision such
-   as "Marco chose X for this dish" so later agents know it was deliberate. This still does not require
-   formal authenticated admin authorization merely because future agents should remember it.
+2. **Meaningful choice worth remembering.** The agent may durably record an **agent-attested conversation
+   note** such as "Marco chose X for this dish" so later agents know the choice was deliberate. The
+   note carries run/source/time provenance and distinguishes Marco's quoted words from an agent
+   paraphrase where possible. It may guide later agents as evidence of a deliberate preference, but it
+   is not authenticated authority for a Level-3 governed gate.
 3. **Governed exception or consequential authorization.** A nutrition exemption, purchase-price
    exception, reversal of a Lock/Exemption/governed constraint, or another consequential scope that
    requires durable Marco authority uses the formal authenticated Human Review/admin path.
 
 The level follows the consequence, not the conversational wording. If an otherwise ordinary choice
-would mutate a governed field or create an exception, it becomes level 3 for that mutation.
+would mutate a governed field or create an exception, it becomes level 3 **for that governed mutation**.
+Material significance by itself does not automatically turn an ordinary conversation into formal Human
+Review; the formal gate is driven by the governed authority actually required.
 
 **Marco decision — 2026-08-09:** agents are trusted to record ordinary and meaningful conversation
 accurately. Do not build formal authentication ceremony around every "Marco said X" record. Formal
@@ -203,19 +233,24 @@ safe and meaningful to commit before asking is already committed, and the record
 remaining human dependency. Do not park half-finished private reasoning and expect another agent to
 continue it.
 
-### Same-agent continuation after Human Review/Evidence
+### Same-agent eligibility after Human Review/Evidence
+
+"Continuation" means eligibility to take the next legal action from **fresh durable Dish state**. It
+does not mean restoring an arbitrary model instruction pointer, stack frame, or half-finished private
+reasoning. A resumed path may replay the unfinished frontier, so any effect adjacent to a pause/resume
+boundary must already be idempotent, fenced, request-identified, or exactly reconcilable.
 
 - If Marco resolves the held question and the candidate itself did not receive a material edit, the
-  same live agent may continue from the resulting durable continuation if it remains otherwise
-  eligible. Creating a fresh cycle/identity does not by itself mean the conversation must die.
+  same live agent may take the resulting legal continuation if it remains otherwise eligible. Creating
+  a fresh cycle/identity does not by itself require a new conversation.
 - If resolution requires a material edit, that same agent may apply/build/self-review the authorized
   change, but it becomes a material editor and a fresh independent verifier must sign the resulting
   candidate.
-- If the original invocation disappeared, a replacement agent resumes from the deliberate checkpoint;
-  it does not inherit uncommitted private reasoning.
+- If the original external invocation disappeared, a replacement agent starts from the deliberate
+  checkpoint and fresh authoritative state; it does not inherit uncommitted private reasoning.
 
-**Marco decision — 2026-08-09:** the current restriction that prevents the original live verifier from
-continuing after a resolved Human Review is not desired behavior.
+**Marco decision — 2026-08-09:** resolving an ordinary Human Review/Evidence dependency should not
+unnecessarily disqualify the original live verifier when no material edit makes it ineligible.
 
 ## 7. Human Review proposals: approval and mechanical application
 
@@ -225,8 +260,12 @@ Required guarantees:
 
 - Review shows the dish/task, relevant issue, exact proposed consequence/change bundle, recommendation
   where useful, and enough local context for Marco to decide even if he knows nothing about that dish.
-- Approval is bound to the exact displayed proposal/candidate and governed changes. A changed/stale
-  target fails closed; the approval is not silently broadened.
+- Approval is a typed outcome bound to the exact displayed proposal/candidate and governed changes. A
+  changed/stale target fails closed; the approval is not silently broadened.
+- If Marco edits the proposal rather than approving it as-is, the edited result is a **new exact
+  subject**. Re-evaluate its materiality/governed consequences and obtain whatever review or
+  authorization that new subject requires; do not treat an edit as approximate approval of the old
+  bundle.
 - Approval and application remain separate durable records/actions as required by ADR-0003.
 - **Normal operator UX should not require a second agent merely to run `apply-proposal` for an exact
   already-approved immutable candidate.** Dish should revalidate the current baseline and execute the
@@ -237,11 +276,11 @@ Required guarantees:
 - Low-level proposal/application commands may remain available for diagnostics, tests, and exceptional
   recovery even if normal UI/CLI flow collapses them.
 
-**Design conclusion from Marco's 2026-08-09 review plus ADR-0003:** "approval" and "application" must
-stay separately auditable, but they need not be separate human/agent interactions. The current
-agent-facing `apply-proposal` hop is implementation debt in the normal workflow. Current runtime/cutover
-docs that describe later application specifically by a fresh eligible agent should be synchronized
-when this normal-path UX is implemented; the durable separation/revalidation invariant remains.
+**Design conclusion from Marco's 2026-08-09 review, compatible with ADR-0003:** "approval" and
+"application" must stay separately auditable, but ADR-0003 does not require a second human or AI-agent
+interaction. The accepted normal-path UX is for Dish to mechanically apply the exact approved bundle
+after fresh baseline validation. A service/worker/later-agent implementation could also satisfy the ADR;
+automatic application is the product/UX conclusion, not an architectural theorem.
 
 For enumerated governed concepts such as nutrition exemptions, the human-facing command/UI should ask
 for the semantic decision (for example add/remove a named exemption) and let Dish compute the exact
@@ -250,38 +289,50 @@ not make Marco hand-type serialized CAS values for routine review.
 
 ## 8. Agent runs, abandonment, and replacement
 
-The operator concept is **an outstanding agent invocation working on a task**, not a lease/cycle graph.
+The operator should see an **invocation-shaped presentation assembled from observable Dish records**,
+not a lease/cycle graph. Dish owns runs, operations, leases, holds, requests, and recorded activity; it
+does **not** reliably observe whether an external ChatGPT/agent process is literally alive, thinking,
+crashed, or merely idle.
 
 ### Outstanding-agent inventory
 
-The admin UI/CLI should list outstanding invocations with enough context to identify them quickly:
+The admin UI/CLI should synthesize outstanding work with enough context to identify it quickly:
 
 - task title plus canonical task identifier/link;
 - stage (Planning, Research, Verification, etc.);
-- when the invocation started;
-- last observable activity;
-- whether it is actively working, deliberately waiting on Evidence/Human Review, or otherwise blocked.
+- known run/operation association;
+- when Dish first observed the current work;
+- last observable Dish activity;
+- mechanical authority state such as active lease, expired/fenced authority, deliberate Evidence/Human
+  Review wait, or unknown/external liveness.
 
-The system may report observable facts such as "last activity 12 minutes ago" and the last completed
-action. It must not infer "the agent is dead" merely from elapsed time.
+Dish may report facts such as "last Dish activity 12 minutes ago" and the last completed action. It may
+automatically expire leases and fence stale mutation authority according to mechanical policy. It must
+not turn elapsed time into a claim that an external agent is dead.
 
-**Marco decision — 2026-08-09:** Marco decides when an agent is not coming back.
+**Marco decision — 2026-08-09:** Marco decides whether to **abandon/replace the external invocation and
+discard its incomplete semantic attempt**. Dish independently owns mechanical lease expiry, fencing,
+and safe mutation authority; system safety must not wait for Marco to notice a stale agent.
 
 ### `kill` / replace intent
 
-The normal operator interface should support one high-level action to declare a specific invocation
-abandoned, plus a bulk form for all outstanding invocations. CLI names such as `dish-admin kill
-<TASK_OR_RUN>` and `dish-admin kill-all` are acceptable starting vocabulary; a UI may expose an X or
-"replace" action instead.
+The normal operator interface should support one high-level action to declare a specific presented
+invocation/run abandoned. CLI vocabulary such as `dish-admin kill <TASK_OR_RUN>` is acceptable; a UI
+may expose an X or "replace" action instead.
 
-"Kill" means fence/retire that invocation's Dish authority and prepare the safe continuation. Dish
-cannot necessarily terminate an external chat process, so a late write from the retired invocation
-must be rejected mechanically.
+"Kill" is a logical Dish action: fence/retire the old Dish authority and prepare a safe continuation.
+It is **not** a claim that Dish terminated the external chat process. External work may continue after
+the declaration, so every late mutation from the retired authority must be rejected mechanically.
 
-After Marco chooses replacement, Dish owns the deterministic internal sequence: request/effect
-recovery if required, lease/cycle fencing, abandonment/succession where required, and creation of a
-claimable continuation. Do not make Marco choose historical lease/cycle/request IDs that Dish already
-knows.
+Marco also requested a convenient bulk "kill all" capability. Treat that as a **reported operator
+requirement whose per-item/partial-failure semantics still need implementation design**, not as evidence
+that bulk abandonment can be one atomic operation. A bulk command must report each item independently,
+fail closed on unsafe/uncertain cases, and never hide partial success.
+
+After Marco chooses replacement for an item, Dish owns the deterministic internal sequence:
+request/effect reconciliation if required, lease/cycle fencing, abandonment/succession where required,
+and creation of a claimable continuation. Do not make Marco choose historical lease/cycle/request IDs
+that Dish already knows.
 
 Low-level recovery, lease, reclaim, abandonment, and reconciliation commands remain available for
 engineering tests and exceptional diagnosis. They are not the normal product workflow.
@@ -302,8 +353,19 @@ engineering tests and exceptional diagnosis. They are not the normal product wor
 Dish may tell Marco "give this task to a new agent" only after the resulting continuation is actually
 claimable by a fresh invocation. Lease release alone is not enough.
 
-The production operator investigation supporting this requirement was captured in the 2026-08-09
-`dish-operator-model-report.md` handoff artifact; the repository architectural invariant is captured in
+### Operator investigation summary and limitations
+
+**Production observation — 2026-08-09:** a read-only reconstruction of the active production SQLite
+authority covered 8-9 August 2026, with selected 7 August examples. It showed that lease release alone
+did not create an ordinary fresh-agent handoff; recovery could report success without removing the
+request-level blocker; formal abandonment was the only path observed in that window that consistently
+produced a claimable fresh successor; and Marco was repeatedly exposed to lease/cycle/request internals.
+
+The same investigation also had important limits: the stored Dish history could not establish why an
+external chat disappeared, whether that external process was still running, or whether a human-perceived
+"agent invocation" was literally alive. The operator inventory above is therefore a presentation over
+observable Dish records, not a liveness oracle. These conclusions are preserved here so the design does
+not depend on a temporary investigation artifact. The durable architecture invariant is in
 [`architecture/operations-leases-and-fencing.md`](architecture/operations-leases-and-fencing.md).
 
 ## 9. Pre-cutover recovery policy
@@ -319,12 +381,17 @@ Until cutover:
 - restart ordinary incomplete agent attempts from the last committed task/workflow boundary;
 - keep current safe-reclaim/abandonment/recovery machinery available, but hide it behind high-level
   operator intent where possible;
-- fix concrete recovery bugs that block live work, but do not redesign genuinely uncertain external
-  effects unless they become a recurring operational problem.
+- preserve minimum correctness for every uncertain external effect: durable exact intent/request
+  identity, no blind retry while outcome is uncertain, authoritative reread/observation when possible,
+  fail-closed continuation, and an exact manual reconciliation route when automatic observation cannot
+  settle the outcome;
+- defer **richer uncertain-effect UX/redesign**, not correctness. Fix concrete pre-cutover defects that
+  violate the minimum guarantees above.
 
-**Marco decision — 2026-08-09:** genuinely uncertain external-effect recovery is deliberately deferred
-for now. If it becomes a real problem before cutover, fix the concrete case; otherwise ride the current
-mechanism to cutover.
+**Marco decision — 2026-08-09:** do not spend a pre-cutover round redesigning genuinely uncertain
+external-effect recovery unless live use forces it. This decision defers ergonomics/architecture churn;
+it does not permit ambiguous effects to proceed without replay, fencing, reconciliation, and fail-closed
+safety.
 
 ### Post-cutover journal/resumability direction
 
@@ -332,16 +399,28 @@ After PostgreSQL becomes authoritative, build resumability around a real Dish-ow
 model:
 
 - canonical content advances only at a complete governed commit boundary;
-- intermediate agent work/evidence may be journaled without becoming canonical;
+- persist explicit structured work/evidence and checkpoint facts, not arbitrary conversational/model
+  runtime state merely because it exists;
+- every checkpoint binds the exact canonical task version plus the relevant workflow/protocol/schema
+  definition version so incompatible code or policy changes cannot silently resume old work;
 - deliberate checkpoints identify exactly what is complete and what dependency remains;
-- a later invocation resumes from the last committed checkpoint plus useful journaled evidence;
+- resume starts from fresh authoritative state at the last committed checkpoint and may replay the
+  unfinished frontier; effects near that frontier must be idempotent, fenced, request-identified, or
+  exactly reconcilable;
 - accidental half-finished private reasoning is still not promoted to trusted state merely because it
   was emitted;
-- version/checkpoint identity prevents resuming against a changed canonical base.
+- retained checkpoint/journal data is treated as potentially sensitive: minimize what is stored, avoid
+  persisting secrets unnecessarily, and define retention/purge behavior rather than keeping resumable
+  state forever.
 
 This supersedes the abandoned trusted-connected-session/authority-assignment Part II design in
 [`abandoned-run-ownership-design.md`](abandoned-run-ownership-design.md). That Part II remains closed
 unless Marco explicitly reopens it.
+
+**Marco decision — 2026-08-09:** do not build this richer journal twice merely to bridge the current
+Asana-authoritative period. Reopen that sequencing decision before cutover only if cutover becomes
+materially delayed **and** repeated loss/restart of valuable completed work becomes a meaningful
+operator burden; prefer the smallest bridge that preserves the eventual Dish-owned model.
 
 ## 10. `dish-admin` operator experience
 
@@ -385,7 +464,8 @@ asks or the UI can show it unobtrusively with the affected area highlighted.
 ### Command quality
 
 - Runnable commands must be runnable exactly as shown; do not emit executable-looking placeholders.
-- Unknown commands should fail locally with a useful suggestion rather than a misleading service error.
+- Unknown commands already fail locally and list valid commands; improve this with a nearest-command
+  hint such as `Did you mean inspect?` rather than describing it as a broader routing defect.
 - Task URL parsing should normalize harmless query strings/fragments before extracting the task ID.
 - Keep low-level admin commands for testing/diagnosis even after higher-level intents exist; clean them
   up only after real usage proves which can be retired.
@@ -414,10 +494,12 @@ A resting signed task can enter Change only from exact durable signoff lineage.
 
 ## 13. Project population, manual Asana lifecycle, and post-cutover completion
 
-A project-level audit/dashboard should compare the configured Asana Cooking corpus with Dish's durable
-records and classify differences rather than silently omit tasks.
+**Design conclusion:** a project-level audit/dashboard should compare the configured Asana Cooking
+corpus with Dish's durable records and classify differences rather than silently omit tasks. The
+following taxonomy is a proposed operator model derived from the review; it has not yet been validated
+by a comprehensive production-corpus audit.
 
-Useful categories are:
+Proposed categories are:
 
 - **Healthy/current** — Dish and Asana are compatible for the current pre-cutover authority model.
 - **Expected manual lifecycle difference** — a known operator action changed section/project/due date
@@ -451,8 +533,9 @@ own explicit completion/lifecycle state. In particular, `Cooked` should be a gov
 completion/archive outcome (exact UI/state naming can be refined), and a separate Cooking History
 project should no longer be required as the source of truth.
 
-This aligns with [`database-backend.md`](database-backend.md), which already requires completion to be
-separate from workflow phase and permits it only through governed Cooked or Archive transitions.
+This is compatible with [`database-backend.md`](database-backend.md), which separates completion from
+workflow phase and requires governed completion transitions. That backend document does not itself
+settle the exact Cooked/archive UX or implementation timing; those are product direction recorded here.
 Asana may remain a downstream UI/projection during transition, but its section/project placement must
 not become a peer lifecycle authority again.
 
@@ -520,9 +603,15 @@ These earlier decided capabilities remain part of the workflow design and were n
 
 ### Marco override
 
-- Dish has no agent-owned substantive hard block against Marco's explicit decision.
+- Dish has no **agent-owned product-preference veto** against Marco's explicit governed decision. Marco
+  may accept a documented product risk or choose among governed Dish options where the protocol permits
+  an explicit override/exception.
+- Override does **not** authorize false signoff, fabrication or deletion of evidence, a knowingly false
+  factual claim, suppression of a genuine food-safety fact as if it were false, or bypass of database,
+  replay, fencing, recovery, or other technical-integrity invariants. An override records Marco's
+  decision in the presence of the evidence; it does not make contrary evidence disappear.
 - A governed override is explicit, scoped, durable, and auditable. It preserves the concern rather than
-  deleting history.
+  deleting history and identifies exactly what constraint/risk Marco accepted.
 - Reopen a settled override only for materially new evidence that could change the accepted decision,
   or Marco's explicit request. A new agent restating the same concern is not new evidence.
 
@@ -577,8 +666,9 @@ manual section movement as authenticated reverify intent.
 
 A verifier may eventually need an explicit "preserve this exact candidate, carry this concern forward,
 and ask a fresh independent verifier" outcome that is neither approval nor a correction/rejection.
-This is a real observed need but is not required for cutover. If implemented, carry the concern as
-structured successor context rather than forcing the next verifier to rediscover it from free text.
+This is a **reported need** from prior use but is not backed here by a preserved incident/transcript and
+is not required for cutover. If implemented, carry the concern as structured successor context rather
+than forcing the next verifier to rediscover it from free text.
 
 ### Active Verification -> Planning redesign
 
@@ -595,58 +685,94 @@ PostgreSQL task/read model makes the actual query needs clear.
 
 ## 20. Current implementation mismatches (2026-08-09)
 
-These are known gaps against this document, not unresolved product questions:
+These are current gaps or evidence-qualified mismatches against the accepted direction, not a claim
+that every root cause below has complete regression coverage:
 
 - `dish-admin inspect <task>` currently resolves through an open operation and can return "no open
-  operation for that task" for a resting task; it must become task-level diagnosis.
-- Human Review resolution creates a fresh continuation, but a same-run verifier can still hit
-  `actor_fact_conflict`; same-agent continuation without a material edit is desired.
-- Normal review approval still advertises a separate connected-agent `apply-proposal`; normal operator
-  UX should mechanically apply the exact approved bundle after revalidation while preserving separate
-  durable approval/application records.
-- There is no first-class outstanding-agent inventory plus high-level kill/kill-all/replace action;
-  Marco is still exposed to lease/reclaim/abandonment mechanics.
-- Project-wide population reconciliation/audit is not yet a complete operator capability.
-- The Honest Verification protocol needs the served-edible-consumed nutrition clarification and should
-  describe the repeated-pass stop as a loop detector rather than a substantive Human Review decision.
+  operation for that task" for a resting task; the desired product behavior is task-level diagnosis.
+- **Reproduction/test evidence — manual reproduction, 2026-08-09:** the exact sequence Verification
+  hold -> Marco resolution without material edit -> original verifier `start kind=verification`
+  reproduced `CONFLICT` with rule `actor_fact_conflict`. This establishes the supplied-baseline failure;
+  the same-agent eligibility fix still needs a focused committed regression test before it is
+  considered protected.
+- Normal review approval still advertises a separate connected-agent `apply-proposal`; automatic exact
+  application after revalidation is the accepted UX/design conclusion, while ADR-0003 requires only
+  durable separation of approval and application.
+- There is no first-class operator inventory that presents outstanding work from observable Dish
+  records plus a high-level per-item replace action. Marco also requested bulk replacement, but its
+  partial-success/mixed-safety semantics remain an implementation-design detail rather than a proven
+  production requirement.
+- Project-wide population reconciliation/audit is not yet a complete operator capability; its proposed
+  categories above have not yet been validated against the full production corpus.
+- The Honest Verification protocol needs the served-edible-consumed nutrition/reproducibility
+  clarification. Its prose already explains that the repeated-pass stop ends automatic cycling without
+  approving/signing the task; the narrower mismatch is that the stop is still represented as
+  `Status: pending-human-review`, which can make an operational loop breaker look like a substantive
+  Marco review item.
 - Honest Research/Verification already exclude routine clarification from Human Review, but they need
-  the explicit three-level remembered-choice distinction and same-agent resume semantics above so a
-  useful durable note is not mistaken for formal governed authorization.
+  the explicit agent-attested Level-2 provenance distinction and same-agent eligibility semantics above
+  so a remembered preference is neither ignored nor mistaken for authenticated governed authority.
 - The checked-in Action source now exposes explicit enums for approve `correction` and reject `route`;
   the deployed Action and future schema/runtime changes must stay synchronized so this live mismatch
   does not recur.
-- Harmless task-URL query/fragment normalization and local typo suggestions are lower-priority
-  operator-quality fixes.
+- Task-URL query/fragment normalization remains a lower-priority operator-quality fix. Unknown commands
+  already fail locally and list valid commands; the remaining typo improvement is a nearest-command
+  hint rather than local-routing correctness.
 
 ## 21. External research and analogues
 
-These sources informed the comparison with other human-in-the-loop/durable-workflow systems. They are
-**supporting research, not Dish authority**; the Marco decisions above control Dish behavior.
+These sources are **supporting research, not Dish authority**. Most are framework documentation: they
+are strong evidence for implementation invariants around pause/resume, replay, exact decision subjects,
+fencing, and retained state, but weak evidence for Dish product judgments such as when Marco should be
+asked, what deserves authentication, or which semantic work is worth preserving. Those remain the
+Marco decisions and Dish-specific design conclusions above.
 
-- OpenAI Agents SDK Human-in-the-loop: sensitive tool calls can pause for explicit approval/rejection,
-  and serialized `RunState` supports later resume:
+- **OpenAI Agents SDK HITL** binds approval/rejection to specific interrupted tool calls and supports
+  serialized `RunState` resume. Its documentation also warns that serialized state contains application
+  context and SDK/runtime metadata, may intentionally carry secrets, and should carry an agent/SDK
+  version marker when approvals can remain pending across code/model/prompt/tool changes:
   <https://openai.github.io/openai-agents-python/human_in_the_loop/>
-- LangGraph interrupts: execution can persist/checkpoint state, pause for human input, and resume later;
-  approval, review/edit, and input validation are distinct patterns:
+- **LangGraph interrupts** persist graph state and resume later, but resume starts execution again from
+  the beginning of the interrupted node. Interrupt order must remain deterministic, and side effects
+  before an interrupt should be idempotent because they can execute again. This supports explicit
+  checkpoints and replay-safe frontiers, not arbitrary instruction-pointer continuation:
   <https://docs.langchain.com/oss/python/langgraph/interrupts>
-- LangChain Human-in-the-loop middleware exposes explicit `approve`, `edit`, and `reject` outcomes over
-  persisted interrupted state:
+- **LangChain HITL** exposes `approve`, `edit`, `reject`, and (in its frontend/HITL surface) `respond` as
+  distinct outcomes. Its documentation warns that substantial edits can cause re-evaluation or repeated
+  execution. Dish therefore treats an edit as a new exact subject requiring appropriate re-evaluation,
+  not approximate approval of the old proposal:
   <https://docs.langchain.com/oss/python/langchain/human-in-the-loop>
-- AWS Step Functions Redrive preserves successful-step results/history and resumes unsuccessful work
-  from the failed frontier rather than pretending completed work never happened:
+  and <https://docs.langchain.com/oss/python/langchain/frontend/human-in-the-loop>
+- **AWS Step Functions Redrive** preserves successful-step results/history, reruns the unsuccessful
+  frontier, and binds the redrive to the same execution identity/input/state-machine definition/version.
+  This is the strongest analogue here for version-bound checkpoints plus replay-safe effects:
   <https://docs.aws.amazon.com/step-functions/latest/dg/redrive-executions.html>
-- Microsoft Durable Task exposes explicit instance suspend/resume/terminate/restart management with
-  durable history/status:
+- **Microsoft Durable Task** exposes suspend/resume/terminate/restart and durable status/history, but
+  suspension/termination are asynchronous and termination does not propagate to already-running
+  activities/sub-orchestrations. This directly supports separating logical abandonment from stale-writer
+  fencing and from any claim that an external worker was physically stopped:
   <https://learn.microsoft.com/en-us/azure/durable-task/common/durable-task-instance-management>
-- Learning to Defer treats referral to a human as a decision distinct from the model's underlying
-  prediction, a useful conceptual analogue for separating escalation from semantic verdict:
+- **Learning to Defer** is only conceptual vocabulary: it treats referral to a human as a decision
+  distinct from the model prediction, but it does not establish authorization, provenance, durable
+  Human Review, or binding human decisions:
   <https://proceedings.mlr.press/v119/mozannar20b.html>
-- `git revert` is the useful whole-version rollback analogy: append a restorative history entry rather
-  than erasing prior history: <https://git-scm.com/docs/git-revert>
+- **`git revert`** remains a useful rollback analogy because it appends restorative history rather than
+  erasing prior history. It does not remove the need for current-baseline validation and an exact
+  resulting version: <https://git-scm.com/docs/git-revert>
 
-The design lesson is deliberately modest: use explicit decisions, preserve durable state at real
-pause/commit boundaries, and resume from trustworthy completed work. Do not import enterprise workflow
-machinery merely because another system has it.
+The resulting implementation lessons are stronger and narrower than the original synthesis:
+
+1. Persist explicit, version-bound checkpoints rather than arbitrary conversational execution state.
+2. Treat resume as possible replay; effects around a checkpoint must be idempotent, fenced,
+   request-identified, or exactly reconciled.
+3. Bind human decisions to typed outcomes and exact subjects; an edit creates a new subject.
+4. Separate logical abandonment from external process termination and fence stale writers regardless.
+5. Treat retained resumable state as sensitive versioned data with explicit compatibility and
+   retention/purge policy.
+
+These sources do **not** prove that those mechanisms produce good operator outcomes for Dish. Product
+choices about interruption frequency, authentication level, review presentation, and what incomplete
+semantic work is valuable remain grounded in Marco's decisions and Dish's own production evidence.
 
 ## Deliberately out of scope here
 
