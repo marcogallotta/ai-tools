@@ -13,7 +13,7 @@ from dish_pg import stage6_models as rel
 from tests.support.postgresql.migrations import MigrationDatabase
 
 PREDECESSOR_REVISION = "0028_consumed_first_request_open_admission"
-TARGET_REVISION = "0032_imported_operation_history"
+TARGET_REVISION = "0034_cc5_schema_repair"
 
 
 @dataclass(frozen=True)
