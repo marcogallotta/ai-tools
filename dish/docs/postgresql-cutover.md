@@ -739,7 +739,7 @@ In practice, Phase 2 was never executed. Phase 3 and Phase 4 were built and dark
 
 - Live defect fixes (§2.2) and the minimum Stage A contract (§4) are complete.
 - The real PostgreSQL runtime, GPT Actions contract migration, Asana projection adapter, reconciliation adapter, and semantic-proposal/Human Review port (§8) are built and live.
-- Dark launch was last documented running on the full, unreduced schema at migration revision 0030. The checked-in forward head after CC5 is `0031_worker_readiness_consolidation`; do not assume a live dark-launch database has been upgraded without direct evidence.
+- Dark launch was last documented running on the full, unreduced schema at migration revision 0030. The checked-in forward head is whatever `dish_pg/release.py::ALEMBIC_HEAD` currently names; do not assume a live dark-launch database has been upgraded without direct evidence.
 - Cutover (§5, §9.4 validation, Addendum B) has not happened.
 
 ## Before cutover
