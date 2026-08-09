@@ -75,6 +75,7 @@ from .request_replay import (
     complete_request,
     pending_error,
     request_may_reconcile_pending,
+    settle_resolved_operation_requests,
     stored_result,
 )
 from .lease_requests import LeaseRequestCoordinator
@@ -2956,6 +2957,11 @@ class DishService:
             release_loader=lambda: self._release(None, include_migrations=True),
             invocation_request_id=request_id,
             invocation_run_id=state.principal.run_id,
+            recovery_request_settler=lambda operation_id: (
+                settle_resolved_operation_requests(
+                    state.conn, operation_id=operation_id
+                )
+            ),
         )
         with self._candidate_file(state.prepared_arguments) as prepared:
             return app.execute(command, **prepared)

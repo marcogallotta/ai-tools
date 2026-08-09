@@ -9,6 +9,7 @@ from typing import Any, Callable, Mapping, MutableMapping, Protocol
 
 from dish_tool.errors import DishRuleError
 from dish_tool.models import utc_now
+from dish_tool.results import result_envelope
 from dish_tool.transactions import immediate_transaction, join_or_begin_immediate
 
 
@@ -245,6 +246,81 @@ def complete_request(
         result.clear()
         result.update(authoritative)
     return authoritative
+
+
+def settle_resolved_operation_requests(
+    conn: sqlite3.Connection, *, operation_id: str
+) -> list[str]:
+    """Settle stranded uncertain requests from exact resolved executions.
+
+    Administrative recovery may resolve a request-bound operation execution
+    after the original response was lost. The request journal remains the
+    replay authority, so advance the exact request through ``complete_request``
+    rather than allowing ownership transfer to bypass it.
+    """
+
+    requests = conn.execute(
+        """SELECT request_id,command,task_gid,operation_id
+             FROM service_requests
+            WHERE operation_id=? AND status='uncertain' AND resolved_at IS NULL
+            ORDER BY created_at,rowid""",
+        (operation_id,),
+    ).fetchall()
+    operation = conn.execute(
+        "SELECT status FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()
+    state = None if operation is None else operation["status"]
+    settled: list[str] = []
+
+    for request in requests:
+        executions = conn.execute(
+            """SELECT execution_id,resolution_evidence_json
+                 FROM operation_executions
+                WHERE operation_id=? AND request_id=? AND command=?
+                  AND status='completed' AND resolved_at IS NOT NULL
+                  AND resolution_evidence_json IS NOT NULL
+                ORDER BY resolved_at,rowid""",
+            (operation_id, request["request_id"], request["command"]),
+        ).fetchall()
+        if len(executions) != 1:
+            continue
+        execution = executions[0]
+        evidence = json.loads(execution["resolution_evidence_json"])
+        resolution = result_envelope(
+            command=request["command"],
+            ok=False,
+            code="CONFLICT",
+            task_gid=request["task_gid"],
+            submission_id=operation_id,
+            state=state,
+            retryable=False,
+            data={
+                "message": (
+                    "The request was administratively reconciled from its exact "
+                    "resolved execution. Inspect current state before issuing fresh work."
+                ),
+                "request_id": request["request_id"],
+                "request_recovery_resolved": True,
+                "execution_id": execution["execution_id"],
+                "execution_resolution": evidence,
+                "required_next_action": "inspect",
+            },
+            errors=[
+                {
+                    "rule": "service_request_recovered_from_execution",
+                    "request_id": request["request_id"],
+                    "execution_id": execution["execution_id"],
+                }
+            ],
+        )
+        complete_request(conn, request_id=request["request_id"], result=resolution)
+        row = conn.execute(
+            "SELECT status,resolved_at FROM service_requests WHERE request_id=?",
+            (request["request_id"],),
+        ).fetchone()
+        if row is not None and row["status"] == "completed" and row["resolved_at"]:
+            settled.append(str(request["request_id"]))
+    return settled
 
 
 def pending_error(command: str, request_id: str, *, operation_id: str | None = None):

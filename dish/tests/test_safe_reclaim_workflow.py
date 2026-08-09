@@ -4,8 +4,18 @@ import json
 import uuid
 
 from dish_service.application import DishService
+from dish_service.request_replay import (
+    begin_request,
+    complete_request,
+    settle_resolved_operation_requests,
+)
 from dish_tool.database import record_marco_authorization
 from dish_tool.database_initialization import initialize_database
+from dish_tool.operation_execution import (
+    claim_operation_execution,
+    execution_recovery_state,
+    finish_operation_execution,
+)
 from tests.support.lease_authority import _principal, _service, _start
 from tests.support.service_leases import Clock
 from tests.support.verification import TASK
@@ -49,6 +59,67 @@ def _verification_with_expired_lease(tmp_path):
     assert inspected["allowed_actions"] == ["approve", "reject"]
     clock.advance(31)
     return service, verifier, operation_id, reviewed["data"]["reviewed_identity"]
+
+
+def _strand_service_request_after_resolved_execution(service, operation_id, verifier):
+    request_id = str(uuid.uuid4())
+    conn = initialize_database(service.config.db_path)
+    try:
+        begin_request(
+            conn,
+            request_id=request_id,
+            owner_id=verifier.owner_id,
+            run_id=verifier.run_id,
+            command="reject",
+            arguments={
+                "submission_id": operation_id,
+                "route": "large",
+                "reason": "test",
+            },
+        )
+        claim = claim_operation_execution(
+            conn, operation_id=operation_id, command="reject", request_id=request_id
+        )
+        evidence = execution_recovery_state(conn, execution_id=claim.execution_id)
+        finish_operation_execution(conn, claim, status="uncertain", evidence=evidence)
+        complete_request(
+            conn,
+            request_id=request_id,
+            result={
+                "ok": False,
+                "code": "BACKEND_UNCERTAIN",
+                "command": "reject",
+                "task_gid": "t",
+                "submission_id": operation_id,
+                "state": "open",
+                "retryable": True,
+                "allowed_actions": [],
+                "data": {},
+                "errors": [],
+            },
+        )
+        resumed = claim_operation_execution(
+            conn, operation_id=operation_id, command="reject", request_id=request_id
+        )
+        resolved = execution_recovery_state(
+            conn, execution_id=resumed.execution_id, refresh=True
+        )
+        finish_operation_execution(conn, resumed, status="completed", evidence=resolved)
+        request = conn.execute(
+            "SELECT status,resolved_at FROM service_requests WHERE request_id=?",
+            (request_id,),
+        ).fetchone()
+        execution = conn.execute(
+            "SELECT status,resolved_at,resolution_evidence_json FROM operation_executions WHERE request_id=?",
+            (request_id,),
+        ).fetchone()
+        assert tuple(request) == ("uncertain", None)
+        assert execution["status"] == "completed"
+        assert execution["resolved_at"] is not None
+        assert execution["resolution_evidence_json"] is not None
+        return request_id
+    finally:
+        conn.close()
 
 
 def _fresh_reclaimable_verification(tmp_path):
@@ -788,5 +859,151 @@ def test_safe_reclaim_rechecks_current_verification_cycle_inside_writer_transact
         assert conn.execute(
             "SELECT 1 FROM safe_reclaims WHERE source_operation_id=?", (operation_id,)
         ).fetchone() is None
+    finally:
+        conn.close()
+
+
+def test_resolved_execution_with_stranded_request_blocks_until_request_recovery(tmp_path):
+    service, verifier, operation_id, _identity = _verification_with_expired_lease(tmp_path)
+    request_id = _strand_service_request_after_resolved_execution(
+        service, operation_id, verifier
+    )
+
+    fresh = _principal("action", "fresh-after-stranded-request")
+    discovered = service.execute_agent(
+        "read", {"agent": "claude", "task_gid": "t"}, principal=fresh
+    )
+
+    assert discovered["ok"] is True
+    assert "safe-reclaim" not in discovered["allowed_actions"]
+    failed = {
+        row["rule"] for row in discovered["data"]["safe_reclaim"]["failed_clauses"]
+    }
+    assert "safe_reclaim_request_unsettled" in failed
+    conn = initialize_database(service.config.db_path)
+    try:
+        request = conn.execute(
+            "SELECT status,resolved_at FROM service_requests WHERE request_id=?",
+            (request_id,),
+        ).fetchone()
+        assert tuple(request) == ("uncertain", None)
+    finally:
+        conn.close()
+
+
+def test_recover_settles_stranded_request_then_returns_nonrecovery_continuation(tmp_path):
+    service, verifier, operation_id, _identity = _verification_with_expired_lease(tmp_path)
+    request_id = _strand_service_request_after_resolved_execution(
+        service, operation_id, verifier
+    )
+    admin = _principal("admin", "admin-recovery-run")
+    lease_recovered = service.recover_lease(
+        operation_id,
+        admin,
+        reason="prior verifier is inactive",
+        request_id=str(uuid.uuid4()),
+    )
+    assert lease_recovered["ok"] is True
+
+    recovered = service.execute_admin(
+        "recover",
+        {
+            "submission_id": operation_id,
+            "outcome": "inspect",
+            "reason": "automatic inspection",
+        },
+        principal=admin,
+        request_id=str(uuid.uuid4()),
+    )
+
+    assert recovered["ok"] is True
+    assert recovered["allowed_actions"] == []
+    assert request_id in recovered["data"]["settled_service_request_ids"]
+    assert recovered["data"]["recovery_still_required"] is False
+    post = recovered["data"]["post_recovery"]
+    assert not any(
+        action.get("command") == "recover"
+        for action in post["human_actions"]
+        if isinstance(action, dict)
+    )
+
+    conn = initialize_database(service.config.db_path)
+    try:
+        request = conn.execute(
+            "SELECT status,resolution_result_json,resolved_at FROM service_requests WHERE request_id=?",
+            (request_id,),
+        ).fetchone()
+        assert request["status"] == "completed"
+        assert request["resolved_at"] is not None
+        resolution = json.loads(request["resolution_result_json"])
+        assert resolution["command"] == "reject"
+        assert resolution["code"] == "CONFLICT"
+        assert resolution["data"]["request_recovery_resolved"] is True
+        assert resolution["data"]["request_id"] == request_id
+    finally:
+        conn.close()
+
+
+def test_request_recovery_does_not_settle_unresolved_request_bound_execution(tmp_path):
+    service, verifier, operation_id, _identity = _verification_with_expired_lease(tmp_path)
+    request_id = str(uuid.uuid4())
+    conn = initialize_database(service.config.db_path)
+    try:
+        begin_request(
+            conn,
+            request_id=request_id,
+            owner_id=verifier.owner_id,
+            run_id=verifier.run_id,
+            command="reject",
+            arguments={
+                "submission_id": operation_id,
+                "route": "large",
+                "reason": "test",
+            },
+        )
+        claim = claim_operation_execution(
+            conn, operation_id=operation_id, command="reject", request_id=request_id
+        )
+        evidence = execution_recovery_state(conn, execution_id=claim.execution_id)
+        finish_operation_execution(conn, claim, status="uncertain", evidence=evidence)
+        complete_request(
+            conn,
+            request_id=request_id,
+            result={
+                "ok": False,
+                "code": "BACKEND_UNCERTAIN",
+                "command": "reject",
+                "task_gid": "t",
+                "submission_id": operation_id,
+                "state": "open",
+                "retryable": True,
+                "allowed_actions": [],
+                "data": {},
+                "errors": [],
+            },
+        )
+        premature = {
+            "ok": False,
+            "code": "CONFLICT",
+            "command": "reject",
+            "task_gid": "t",
+            "submission_id": operation_id,
+            "state": "open",
+            "retryable": False,
+            "allowed_actions": [],
+            "data": {"message": "not resolved yet"},
+            "errors": [],
+        }
+        authoritative = complete_request(
+            conn, request_id=request_id, result=premature
+        )
+        assert authoritative["code"] == "BACKEND_UNCERTAIN"
+
+        assert settle_resolved_operation_requests(conn, operation_id=operation_id) == []
+        request = conn.execute(
+            "SELECT status,resolved_at FROM service_requests WHERE request_id=?",
+            (request_id,),
+        ).fetchone()
+        assert tuple(request) == ("uncertain", None)
     finally:
         conn.close()

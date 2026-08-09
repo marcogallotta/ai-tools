@@ -37,6 +37,23 @@ CASES = (
         invariant="request identity remains bound to the originating run",
     ),
     MutationCase(
+        mutation_id="request-recovery-resolved-execution",
+        target="dish_service/request_replay.py",
+        before=(
+            "WHERE request_id=? AND status='completed'\n"
+            "               AND resolution_evidence_json IS NOT NULL\n"
+            "               AND resolved_at IS NOT NULL"
+        ),
+        after=(
+            "WHERE request_id=? AND status IN ('completed','uncertain')\n"
+            "               AND COALESCE(resolution_evidence_json,evidence_json) IS NOT NULL"
+        ),
+        tests=(
+            "tests/test_safe_reclaim_workflow.py::test_request_recovery_does_not_settle_unresolved_request_bound_execution",
+        ),
+        invariant="request completion cannot resolve uncertainty before the exact execution is durably resolved",
+    ),
+    MutationCase(
         mutation_id="lease-owner-run-conjunction",
         target="dish_service/leases.py",
         before='return row["owner_id"] == principal.owner_id and row["run_id"] == principal.run_id',

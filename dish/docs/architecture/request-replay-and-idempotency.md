@@ -26,6 +26,7 @@ A mutation request ID permanently binds the admitted command, canonical argument
 - A replay does not silently retarget a later operation, cycle, lease, proposal, or other nearby durable subject.
 - Lost-response recovery does not require inventing a new mutation identity.
 - Pending/uncertain execution is not treated as permission to reissue effects blindly.
+- If administrative recovery durably resolves a request-bound execution after response loss, the service request remains authoritative and must itself be settled from that exact execution evidence before ownership transfer may proceed.
 - Validation-only failures that are part of the request contract can be durably replayed when the runtime owns them.
 
 ## Process and transaction boundaries

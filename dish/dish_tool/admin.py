@@ -126,12 +126,14 @@ class DishAdminApplication:
         release_loader: Callable[[], Any] | None = None,
         invocation_request_id: str | None = None,
         invocation_run_id: str | None = None,
+        recovery_request_settler: Callable[[str], list[str]] | None = None,
     ) -> None:
         self.conn = conn
         self.backend = backend
         self.release_loader = release_loader
         self.invocation_request_id = invocation_request_id
         self.invocation_run_id = invocation_run_id
+        self.recovery_request_settler = recovery_request_settler
         self.operation_service = (
             None
             if backend is None
@@ -1469,7 +1471,54 @@ def _step9_admin_recover(
         ),
     )
     trace.state = view["status"]
-    return result_envelope(command="recover", task_gid=trace.task_gid, submission_id=operation_id, state=view["status"], allowed_actions=view["legal_actions"], data=data)
+    if self.recovery_request_settler is not None:
+        settled_requests = self.recovery_request_settler(operation_id)
+        if settled_requests:
+            data = dict(data)
+            data["settled_service_request_ids"] = settled_requests
+
+    continuation = _command_inspect(
+        self,
+        trace=AdminTrace(submission_id=operation_id),
+        submission_id=operation_id,
+    )
+    continuation_data = (
+        continuation.get("data")
+        if isinstance(continuation.get("data"), Mapping)
+        else {}
+    )
+    human_actions = continuation_data.get("human_actions")
+    recovery_still_required = bool(
+        isinstance(human_actions, list)
+        and any(
+            isinstance(action, Mapping) and action.get("command") == "recover"
+            for action in human_actions
+        )
+    )
+    data = dict(data)
+    data["post_recovery"] = {
+        "problem": continuation_data.get("problem"),
+        "waiting_for": continuation_data.get("waiting_for"),
+        "operator_instruction": continuation_data.get("operator_instruction"),
+        "task_title": continuation_data.get("task_title"),
+        "phase": continuation_data.get("phase"),
+        "administrative_blocker": bool(
+            continuation_data.get("administrative_blocker")
+        ),
+        "human_actions": human_actions if isinstance(human_actions, list) else [],
+        "agent_actions_now": continuation_data.get("agent_actions_now")
+        if isinstance(continuation_data.get("agent_actions_now"), list)
+        else [],
+    }
+    data["recovery_still_required"] = recovery_still_required
+    return result_envelope(
+        command="recover",
+        task_gid=trace.task_gid,
+        submission_id=operation_id,
+        state=str(continuation.get("state") or view["status"]),
+        allowed_actions=list(continuation.get("allowed_actions") or []),
+        data=data,
+    )
 
 
 

@@ -82,6 +82,8 @@ Reclaim is legal only when committed database state proves all of:
 - no proposal, application, or settlement step is incomplete;
 - no projection attempt has an unresolved outcome;
 - no live lease or claim is held by another owner.
+- an uncertain service request remains blocking until Dish settles that exact request from its
+  durably recovered execution evidence; resolving the execution alone does not transfer request authority.
 
 This must be one mechanically checkable predicate used consistently by service code, `dish-admin`,
 and tests — not inspection of a database server's live transaction list.
