@@ -5,7 +5,6 @@ from datetime import timedelta
 from uuid import UUID
 
 import pytest
-from sqlalchemy import select
 
 from dish_pg import models
 from dish_pg.database import session_scope
@@ -18,7 +17,7 @@ from tests.support.postgresql.core import NOW, _bootstrap_registry, _next, core_
 SECRET = b"stage-4-detail-query-secret-is-at-least-32-bytes"
 
 
-def _import(session, ids, context, *, title: str, asana_gid: str):
+def _import(session, ids, context, *, title: str, asana_gid: str, completed: bool = False):
     body = "Canonical body\n---\nStatus: ready\n"
     return CoreAuthorityService(session, uuid_factory=lambda: _next(ids)).import_task_document(
         generation_id=context["generation_id"],
@@ -33,7 +32,7 @@ def _import(session, ids, context, *, title: str, asana_gid: str):
             content_identity=hashlib.sha256((title + "\0" + body).encode()).hexdigest(),
             project_ids=(context["project_id"],),
             section_id=context["section_id"],
-            completed=False,
+            completed=completed,
             observed_at=NOW,
         ),
     )
@@ -79,12 +78,14 @@ def test_detail_query_rejects_completed_task_after_route_resolution(core_db) -> 
         context = _bootstrap_registry(
             session, ids, generation_status="active", schema_head="0032_imported_operation_history"
         )
-        imported = _import(session, ids, context, title="Completed", asana_gid="4002")
-        completion = session.scalar(select(models.CurrentTaskCompletion).where(
-            models.CurrentTaskCompletion.generation_id == context["generation_id"],
-            models.CurrentTaskCompletion.task_id == imported.task_id,
-        ))
-        completion.completed = True
+        imported = _import(
+            session,
+            ids,
+            context,
+            title="Completed",
+            asana_gid="4002",
+            completed=True,
+        )
 
     with session_scope(factory) as session:
         with pytest.raises(TaskDetailIneligible):

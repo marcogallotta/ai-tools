@@ -62,6 +62,11 @@ def _run_planning(url):
         request_id="11111111-1111-4111-8111-111111111111",
     )
     task_gid = created["task_gid"]
+    assert created["allowed_actions"] == ["start"]
+    assert created["data"]["required_start_kind"] == "planning"
+    resting = planner.execute("read", agent="gpt", task_gid=task_gid)
+    assert resting["allowed_actions"] == ["start"]
+    assert resting["data"]["required_start_kind"] == "planning"
     challenge = planner.execute(
         "start",
         agent="gpt",
@@ -79,6 +84,7 @@ def _run_planning(url):
         intent_basis="user_requested",
         request_id="25252525-2525-4525-8525-252525252525",
     )
+    assert planning["allowed_actions"] == ["prepare"]
     planned = planner.execute(
         "prepare",
         agent="gpt",
@@ -86,6 +92,11 @@ def _run_planning(url):
         submission_id=planning["submission_id"],
         file_text=PLANNING.replace("Sichuan — 12345", "Planned — 333"),
     )
+    assert planned["allowed_actions"] == ["start"]
+    assert planned["data"]["required_start_kind"] == "initial"
+    resting = planner.execute("read", agent="gpt", task_gid=task_gid)
+    assert resting["allowed_actions"] == ["start"]
+    assert resting["data"]["required_start_kind"] == "initial"
     return created, planning, planned, task_gid
 
 
@@ -102,6 +113,7 @@ def _run_research(url, task_gid):
         kind="initial",
         request_id="33333333-3333-4333-8333-333333333333",
     )
+    assert research["allowed_actions"] == ["prepare"]
     prepared = researcher.execute(
         "prepare",
         agent="gpt",
@@ -109,6 +121,11 @@ def _run_research(url, task_gid):
         submission_id=research["submission_id"],
         file_text=TASK.replace("Sichuan — 12345", "Planned — 333"),
     )
+    assert prepared["allowed_actions"] == ["start"]
+    assert prepared["data"]["required_start_kind"] == "verification"
+    resting = researcher.execute("read", agent="gpt", task_gid=task_gid)
+    assert resting["allowed_actions"] == ["start"]
+    assert resting["data"]["required_start_kind"] == "verification"
     return research, prepared
 
 
@@ -126,10 +143,12 @@ def _run_verification(url, task_gid, operation_id):
         request_id="44444444-4444-4444-8444-444444444444",
         independence_attestation="independent",
     )
+    assert review["allowed_actions"] == ["inspect"]
     inspected = verifier.execute(
         "inspect", agent="codex", submission_id=operation_id
     )
     assert inspected["ok"], inspected
+    assert inspected["allowed_actions"] == ["approve", "reject"]
     assert inspected["data"].get("dish_inspect_fact"), inspected
     approved = verifier.execute(
         "approve",
@@ -141,7 +160,12 @@ def _run_verification(url, task_gid, operation_id):
         semantic_review_complete=True,
         provenance_complete=True,
     )
+    assert approved["allowed_actions"] == ["submit"]
     submitted = verifier.execute("submit", submission_id=operation_id)
+    assert submitted["allowed_actions"] == []
+    resting = verifier.execute("read", agent="gpt", task_gid=task_gid)
+    assert resting["allowed_actions"] == ["start"]
+    assert resting["data"]["required_start_kind"] == "change"
     return review, approved, submitted
 
 
