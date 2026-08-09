@@ -36,6 +36,9 @@ from .models import (
 from .results import error_envelope, result_envelope
 from .human_actions import PromptField, exact_action, relay_text, template_action
 from .review_queue import human_review_consequence_metadata
+from .database import resolve_signoff_cycle_for_identity
+from .task_document import document_shape
+from .workflow_policy import RestingTaskSnapshot, required_resting_start_kind
 from .validation_scope import scope_for_command
 
 
@@ -123,6 +126,51 @@ def _copy_recovery_guidance(
         ):
             if key in view:
                 data[key] = view[key]
+
+
+def _resting_task_required_start_kind(
+    conn: sqlite3.Connection, *, live, diagnostics: Mapping[str, Any]
+) -> str | None:
+    """Derive ordinary start authority for a managed task with no active operation."""
+    shape = document_shape(live.notes)
+    parsed = diagnostics.get("parsed")
+    canonical_status = None
+    signed_baseline_bound = False
+    if isinstance(parsed, dict):
+        state = parsed.get("state")
+        if isinstance(state, dict):
+            canonical_status = state.get("Status")
+        if (
+            canonical_status == "ready"
+            and not diagnostics.get("validation")
+            and not diagnostics.get("migration_required")
+        ):
+            signed_baseline_bound = (
+                resolve_signoff_cycle_for_identity(
+                    conn, task_gid=live.gid, identity=live.identity
+                )
+                is not None
+            )
+    return required_resting_start_kind(
+        RestingTaskSnapshot(
+            document_shape=shape,
+            structurally_valid=not bool(diagnostics.get("validation")),
+            migration_required=bool(diagnostics.get("migration_required")),
+            completed=bool(live.completed),
+            canonical_status=None if canonical_status is None else str(canonical_status),
+            signed_baseline_bound=signed_baseline_bound,
+        )
+    )
+
+
+def _active_operation_id(conn: sqlite3.Connection, *, task_gid: str) -> str | None:
+    row = conn.execute(
+        """SELECT operation_id FROM operations
+             WHERE task_gid=? AND status IN ('open','uncertain')
+             ORDER BY created_at DESC LIMIT 1""",
+        (task_gid,),
+    ).fetchone()
+    return None if row is None else str(row["operation_id"])
 
 
 def _admin_resolver(action: str | None) -> str | None:
@@ -805,15 +853,19 @@ def _step5_read(self, *, trace: CommandTrace, agent: str, task_gid: str) -> dict
         "compatibility": {"protocol_version": release.protocol_version, "schema_version": release.schema_version},
         "validation": diag["validation"],
     }
-    operation = self.conn.execute(
-        """SELECT operation_id FROM operations
-             WHERE task_gid=? AND status IN ('open','uncertain')
-             ORDER BY created_at DESC LIMIT 1""",
-        (task_gid,),
-    ).fetchone()
-    if operation is None:
-        return result_envelope(command="read", task_gid=task_gid, data=data)
-    operation_id = operation["operation_id"]
+    operation_id = _active_operation_id(self.conn, task_gid=task_gid)
+    if operation_id is None:
+        required_start_kind = _resting_task_required_start_kind(
+            self.conn, live=live, diagnostics=diag
+        )
+        if required_start_kind is not None:
+            data["required_start_kind"] = required_start_kind
+        return result_envelope(
+            command="read",
+            task_gid=task_gid,
+            allowed_actions=["start"] if required_start_kind is not None else [],
+            data=data,
+        )
     view = expose_authoritative_view(_current_operation_view(self, operation_id, schema=release.schema))
     data["active_operation"] = {
         "submission_id": operation_id,
@@ -991,6 +1043,33 @@ def _step5_start(self, *, trace: CommandTrace, agent: str, task_gid: str, kind: 
             raise DishRuleError("VALIDATION_FAILED", "task schema is older than the current schema; migration required", rule="migration_required", details={"task_schema_version": diag["schema_version"], "current_schema_version": release.schema_version})
         if diag["parsed"] is not None and diag["validation"]:
             raise DishRuleError("VALIDATION_FAILED", "task failed current structural validation", errors=diag["validation"])
+
+    if kind != "verification" and _active_operation_id(self.conn, task_gid=task_gid) is None:
+        required_start_kind = _resting_task_required_start_kind(
+            self.conn, live=live, diagnostics=diag
+        )
+        if required_start_kind != kind:
+            details = {}
+            if required_start_kind is not None:
+                details = {
+                    "required_start_kind": required_start_kind,
+                    "legal_next_step": (
+                        f"start with kind={required_start_kind} using a fresh client.request_id"
+                    ),
+                }
+            if kind == "change" and required_start_kind is None:
+                raise DishRuleError(
+                    "WRONG_STATE",
+                    "post-signoff Change requires the current ready identity to have exact durable signoff lineage",
+                    rule="post_signoff_change_signed_baseline_required",
+                    details={"baseline_identity": live.identity},
+                )
+            raise DishRuleError(
+                "WRONG_STATE",
+                "requested start kind is not legal for this resting task",
+                rule="resting_task_start_kind_mismatch",
+                details=details,
+            )
     try:
         if prepared_operation_id is not None:
             op = self.operation_service.current.start_operation(

@@ -39,6 +39,10 @@ Human approval is the authorization for the exact governed changes in an approve
 - An unanswered agent-created Verification Human Review hold may be dismissed by Marco as an invalid escalation. Dismissal preserves the original finding and reason, records the dismissal reason, always returns the unchanged candidate to fresh Verification regardless of the hold's stored resume status, and does not create a substantive Marco decision or governed authorization. Substantive Marco approval is different: it records the decision and may honor the hold's stored resume status, including returning the task to Research.
 - Small governed-text edits that may be incidental cleanup require explicit agent intent before they can enter the governed proposal path. This is an intent check, not a semantic classifier: the agent must restore incidental text exactly or explicitly identify an intended governed edit.
 - "Allowed actions" are a derived view of authority, not a second state machine.
+- Resting-task start authority is shared by discovery and admission: a task with no active operation
+  exposes only the start kind that the same authority will accept. Post-signoff Change requires the
+  exact current `ready` identity to resolve to durable approved signoff lineage; status text alone is
+  never enough to authorize Change.
 
 ## Process and transaction boundaries
 

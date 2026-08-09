@@ -37,6 +37,36 @@ class WorkflowSnapshot:
     abandonment_continuation_ready: bool = False
 
 
+
+
+@dataclass(frozen=True)
+class RestingTaskSnapshot:
+    """Authority facts for a managed task with no active workflow operation."""
+
+    document_shape: str
+    structurally_valid: bool
+    migration_required: bool
+    completed: bool
+    canonical_status: str | None = None
+    signed_baseline_bound: bool = False
+
+
+def required_resting_start_kind(snapshot: RestingTaskSnapshot) -> str | None:
+    """Return the only ordinary start kind legal for a resting task, if any."""
+    if snapshot.completed or not snapshot.structurally_valid or snapshot.migration_required:
+        return None
+    if snapshot.document_shape == "bare":
+        return "planning"
+    if snapshot.document_shape == "planning_brief":
+        return "initial"
+    if snapshot.document_shape == "canonical":
+        if snapshot.canonical_status in {"pending-research", "pending-verification"}:
+            return "initial"
+        if snapshot.canonical_status == "ready" and snapshot.signed_baseline_bound:
+            return "change"
+    return None
+
+
 @dataclass(frozen=True)
 class HoldResolutionOutcome:
     resume_status: str

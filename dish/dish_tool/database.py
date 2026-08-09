@@ -531,6 +531,17 @@ def create_operation(
                     ),
                 },
             )
+        active = conn.execute(
+            """SELECT operation_id FROM operations
+                 WHERE task_gid=? AND status IN ('open','uncertain')
+                 LIMIT 1""",
+            (task_gid,),
+        ).fetchone()
+        if active is not None:
+            raise DishRuleError(
+                "CONFLICT", "task already has an open operation",
+                rule="open_operation_exists",
+            )
         state = conn.execute(
             """SELECT last_confirmed_identity, last_confirmed_content_version_id
                  FROM task_content_state WHERE task_gid = ?""",
@@ -548,6 +559,15 @@ def create_operation(
                 "CONFLICT", "live task content differs from the expected identity",
                 rule="stale_content_identity",
                 details={"expected_identity": expected_identity, "actual_identity": actual},
+            )
+        if operation_kind == "change" and resolve_signoff_cycle_for_identity(
+            conn, task_gid=task_gid, identity=expected_identity
+        ) is None:
+            raise DishRuleError(
+                "WRONG_STATE",
+                "post-signoff Change requires exact durable signoff lineage for the expected identity",
+                rule="post_signoff_change_signed_baseline_required",
+                details={"baseline_identity": expected_identity},
             )
         if operation_kind == "planning":
             blocker = planning_reopen_blocker_for_task(conn, task_gid=task_gid)

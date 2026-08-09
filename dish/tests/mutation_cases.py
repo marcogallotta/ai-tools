@@ -217,6 +217,26 @@ CASES = (
         invariant="submission actions require exact durable signoff binding",
     ),
     MutationCase(
+        mutation_id="resting-change-signoff-binding",
+        target="dish_tool/workflow_policy.py",
+        before='if snapshot.canonical_status == "ready" and snapshot.signed_baseline_bound:',
+        after='if snapshot.canonical_status == "ready":',
+        tests=(
+            "tests/test_change_start_intent.py::test_read_exposes_change_only_for_exact_signed_ready_resting_task",
+        ),
+        invariant="resting ready text exposes Change only when exact durable signoff is bound",
+    ),
+    MutationCase(
+        mutation_id="change-creation-signoff-binding",
+        target="dish_tool/database.py",
+        before='if operation_kind == "change" and resolve_signoff_cycle_for_identity(\n            conn, task_gid=task_gid, identity=expected_identity\n        ) is None:',
+        after='if False:',
+        tests=(
+            "tests/test_change_start_intent.py::test_direct_create_change_requires_signed_baseline_before_insert",
+        ),
+        invariant="direct Change operation creation requires exact durable signoff lineage before insert",
+    ),
+    MutationCase(
         mutation_id="task-store-cooking-project-selection",
         target="dish_tool/task_store.py",
         before="if membership_project_gid == project_gid:",

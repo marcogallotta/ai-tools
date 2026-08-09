@@ -113,7 +113,11 @@ Planning again against the valid Planning brief, Dish returns
 `start` exposes only `inspect` after the review binding is complete. The exact
 verifier run must then inspect the still-current candidate in Verification Queue; that reread appends
 a cycle-bound `dish_inspect` fact and only then exposes `approve` and `reject`. Task-level `read` responses expose any active operation, its submission
-ID, workflow state, and principal-filtered next actions. Successful operation-scoped lease renewal
+ID, workflow state, and principal-filtered next actions. With no active operation, `read` derives the
+resting-task continuation from the same authority used by `start`: a bare task may start Planning,
+a valid Planning/canonical Research baseline may start Initial Research, and an exact current-schema
+`ready` identity with durable local signoff lineage may start `kind=change`. A merely `ready`-looking
+task without that exact signoff exposes no ordinary Change action. Successful operation-scoped lease renewal
 includes both `task_gid` and `submission_id`; renewal of a terminal operation reports
 `WRONG_STATE / operation_not_open` with the terminal status.
 
@@ -309,7 +313,8 @@ their own JSON documents rather than this envelope:
 
 Internal workflow permission `verify` is exposed as Action/CLI command `start`. When `start` is the
 required handoff command, `data.required_start_kind` identifies its required `kind`: `initial` after
-Planning and `verification` after Research. Clients must not look for a separate `verify` Action.
+Planning, `change` for an exact signed resting `ready` task, and `verification` after Research. Clients
+must not look for a separate `verify` Action.
 
 Verification `start` and `inspect` expose `data.verification_lineage`. `candidate_runs` lists the
 constructor and material-editor run facts that contribute to verifier independence enforcement.

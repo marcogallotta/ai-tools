@@ -392,7 +392,8 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
                 start_variant("initial", "prepared_operation_id"),
                 start_variant(
                     "change", "change_level", "change_reason",
-                    "prepared_operation_id"
+                    "prepared_operation_id",
+                    required=("change_level", "change_reason"),
                 ),
                 start_variant(
                     "verification",

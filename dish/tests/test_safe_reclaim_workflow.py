@@ -449,7 +449,67 @@ def test_safe_reclaim_change_successor_returns_exact_change_intent(tmp_path):
     from tests.support.service_leases import Clock
 
     clock = Clock()
-    service, _backend = _service(tmp_path, clock=clock, ttl=30)
+    service, backend = _service(tmp_path, clock=clock, ttl=30)
+
+    constructor = _principal("action", "constructor-run")
+    initial = service.execute_agent(
+        "start",
+        {"agent": "gpt", "task_gid": "t", "kind": "initial"},
+        principal=constructor,
+        request_id=str(uuid.uuid4()),
+    )
+    assert initial["ok"] is True
+    assert service.execute_agent(
+        "prepare",
+        {
+            "agent": "gpt",
+            "model": "gpt-5.6-sol",
+            "submission_id": initial["submission_id"],
+            "file_text": backend.title + "\n" + backend.notes,
+        },
+        principal=constructor,
+        request_id=str(uuid.uuid4()),
+    )["ok"] is True
+    verifier = _principal("action", "signoff-run")
+    reviewed = service.execute_agent(
+        "start",
+        {
+            "agent": "codex",
+            "task_gid": "t",
+            "kind": "verification",
+            "independence_attestation": "independent",
+        },
+        principal=verifier,
+        request_id=str(uuid.uuid4()),
+    )
+    assert reviewed["ok"] is True
+    assert service.execute_agent(
+        "inspect",
+        {"agent": "codex", "submission_id": initial["submission_id"]},
+        principal=verifier,
+    )["ok"] is True
+    approved = service.execute_agent(
+        "approve",
+        {
+            "agent": "codex",
+            "model": "gpt-5.6-sol",
+            "submission_id": initial["submission_id"],
+            "correction": "none",
+            "reviewed_identity": reviewed["data"]["reviewed_identity"],
+            "semantic_review_complete": True,
+            "provenance_complete": True,
+        },
+        principal=verifier,
+        request_id=str(uuid.uuid4()),
+    )
+    assert approved["ok"] is True
+    assert service.execute_agent(
+        "submit",
+        {"submission_id": initial["submission_id"]},
+        principal=verifier,
+        request_id=str(uuid.uuid4()),
+    )["ok"] is True
+
     old = _principal("action", "old-change-run")
     started = service.execute_agent(
         "start",

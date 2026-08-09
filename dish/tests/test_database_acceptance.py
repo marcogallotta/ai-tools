@@ -50,7 +50,7 @@ def test_confirmed_attempts_require_evidence_bindings(tmp_path):
     conn = initialize_database(tmp_path / "db.sqlite")
     confirm_task_content(conn, task_gid="t", title="Old", notes="Notes", schema_version="2")
     expected = conn.execute("SELECT last_confirmed_identity FROM task_content_state WHERE task_gid='t'").fetchone()[0]
-    op = create_operation(conn, task_gid="t", operation_kind="change", expected_identity=expected, schema_version="2", actors=OperationActors(editor_agent="gpt", run_id="r"))
+    op = create_operation(conn, task_gid="t", operation_kind="initial", expected_identity=expected, schema_version="2", actors=OperationActors(editor_agent="gpt", run_id="r"))
     wa = begin_operation_write_attempt(conn, operation_id=op["operation_id"], expected_identity=expected, intended_identity="new", intended_title="T", intended_notes="N", schema_version="2")
     with pytest.raises(ValueError):
         finish_operation_write_attempt(conn, attempt_id=wa, outcome="confirmed")

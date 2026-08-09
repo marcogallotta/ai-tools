@@ -49,6 +49,15 @@ fast-path). Treat that document and this one as describing the same lifecycle at
 of detail — the inline-resolution proposal there is a mechanism for reaching the states defined
 here faster when Marco is live in the same run, not a competing model.
 
+## Resting-task continuations
+
+When no workflow operation is active, Dish still owns the next-action decision. A fresh task read
+should expose the same start kind that `start` will admit: Planning for a bare task, Initial Research
+for the accepted Research-entry shape, and Change only for a current-schema `ready` identity whose
+exact durable Dish signoff lineage is present. A `ready`-looking task without that lineage must fail
+closed rather than treating status text as approval. Discovery and admission must share this authority
+so an agent never has to guess a legal start or strand the task by choosing the wrong kind.
+
 ## Safe reclaim
 
 This introduces a third action, distinct from the two Part I already ships

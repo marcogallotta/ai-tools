@@ -42,7 +42,7 @@ def test_constructor_run_from_prior_operation_can_verify_later_operation(tmp_pat
     op2 = create_operation(
         app.conn,
         task_gid="t",
-        operation_kind="change",
+        operation_kind="initial",
         expected_identity=app.conn.execute("SELECT last_confirmed_identity FROM task_content_state WHERE task_gid='t'").fetchone()[0],
         schema_version="2",
         actors=OperationActors(editor_agent="codex", run_id="later-editor"),

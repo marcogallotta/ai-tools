@@ -132,7 +132,7 @@ def test_non_material_checkins_preserve_signoff_lineage_across_multiple_heads(tm
     assert [row["inherited_signoff_cycle_id"] for row in rows] == [source_cycle, source_cycle]
 
 
-def test_non_material_checkin_requires_exact_local_signed_baseline(tmp_path):
+def test_change_start_requires_exact_local_signed_baseline(tmp_path):
     # Produce a genuinely ready live task, then attach a fresh local database
     # that has exact content evidence but no local approved Verification cycle.
     source_dir = tmp_path / "source"
@@ -161,16 +161,10 @@ def test_non_material_checkin_requires_exact_local_signed_baseline(tmp_path):
         "start", agent="gpt", task_gid="t", kind="change",
         change_level="small", change_reason="handling wording", run_id="later",
     )
-    assert started["ok"]
-    candidate = tmp_path / "non-material.txt"
-    candidate.write_text(f"{backend.title}\n{backend.notes}".replace("1. Cook it.", "1. Cook it gently."))
-    result = fresh.execute(
-        "prepare", agent="gpt", model="gpt-5.6-sol",
-        submission_id=started["submission_id"], file_path=str(candidate),
-        material_classification="non-material",
-    )
-    assert result["code"] == "CONFLICT"
-    assert result["errors"][0]["rule"] == "non_material_signed_baseline_missing"
+    assert not started["ok"]
+    assert started["code"] == "WRONG_STATE"
+    assert started["errors"][0]["rule"] == "post_signoff_change_signed_baseline_required"
+    assert fresh.conn.execute("SELECT COUNT(*) FROM operations").fetchone()[0] == 0
 
 
 def test_post_planning_priors_change_requires_exact_marco_authorization(tmp_path):

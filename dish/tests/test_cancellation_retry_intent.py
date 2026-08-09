@@ -44,7 +44,7 @@ def _operation(tmp_path: Path):
     op = create_operation(
         conn,
         task_gid=task_gid,
-        operation_kind="change",
+        operation_kind="initial",
         expected_identity=baseline.digest,
         schema_version="2",
         actors=OperationActors(editor_agent="gpt", run_id="run-a"),

@@ -363,6 +363,8 @@ def test_action_contract_has_one_run_identity_and_precise_start_shapes():
     assert "request_id" not in read_client["properties"]
     start_kind = spec["components"]["schemas"]["ResultEnvelope"]["properties"]["data"]["properties"]["required_start_kind"]
     assert "planning" in start_kind["enum"]
+    assert "change" in start_kind["enum"]
+    assert {"change_level", "change_reason"}.issubset(variants["change"]["required"])
     assert "planning-to-research handoff always requires kind=initial" in start_kind["description"]
     assert (
         "first Research construction after Planning"

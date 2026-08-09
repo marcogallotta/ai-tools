@@ -124,11 +124,12 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
                     },
                     "required_start_kind": {
                         "type": "string",
-                        "enum": ["planning", "initial", "verification"],
+                        "enum": ["planning", "initial", "change", "verification"],
                         "description": (
                             "Exact arguments.kind for the returned start action: planning starts "
                             "Planning from a bare task; initial starts the first Research construction "
-                            "after Planning; verification starts independent Verification after Research. "
+                            "after Planning; change starts a post-signoff update from an exact durably "
+                            "signed ready baseline; verification starts independent Verification after Research. "
                             "A planning-to-research handoff always requires kind=initial."
                         ),
                     },

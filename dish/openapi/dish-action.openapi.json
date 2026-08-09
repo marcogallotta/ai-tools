@@ -859,7 +859,9 @@
                         "required": [
                           "task_gid",
                           "agent",
-                          "kind"
+                          "kind",
+                          "change_level",
+                          "change_reason"
                         ],
                         "properties": {
                           "task_gid": {
@@ -1843,9 +1845,10 @@
                 "enum": [
                   "planning",
                   "initial",
+                  "change",
                   "verification"
                 ],
-                "description": "Exact arguments.kind for the returned start action: planning starts Planning from a bare task; initial starts the first Research construction after Planning; verification starts independent Verification after Research. A planning-to-research handoff always requires kind=initial."
+                "description": "Exact arguments.kind for the returned start action: planning starts Planning from a bare task; initial starts the first Research construction after Planning; change starts a post-signoff update from an exact durably signed ready baseline; verification starts independent Verification after Research. A planning-to-research handoff always requires kind=initial."
               },
               "required_admin_action": {
                 "type": "string",

@@ -133,11 +133,19 @@ def test_prepare_rejects_placement_drift_for_all_operation_kinds(tmp_path):
         if kind == "planning":
             b = Backend()
             candidate_text = PLANNING
+            a = app(case, b)
+        elif kind == "change":
+            from tests.support.readiness import _approve_and_submit
+            from tests.support.verification import make_app
+
+            a, b, signed_operation_id, _ = make_app(case)
+            _approve_and_submit(a, signed_operation_id)
+            candidate_text = TASK
         else:
             lines = TASK.splitlines()
             b = Backend(lines[0], "\n".join(lines[1:]) + "\n")
             candidate_text = TASK
-        a = app(case, b)
+            a = app(case, b)
         confirm_task_content(
             a.conn,
             task_gid="t",
@@ -158,11 +166,13 @@ def test_prepare_rejects_placement_drift_for_all_operation_kinds(tmp_path):
             expected_identity=a.conn.execute(
                 "SELECT last_confirmed_identity FROM task_content_state WHERE task_gid='t'"
             ).fetchone()[0],
-            expected_section_gid="rq",
+            expected_section_gid=b.section,
             schema_version="2",
             actors=actors,
         )
-        b.section = "12345"
+        writes_before = b.writes
+        moves_before = b.moves
+        b.section = "drifted-section"
         candidate = write(case, "candidate.txt", candidate_text)
         with pytest.raises(DishRuleError) as exc:
             prepare_live(
@@ -176,8 +186,8 @@ def test_prepare_rejects_placement_drift_for_all_operation_kinds(tmp_path):
                 material_classification="non-material" if kind == "change" else None,
             )
         assert exc.value.rule == "live_task_placement_drift"
-        assert b.writes == 0
-        assert b.moves == 0
+        assert b.writes == writes_before
+        assert b.moves == moves_before
 @pytest.mark.smoke
 def test_completed_task_requires_audited_marco_reopen_before_planning(tmp_path):
     from dish_tool.admin import DishAdminApplication

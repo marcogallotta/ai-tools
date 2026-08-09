@@ -30,17 +30,11 @@ def _operation(tmp_path: Path):
     op = create_operation(
         conn,
         task_gid="task",
-        operation_kind="change",
+        operation_kind="initial",
         expected_identity=head.digest,
         expected_section_gid="research",
         schema_version="2",
         actors=OperationActors(editor_agent="gpt", run_id="run-1"),
-        initial_steps={
-            "change_intent": {
-                "level": "small",
-                "reason": "Exercise persistence invariants",
-            }
-        },
     )
     return db_path, conn, op, head
 
@@ -66,7 +60,7 @@ def test_uncertain_operation_blocks_a_second_operation(tmp_path: Path) -> None:
         create_operation(
             conn,
             task_gid="task",
-            operation_kind="change",
+            operation_kind="initial",
             expected_identity=head.digest,
             expected_section_gid="research",
             schema_version="2",
