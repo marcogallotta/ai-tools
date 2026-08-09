@@ -10,7 +10,7 @@ Dark launch observes and exercises the PostgreSQL target without transferring li
 
 ## Authoritative implementation
 
-Current anchors include `dish_pg/location_manifest.py`, `dish_pg/legacy_source.py`, `dish_pg/dark_launch_readiness.py`, `dish_service/shadow_capture.py`, `dish_service/shadow_spool.py`, `dish_shadow/policy.py`, and `dish_pg/shadow_worker.py`.
+Current anchors include `dish_pg/location_manifest.py`, `dish_pg/legacy_source.py`, `dish_pg/dark_launch_readiness.py`, `dish_pg/importer.py`, `dish_pg/import_runtime.py`, `dish_service/shadow_capture.py`, `dish_service/shadow_spool.py`, `dish_shadow/policy.py`, and `dish_pg/shadow_worker.py`.
 
 ## Actors, processes, and stores
 
@@ -56,7 +56,7 @@ Changes to capture/readiness must preserve read-only authority isolation. Change
 
 ## Proving tests
 
-Current evidence includes `tests/test_shadow_capture.py`, `tests/test_shadow_spool.py`, `tests/postgresql/test_location_manifest.py`, `tests/postgresql/test_dark_launch_legacy_source.py`, `tests/postgresql/test_dark_launch_readiness.py`, `tests/postgresql/test_dark_launch_policy.py`, and shadow-worker/authority regression tests.
+Current evidence includes `tests/test_shadow_capture.py`, `tests/test_shadow_spool.py`, `tests/postgresql/test_location_manifest.py`, `tests/postgresql/test_dark_launch_legacy_source.py`, `tests/postgresql/test_dark_launch_readiness.py`, `tests/postgresql/test_dark_launch_policy.py`, `tests/postgresql/test_dark_launch_shadow_translation.py`, `tests/postgresql/native/test_importer.py`, and shadow-worker/authority regression tests.
 
 ## Current debt and temporary compatibility
 
