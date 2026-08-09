@@ -579,7 +579,7 @@ def _source_identity(
     for label, value in (("dish commit", expected_commit), ("base commit", expected_base)):
         if value is not None and not GIT_COMMIT.fullmatch(value):
             raise ProductionShapedError(f"{label} must be 40 lowercase hexadecimal characters")
-    if not (REPOSITORY / ".git").is_dir():
+    if not (REPOSITORY / ".git").exists():
         raise ProductionShapedError("Git metadata is required for Section 4 evidence")
     head = _git(runner, "rev-parse", "HEAD").stdout.strip()
     tree = _git(runner, "rev-parse", "HEAD^{tree}").stdout.strip()
