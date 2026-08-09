@@ -28,6 +28,7 @@ export function groupNotices(contributions, lifecycle = []) {
       severity: registered.severity,
       tasks: new Map(),
       message: contribution.message ?? null,
+      action: contribution.action ?? null,
     };
     if (contribution.taskId) {
       const knownTitle = existing.tasks.get(contribution.taskId);
@@ -37,6 +38,7 @@ export function groupNotices(contributions, lifecycle = []) {
       );
     }
     if (contribution.message) existing.message = contribution.message;
+    if (contribution.action) existing.action = contribution.action;
     groups.set(contribution.code, existing);
   }
   return [...groups.values()].map((group) => ({

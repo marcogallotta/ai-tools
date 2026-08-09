@@ -166,6 +166,7 @@ def enabled_env() -> dict[str, str]:
         "DISH_FRONTEND_ORIGIN": "https://dish.example.test",
         "DISH_ACTION_PUBLIC_ORIGIN": "https://action.example.test",
         "DISH_FRONTEND_DATABASE_URL": "postgresql+psycopg://dish:secret@127.0.0.1/dish",
+        "DISH_FRONTEND_REFRESH_INTERVAL_SECONDS": "25",
         "DISH_FRONTEND_RESTORE_FENCE_PATH": "/tmp/dish-frontend-fence",
         "DISH_FRONTEND_TOKEN_SECRET": encoded(1),
         "DISH_FRONTEND_SESSION_SECRET": encoded(2),
@@ -193,6 +194,7 @@ def test_frontend_settings_fail_closed_and_keep_postgresql_reads_explicit(tmp_pa
     assert not settings.postgresql_reads_enabled
     assert settings.observation_database_url is None
     assert settings.projection_delay_seconds is None
+    assert settings.refresh_interval_seconds == 25
 
     enabled_reads = {**env, "DISH_FRONTEND_POSTGRESQL_READS_ENABLED": "1"}
     with pytest.raises(FrontendSecurityConfigurationError, match="OBSERVATION_DATABASE_URL"):
@@ -207,6 +209,16 @@ def test_frontend_settings_fail_closed_and_keep_postgresql_reads_explicit(tmp_pa
     assert settings.postgresql_reads_enabled
     assert settings.projection_delay_seconds == 900
     assert settings.observation_database_url == enabled_reads["DISH_FRONTEND_OBSERVATION_DATABASE_URL"]
+
+
+
+def test_frontend_settings_bound_active_refresh_interval(tmp_path: Path) -> None:
+    env = enabled_env()
+    env["DISH_FRONTEND_REFRESH_INTERVAL_SECONDS"] = "30"
+    assert FrontendRuntimeSettings.from_mapping(env, dish_root=tmp_path).refresh_interval_seconds == 30
+    env["DISH_FRONTEND_REFRESH_INTERVAL_SECONDS"] = "31"
+    with pytest.raises(FrontendSecurityConfigurationError, match="at most 30"):
+        FrontendRuntimeSettings.from_mapping(env, dish_root=tmp_path)
 
 
 def test_frontend_settings_require_explicit_database_url(tmp_path: Path) -> None:

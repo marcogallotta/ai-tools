@@ -113,7 +113,8 @@ an explicitly approved `DISH_FRONTEND_PROJECTION_DELAY_SECONDS`. During dark lau
 `DISH_FRONTEND_OBSERVATION_DATABASE_URL` is the dark-launch task database used only for Stage 3/4 reads and
 should use SELECT-only credentials. Startup verifies server-reported database identity and fails closed if the
 two URLs resolve to the same database. Both database passwords must remain distinct from the frontend security
-secrets.
+secrets. `DISH_FRONTEND_REFRESH_INTERVAL_SECONDS` configures the active visible-tab Stage 5 polling
+interval and must be a positive integer no greater than 30; the checked-in examples use 25 seconds.
 
 Before any enabled test deployment, populate the full frontend variable inventory from the environment-specific
 systemd example, apply the current migration head to the separate database named by

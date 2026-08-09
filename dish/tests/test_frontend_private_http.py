@@ -76,13 +76,13 @@ class FakeService:
 
 class FakeRuntime:
     def __init__(self, tmp_path: Path, *, mode: str = "private-fixture") -> None:
-        self.settings = SimpleNamespace(origin="https://dish.example.test")
+        self.settings = SimpleNamespace(origin="https://dish.example.test", refresh_interval_seconds=17)
         self.browser_runtime_mode = mode
         self.auth = FakeAuth()
         self.static_root = tmp_path / "dist"
         self.static_root.mkdir(parents=True)
         (self.static_root / "index.html").write_text(
-            '<meta name="dish-runtime-mode" content="fixture"><main id="app"></main>\n',
+            '<meta name="dish-runtime-mode" content="fixture"><meta name="dish-refresh-interval-seconds" content="25"><main id="app"></main>\n',
             encoding="utf-8",
         )
         fixtures = self.static_root / "fixtures"
@@ -174,6 +174,7 @@ def test_unauthenticated_html_redirects_and_authenticated_fixture_shell_is_serve
     status, headers, body = request(server, "GET", "/", cookie=TOKEN, contract=None)
     assert status == 200
     assert b'content="private-fixture"' in body
+    assert b'name="dish-refresh-interval-seconds" content="17"' in body
     assert header_values(headers, "Cache-Control") == ["no-store"]
     assert header_values(headers, "Content-Security-Policy")
 

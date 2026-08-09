@@ -1,3 +1,14 @@
+export const TASK_ATTENTION_NOTICE_CODES = Object.freeze([
+  "isolated",
+  "lease_attention",
+  "verification_attention",
+  "hold_active",
+  "recovery_required",
+  "abandonment_active",
+  "succession_active",
+  "projection_abnormal",
+]);
+
 export const noticeRegistry = Object.freeze({
   isolated: { label: "ISOLATED", severity: "warning" },
   lease_attention: { label: "Lease needs attention", severity: "warning" },
@@ -10,4 +21,13 @@ export const noticeRegistry = Object.freeze({
   render_rejected: { label: "Task content shown as inert plain text", severity: "warning" },
   initial_load_failed: { label: "Board unavailable", severity: "error" },
   service_unavailable: { label: "Refresh unavailable", severity: "warning" },
+  internal_error: { label: "Refresh unavailable", severity: "warning" },
+  board_configuration_invalid: { label: "Board configuration invalid", severity: "error" },
+  board_capacity_exceeded: { label: "Board capacity exceeded", severity: "error" },
+  detail_capacity_exceeded: { label: "Task detail unavailable", severity: "warning" },
+  client_update_required: { label: "Frontend update required", severity: "error" },
+  contract_mismatch: { label: "Frontend update required", severity: "error" },
+  request_invalid: { label: "Refresh request rejected", severity: "warning" },
+  task_not_found: { label: "Task no longer available", severity: "information" },
+  task_ineligible: { label: "Task left the board", severity: "information" },
 });

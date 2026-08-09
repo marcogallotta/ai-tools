@@ -68,3 +68,14 @@
 .notice-banner__task:hover {
   text-decoration-thickness: 2px;
 }
+
+.notice-banner--information {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-muted);
+  color: var(--color-ink);
+}
+
+.notice-banner__action {
+  flex: 0 0 auto;
+  align-self: center;
+}

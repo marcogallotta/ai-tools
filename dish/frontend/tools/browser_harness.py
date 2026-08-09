@@ -8,6 +8,8 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+from stage5_cursor_harness import assert_stage5_repeated_invalid_cursors
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -225,7 +227,8 @@ def main() -> None:
             if args.mode == "test":
                 assert_shells(browser)
                 assert_visual_resilience(browser)
-                print("Playwright shell and visual-resilience checks passed")
+                assert_stage5_repeated_invalid_cursors(browser, SRC)
+                print("Playwright shell, visual-resilience, and Stage 5 cursor checks passed")
             elif args.mode == "local-postgresql":
                 assert_local_postgresql(browser)
                 print("Local PostgreSQL board/detail browser smoke passed")

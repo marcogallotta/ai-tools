@@ -743,7 +743,7 @@ event merge.
 
 The client performs bounded automatic background refresh by reissuing the approved board and detail
 reads. Scheduling, cancellation, and in-memory cache mechanics are implementation choices subject to
-service-load and acceptance tests. The deployment-configured active-view refresh interval is positive
+service-load and acceptance tests. The deployment-configured active-view refresh interval, `DISH_FRONTEND_REFRESH_INTERVAL_SECONDS`, is positive
 and no greater than 30 seconds. While the private service is reachable and can establish session and
 canonical read outcomes, an active visible tab therefore discovers server-side expiry, revocation,
 rotation, and canonical board/detail changes within 30 seconds unless an earlier protected request or
@@ -1266,6 +1266,10 @@ is layered on. Detail, rendering, disclosure, route-identity, history-exclusion,
 land in this stage.
 
 ### 11.8 Delivery Stage 5 — refresh, continuity, warnings, and failure behavior
+
+**Implementation status:** the authenticated `private-postgresql` path implements this stage with bounded
+visible-tab polling and ordinary board/detail re-reads. No SSE, WebSocket, or alternate synchronization
+transport is introduced. Production acceptance remains subject to the existing frontend gates.
 
 Deliver the dynamic behavior around the already-reviewed board and panel:
 

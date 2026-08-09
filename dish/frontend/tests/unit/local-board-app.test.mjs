@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { LocalBoardRequestState } from "../../src/js/local/local-board-app.js";
+import { LocalBoardRequestState } from "../../src/js/features/refresh/request-state.js";
 
 function section(overrides = {}) {
   return {
@@ -75,4 +75,12 @@ test("newer detail requests fence stale detail responses and close invalidates i
   assert.equal(state.isCurrentDetail(second), true);
   state.cancelDetail();
   assert.equal(state.isCurrentDetail(second), false);
+});
+
+
+test("blocked continuation state cannot start another request", () => {
+  const state = new LocalBoardRequestState();
+  const generation = state.beginBootstrap();
+  assert.equal(state.acceptBootstrap(generation), true);
+  assert.equal(state.beginContinuation(section({ loadMoreBlocked: true })), null);
 });

@@ -52,7 +52,12 @@ export function closeTaskDetail({ restoreFocus = true } = {}) {
   if (restoreFocus) restorePanelFocus(origin, fallback);
 }
 
-export function openTaskDetail(detail, origin, { onRequestClose, focusFallback } = {}) {
+export function openTaskDetail(detail, origin, { onRequestClose, focusFallback, refresh = false } = {}) {
+  const prior = refresh && activePanel?.panel?.dataset.taskDetail === detail.id ? {
+    scrollTop: activePanel.panel.querySelector(".task-detail__body")?.scrollTop ?? 0,
+    technicalOpen: Boolean(activePanel.panel.querySelector(".detail-technical")?.open),
+    focusInside: activePanel.panel.contains(document.activeElement),
+  } : null;
   closeTaskDetail({ restoreFocus: false });
   const panel = document.createElement("aside");
   panel.className = "task-detail";
@@ -98,6 +103,7 @@ export function openTaskDetail(detail, origin, { onRequestClose, focusFallback }
     const summary = document.createElement("summary");
     summary.textContent = "Technical details";
     technical.append(summary);
+    if (prior?.technicalOpen) technical.open = true;
     renderDisclosures(technical, detail.disclosures);
     if (detail.projection) {
       const projection = document.createElement("section");
@@ -134,6 +140,11 @@ export function openTaskDetail(detail, origin, { onRequestClose, focusFallback }
   activePanel = { panel, origin, fallback: focusFallback, outsideListener, keyListener };
   document.addEventListener("pointerdown", outsideListener, true);
   document.addEventListener("keydown", keyListener);
-  close.focus();
+  if (prior) {
+    body.scrollTop = prior.scrollTop;
+    if (prior.focusInside) close.focus({ preventScroll: true });
+  } else {
+    close.focus();
+  }
   return panel;
 }

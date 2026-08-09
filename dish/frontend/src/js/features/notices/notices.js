@@ -1,6 +1,6 @@
 import { noticeHeading } from "./notice-model.js";
 
-export function renderNotices(host, notices, { onSelectTask = null } = {}) {
+export function renderNotices(host, notices, { onSelectTask = null, onRetry = null, onReload = null } = {}) {
   host.replaceChildren();
   host.className = "notice-stack";
   host.setAttribute("aria-label", "Current notices");
@@ -30,7 +30,23 @@ export function renderNotices(host, notices, { onSelectTask = null } = {}) {
       }
       text.append(tasks);
     }
-    banner.append(text);
+    if (notice.action === "retry" && onRetry) {
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "button button--secondary notice-banner__action";
+      retry.textContent = "Retry now";
+      retry.addEventListener("click", onRetry);
+      banner.append(text, retry);
+    } else if (notice.action === "reload" && onReload) {
+      const reload = document.createElement("button");
+      reload.type = "button";
+      reload.className = "button button--secondary notice-banner__action";
+      reload.textContent = "Reload page";
+      reload.addEventListener("click", onReload);
+      banner.append(text, reload);
+    } else {
+      banner.append(text);
+    }
     host.append(banner);
   }
 }

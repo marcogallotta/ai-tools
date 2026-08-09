@@ -82,6 +82,7 @@ class FrontendRuntimeSettings:
     argon2_policy: Argon2Policy | None = None
     postgresql_reads_enabled: bool = False
     projection_delay_seconds: int | None = None
+    refresh_interval_seconds: int | None = None
 
     @classmethod
     def from_mapping(cls, env: Mapping[str, str], *, dish_root: Path) -> "FrontendRuntimeSettings":
@@ -137,6 +138,11 @@ class FrontendRuntimeSettings:
             _positive_int(env, "DISH_FRONTEND_PROJECTION_DELAY_SECONDS")
             if reads_enabled else None
         )
+        refresh_interval = _positive_int(env, "DISH_FRONTEND_REFRESH_INTERVAL_SECONDS")
+        if refresh_interval > 30:
+            raise FrontendSecurityConfigurationError(
+                "DISH_FRONTEND_REFRESH_INTERVAL_SECONDS must be at most 30"
+            )
         static_root = Path(env.get("DISH_FRONTEND_STATIC_ROOT") or dish_root / "frontend" / "dist").expanduser()
         restore_path = Path(_required(env, "DISH_FRONTEND_RESTORE_FENCE_PATH")).expanduser()
         return cls(
@@ -154,4 +160,5 @@ class FrontendRuntimeSettings:
             argon2_policy=policy,
             postgresql_reads_enabled=reads_enabled,
             projection_delay_seconds=projection_delay,
+            refresh_interval_seconds=refresh_interval,
         )

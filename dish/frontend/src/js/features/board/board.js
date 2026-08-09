@@ -33,12 +33,13 @@ function createSection(section, options) {
   }
 
   region.append(header, list);
-  if (section.hasMore) {
+  if (section.hasMore || section.loadMoreBlocked) {
     const loadMore = document.createElement("button");
     loadMore.className = "button button--secondary board-column__load";
     loadMore.type = "button";
-    loadMore.textContent = "Load more";
-    loadMore.addEventListener("click", () => options.onLoadMore(section, region));
+    loadMore.textContent = section.loadMoreBlocked ? "Reload required" : "Load more";
+    loadMore.disabled = Boolean(section.loadMoreBlocked);
+    if (!section.loadMoreBlocked) loadMore.addEventListener("click", () => options.onLoadMore(section, region));
     region.append(loadMore);
   }
   return region;

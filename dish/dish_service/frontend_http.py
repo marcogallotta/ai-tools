@@ -261,6 +261,10 @@ def _serve_protected_html(handler, runtime, path: str, query: str) -> None:
 def _serve_html(handler, runtime, *, login: bool) -> None:
     body = (runtime.static_root / "index.html").read_text(encoding="utf-8")
     body = body.replace('name="dish-runtime-mode" content="fixture"', f'name="dish-runtime-mode" content="{runtime.browser_runtime_mode}"')
+    body = body.replace(
+        'name="dish-refresh-interval-seconds" content="25"',
+        f'name="dish-refresh-interval-seconds" content="{runtime.settings.refresh_interval_seconds}"',
+    )
     _write_bytes(handler, http.HTTPStatus.OK, body.encode("utf-8"), "text/html; charset=utf-8", html=True)
 
 

@@ -1,7 +1,7 @@
 import { FrontendApiError, FrontendHttpClient } from "../api/http-transport.js";
 import {
   PrivateSessionLifecycle,
-  isLifecycleFailure,
+  isSessionInvalidity,
   loginLocationForCurrentPage,
   parseSessionBootstrap,
   returnTargetFromSearch,
@@ -15,7 +15,7 @@ function navigateToLogin(root) {
   window.location.replace(loginLocationForCurrentPage());
 }
 
-function installLogout(root, lifecycle, client) {
+function installLogout(root, lifecycle, client, { stopProtectedReads = () => {} } = {}) {
   const header = root.querySelector(".app-header");
   if (!header) return;
   const button = document.createElement("button");
@@ -29,6 +29,7 @@ function installLogout(root, lifecycle, client) {
       navigateToLogin(root);
       return;
     }
+    stopProtectedReads();
     lifecycle.conceal();
     lifecycle.signalLogoutStart();
     lifecycle.stop();
@@ -106,14 +107,15 @@ export async function bootPrivateFrontend(root, { mode, fetchImpl = globalThis.f
   lifecycle.start();
 
   const onAuthenticationLost = (error) => {
-    if (!isLifecycleFailure(error) && !(error instanceof FrontendApiError && error.code === "session_unavailable")) return false;
+    if (!isSessionInvalidity(error) && !(error instanceof FrontendApiError && error.code === "session_unavailable")) return false;
     lifecycle.stop();
     navigateToLogin(root);
     return true;
   };
 
+  let protectedController = null;
   if (mode === "private-postgresql") {
-    await renderLocalPostgresqlBoard(root, {
+    protectedController = await renderLocalPostgresqlBoard(root, {
       initialTaskId: parsePostgresTaskRoute(window.location.pathname)?.taskId ?? null,
       prototypeLabel: "POSTGRESQL — NON-AUTHORITATIVE",
       onAuthenticationLost,
@@ -122,5 +124,7 @@ export async function bootPrivateFrontend(root, { mode, fetchImpl = globalThis.f
     const { renderFixturePrototype } = await import("../prototype/prototype-app.js");
     renderFixturePrototype(root, "board", parseTaskRoute(window.location.pathname), { reviewMode: false });
   }
-  if (!root.hidden) installLogout(root, lifecycle, client);
+  if (!root.hidden) installLogout(root, lifecycle, client, {
+    stopProtectedReads: () => protectedController?.stop(),
+  });
 }

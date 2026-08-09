@@ -1,12 +1,10 @@
-import { noticeRegistry } from "../notices/notice-registry.js";
+import { noticeRegistry, TASK_ATTENTION_NOTICE_CODES } from "../notices/notice-registry.js";
 
 const routePatterns = Object.freeze({
   task: /^r1t-[A-Za-z0-9_-]{27}$/,
   section: /^r1s-[A-Za-z0-9_-]{27}$/,
 });
-const attentionOrder = Object.freeze(Object.keys(noticeRegistry).filter((code) => (
-  !["render_rejected", "initial_load_failed", "service_unavailable"].includes(code)
-)));
+const attentionOrder = TASK_ATTENTION_NOTICE_CODES;
 export const WORKFLOW_OPERATION_LABELS = Object.freeze([
   "Planning",
   "Initial",
@@ -144,8 +142,11 @@ export function mapBoardResponse(value) {
       projectLabel: raw.project_label == null ? null : boundedString(raw.project_label, 160),
       continuityId: boundedString(raw.continuity_id, 200),
       cards,
+      firstPageCount: cards.length,
       nextCursor,
       hasMore: nextCursor !== null,
+      loadMoreBlocked: false,
+      resetPending: false,
     };
   });
   validateNotices(value.notices, sections.flatMap((section) => section.cards));
@@ -176,6 +177,8 @@ export function appendSectionPage(board, sectionId, page) {
       cards: [...item.cards, ...page.cards],
       nextCursor: page.nextCursor,
       hasMore: page.nextCursor !== null,
+      loadMoreBlocked: false,
+      resetPending: false,
     } : item),
   };
 }
