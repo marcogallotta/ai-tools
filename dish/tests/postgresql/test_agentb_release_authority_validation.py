@@ -10,16 +10,21 @@ import pytest
 from sqlalchemy import select
 
 from dish_pg import import_link_models as import_links
+from dish_pg import models
 from dish_pg import stage3_models as wf
 from dish_pg import stage5_models as tx
 from dish_pg import stage6_models as rel
 from dish_pg.database import session_scope
 from dish_pg.release import EVIDENCE_ARTIFACT_KINDS, ReleaseAuthorityError
+from dish_pg.repositories import RegistryRepository
+from dish_pg.transition import ProjectionService, TransitionAuthorityError
 from tests.support.postgresql.release import (
     HASH_A,
+    _independent_active_mapping_membership,
     _prepare_candidate,
     _record_final_closure,
 )
+from tests.support.postgresql.release_oracles import independent_sha256_json
 from tests.support.postgresql.workflow import NOW, _next, workflow_db
 
 
@@ -37,6 +42,264 @@ def _evidence_payload(path: Path, *, identity: str) -> dict[str, object]:
         "gate_name": "authority_coverage:current_to_target",
         "gate_result": "pass",
     }
+
+
+def _independent_candidate_corpus_sha256(candidate, membership) -> str:
+    return independent_sha256_json(
+        {
+            "contract": "release-active-projection-corpus-v1",
+            "candidate_id": str(candidate.candidate_id),
+            "generation_id": str(candidate.generation_id),
+            "projection_epoch_id": str(candidate.projection_epoch_id),
+            "items": [
+                {"entity_kind": entity_kind, "mapping_id": str(mapping_id)}
+                for entity_kind, mapping_id in sorted(
+                    membership, key=lambda item: (item[0], str(item[1]))
+                )
+            ],
+        }
+    )
+
+
+def test_candidate_reconciliation_writer_binds_canonical_authority_and_replays_safely(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        service, candidate_id = _prepare_candidate(session, ids, context, task_id)
+        candidate = service._candidate(candidate_id)
+        membership = _independent_active_mapping_membership(
+            session, candidate=candidate
+        )
+        started_at = NOW + timedelta(minutes=1)
+        run = service.start_candidate_reconciliation(
+            candidate_id=candidate_id,
+            corpus_identity="candidate-writer-production-path",
+            observation_started_at=started_at,
+            adapter_contract_version="asana-high-water-v1",
+            started_at=started_at,
+        )
+        active_registry = session.get(
+            models.ActiveSectionRegistry, candidate.generation_id
+        )
+        assert run.candidate_id == candidate_id
+        assert run.registry_version_id == active_registry.registry_version_id
+        assert run.expected_items == len(membership)
+        assert run.processed_items == 0
+        assert run.scope_complete is False
+        assert run.status == "running"
+        assert run.observation_started_at == started_at
+        assert run.adapter_contract_version == "asana-high-water-v1"
+        assert run.evidence_recorded_at == started_at
+        assert run.corpus_manifest_sha256 == _independent_candidate_corpus_sha256(
+            candidate, membership
+        )
+
+        projection = ProjectionService(session, uuid_factory=lambda: _next(ids))
+        for ordinal, (entity_kind, mapping_id) in enumerate(
+            sorted(membership, key=lambda item: (item[0], str(item[1])))
+        ):
+            projection.record_reconciliation_item(
+                reconciliation_run_id=run.reconciliation_run_id,
+                item_identity=f"writer:{ordinal}:{entity_kind}:{mapping_id}",
+                entity_kind=entity_kind,
+                mapping_id=mapping_id,
+                outcome="matched",
+                evidence={"reread": "exact", "boundary": "asana-event-700"},
+                recorded_at=started_at,
+            )
+        with pytest.raises(
+            TransitionAuthorityError,
+            match="candidate-bound reconciliation completion requires release authority",
+        ):
+            projection.complete_reconciliation(
+                reconciliation_run_id=run.reconciliation_run_id,
+                completed_at=started_at,
+            )
+
+        completed = service.complete_candidate_reconciliation(
+            candidate_id=candidate_id,
+            reconciliation_run_id=run.reconciliation_run_id,
+            observation_completed_at=started_at,
+            external_high_water="asana-event-700",
+            completed_at=started_at,
+        )
+        assert completed.status == "complete"
+        assert completed.scope_complete is True
+        assert completed.observation_completed_at == started_at
+        assert completed.evidence_recorded_at == started_at
+        assert completed.external_high_water == "asana-event-700"
+        assert completed.external_snapshot_identity is None
+
+        replayed_start = service.start_candidate_reconciliation(
+            candidate_id=candidate_id,
+            corpus_identity="candidate-writer-production-path",
+            observation_started_at=started_at,
+            adapter_contract_version="asana-high-water-v1",
+            started_at=started_at,
+        )
+        replayed_complete = service.complete_candidate_reconciliation(
+            candidate_id=candidate_id,
+            reconciliation_run_id=run.reconciliation_run_id,
+            observation_completed_at=started_at,
+            external_high_water="asana-event-700",
+            completed_at=started_at,
+        )
+        assert replayed_start.reconciliation_run_id == run.reconciliation_run_id
+        assert replayed_complete.reconciliation_run_id == run.reconciliation_run_id
+
+
+def test_candidate_reconciliation_writer_rejects_wrong_run_and_registry_change(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        service, candidate_id = _prepare_candidate(session, ids, context, task_id)
+        candidate = service._candidate(candidate_id)
+        started_at = NOW + timedelta(minutes=1)
+
+        generic = ProjectionService(
+            session, uuid_factory=lambda: _next(ids)
+        ).start_reconciliation(
+            generation_id=candidate.generation_id,
+            corpus_identity="generic-not-candidate-owned",
+            expected_items=0,
+            started_at=started_at,
+        )
+        with pytest.raises(
+            ReleaseAuthorityError,
+            match="does not belong to the release candidate",
+        ):
+            service.complete_candidate_reconciliation(
+                candidate_id=candidate_id,
+                reconciliation_run_id=generic.reconciliation_run_id,
+                observation_completed_at=started_at,
+                external_high_water="asana-event-generic",
+                completed_at=started_at,
+            )
+
+        run = service.start_candidate_reconciliation(
+            candidate_id=candidate_id,
+            corpus_identity="candidate-registry-change",
+            observation_started_at=started_at,
+            adapter_contract_version="asana-high-water-v1",
+            started_at=started_at,
+        )
+        active = session.get(models.ActiveSectionRegistry, candidate.generation_id)
+        current = session.get(models.SectionRegistryVersion, active.registry_version_id)
+        entries = session.scalars(
+            select(models.SectionRegistryEntry).where(
+                models.SectionRegistryEntry.registry_version_id
+                == current.registry_version_id
+            )
+        ).all()
+        replacement_id = _next(ids)
+        replacement_activation_id = _next(ids)
+        repo = RegistryRepository(session)
+        repo.add_registry_version(
+            models.SectionRegistryVersion(
+                registry_version_id=replacement_id,
+                generation_id=current.generation_id,
+                version_number=current.version_number + 1,
+                import_run_id=current.import_run_id,
+                contract_binding_id=current.contract_binding_id,
+                registry_sha256="b" * 64,
+                created_at=started_at,
+            ),
+            [
+                models.SectionRegistryEntry(
+                    registry_version_id=replacement_id,
+                    section_id=entry.section_id,
+                    ordinal=entry.ordinal,
+                    display_name=entry.display_name,
+                    workflow_role=entry.workflow_role,
+                )
+                for entry in entries
+            ],
+        )
+        repo.activate_registry(
+            activation=models.SectionRegistryActivation(
+                registry_activation_id=replacement_activation_id,
+                generation_id=current.generation_id,
+                registry_version_id=replacement_id,
+                activation_route="command_execution",
+                import_run_id=None,
+                command_execution_id=_next(ids),
+                registry_revision=active.registry_revision + 1,
+                activated_at=started_at,
+            ),
+            current=models.ActiveSectionRegistry(
+                generation_id=current.generation_id,
+                registry_version_id=replacement_id,
+                registry_activation_id=replacement_activation_id,
+                registry_revision=active.registry_revision + 1,
+                updated_at=started_at,
+            ),
+        )
+        with pytest.raises(
+            ReleaseAuthorityError,
+            match="not bound to the current candidate registry",
+        ):
+            service.complete_candidate_reconciliation(
+                candidate_id=candidate_id,
+                reconciliation_run_id=run.reconciliation_run_id,
+                observation_completed_at=started_at,
+                external_high_water="asana-event-701",
+                completed_at=started_at,
+            )
+
+
+def test_candidate_reconciliation_writer_fails_closed_for_candidate_scope_and_epoch(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        service, candidate_id = _prepare_candidate(session, ids, context, task_id)
+        candidate = service._candidate(candidate_id)
+        started_at = NOW + timedelta(minutes=1)
+        run = service.start_candidate_reconciliation(
+            candidate_id=candidate_id,
+            corpus_identity="candidate-fail-closed",
+            observation_started_at=started_at,
+            adapter_contract_version="asana-high-water-v1",
+            started_at=started_at,
+        )
+
+        with pytest.raises(ReleaseAuthorityError, match="unknown release candidate"):
+            service.complete_candidate_reconciliation(
+                candidate_id=_next(ids),
+                reconciliation_run_id=run.reconciliation_run_id,
+                observation_completed_at=started_at,
+                external_high_water="asana-event-702",
+                completed_at=started_at,
+            )
+
+        with pytest.raises(
+            ReleaseAuthorityError, match="candidate reconciliation corpus is incomplete"
+        ):
+            service.complete_candidate_reconciliation(
+                candidate_id=candidate_id,
+                reconciliation_run_id=run.reconciliation_run_id,
+                observation_completed_at=started_at,
+                external_high_water="asana-event-702",
+                completed_at=started_at,
+            )
+
+        ProjectionService(session, uuid_factory=lambda: _next(ids)).retire_epoch(
+            projection_epoch_id=candidate.projection_epoch_id,
+            retired_at=started_at,
+        )
+        with pytest.raises(
+            ReleaseAuthorityError,
+            match="candidate projection epoch to be active",
+        ):
+            service.complete_candidate_reconciliation(
+                candidate_id=candidate_id,
+                reconciliation_run_id=run.reconciliation_run_id,
+                observation_completed_at=started_at,
+                external_high_water="asana-event-702",
+                completed_at=started_at,
+            )
 
 
 def test_release_artifact_substitution_is_detected_during_revalidation(workflow_db) -> None:
@@ -137,6 +400,8 @@ def test_reconciliation_requires_exact_candidate_scope_digest_boundary_and_fresh
             )
         )
         evaluation_at = NOW
+        # Synthetic corruption is intentional here: these branches prove the
+        # validator fails closed against states ordinary production writers reject.
         if defect == "candidate_binding":
             run.candidate_id = None
             run.registry_version_id = None

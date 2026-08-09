@@ -2408,6 +2408,10 @@ class ProjectionService:
         run = self._lock_reconciliation_run(reconciliation_run_id)
         if run is None or run.status != "running":
             raise TransitionAuthorityError("reconciliation run is not active")
+        if run.candidate_id is not None:
+            raise TransitionAuthorityError(
+                "candidate-bound reconciliation completion requires release authority"
+            )
         if run.processed_items != run.expected_items:
             raise TransitionAuthorityError("reconciliation corpus is incomplete")
         blocked = self.session.scalar(

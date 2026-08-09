@@ -57,7 +57,7 @@ from .release_evidence import (
     REQUIRED_REHEARSALS,
     sha256_json as release_sha256_json,
 )
-from .release_validation import active_mapping_membership, reconciliation_corpus_sha256
+from .release_validation import active_mapping_membership
 from .services import CoreAuthorityService, ImportedTaskSpec
 from .transition import ProjectionService, SourceImportService
 from .workflow import (
@@ -1138,48 +1138,33 @@ def _seed_baseline(engine: Engine, evidence_dir: Path, *, dish_commit: str) -> S
         )
         session.flush()
         reconciliation_at = utc_now()
-        membership = active_mapping_membership(session, candidate=candidate)
-        reconciliation = transition_models.ProjectionReconciliationRun(
-            reconciliation_run_id=uuid.uuid4(),
-            generation_id=result.generation_id,
-            projection_epoch_id=epoch.projection_epoch_id,
-            corpus_identity=f"section2-recovery-approval:{candidate_id}",
+        reconciliation = service.start_candidate_reconciliation(
             candidate_id=candidate_id,
-            registry_version_id=result.registry_version_id,
+            corpus_identity=f"section2-recovery-approval:{candidate_id}",
             observation_started_at=reconciliation_at,
-            observation_completed_at=reconciliation_at,
-            external_snapshot_identity=None,
-            external_high_water="section2-recovery-approval-high-water",
-            corpus_manifest_sha256=reconciliation_corpus_sha256(
-                candidate=candidate, membership=membership
-            ),
-            scope_complete=True,
             adapter_contract_version="asana-high-water-v1",
-            evidence_recorded_at=reconciliation_at,
-            status="complete",
-            expected_items=len(membership),
-            processed_items=len(membership),
             started_at=reconciliation_at,
-            completed_at=reconciliation_at,
         )
-        session.add(reconciliation)
-        session.flush()
+        membership = active_mapping_membership(session, candidate=candidate)
         for ordinal, (entity_kind, mapping_id) in enumerate(
             sorted(membership, key=lambda item: (item[0], str(item[1])))
         ):
-            session.add(
-                transition_models.ProjectionReconciliationItem(
-                    reconciliation_item_id=uuid.uuid4(),
-                    reconciliation_run_id=reconciliation.reconciliation_run_id,
-                    item_identity=f"{ordinal}:{entity_kind}:{mapping_id}",
-                    entity_kind=entity_kind,
-                    mapping_id=mapping_id,
-                    outcome="matched",
-                    evidence={"source": "section2 recovery rehearsal"},
-                    recorded_at=reconciliation_at,
-                )
+            projection.record_reconciliation_item(
+                reconciliation_run_id=reconciliation.reconciliation_run_id,
+                item_identity=f"{ordinal}:{entity_kind}:{mapping_id}",
+                entity_kind=entity_kind,
+                mapping_id=mapping_id,
+                outcome="matched",
+                evidence={"source": "section2 recovery rehearsal"},
+                recorded_at=reconciliation_at,
             )
-        session.flush()
+        reconciliation = service.complete_candidate_reconciliation(
+            candidate_id=candidate_id,
+            reconciliation_run_id=reconciliation.reconciliation_run_id,
+            observation_completed_at=reconciliation_at,
+            external_high_water="section2-recovery-approval-high-water",
+            completed_at=reconciliation_at,
+        )
         _record_candidate_acceptance_evidence(
             session,
             candidate,

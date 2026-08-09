@@ -45,23 +45,6 @@ def _independent_active_mapping_membership(session, *, candidate):
     return membership
 
 
-def _independent_reconciliation_corpus_sha256(*, candidate, membership) -> str:
-    return independent_sha256_json(
-        {
-            "contract": "release-active-projection-corpus-v1",
-            "candidate_id": str(candidate.candidate_id),
-            "generation_id": str(candidate.generation_id),
-            "projection_epoch_id": str(candidate.projection_epoch_id),
-            "items": [
-                {"entity_kind": entity_kind, "mapping_id": str(mapping_id)}
-                for entity_kind, mapping_id in sorted(
-                    membership, key=lambda item: (item[0], str(item[1]))
-                )
-            ],
-        }
-    )
-
-
 def _prepare_candidate(
     session,
     ids,
@@ -195,38 +178,18 @@ def _prepare_candidate(
         created_at=NOW,
     )
     candidate = service._candidate(candidate_id)
-    active_registry = session.get(models.ActiveSectionRegistry, context["generation_id"])
     membership = _independent_active_mapping_membership(session, candidate=candidate)
-    reconciliation = tx.ProjectionReconciliationRun(
-        reconciliation_run_id=_next(ids),
-        generation_id=candidate.generation_id,
-        projection_epoch_id=candidate.projection_epoch_id,
-        corpus_identity="candidate-release-corpus@42619b9",
+    reconciliation = service.start_candidate_reconciliation(
         candidate_id=candidate_id,
-        registry_version_id=active_registry.registry_version_id,
+        corpus_identity="candidate-release-corpus@42619b9",
         observation_started_at=NOW,
-        observation_completed_at=NOW,
-        external_snapshot_identity=None,
-        external_high_water="asana-event-500",
-        corpus_manifest_sha256=_independent_reconciliation_corpus_sha256(
-            candidate=candidate, membership=membership
-        ),
-        scope_complete=True,
         adapter_contract_version="asana-high-water-v1",
-        evidence_recorded_at=NOW,
-        status="complete",
-        expected_items=len(membership),
-        processed_items=len(membership),
         started_at=NOW,
-        completed_at=NOW,
     )
-    session.add(reconciliation)
-    session.flush()
     for ordinal, (entity_kind, mapping_id) in enumerate(
         sorted(membership, key=lambda item: (item[0], str(item[1])))
     ):
-        session.add(tx.ProjectionReconciliationItem(
-            reconciliation_item_id=_next(ids),
+        projection.record_reconciliation_item(
             reconciliation_run_id=reconciliation.reconciliation_run_id,
             item_identity=f"{ordinal}:{entity_kind}:{mapping_id}",
             entity_kind=entity_kind,
@@ -234,7 +197,14 @@ def _prepare_candidate(
             outcome="matched",
             evidence={"reread": "exact", "boundary": "asana-event-500"},
             recorded_at=NOW,
-        ))
+        )
+    reconciliation = service.complete_candidate_reconciliation(
+        candidate_id=candidate_id,
+        reconciliation_run_id=reconciliation.reconciliation_run_id,
+        observation_completed_at=NOW,
+        external_high_water="asana-event-500",
+        completed_at=NOW,
+    )
     artifact_root = Path(tempfile.mkdtemp(prefix="dish-release-evidence-"))
 
     def artifact(label: str) -> tuple[str, str]:
@@ -377,38 +347,20 @@ def _complete_active_mapping_reconciliation(
         candidate = session.get(rel.ReleaseCandidate, candidate_id)
     if candidate is None:
         raise AssertionError("reconciliation fixture requires an existing release candidate")
-    active_registry = session.get(models.ActiveSectionRegistry, candidate.generation_id)
     membership = _independent_active_mapping_membership(session, candidate=candidate)
-    run = tx.ProjectionReconciliationRun(
-        reconciliation_run_id=_next(ids),
-        generation_id=candidate.generation_id,
-        projection_epoch_id=candidate.projection_epoch_id,
-        corpus_identity=corpus_identity,
+    service = ReleaseCandidateService(session, uuid_factory=lambda: _next(ids))
+    run = service.start_candidate_reconciliation(
         candidate_id=candidate.candidate_id,
-        registry_version_id=active_registry.registry_version_id,
+        corpus_identity=corpus_identity,
         observation_started_at=started_at,
-        observation_completed_at=completed_at,
-        external_snapshot_identity=None,
-        external_high_water=f"high-water:{corpus_identity}",
-        corpus_manifest_sha256=_independent_reconciliation_corpus_sha256(
-            candidate=candidate, membership=membership
-        ),
-        scope_complete=True,
         adapter_contract_version="asana-high-water-v1",
-        evidence_recorded_at=completed_at,
-        status="complete",
-        expected_items=len(membership),
-        processed_items=len(membership),
         started_at=started_at,
-        completed_at=completed_at,
     )
-    session.add(run)
-    session.flush()
+    projection = ProjectionService(session, uuid_factory=lambda: _next(ids))
     for ordinal, (entity_kind, mapping_id) in enumerate(
         sorted(membership, key=lambda item: (item[0], str(item[1])))
     ):
-        session.add(tx.ProjectionReconciliationItem(
-            reconciliation_item_id=_next(ids),
+        projection.record_reconciliation_item(
             reconciliation_run_id=run.reconciliation_run_id,
             item_identity=f"{ordinal}:{entity_kind}:{mapping_id}",
             entity_kind=entity_kind,
@@ -416,9 +368,14 @@ def _complete_active_mapping_reconciliation(
             outcome="matched",
             evidence={"source": corpus_identity},
             recorded_at=completed_at,
-        ))
-    session.flush()
-    return run
+        )
+    return service.complete_candidate_reconciliation(
+        candidate_id=candidate.candidate_id,
+        reconciliation_run_id=run.reconciliation_run_id,
+        observation_completed_at=completed_at,
+        external_high_water=f"high-water:{corpus_identity}",
+        completed_at=completed_at,
+    )
 
 
 def _artifact_file(label: str) -> tuple[str, str]:

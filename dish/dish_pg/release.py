@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Iterable, Mapping
 
 from sqlalchemy import func, inspect, select, text
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.orm import Session
 
 from . import models
@@ -23,6 +24,9 @@ from .cutover_control import CutoverControlAuthority
 from .final_asana_closure import FinalAsanaClosureAuthority
 from .release_artifacts import observe_release_artifact
 from .release_validation import (
+    SUPPORTED_RECONCILIATION_ADAPTERS,
+    active_mapping_membership,
+    reconciliation_corpus_sha256,
     validate_reconciliation,
     validate_typed_import_linkage,
 )
@@ -94,6 +98,460 @@ class ReleaseCandidateService(
         if checkpoint is None:
             raise ReleaseAuthorityError(f"cutover lacks {checkpoint_kind} chronology evidence")
         return checkpoint.recorded_at
+
+    def _lock_candidate_reconciliation_authority(
+        self, candidate_id: uuid.UUID
+    ) -> tuple[
+        rel.ReleaseCandidate,
+        models.AuthorityGeneration,
+        tx.ProjectionEpoch,
+        models.ActiveSectionRegistry,
+        models.SectionRegistryVersion,
+    ]:
+        dialect = self.session.get_bind().dialect.name
+
+        candidate_statement = select(rel.ReleaseCandidate).where(
+            rel.ReleaseCandidate.candidate_id == candidate_id
+        )
+        if dialect == "postgresql":
+            candidate_statement = candidate_statement.with_for_update().execution_options(
+                populate_existing=True
+            )
+        candidate = self.session.scalar(candidate_statement)
+        if candidate is None:
+            raise ReleaseAuthorityError("unknown release candidate")
+        if candidate.status == "aborted":
+            raise ReleaseAuthorityError("aborted release candidate cannot own reconciliation")
+
+        generation_statement = select(models.AuthorityGeneration).where(
+            models.AuthorityGeneration.generation_id == candidate.generation_id
+        )
+        epoch_statement = select(tx.ProjectionEpoch).where(
+            tx.ProjectionEpoch.projection_epoch_id == candidate.projection_epoch_id
+        )
+        registry_statement = select(models.ActiveSectionRegistry).where(
+            models.ActiveSectionRegistry.generation_id == candidate.generation_id
+        )
+        if dialect == "postgresql":
+            generation_statement = generation_statement.with_for_update(read=True)
+            epoch_statement = epoch_statement.with_for_update(read=True)
+            registry_statement = registry_statement.with_for_update(read=True)
+            generation_statement = generation_statement.execution_options(populate_existing=True)
+            epoch_statement = epoch_statement.execution_options(populate_existing=True)
+            registry_statement = registry_statement.execution_options(populate_existing=True)
+
+        generation = self.session.scalar(generation_statement)
+        epoch = self.session.scalar(epoch_statement)
+        active_registry = self.session.scalar(registry_statement)
+        if generation is None or generation.status != "active":
+            raise ReleaseAuthorityError(
+                "candidate reconciliation requires the active target generation"
+            )
+        if (
+            epoch is None
+            or epoch.generation_id != candidate.generation_id
+            or epoch.status != "active"
+        ):
+            raise ReleaseAuthorityError(
+                "candidate reconciliation requires the candidate projection epoch to be active"
+            )
+        if active_registry is None:
+            raise ReleaseAuthorityError(
+                "candidate reconciliation requires the current section registry"
+            )
+        registry = self.session.get(
+            models.SectionRegistryVersion, active_registry.registry_version_id
+        )
+        batch = self.session.get(tx.SourceImportBatch, candidate.source_import_batch_id)
+        if registry is None or batch is None:
+            raise ReleaseAuthorityError(
+                "candidate reconciliation authority lineage is incomplete"
+            )
+        if (
+            registry.generation_id != candidate.generation_id
+            or registry.import_run_id != batch.import_run_id
+        ):
+            raise ReleaseAuthorityError(
+                "current registry does not belong to the release candidate import lineage"
+            )
+        return candidate, generation, epoch, active_registry, registry
+
+    def _fence_candidate_reconciliation_membership(self) -> None:
+        bind = self.session.get_bind()
+        if bind.dialect.name != "postgresql":
+            return
+        preparer = bind.dialect.identifier_preparer
+        table_names = sorted(
+            preparer.quote(model.__table__.name)
+            for model in (
+                tx.ProjectProjectionMapping,
+                tx.SectionProjectionMapping,
+                tx.TaskProjectionMapping,
+            )
+        )
+        self.session.execute(
+            text(f"LOCK TABLE {', '.join(table_names)} IN SHARE MODE")
+        )
+
+    def _lock_candidate_reconciliation_run(
+        self, reconciliation_run_id: uuid.UUID
+    ) -> tx.ProjectionReconciliationRun | None:
+        statement = select(tx.ProjectionReconciliationRun).where(
+            tx.ProjectionReconciliationRun.reconciliation_run_id == reconciliation_run_id
+        )
+        if self.session.get_bind().dialect.name == "postgresql":
+            statement = statement.with_for_update().execution_options(populate_existing=True)
+        return self.session.scalar(statement)
+
+    def _candidate_reconciliation_run_by_key(
+        self,
+        *,
+        generation_id: uuid.UUID,
+        projection_epoch_id: uuid.UUID,
+        corpus_identity: str,
+    ) -> tx.ProjectionReconciliationRun | None:
+        statement = select(tx.ProjectionReconciliationRun).where(
+            tx.ProjectionReconciliationRun.generation_id == generation_id,
+            tx.ProjectionReconciliationRun.projection_epoch_id == projection_epoch_id,
+            tx.ProjectionReconciliationRun.corpus_identity == corpus_identity,
+        )
+        if self.session.get_bind().dialect.name == "postgresql":
+            statement = statement.with_for_update().execution_options(populate_existing=True)
+        return self.session.scalar(statement)
+
+    @staticmethod
+    def _require_candidate_reconciliation_start_replay(
+        run: tx.ProjectionReconciliationRun,
+        *,
+        candidate_id: uuid.UUID,
+        registry_version_id: uuid.UUID,
+        observation_started_at: datetime,
+        adapter_contract_version: str,
+        corpus_manifest_sha256: str,
+        expected_items: int,
+        started_at: datetime,
+    ) -> None:
+        immutable_identity = (
+            run.candidate_id == candidate_id
+            and run.registry_version_id == registry_version_id
+            and run.observation_started_at is not None
+            and _utc_comparable(run.observation_started_at)
+            == _utc_comparable(observation_started_at)
+            and run.adapter_contract_version == adapter_contract_version
+            and run.corpus_manifest_sha256 == corpus_manifest_sha256
+            and run.expected_items == expected_items
+            and _utc_comparable(run.started_at) == _utc_comparable(started_at)
+        )
+        if not immutable_identity:
+            raise ReleaseAuthorityError(
+                "candidate reconciliation immutable identity conflict"
+            )
+
+    def start_candidate_reconciliation(
+        self,
+        *,
+        candidate_id: uuid.UUID,
+        corpus_identity: str,
+        observation_started_at: datetime,
+        adapter_contract_version: str,
+        started_at: datetime,
+    ) -> tx.ProjectionReconciliationRun:
+        """Start the exact reconciliation corpus owned by a release candidate.
+
+        Candidate, registry, epoch, and canonical mapping membership are derived
+        and bound here because PostgreSQL makes that observation identity
+        immutable after insert.  External observation completion/boundary is
+        recorded only by :meth:`complete_candidate_reconciliation`.
+        """
+
+        corpus_identity = _require_nonblank(corpus_identity, "corpus_identity")
+        adapter_contract_version = _require_nonblank(
+            adapter_contract_version, "adapter_contract_version"
+        )
+        if adapter_contract_version not in SUPPORTED_RECONCILIATION_ADAPTERS:
+            raise ReleaseAuthorityError(
+                "candidate reconciliation adapter contract is unsupported"
+            )
+        _require_aware(observation_started_at, "observation_started_at")
+        _require_aware(started_at, "started_at")
+        _require_at_or_after(
+            started_at,
+            observation_started_at,
+            field="started_at",
+            floor_field="observation_started_at",
+        )
+        self._require_not_future(observation_started_at, "observation_started_at")
+        self._require_not_future(started_at, "started_at")
+
+        candidate, _generation, epoch, active_registry, _registry = (
+            self._lock_candidate_reconciliation_authority(candidate_id)
+        )
+        self._fence_candidate_reconciliation_membership()
+        membership = active_mapping_membership(self.session, candidate=candidate)
+        if not membership:
+            raise ReleaseAuthorityError(
+                "candidate reconciliation requires a non-empty active mapping corpus"
+            )
+        corpus_manifest_sha256 = reconciliation_corpus_sha256(
+            candidate=candidate, membership=membership
+        )
+        expected_items = len(membership)
+
+        existing = self._candidate_reconciliation_run_by_key(
+            generation_id=candidate.generation_id,
+            projection_epoch_id=epoch.projection_epoch_id,
+            corpus_identity=corpus_identity,
+        )
+        if existing is not None:
+            self._require_candidate_reconciliation_start_replay(
+                existing,
+                candidate_id=candidate.candidate_id,
+                registry_version_id=active_registry.registry_version_id,
+                observation_started_at=observation_started_at,
+                adapter_contract_version=adapter_contract_version,
+                corpus_manifest_sha256=corpus_manifest_sha256,
+                expected_items=expected_items,
+                started_at=started_at,
+            )
+            return existing
+
+        reconciliation_run_id = self.uuid_factory()
+        row_values = {
+            "reconciliation_run_id": reconciliation_run_id,
+            "generation_id": candidate.generation_id,
+            "projection_epoch_id": epoch.projection_epoch_id,
+            "corpus_identity": corpus_identity,
+            "candidate_id": candidate.candidate_id,
+            "registry_version_id": active_registry.registry_version_id,
+            "observation_started_at": observation_started_at,
+            "observation_completed_at": None,
+            "external_snapshot_identity": None,
+            "external_high_water": None,
+            "corpus_manifest_sha256": corpus_manifest_sha256,
+            "scope_complete": False,
+            "adapter_contract_version": adapter_contract_version,
+            "evidence_recorded_at": started_at,
+            "status": "running",
+            "expected_items": expected_items,
+            "processed_items": 0,
+            "started_at": started_at,
+            "completed_at": None,
+        }
+        if self.session.get_bind().dialect.name != "postgresql":
+            row = tx.ProjectionReconciliationRun(**row_values)
+            self.session.add(row)
+            self.session.flush()
+            return row
+
+        inserted_run_id = self.session.scalar(
+            postgresql_insert(tx.ProjectionReconciliationRun)
+            .values(**row_values)
+            .on_conflict_do_nothing(constraint="uq_reconciliation_corpus")
+            .returning(tx.ProjectionReconciliationRun.reconciliation_run_id)
+        )
+        if inserted_run_id is not None:
+            inserted = self._lock_candidate_reconciliation_run(inserted_run_id)
+            if inserted is None:
+                raise ReleaseAuthorityError(
+                    "candidate reconciliation insert was not observable"
+                )
+            return inserted
+
+        existing = self._candidate_reconciliation_run_by_key(
+            generation_id=candidate.generation_id,
+            projection_epoch_id=epoch.projection_epoch_id,
+            corpus_identity=corpus_identity,
+        )
+        if existing is None:
+            raise ReleaseAuthorityError(
+                "candidate reconciliation conflict did not resolve"
+            )
+        self._require_candidate_reconciliation_start_replay(
+            existing,
+            candidate_id=candidate.candidate_id,
+            registry_version_id=active_registry.registry_version_id,
+            observation_started_at=observation_started_at,
+            adapter_contract_version=adapter_contract_version,
+            corpus_manifest_sha256=corpus_manifest_sha256,
+            expected_items=expected_items,
+            started_at=started_at,
+        )
+        return existing
+
+    def complete_candidate_reconciliation(
+        self,
+        *,
+        candidate_id: uuid.UUID,
+        reconciliation_run_id: uuid.UUID,
+        observation_completed_at: datetime,
+        completed_at: datetime,
+        external_snapshot_identity: str | None = None,
+        external_high_water: str | None = None,
+    ) -> tx.ProjectionReconciliationRun:
+        """Finish a candidate reconciliation after exact corpus revalidation."""
+
+        _require_aware(observation_completed_at, "observation_completed_at")
+        _require_aware(completed_at, "completed_at")
+        self._require_not_future(observation_completed_at, "observation_completed_at")
+        self._require_not_future(completed_at, "completed_at")
+
+        candidate, _generation, epoch, active_registry, _registry = (
+            self._lock_candidate_reconciliation_authority(candidate_id)
+        )
+        self._fence_candidate_reconciliation_membership()
+        run = self._lock_candidate_reconciliation_run(reconciliation_run_id)
+        if run is None:
+            raise ReleaseAuthorityError("unknown candidate reconciliation run")
+        if (
+            run.candidate_id != candidate.candidate_id
+            or run.generation_id != candidate.generation_id
+            or run.projection_epoch_id != epoch.projection_epoch_id
+        ):
+            raise ReleaseAuthorityError(
+                "reconciliation run does not belong to the release candidate"
+            )
+        if run.registry_version_id != active_registry.registry_version_id:
+            raise ReleaseAuthorityError(
+                "reconciliation run is not bound to the current candidate registry"
+            )
+        if run.observation_started_at is None:
+            raise ReleaseAuthorityError(
+                "candidate reconciliation lacks observation-start evidence"
+            )
+        _require_at_or_after(
+            observation_completed_at,
+            run.observation_started_at,
+            field="observation_completed_at",
+            floor_field="observation_started_at",
+        )
+        _require_at_or_after(
+            completed_at,
+            observation_completed_at,
+            field="completed_at",
+            floor_field="observation_completed_at",
+        )
+        _require_at_or_after(
+            completed_at,
+            run.started_at,
+            field="completed_at",
+            floor_field="reconciliation started_at",
+        )
+
+        membership = active_mapping_membership(self.session, candidate=candidate)
+        if not membership:
+            raise ReleaseAuthorityError(
+                "candidate reconciliation requires a non-empty active mapping corpus"
+            )
+        corpus_manifest_sha256 = reconciliation_corpus_sha256(
+            candidate=candidate, membership=membership
+        )
+        if (
+            run.corpus_manifest_sha256 != corpus_manifest_sha256
+            or run.expected_items != len(membership)
+        ):
+            raise ReleaseAuthorityError(
+                "candidate reconciliation canonical corpus changed before completion"
+            )
+
+        adapter_boundary = SUPPORTED_RECONCILIATION_ADAPTERS.get(
+            str(run.adapter_contract_version)
+        )
+        if adapter_boundary == "snapshot":
+            boundary_value = _require_nonblank(
+                external_snapshot_identity, "external_snapshot_identity"
+            )
+            if external_high_water is not None:
+                raise ReleaseAuthorityError(
+                    "snapshot reconciliation cannot also bind an external high-water"
+                )
+            snapshot_identity = boundary_value
+            high_water = None
+        elif adapter_boundary == "high_water":
+            boundary_value = _require_nonblank(
+                external_high_water, "external_high_water"
+            )
+            if external_snapshot_identity is not None:
+                raise ReleaseAuthorityError(
+                    "high-water reconciliation cannot also bind an external snapshot"
+                )
+            snapshot_identity = None
+            high_water = boundary_value
+        else:
+            raise ReleaseAuthorityError(
+                "candidate reconciliation adapter contract is unsupported"
+            )
+
+        items = self.session.scalars(
+            select(tx.ProjectionReconciliationItem).where(
+                tx.ProjectionReconciliationItem.reconciliation_run_id
+                == reconciliation_run_id
+            )
+        ).all()
+        actual: set[tuple[str, uuid.UUID]] = set()
+        blocked = False
+        for item in items:
+            if (
+                item.mapping_id is None
+                or item.entity_kind not in {"project", "section", "task"}
+                or item.outcome
+                not in {"matched", "reprojected", "unknown_external", "blocked"}
+            ):
+                raise ReleaseAuthorityError(
+                    "candidate reconciliation contains invalid corpus evidence"
+                )
+            pair = (item.entity_kind, item.mapping_id)
+            if pair not in membership or pair in actual:
+                raise ReleaseAuthorityError(
+                    "candidate reconciliation item membership is not canonical"
+                )
+            actual.add(pair)
+            blocked = blocked or item.outcome in {"unknown_external", "blocked"}
+        if (
+            run.processed_items != run.expected_items
+            or len(items) != run.expected_items
+            or actual != membership
+        ):
+            raise ReleaseAuthorityError("candidate reconciliation corpus is incomplete")
+
+        if run.status != "running":
+            expected_status = "blocked" if blocked else "complete"
+            replay_matches = (
+                run.status == expected_status
+                and run.scope_complete is True
+                and run.observation_completed_at is not None
+                and _utc_comparable(run.observation_completed_at)
+                == _utc_comparable(observation_completed_at)
+                and run.external_snapshot_identity == snapshot_identity
+                and run.external_high_water == high_water
+                and run.evidence_recorded_at is not None
+                and _utc_comparable(run.evidence_recorded_at)
+                == _utc_comparable(completed_at)
+                and run.completed_at is not None
+                and _utc_comparable(run.completed_at) == _utc_comparable(completed_at)
+            )
+            if not replay_matches:
+                raise ReleaseAuthorityError(
+                    "candidate reconciliation completion replay conflict"
+                )
+            return run
+
+        if run.observation_completed_at is not None:
+            raise ReleaseAuthorityError(
+                "running candidate reconciliation already has a completion boundary"
+            )
+        if run.external_snapshot_identity is not None or run.external_high_water is not None:
+            raise ReleaseAuthorityError(
+                "running candidate reconciliation already has an external boundary"
+            )
+        run.observation_completed_at = observation_completed_at
+        run.external_snapshot_identity = snapshot_identity
+        run.external_high_water = high_water
+        run.scope_complete = True
+        run.evidence_recorded_at = completed_at
+        run.status = "blocked" if blocked else "complete"
+        run.completed_at = completed_at
+        self.session.flush()
+        return run
 
     def create_candidate(
         self,
