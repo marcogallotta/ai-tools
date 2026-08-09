@@ -565,6 +565,36 @@ def _argument_context(argv: Sequence[str]) -> dict[str, str | None]:
     return {"command": command, "submission_id": submission_id, "task_gid": task_gid}
 
 
+def _attach_recovery_continuation(
+    app, result: dict, *, submission_id: str
+) -> dict:
+    """Attach one fresh inspect after a successful CLI recovery action."""
+    if not result.get("ok"):
+        return result
+    execute = getattr(app, "execute", None)
+    if execute is None:
+        return result
+    continuation = execute("inspect", submission_id=submission_id)
+    data = result.setdefault("data", {})
+    if not continuation.get("ok"):
+        data["post_recovery_error"] = {
+            "code": continuation.get("code"),
+            "errors": continuation.get("errors")
+            if isinstance(continuation.get("errors"), list)
+            else [],
+        }
+        result["allowed_actions"] = []
+        return result
+    continuation_data = continuation.get("data")
+    data["post_recovery"] = (
+        dict(continuation_data) if isinstance(continuation_data, dict) else {}
+    )
+    result["allowed_actions"] = list(continuation.get("allowed_actions") or [])
+    if continuation.get("state") is not None:
+        result["state"] = continuation.get("state")
+    return result
+
+
 def main(
     argv: Sequence[str] | None = None,
     *,
@@ -636,6 +666,9 @@ def main(
                     )
                 else:
                     result = method(parsed["submission_id"], reason=parsed["reason"])
+                    result = _attach_recovery_continuation(
+                        app, result, submission_id=parsed["submission_id"]
+                    )
             elif command == "backup-create":
                 method = getattr(app, "create_backup", None)
                 if method is None:

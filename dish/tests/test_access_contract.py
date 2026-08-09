@@ -180,6 +180,25 @@ class FakeRemoteAdmin:
                 "submission_id": operation_id, "state": None, "retryable": False,
                 "allowed_actions": [], "data": {}, "errors": []}
 
+    def execute(self, command, **arguments):
+        self.calls.append((command, arguments))
+        assert command == "inspect"
+        return {"ok": True, "command": "inspect", "code": "OK", "task_gid": "t",
+                "submission_id": arguments["submission_id"], "state": "open",
+                "retryable": False, "allowed_actions": [],
+                "data": {
+                    "task_title": "Dish",
+                    "phase": "await_verification",
+                    "administrative_blocker": True,
+                    "problem": "The prior verifier is inactive.",
+                    "human_actions": [{
+                        "kind": "abandon-dead-verifier",
+                        "command": "abandon-operation",
+                        "shell_command": "dish-admin abandon-operation op-1 --reason '<why unavailable>'",
+                    }],
+                    "agent_actions_now": [],
+                }, "errors": []}
+
 
 def test_admin_cli_exposes_backup_restore_and_stale_lease_recovery(capsys):
     app = FakeRemoteAdmin()
@@ -193,6 +212,7 @@ def test_admin_cli_exposes_backup_restore_and_stale_lease_recovery(capsys):
         ("create", "before-step12"),
         ("restore", "dish-test.sqlite3"),
         ("recover-lease", "op-1", "run ended"),
+        ("inspect", {"submission_id": "op-1"}),
     ]
 
 

@@ -198,6 +198,12 @@ Existing lease termination and `abandon-operation` remain distinct; safe reclaim
 action for the case where state is already mechanically safe, so it does not go through
 `abandon-operation` first.
 
+For normal terminal use, admin recovery is decision-first: show the substantive human question
+(for example, whether a prior verifier conversation is permanently unavailable) before abandonment
+mechanics, collapse routine recovery to the one runnable action, and hand a cleared workflow back as
+a concrete `Tell an agent: ...` instruction. Structured JSON/verbose output retains the underlying
+recovery metadata.
+
 ## Current bounded Human Review quality changes
 
 Recent real cases exposed three concrete failure modes: a weak nutrition extrapolation jumped

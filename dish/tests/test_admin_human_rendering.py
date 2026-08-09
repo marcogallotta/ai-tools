@@ -184,3 +184,188 @@ def test_human_renderer_summarizes_global_attention_items():
     assert "Workflow records checked: 3" in rendered
     assert "[SAFE MULTI-STEP] Laap gai" in rendered
     assert "dish-admin abandon-operation operation-1" in rendered
+
+
+def test_human_renderer_asks_dead_verifier_decision_before_abandonment_template():
+    from dish_tool.admin_human import render_admin_result
+
+    result = {
+        "ok": True,
+        "command": "inspect",
+        "code": "OK",
+        "task_gid": "121",
+        "submission_id": "operation-1",
+        "allowed_actions": [],
+        "data": {
+            "problem": "The open Verification cycle belongs to a prior run with no active lease.",
+            "human_actions": [{
+                "kind": "abandon-dead-verifier",
+                "summary": "Abandon the dead verifier attempt.",
+                "effect": "Preserve the candidate and prepare fresh Verification.",
+                "requires_input": [{"name": "reason"}],
+                "shell_command": (
+                    "dish-admin abandon-operation operation-1 --lease-id lease-1 "
+                    "--reason '<why the verifier run is permanently unavailable>'"
+                ),
+            }],
+        },
+        "errors": [],
+    }
+
+    rendered = render_admin_result(result, profile="prod")
+
+    assert "Is the previous verifier conversation permanently unavailable?" in rendered
+    assert "If yes, Template: dish-admin abandon-operation operation-1" in rendered
+    assert "What you can do" not in rendered
+    assert "This will:" not in rendered
+
+
+def test_human_renderer_collapses_normal_recovery_inspection_to_one_command():
+    from dish_tool.admin_human import render_admin_result
+
+    result = {
+        "ok": True,
+        "command": "inspect",
+        "code": "OK",
+        "task_gid": "121",
+        "submission_id": "operation-1",
+        "allowed_actions": [],
+        "data": {
+            "problem": "The prior verifier is inactive, but its interrupted execution must be reconciled.",
+            "human_actions": [{
+                "kind": "reconcile-before-ownership-transfer",
+                "summary": "Automatically reconcile the interrupted execution before ownership moves.",
+                "effect": "Settle only proven recovery evidence.",
+                "details": [
+                    "Automatic inspection is the normal recovery path.",
+                    "Manual outcomes are advanced assertions only.",
+                ],
+                "requires_input": [],
+                "shell_command": "dish-admin recover operation-1",
+            }],
+        },
+        "errors": [],
+    }
+
+    rendered = render_admin_result(result, profile="prod")
+
+    assert "Run: dish-admin recover operation-1" in rendered
+    assert "What you can do" not in rendered
+    assert "Automatic inspection is the normal recovery path" not in rendered
+    assert "advanced assertions" not in rendered
+    assert "This will:" not in rendered
+
+
+def test_human_renderer_does_not_turn_plain_recover_legal_actions_into_handoff():
+    from dish_tool.admin_human import render_admin_result
+
+    result = {
+        "ok": True,
+        "command": "recover",
+        "code": "OK",
+        "task_gid": "121",
+        "submission_id": "operation-1",
+        "allowed_actions": ["approve", "reject"],
+        "data": {},
+        "errors": [],
+    }
+
+    rendered = render_admin_result(result, profile="prod")
+
+    assert "The recovery step completed against the live task." in rendered
+    assert "Agent can now" not in rendered
+    assert "Tell an agent" not in rendered
+    assert "Recovered" not in rendered
+
+
+@pytest.mark.parametrize("command", ["recover", "recover-lease"])
+def test_human_renderer_uses_verified_post_recovery_continuation_for_agent_handoff(command):
+    from dish_tool.admin_human import render_admin_result
+
+    result = {
+        "ok": True,
+        "command": command,
+        "code": "OK",
+        "task_gid": "121",
+        "submission_id": "operation-1",
+        "allowed_actions": ["approve", "reject"],
+        "data": {
+            "post_recovery": {
+                "task_title": "Duójiao steamed fish head",
+                "phase": "await_verification",
+                "administrative_blocker": False,
+                "agent_actions_now": ["safe-reclaim"],
+                "human_actions": [],
+            }
+        },
+        "errors": [],
+    }
+
+    rendered = render_admin_result(result, profile="prod")
+
+    assert 'Tell an agent: "Resume Verification for Duójiao steamed fish head."' in rendered
+    assert "Agent can now" not in rendered
+
+
+@pytest.mark.parametrize("command", ["recover", "recover-lease"])
+def test_human_renderer_post_recovery_human_decision_is_not_rendered_as_recovered(command):
+    from dish_tool.admin_human import render_admin_result
+
+    result = {
+        "ok": True,
+        "command": command,
+        "code": "OK",
+        "task_gid": "121",
+        "submission_id": "operation-1",
+        "allowed_actions": ["approve", "reject"],
+        "data": {
+            "post_recovery": {
+                "problem": "The previous verifier is inactive.",
+                "administrative_blocker": True,
+                "agent_actions_now": [],
+                "human_actions": [{
+                    "kind": "abandon-dead-verifier",
+                    "requires_input": [{"name": "reason"}],
+                    "shell_command": (
+                        "dish-admin abandon-operation operation-1 --lease-id lease-1 "
+                        "--reason '<why the verifier run is permanently unavailable>'"
+                    ),
+                }],
+            }
+        },
+        "errors": [],
+    }
+
+    rendered = render_admin_result(result, profile="prod")
+
+    assert "Recovery step completed" in rendered
+    assert "Is the previous verifier conversation permanently unavailable?" in rendered
+    assert "If yes, Template: dish-admin abandon-operation operation-1" in rendered
+    assert "Recovered" not in rendered
+    assert "Tell an agent" not in rendered
+
+
+def test_human_renderer_connected_agent_continuation_is_a_concrete_handoff():
+    from dish_tool.admin_human import render_admin_result
+
+    result = {
+        "ok": True,
+        "command": "abandon-operation",
+        "code": "OK",
+        "task_gid": "121",
+        "submission_id": "operation-1",
+        "allowed_actions": ["start"],
+        "data": {
+            "required_action": {
+                "surface": "connected-agent",
+                "command": "start",
+                "arguments": {"kind": "verification"},
+            }
+        },
+        "errors": [],
+    }
+
+    rendered = render_admin_result(result, profile="prod")
+
+    assert 'Tell an agent: "Resume Verification for task 121."' in rendered
+    assert "Agent can now" not in rendered

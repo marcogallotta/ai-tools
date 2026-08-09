@@ -67,6 +67,68 @@ def _actions(
     return unique
 
 
+def _decision_first_abandonment_action(
+    actions: Iterable[Mapping[str, Any]],
+) -> tuple[Mapping[str, Any], str] | None:
+    for action in actions:
+        kind = _clean(action.get("kind"))
+        if kind == "abandon-dead-verifier":
+            return action, "Is the previous verifier conversation permanently unavailable?"
+        if kind == "abandon-dead-agent":
+            return action, "Is the previous agent conversation permanently unavailable?"
+    return None
+
+
+def _compact_recovery_action(
+    actions: Iterable[Mapping[str, Any]],
+) -> Mapping[str, Any] | None:
+    recovery_kinds = {
+        "reconcile-uncertain-effect",
+        "reconcile-before-ownership-transfer",
+        "recover-expired-lease",
+    }
+    for action in actions:
+        if _clean(action.get("kind")) in recovery_kinds:
+            return action
+    return None
+
+
+def _agent_command_name(item: Any) -> str | None:
+    if isinstance(item, Mapping):
+        return _clean(item.get("command"))
+    return _clean(item)
+
+
+def _agent_handoff_line(
+    *,
+    result: Mapping[str, Any],
+    data: Mapping[str, Any],
+    commands: Iterable[str | None],
+) -> str | None:
+    command_set = {command for command in commands if command}
+    if not command_set:
+        return None
+    title = _clean(data.get("task_title"))
+    task_gid = _clean(result.get("task_gid") or data.get("task_gid"))
+    target = title or (f"task {task_gid}" if task_gid else "this task")
+    phase = _clean(data.get("phase"))
+    required = data.get("required_action")
+    required_arguments = (
+        required.get("arguments")
+        if isinstance(required, Mapping) and isinstance(required.get("arguments"), Mapping)
+        else {}
+    )
+    required_kind = _clean(required_arguments.get("kind"))
+    if phase == "await_verification" or {"approve", "reject"} & command_set or required_kind == "verification":
+        return f'Tell an agent: "Resume Verification for {target}."'
+    return f'Tell an agent: "Resume Dish work for {target}."'
+
+
+def _post_recovery_view(data: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    post = data.get("post_recovery")
+    return post if isinstance(post, Mapping) else None
+
+
 def _success_lines(command: str, data: Mapping[str, Any]) -> list[str]:
     effect = _clean(data.get("effect") or data.get("message"))
     if effect:
@@ -118,7 +180,7 @@ def _success_lines(command: str, data: Mapping[str, Any]) -> list[str]:
                 "The held Verification candidate was substantively reopened.",
             ),
             "recover": (
-                "The interrupted effect was checked against the live task.",
+                "The recovery step completed against the live task.",
             ),
             "discard": (
                 "The provably unapplied operation was cancelled.",
@@ -151,6 +213,8 @@ def render_admin_result(
     data = result.get("data") if isinstance(result.get("data"), Mapping) else {}
     errors = result.get("errors") if isinstance(result.get("errors"), list) else []
     lines: list[str] = [f"Environment: {str(profile or 'prod').upper()}"]
+    suppress_generic_actions = False
+    suppress_generic_agent_actions = False
 
     title = _clean(data.get("task_title"))
     task_gid = _clean(result.get("task_gid") or data.get("task_gid"))
@@ -393,31 +457,64 @@ def render_admin_result(
                 if shell:
                     lines.append(f"   {_command_label(action)}: {shell}")
     elif command == "inspect" and ok:
+        inspect_actions = _actions(data, (row for row in errors if isinstance(row, Mapping)))
+        abandonment_decision = _decision_first_abandonment_action(inspect_actions)
+        recovery_action = _compact_recovery_action(inspect_actions)
         lines.append("Status")
         lines.append(_clean(data.get("problem")) or "No administrative blocker is recorded.")
-        waiting = _clean(data.get("waiting_for"))
-        if waiting:
-            lines.append(f"Waiting for: {waiting}")
-        operator_instruction = _clean(data.get("operator_instruction"))
-        if operator_instruction:
-            lines.append(f"Next: {operator_instruction}")
-        lease = data.get("service_lease")
-        if isinstance(lease, Mapping):
-            owner = _clean(lease.get("run_id")) or "unknown"
-            expiry = _clean(lease.get("expires_at"))
-            lines.append(
-                f"Owned by run: {owner}" + (f" until {expiry}" if expiry else "")
-            )
+        if abandonment_decision is not None:
+            action, question = abandonment_decision
+            lines.append(question)
+            shell = _command_from_action(action)
+            if shell:
+                lines.append(f"If yes, {_command_label(action)}: {shell}")
+            suppress_generic_actions = True
+        elif recovery_action is not None:
+            shell = _command_from_action(recovery_action)
+            if shell:
+                lines.append(f"Run: {shell}")
+            suppress_generic_actions = True
+        else:
+            waiting = _clean(data.get("waiting_for"))
+            if waiting:
+                lines.append(f"Waiting for: {waiting}")
+            operator_instruction = _clean(data.get("operator_instruction"))
+            if operator_instruction:
+                lines.append(f"Next: {operator_instruction}")
+            lease = data.get("service_lease")
+            if isinstance(lease, Mapping):
+                owner = _clean(lease.get("run_id")) or "unknown"
+                expiry = _clean(lease.get("expires_at"))
+                lines.append(
+                    f"Owned by run: {owner}" + (f" until {expiry}" if expiry else "")
+                )
     elif ok:
-        lines.append("Done")
-        lines.extend(_success_lines(command, data))
+        post_recovery = _post_recovery_view(data) if command in {"recover", "recover-lease"} else None
+        if post_recovery is not None and bool(post_recovery.get("administrative_blocker")):
+            lines.append("Recovery step completed")
+            problem = _clean(post_recovery.get("problem"))
+            if problem:
+                lines.append(problem)
+            post_actions = _actions(post_recovery)
+            abandonment_decision = _decision_first_abandonment_action(post_actions)
+            if abandonment_decision is not None:
+                action, question = abandonment_decision
+                lines.append(question)
+                shell = _command_from_action(action)
+                if shell:
+                    lines.append(f"If yes, {_command_label(action)}: {shell}")
+            suppress_generic_actions = True
+            suppress_generic_agent_actions = True
+        else:
+            lines.append("Done")
+            lines.extend(_success_lines(command, data))
     else:
         message = _clean(data.get("message")) or "The command could not be completed."
         lines.append(f"Could not {command}")
         lines.append(message)
 
     actions = _actions(data, (row for row in errors if isinstance(row, Mapping)))
-    if actions:
+    if actions and not suppress_generic_actions:
         lines.append("")
         lines.append("What you can do")
         for index, action in enumerate(actions, start=1):
@@ -441,12 +538,35 @@ def render_admin_result(
             if shell:
                 lines.append(f"   {_command_label(action)}: {shell}")
 
-    agent_actions = data.get("agent_actions_now")
+    handoff_data: Mapping[str, Any] = data
+    post_recovery = _post_recovery_view(data)
+    if command in {"recover", "recover-lease"}:
+        if post_recovery is None:
+            # A plain recovery result does not prove that every ownership-transfer
+            # blocker is gone. Do not turn stale pre-recovery legal actions into a
+            # confident agent handoff.
+            suppress_generic_agent_actions = True
+        else:
+            handoff_data = post_recovery
+            if bool(post_recovery.get("administrative_blocker")):
+                suppress_generic_agent_actions = True
+
+    agent_actions = handoff_data.get("agent_actions_now")
     if not isinstance(agent_actions, list):
-        agent_actions = result.get("allowed_actions")
-    if isinstance(agent_actions, list) and agent_actions:
-        lines.append("")
-        lines.append("Agent can now: " + ", ".join(str(item) for item in agent_actions))
+        required = handoff_data.get("required_action")
+        if isinstance(required, Mapping) and required.get("surface") == "connected-agent":
+            agent_actions = [required]
+        elif command not in {"recover", "recover-lease"}:
+            agent_actions = result.get("allowed_actions")
+    if isinstance(agent_actions, list) and agent_actions and not suppress_generic_agent_actions:
+        handoff = _agent_handoff_line(
+            result=result,
+            data=handoff_data,
+            commands=[_agent_command_name(item) for item in agent_actions],
+        )
+        if handoff:
+            lines.append("")
+            lines.append(handoff)
 
     if verbose:
         lines.append("")
