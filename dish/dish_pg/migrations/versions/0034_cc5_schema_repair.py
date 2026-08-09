@@ -129,7 +129,7 @@ def _upgrade_manifest_contract() -> None:
             "manifest_version IN (2, 3)",
         )
         batch.create_check_constraint(
-            "component_hash_lengths",
+            "observed_component_hash_lengths",
             "length(observed_mapping_membership_sha256) = 64 AND "
             "length(observed_import_completion_sha256) = 64 AND "
             "length(observed_typed_import_linkage_sha256) = 64 AND "
@@ -555,7 +555,7 @@ def downgrade() -> None:
             type_="check",
         )
         batch.drop_constraint(
-            "component_hash_lengths",
+            "observed_component_hash_lengths",
             type_="check",
         )
         batch.alter_column(
@@ -573,7 +573,7 @@ def downgrade() -> None:
             "manifest_version = 2",
         )
         batch.create_check_constraint(
-            "component_hash_lengths",
+            "observed_component_hash_lengths",
             "length(observed_mapping_membership_sha256) = 64 AND "
             "length(observed_import_completion_sha256) = 64 AND "
             "length(observed_typed_import_linkage_sha256) = 64 AND "
