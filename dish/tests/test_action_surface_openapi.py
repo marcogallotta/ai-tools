@@ -215,3 +215,39 @@ def test_generated_and_checked_in_openapi_satisfy_action_contract():
     )
     for document in (action_openapi(), checked):
         assert assert_action_openapi_contract(document) is None
+
+
+@pytest.mark.smoke
+def test_result_start_continuation_kinds_match_callable_start_variants():
+    spec = action_openapi(server_url="https://dish.example.test")
+    start_arguments = spec["paths"]["/v1/action/start"]["post"]["requestBody"][
+        "content"
+    ]["application/json"]["schema"]["properties"]["arguments"]
+    callable_start_kinds = {
+        variant["properties"]["kind"]["const"] for variant in start_arguments["oneOf"]
+    }
+
+    result_start_kinds = set(
+        spec["components"]["schemas"]["ResultEnvelope"]["properties"]["data"][
+            "properties"
+        ]["required_start_kind"]["enum"]
+    )
+
+    assert result_start_kinds == callable_start_kinds
+
+
+@pytest.mark.smoke
+def test_change_start_schema_requires_the_runtime_change_intent_arguments():
+    spec = action_openapi(server_url="https://dish.example.test")
+    start_arguments = spec["paths"]["/v1/action/start"]["post"]["requestBody"][
+        "content"
+    ]["application/json"]["schema"]["properties"]["arguments"]
+    change = next(
+        variant
+        for variant in start_arguments["oneOf"]
+        if variant["properties"]["kind"].get("const") == "change"
+    )
+
+    assert {"task_gid", "agent", "kind", "change_level", "change_reason"}.issubset(
+        change["required"]
+    )
