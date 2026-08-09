@@ -121,7 +121,7 @@ def _upgrade_manifest_contract() -> None:
             type_="check",
         )
         batch.drop_constraint(
-            "ck_candidate_manifest_revalidations_component_hash_lengths",
+            "ck_candidate_manifest_revalidations_observed_component_hash_lengths",
             type_="check",
         )
         batch.create_check_constraint(
@@ -551,11 +551,11 @@ def downgrade() -> None:
 
     with op.batch_alter_table("candidate_manifest_revalidations") as batch:
         batch.drop_constraint(
-            "ck_candidate_manifest_revalidations_manifest_version_supported",
+            "manifest_version_supported",
             type_="check",
         )
         batch.drop_constraint(
-            "ck_candidate_manifest_revalidations_component_hash_lengths",
+            "component_hash_lengths",
             type_="check",
         )
         batch.alter_column(
@@ -584,7 +584,7 @@ def downgrade() -> None:
 
     with op.batch_alter_table("cutover_approval_manifest_bindings") as batch:
         batch.drop_constraint(
-            "ck_cutover_approval_manifest_bindings_version_supported",
+            "version_supported",
             type_="check",
         )
         batch.create_check_constraint(
@@ -594,11 +594,11 @@ def downgrade() -> None:
 
     with op.batch_alter_table("release_candidate_manifests") as batch:
         batch.drop_constraint(
-            "ck_release_candidate_manifests_manifest_version_supported",
+            "manifest_version_supported",
             type_="check",
         )
         batch.drop_constraint(
-            "ck_release_candidate_manifests_component_hash_lengths",
+            "component_hash_lengths",
             type_="check",
         )
         batch.drop_constraint(

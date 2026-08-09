@@ -51,6 +51,7 @@ from .recovery_control import (
 )
 from .release import ALEMBIC_HEAD
 from .release_evidence import sha256_json as release_sha256_json
+from .release_validation import active_mapping_membership, reconciliation_corpus_sha256
 from .services import CoreAuthorityService, ImportedTaskSpec
 from .transition import ProjectionService
 from .workflow import (
@@ -468,7 +469,8 @@ class Cluster:
         return self.started
 
     def stop(self, *, mode: str = "fast") -> None:
-        if not self.started and not (self.data_dir / "postmaster.pid").exists():
+        if not (self.data_dir / "postmaster.pid").exists():
+            self.started = False
             return
         result = self.runner.run(
             [self.binaries["pg_ctl"], "-D", self.data_dir, "-m", mode, "stop"],
@@ -629,6 +631,62 @@ def _authorize_release_candidate(
     session.flush()
 
 
+def _seed_approval_reconciliation(
+    session: Session,
+    candidate: release_models.ReleaseCandidate,
+    *,
+    observed_at: datetime,
+) -> None:
+    active_registry = session.get(models.ActiveSectionRegistry, candidate.generation_id)
+    if active_registry is None:
+        raise RehearsalError("approval reconciliation requires an active registry")
+    membership = active_mapping_membership(session, candidate=candidate)
+    if not membership:
+        raise RehearsalError("approval reconciliation requires active projection mappings")
+    run = transition_models.ProjectionReconciliationRun(
+        reconciliation_run_id=uuid.uuid4(),
+        generation_id=candidate.generation_id,
+        projection_epoch_id=candidate.projection_epoch_id,
+        corpus_identity="section2-approval-reconciliation",
+        candidate_id=candidate.candidate_id,
+        registry_version_id=active_registry.registry_version_id,
+        observation_started_at=observed_at,
+        observation_completed_at=observed_at,
+        external_snapshot_identity=None,
+        external_high_water="section2-baseline-high-water",
+        corpus_manifest_sha256=reconciliation_corpus_sha256(
+            candidate=candidate,
+            membership=membership,
+        ),
+        scope_complete=True,
+        adapter_contract_version="asana-high-water-v1",
+        evidence_recorded_at=observed_at,
+        status="complete",
+        expected_items=len(membership),
+        processed_items=len(membership),
+        started_at=observed_at,
+        completed_at=observed_at,
+    )
+    session.add(run)
+    session.flush()
+    for ordinal, (entity_kind, mapping_id) in enumerate(
+        sorted(membership, key=lambda item: (item[0], str(item[1])))
+    ):
+        session.add(
+            transition_models.ProjectionReconciliationItem(
+                reconciliation_item_id=uuid.uuid4(),
+                reconciliation_run_id=run.reconciliation_run_id,
+                item_identity=f"{ordinal}:{entity_kind}:{mapping_id}",
+                entity_kind=entity_kind,
+                mapping_id=mapping_id,
+                outcome="matched",
+                evidence={"boundary": "section2-baseline-high-water"},
+                recorded_at=observed_at,
+            )
+        )
+    session.flush()
+
+
 def _seed_baseline(engine: Engine, evidence_dir: Path, *, dish_commit: str) -> SeedContext:
     evidence_dir.mkdir(parents=True, exist_ok=True)
     source_path = evidence_dir / "seed-source.ndjson"
@@ -699,6 +757,11 @@ def _seed_baseline(engine: Engine, evidence_dir: Path, *, dish_commit: str) -> S
             created_at=utc_now(),
             external_effects_enabled=True,
         )
+        if projection.bind_imported_mappings(
+            generation_id=result.generation_id,
+            bound_at=utc_now(),
+        ) != (1, 1, 1):
+            raise RehearsalError("baseline import did not produce exact projection mappings")
         run_id = uuid.uuid4()
         workflow = WorkflowAuthorityService(session)
         workflow.register_run(
@@ -908,7 +971,9 @@ def _seed_baseline(engine: Engine, evidence_dir: Path, *, dish_commit: str) -> S
         )
         session.add(candidate)
         session.flush()
-        _authorize_release_candidate(session, candidate, approved_at=utc_now())
+        approved_at = utc_now()
+        _seed_approval_reconciliation(session, candidate, observed_at=approved_at)
+        _authorize_release_candidate(session, candidate, approved_at=approved_at)
         baseline_evidence = {"label": "baseline", "revision": 1}
         session.add(
             release_models.ReleaseEvidenceItem(
