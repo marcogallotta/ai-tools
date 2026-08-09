@@ -23,7 +23,10 @@ AGENT_FAMILIES = {
 FAMILIES = frozenset(AGENT_FAMILIES.values())
 SUBMISSION_KINDS = frozenset({"planning", "initial", "change"})
 CHANGE_LEVELS = frozenset({"small", "large"})
-VERIFICATION_ROUTES = frozenset({"small", "large", "evidence", "human-review"})
+APPROVAL_CORRECTIONS = ("none", "small")
+REJECTION_ROUTES = ("large", "evidence", "human-review")
+MECHANICAL_PROPOSAL_AGENT = "dish"
+VERIFICATION_ROUTES = frozenset({"small", *REJECTION_ROUTES})
 RESET_CATEGORIES = frozenset({"evidence", "premise", "method", "scope"})
 SUBMISSION_STATES = frozenset(
     {
@@ -101,7 +104,7 @@ HONEST_PATH_ENV = "DISH_HONEST_PATH"
 DISH_VERSION_FILENAME = "DISH_VERSION"
 TASK_SCHEMA_FILENAME = "dish-task-schema.json"
 SCHEMA_MIGRATION_DIRECTORY = "dish-schema-migrations"
-SUPPORTED_PROTOCOL_VERSION = "1.0.10"
+SUPPORTED_PROTOCOL_VERSION = "1.0.11"
 SUPPORTED_TASK_SCHEMA_VERSION = "2"
 
 PROTOCOL_FILENAMES = {
@@ -122,4 +125,4 @@ GOVERNED_PROTOCOL_FILENAMES = tuple(PROTOCOL_FILENAMES.values())
 GOVERNED_SCHEMA_FILENAMES = (TASK_SCHEMA_FILENAME,)
 
 # Local SQLite schema version; unrelated to Honest's task SCHEMA_VERSION.
-SCHEMA_VERSION = 40
+SCHEMA_VERSION = 41

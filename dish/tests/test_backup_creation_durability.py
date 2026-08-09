@@ -6,6 +6,7 @@ import sqlite3
 import dish_service.application as application_module
 from dish_service.backup import BackupManager
 from dish_service.leases import ServicePrincipal
+from dish_tool.constants import SCHEMA_VERSION
 from dish_tool.database_initialization import initialize_database
 from tests.support.operational import _service
 
@@ -480,6 +481,6 @@ def test_schema_39_migrates_backup_reservations_and_completed_rows(tmp_path):
         assert rows[completed_request]["resolution_reason"] == "migrated_confirmed"
         assert rows[reserved_request]["status"] == "reserved"
         assert rows[reserved_request]["resolution_reason"] is None
-        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 40
+        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     finally:
         upgraded.close()

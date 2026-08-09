@@ -10,7 +10,7 @@ from typing import Any
 from .constants import COOKING_PROJECT_GID
 from .database import (
     create_verification_cycle, transition_operation, declare_operation_step,
-    complete_operation_step, record_actor_fact, resolve_signoff_cycle_for_identity,
+    complete_operation_step, record_actor_fact, record_audit, resolve_signoff_cycle_for_identity,
 )
 from .errors import DishRuleError
 from .models import (
@@ -40,6 +40,8 @@ from .task_document import (
 )
 from .task_store import LiveTask, move_exact, read_complete_task, write_exact_content
 from .governed_diff import (
+    GOVERNED_FIELDS,
+    agent_attested_decision_appends,
     effective_material_change_level,
     explicit_material_reasons,
     require_governed_authorization,
@@ -154,6 +156,7 @@ def prepare_live(
     file_path: str,
     release: ResolvedRelease,
     material_classification: str | None = None,
+    governed_change_fields=None,
 ) -> dict[str, Any]:
     op = _operation(conn, operation_id)
     _require_actor(op, agent)
@@ -190,8 +193,36 @@ def prepare_live(
         )
     text = _candidate(file_path)
     registry = SectionRegistry.from_sections(backend.list_sections(COOKING_PROJECT_GID))
+    declared_governed_fields = tuple(
+        dict.fromkeys(
+            str(field).strip()
+            for field in (governed_change_fields or ())
+            if str(field).strip()
+        )
+    )
+    unknown_declared = sorted(set(declared_governed_fields) - set(GOVERNED_FIELDS))
+    if unknown_declared:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "governed_change_fields contains unsupported field names",
+            rule="governed_change_field_invalid",
+            details={"unsupported": unknown_declared, "allowed": list(GOVERNED_FIELDS)},
+        )
+    if set(declared_governed_fields) - {"Decisions"}:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "prepare accepts governed_change_fields only to attest an appended Marco Decision",
+            rule="prepare_governed_change_field_not_applicable",
+            details={"allowed": ["Decisions"]},
+        )
 
     if op["operation_kind"] == "planning":
+        if declared_governed_fields:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "Decision attestation applies to a canonical Research/change candidate, not Planning",
+                rule="decision_attestation_not_applicable",
+            )
         try:
             brief = parse_planning_brief(text)
         except DocumentParseError as exc:
@@ -314,9 +345,19 @@ def prepare_live(
         candidate = dataclasses.replace(candidate, state=TaskState(candidate_state))
         candidate = preserve_material_change_history(prior, candidate)
 
+    # Governed authorization applies to agent-authored candidate facts, not to
+    # process provenance that prepare itself deterministically owns and rewrites.
+    authority_candidate = candidate
+    if prior is not None:
+        authority_state = dict(authority_candidate.state.values)
+        authority_state["Researched by"] = prior.state.values["Researched by"]
+        authority_candidate = dataclasses.replace(
+            authority_candidate, state=TaskState(authority_state)
+        )
+
     verification_snapshot = None
     material_changes = list(candidate.material_changes)
-    body_changed = prior is not None and _body_changed(prior, candidate)
+    body_changed = prior is not None and _body_changed(prior, authority_candidate)
     effective_classification = None
     forced_material_reasons: tuple[str, ...] = ()
 
@@ -404,9 +445,50 @@ def prepare_live(
         raise DishRuleError("VALIDATION_FAILED", "candidate failed current validation", errors=[finding_payload(f) for f in validation.findings])
 
     authorization_ids = ()
+    agent_attested_decisions: tuple[str, ...] = ()
+    if prior is None:
+        newly_attributed = tuple(
+            line
+            for line in authority_candidate.decisions
+            if str(line).startswith("Human — Marco:")
+            and str(line)[len("Human — Marco:") :].strip()
+        )
+    else:
+        newly_attributed = agent_attested_decision_appends(prior, authority_candidate)
+
+    if "Decisions" in declared_governed_fields:
+        if not newly_attributed:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "Decisions attestation applies only to newly recorded attributed Marco choices",
+                rule="decision_attestation_not_applicable",
+            )
+        agent_attested_decisions = newly_attributed
+    elif newly_attributed:
+        raise DishRuleError(
+            "CONFIRMATION_REQUIRED",
+            "an attributed Marco Decision append requires explicit agent attestation",
+            rule="decision_attestation_required",
+            details={
+                "appended_decisions": list(newly_attributed),
+                "required_governed_change_field": "Decisions",
+                "instruction": (
+                    "Retry the same exact candidate with governed_change_fields including Decisions "
+                    "only if Marco actually stated these choices in the conversation. This records "
+                    "agent-attested provenance, not formal governed authorization."
+                ),
+                "fresh_request_id": True,
+            },
+        )
+
     if prior is not None and body_changed:
         authorization_ids = require_governed_authorization(
-            conn, prior, candidate, task_gid=op["task_gid"], operation_id=operation_id
+            conn,
+            prior,
+            authority_candidate,
+            task_gid=op["task_gid"],
+            operation_id=operation_id,
+            agent_attested_decisions=agent_attested_decisions,
         )
 
     title, notes = _render_document(candidate)
@@ -457,6 +539,26 @@ def prepare_live(
         context={"authorization_ids": list(authorization_ids)} if authorization_ids else None,
     )
     complete_operation_step(conn, operation_id, "candidate_write")
+    if agent_attested_decisions:
+        record_audit(
+            conn,
+            submission_id=None,
+            task_gid=op["task_gid"],
+            operation_id=operation_id,
+            event_type="decision.agent_attested",
+            actor_agent=agent,
+            actor_run_id=op["run_id"],
+            actor_source="agent-attested-conversation",
+            details={
+                "appended_decisions": list(agent_attested_decisions),
+                "formal_marco_authorization": False,
+            },
+            result_code="OK",
+            result_ok=True,
+            governed_kind="decision",
+            before_state={"Decisions": [] if prior is None else list(prior.decisions)},
+            after_state={"Decisions": list(candidate.decisions)},
+        )
     if op["operation_kind"] == "initial" or (op["operation_kind"] == "change" and body_changed and state.values["Status"] == "pending-verification"):
         record_actor_fact(conn, operation_id=operation_id, task_gid=live.gid, role="constructor" if op["operation_kind"] == "initial" else "material_editor", agent=agent, run_id=op["run_id"], candidate_identity=confirmed.identity)
     exact = parse_task_document(f"{confirmed.title}\n{confirmed.notes}")

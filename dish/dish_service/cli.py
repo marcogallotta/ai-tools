@@ -54,7 +54,13 @@ TOPIC_COMMANDS = ("planning", "research", "verification")
 
 
 def _canonical_enum_choices(command, field: str) -> tuple[str, ...]:
-    return tuple(ARGUMENT_SCHEMAS[command.name]["properties"][field]["enum"])
+    schema = ARGUMENT_SCHEMAS[command.name]["properties"][field]
+    values = schema.get("enum")
+    if values is None and isinstance(schema.get("items"), dict):
+        values = schema["items"].get("enum")
+    if values is None:
+        raise KeyError(f"{command.name}.{field} has no canonical enum")
+    return tuple(values)
 
 
 _TOPIC_WALKTHROUGHS: dict[str, str] = {
@@ -300,6 +306,14 @@ def build_parser() -> JsonArgumentParser:
             "required only for a post-signoff change that alters the canonical body: "
             "classify that exact diff; Dish may force non-material to material when a "
             "protocol-defined material path changed"
+        ),
+    )
+    prepare.add_argument(
+        "--governed-change-field", dest="governed_change_fields", action="append", default=[],
+        choices=_canonical_enum_choices(PREPARE_COMMAND, "governed_change_fields"),
+        help=(
+            "use only as explicit agent attestation for an append-only Human — Marco Decision; "
+            "repeat only if the schema later exposes more attestation fields"
         ),
     )
 

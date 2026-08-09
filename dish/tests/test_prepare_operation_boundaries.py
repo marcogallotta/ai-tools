@@ -112,6 +112,125 @@ def test_initial_prepare_rejects_missing_or_invalid_model(
             "structural-only", "transition-state", "exact-content-identity",
         ]
     assert backend.writes == 0
+
+
+@pytest.mark.smoke
+def test_initial_prepare_agent_attested_marco_decision_requires_explicit_attestation(tmp_path):
+    import json
+
+    lines = TASK.splitlines()
+    backend = Backend(lines[0], "\n".join(lines[1:]) + "\n")
+    application = app(tmp_path, backend)
+    started = application.execute(
+        "start", agent="gpt", task_gid="t", kind="initial",
+        change_level=None, change_reason=None, run_id="research-run",
+    )
+    candidate_text = TASK.replace(
+        "### Research basis",
+        "### Decisions\nHuman — Marco: Use chicken.\n### Research basis",
+    )
+    candidate_path = write(tmp_path, "decision-candidate.txt", candidate_text)
+
+    preflight = application.execute(
+        "prepare", agent="gpt", model="gpt-5.6-sol",
+        submission_id=started["submission_id"], file_path=candidate_path,
+    )
+    assert preflight["code"] == "CONFIRMATION_REQUIRED"
+    assert preflight["errors"][0]["rule"] == "decision_attestation_required"
+    assert backend.writes == 0
+
+    result = application.execute(
+        "prepare", agent="gpt", model="gpt-5.6-sol",
+        submission_id=started["submission_id"], file_path=candidate_path,
+        governed_change_fields=["Decisions"],
+    )
+    assert result["ok"]
+    assert "Human — Marco: Use chicken." in backend.notes
+    assert application.conn.execute(
+        "SELECT COUNT(*) FROM marco_authorizations WHERE operation_id=?",
+        (started["submission_id"],),
+    ).fetchone()[0] == 0
+    attestation = application.conn.execute(
+        """SELECT actor_agent,actor_provenance,details
+             FROM audit_events
+            WHERE operation_id=? AND event_type='decision.agent_attested'
+            ORDER BY created_at DESC,rowid DESC LIMIT 1""",
+        (started["submission_id"],),
+    ).fetchone()
+    provenance = json.loads(attestation["actor_provenance"])
+    details = json.loads(attestation["details"])
+    assert attestation["actor_agent"] == "gpt"
+    assert provenance["run_id"] == "research-run"
+    assert provenance["source"] == "agent-attested-conversation"
+    assert details["appended_decisions"] == ["Human — Marco: Use chicken."]
+    assert details["formal_marco_authorization"] is False
+
+
+@pytest.mark.smoke
+def test_first_canonical_research_candidate_can_attest_marco_decision_from_planning_brief(tmp_path):
+    import json
+
+    backend = Backend(TASK.splitlines()[0], PLANNING)
+    application = app(tmp_path, backend)
+    started = application.execute(
+        "start", agent="gpt", task_gid="t", kind="initial",
+        change_level=None, change_reason=None, run_id="research-run",
+    )
+    candidate_text = TASK.replace(
+        "### Research basis",
+        "### Decisions\nHuman — Marco: Use chicken.\n### Research basis",
+    )
+    candidate_path = write(tmp_path, "first-canonical-decision.txt", candidate_text)
+
+    preflight = application.execute(
+        "prepare", agent="gpt", model="gpt-5.6-sol",
+        submission_id=started["submission_id"], file_path=candidate_path,
+    )
+    assert preflight["code"] == "CONFIRMATION_REQUIRED"
+    assert preflight["errors"][0]["rule"] == "decision_attestation_required"
+
+    result = application.execute(
+        "prepare", agent="gpt", model="gpt-5.6-sol",
+        submission_id=started["submission_id"], file_path=candidate_path,
+        governed_change_fields=["Decisions"],
+    )
+    assert result["ok"]
+    attestation = application.conn.execute(
+        """SELECT actor_agent,actor_provenance,details,before_state,after_state
+             FROM audit_events
+            WHERE operation_id=? AND event_type='decision.agent_attested'
+            ORDER BY created_at DESC,rowid DESC LIMIT 1""",
+        (started["submission_id"],),
+    ).fetchone()
+    assert attestation["actor_agent"] == "gpt"
+    assert json.loads(attestation["actor_provenance"])["run_id"] == "research-run"
+    assert json.loads(attestation["before_state"])["Decisions"] == []
+    assert json.loads(attestation["after_state"])["Decisions"] == [
+        "Human — Marco: Use chicken."
+    ]
+
+
+@pytest.mark.smoke
+def test_initial_prepare_decision_attestation_rejected_without_matching_append(tmp_path):
+    lines = TASK.splitlines()
+    backend = Backend(lines[0], "\n".join(lines[1:]) + "\n")
+    application = app(tmp_path, backend)
+    started = application.execute(
+        "start", agent="gpt", task_gid="t", kind="initial",
+        change_level=None, change_reason=None, run_id="research-run",
+    )
+
+    result = application.execute(
+        "prepare", agent="gpt", model="gpt-5.6-sol",
+        submission_id=started["submission_id"],
+        file_path=write(tmp_path, "unchanged.txt", TASK),
+        governed_change_fields=["Decisions"],
+    )
+
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert result["errors"][0]["rule"] == "decision_attestation_not_applicable"
+    assert backend.writes == 0
+
 @pytest.mark.smoke
 def test_stale_baseline_blocks_before_write(tmp_path):
     lines=TASK.splitlines(); b=Backend(lines[0],"\n".join(lines[1:])+"\n"); a=app(tmp_path,b)

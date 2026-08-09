@@ -88,14 +88,98 @@ def validate_semantic_proposal(before, after) -> None:
             },
         )
 
-def require_governed_authorization(conn, before, after, *, task_gid: str, operation_id: str, proposal_reason: str | None = None) -> tuple[str, ...]:
+def _remembered_decision_append_only(before, after) -> bool:
+    """Return whether Decisions changed only by appending attributed Marco choices.
+
+    Ordinary or meaningful choices that Marco gives an agent may be remembered in the
+    canonical Decisions log without pretending they are formal governed authorization.
+    Existing Decisions remain protected: deleting, rewriting, or reordering them is still
+    a governed change that requires explicit authorization.
+    """
+
+    old = tuple(before.decisions)
+    new = tuple(after.decisions)
+    if len(new) <= len(old) or new[: len(old)] != old:
+        return False
+    appended = new[len(old) :]
+    return bool(appended) and all(
+        str(line).startswith("Human — Marco:") and str(line)[len("Human — Marco:") :].strip()
+        for line in appended
+    )
+
+
+def agent_attested_decision_appends(before, after) -> tuple[str, ...]:
+    """Return append-only attributed Marco choices that do not themselves grant authority.
+
+    The canonical Decisions log may preserve a deliberate choice that an agent says Marco made in
+    conversation.  This is evidence of an agent-attested conversation note, not authenticated admin
+    authorization for another governed mutation.  Existing Decision history remains immutable except
+    through the normal governed-authorization path.
+    """
+
+    if not _remembered_decision_append_only(before, after):
+        return ()
+    old = tuple(before.decisions)
+    return tuple(after.decisions)[len(old) :]
+
+
+def governed_changes_requiring_authorization(
+    before,
+    after,
+    *,
+    agent_attested_decisions: tuple[str, ...] = (),
+) -> tuple[GovernedChange, ...]:
+    """Return governed changes that require formal Marco authorization.
+
+    Append-only Decisions are exempt only when the caller supplies the exact durable
+    agent-attestation evidence for those appended entries.  Merely writing the
+    ``Human — Marco:`` prefix is never enough to relax authorization on another path.
+    """
+
+    actual_attested = agent_attested_decision_appends(before, after)
+    supplied_attested = tuple(agent_attested_decisions)
+    if supplied_attested and supplied_attested != actual_attested:
+        raise DishRuleError(
+            "CONFLICT",
+            "agent-attested Decision evidence does not match the exact candidate",
+            rule="decision_attestation_mismatch",
+            details={
+                "supplied": list(supplied_attested),
+                "actual": list(actual_attested),
+            },
+        )
+    exempt_decisions = bool(supplied_attested)
+    return tuple(
+        change
+        for change in governed_changes(before, after)
+        if not (change.field == "Decisions" and exempt_decisions)
+    )
+
+
+def require_governed_authorization(
+    conn,
+    before,
+    after,
+    *,
+    task_gid: str,
+    operation_id: str,
+    proposal_reason: str | None = None,
+    agent_attested_decisions: tuple[str, ...] = (),
+) -> tuple[str, ...]:
     validate_semantic_proposal(before, after)
-    changes = governed_changes(before, after)
-    if not changes:
+    authorization_changes = governed_changes_requiring_authorization(
+        before,
+        after,
+        agent_attested_decisions=agent_attested_decisions,
+    )
+    if not authorization_changes:
         return ()
     rows = reserve_marco_authorizations(
         conn, task_gid=task_gid, operation_id=operation_id,
-        changes=tuple({"field": c.field, "before": c.before, "after": c.after} for c in changes),
+        changes=tuple(
+            {"field": c.field, "before": c.before, "after": c.after}
+            for c in authorization_changes
+        ),
         proposal_reason=proposal_reason,
         linked_changes=tuple(
             {"path": path, "before": old, "after": new}

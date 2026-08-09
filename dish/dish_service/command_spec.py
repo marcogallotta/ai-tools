@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Mapping
 
 from dish_tool import command_identity as command_ids
+from dish_tool.constants import APPROVAL_CORRECTIONS, REJECTION_ROUTES
 from dish_tool.errors import DishRuleError
 from dish_tool.identifiers import (
     CANONICAL_DISH_UUID_SCHEMA,
@@ -264,6 +265,16 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
                     "an accepted non-material diff preserves the exact prior signoff."
                 ),
             },
+            "governed_change_fields": {
+                "type": "array",
+                "items": {"type": "string", "enum": ["Decisions"]},
+                "uniqueItems": True,
+                "description": (
+                    "Use only to explicitly attest an append-only `Human — Marco:` Decision "
+                    "that Marco actually stated in conversation. This records agent-attributed "
+                    "provenance; it does not authorize any other governed-field mutation."
+                ),
+            },
         },
     },
     APPROVE_COMMAND.name: {
@@ -280,7 +291,7 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             "submission_id": dict(DISH_UUID_SCHEMA),
             "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
             "model": {"type": "string"},
-            "correction": {"type": "string", "enum": ["none", "small"]},
+            "correction": {"type": "string", "enum": list(APPROVAL_CORRECTIONS)},
             "file_text": {"type": "string"},
             "reviewed_identity": {"type": "string"},
             "semantic_review_complete": {"type": "boolean"},
@@ -296,7 +307,7 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
             "reason": {"type": "string"},
             "route": {
                 "type": "string",
-                "enum": ["large", "evidence", "human-review"],
+                "enum": list(REJECTION_ROUTES),
             },
             "file_text": {"type": "string"},
             "blocker_metric": {"type": "string"},
@@ -324,7 +335,12 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
                     "enum": ["Dish candidate", "Purpose", "Role", "Priors", "Locks", "Exemptions", "Research emphasis", "Destination section", "Decisions", "Researched by"],
                 },
                 "uniqueItems": True,
-                "description": "On a Large-correction retry, name only small governed-text fields Dish asked the agent to confirm as intentionally changed.",
+                "description": (
+                    "On a Large-correction retry, name only governed fields Dish asked the agent "
+                    "to confirm as intentionally changed. Naming Decisions also attests that an "
+                    "append-only `Human — Marco:` entry reflects something Marco actually stated; "
+                    "it does not authorize another governed field."
+                ),
             },
             "resume_status": {
                 "type": "string",
@@ -450,8 +466,8 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
 
         return {
             "oneOf": [
-                approve_variant("none", with_file_text=False),
-                approve_variant("small", with_file_text=True),
+                approve_variant(correction, with_file_text=(correction == "small"))
+                for correction in APPROVAL_CORRECTIONS
             ],
             "discriminator": {"propertyName": "correction"},
         }
@@ -478,24 +494,25 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
             "properties": properties,
         }
 
+    variants = {
+        "large": dict(
+            extra=("model", "file_text", "governed_change_fields"),
+            required=("model", "file_text"),
+        ),
+        "evidence": dict(
+            extra=("resume_status", *blocker_fields),
+            required=("resume_status",),
+        ),
+        "human-review": dict(
+            extra=(
+                "resume_status", *blocker_fields, "human_review_confirmed",
+                "human_review_basis", "repairs_considered",
+            ),
+            required=("resume_status",),
+        ),
+    }
     return {
-        "oneOf": [
-            variant(
-                "large",
-                extra=("model", "file_text", "governed_change_fields"),
-                required=("model", "file_text"),
-            ),
-            variant(
-                "evidence",
-                extra=("resume_status", *blocker_fields),
-                required=("resume_status",),
-            ),
-            variant(
-                "human-review",
-                extra=("resume_status", *blocker_fields, "human_review_confirmed", "human_review_basis", "repairs_considered"),
-                required=("resume_status",),
-            ),
-        ],
+        "oneOf": [variant(route, **variants[route]) for route in REJECTION_ROUTES],
         "discriminator": {"propertyName": "route"},
     }
 

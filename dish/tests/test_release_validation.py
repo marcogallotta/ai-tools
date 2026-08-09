@@ -167,7 +167,7 @@ def test_resolver_loads_external_schema_and_requested_protocol(release_repo):
     repo, _ = release_repo
     release = resolve_release(repo, protocol_role="planning")
 
-    assert release.protocol_version == "1.0.10"
+    assert release.protocol_version == "1.0.11"
     assert release.schema_version == "2"
     assert set(release.protocols) == {"planning"}
     assert set(release.schema["legacy_validation_adapter"]) == {"planning", "complete_task"}

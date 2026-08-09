@@ -1059,6 +1059,17 @@
                           "non-material"
                         ],
                         "description": "Required only when a post-signoff change candidate changes the canonical body. It classifies that exact body diff from the signed baseline. The caller may propose non-material, but Dish forces material when a protocol-defined material path changed; material opens Verification, while an accepted non-material diff preserves the exact prior signoff."
+                      },
+                      "governed_change_fields": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "enum": [
+                            "Decisions"
+                          ]
+                        },
+                        "uniqueItems": true,
+                        "description": "Use only to explicitly attest an append-only `Human — Marco:` Decision that Marco actually stated in conversation. This records agent-attributed provenance; it does not authorize any other governed-field mutation."
                       }
                     },
                     "type": "object",
@@ -1366,7 +1377,7 @@
                               ]
                             },
                             "uniqueItems": true,
-                            "description": "On a Large-correction retry, name only small governed-text fields Dish asked the agent to confirm as intentionally changed."
+                            "description": "On a Large-correction retry, name only governed fields Dish asked the agent to confirm as intentionally changed. Naming Decisions also attests that an append-only `Human — Marco:` entry reflects something Marco actually stated; it does not authorize another governed field."
                           }
                         }
                       },

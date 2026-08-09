@@ -13,7 +13,10 @@ from .database import (
     transition_operation,
     utc_now,
 )
-from .governed_diff import canonical_diff, governed_changes, validate_semantic_proposal
+from .governed_diff import (
+    agent_attested_decision_appends, canonical_diff, governed_changes,
+    governed_changes_requiring_authorization, validate_semantic_proposal,
+)
 from .task_document import (
     DocumentParseError,
     document_parse_error_payloads,
@@ -29,6 +32,13 @@ _ACTIVE = ("pending", "approved", "claimed")
 
 def _json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def _proposal_audit_actor(agent: str) -> tuple[str | None, str]:
+    """Map the internal mechanical proposal actor onto the audit provenance model."""
+    if agent == "dish":
+        return None, "dish-mechanical"
+    return agent, "command"
 
 
 def _row_dict(row: sqlite3.Row | Mapping[str, Any]) -> dict[str, Any]:
@@ -190,6 +200,29 @@ def validate_semantic_proposal_integrity(
             details={
                 "proposal_id": proposal["proposal_id"],
                 "mismatches": _record_mismatches(stored_governed, actual_governed),
+            },
+        )
+    stored_attested_raw = json.loads(proposal.get("agent_attested_decisions_json") or "[]")
+    if not isinstance(stored_attested_raw, list) or not all(
+        isinstance(item, str) for item in stored_attested_raw
+    ):
+        raise DishRuleError(
+            "CONFLICT",
+            "stored proposal Decision-attestation evidence is malformed",
+            rule="semantic_proposal_attestation_invalid",
+            details={"proposal_id": proposal["proposal_id"]},
+        )
+    stored_attested = tuple(stored_attested_raw)
+    actual_attested = agent_attested_decision_appends(before_document, candidate_document)
+    if stored_attested and stored_attested != actual_attested:
+        raise DishRuleError(
+            "CONFLICT",
+            "stored proposal Decision-attestation evidence does not match its exact candidate",
+            rule="semantic_proposal_attestation_invalid",
+            details={
+                "proposal_id": proposal["proposal_id"],
+                "stored": list(stored_attested),
+                "actual": list(actual_attested),
             },
         )
     return before_document, candidate_document
@@ -408,6 +441,9 @@ def proposal_payload(
     item = _row_dict(row)
     item["explanation"] = json.loads(item.pop("explanation_json"))
     item["linked_changes"] = json.loads(item.pop("linked_changes_json"))
+    item["agent_attested_decisions"] = json.loads(
+        item.pop("agent_attested_decisions_json", "[]")
+    )
     item["changes"] = list(proposal_changes(conn, item["proposal_id"]))
     changed_fields = [str(change.get("field") or "").strip() for change in item["changes"]]
     changed_fields = [field for field in changed_fields if field]
@@ -504,6 +540,7 @@ def queue_semantic_proposal(
     protocol_text: str,
     proposer_agent: str,
     proposer_run_id: str,
+    agent_attested_decisions: Sequence[str] = (),
 ) -> sqlite3.Row:
     """Persist one exact pending proposal and detach it from proposer lease ownership."""
     if not changes:
@@ -550,7 +587,20 @@ def queue_semantic_proposal(
         ).fetchone()
         if existing is not None:
             if existing["candidate_identity"] == candidate_identity:
-                return existing
+                stored_attested = tuple(json.loads(existing["agent_attested_decisions_json"]))
+                supplied_attested = tuple(str(item) for item in agent_attested_decisions)
+                if stored_attested == supplied_attested:
+                    return existing
+                raise DishRuleError(
+                    "CONFLICT",
+                    "active semantic proposal has different Decision-attestation provenance",
+                    rule="semantic_proposal_attestation_mismatch",
+                    details={
+                        "proposal_id": existing["proposal_id"],
+                        "stored": list(stored_attested),
+                        "supplied": list(supplied_attested),
+                    },
+                )
             raise DishRuleError(
                 "CONFLICT",
                 "this operation is already parked on a different active semantic proposal",
@@ -603,6 +653,20 @@ def queue_semantic_proposal(
                 errors=document_parse_error_payloads(exc),
             ) from exc
         validate_semantic_proposal(baseline_document, candidate_document)
+        actual_attested = agent_attested_decision_appends(
+            baseline_document, candidate_document
+        )
+        supplied_attested = tuple(str(item) for item in agent_attested_decisions)
+        if supplied_attested and supplied_attested != actual_attested:
+            raise DishRuleError(
+                "CONFLICT",
+                "agent-attested Decision evidence does not match the exact proposal candidate",
+                rule="decision_attestation_mismatch",
+                details={
+                    "supplied": list(supplied_attested),
+                    "actual": list(actual_attested),
+                },
+            )
         rendered_title, rendered_notes = _render_document(candidate_document)
         rendered_identity = content_identity(rendered_title, rendered_notes).digest
         if rendered_identity != candidate_identity:
@@ -686,13 +750,14 @@ def queue_semantic_proposal(
             """INSERT INTO semantic_proposals(
                    proposal_id,task_gid,operation_id,cycle_id,baseline_identity,
                    candidate_identity,candidate_title,candidate_notes,proposal_reason,
-                   explanation_json,linked_changes_json,protocol_release,protocol_text,
-                   correction_class,proposer_agent,proposer_run_id,status,created_at
-               ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   explanation_json,linked_changes_json,agent_attested_decisions_json,
+                   protocol_release,protocol_text,correction_class,proposer_agent,proposer_run_id,
+                   status,created_at
+               ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 proposal_id, task_gid, operation_id, cycle_id, baseline_identity,
                 candidate_identity, candidate_title, candidate_notes, str(proposal_reason).strip(),
-                _json(dict(explanation)), _json(proposed_linked),
+                _json(dict(explanation)), _json(proposed_linked), _json(supplied_attested),
                 protocol_release, protocol_text, "large", proposer_agent, proposer_run_id,
                 "pending", now,
             ),
@@ -724,6 +789,7 @@ def queue_semantic_proposal(
                 "cycle_id": cycle_id,
                 "candidate_identity": candidate_identity,
                 "change_fields": [str(change["field"]) for change in changes],
+                "agent_attested_decisions": list(supplied_attested),
                 "proposal_reason": proposal_reason,
             },
             result_code="OK", result_ok=True,
@@ -825,7 +891,7 @@ def approve_semantic_proposal(
                     conn, row, live_title=live_title, live_notes=live_notes
                 ),
             )
-        validate_semantic_proposal_integrity(
+        before_document, candidate_document = validate_semantic_proposal_integrity(
             conn, row, baseline_title=live_title, baseline_notes=live_notes
         )
         operation = conn.execute(
@@ -837,11 +903,17 @@ def approve_semantic_proposal(
                 rule="semantic_proposal_operation_closed",
             )
         authorization_ids = []
-        for change in proposal_changes(conn, proposal_id):
+        stored_attested = tuple(json.loads(row["agent_attested_decisions_json"]))
+        authorization_changes = governed_changes_requiring_authorization(
+            before_document,
+            candidate_document,
+            agent_attested_decisions=stored_attested,
+        )
+        for change in authorization_changes:
             authorization_ids.append(
                 _record_authorization_in_transaction(
                     conn, task_gid=row["task_gid"], operation_id=row["operation_id"],
-                    field_name=change["field"], before=change["before"], after=change["after"],
+                    field_name=change.field, before=change.before, after=change.after,
                     reason=clean_reason, proposal_id=proposal_id,
                 )
             )
@@ -871,6 +943,8 @@ def approve_semantic_proposal(
                 "reason": clean_reason,
                 "authorization_ids": authorization_ids,
                 "change_fields": [item["field"] for item in proposal_changes(conn, proposal_id)],
+                "authorization_fields": [change.field for change in authorization_changes],
+                "agent_attested_decisions": list(stored_attested),
             },
             result_code="OK", result_ok=True, governed_kind="decision",
             before_state={"proposal_status": "pending"},
@@ -1030,10 +1104,15 @@ def claim_semantic_proposal(
                 "CONFLICT", "proposal was claimed concurrently",
                 rule="semantic_proposal_claim_race",
             )
+        audit_agent, audit_source = _proposal_audit_actor(agent)
         record_audit(
             conn, submission_id=None, task_gid=row["task_gid"], operation_id=row["operation_id"],
-            event_type="semantic_proposal.claimed", actor_agent=agent, actor_run_id=run_id,
-            details={"proposal_id": proposal_id, "request_id": request_id},
+            event_type="semantic_proposal.claimed", actor_agent=audit_agent, actor_run_id=run_id,
+            actor_source=audit_source,
+            details={
+                "proposal_id": proposal_id, "request_id": request_id,
+                "application_actor": agent,
+            },
             result_code="OK", result_ok=True,
         )
         return get_semantic_proposal(conn, proposal_id)
@@ -1053,10 +1132,15 @@ def release_semantic_proposal_claim(
                 WHERE proposal_id=? AND status='claimed' AND claimed_run_id=?""",
             (proposal_id, run_id),
         )
+        audit_agent, audit_source = _proposal_audit_actor(str(row["claimed_agent"]))
         record_audit(
             conn, submission_id=None, task_gid=row["task_gid"], operation_id=row["operation_id"],
-            event_type="semantic_proposal.claim_released", actor_agent=row["claimed_agent"],
-            actor_run_id=run_id, details={"proposal_id": proposal_id, "reason": reason},
+            event_type="semantic_proposal.claim_released", actor_agent=audit_agent,
+            actor_run_id=run_id, actor_source=audit_source,
+            details={
+                "proposal_id": proposal_id, "reason": reason,
+                "application_actor": row["claimed_agent"],
+            },
             result_code="OK", result_ok=True,
         )
 
@@ -1081,11 +1165,15 @@ def mark_semantic_proposal_applied(
             "CONFLICT", "proposal application claim was lost",
             rule="semantic_proposal_claim_lost",
         )
+    audit_agent, audit_source = _proposal_audit_actor(str(row["claimed_agent"]))
     record_audit(
         conn, submission_id=None, task_gid=row["task_gid"], operation_id=row["operation_id"],
-        event_type="semantic_proposal.applied", actor_agent=row["claimed_agent"],
-        actor_run_id=run_id,
-        details={"proposal_id": proposal_id, "applied_identity": applied_identity},
+        event_type="semantic_proposal.applied", actor_agent=audit_agent,
+        actor_run_id=run_id, actor_source=audit_source,
+        details={
+            "proposal_id": proposal_id, "applied_identity": applied_identity,
+            "application_actor": row["claimed_agent"],
+        },
         result_code="OK", result_ok=True,
     )
     return get_semantic_proposal(conn, proposal_id)

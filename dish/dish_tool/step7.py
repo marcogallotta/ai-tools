@@ -6,7 +6,7 @@ import json
 import sqlite3
 from typing import Any, Mapping
 
-from .constants import COOKING_PROJECT_GID
+from .constants import APPROVAL_CORRECTIONS, COOKING_PROJECT_GID
 from .database import (
     record_audit, transition_operation, assert_fresh_verifier,
     record_actor_fact, declare_operation_step, complete_operation_step, content_identity,
@@ -799,8 +799,13 @@ def approve_live(
     )
     if not semantic_review_complete or not provenance_complete:
         raise DishRuleError("VALIDATION_FAILED", "explicit semantic self-review and provenance completion are required", rule="verification_inputs_incomplete")
-    if correction_class not in {"none", "small"}:
-        raise DishRuleError("INVALID_ARGUMENT", "approval correction must be none or small", rule="invalid_correction")
+    if correction_class not in APPROVAL_CORRECTIONS:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "approval correction is not supported",
+            rule="invalid_correction",
+            details={"allowed": list(APPROVAL_CORRECTIONS), "actual": correction_class},
+        )
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
     persisted_reviewed = cycle["reviewed_identity"]
     if not persisted_reviewed or not cycle["reviewed_content_version_id"]:

@@ -258,7 +258,7 @@ There is intentionally no general-purpose `unblock` mutation for workflow state.
 
 HTTP bodies are executed only when exactly the declared `Content-Length` bytes were received; a short body is rejected before JSON parsing. Tokens reject surrounding whitespace, numeric timeouts must be finite and positive, and private lease/backup routes reject undeclared fields just like Action/admin routes. The CLI/admin client bounds connect and response waits independently (`connect_timeout`, default 10s; `response_timeout`, default 600s, since one command can legitimately span several sequential 40s Asana calls) and closes its connection after the response. Ordinary client calls map transport failures to structured service-unavailable results and reject noncanonical responses. Consequential `inspect` and `apply-proposal` calls conservatively map transport loss, empty bodies, unreadable UTF-8, invalid JSON, and any canonical result-validation failure when dispatch may already have begun to local non-retryable `BACKEND_UNCERTAIN / service_response_ambiguous` with the exact transmitted request and run IDs, `safe_to_retry: false`, and `required_next_action: retry_exact_request`; exact replay is manual and the client never dispatches a second request automatically. `expire-lease` uses stricter phase-aware transport handling: DNS/TCP/TLS or socket-setup failure before dispatch is ordinary `BACKEND_REJECTED / service_unavailable`; timeout, disconnect, truncated body, invalid JSON, or noncanonical output after dispatch may have begun returns local non-retryable `BACKEND_UNCERTAIN / service_response_ambiguous` with the original request and run IDs and `required_next_action: retry_exact_request`. These local envelopes are not journaled; exact replay obtains the authoritative stored service result.
 
-Every complete task reread reasserts Cooking-project membership, so a task removed between the initial scope check and the authoritative read cannot open or continue an operation with a null placement. Asana section enumeration follows all pages. Verification start requires a non-blank, single-line independence attestation. CR, LF, tabs, ASCII controls, Unicode format characters, surrogates, line separators, and paragraph separators are rejected before request journaling, operation execution, Verification-cycle mutation, or attestation persistence; ordinary Unicode text remains valid. The same validator applies to every public route that accepts an attestation. Approval repeats only the exact verifier agent/run and inherits the exact persisted start attestation; its public shape does not accept the field. Every rejection route — Large, Evidence, and Human Review — repeats the exact verifier run and inherits that persisted attestation the same way; none of their public route shapes accept the field. Actor facts are scoped to an operation, allowing a run to participate legally in a later operation without rewriting earlier lineage.
+Every complete task reread reasserts Cooking-project membership, so a task removed between the initial scope check and the authoritative read cannot open or continue an operation with a null placement. Asana section enumeration follows all pages. Verification start requires a non-blank, single-line independence attestation. CR, LF, tabs, ASCII controls, Unicode format characters, surrogates, line separators, and paragraph separators are rejected before request journaling, operation execution, Verification-cycle mutation, or attestation persistence; ordinary Unicode text remains valid. The same validator applies to every public route that accepts an attestation. Approval repeats only the exact verifier agent/run and inherits the exact persisted start attestation; its public shape does not accept the field. Every rejection route — Large, Evidence, and Human Review — repeats the exact verifier run and inherits that persisted attestation the same way; none of their public route shapes accept the field. Actor facts are scoped to an operation, allowing a run to participate legally in a later operation without rewriting earlier lineage. Within one operation, verifier facts are idempotent per Verification cycle: the same still-live independent verifier may acquire a later-cycle fact when resuming an unchanged candidate after a deliberate hold, while constructor/material-editor independence remains enforced separately.
 
 Rejection reasons are NFC-normalized and must remain one safe Material-change field. The boundary rejects every Unicode control, format, surrogate, line-separator, or paragraph-separator character, including CR, LF, CRLF, NEL, vertical controls, zero-width format characters, U+2028, and U+2029. It also rejects the Material-change field delimiter (`—`). Valid long single-line Unicode text remains accepted. The same validator is applied again by Material-change rendering so caller text cannot alter the seven-field, one-record-per-line grammar even if an internal caller bypasses the public command path.
 
@@ -494,8 +494,11 @@ An agent attempting `reject --route human-review` must either supply the Human R
 fields or receive a non-mutating `CONFIRMATION_REQUIRED` response that asks for the evidence, repairs
 considered, and the specific unresolved Marco-only choice. The preflight explicitly treats a
 reasonable defensible estimate with stated assumptions as valid when exact yield/portion facts are
-unknowable. Uncertainty alone is not a blocker, but Dish must not invent a midpoint or other false
-precision when no single estimate is defensible. The durable structured numeric blocker represents
+unknowable. Nutrition uses the served edible portion expected to be consumed, excluding bones,
+shells, discarded cooking liquid, drained/rendered fat, and other material not eaten. A gross-raw or
+otherwise poorly supported estimate cannot establish a hard-limit breach. Uncertainty alone is not a
+blocker, but Dish must not invent a midpoint or other false precision when no single estimate is
+defensible. The durable structured numeric blocker represents
 one estimate, its limit, and its excess/shortfall; it does not represent a range. If the exact governed repair can already be constructed,
 the agent should use a Large correction so Dish queues that exact semantic proposal instead of
 creating an open-ended Human Review hold. Retrying a genuine escalation uses a fresh request ID.
@@ -530,10 +533,17 @@ the durable UUID or the current queue number. Semantic bundles use `review-appro
 For an unanswered Verification Human Review item the normal operator surface is also the review flow:
 `review-inspect` presents `review-approve REVIEW_ID --reason '<Marco decision>'` or
 `review-reject REVIEW_ID --reason '<why the escalation is invalid>'`; low-level hold IDs and
-`record-human-decision` remain internal/compatibility mechanics rather than the normal UX. Substantive
+`record-human-decision` remain internal/compatibility mechanics rather than the normal UX. Formal
+Human Review is reserved for consequential governed authorization. Ordinary clarification/preference
+may be used directly, while an intentional choice worth preserving may be appended as an attributed
+`Human — Marco:` Decision without formal admin authorization; such an append does not itself authorize
+another governed field mutation, and rewriting/removing an existing Decision remains governed. Substantive
 approval persists Marco's decision and follows the hold's stored resume route: `pending-verification`
-opens a fresh Verification cycle, while `pending-research` returns the task to Research and completes
-the held Verification operation. Dismissal is intentionally different: it always releases the
+opens a new Verification cycle, while `pending-research` returns the task to Research and completes
+the held Verification operation. When the candidate is unchanged, the same still-live verifier run
+that was already independent of the constructor/material editor may resume the interrupted pass on
+the new cycle. A material edit makes its resolver a material editor and still requires fresh
+independent signoff. Dismissal is intentionally different: it always releases the
 unchanged candidate to fresh Verification regardless of stored resume status, preserves the original
 issue and dismissal reason in audit/context, and fabricates no Marco decision. The outer
 machine-readable command remains the public wrapper Marco invoked (`review-approve` or
@@ -541,15 +551,21 @@ machine-readable command remains the public wrapper Marco invoked (`review-appro
 Neither path silently edits or authorizes governed fields. For semantic proposals, normal
 `review-inspect` shows every linked candidate change covered by approval/application before the
 approve command; `--verbose` adds rationale, evidence/provenance, protocol mechanics, IDs and
-diagnostics. Approval is atomic across that exact displayed bundle and does not apply, sign, or submit
-the task.
+diagnostics. Approval is atomic across that exact displayed bundle and does not by itself apply, sign, or
+submit the task. `review-approve` first durably persists that approval and then invokes a separate
+mechanical application action in Dish. The application rereads/revalidates the approved immutable
+bundle, and only that second durable action may change canonical content. If mechanical application
+fails, approval remains persisted and the failure reports that fact so retry/recovery can continue
+without asking Marco to approve the same bundle again.
 
-Approved proposals are detached from the proposing run. `dish proposals --agent AGENT` lists
-claimable approved bundles. A fresh invocation runs `dish apply-proposal PROPOSAL_ID --agent AGENT
---model MODEL`; Dish claims the bundle, verifies the original baseline, installs only the immutable
-stored candidate, consumes the linked authorizations, closes the interrupted cycle as Large, and
-opens a fresh Verification cycle. The applying invocation does not inherit the proposer's run
-identity or Verification independence. A rejected proposal creates no authorizations or task edit;
+Approved proposals are detached from the proposing run. The normal path does not require another AI
+agent: Dish claims the bundle under its mechanical application actor, verifies the original baseline,
+installs only the immutable stored candidate, consumes linked authorizations, closes the interrupted
+cycle as Large, and opens a fresh Verification cycle for independent signoff. `dish proposals
+--agent AGENT` and `dish apply-proposal PROPOSAL_ID --agent AGENT --model MODEL` remain low-level
+recovery/testing surfaces for an approved bundle whose normal application did not complete. A
+low-level applying invocation does not inherit the proposer's run identity or Verification
+independence. A rejected proposal creates no authorizations or task edit;
 Dish closes the proposing cycle against the unchanged baseline and opens a fresh Verification cycle
 for a different proposal. The same semantic change bundle cannot be requeued unchanged after Marco
 rejects it. An unused standalone operation-bound authorization still inherits across an exact

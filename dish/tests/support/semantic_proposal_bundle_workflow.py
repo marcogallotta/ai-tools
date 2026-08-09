@@ -1,7 +1,7 @@
 import pytest
 from dish_tool.admin import DishAdminApplication
 from dish_tool.errors import DishRuleError
-from dish_tool.semantic_proposals import queue_semantic_proposal
+from dish_tool.semantic_proposals import approve_semantic_proposal, queue_semantic_proposal
 from tests.support.verification import TASK, make_app, review_and_inspect
 
 
@@ -70,29 +70,16 @@ def _case_test_service_fresh_invocation_claims_approved_bundle_without_old_run_i
     )
     assert approved["ok"]
 
+    # Normal Marco approval now performs the separate application action
+    # mechanically, so the next AI sees the fresh Verification cycle directly.
     available = service.execute_agent(
         "start", {
             "agent": "gpt", "task_gid": "t", "kind": "verification",
             "independence_attestation": "independent",
         }, principal=ServicePrincipal(owner_id="applicant", run_id="fresh-applicant"),
     )
-    assert available["allowed_actions"] == ["apply-proposal"]
-    assert available["data"]["service_access"]["state"] == "approved_semantic_proposal_available"
-    assert available["data"]["agent_action"] == {
-        "command": "apply-proposal",
-        "arguments": {"proposal_id": proposal_id},
-    }
-
-    applicant = ServicePrincipal(owner_id="applicant", run_id="fresh-applicant")
-    applied = service.execute_agent(
-        "apply-proposal", {
-            "proposal_id": proposal_id, "agent": "gpt", "model": "gpt-5.6-sol",
-        }, principal=applicant,
-    )
-    assert applied["ok"]
-    assert applied["data"]["proposal"]["status"] == "applied"
-    assert applied["allowed_actions"] == ["start"]
-    assert applied["data"]["service_lease"] is None
+    assert available["ok"]
+    assert available["allowed_actions"] == ["inspect"]
     assert "Use whole scallion" in backend.notes
 
     conn = initialize_database(service.config.db_path)
@@ -103,7 +90,7 @@ def _case_test_service_fresh_invocation_claims_approved_bundle_without_old_run_i
         ).fetchone()
         assert proposal["status"] == "applied"
         assert proposal["proposer_run_id"] == "proposal-run"
-        assert proposal["claimed_run_id"] == "fresh-applicant"
+        assert proposal["claimed_run_id"] != "fresh-applicant"
         assert proposal["applied_identity"]
         result = dict(proposal)
     finally:
@@ -189,13 +176,18 @@ def _approved_service_proposal_runtime(tmp_path):
         request_id=str(uuid.uuid4()),
     )
     proposal_id = queued["data"]["proposal_id"]
-    assert service.execute_admin(
-        "review-approve",
-        {
-            "proposal_id": proposal_id,
-            "reason": "Marco approves this exact linked correction bundle.",
-        },
-        principal=ServicePrincipal("marco", str(uuid.uuid4())),
-        request_id=str(uuid.uuid4()),
-    )["ok"]
+    from dish_tool.database_initialization import initialize_database
+
+    conn = initialize_database(service.config.db_path)
+    try:
+        approved = approve_semantic_proposal(
+            conn,
+            proposal_id=proposal_id,
+            live_title=backend.title,
+            live_notes=backend.notes,
+            reason="Marco approves this exact linked correction bundle.",
+        )
+        assert approved["status"] == "approved"
+    finally:
+        conn.close()
     return service, backend, proposal_id, task_gid

@@ -6,6 +6,7 @@ import pytest
 from dish_service import command_spec
 from dish_service import openapi
 from dish_service.openapi import action_openapi
+from dish_tool.constants import APPROVAL_CORRECTIONS, REJECTION_ROUTES
 from tests.support.action_contract import (
     EXPECTED_ACTION_COMMANDS,
     EXPECTED_CONSEQUENTIAL,
@@ -111,9 +112,15 @@ def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
     assert finding_current["type"] == ["string", "object", "null"]
     assert "exact submitted value" in finding_current["description"].lower()
 
+    prepare = spec["paths"]["/v1/action/prepare"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
+    prepare_attestation = prepare["properties"]["governed_change_fields"]
+    assert prepare_attestation["type"] == "array"
+    assert set(prepare_attestation["items"]["enum"]) == {"Decisions"}
+    assert "provenance" in prepare_attestation["description"]
+
     reject = spec["paths"]["/v1/action/reject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
     variants = {item["properties"]["route"]["const"]: item for item in reject["oneOf"]}
-    assert set(variants) == {"large", "evidence", "human-review"}
+    assert set(variants) == set(REJECTION_ROUTES)
     assert {"model", "file_text"}.issubset(variants["large"]["required"])
     assert "resume_status" not in variants["large"]["properties"]
     assert "independence_attestation" not in variants["large"]["properties"]
@@ -140,7 +147,7 @@ def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
     approve_variants = {
         item["properties"]["correction"]["const"]: item for item in approve["oneOf"]
     }
-    assert set(approve_variants) == {"none", "small"}
+    assert set(approve_variants) == set(APPROVAL_CORRECTIONS)
     assert "file_text" not in approve_variants["none"]["properties"]
     assert "file_text" in approve_variants["small"]["required"]
     for variant in approve_variants.values():

@@ -168,6 +168,35 @@ def test_service_review_queue_resolves_human_hold_by_current_row_number(tmp_path
     assert resolved["command"] == "review-approve"
     assert "Status: pending-verification" in backend.notes
 
+    # A deliberate non-material Human Review pause is resumable by the same live
+    # verifier run.  It is a new cycle, not a reason to fabricate a new agent.
+    resumed = service.execute_agent(
+        "start",
+        {
+            "agent": "codex",
+            "task_gid": "t",
+            "kind": "verification",
+            "independence_attestation": "independent",
+        },
+        principal=verifier,
+    )
+    assert resumed["ok"]
+    assert resumed["allowed_actions"] == ["inspect"]
+    from dish_tool.database_initialization import initialize_database
+
+    conn = initialize_database(service.config.db_path)
+    try:
+        verifier_facts = conn.execute(
+            """SELECT source_cycle_id,candidate_identity FROM operation_actor_facts
+                 WHERE operation_id=? AND role='verifier' AND run_id=?
+                 ORDER BY created_at,fact_id""",
+            (started["submission_id"], "verifier-run"),
+        ).fetchall()
+        assert len(verifier_facts) == 2
+        assert verifier_facts[0]["source_cycle_id"] != verifier_facts[1]["source_cycle_id"]
+    finally:
+        conn.close()
+
 
 @pytest.mark.smoke
 def test_review_reject_dismisses_unanswered_human_review_without_recording_decision(tmp_path):

@@ -210,6 +210,22 @@ def test_reject_cli_rejects_removed_compatibility_flags():
         ),
         (
             [
+                "prepare",
+                "00000000-0000-4000-8000-000000000000",
+                "--agent",
+                "gpt",
+                "--model",
+                "gpt-5.6-sol",
+                "--file",
+                "candidate.txt",
+                "--governed-change-field",
+                "Decisions",
+            ],
+            "governed_change_fields",
+            ["Decisions"],
+        ),
+        (
+            [
                 "approve",
                 "00000000-0000-4000-8000-000000000000",
                 "--agent",
@@ -251,6 +267,12 @@ def test_agent_cli_preserves_command_choice_behavior(argv, field, expected):
     [
         ["create", "--title", "Canonical", "--agent", "unknown"],
         ["start", "123", "--agent", "gpt", "--kind", "unknown"],
+        [
+            "prepare",
+            "00000000-0000-4000-8000-000000000000",
+            "--agent", "gpt", "--model", "gpt-5.6-sol", "--file", "candidate.txt",
+            "--governed-change-field", "Purpose",
+        ],
     ],
 )
 def test_agent_cli_rejects_values_outside_canonical_enums(argv):

@@ -111,7 +111,7 @@ def test_schema_34_and_35_upgrade_existing_database_with_current_journals(tmp_pa
 
     upgraded = initialize_database(db_path)
     try:
-        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 40
+        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         planning_table = upgraded.execute(
             "SELECT name FROM sqlite_master "
             "WHERE type='table' AND name='planning_intent_challenges'"
@@ -156,7 +156,7 @@ def test_schema_35_upgrades_schema_34_audit_journal(tmp_path):
 
     upgraded = initialize_database(db_path)
     try:
-        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 40
+        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         assert "operation_execution_id" in {
             row[1] for row in upgraded.execute("PRAGMA table_info(audit_events)")
         }
@@ -168,6 +168,96 @@ def test_schema_35_upgrades_schema_34_audit_journal(tmp_path):
             "SELECT 1 FROM sqlite_master "
             "WHERE type='trigger' AND name='audit_events_execution_binding_insert'"
         ).fetchone() is not None
+    finally:
+        upgraded.close()
+
+
+@pytest.mark.database_boundary
+@pytest.mark.production_sqlite_pragmas
+@pytest.mark.database_boundary_upgrade
+def test_schema_41_preserves_semantic_proposals_and_allows_mechanical_claim_actor(tmp_path):
+    db_path = tmp_path / "schema-40-semantic-proposal.db"
+    conn = sqlite3.connect(db_path, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    try:
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            "CREATE TABLE schema_migrations "
+            "(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        for version in range(1, 41):
+            _execute_script_statements(conn, MIGRATIONS[version])
+            conn.execute(
+                "INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)",
+                (version, f"v{version}"),
+            )
+            conn.execute(f"PRAGMA user_version={version}")
+        conn.execute(
+            """INSERT INTO operations (
+                   operation_id,task_gid,operation_kind,status,expected_identity,
+                   schema_version,created_at
+               ) VALUES ('op-v40','task-v40','initial','open',?, '1.0.10','2026-08-09T00:00:00Z')""",
+            ("a" * 64,),
+        )
+        conn.execute(
+            """INSERT INTO verification_cycles (
+                   cycle_id,operation_id,task_gid,cycle_number,protocol_release,created_at
+               ) VALUES ('cycle-v40','op-v40','task-v40',1,'release-v40','2026-08-09T00:00:01Z')"""
+        )
+        conn.execute(
+            """INSERT INTO semantic_proposals (
+                   proposal_id,task_gid,operation_id,cycle_id,baseline_identity,candidate_identity,
+                   candidate_title,candidate_notes,proposal_reason,explanation_json,linked_changes_json,
+                   protocol_release,protocol_text,correction_class,proposer_agent,proposer_run_id,
+                   status,created_at
+               ) VALUES (
+                   'proposal-v40','task-v40','op-v40','cycle-v40',?,?,
+                   'Candidate','notes','reason','{}','[]','release-v40','protocol','large','gpt','run-v40',
+                   'pending','2026-08-09T00:00:02Z'
+               )""",
+            ("a" * 64, "b" * 64),
+        )
+        conn.execute(
+            """INSERT INTO semantic_proposal_changes (
+                   proposal_id,ordinal,field_name,before_json,after_json
+               ) VALUES ('proposal-v40',0,'Locks','"old"','"new"')"""
+        )
+        conn.execute("COMMIT")
+    finally:
+        conn.close()
+
+    upgraded = sqlite3.connect(db_path, isolation_level=None)
+    upgraded.row_factory = sqlite3.Row
+    upgraded.execute("PRAGMA foreign_keys=ON")
+    migrate_database(upgraded)
+    try:
+        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        proposal = upgraded.execute(
+            "SELECT * FROM semantic_proposals WHERE proposal_id='proposal-v40'"
+        ).fetchone()
+        assert proposal["candidate_identity"] == "b" * 64
+        assert proposal["agent_attested_decisions_json"] == "[]"
+        change = upgraded.execute(
+            "SELECT field_name,before_json,after_json FROM semantic_proposal_changes "
+            "WHERE proposal_id='proposal-v40'"
+        ).fetchone()
+        assert tuple(change) == ("Locks", '"old"', '"new"')
+        upgraded.execute(
+            """UPDATE semantic_proposals
+                  SET status='approved',reviewed_at='2026-08-09T00:00:03Z',
+                      review_reason='approved',approved_by='Marco'
+                WHERE proposal_id='proposal-v40'"""
+        )
+        upgraded.execute(
+            """UPDATE semantic_proposals
+                  SET status='claimed',claimed_at='2026-08-09T00:00:04Z',
+                      claimed_agent='dish',claimed_run_id='mechanical-run'
+                WHERE proposal_id='proposal-v40'"""
+        )
+        assert upgraded.execute(
+            "SELECT claimed_agent FROM semantic_proposals WHERE proposal_id='proposal-v40'"
+        ).fetchone()[0] == "dish"
     finally:
         upgraded.close()
 

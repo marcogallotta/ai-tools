@@ -32,14 +32,30 @@ from .human_actions import PromptField, exact_action, relay_text, template_actio
 from .semantic_proposals import (
     active_proposal_for_operation,
     approve_semantic_proposal,
+    get_semantic_proposal,
     proposal_payload,
     reject_semantic_proposal,
 )
+from .step8 import apply_semantic_proposal
+from .constants import MECHANICAL_PROPOSAL_AGENT
 from .review_queue import (
     human_review_consequence_metadata,
     list_review_items,
     resolve_review_item,
 )
+
+
+def _mechanical_proposal_run_id(proposal_id: str) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"dish:semantic-proposal:{proposal_id}"))
+
+
+def _is_recoverable_mechanical_proposal_claim(proposal: Mapping[str, Any]) -> bool:
+    proposal_id = str(proposal["proposal_id"] or "")
+    return bool(proposal_id) and (
+        proposal["status"] == "claimed"
+        and proposal["claimed_agent"] == MECHANICAL_PROPOSAL_AGENT
+        and proposal["claimed_run_id"] == _mechanical_proposal_run_id(proposal_id)
+    )
 
 
 @dataclass
@@ -87,10 +103,17 @@ def _assert_no_active_semantic_proposal(
     if proposal_status == "pending":
         next_command = "review-inspect"
         instruction = f"Review proposal {proposal['proposal_id']} before other admin recovery."
-    elif "apply-proposal" in legal_actions:
-        next_command = "apply-proposal"
+    elif proposal_status == "approved" and isinstance(view_proposal.get("block"), Mapping):
+        next_command = "inspect"
         instruction = (
-            f"Have a fresh eligible agent apply proposal {proposal['proposal_id']} exactly as stored."
+            f"Proposal {proposal['proposal_id']} is approved but currently blocked; inspect "
+            "the authoritative reason before retrying application."
+        )
+    elif proposal_status == "approved":
+        next_command = "review-approve"
+        instruction = (
+            f"Proposal {proposal['proposal_id']} is already approved; retry its mechanical "
+            "application through the admin review action."
         )
     else:
         next_command = "inspect"
@@ -433,53 +456,78 @@ def _command_inspect(
         actions.append(spec.payload()["human_action"] | {"shell_command": spec.shell_command()})
         problem = "This Verification attempt is safely parked while Marco reviews a semantic proposal."
     elif proposal is not None and proposal["status"] == "approved":
+        administrative_blocker = True
         if "apply-proposal" in view.get("legal_actions", ()):
-            waiting_for = "a fresh agent to apply Marco's approved proposal"
-            problem = "Marco approved the exact proposal bundle; it is ready for a fresh agent to apply."
-            agent_actions_override = [
-                {
-                    "command": "apply-proposal",
-                    "arguments": {"proposal_id": proposal["proposal_id"]},
-                }
-            ]
+            waiting_for = "Dish to retry mechanical application of Marco's approved proposal"
+            problem = (
+                "Marco's exact proposal approval is durable, but mechanical application has not completed."
+            )
+            spec = exact_action(
+                kind="retry-approved-proposal",
+                command="review-approve",
+                positional=(proposal["proposal_id"],),
+                summary="Retry mechanical application of the already-approved exact bundle.",
+                effect=(
+                    "Reuse the durable approval; revalidate and apply only the same immutable candidate."
+                ),
+                after_success={"instruction": "Give the resulting task to an independent verifier."},
+            )
+            actions.append(spec.payload()["human_action"] | {"shell_command": spec.shell_command()})
         else:
-            administrative_blocker = True
             waiting_for = "authoritative proposal reconciliation"
             problem = (
                 "Marco approved the proposal, but its authoritative state no longer permits "
                 "application."
             )
             operator_instruction = (
-                "Inspect the authoritative proposal block; do not tell an agent to apply the "
-                "proposal unless Dish advertises apply-proposal again."
+                "Inspect the authoritative proposal block; the durable approval remains recorded."
             )
     elif proposal is not None and proposal["status"] == "claimed":
         administrative_blocker = True
-        waiting_for = "the agent currently applying Marco's approved proposal"
-        problem = "An agent run has claimed the approved proposal for exact application."
-        if active_lease is not None:
-            spec = template_action(
-                kind="expire-active-lease",
-                command="expire-lease",
-                positional=(active_lease["lease_id"],),
-                options=(("--reason", "<why the applying run is no longer available>"),),
-                prompt_fields=(
-                    PromptField(
-                        "reason",
-                        "Why the applying run is unavailable",
-                        "<why the applying run is no longer available>",
-                    ),
+        if _is_recoverable_mechanical_proposal_claim(proposal):
+            waiting_for = "Dish to resume finalization of Marco's already-approved proposal"
+            problem = (
+                "Dish's deterministic mechanical application claim is still durable; retry can "
+                "reconcile an exact previously confirmed write without asking Marco again."
+            )
+            spec = exact_action(
+                kind="resume-approved-proposal",
+                command="review-approve",
+                positional=(proposal["proposal_id"],),
+                summary="Resume the already-approved mechanical proposal application.",
+                effect=(
+                    "Reuse only the exact deterministic Dish claim and durable confirmed-write binding; "
+                    "do not perform another governed write when that binding proves the candidate is live."
                 ),
-                summary="Release the applying run's lease only if that run is gone.",
-                effect="This does not discard the approved proposal; inspect again afterward.",
-                after_success={"instruction": "Rerun dish-admin inspect on this operation."},
+                after_success={"instruction": "Give the resulting task to an independent verifier."},
             )
             actions.append(spec.payload()["human_action"] | {"shell_command": spec.shell_command()})
         else:
-            operator_instruction = (
-                "The proposal claim has no active lease. Do not abandon the operation or guess a "
-                "replacement run; report this claim for deterministic recovery."
-            )
+            waiting_for = "the agent currently applying Marco's approved proposal"
+            problem = "An agent run has claimed the approved proposal for exact application."
+            if active_lease is not None:
+                spec = template_action(
+                    kind="expire-active-lease",
+                    command="expire-lease",
+                    positional=(active_lease["lease_id"],),
+                    options=(("--reason", "<why the applying run is no longer available>"),),
+                    prompt_fields=(
+                        PromptField(
+                            "reason",
+                            "Why the applying run is unavailable",
+                            "<why the applying run is no longer available>",
+                        ),
+                    ),
+                    summary="Release the applying run's lease only if that run is gone.",
+                    effect="This does not discard the approved proposal; inspect again afterward.",
+                    after_success={"instruction": "Rerun dish-admin inspect on this operation."},
+                )
+                actions.append(spec.payload()["human_action"] | {"shell_command": spec.shell_command()})
+            else:
+                operator_instruction = (
+                    "The proposal claim has no active lease. Do not abandon the operation or guess a "
+                    "replacement run; report this claim for deterministic recovery."
+                )
     elif active_lease is not None:
         administrative_blocker = True
         spec = template_action(
@@ -1664,10 +1712,11 @@ def _command_review_inspect(
                 )
             )
             data["authoritative_view"] = view
-            if "apply-proposal" in view.get("legal_actions", ()):
-                data["agent_action"] = {
-                    "command": "apply-proposal",
+            if item.get("status") == "approved" or _is_recoverable_mechanical_proposal_claim(item):
+                data["admin_action"] = {
+                    "command": "review-approve",
                     "arguments": {"proposal_id": item["proposal_id"]},
+                    "effect": "Resume mechanical application of the already-approved exact bundle.",
                 }
     else:
         if item["item_type"] == "verification_hold":
@@ -1732,7 +1781,7 @@ def _command_review_approve(
 ) -> dict[str, Any]:
     if self.backend is None:
         raise DishRuleError(
-            "INTERNAL_ERROR", "proposal approval requires the live task backend",
+            "INTERNAL_ERROR", "review approval requires the live task backend",
             rule="semantic_proposal_backend_required",
         )
     from .constants import COOKING_PROJECT_GID
@@ -1790,13 +1839,22 @@ def _command_review_approve(
                 "Marco's substantive decision was recorded and the unchanged candidate was released to a fresh "
                 "Verification cycle; no governed field was edited or authorized."
             )
-            next_step = "A later fresh verifier may start Verification."
+            next_step = (
+                "An eligible verifier may continue Verification. If the original verifier is "
+                "still live and did not materially edit the candidate, that same run may continue."
+            )
         result.setdefault("data", {}).update({
             "effect": effect,
             "next_step": next_step,
             "approval_consequence": consequence,
         })
         return result
+    if self.release_loader is None:
+        raise DishRuleError(
+            "INTERNAL_ERROR",
+            "semantic proposal application requires the current protocol release",
+            rule="semantic_proposal_release_required",
+        )
     row = self.conn.execute(
         "SELECT * FROM semantic_proposals WHERE proposal_id=?", (item["proposal_id"],)
     ).fetchone()
@@ -1805,28 +1863,80 @@ def _command_review_approve(
         self.backend, task_gid=row["task_gid"], project_gid=COOKING_PROJECT_GID
     )
     clean_reason = str(reason or "").strip() or "Approved after reviewing the exact linked change bundle."
-    approved = approve_semantic_proposal(
-        self.conn,
-        proposal_id=clean_id,
-        live_title=live.title,
-        live_notes=live.notes,
-        reason=clean_reason,
-    )
+    mechanical_run_id = _mechanical_proposal_run_id(clean_id)
+    if row["status"] == "claimed":
+        claimed = dict(row)
+        if not _is_recoverable_mechanical_proposal_claim(claimed):
+            raise DishRuleError(
+                "CONFLICT",
+                "claimed proposal is not owned by Dish's deterministic mechanical application",
+                rule="semantic_proposal_claimed",
+                details={
+                    "claimed_agent": row["claimed_agent"],
+                    "claimed_run_id": row["claimed_run_id"],
+                },
+            )
+        approved = row
+    else:
+        approved = approve_semantic_proposal(
+            self.conn,
+            proposal_id=clean_id,
+            live_title=live.title,
+            live_notes=live.notes,
+            reason=clean_reason,
+        )
     trace.task_gid = approved["task_gid"]
     trace.submission_id = approved["operation_id"]
     trace.state = approved["status"]
+
+    # Approval is already durable before application begins.  The second action is
+    # mechanical: revalidate the exact approved bundle against live authority, install
+    # it if still applicable, and open independent Verification.  Keep apply-proposal
+    # as a low-level recovery/testing command, but do not require another AI agent for
+    # the ordinary approved path.
+    release = self.release_loader()
+    try:
+        applied = apply_semantic_proposal(
+            self.conn,
+            self.backend,
+            proposal_id=clean_id,
+            agent=MECHANICAL_PROPOSAL_AGENT,
+            model="dish-mechanical",
+            run_id=mechanical_run_id,
+            request_id=None,
+            schema=release.schema,
+        )
+    except DishRuleError as exc:
+        details = dict(exc.details)
+        details.update({
+            "proposal_id": clean_id,
+            "approval_persisted": True,
+            "proposal_status": get_semantic_proposal(self.conn, clean_id)["status"],
+        })
+        raise DishRuleError(
+            exc.code,
+            str(exc),
+            rule=exc.rule,
+            retryable=exc.retryable,
+            details=details,
+            errors=exc.errors,
+        ) from exc
+
+    trace.state = "applied"
     return result_envelope(
         command="review-approve", task_gid=approved["task_gid"],
-        submission_id=approved["operation_id"], state=approved["status"],
+        submission_id=approved["operation_id"], state="applied",
         data={
-            "proposal": proposal_payload(self.conn, approved),
+            "proposal": applied["proposal"],
+            "recovered_confirmed_write": bool(applied.get("recovered_confirmed_write")),
             "effect": (
-                "The complete linked change bundle is approved and detached from the proposer run."
+                "Marco's exact proposal approval was recorded, then Dish mechanically "
+                "revalidated and applied that same immutable bundle."
             ),
+            "new_cycle_id": applied["new_cycle_id"],
             "next_step": (
-                "Approval does not apply the proposal. Refresh the authoritative operation "
-                f"state with `dish-admin inspect {approved['operation_id']}` and follow only "
-                "the action Dish advertises there."
+                "The material editor cannot sign this result. An independent eligible "
+                "verifier must review the new Verification cycle."
             ),
         },
     )

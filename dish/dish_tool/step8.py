@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from .constants import COOKING_PROJECT_GID
+from .constants import COOKING_PROJECT_GID, MECHANICAL_PROPOSAL_AGENT, REJECTION_ROUTES
 from .database import (
     complete_operation_step,
     confirm_task_content,
@@ -39,9 +39,11 @@ from .task_document import DocumentParseError, TaskState, document_parse_error_p
 from .task_store import read_complete_task, write_exact_content
 from .releases import current_verification_protocol_release
 from .governed_diff import (
+    agent_attested_decision_appends,
     canonical_diff,
     GOVERNED_FIELDS,
     governed_changes,
+    governed_changes_requiring_authorization,
     require_governed_authorization,
     preserve_material_change_history,
     require_small_scope,
@@ -56,7 +58,7 @@ from .semantic_proposals import (
     validate_semantic_proposal_integrity,
 )
 
-ROUTES = {"large", "evidence", "human-review"}
+ROUTES = frozenset(REJECTION_ROUTES)
 RESET_CATEGORIES = {"evidence", "premise", "method", "scope"}
 
 
@@ -241,18 +243,24 @@ def _held_document(conn: sqlite3.Connection, *, cycle, live):
     return parse_task_document(f"{version['title']}\n{version['notes']}")
 
 
-def _write_document(conn, backend, op, live, document, *, schema=None, authorization_ids=()):
+def _write_document(
+    conn, backend, op, live, document, *, schema=None, authorization_ids=(),
+    write_context: dict[str, object] | None = None,
+):
     check = validate_task_document(document, expected_schema_version=op["schema_version"], schema=schema)
     if not check.ok:
         raise DishRuleError("VALIDATION_FAILED", "candidate failed deterministic validation", errors=[finding_payload(f) for f in check.findings])
     title, notes = _render(document)
     try:
+        context = dict(write_context or {})
+        if authorization_ids:
+            context["authorization_ids"] = list(authorization_ids)
         return write_exact_content(
             conn, backend, operation_id=op["operation_id"], task_gid=op["task_gid"],
             project_gid=COOKING_PROJECT_GID, expected_identity=live.identity,
             expected_section_gid=live.section_gid, title=title, notes=notes,
             schema_version=op["schema_version"],
-            context={"authorization_ids": list(authorization_ids)} if authorization_ids else None,
+            context=context or None,
         )
     except DishRuleError as exc:
         if authorization_ids and exc.code != "BACKEND_UNCERTAIN":
@@ -822,27 +830,12 @@ def _governed_change_needs_intent_confirmation(change) -> bool:
 
 
 def _confirm_intended_governed_changes(before_document, document, declared_fields) -> tuple[dict[str, Any], ...]:
-    changes = governed_changes(before_document, document)
+    changes, declared = _validated_declared_governed_fields(
+        before_document, document, declared_fields
+    )
     if not changes:
         return ()
     actual_fields = tuple(change.field for change in changes)
-    declared = tuple(dict.fromkeys(str(field).strip() for field in (declared_fields or ()) if str(field).strip()))
-    unknown = sorted(set(declared) - set(GOVERNED_FIELDS))
-    if unknown:
-        raise DishRuleError(
-            "INVALID_ARGUMENT",
-            "governed_change_fields contains unsupported field names",
-            rule="governed_change_field_invalid",
-            details={"unsupported": unknown, "allowed": list(GOVERNED_FIELDS)},
-        )
-    non_actual = sorted(set(declared) - set(actual_fields))
-    if non_actual:
-        raise DishRuleError(
-            "INVALID_ARGUMENT",
-            "governed_change_fields names fields that are unchanged in the candidate",
-            rule="governed_change_field_not_changed",
-            details={"unchanged": non_actual, "actual_fields": list(actual_fields)},
-        )
     suspicious = tuple(
         change for change in changes
         if _governed_change_needs_intent_confirmation(change)
@@ -874,6 +867,63 @@ def _confirm_intended_governed_changes(before_document, document, declared_field
         for change in changes
     )
 
+
+def _validated_declared_governed_fields(before_document, document, declared_fields):
+    changes = governed_changes(before_document, document)
+    actual_fields = tuple(change.field for change in changes)
+    declared = tuple(
+        dict.fromkeys(
+            str(field).strip()
+            for field in (declared_fields or ())
+            if str(field).strip()
+        )
+    )
+    unknown = sorted(set(declared) - set(GOVERNED_FIELDS))
+    if unknown:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "governed_change_fields contains unsupported field names",
+            rule="governed_change_field_invalid",
+            details={"unsupported": unknown, "allowed": list(GOVERNED_FIELDS)},
+        )
+    non_actual = sorted(set(declared) - set(actual_fields))
+    if non_actual:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "governed_change_fields names fields that are unchanged in the candidate",
+            rule="governed_change_field_not_changed",
+            details={"unchanged": non_actual, "actual_fields": list(actual_fields)},
+        )
+    return changes, declared
+
+
+def _require_agent_attested_decision_intent(
+    before_document, document, declared_fields
+) -> tuple[str, ...]:
+    appended = agent_attested_decision_appends(before_document, document)
+    if not appended:
+        return ()
+    _changes, declared = _validated_declared_governed_fields(
+        before_document, document, declared_fields
+    )
+    if "Decisions" not in declared:
+        raise DishRuleError(
+            "CONFIRMATION_REQUIRED",
+            "an attributed Marco Decision append requires explicit agent attestation",
+            rule="decision_attestation_required",
+            details={
+                "appended_decisions": list(appended),
+                "required_governed_change_field": "Decisions",
+                "instruction": (
+                    "Retry the same exact candidate with governed_change_fields including Decisions "
+                    "only if Marco actually stated these choices in the conversation. This records "
+                    "agent-attested provenance; it is not formal authorization for another governed field."
+                ),
+                "fresh_request_id": True,
+            },
+        )
+    return appended
+
 def _validated_quantified_blocker(*, metric=None, actual=None, limit=None, delta=None, unit=None, basis=None):
     values = {"metric": metric, "actual": actual, "limit": limit, "delta": delta, "unit": unit, "basis": basis}
     present = {key: value for key, value in values.items() if value is not None and str(value).strip() != ""}
@@ -897,7 +947,12 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
     reason = validate_rejection_reason(reason)
     quantified_blocker = _validated_quantified_blocker(metric=blocker_metric, actual=blocker_actual, limit=blocker_limit, delta=blocker_delta, unit=blocker_unit, basis=blocker_basis)
     if route not in ROUTES:
-        raise DishRuleError("INVALID_ARGUMENT", "route must be large, evidence, or human-review", rule="invalid_rejection_route")
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "rejection route is not supported",
+            rule="invalid_rejection_route",
+            details={"allowed": list(REJECTION_ROUTES), "actual": route},
+        )
     _validate_rejection_route_arguments(
         route=route,
         model=model,
@@ -1000,6 +1055,9 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
     if not precheck.ok:
         raise DishRuleError("VALIDATION_FAILED", "candidate failed deterministic validation", errors=[finding_payload(f) for f in precheck.findings])
     before_document = parse_task_document(f"{live.title}\n{live.notes}")
+    agent_attested_decisions = _require_agent_attested_decision_intent(
+        before_document, document, governed_change_fields
+    )
     intended_title, intended_notes = _render(document)
     intended_identity = content_identity(intended_title, intended_notes).digest
     try:
@@ -1007,6 +1065,7 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
             conn, before_document, document,
             task_gid=op["task_gid"], operation_id=operation_id,
             proposal_reason=reason,
+            agent_attested_decisions=agent_attested_decisions,
         )
     except DishRuleError as exc:
         if exc.rule != "governed_change_unauthorized" or route != "large":
@@ -1047,7 +1106,10 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
                 ),
                 "scope": "This task, this exact baseline, and this exact candidate only.",
                 "command_effect": "Approval authorizes the complete bundle; it does not sign the dish.",
-                "after_success": "Any fresh eligible run may claim and apply the exact stored candidate.",
+                "after_success": (
+                    "Dish mechanically revalidates and applies the exact approved bundle. If that "
+                    "application cannot complete safely, the durable approval remains available for retry/recovery."
+                ),
             },
             linked_changes=linked_for_proposal,
             changes=changes_for_proposal,
@@ -1055,6 +1117,7 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
             protocol_text=snapshot.text,
             proposer_agent=agent,
             proposer_run_id=str(cycle["run_id"] or run_id or ""),
+            agent_attested_decisions=agent_attested_decisions,
         )
         review_action = exact_action(
             kind="inspect-semantic-proposal",
@@ -1173,6 +1236,28 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         else:
             new_cycle = None
         complete_operation_step(conn, operation_id, route_phase_step)
+        if agent_attested_decisions:
+            record_audit(
+                conn,
+                submission_id=None,
+                task_gid=op["task_gid"],
+                operation_id=operation_id,
+                event_type="decision.agent_attested",
+                actor_agent=agent,
+                actor_run_id=run_id,
+                actor_attestation=authority_attestation,
+                actor_source="agent-attested-conversation",
+                details={
+                    "cycle_id": cycle["cycle_id"],
+                    "appended_decisions": list(agent_attested_decisions),
+                    "formal_marco_authorization": False,
+                },
+                result_code="OK",
+                result_ok=True,
+                governed_kind="decision",
+                before_state={"Decisions": list(before_document.decisions)},
+                after_state={"Decisions": list(document.decisions)},
+            )
         record_audit(conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id, event_type="verification.rejected", actor_agent=agent, details={"cycle_id": cycle["cycle_id"], "route": route, "reason": reason, "quantified_blocker": quantified_blocker, "human_review_basis": str(human_review_basis or "").strip() or None, "repairs_considered": str(repairs_considered or "").strip() or None, "verification_hold": verification_hold, "identity": confirmed.identity}, result_code="OK", result_ok=True, governed_kind="decision", before_state={"outcome": None, "reviewed_identity": cycle["reviewed_identity"], "status": "pending-verification"}, after_state={"outcome": outcome, "route": route, "resume_state": document.state.values["Resume status"], "status": document.state.values["Status"]}, actor_run_id=run_id, actor_attestation=authority_attestation)
     return {
         "operation_id": operation_id,
@@ -1189,6 +1274,200 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         ),
     }
 
+
+
+def _confirmed_semantic_proposal_application(
+    conn: sqlite3.Connection,
+    *,
+    proposal: sqlite3.Row,
+    applying_agent: str,
+    applying_run_id: str,
+    expected_authorization_changes,
+) -> dict[str, Any]:
+    """Prove one already-confirmed write is this exact claimed proposal application.
+
+    This is intentionally stricter than "the candidate is live".  Recovery is allowed
+    only when immutable write-attempt intent binds the proposal/candidate and exact
+    applying actor/run, the durable approval names the same authorization IDs, those
+    exact grants match the proposal's governed changes and are already consumed by the
+    confirmed candidate, and the write attempt is bound to an exact confirmed content
+    version.
+    """
+    if proposal["status"] != "claimed":
+        raise DishRuleError(
+            "CONFLICT",
+            "confirmed proposal-application recovery requires an existing claim",
+            rule="semantic_proposal_application_recovery_claim_missing",
+        )
+    if (
+        proposal["claimed_agent"] != applying_agent
+        or proposal["claimed_run_id"] != applying_run_id
+    ):
+        raise DishRuleError(
+            "CONFLICT",
+            "proposal application recovery actor does not match the durable claim",
+            rule="semantic_proposal_application_recovery_actor_mismatch",
+            details={
+                "claimed_agent": proposal["claimed_agent"],
+                "claimed_run_id": proposal["claimed_run_id"],
+            },
+        )
+
+    approval_rows = conn.execute(
+        """SELECT event_id,details FROM audit_events
+             WHERE operation_id=? AND event_type='semantic_proposal.approved'
+               AND json_extract(details, '$.proposal_id')=?
+             ORDER BY created_at,event_id""",
+        (proposal["operation_id"], proposal["proposal_id"]),
+    ).fetchall()
+    if len(approval_rows) != 1:
+        raise DishRuleError(
+            "CONFLICT",
+            "proposal application recovery requires one exact durable approval fact",
+            rule="semantic_proposal_application_recovery_approval_invalid",
+            details={"approval_fact_count": len(approval_rows)},
+        )
+    approval_details = json.loads(approval_rows[0]["details"])
+    approval_authorization_ids = tuple(approval_details.get("authorization_ids") or ())
+    if len(approval_authorization_ids) != len(set(approval_authorization_ids)):
+        raise DishRuleError(
+            "CONFLICT",
+            "proposal approval contains a duplicate authorization binding",
+            rule="semantic_proposal_application_recovery_authorization_invalid",
+        )
+
+    matching_attempts = []
+    for attempt in conn.execute(
+        """SELECT attempt.*, version.task_gid AS confirmed_task_gid,
+                         version.operation_id AS confirmed_operation_id,
+                         version.identity AS confirmed_identity,
+                         version.title AS confirmed_title,
+                         version.notes AS confirmed_notes
+              FROM write_attempts AS attempt
+              LEFT JOIN content_versions AS version
+                ON version.content_version_id=attempt.confirmed_content_version_id
+             WHERE attempt.operation_id=? AND attempt.outcome='confirmed'
+             ORDER BY attempt.started_at,attempt.attempt_id""",
+        (proposal["operation_id"],),
+    ).fetchall():
+        context = json.loads(attempt["context_json"] or "{}")
+        binding = context.get("semantic_proposal_application")
+        if not isinstance(binding, dict) or binding.get("proposal_id") != proposal["proposal_id"]:
+            continue
+        matching_attempts.append((attempt, context, binding))
+    if len(matching_attempts) != 1:
+        raise DishRuleError(
+            "CONFLICT",
+            "proposal application recovery lacks one exact confirmed write binding",
+            rule="semantic_proposal_application_recovery_write_invalid",
+            details={"matching_confirmed_write_count": len(matching_attempts)},
+        )
+
+    attempt, context, binding = matching_attempts[0]
+    bound_authorization_ids = tuple(context.get("authorization_ids") or ())
+    expected_binding = {
+        "proposal_id": proposal["proposal_id"],
+        "candidate_identity": proposal["candidate_identity"],
+        "application_actor": applying_agent,
+        "application_run_id": applying_run_id,
+    }
+    if any(binding.get(key) != value for key, value in expected_binding.items()):
+        raise DishRuleError(
+            "CONFLICT",
+            "confirmed write is bound to a different semantic proposal application",
+            rule="semantic_proposal_application_recovery_binding_mismatch",
+        )
+    if bound_authorization_ids != approval_authorization_ids:
+        raise DishRuleError(
+            "CONFLICT",
+            "confirmed write authorization set differs from the durable proposal approval",
+            rule="semantic_proposal_application_recovery_authorization_mismatch",
+        )
+    if (
+        attempt["purpose"] != "content_write"
+        or attempt["expected_identity"] != proposal["baseline_identity"]
+        or attempt["intended_identity"] != proposal["candidate_identity"]
+        or attempt["intended_title"] != proposal["candidate_title"]
+        or attempt["intended_notes"] != proposal["candidate_notes"]
+        or attempt["confirmed_task_gid"] != proposal["task_gid"]
+        or attempt["confirmed_operation_id"] != proposal["operation_id"]
+        or attempt["confirmed_identity"] != proposal["candidate_identity"]
+        or attempt["confirmed_title"] != proposal["candidate_title"]
+        or attempt["confirmed_notes"] != proposal["candidate_notes"]
+    ):
+        raise DishRuleError(
+            "CONFLICT",
+            "confirmed write evidence does not match the immutable approved candidate",
+            rule="semantic_proposal_application_recovery_write_mismatch",
+        )
+
+    expected_by_field = {
+        change.field: (
+            json.dumps(change.before, sort_keys=True, separators=(",", ":")),
+            json.dumps(change.after, sort_keys=True, separators=(",", ":")),
+        )
+        for change in expected_authorization_changes
+    }
+    if len(expected_by_field) != len(expected_authorization_changes):
+        raise DishRuleError(
+            "CONFLICT",
+            "proposal recovery cannot disambiguate repeated governed authorization fields",
+            rule="semantic_proposal_application_recovery_authorization_invalid",
+        )
+    if len(bound_authorization_ids) != len(expected_by_field):
+        raise DishRuleError(
+            "CONFLICT",
+            "confirmed write authorization count differs from the approved governed changes",
+            rule="semantic_proposal_application_recovery_authorization_mismatch",
+        )
+    for authorization_id in bound_authorization_ids:
+        authorization = conn.execute(
+            "SELECT * FROM marco_authorizations WHERE authorization_id=?",
+            (authorization_id,),
+        ).fetchone()
+        if authorization is None:
+            raise DishRuleError(
+                "CONFLICT",
+                "proposal recovery authorization evidence is missing",
+                rule="semantic_proposal_application_recovery_authorization_invalid",
+            )
+        expected = expected_by_field.get(authorization["field_name"])
+        if (
+            expected is None
+            or authorization["task_gid"] != proposal["task_gid"]
+            or authorization["operation_id"] != proposal["operation_id"]
+            or authorization["before_json"] != expected[0]
+            or authorization["after_json"] != expected[1]
+            or authorization["reserved_by_operation_id"] != proposal["operation_id"]
+            or authorization["consumed_at"] is None
+            or authorization["consumed_identity"] != proposal["candidate_identity"]
+        ):
+            raise DishRuleError(
+                "CONFLICT",
+                "proposal recovery authorization does not prove this exact confirmed application",
+                rule="semantic_proposal_application_recovery_authorization_mismatch",
+                details={"authorization_id": authorization_id},
+            )
+        grants = conn.execute(
+            """SELECT event_id FROM audit_events
+                 WHERE operation_id=? AND event_type='marco.authorization'
+                   AND json_extract(details, '$.authorization_id')=?
+                   AND json_extract(details, '$.proposal_id')=?""",
+            (proposal["operation_id"], authorization_id, proposal["proposal_id"]),
+        ).fetchall()
+        if len(grants) != 1:
+            raise DishRuleError(
+                "CONFLICT",
+                "proposal recovery authorization grant is not uniquely bound to this proposal",
+                rule="semantic_proposal_application_recovery_authorization_invalid",
+                details={"authorization_id": authorization_id, "grant_count": len(grants)},
+            )
+
+    return {
+        "attempt_id": attempt["attempt_id"],
+        "confirmed_content_version_id": attempt["confirmed_content_version_id"],
+        "authorization_ids": bound_authorization_ids,
+    }
 
 
 def apply_semantic_proposal(
@@ -1209,12 +1488,15 @@ def apply_semantic_proposal(
             "INVALID_ARGUMENT", "proposal ID is required",
             rule="semantic_proposal_id_required",
         )
+    initial_proposal = get_semantic_proposal(conn, clean_id)
+    was_claimed = initial_proposal["status"] == "claimed"
     proposal = claim_semantic_proposal(
         conn, proposal_id=clean_id, agent=agent, run_id=run_id,
         request_id=request_id,
     )
     write_confirmed = False
     candidate_already_live = False
+    recovered_confirmed_write = False
     authorization_ids: tuple[str, ...] = ()
     try:
         op, cycle = _rows(conn, str(proposal["operation_id"]))
@@ -1262,11 +1544,31 @@ def apply_semantic_proposal(
             baseline_title=baseline_title,
             baseline_notes=baseline_notes,
         )
-        authorization_ids = require_governed_authorization(
-            conn, before_document, document,
-            task_gid=op["task_gid"], operation_id=op["operation_id"],
-            proposal_reason=proposal["proposal_reason"],
+        agent_attested_decisions = tuple(
+            json.loads(proposal["agent_attested_decisions_json"])
         )
+        expected_authorization_changes = governed_changes_requiring_authorization(
+            before_document, document,
+            agent_attested_decisions=agent_attested_decisions,
+        )
+        if candidate_already_live and was_claimed:
+            recovery = _confirmed_semantic_proposal_application(
+                conn,
+                proposal=proposal,
+                applying_agent=agent,
+                applying_run_id=run_id,
+                expected_authorization_changes=expected_authorization_changes,
+            )
+            authorization_ids = tuple(recovery["authorization_ids"])
+            recovered_confirmed_write = True
+            write_confirmed = True
+        else:
+            authorization_ids = require_governed_authorization(
+                conn, before_document, document,
+                task_gid=op["task_gid"], operation_id=op["operation_id"],
+                proposal_reason=proposal["proposal_reason"],
+                agent_attested_decisions=agent_attested_decisions,
+            )
         step_suffix = clean_id
         write_step = f"semantic_proposal_write:{step_suffix}"
         actor_step = f"semantic_proposal_actor:{step_suffix}"
@@ -1309,32 +1611,43 @@ def apply_semantic_proposal(
                     "approved candidate already live but failed deterministic validation",
                     errors=[finding_payload(finding) for finding in check.findings],
                 )
-            # Record that exact observed content as durable evidence and consume the approval
-            # atomically with proposal finalization below.
-            confirmed_identity = confirm_task_content(
-                conn,
-                task_gid=op["task_gid"],
-                title=live.title,
-                notes=live.notes,
-                schema_version=op["schema_version"],
-                operation_id=op["operation_id"],
-                boundary="semantic_proposal_candidate_already_live",
-            )
-            if confirmed_identity.digest != live.identity:
-                raise DishRuleError(
-                    "INTERNAL_ERROR",
-                    "confirmed candidate identity changed while reconciling the approved proposal",
-                    rule="semantic_proposal_reconciliation_identity_mismatch",
+            if not recovered_confirmed_write:
+                # Legacy/already-live reconciliation has no prior application write to reuse.
+                # Persist the exact observed candidate and consume the still-unused approval
+                # during finalization.  Confirmed-write recovery instead reuses the immutable
+                # write-attempt/content-version evidence that already consumed authorization.
+                confirmed_identity = confirm_task_content(
+                    conn,
+                    task_gid=op["task_gid"],
+                    title=live.title,
+                    notes=live.notes,
+                    schema_version=op["schema_version"],
+                    operation_id=op["operation_id"],
+                    boundary="semantic_proposal_candidate_already_live",
                 )
+                if confirmed_identity.digest != live.identity:
+                    raise DishRuleError(
+                        "INTERNAL_ERROR",
+                        "confirmed candidate identity changed while reconciling the approved proposal",
+                        rule="semantic_proposal_reconciliation_identity_mismatch",
+                    )
             confirmed = live
         else:
             confirmed = _write_document(
                 conn, backend, op, live, document, schema=schema,
                 authorization_ids=authorization_ids,
+                write_context={
+                    "semantic_proposal_application": {
+                        "proposal_id": clean_id,
+                        "candidate_identity": proposal["candidate_identity"],
+                        "application_actor": agent,
+                        "application_run_id": run_id,
+                    },
+                },
             )
             write_confirmed = True
         with savepoint_transaction(conn, "semantic_proposal_apply_finalize"):
-            if candidate_already_live:
+            if candidate_already_live and not recovered_confirmed_write:
                 consume_reserved_marco_authorizations(
                     conn,
                     operation_id=op["operation_id"],
@@ -1381,24 +1694,51 @@ def apply_semantic_proposal(
             )
             complete_operation_step(conn, op["operation_id"], new_cycle_step)
             transition_operation(conn, op["operation_id"], phase="await_verification")
+            if agent_attested_decisions:
+                record_audit(
+                    conn,
+                    submission_id=None,
+                    task_gid=op["task_gid"],
+                    operation_id=op["operation_id"],
+                    event_type="decision.agent_attested",
+                    actor_agent=proposal["proposer_agent"],
+                    actor_run_id=proposal["proposer_run_id"],
+                    actor_attestation=cycle["independence_attestation"],
+                    actor_source="agent-attested-conversation",
+                    details={
+                        "proposal_id": clean_id,
+                        "cycle_id": cycle["cycle_id"],
+                        "appended_decisions": list(agent_attested_decisions),
+                        "formal_marco_authorization": False,
+                    },
+                    result_code="OK",
+                    result_ok=True,
+                    governed_kind="decision",
+                    before_state={"Decisions": list(before_document.decisions)},
+                    after_state={"Decisions": list(document.decisions)},
+                )
             applied = mark_semantic_proposal_applied(
                 conn, proposal_id=clean_id, run_id=run_id,
                 applied_identity=confirmed.identity,
             )
             complete_operation_step(conn, op["operation_id"], proposal_step)
+            mechanical = agent == MECHANICAL_PROPOSAL_AGENT
             record_audit(
                 conn, submission_id=None, task_gid=op["task_gid"],
                 operation_id=op["operation_id"],
                 event_type="semantic_proposal.application_completed",
-                actor_agent=agent, actor_run_id=run_id,
+                actor_agent=None if mechanical else agent, actor_run_id=run_id,
+                actor_source="dish-mechanical" if mechanical else "command",
                 details={
                     "proposal_id": clean_id,
                     "proposer_agent": proposal["proposer_agent"],
                     "proposer_run_id": proposal["proposer_run_id"],
+                    "application_actor": agent,
                     "applied_identity": confirmed.identity,
                     "new_cycle_id": new_cycle["cycle_id"],
                     "model": model,
                     "candidate_already_live": candidate_already_live,
+                    "recovered_confirmed_write": recovered_confirmed_write,
                 }, result_code="OK", result_ok=True,
             )
         return {
@@ -1409,6 +1749,7 @@ def apply_semantic_proposal(
             "applied_identity": confirmed.identity,
             "task": dataclasses.asdict(confirmed),
             "candidate_already_live": candidate_already_live,
+            "recovered_confirmed_write": recovered_confirmed_write,
             "next_step": (
                 (
                     "The exact approved candidate was already live and Dish reconciled it "
@@ -1423,7 +1764,7 @@ def apply_semantic_proposal(
             ),
         }
     except DishRuleError as exc:
-        if not write_confirmed and exc.code != "BACKEND_UNCERTAIN":
+        if not was_claimed and not write_confirmed and exc.code != "BACKEND_UNCERTAIN":
             if authorization_ids:
                 release_marco_authorization_reservations(
                     conn,

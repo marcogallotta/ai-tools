@@ -2255,28 +2255,65 @@ def record_actor_fact(conn: sqlite3.Connection, *, operation_id: str, task_gid: 
                         rule="actor_fact_conflict",
                         details={"role": role, "run_id": clean_run},
                     )
-                if (
-                    existing["candidate_identity"] == candidate_identity
-                    and str(existing["independence_attestation"] or "").strip()
-                    == str(clean_attestation or "").strip()
-                ):
-                    return existing
-            if existing_rows:
-                operation = conn.execute(
-                    "SELECT expected_identity FROM operations WHERE operation_id=?",
-                    (operation_id,),
-                ).fetchone()
-                baseline = None if operation is None else operation["expected_identity"]
-                if not all(
-                    row["candidate_identity"] in {None, baseline}
-                    for row in existing_rows
-                ):
+            if role == "verifier" and existing_rows:
+                # A still-live verifier may resume the same operation after a deliberate
+                # Human Review/Evidence hold.  Hold resolution creates a new Verification
+                # cycle, so verifier identity is idempotent within that cycle rather than
+                # globally unique for the whole operation.  Independence remains enforced
+                # separately by assert_fresh_verifier(), which still rejects constructor or
+                # material-editor runs.
+                if source_cycle_id is None:
                     raise DishRuleError(
                         "CONFLICT",
-                        "actor lineage fact conflicts with persisted candidate",
+                        "repeated verifier lineage requires a Verification cycle",
                         rule="actor_fact_conflict",
                         details={"role": role, "run_id": clean_run},
                     )
+                same_cycle = [
+                    row for row in existing_rows
+                    if row["source_cycle_id"] == source_cycle_id
+                ]
+                for existing in same_cycle:
+                    if (
+                        existing["candidate_identity"] == candidate_identity
+                        and str(existing["independence_attestation"] or "").strip()
+                        == str(clean_attestation or "").strip()
+                    ):
+                        return existing
+                if same_cycle:
+                    raise DishRuleError(
+                        "CONFLICT",
+                        "actor lineage fact conflicts with persisted Verification cycle",
+                        rule="actor_fact_conflict",
+                        details={
+                            "role": role, "run_id": clean_run,
+                            "source_cycle_id": source_cycle_id,
+                        },
+                    )
+            else:
+                for existing in existing_rows:
+                    if (
+                        existing["candidate_identity"] == candidate_identity
+                        and str(existing["independence_attestation"] or "").strip()
+                        == str(clean_attestation or "").strip()
+                    ):
+                        return existing
+                if existing_rows:
+                    operation = conn.execute(
+                        "SELECT expected_identity FROM operations WHERE operation_id=?",
+                        (operation_id,),
+                    ).fetchone()
+                    baseline = None if operation is None else operation["expected_identity"]
+                    if not all(
+                        row["candidate_identity"] in {None, baseline}
+                        for row in existing_rows
+                    ):
+                        raise DishRuleError(
+                            "CONFLICT",
+                            "actor lineage fact conflicts with persisted candidate",
+                            rule="actor_fact_conflict",
+                            details={"role": role, "run_id": clean_run},
+                        )
         fact_id = str(uuid.uuid4())
         conn.execute(
             """INSERT INTO operation_actor_facts(

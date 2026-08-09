@@ -264,7 +264,9 @@ def test_honest_checkout_uses_real_git_and_asset_hashes(tmp_path: Path, monkeypa
         "dish_pg.bootstrap.validate_task_schema_shape",
         lambda value, filename: value,
     )
-    resolved = resolve_honest_checkout(repo, expected_commit=commit)
+    resolved = resolve_honest_checkout(
+        repo, expected_commit=commit, expected_protocol_version="1.0.10"
+    )
     assert resolved.commit == commit
     assert resolved.schema_sha256 == hashlib.sha256((repo / "dish-task-schema.json").read_bytes()).hexdigest()
     assert set(resolved.protocol_files) == {"planning", "research", "verification", "cooking"}

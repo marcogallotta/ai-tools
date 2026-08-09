@@ -140,8 +140,7 @@ def _success_lines(command: str, data: Mapping[str, Any]) -> list[str]:
                 "Have the agent retry the same exact candidate.",
             ),
             "review-approve": (
-                "The exact linked change bundle was approved.",
-                "Any fresh eligible agent may now claim and apply the stored candidate.",
+                "The exact linked change bundle was approved and Dish attempted its separate mechanical application.",
             ),
             "review-reject": (
                 "The proposal was rejected. No task content or governed authorization changed.",

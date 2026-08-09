@@ -1,13 +1,25 @@
+import json
+
 import pytest
+import dish_tool.admin as admin_module
+import dish_tool.step8 as step8_module
 from dish_tool.admin import DishAdminApplication
 from dish_tool.database import content_identity
 from dish_tool.errors import DishRuleError
-from dish_tool.semantic_proposals import queue_semantic_proposal
+from dish_tool.semantic_proposals import approve_semantic_proposal, queue_semantic_proposal
 from tests.support.verification import TASK, make_app, review_and_inspect
 from tests.support.semantic_proposal_bundle_workflow import (
     _approved_service_proposal_runtime,
     _case_test_service_fresh_invocation_claims_approved_bundle_without_old_run_identity,
 )
+
+
+def _approve_only(app, backend, proposal_id: str, reason: str = "Marco approves exact bundle."):
+    """Low-level fixture helper for tests that exercise apply-proposal directly."""
+    return approve_semantic_proposal(
+        app.conn, proposal_id=proposal_id, live_title=backend.title,
+        live_notes=backend.notes, reason=reason,
+    )
 
 
 
@@ -76,37 +88,35 @@ def test_governed_large_correction_queues_one_bundle_and_fresh_run_applies_it(tm
         reason="Marco approves the exact linked whole-scallion correction bundle.",
     )
     assert approved["ok"]
-    assert approved["data"]["proposal"]["status"] == "approved"
-    assert "agent_action" not in approved["data"]
-    reviewed = admin.execute("review-inspect", proposal_id=proposal_id)
-    assert reviewed["data"]["authoritative_view"]["legal_actions"] == ["apply-proposal"]
-    assert reviewed["data"]["agent_action"] == {
-        "command": "apply-proposal", "arguments": {"proposal_id": proposal_id}
-    }
-    authoritative = admin.execute("inspect", submission_id=operation_id)
-    assert authoritative["data"]["agent_actions_now"] == [{
-        "command": "apply-proposal", "arguments": {"proposal_id": proposal_id}
-    }]
-    assert authoritative["data"]["authoritative_view"]["legal_actions"] == ["apply-proposal"]
+    assert approved["state"] == "applied"
+    assert approved["data"]["proposal"]["status"] == "applied"
+    assert approved["data"]["new_cycle_id"]
+    assert "Locks: Keep crisp | Use whole scallion" in backend.notes
+
+    # Marco approval and application remain separate durable events, but the second
+    # action is performed mechanically by Dish rather than delegated to another AI.
+    proposal_after = app.conn.execute(
+        "SELECT claimed_agent,claimed_run_id,status FROM semantic_proposals WHERE proposal_id=?",
+        (proposal_id,),
+    ).fetchone()
+    assert proposal_after["claimed_agent"] == "dish"
+    assert proposal_after["claimed_run_id"]
+    assert proposal_after["status"] == "applied"
+    audit_types = [
+        row[0] for row in app.conn.execute(
+            "SELECT event_type FROM audit_events WHERE operation_id=? ORDER BY created_at,rowid",
+            (operation_id,),
+        )
+    ]
+    assert "semantic_proposal.approved" in audit_types
+    assert "semantic_proposal.applied" in audit_types
+    assert "semantic_proposal.application_completed" in audit_types
     claimable = app.execute("proposals", agent="gpt")
-    assert claimable["allowed_actions"] == ["apply-proposal"]
-    assert [item["proposal_id"] for item in claimable["data"]["proposals"]] == [proposal_id]
-    # Approval is authorization, not application.
-    assert "Use whole scallion" not in backend.notes
+    assert claimable["data"]["count"] == 0
     assert app.conn.execute(
         "SELECT COUNT(*) FROM marco_authorizations WHERE operation_id=? AND consumed_at IS NULL",
         (operation_id,),
-    ).fetchone()[0] == 1
-
-    applied = app.execute(
-        "apply-proposal", proposal_id=proposal_id, agent="gpt",
-        model="gpt-5.6-sol", run_id="fresh-applicant",
-    )
-    assert applied["ok"]
-    assert applied["data"]["proposal"]["status"] == "applied"
-    assert applied["data"]["new_cycle_id"]
-    assert "Locks: Keep crisp | Use whole scallion" in backend.notes
-    assert applied["allowed_actions"] == ["start"]
+    ).fetchone()[0] == 0
 
     cycles = app.conn.execute(
         "SELECT cycle_number,outcome,completed_at FROM verification_cycles WHERE operation_id=? ORDER BY cycle_number",
@@ -123,7 +133,7 @@ def test_governed_large_correction_queues_one_bundle_and_fresh_run_applies_it(tm
 
 
 
-def test_decisions_governed_change_survives_json_round_trip_and_applies(tmp_path):
+def test_attributed_decision_append_does_not_require_formal_authorization(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review_and_inspect(app, agent="codex", run_id="proposal-author")
     candidate = tmp_path / "decisions-proposal.txt"
@@ -134,49 +144,49 @@ def test_decisions_governed_change_survives_json_round_trip_and_applies(tmp_path
         )
     )
 
-    queued = app.execute(
+    preflight = app.execute(
         "reject", agent="codex", model="gpt-5.6-sol",
         submission_id=operation_id, route="large",
         reason="Record Marco's settled chicken decision.",
         file_path=str(candidate), run_id="proposal-author",
     )
-    assert queued["code"] == "VALIDATION_FAILED"
-    assert queued["errors"][0]["rule"] == "semantic_proposal_queued"
-    proposal_id = queued["data"]["proposal_id"]
+    assert preflight["code"] == "CONFIRMATION_REQUIRED"
+    assert preflight["errors"][0]["rule"] == "decision_attestation_required"
 
-    stored_change = app.conn.execute(
-        "SELECT before_json,after_json FROM semantic_proposal_changes WHERE proposal_id=?",
-        (proposal_id,),
-    ).fetchone()
-    assert stored_change is not None
-    assert stored_change["before_json"] == "[]"
-    assert "Use chicken" in stored_change["after_json"]
-
-    admin = DishAdminApplication(app.conn, backend=backend, release_loader=app.release_loader)
-    approved = admin.execute(
-        "review-approve", proposal_id=proposal_id,
-        reason="Marco approves recording this exact decision.",
+    result = app.execute(
+        "reject", agent="codex", model="gpt-5.6-sol",
+        submission_id=operation_id, route="large",
+        reason="Record Marco's settled chicken decision.",
+        file_path=str(candidate), run_id="proposal-author",
+        governed_change_fields=["Decisions"],
     )
-    assert approved["ok"]
-
-    applied = app.execute(
-        "apply-proposal", proposal_id=proposal_id, agent="gpt",
-        model="gpt-5.6-sol", run_id="fresh-applicant",
-    )
-    assert applied["ok"]
-    assert applied["data"]["proposal"]["status"] == "applied"
+    assert result["ok"]
     assert "Human — Marco: Use chicken." in backend.notes
+    assert app.conn.execute(
+        "SELECT COUNT(*) FROM semantic_proposals WHERE operation_id=?",
+        (operation_id,),
+    ).fetchone()[0] == 0
+    assert app.conn.execute(
+        "SELECT COUNT(*) FROM marco_authorizations WHERE operation_id=?",
+        (operation_id,),
+    ).fetchone()[0] == 0
+    attestation = app.conn.execute(
+        """SELECT actor_agent,actor_provenance,details
+             FROM audit_events
+            WHERE operation_id=? AND event_type='decision.agent_attested'
+            ORDER BY created_at DESC LIMIT 1""",
+        (operation_id,),
+    ).fetchone()
+    import json
+    provenance = json.loads(attestation["actor_provenance"])
+    details = json.loads(attestation["details"])
+    assert attestation["actor_agent"] == "codex"
+    assert provenance["run_id"] == "proposal-author"
+    assert provenance["source"] == "agent-attested-conversation"
+    assert details["formal_marco_authorization"] is False
 
 
-def test_multi_entry_decisions_authorization_reserves_across_json_serializers(tmp_path):
-    """A single-element Decisions array round-trips identically under either JSON
-    serializer, so it cannot reveal a serializer mismatch between the authorization
-    writer (proposal approval) and the authorization reader (apply-proposal
-    reservation). A multi-element array does: ``json.dumps([...], sort_keys=True)``
-    inserts a space after each comma that ``json.dumps([...], sort_keys=True,
-    separators=(",", ":"))`` omits, so an authorization recorded with one
-    serializer would silently fail the exact-string lookup performed with the
-    other, leaving an approved proposal permanently unapplyable."""
+def test_multiple_attributed_decision_appends_need_no_admin_ceremony(tmp_path):
     app, backend, operation_id, _ = make_app(tmp_path)
     review_and_inspect(app, agent="codex", run_id="proposal-author")
     candidate = tmp_path / "decisions-multi-proposal.txt"
@@ -190,31 +200,127 @@ def test_multi_entry_decisions_authorization_reserves_across_json_serializers(tm
         )
     )
 
-    queued = app.execute(
+    result = app.execute(
         "reject", agent="codex", model="gpt-5.6-sol",
         submission_id=operation_id, route="large",
         reason="Record Marco's settled chicken and ginger decisions.",
         file_path=str(candidate), run_id="proposal-author",
+        governed_change_fields=["Decisions"],
+    )
+    assert result["ok"]
+    assert "Human — Marco: Use chicken." in backend.notes
+    assert "Human — Marco: Use ginger." in backend.notes
+    assert app.conn.execute(
+        "SELECT COUNT(*) FROM marco_authorizations WHERE operation_id=?",
+        (operation_id,),
+    ).fetchone()[0] == 0
+
+
+def test_agent_attested_decision_plus_governed_lock_authorizes_only_lock(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review_and_inspect(app, agent="codex", run_id="proposal-author")
+    candidate = tmp_path / "decision-and-lock.txt"
+    candidate.write_text(
+        TASK.replace(
+            "Locks: Keep crisp",
+            "Locks: Keep crisp | Use whole scallion",
+        ).replace(
+            "### Research basis",
+            "### Decisions\nHuman — Marco: Use whole scallion.\n### Research basis",
+        )
+    )
+
+    queued = app.execute(
+        "reject", agent="codex", model="gpt-5.6-sol",
+        submission_id=operation_id, route="large",
+        reason="Record Marco's stated choice and apply the governed Lock consequence.",
+        file_path=str(candidate), run_id="proposal-author",
+        governed_change_fields=["Decisions", "Locks"],
     )
     assert queued["code"] == "VALIDATION_FAILED"
     assert queued["errors"][0]["rule"] == "semantic_proposal_queued"
     proposal_id = queued["data"]["proposal_id"]
+    stored = app.conn.execute(
+        "SELECT agent_attested_decisions_json FROM semantic_proposals WHERE proposal_id=?",
+        (proposal_id,),
+    ).fetchone()
+    import json
+    assert json.loads(stored["agent_attested_decisions_json"]) == ["Human — Marco: Use whole scallion."]
 
     admin = DishAdminApplication(app.conn, backend=backend, release_loader=app.release_loader)
     approved = admin.execute(
         "review-approve", proposal_id=proposal_id,
-        reason="Marco approves recording both exact decisions.",
+        reason="Marco approves the exact governed Lock change.",
     )
     assert approved["ok"]
+    assert approved["state"] == "applied"
+    assert "Human — Marco: Use whole scallion." in backend.notes
+    assert "Locks: Keep crisp | Use whole scallion" in backend.notes
 
-    applied = app.execute(
-        "apply-proposal", proposal_id=proposal_id, agent="gpt",
-        model="gpt-5.6-sol", run_id="fresh-applicant",
+    authorizations = app.conn.execute(
+        "SELECT field_name FROM marco_authorizations WHERE operation_id=? ORDER BY field_name",
+        (operation_id,),
+    ).fetchall()
+    assert [row["field_name"] for row in authorizations] == ["Locks"]
+
+    approval_audit = app.conn.execute(
+        """SELECT details FROM audit_events
+             WHERE operation_id=? AND event_type='semantic_proposal.approved'
+             ORDER BY created_at DESC LIMIT 1""",
+        (operation_id,),
+    ).fetchone()
+    import json
+    details = json.loads(approval_audit["details"])
+    assert details["authorization_fields"] == ["Locks"]
+    assert details["agent_attested_decisions"] == ["Human — Marco: Use whole scallion."]
+
+    attested = app.conn.execute(
+        """SELECT actor_agent,actor_provenance FROM audit_events
+             WHERE operation_id=? AND event_type='decision.agent_attested'
+             ORDER BY created_at DESC LIMIT 1""",
+        (operation_id,),
+    ).fetchone()
+    provenance = json.loads(attested["actor_provenance"])
+    assert attested["actor_agent"] == "codex"
+    assert provenance["run_id"] == "proposal-author"
+    assert provenance["source"] == "agent-attested-conversation"
+
+
+def test_rewriting_existing_decision_still_requires_formal_authorization(tmp_path):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review_and_inspect(app, agent="codex", run_id="proposal-author")
+    # First append a remembered choice without formal authorization.
+    first = tmp_path / "decision-first.txt"
+    first.write_text(
+        TASK.replace(
+            "### Research basis",
+            "### Decisions\nHuman — Marco: Use chicken.\n### Research basis",
+        )
     )
-    assert applied["ok"]
-    assert applied["data"]["proposal"]["status"] == "applied"
-    assert "Human — Marco: Use chicken." in backend.notes
-    assert "Human — Marco: Use ginger." in backend.notes
+    assert app.execute(
+        "reject", agent="codex", model="gpt-5.6-sol",
+        submission_id=operation_id, route="large", reason="Record Marco choice.",
+        file_path=str(first), run_id="proposal-author",
+        governed_change_fields=["Decisions"],
+    )["ok"]
+
+    # A new verifier may not rewrite that durable choice as though it were another
+    # ordinary remembered answer. Existing Decisions remain protected history.
+    fresh = review_and_inspect(app, agent="gpt", run_id="second-verifier")
+    rewritten = tmp_path / "decision-rewrite.txt"
+    rewritten.write_text(
+        f"{backend.title}\n{backend.notes}".replace(
+            "Human — Marco: Use chicken.", "Human — Marco: Use beef."
+        )
+    )
+    queued = app.execute(
+        "reject", agent="gpt", model="gpt-5.6-sol",
+        submission_id=operation_id, route="large", reason="Rewrite prior Marco choice.",
+        file_path=str(rewritten), run_id="second-verifier",
+    )
+    assert queued["code"] == "VALIDATION_FAILED"
+    assert queued["errors"][0]["rule"] == "semantic_proposal_queued"
+    assert queued["data"]["proposal_queued"] is True
 
 
 def test_malformed_governed_evidence_is_rejected_before_human_review(tmp_path):
@@ -290,14 +396,11 @@ def test_section_move_does_not_invalidate_semantic_proposal(tmp_path):
     # Operational placement is not semantic proposal content.
     backend.section = "vq"
     admin = DishAdminApplication(app.conn, backend=backend, release_loader=app.release_loader)
-    assert admin.execute(
+    applied = admin.execute(
         "review-approve", proposal_id=proposal_id, reason="Marco approves exact bundle."
-    )["ok"]
-    applied = app.execute(
-        "apply-proposal", proposal_id=proposal_id, agent="gpt",
-        model="gpt-5.6-sol", run_id="fresh-applicant",
     )
     assert applied["ok"]
+    assert applied["data"]["proposal"]["status"] == "applied"
     assert backend.section == "vq"
     assert "Use whole scallion" in backend.notes
 
@@ -316,9 +419,7 @@ def test_apply_reconciles_exact_approved_candidate_when_it_is_already_live(tmp_p
     )
     proposal_id = queued["data"]["proposal_id"]
     admin = DishAdminApplication(app.conn, backend=backend, release_loader=app.release_loader)
-    assert admin.execute(
-        "review-approve", proposal_id=proposal_id, reason="Marco approves exact bundle."
-    )["ok"]
+    assert _approve_only(app, backend, proposal_id)["status"] == "approved"
 
     proposal = app.conn.execute(
         "SELECT candidate_title,candidate_notes FROM semantic_proposals WHERE proposal_id=?",
@@ -332,9 +433,9 @@ def test_apply_reconciles_exact_approved_candidate_when_it_is_already_live(tmp_p
 
     recoverable = admin.execute("inspect", submission_id=operation_id)
     assert recoverable["data"]["authoritative_view"]["legal_actions"] == ["apply-proposal"]
-    assert recoverable["data"]["agent_actions_now"] == [{
-        "command": "apply-proposal", "arguments": {"proposal_id": proposal_id}
-    }]
+    assert recoverable["data"]["agent_actions_now"] == []
+    assert recoverable["data"]["human_actions"][0]["command"] == "review-approve"
+    assert recoverable["data"]["human_actions"][0]["arguments"]["positional"] == [proposal_id]
 
     applied = app.execute(
         "apply-proposal", proposal_id=proposal_id, agent="gpt",
@@ -350,6 +451,298 @@ def test_apply_reconciles_exact_approved_candidate_when_it_is_already_live(tmp_p
     ).fetchone()
     assert authorization["consumed_at"]
     assert authorization["consumed_identity"] == applied["data"]["applied_identity"]
+
+
+def test_admin_mechanical_application_failure_preserves_durable_approval(tmp_path, monkeypatch):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review_and_inspect(app, agent="codex", run_id="proposal-author")
+    candidate = tmp_path / "proposal-mechanical-failure.txt"
+    candidate.write_text(
+        TASK.replace("Locks: Keep crisp", "Locks: Keep crisp | Use whole scallion")
+    )
+    queued = app.execute(
+        "reject", agent="codex", model="gpt-5.6-sol",
+        submission_id=operation_id, route="large", reason="Linked governed correction",
+        file_path=str(candidate), run_id="proposal-author",
+    )
+    proposal_id = queued["data"]["proposal_id"]
+    original_notes = backend.notes
+
+    def fail_mechanical_application(*args, **kwargs):
+        raise DishRuleError(
+            "CONFLICT",
+            "forced safe mechanical application failure",
+            rule="forced_mechanical_application_failure",
+        )
+
+    monkeypatch.setattr(admin_module, "apply_semantic_proposal", fail_mechanical_application)
+    admin = DishAdminApplication(app.conn, backend=backend, release_loader=app.release_loader)
+    failed = admin.execute(
+        "review-approve", proposal_id=proposal_id,
+        reason="Marco approves this exact linked bundle.",
+    )
+    assert failed["code"] == "CONFLICT"
+    error = failed["errors"][0]
+    assert error["rule"] == "forced_mechanical_application_failure"
+    assert error["approval_persisted"] is True
+    assert error["proposal_status"] == "approved"
+    assert backend.notes == original_notes
+    proposal = app.conn.execute(
+        "SELECT status,review_reason,claimed_agent FROM semantic_proposals WHERE proposal_id=?",
+        (proposal_id,),
+    ).fetchone()
+    assert proposal["status"] == "approved"
+    assert proposal["review_reason"] == "Marco approves this exact linked bundle."
+    assert proposal["claimed_agent"] is None
+    assert app.conn.execute(
+        "SELECT COUNT(*) FROM marco_authorizations WHERE operation_id=? AND consumed_at IS NULL",
+        (operation_id,),
+    ).fetchone()[0] == 1
+
+    # Restore the real function explicitly; the retry must reuse approval rather than create another one.
+    from dish_tool.step8 import apply_semantic_proposal as real_apply_semantic_proposal
+    monkeypatch.setattr(admin_module, "apply_semantic_proposal", real_apply_semantic_proposal)
+    retried = admin.execute("review-approve", proposal_id=proposal_id)
+    assert retried["ok"]
+    assert retried["state"] == "applied"
+    assert "Use whole scallion" in backend.notes
+    assert app.conn.execute(
+        "SELECT COUNT(*) FROM audit_events WHERE event_type='semantic_proposal.approved' AND operation_id=?",
+        (operation_id,),
+    ).fetchone()[0] == 1
+
+
+
+def _fail_after_confirmed_semantic_proposal_write(monkeypatch, proposal_id: str):
+    original_complete = step8_module.complete_operation_step
+    failed = {"done": False}
+
+    def fail_once(conn, operation_id, step_name):
+        if step_name == f"semantic_proposal_write:{proposal_id}" and not failed["done"]:
+            failed["done"] = True
+            raise DishRuleError(
+                "CONFLICT",
+                "forced failure after confirmed semantic proposal write",
+                rule="forced_post_write_proposal_finalize_failure",
+            )
+        return original_complete(conn, operation_id, step_name)
+
+    monkeypatch.setattr(step8_module, "complete_operation_step", fail_once)
+    return original_complete
+
+
+def test_confirmed_mechanical_write_recovery_is_idempotent_and_needs_no_reapproval(
+    tmp_path, monkeypatch
+):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review_and_inspect(app, agent="codex", run_id="proposal-author")
+    candidate = tmp_path / "proposal-confirmed-write-recovery.txt"
+    candidate.write_text(
+        TASK.replace("Locks: Keep crisp", "Locks: Keep crisp | Use whole scallion")
+    )
+    queued = app.execute(
+        "reject", agent="codex", model="gpt-5.6-sol",
+        submission_id=operation_id, route="large", reason="Linked governed correction",
+        file_path=str(candidate), run_id="proposal-author",
+    )
+    proposal_id = queued["data"]["proposal_id"]
+    writes_before = backend.writes
+    original_complete = _fail_after_confirmed_semantic_proposal_write(monkeypatch, proposal_id)
+    admin = DishAdminApplication(app.conn, backend=backend, release_loader=app.release_loader)
+
+    failed = admin.execute(
+        "review-approve", proposal_id=proposal_id,
+        reason="Marco approves this exact linked bundle.",
+    )
+    assert failed["code"] == "CONFLICT"
+    assert failed["errors"][0]["rule"] == "forced_post_write_proposal_finalize_failure"
+    assert failed["errors"][0]["approval_persisted"] is True
+    assert failed["errors"][0]["proposal_status"] == "claimed"
+    assert backend.writes == writes_before + 1
+    assert "Use whole scallion" in backend.notes
+
+    proposal = app.conn.execute(
+        "SELECT * FROM semantic_proposals WHERE proposal_id=?", (proposal_id,)
+    ).fetchone()
+    assert proposal["status"] == "claimed"
+    assert proposal["claimed_agent"] == "dish"
+    assert proposal["claimed_run_id"]
+    assert app.conn.execute(
+        "SELECT COUNT(*) FROM audit_events WHERE operation_id=? AND event_type='semantic_proposal.approved'",
+        (operation_id,),
+    ).fetchone()[0] == 1
+    authorizations = app.conn.execute(
+        "SELECT * FROM marco_authorizations WHERE operation_id=? ORDER BY authorization_id",
+        (operation_id,),
+    ).fetchall()
+    assert len(authorizations) == 1
+    assert authorizations[0]["consumed_at"]
+    assert authorizations[0]["consumed_identity"] == proposal["candidate_identity"]
+    assert app.conn.execute(
+        "SELECT COUNT(*) FROM audit_events WHERE operation_id=? AND event_type='marco.authorization'",
+        (operation_id,),
+    ).fetchone()[0] == 1
+
+    attempt = app.conn.execute(
+        """SELECT * FROM write_attempts
+             WHERE operation_id=? AND outcome='confirmed' AND intended_identity=?""",
+        (operation_id, proposal["candidate_identity"]),
+    ).fetchone()
+    context = json.loads(attempt["context_json"])
+    assert context["authorization_ids"] == [authorizations[0]["authorization_id"]]
+    assert context["semantic_proposal_application"] == {
+        "proposal_id": proposal_id,
+        "candidate_identity": proposal["candidate_identity"],
+        "application_actor": "dish",
+        "application_run_id": proposal["claimed_run_id"],
+    }
+    assert app.conn.execute(
+        "SELECT COUNT(*) FROM verification_cycles WHERE operation_id=?", (operation_id,)
+    ).fetchone()[0] == 1
+
+    # A different actor/run cannot take over the claimed confirmed-write recovery.
+    wrong_run = app.execute(
+        "apply-proposal", proposal_id=proposal_id, agent="gpt",
+        model="gpt-5.6-sol", run_id="different-application-run",
+    )
+    assert wrong_run["code"] == "CONFLICT"
+    assert wrong_run["errors"][0]["rule"] == "semantic_proposal_claimed"
+    assert backend.writes == writes_before + 1
+
+    # Nor can merely different live content be reconciled as this exact application.
+    exact_candidate_notes = backend.notes
+    backend.notes = backend.notes.replace("Use whole scallion", "Use half scallion")
+    wrong_candidate = admin.execute("review-approve", proposal_id=proposal_id)
+    assert wrong_candidate["code"] == "CONFLICT"
+    assert wrong_candidate["errors"][0]["rule"] == "semantic_proposal_stale"
+    assert backend.writes == writes_before + 1
+    backend.notes = exact_candidate_notes
+
+    inspect = admin.execute("review-inspect", proposal_id=proposal_id)
+    assert inspect["ok"]
+    assert inspect["data"]["admin_action"]["command"] == "review-approve"
+    operation_inspect = admin.execute("inspect", submission_id=operation_id)
+    assert operation_inspect["data"]["human_actions"][0]["command"] == "review-approve"
+
+    monkeypatch.setattr(step8_module, "complete_operation_step", original_complete)
+    retried = admin.execute("review-approve", proposal_id=proposal_id)
+    assert retried["ok"]
+    assert retried["state"] == "applied"
+    assert retried["data"]["proposal"]["status"] == "applied"
+    assert retried["data"]["recovered_confirmed_write"] is True
+    assert backend.writes == writes_before + 1
+
+    final = app.conn.execute(
+        "SELECT * FROM semantic_proposals WHERE proposal_id=?", (proposal_id,)
+    ).fetchone()
+    assert final["status"] == "applied"
+    assert final["applied_identity"] == proposal["candidate_identity"]
+    assert app.conn.execute(
+        "SELECT COUNT(*) FROM semantic_proposals WHERE operation_id=?", (operation_id,)
+    ).fetchone()[0] == 1
+    assert app.conn.execute(
+        "SELECT COUNT(*) FROM audit_events WHERE operation_id=? AND event_type='semantic_proposal.approved'",
+        (operation_id,),
+    ).fetchone()[0] == 1
+    assert app.conn.execute(
+        "SELECT COUNT(*) FROM audit_events WHERE operation_id=? AND event_type='semantic_proposal.applied'",
+        (operation_id,),
+    ).fetchone()[0] == 1
+    assert app.conn.execute(
+        "SELECT COUNT(*) FROM audit_events WHERE operation_id=? AND event_type='semantic_proposal.application_completed'",
+        (operation_id,),
+    ).fetchone()[0] == 1
+    assert app.conn.execute(
+        """SELECT COUNT(*) FROM write_attempts
+             WHERE operation_id=? AND outcome='confirmed' AND intended_identity=?""",
+        (operation_id, proposal["candidate_identity"]),
+    ).fetchone()[0] == 1
+    final_authorizations = app.conn.execute(
+        "SELECT * FROM marco_authorizations WHERE operation_id=?", (operation_id,)
+    ).fetchall()
+    assert len(final_authorizations) == 1
+    assert final_authorizations[0]["authorization_id"] == authorizations[0]["authorization_id"]
+    assert final_authorizations[0]["consumed_at"] == authorizations[0]["consumed_at"]
+    cycles = app.conn.execute(
+        "SELECT cycle_number,outcome,completed_at FROM verification_cycles WHERE operation_id=? ORDER BY cycle_number",
+        (operation_id,),
+    ).fetchall()
+    assert len(cycles) == 2
+    assert cycles[0]["outcome"] == "rejected" and cycles[0]["completed_at"]
+    assert cycles[1]["outcome"] is None and cycles[1]["completed_at"] is None
+
+
+@pytest.mark.parametrize(
+    ("tamper", "expected_rule"),
+    [
+        ("proposal", "semantic_proposal_application_recovery_write_invalid"),
+        ("candidate", "semantic_proposal_application_recovery_binding_mismatch"),
+        ("actor", "semantic_proposal_application_recovery_binding_mismatch"),
+        ("run", "semantic_proposal_application_recovery_binding_mismatch"),
+        ("authorization_set", "semantic_proposal_application_recovery_authorization_mismatch"),
+    ],
+)
+def test_confirmed_application_recovery_rejects_mismatched_durable_binding(
+    tmp_path, monkeypatch, tamper, expected_rule
+):
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review_and_inspect(app, agent="codex", run_id="proposal-author")
+    candidate = tmp_path / f"proposal-binding-{tamper}.txt"
+    candidate.write_text(
+        TASK.replace("Locks: Keep crisp", "Locks: Keep crisp | Use whole scallion")
+    )
+    queued = app.execute(
+        "reject", agent="codex", model="gpt-5.6-sol",
+        submission_id=operation_id, route="large", reason="Linked governed correction",
+        file_path=str(candidate), run_id="proposal-author",
+    )
+    proposal_id = queued["data"]["proposal_id"]
+    writes_before = backend.writes
+    original_complete = _fail_after_confirmed_semantic_proposal_write(monkeypatch, proposal_id)
+    admin = DishAdminApplication(app.conn, backend=backend, release_loader=app.release_loader)
+    failed = admin.execute(
+        "review-approve", proposal_id=proposal_id,
+        reason="Marco approves this exact linked bundle.",
+    )
+    assert failed["errors"][0]["rule"] == "forced_post_write_proposal_finalize_failure"
+    monkeypatch.setattr(step8_module, "complete_operation_step", original_complete)
+
+    attempt = app.conn.execute(
+        """SELECT attempt_id,context_json FROM write_attempts
+             WHERE operation_id=? AND outcome='confirmed'
+               AND json_extract(context_json, '$.semantic_proposal_application.proposal_id')=?""",
+        (operation_id, proposal_id),
+    ).fetchone()
+    context = json.loads(attempt["context_json"])
+    binding = context["semantic_proposal_application"]
+    if tamper == "proposal":
+        binding["proposal_id"] = "different-proposal"
+    elif tamper == "candidate":
+        binding["candidate_identity"] = "0" * 64
+    elif tamper == "actor":
+        binding["application_actor"] = "gpt"
+    elif tamper == "run":
+        binding["application_run_id"] = "different-run"
+    else:
+        context["authorization_ids"] = ["different-authorization"]
+
+    # Simulate corrupted durable evidence. Production triggers make this context immutable;
+    # dropping them here lets the recovery validator prove it still fails closed if storage
+    # evidence is inconsistent rather than trusting current task text.
+    app.conn.execute("DROP TRIGGER write_attempt_intent_immutable_update")
+    app.conn.execute("DROP TRIGGER write_attempt_confirmed_append_only_update")
+    app.conn.execute(
+        "UPDATE write_attempts SET context_json=? WHERE attempt_id=?",
+        (json.dumps(context, sort_keys=True, separators=(",", ":")), attempt["attempt_id"]),
+    )
+
+    retried = admin.execute("review-approve", proposal_id=proposal_id)
+    assert retried["code"] == "CONFLICT"
+    assert retried["errors"][0]["rule"] == expected_rule
+    assert backend.writes == writes_before + 1
+    assert app.conn.execute(
+        "SELECT status FROM semantic_proposals WHERE proposal_id=?", (proposal_id,)
+    ).fetchone()[0] == "claimed"
 
 
 def test_stale_proposal_reports_exact_content_paths_and_excludes_operational_metadata(tmp_path):
@@ -418,9 +811,7 @@ def test_approved_proposal_is_not_advertised_after_exact_content_staleness(tmp_p
     )
     proposal_id = queued["data"]["proposal_id"]
     admin = DishAdminApplication(app.conn, backend=backend, release_loader=app.release_loader)
-    assert admin.execute(
-        "review-approve", proposal_id=proposal_id, reason="Marco approves exact bundle."
-    )["ok"]
+    assert _approve_only(app, backend, proposal_id)["status"] == "approved"
 
     backend.notes = backend.notes.replace(
         "Purpose: Compare texture", "Purpose: Compare changed texture"
@@ -484,9 +875,7 @@ def test_approved_proposal_requires_open_verification_cycle_everywhere(tmp_path)
     )
     proposal_id = queued["data"]["proposal_id"]
     admin = DishAdminApplication(app.conn, backend=backend, release_loader=app.release_loader)
-    assert admin.execute(
-        "review-approve", proposal_id=proposal_id, reason="Marco approves exact bundle."
-    )["ok"]
+    assert _approve_only(app, backend, proposal_id)["status"] == "approved"
 
     app.conn.execute(
         "UPDATE verification_cycles SET completed_at='2026-08-07T00:00:00Z' "
@@ -627,7 +1016,7 @@ def test_service_fresh_invocation_claims_approved_bundle_without_old_run_identit
 
     assert proposal["status"] == "applied"
     assert proposal["proposer_run_id"] == "proposal-run"
-    assert proposal["claimed_run_id"] == "fresh-applicant"
+    assert proposal["claimed_run_id"] != "fresh-applicant"
     assert proposal["claimed_run_id"] != proposal["proposer_run_id"]
     assert proposal["applied_identity"]
 
@@ -689,9 +1078,7 @@ def test_post_write_application_failure_keeps_proposal_claimed_for_recovery(tmp_
     )
     proposal_id = queued["data"]["proposal_id"]
     admin = DishAdminApplication(app.conn, backend=backend, release_loader=app.release_loader)
-    assert admin.execute(
-        "review-approve", proposal_id=proposal_id, reason="Marco approves exact bundle."
-    )["ok"]
+    assert _approve_only(app, backend, proposal_id)["status"] == "approved"
 
     def fail_after_write(*args, **kwargs):
         raise DishRuleError(

@@ -183,7 +183,11 @@ def _human_review_items(conn: sqlite3.Connection) -> tuple[dict[str, Any], ...]:
                     "after_success": (
                         consequences["approval"]["instruction"]
                         if kind == "human_review"
-                        else "A later fresh verifier may continue from the resumed operation."
+                        else (
+                            "An eligible verifier may continue from the resumed operation; if the "
+                            "original verifier is still live and made no material edit, that same "
+                            "run may continue from fresh durable state."
+                        )
                     ),
                     "dismissal_after_success": (
                         consequences["dismissal"]["instruction"] if kind == "human_review" else None
