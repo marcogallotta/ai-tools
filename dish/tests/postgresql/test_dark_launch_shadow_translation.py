@@ -10,6 +10,7 @@ from dish_pg.database import session_scope
 from dish_pg.shadow_worker import (
     ShadowIdentityMappingError,
     ShadowWorker,
+    _shadow_uuid,
     _translate_workflow_identifiers,
 )
 from dish_pg.transition import ShadowService
@@ -17,6 +18,7 @@ from dish_pg.workflow import sha256_json
 from dish_service.shadow_spool import ShadowSpool
 from tests.support.postgresql.command import (
     _add_verification_queue,
+    _call,
     _port,
     _prepare_for_verification,
     _start_initial,
@@ -218,95 +220,48 @@ def test_real_shadow_evaluator_tags_outbox_and_projection_claim_refuses_it(workf
             ttl=timedelta(minutes=2),
         ) is None
 
-def test_shadow_identifier_translation_uses_prior_comparison_bindings(workflow_db):
-    factory, ids, context, _task = workflow_db
-    source_operation, target_operation = uuid.uuid4(), uuid.uuid4()
-    source_lease, target_lease = uuid.uuid4(), uuid.uuid4()
-    with session_scope(factory) as session:
-        service = ShadowService(session, uuid_factory=lambda: _next(ids))
-        baseline = service.create_baseline(
-            generation_id=context["generation_id"],
-            source_generation_identity="legacy-1",
-            source_commit="worktree",
-            created_at=NOW,
+def _source_task_gid(session, task_id) -> str:
+    value = session.scalar(
+        select(models.TaskExternalAlias.external_id).where(
+            models.TaskExternalAlias.task_id == task_id,
+            models.TaskExternalAlias.external_system == "asana",
+            models.TaskExternalAlias.state == "active",
         )
-        prior = service.capture_envelope(
-            shadow_baseline_id=baseline.shadow_baseline_id,
-            command_name="start",
-            source_request_identity="source-start",
-            canonical_input={"command": "start", "arguments": {}},
-            source_outcome={
-                "submission_id": str(source_operation),
-                "data": {"operation_id": str(source_operation), "lease_id": str(source_lease)},
-            },
-            source_post_state={"phase": "research"},
-            rollout_sequence=1,
-            source_authority_generation="legacy-1",
-            captured_at=NOW,
-        )
-        target_result = {
-            "evidence_schema_version": 2,
-            "response": {
-                "ok": True,
-                "command": "start",
-                "code": "OK",
-                "http_status": 200,
-                "data": {"operation_id": str(target_operation), "lease_id": str(target_lease)},
-                "retryable": False,
-            },
-        }
-        session.add(
-            tx.ShadowComparison(
-                comparison_id=_next(ids),
-                envelope_id=prior.envelope_id,
-                target_result=target_result,
-                target_result_sha256=sha256_json(target_result),
-                parity_class="semantic",
-                differences=[],
-                comparator_release="test",
-                compared_at=NOW,
-            )
-        )
-        current = service.capture_envelope(
-            shadow_baseline_id=baseline.shadow_baseline_id,
-            command_name="renew-lease",
-            source_request_identity="source-renew",
-            canonical_input={"command": "renew-lease", "arguments": {}},
-            source_outcome={"ok": True},
-            source_post_state={"phase": "research"},
-            rollout_sequence=2,
-            source_authority_generation="legacy-1",
-            captured_at=NOW,
-        )
-        translated = _translate_workflow_identifiers(
-            session,
-            current,
-            {"submission_id": str(source_operation), "lease_id": str(source_lease)},
-        )
-        assert translated == {
-            "submission_id": str(target_operation),
-            "lease_id": str(target_lease),
-        }
-        with pytest.raises(ShadowIdentityMappingError, match="no unique target operation"):
-            _translate_workflow_identifiers(
-                session,
-                current,
-                {"submission_id": str(uuid.uuid4())},
-            )
+    )
+    assert value
+    return str(value)
 
-def test_real_shadow_evaluator_translates_verification_continuation_before_dispatch(workflow_db):
-    from dish_pg.shadow_worker import CommandPortShadowEvaluator
 
+def _source_creator_request_row(*, request_id, operation_id, task_gid, kind):
+    return {
+        "request_id": request_id,
+        "owner_id": "owner-1",
+        "run_id": "source-author-run",
+        "command": "start",
+        "request_hash": "source-hash",
+        "status": "completed",
+        "operation_id": str(operation_id),
+        "task_gid": task_gid,
+        "result_json": {
+            "ok": True,
+            "command": "start",
+            "task_gid": task_gid,
+            "submission_id": str(operation_id),
+            "data": {"operation_id": str(operation_id), "operation_kind": kind},
+        },
+        "resolution_result_json": None,
+        "created_at": (NOW - timedelta(seconds=1)).isoformat(),
+        "completed_at": (NOW + timedelta(seconds=1)).isoformat(),
+    }
+
+
+def test_shadow_identifier_translation_uses_envelope_local_operation_lineage(workflow_db):
     factory, ids, context, task_id = workflow_db
     source_operation = uuid.uuid4()
-    source_cycle = uuid.uuid4()
+    source_request_id = "legacy-start-request"
+    source_run_id = "source-author-run"
     with session_scope(factory) as session:
-        target_operation, target_cycle = _real_verification_target(
-            session, ids, context, task_id
-        )
-        assert str(source_operation) != target_operation
-        assert str(source_cycle) != target_cycle
-
+        task_gid = _source_task_gid(session, task_id)
         service = ShadowService(session, uuid_factory=lambda: _next(ids))
         baseline = service.create_baseline(
             generation_id=context["generation_id"],
@@ -314,82 +269,217 @@ def test_real_shadow_evaluator_translates_verification_continuation_before_dispa
             source_commit="worktree",
             created_at=NOW,
         )
+        envelope = service.capture_envelope(
+            shadow_baseline_id=baseline.shadow_baseline_id,
+            command_name="prepare",
+            source_request_identity="legacy-prepare",
+            canonical_input={"command": "prepare", "arguments": {}},
+            source_outcome={"ok": True},
+            source_pre_state={
+                "selected_tables": ["operations", "service_requests"],
+                "lineage_scope": {
+                    "operation_ids": [str(source_operation)],
+                    "explicit_request_ids": [],
+                },
+                "tables": {
+                    "operations": [{
+                        "operation_id": str(source_operation),
+                        "task_gid": task_gid,
+                        "operation_kind": "initial",
+                        "created_at": NOW.isoformat(),
+                    }],
+                    "service_requests": [_source_creator_request_row(
+                        request_id=source_request_id,
+                        operation_id=source_operation,
+                        task_gid=task_gid,
+                        kind="initial",
+                    )],
+                },
+            },
+            source_post_state={"phase": "research"},
+            rollout_sequence=2,
+            source_authority_generation="legacy-1",
+            pinned_inputs={"capture_schema": 3, "rollout_mode": "execute"},
+            captured_at=NOW,
+        )
+
+        target_run_id = _shadow_uuid(
+            envelope, label="run", value=f"owner-1:{source_run_id}"
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=target_run_id,
+            owner="owner-1",
+            agent="claude",
+        )
+        target_start = _port(session, ids).execute(
+            _call(
+                "start",
+                run_id=target_run_id,
+                request_id=_shadow_uuid(envelope, label="request", value=source_request_id),
+                owner="owner-1",
+                arguments={"task_id": str(task_id), "kind": "initial", "agent": "claude"},
+            )
+        )
+        assert target_start.ok
+
         prior = service.capture_envelope(
             shadow_baseline_id=baseline.shadow_baseline_id,
             command_name="start",
-            source_request_identity="legacy-verification-start",
+            source_request_identity="misleading-sibling",
             canonical_input={"command": "start", "arguments": {}},
-            source_outcome={
-                "data": {
-                    "operation_id": str(source_operation),
-                    "cycle_id": str(source_cycle),
-                }
-            },
-            source_post_state={"phase": "await_verification"},
+            source_outcome={"submission_id": str(source_operation)},
+            source_post_state={"phase": "research"},
             rollout_sequence=1,
             source_authority_generation="legacy-1",
             captured_at=NOW,
         )
-        target_result = {
+        misleading = {
             "evidence_schema_version": 2,
-            "response": {
-                "ok": True,
-                "data": {
-                    "operation_id": target_operation,
-                    "cycle_id": target_cycle,
-                },
-            },
+            "response": {"data": {"operation_id": str(uuid.uuid4())}},
         }
         session.add(
             tx.ShadowComparison(
                 comparison_id=_next(ids),
                 envelope_id=prior.envelope_id,
-                target_result=target_result,
-                target_result_sha256=sha256_json(target_result),
+                target_result=misleading,
+                target_result_sha256=sha256_json(misleading),
                 parity_class="semantic",
                 differences=[],
                 comparator_release="test",
                 compared_at=NOW,
             )
         )
-        current = service.capture_envelope(
+
+        assert _translate_workflow_identifiers(
+            session, envelope, {"submission_id": str(source_operation)}
+        ) == {"submission_id": target_start.data["operation_id"]}
+
+
+def test_shadow_identifier_translation_resolves_successor_operation_from_local_succession(workflow_db):
+    factory, ids, context, task_id = workflow_db
+    source_operation = uuid.uuid4()
+    source_successor = uuid.uuid4()
+    source_request_id = "legacy-abandonment-source-start"
+    source_run_id = "source-author-run"
+    with session_scope(factory) as session:
+        task_gid = _source_task_gid(session, task_id)
+        service = ShadowService(session, uuid_factory=lambda: _next(ids))
+        baseline = service.create_baseline(
+            generation_id=context["generation_id"],
+            source_generation_identity="legacy-1",
+            source_commit="worktree",
+            created_at=NOW,
+        )
+        envelope = service.capture_envelope(
             shadow_baseline_id=baseline.shadow_baseline_id,
             command_name="start",
-            source_request_identity="legacy-verification-continuation",
-            canonical_input={
-                "command": "start",
-                "arguments": {
-                    "task_id": str(task_id),
-                    "kind": "verification",
-                    "agent": "codex",
-                    "independence_attestation": (
-                        "I independently inspected this exact candidate."
-                    ),
-                    "target_operation_id": str(source_operation),
-                    "target_cycle_id": str(source_cycle),
+            source_request_identity="legacy-successor-verification",
+            canonical_input={"command": "start", "arguments": {}},
+            source_outcome={"ok": True},
+            source_pre_state={
+                "selected_tables": [
+                    "operations", "service_requests", "operation_successions",
+                ],
+                "lineage_scope": {
+                    "operation_ids": [str(source_operation), str(source_successor)],
+                    "explicit_request_ids": [],
+                },
+                "tables": {
+                    "operations": [
+                        {
+                            "operation_id": str(source_operation),
+                            "task_gid": task_gid,
+                            "operation_kind": "initial",
+                            "created_at": NOW.isoformat(),
+                        },
+                        {
+                            "operation_id": str(source_successor),
+                            "task_gid": task_gid,
+                            "operation_kind": "initial",
+                            "created_at": (NOW + timedelta(seconds=2)).isoformat(),
+                        },
+                    ],
+                    "service_requests": [_source_creator_request_row(
+                        request_id=source_request_id,
+                        operation_id=source_operation,
+                        task_gid=task_gid,
+                        kind="initial",
+                    )],
+                    "operation_successions": [{
+                        "succession_id": str(uuid.uuid4()),
+                        "task_gid": task_gid,
+                        "source_operation_id": str(source_operation),
+                        "successor_operation_id": str(source_successor),
+                    }],
                 },
             },
-            source_outcome={"ok": True},
             source_post_state={"phase": "await_verification"},
-            principal={
-                "owner_id": "verifier-owner",
-                "principal_class": "agent",
-                "run_id": str(uuid.uuid4()),
-            },
-            pinned_inputs={"rollout_mode": "execute"},
+            pinned_inputs={"capture_schema": 3, "rollout_mode": "execute"},
             rollout_sequence=2,
             source_authority_generation="legacy-1",
-            capture_qualification="execute",
             captured_at=NOW,
         )
 
-        target = CommandPortShadowEvaluator(
-            cursor_secret=b"shadow-test-cursor-secret-32bytes!"
-        ).evaluate(session, current)
+        author_run = _shadow_uuid(envelope, label="run", value=f"owner-1:{source_run_id}")
+        verifier_run = _next(ids)
+        admin_run = _next(ids)
+        _register_run(
+            session, generation_id=context["generation_id"], run_id=author_run,
+            owner="owner-1", agent="claude",
+        )
+        _register_run(
+            session, generation_id=context["generation_id"], run_id=verifier_run,
+            owner="old-verifier", agent="gpt",
+        )
+        _register_run(
+            session, generation_id=context["generation_id"], run_id=admin_run,
+            owner="Marco", agent="claude",
+        )
+        _add_verification_queue(session, ids, context)
+        port = _port(session, ids)
+        started = port.execute(
+            _call(
+                "start",
+                run_id=author_run,
+                request_id=_shadow_uuid(envelope, label="request", value=source_request_id),
+                owner="owner-1",
+                arguments={"task_id": str(task_id), "kind": "initial", "agent": "claude"},
+            )
+        )
+        assert started.ok
+        _prepare_for_verification(
+            port, ids, task_id=task_id, operation_id=started.data["operation_id"],
+            run_id=author_run,
+        )
+        verification = _start_verification(
+            port, ids, task_id=task_id, operation_id=started.data["operation_id"],
+            run_id=verifier_run, owner="old-verifier", agent="gpt",
+        )
+        abandoned = port.execute(
+            _call(
+                "abandon-operation",
+                run_id=admin_run,
+                request_id=_next(ids),
+                owner="Marco",
+                principal="admin",
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                    "lease_id": verification.data["lease_id"],
+                    "reason": "verifier permanently unavailable",
+                },
+            )
+        )
+        assert abandoned.ok
+        edge = session.scalar(select(wf.OperationSuccessionEdge))
+        assert edge is not None
 
-        assert target["response"]["ok"] is True
-        assert target["response"]["data"]["operation_id"] == target_operation
-        assert target["response"]["data"]["cycle_id"] == target_cycle
+        assert _translate_workflow_identifiers(
+            session, envelope, {"target_operation_id": str(source_successor)}
+        ) == {"target_operation_id": str(edge.successor_operation_id)}
+
 
 def test_real_shadow_evaluator_rejects_unmapped_verification_continuation(workflow_db):
     from dish_pg.shadow_worker import CommandPortShadowEvaluator
@@ -443,10 +533,10 @@ def test_real_shadow_evaluator_rejects_unmapped_verification_continuation(workfl
                 cursor_secret=b"shadow-test-cursor-secret-32bytes!"
             ).evaluate(session, current)
 
-def test_shadow_identifier_translation_rejects_mismatch_and_non_bijective_bindings(workflow_db):
+def test_shadow_identifier_translation_ignores_sibling_comparison_bindings_without_local_lineage(workflow_db):
     factory, ids, context, _task = workflow_db
-    shared_target = uuid.uuid4()
-    source_values = [uuid.uuid4(), uuid.uuid4(), uuid.uuid4()]
+    source_operation = uuid.uuid4()
+    target_operation = uuid.uuid4()
     with session_scope(factory) as session:
         service = ShadowService(session, uuid_factory=lambda: _next(ids))
         baseline = service.create_baseline(
@@ -455,34 +545,33 @@ def test_shadow_identifier_translation_rejects_mismatch_and_non_bijective_bindin
             source_commit="worktree",
             created_at=NOW,
         )
-        for sequence, source_value in enumerate(source_values, 1):
-            prior = service.capture_envelope(
-                shadow_baseline_id=baseline.shadow_baseline_id,
-                command_name="start",
-                source_request_identity=f"source-{sequence}",
-                canonical_input={"command": "start", "arguments": {}},
-                source_outcome={"submission_id": str(source_value)},
-                source_post_state={"phase": "research"},
-                rollout_sequence=sequence,
-                source_authority_generation="legacy-1",
-                captured_at=NOW,
+        prior = service.capture_envelope(
+            shadow_baseline_id=baseline.shadow_baseline_id,
+            command_name="start",
+            source_request_identity="source-start",
+            canonical_input={"command": "start", "arguments": {}},
+            source_outcome={"submission_id": str(source_operation)},
+            source_post_state={"phase": "research"},
+            rollout_sequence=1,
+            source_authority_generation="legacy-1",
+            captured_at=NOW,
+        )
+        target_result = {
+            "evidence_schema_version": 2,
+            "response": {"data": {"operation_id": str(target_operation)}},
+        }
+        session.add(
+            tx.ShadowComparison(
+                comparison_id=_next(ids),
+                envelope_id=prior.envelope_id,
+                target_result=target_result,
+                target_result_sha256=sha256_json(target_result),
+                parity_class="semantic",
+                differences=[],
+                comparator_release="test",
+                compared_at=NOW,
             )
-            target_result = {
-                "evidence_schema_version": 2,
-                "response": {"data": {"operation_id": str(shared_target)}},
-            }
-            session.add(
-                tx.ShadowComparison(
-                    comparison_id=_next(ids),
-                    envelope_id=prior.envelope_id,
-                    target_result=target_result,
-                    target_result_sha256=sha256_json(target_result),
-                    parity_class="mismatch" if sequence == 1 else "semantic",
-                    differences=[],
-                    comparator_release="test",
-                    compared_at=NOW,
-                )
-            )
+        )
         current = service.capture_envelope(
             shadow_baseline_id=baseline.shadow_baseline_id,
             command_name="prepare",
@@ -490,19 +579,16 @@ def test_shadow_identifier_translation_rejects_mismatch_and_non_bijective_bindin
             canonical_input={"command": "prepare", "arguments": {}},
             source_outcome={"ok": True},
             source_post_state={"phase": "research"},
-            rollout_sequence=4,
+            rollout_sequence=2,
             source_authority_generation="legacy-1",
             captured_at=NOW,
         )
-        with pytest.raises(ShadowIdentityMappingError):
+
+        with pytest.raises(ShadowIdentityMappingError, match="no unique target operation"):
             _translate_workflow_identifiers(
-                session, current, {"submission_id": str(source_values[0])}
+                session, current, {"submission_id": str(source_operation)}
             )
-        for source_value in source_values[1:]:
-            with pytest.raises(ShadowIdentityMappingError):
-                _translate_workflow_identifiers(
-                    session, current, {"submission_id": str(source_value)}
-                )
+
 
 def test_real_shadow_evaluator_compares_legacy_start_semantically(workflow_db):
     from dish_pg.shadow_worker import CommandPortShadowEvaluator

@@ -263,6 +263,154 @@ def test_capture_rejects_authority_spool_or_kill_switch_alias(tmp_path):
         )
 
 
+def test_snapshot_captures_all_operation_linked_service_requests_for_creator_proof(tmp_path):
+    from dish_service.shadow_capture import authoritative_snapshot
+
+    db = tmp_path / "lineage.sqlite3"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE operations(
+            operation_id TEXT PRIMARY KEY,
+            task_gid TEXT NOT NULL,
+            operation_kind TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE service_requests(
+            request_id TEXT PRIMARY KEY,
+            owner_id TEXT,
+            run_id TEXT,
+            command TEXT NOT NULL,
+            request_hash TEXT,
+            status TEXT NOT NULL,
+            operation_id TEXT,
+            task_gid TEXT,
+            result_json TEXT,
+            resolution_result_json TEXT,
+            created_at TEXT NOT NULL,
+            completed_at TEXT
+        );
+        """
+    )
+    operation_id = "operation-1"
+    conn.execute(
+        "INSERT INTO operations VALUES (?,?,?,?)",
+        (operation_id, "task-1", "initial", "2026-08-09T08:00:00+00:00"),
+    )
+    creator_result = (
+        '{"ok":true,"command":"start","task_gid":"task-1",'
+        '"submission_id":"operation-1","data":{"operation_id":"operation-1",'
+        '"operation_kind":"initial"}}'
+    )
+    conn.execute(
+        "INSERT INTO service_requests VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "creator-request", "owner", "run", "start", "hash-a", "completed",
+            operation_id, "task-1", creator_result, None,
+            "2026-08-09T07:59:59+00:00", "2026-08-09T08:00:01+00:00",
+        ),
+    )
+    conn.execute(
+        "INSERT INTO service_requests VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "later-request", "owner", "run", "start", "hash-b", "completed",
+            operation_id, "task-1", "{}", "{}",
+            "2026-08-09T08:01:00+00:00", "2026-08-09T08:01:01+00:00",
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+    snapshot = authoritative_snapshot(
+        db,
+        arguments={"submission_id": operation_id},
+        request_id=None,
+    )
+
+    requests = snapshot["tables"]["service_requests"]
+    assert {row["request_id"] for row in requests} == {
+        "creator-request", "later-request"
+    }
+    assert snapshot["lineage_scope"] == {
+        "operation_ids": [operation_id],
+        "explicit_request_ids": [],
+    }
+
+
+def test_snapshot_expands_operation_succession_lineage_for_operation_resolution(tmp_path):
+    from dish_service.shadow_capture import authoritative_snapshot
+
+    db = tmp_path / "succession.sqlite3"
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE operations(
+            operation_id TEXT PRIMARY KEY,
+            task_gid TEXT NOT NULL,
+            operation_kind TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE service_requests(
+            request_id TEXT PRIMARY KEY,
+            owner_id TEXT,
+            run_id TEXT,
+            command TEXT NOT NULL,
+            request_hash TEXT,
+            status TEXT NOT NULL,
+            operation_id TEXT,
+            task_gid TEXT,
+            result_json TEXT,
+            resolution_result_json TEXT,
+            created_at TEXT NOT NULL,
+            completed_at TEXT
+        );
+        CREATE TABLE operation_successions(
+            succession_id TEXT PRIMARY KEY,
+            task_gid TEXT NOT NULL,
+            source_operation_id TEXT NOT NULL,
+            successor_operation_id TEXT NOT NULL
+        );
+        """
+    )
+    conn.executemany(
+        "INSERT INTO operations VALUES (?,?,?,?)",
+        [
+            ("source-op", "task-1", "initial", "2026-08-09T08:00:00+00:00"),
+            ("successor-op", "task-1", "initial", "2026-08-09T08:02:00+00:00"),
+        ],
+    )
+    conn.execute(
+        "INSERT INTO service_requests VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            "creator-request", "owner", "run", "start", "hash", "completed",
+            "source-op", "task-1", "{}", None,
+            "2026-08-09T07:59:59+00:00", "2026-08-09T08:00:01+00:00",
+        ),
+    )
+    conn.execute(
+        "INSERT INTO operation_successions VALUES (?,?,?,?)",
+        ("succession-1", "task-1", "source-op", "successor-op"),
+    )
+    conn.commit()
+    conn.close()
+
+    snapshot = authoritative_snapshot(
+        db,
+        arguments={"target_operation_id": "successor-op"},
+        request_id=None,
+    )
+
+    assert snapshot["lineage_scope"] == {
+        "operation_ids": ["source-op", "successor-op"],
+        "explicit_request_ids": [],
+    }
+    assert {
+        row["operation_id"] for row in snapshot["tables"]["operations"]
+    } == {"source-op", "successor-op"}
+    assert snapshot["tables"]["operation_successions"][0]["succession_id"] == "succession-1"
+    assert snapshot["tables"]["service_requests"][0]["request_id"] == "creator-request"
+
+
 def test_completion_capacity_guard_kills_capture_and_retains_only_gap(tmp_path):
     db = tmp_path / "live.sqlite3"
     _db(db)

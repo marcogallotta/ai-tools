@@ -57,34 +57,36 @@ def authoritative_snapshot(
     result: Mapping[str, Any] | None = None,
     busy_timeout_ms: int = 50,
 ) -> dict[str, Any]:
-    """Capture a bounded SQLite-only authority snapshot for one command.
+    """Capture bounded SQLite lineage needed for live operation translation.
 
-    Rows are selected only by the command's task, operation, and request
-    identities. This deliberately does not perform an independent Asana read.
+    The closure follows operation succession relationships so a captured
+    successor operation also carries the predecessor operation and the complete
+    set of source requests linked to either operation.  It deliberately does
+    not perform an independent Asana read or choose a creator request.
     """
     sources = [arguments]
     if isinstance(result, Mapping):
         sources.append(result)
         if isinstance(result.get("data"), Mapping):
             sources.append(result["data"])
-    task_gids = sorted({
+    task_gids = {
         str(source.get("task_gid") or "").strip()
         for source in sources
         if str(source.get("task_gid") or "").strip()
-    })
+    }
     operation_keys = (
         "submission_id", "operation_id", "existing_submission_id",
         "prepared_operation_id", "successor_operation_id",
         "continuation_operation_id", "source_operation_id", "target_operation_id",
     )
-    operation_ids = sorted({
+    requested_operation_ids = {
         str(source.get(key) or "").strip()
         for source in sources
         for key in operation_keys
         if str(source.get(key) or "").strip()
-    })
-    task_gid = task_gids[0] if task_gids else None
-    operation_id = operation_ids[0] if operation_ids else None
+    }
+    operation_ids = set(requested_operation_ids)
+    explicit_request_ids = {str(request_id).strip()} if request_id else set()
     uri = f"file:{Path(db_path).expanduser().resolve()}?mode=ro"
     conn = sqlite3.connect(uri, uri=True, timeout=busy_timeout_ms / 1000)
     conn.row_factory = sqlite3.Row
@@ -96,28 +98,68 @@ def authoritative_snapshot(
                 "SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'"
             )
         }
+
+        changed = True
+        while changed:
+            before = (frozenset(task_gids), frozenset(operation_ids))
+            if "operations" in tables:
+                for candidate in tuple(operation_ids):
+                    for row in _rows(conn, "operations", "operation_id=?", (candidate,)):
+                        task_gid = str(row.get("task_gid") or "").strip()
+                        if task_gid:
+                            task_gids.add(task_gid)
+            if "operation_successions" in tables:
+                for candidate in tuple(operation_ids):
+                    for row in _rows(
+                        conn,
+                        "operation_successions",
+                        "source_operation_id=? OR successor_operation_id=?",
+                        (candidate, candidate),
+                    ):
+                        task_gid = str(row.get("task_gid") or "").strip()
+                        if task_gid:
+                            task_gids.add(task_gid)
+                        for key in ("source_operation_id", "successor_operation_id"):
+                            value = str(row.get(key) or "").strip()
+                            if value:
+                                operation_ids.add(value)
+            changed = before != (frozenset(task_gids), frozenset(operation_ids))
+
+        task_gids_sorted = sorted(task_gids)
+        operation_ids_sorted = sorted(operation_ids)
+        requested_operation_ids_sorted = sorted(requested_operation_ids)
+        explicit_request_ids_sorted = sorted(explicit_request_ids)
         snapshot: dict[str, Any] = {
             "schema_version": conn.execute("PRAGMA user_version").fetchone()[0],
-            "task_gid": task_gid,
-            "operation_id": operation_id,
-            "task_gids": task_gids,
-            "operation_ids": operation_ids,
+            "task_gid": task_gids_sorted[0] if task_gids_sorted else None,
+            "operation_id": (
+                requested_operation_ids_sorted[0]
+                if requested_operation_ids_sorted
+                else (operation_ids_sorted[0] if operation_ids_sorted else None)
+            ),
+            "task_gids": task_gids_sorted,
+            "operation_ids": operation_ids_sorted,
             "request_id": request_id,
+            "lineage_scope": {
+                "operation_ids": operation_ids_sorted,
+                "explicit_request_ids": explicit_request_ids_sorted,
+            },
             "selected_tables": [],
             "tables": {},
         }
         selectors: list[tuple[str, str, tuple[Any, ...]]] = []
-        for task_gid in task_gids:
+        for task_gid in task_gids_sorted:
             for table in (
                 "task_content_state", "operations", "submissions", "service_leases",
                 "dish_inspect_facts", "planning_reopen_attempts",
             ):
                 selectors.append((table, "task_gid=?", (task_gid,)))
-        for operation_id in operation_ids:
+        for operation_id in operation_ids_sorted:
             for table in (
                 "operations", "content_versions", "verification_cycles", "write_attempts",
                 "movement_attempts", "operation_steps", "operation_actor_facts", "audit_events",
                 "marco_authorizations", "operation_executions", "operation_execution_claims",
+                "service_requests",
             ):
                 selectors.append((table, "operation_id=?", (operation_id,)))
             selectors.append((
@@ -130,9 +172,9 @@ def authoritative_snapshot(
                 "source_operation_id=? OR successor_operation_id=?",
                 (operation_id, operation_id),
             ))
-        if request_id:
+        for explicit_request_id in explicit_request_ids_sorted:
             for table in ("service_requests", "backup_creations"):
-                selectors.append((table, "request_id=?", (request_id,)))
+                selectors.append((table, "request_id=?", (explicit_request_id,)))
         seen: set[tuple[str, str, tuple[Any, ...]]] = set()
         for selector in selectors:
             if selector in seen or selector[0] not in tables:
@@ -283,7 +325,7 @@ class LegacyShadowCapture:
                 canonical_input=canonical_input,
                 principal=principal_payload,
                 source_pre_state=pre_state,
-                pinned_inputs={"capture_schema": 2, "rollout_mode": self.settings.mode},
+                pinned_inputs={"capture_schema": 3, "rollout_mode": self.settings.mode},
                 created_at=_utcnow(),
             )
         except ShadowSpoolCapacityError as exc:

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import logging
 import signal
 import time
@@ -34,7 +35,6 @@ from .command_port import CommandCall, CommandResult, PostgresCommandPort
 from .database import DatabaseSettings, create_database_engine, session_factory, session_scope
 from .read_model import ReadModelError
 from .shadow_evidence import (
-    EVIDENCE_SCHEMA_VERSION,
     ShadowEvaluation,
     canonical_legacy_state,
     canonical_transition,
@@ -146,76 +146,6 @@ def _ensure_shadow_run(
     )
 
 
-def _collect_identifiers(value: Any) -> dict[str, set[str]]:
-    found: dict[str, set[str]] = {}
-
-    def visit(item: Any) -> None:
-        if isinstance(item, Mapping):
-            for key, child in item.items():
-                role = _IDENTIFIER_ROLES.get(str(key))
-                if (
-                    role is not None
-                    and child is not None
-                    and child != ""
-                    and not isinstance(child, (Mapping, list, tuple))
-                ):
-                    found.setdefault(role[0], set()).add(str(child))
-                visit(child)
-        elif isinstance(item, (list, tuple)):
-            for child in item:
-                visit(child)
-
-    visit(value)
-    return found
-
-
-def _identifier_bindings(session, envelope: tx.ShadowEnvelope) -> dict[str, dict[str, str]]:
-    query = (
-        select(tx.ShadowEnvelope, tx.ShadowComparison)
-        .join(tx.ShadowComparison, tx.ShadowComparison.envelope_id == tx.ShadowEnvelope.envelope_id)
-        .where(
-            tx.ShadowEnvelope.shadow_baseline_id == envelope.shadow_baseline_id,
-            tx.ShadowComparison.parity_class.in_(("exact", "semantic")),
-        )
-    )
-    if envelope.rollout_sequence is not None:
-        query = query.where(
-            tx.ShadowEnvelope.rollout_sequence.is_not(None),
-            tx.ShadowEnvelope.rollout_sequence < envelope.rollout_sequence,
-        ).order_by(tx.ShadowEnvelope.rollout_sequence)
-    else:
-        query = query.where(tx.ShadowEnvelope.captured_at < envelope.captured_at).order_by(
-            tx.ShadowEnvelope.captured_at, tx.ShadowEnvelope.envelope_id
-        )
-
-    observed: dict[str, dict[str, set[str]]] = {}
-    for prior, comparison in session.execute(query):
-        if comparison.target_result.get("evidence_schema_version") != EVIDENCE_SCHEMA_VERSION:
-            continue
-        source = _collect_identifiers(prior.source_outcome)
-        target = _collect_identifiers(comparison.target_result)
-        for role in source.keys() & target.keys():
-            source_values, target_values = source[role], target[role]
-            if len(source_values) != 1 or len(target_values) != 1:
-                continue
-            source_value, target_value = next(iter(source_values)), next(iter(target_values))
-            family = next(family for candidate, family in _IDENTIFIER_ROLES.values() if candidate == role)
-            observed.setdefault(family, {}).setdefault(source_value, set()).add(target_value)
-    bindings: dict[str, dict[str, str]] = {}
-    for family, source_targets in observed.items():
-        target_sources: dict[str, set[str]] = {}
-        for source_value, targets in source_targets.items():
-            for target_value in targets:
-                target_sources.setdefault(target_value, set()).add(source_value)
-        bindings[family] = {
-            source_value: next(iter(targets))
-            for source_value, targets in source_targets.items()
-            if len(targets) == 1
-            and len(target_sources[next(iter(targets))]) == 1
-        }
-    return bindings
-
-
 def _imported_identity_binding(
     session,
     envelope: tx.ShadowEnvelope,
@@ -274,6 +204,322 @@ def _imported_identity_binding(
     return str(identifier)
 
 
+def _capture_schema(envelope: tx.ShadowEnvelope) -> int:
+    try:
+        return int(dict(envelope.pinned_inputs or {}).get("capture_schema", 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _snapshot_rows(snapshot: Mapping[str, Any], table: str) -> list[Mapping[str, Any]]:
+    tables = snapshot.get("tables")
+    if not isinstance(tables, Mapping):
+        return []
+    rows = tables.get(table)
+    if not isinstance(rows, list):
+        return []
+    return [row for row in rows if isinstance(row, Mapping)]
+
+
+def _source_timestamp(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed
+
+
+def _source_request_result(row: Mapping[str, Any]) -> Mapping[str, Any] | None:
+    encoded = (
+        row.get("resolution_result_json")
+        if row.get("status") == "completed" and row.get("resolution_result_json")
+        else row.get("result_json")
+    )
+    if isinstance(encoded, Mapping):
+        return encoded
+    if not isinstance(encoded, str) or not encoded.strip():
+        return None
+    try:
+        parsed = json.loads(encoded)
+    except (TypeError, ValueError):
+        return None
+    return parsed if isinstance(parsed, Mapping) else None
+
+
+def _source_operation_creator_request(
+    envelope: tx.ShadowEnvelope, source_value: str
+) -> Mapping[str, Any] | None:
+    """Return the unique ordinary-start request that durably created a source operation."""
+    if _capture_schema(envelope) < 3:
+        return None
+    snapshot = envelope.source_pre_state
+    if not isinstance(snapshot, Mapping):
+        return None
+    selected = snapshot.get("selected_tables")
+    if not isinstance(selected, list) or not {"operations", "service_requests"}.issubset(
+        {str(item) for item in selected}
+    ):
+        return None
+    lineage_scope = snapshot.get("lineage_scope")
+    if not isinstance(lineage_scope, Mapping):
+        return None
+    scoped_operations = lineage_scope.get("operation_ids")
+    if not isinstance(scoped_operations, list) or source_value not in {
+        str(item) for item in scoped_operations
+    }:
+        return None
+
+    operations = [
+        row
+        for row in _snapshot_rows(snapshot, "operations")
+        if str(row.get("operation_id") or "") == source_value
+    ]
+    if len(operations) != 1:
+        return None
+    operation = operations[0]
+    operation_kind = str(operation.get("operation_kind") or "")
+    if operation_kind not in {"planning", "initial", "change"}:
+        return None
+    task_gid = str(operation.get("task_gid") or "")
+    operation_created_at = _source_timestamp(operation.get("created_at"))
+    if not task_gid or operation_created_at is None:
+        return None
+
+    candidates: list[Mapping[str, Any]] = []
+    for row in _snapshot_rows(snapshot, "service_requests"):
+        if (
+            str(row.get("operation_id") or "") != source_value
+            or row.get("command") != "start"
+            or row.get("status") != "completed"
+            or str(row.get("task_gid") or "") != task_gid
+        ):
+            continue
+        created_at = _source_timestamp(row.get("created_at"))
+        completed_at = _source_timestamp(row.get("completed_at"))
+        if (
+            created_at is None
+            or completed_at is None
+            or not (created_at <= operation_created_at <= completed_at)
+        ):
+            continue
+        result = _source_request_result(row)
+        if result is None or result.get("ok") is not True or result.get("command") != "start":
+            continue
+        if (
+            str(result.get("submission_id") or "") != source_value
+            or str(result.get("task_gid") or "") != task_gid
+        ):
+            continue
+        data = result.get("data")
+        if not isinstance(data, Mapping):
+            continue
+        if (
+            str(data.get("operation_id") or "") != source_value
+            or str(data.get("operation_kind") or "") != operation_kind
+        ):
+            continue
+        candidates.append(row)
+    return candidates[0] if len(candidates) == 1 else None
+
+
+def _baseline_for_envelope(session, envelope: tx.ShadowEnvelope) -> tx.ShadowBaseline | None:
+    baseline = session.get(tx.ShadowBaseline, envelope.shadow_baseline_id)
+    if (
+        baseline is None
+        or baseline.source_generation_identity != envelope.source_authority_generation
+    ):
+        return None
+    return baseline
+
+
+def _target_task_id_for_source_gid(session, source_task_gid: str) -> uuid.UUID | None:
+    aliases = list(
+        session.scalars(
+            select(models.TaskExternalAlias).where(
+                models.TaskExternalAlias.external_system == "asana",
+                models.TaskExternalAlias.external_id == source_task_gid,
+                models.TaskExternalAlias.state == "active",
+            )
+        )
+    )
+    return aliases[0].task_id if len(aliases) == 1 else None
+
+
+def _source_operation_row(
+    envelope: tx.ShadowEnvelope, source_value: str
+) -> Mapping[str, Any] | None:
+    snapshot = envelope.source_pre_state
+    if not isinstance(snapshot, Mapping):
+        return None
+    rows = [
+        row
+        for row in _snapshot_rows(snapshot, "operations")
+        if str(row.get("operation_id") or "") == source_value
+    ]
+    return rows[0] if len(rows) == 1 else None
+
+
+def _target_operation_from_creator_request(
+    session,
+    envelope: tx.ShadowEnvelope,
+    *,
+    source_value: str,
+) -> str | None:
+    source_request = _source_operation_creator_request(envelope, source_value)
+    if source_request is None:
+        return None
+    source_request_id = str(source_request.get("request_id") or "")
+    if not source_request_id:
+        return None
+
+    baseline = _baseline_for_envelope(session, envelope)
+    if baseline is None:
+        return None
+    target_request_id = _shadow_uuid(envelope, label="request", value=source_request_id)
+    target_request = session.get(wf.ServiceRequest, target_request_id)
+    if (
+        target_request is None
+        or target_request.generation_id != baseline.generation_id
+        or target_request.command_name != "start"
+    ):
+        return None
+
+    target_operations = list(
+        session.scalars(
+            select(wf.WorkflowOperation).where(
+                wf.WorkflowOperation.generation_id == baseline.generation_id,
+                wf.WorkflowOperation.creation_request_id == target_request_id,
+            )
+        )
+    )
+    if len(target_operations) != 1:
+        return None
+    target_operation = target_operations[0]
+    if target_operation.import_run_id is not None:
+        return None
+
+    source_operation = _source_operation_row(envelope, source_value)
+    if source_operation is None:
+        return None
+    task_gid = str(source_operation.get("task_gid") or "")
+    target_task_id = _target_task_id_for_source_gid(session, task_gid)
+    if (
+        target_task_id is None
+        or target_task_id != target_operation.task_id
+        or target_operation.kind != str(source_operation.get("operation_kind") or "")
+    ):
+        return None
+    return str(target_operation.operation_id)
+
+
+def _target_operation_from_succession(
+    session,
+    envelope: tx.ShadowEnvelope,
+    *,
+    source_value: str,
+    seen: set[str],
+) -> str | None:
+    snapshot = envelope.source_pre_state
+    if not isinstance(snapshot, Mapping):
+        return None
+    source_edges = [
+        row
+        for row in _snapshot_rows(snapshot, "operation_successions")
+        if str(row.get("successor_operation_id") or "") == source_value
+    ]
+    if len(source_edges) != 1:
+        return None
+    source_edge = source_edges[0]
+    source_predecessor = str(source_edge.get("source_operation_id") or "")
+    if not source_predecessor:
+        return None
+    target_predecessor = _resolve_operation_identity_binding(
+        session, envelope, source_value=source_predecessor, seen=seen
+    )
+    if target_predecessor is None:
+        return None
+    try:
+        target_predecessor_id = uuid.UUID(target_predecessor)
+    except ValueError:
+        return None
+
+    target_edges = list(
+        session.scalars(
+            select(wf.OperationSuccessionEdge).where(
+                wf.OperationSuccessionEdge.source_operation_id == target_predecessor_id
+            )
+        )
+    )
+    if len(target_edges) != 1:
+        return None
+    target_edge = target_edges[0]
+    target_operation = session.get(wf.WorkflowOperation, target_edge.successor_operation_id)
+    source_operation = _source_operation_row(envelope, source_value)
+    baseline = _baseline_for_envelope(session, envelope)
+    if target_operation is None or source_operation is None or baseline is None:
+        return None
+    target_task_id = _target_task_id_for_source_gid(
+        session, str(source_operation.get("task_gid") or "")
+    )
+    if (
+        target_operation.generation_id != baseline.generation_id
+        or target_task_id is None
+        or target_operation.task_id != target_task_id
+        or target_edge.task_id != target_task_id
+        or target_operation.kind != str(source_operation.get("operation_kind") or "")
+    ):
+        return None
+    return str(target_operation.operation_id)
+
+
+def _resolve_operation_identity_binding(
+    session,
+    envelope: tx.ShadowEnvelope,
+    *,
+    source_value: str,
+    seen: set[str] | None = None,
+) -> str | None:
+    imported = _imported_identity_binding(
+        session, envelope, family="operation", source_value=source_value
+    )
+    if imported is not None:
+        return imported
+    if _capture_schema(envelope) < 3:
+        return None
+    active_seen = set() if seen is None else set(seen)
+    if source_value in active_seen:
+        return None
+    active_seen.add(source_value)
+    ordinary = _target_operation_from_creator_request(
+        session, envelope, source_value=source_value
+    )
+    if ordinary is not None:
+        return ordinary
+    return _target_operation_from_succession(
+        session, envelope, source_value=source_value, seen=active_seen
+    )
+
+
+def _resolve_identifier_binding(
+    session,
+    envelope: tx.ShadowEnvelope,
+    *,
+    family: str,
+    source_value: str,
+) -> str | None:
+    if family == "operation":
+        return _resolve_operation_identity_binding(
+            session, envelope, source_value=source_value
+        )
+    return _imported_identity_binding(
+        session, envelope, family=family, source_value=source_value
+    )
+
+
 def _translate_workflow_identifiers(
     session,
     envelope: tx.ShadowEnvelope,
@@ -287,14 +533,11 @@ def _translate_workflow_identifiers(
     }
     if not needed:
         return translated
-    bindings = _identifier_bindings(session, envelope)
     for key, family in needed.items():
         source_value = str(arguments[key])
-        target_value = bindings.get(family, {}).get(source_value)
-        if target_value is None:
-            target_value = _imported_identity_binding(
-                session, envelope, family=family, source_value=source_value
-            )
+        target_value = _resolve_identifier_binding(
+            session, envelope, family=family, source_value=source_value
+        )
         if target_value is None:
             raise ShadowIdentityMappingError(
                 f"no unique target {family} binding for captured field {key}"
