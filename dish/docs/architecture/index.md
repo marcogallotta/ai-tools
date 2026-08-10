@@ -105,3 +105,4 @@ Architecture documents are descriptive current-state records plus explicitly acc
 - [Approval and application are separate](decisions/0003-approval-and-application-are-separate.md)
 - [Shadow-origin work never projects](decisions/0004-shadow-origin-never-projects.md)
 - [Cutover evidence is bounded](decisions/0005-cutover-evidence-is-bounded.md)
+- [Cutover bar matches actual operating context](decisions/0006-cutover-bar-matches-operating-context.md)

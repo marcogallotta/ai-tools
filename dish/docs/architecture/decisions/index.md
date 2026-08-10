@@ -25,6 +25,7 @@ The decisions apply to the current service, migration target, dark-launch machin
 | [Approval and application are separate](0003-approval-and-application-are-separate.md) | Accepted |
 | [Shadow-origin work never projects](0004-shadow-origin-never-projects.md) | Accepted |
 | [Cutover evidence is bounded](0005-cutover-evidence-is-bounded.md) | Accepted |
+| [Cutover bar matches actual operating context](0006-cutover-bar-matches-operating-context.md) | Accepted |
 
 ## Invariants
 

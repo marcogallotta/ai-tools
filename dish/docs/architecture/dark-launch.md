@@ -68,6 +68,7 @@ Dark launch is migration machinery, not a permanent product subsystem. Its artif
 - [External effects and Asana](external-effects-and-asana.md)
 - [ADR-0001](decisions/0001-dark-launch-does-not-transfer-authority.md)
 - [ADR-0004](decisions/0004-shadow-origin-never-projects.md)
+- [ADR-0006 — how much dark-launch evidence cutover actually requires](decisions/0006-cutover-bar-matches-operating-context.md)
 - Operating and investigating a live instance (status checks, log access, gap recovery, known
   non-bugs): [dark-launch runbook](../database-backend-dark-launch-runbook.md), "Investigating dark
   launch."
