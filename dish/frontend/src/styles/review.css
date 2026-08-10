@@ -1,3 +1,7 @@
+.login-layout {
+  padding-block-start: 6rem;
+}
+
 .review-toolbar {
   display: flex;
   align-items: center;

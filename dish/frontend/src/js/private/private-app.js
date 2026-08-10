@@ -6,8 +6,9 @@ import {
   parseSessionBootstrap,
   returnTargetFromSearch,
 } from "../features/auth/session.js";
-import { parsePostgresTaskRoute, parseTaskRoute } from "../features/routing/routes.js";
+import { parsePostgresTaskRoute } from "../features/routing/routes.js";
 import { renderLocalPostgresqlBoard } from "../local/local-board-app.js";
+import { createApplicationFrame } from "../shell/application-shell.js";
 import { renderLoginShell, renderLogoutPendingShell } from "../shell/login-shell.js";
 
 function navigateToLogin(root) {
@@ -88,6 +89,24 @@ async function bootLogin(root, client) {
   render();
 }
 
+function renderReadsDisabled(root) {
+  const { shell, main } = createApplicationFrame({ environmentLabel: "READS NOT ACTIVATED" });
+  const section = document.createElement("section");
+  section.className = "empty-shell";
+  const content = document.createElement("div");
+  const heading = document.createElement("h2");
+  heading.textContent = "Frontend data reads are not activated";
+  const description = document.createElement("p");
+  description.className = "muted";
+  description.textContent = "Authentication is available, but this environment is not exposing the read-only task board.";
+  content.append(heading, description);
+  section.append(content);
+  main.append(section);
+  root.replaceChildren(shell);
+  root.hidden = false;
+  root.dataset.shellState = "private-reads-disabled";
+}
+
 export async function bootPrivateFrontend(root, { mode, fetchImpl = globalThis.fetch } = {}) {
   const client = new FrontendHttpClient({ fetchImpl });
   if (window.location.pathname === "/login") {
@@ -117,12 +136,11 @@ export async function bootPrivateFrontend(root, { mode, fetchImpl = globalThis.f
   if (mode === "private-postgresql") {
     protectedController = await renderLocalPostgresqlBoard(root, {
       initialTaskId: parsePostgresTaskRoute(window.location.pathname)?.taskId ?? null,
-      prototypeLabel: "POSTGRESQL — NON-AUTHORITATIVE",
+      environmentLabel: "POSTGRESQL — NON-AUTHORITATIVE",
       onAuthenticationLost,
     });
   } else {
-    const { renderFixturePrototype } = await import("../prototype/prototype-app.js");
-    renderFixturePrototype(root, "board", parseTaskRoute(window.location.pathname), { reviewMode: false });
+    renderReadsDisabled(root);
   }
   if (!root.hidden) installLogout(root, lifecycle, client, {
     stopProtectedReads: () => protectedController?.stop(),

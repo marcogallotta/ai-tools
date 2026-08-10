@@ -14,7 +14,7 @@ import os
 import subprocess
 import tempfile
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -56,6 +56,7 @@ class SourceBundle:
     record_count: int
     max_observed_at: datetime
     sections: Mapping[uuid.UUID, str]
+    section_names: Mapping[uuid.UUID, str] = field(default_factory=dict)
 
     @property
     def high_water_mark(self) -> str:
@@ -85,15 +86,19 @@ class SectionSpec:
 def section_specs_from_bundle(source_bundle: SourceBundle) -> tuple[SectionSpec, ...]:
     """Derive one registrable section per distinct section discovered in the corpus.
 
-    The legacy corpus carries only an Asana section gid per task, not a
-    human-assigned display name or workflow role, so both are placeholders
-    keyed off the gid. Ordered by gid for a deterministic registry ordinal.
+    Current source bundles preserve the Asana section display name. Older
+    programmatically-constructed bundles may omit it, in which case the
+    historical placeholder remains as a compatibility fallback. Workflow role
+    is still an explicit bootstrap concern and is never inferred from the name.
+    Ordered by gid for a deterministic registry ordinal.
     """
     return tuple(
         SectionSpec(
             section_id=section_id,
             section_gid=section_gid,
-            section_name=f"Imported section {section_gid}",
+            section_name=source_bundle.section_names.get(
+                section_id, f"Imported section {section_gid}"
+            ),
             workflow_role=f"imported-section-{section_gid}",
         )
         for section_id, section_gid in sorted(
@@ -248,6 +253,7 @@ def inspect_source_bundle(
     asana_gids: set[str] = set()
     observed_values: list[datetime] = []
     sections: dict[uuid.UUID, str] = {}
+    section_names: dict[uuid.UUID, str] = {}
     count = 0
     for line_number, raw_line in enumerate(raw.splitlines(), start=1):
         if not raw_line.strip():
@@ -290,6 +296,18 @@ def inspect_source_bundle(
         except ValueError as exc:
             raise InitialBootstrapError(f"source line {line_number}: section_id is not a UUID") from exc
         section_gid = _required_string(record, "section_gid", line_number=line_number)
+        raw_section_name = record.get("section_name")
+        section_name: str | None = None
+        if raw_section_name is not None:
+            if not isinstance(raw_section_name, str) or not raw_section_name.strip():
+                raise InitialBootstrapError(
+                    f"source line {line_number}: section_name must be a nonblank string when present"
+                )
+            section_name = raw_section_name.strip()
+            if len(section_name) > 256:
+                raise InitialBootstrapError(
+                    f"source line {line_number}: section_name exceeds 256 characters"
+                )
         known_gid = sections.get(parsed_section)
         if known_gid is None:
             sections[parsed_section] = section_gid
@@ -298,6 +316,15 @@ def inspect_source_bundle(
                 f"source line {line_number}: section_id {parsed_section} maps to both "
                 f"section_gid {known_gid} and {section_gid}"
             )
+        if section_name is not None:
+            known_name = section_names.get(parsed_section)
+            if known_name is None:
+                section_names[parsed_section] = section_name
+            elif known_name != section_name:
+                raise InitialBootstrapError(
+                    f"source line {line_number}: section_id {parsed_section} maps to both "
+                    f"section_name {known_name!r} and {section_name!r}"
+                )
         _required_string(record, "title", line_number=line_number)
         _required_string(record, "body", line_number=line_number)
         _required_string(record, "identity_scheme", line_number=line_number)
@@ -313,6 +340,7 @@ def inspect_source_bundle(
         record_count=count,
         max_observed_at=max(observed_values),
         sections=sections,
+        section_names=section_names,
     )
 
 

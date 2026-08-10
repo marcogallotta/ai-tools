@@ -69,11 +69,15 @@ export function captureBoardViewState(host, board) {
     const list = host.querySelector?.(`[data-card-list="${CSS.escape(section.id)}"]`);
     if (list) vertical.set(section.id, { continuityId: section.continuityId, scrollTop: list.scrollTop });
   }
-  const focused = document.activeElement?.closest?.(".task-card[data-task-id]");
+  const activeElement = document.activeElement;
+  const focused = activeElement?.closest?.(".task-card[data-task-id]");
+  const focusedSection = activeElement?.closest?.(".board-column[data-section-id]");
   return {
     horizontal: scroller?.scrollLeft ?? 0,
     vertical,
     focusedTaskId: focused?.dataset.taskId ?? null,
+    focusedSectionId: focusedSection?.dataset.sectionId ?? null,
+    hadBoardFocus: activeElement === host || Boolean(host.contains?.(activeElement)),
   };
 }
 
@@ -87,9 +91,18 @@ export function restoreBoardViewState(host, board, state) {
     const list = host.querySelector?.(`[data-card-list="${CSS.escape(section.id)}"]`);
     if (list) list.scrollTop = saved.scrollTop;
   }
-  if (!state.focusedTaskId) return;
-  const card = host.querySelector?.(`.task-card[data-task-id="${CSS.escape(state.focusedTaskId)}"]`);
-  if (!card) return;
-  card.focus({ preventScroll: true });
-  card.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  if (!state.hadBoardFocus) return;
+  const card = state.focusedTaskId
+    ? host.querySelector?.(`.task-card[data-task-id="${CSS.escape(state.focusedTaskId)}"]`)
+    : null;
+  if (card) {
+    card.focus({ preventScroll: true });
+    card.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+    return;
+  }
+  const heading = state.focusedSectionId
+    ? host.querySelector?.(`[data-section-id="${CSS.escape(state.focusedSectionId)}"] .board-column__title`)
+    : null;
+  const fallback = heading ?? host.querySelector?.(".zero-board") ?? host;
+  fallback?.focus({ preventScroll: true });
 }

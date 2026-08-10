@@ -18,7 +18,7 @@ export function renderLoadingState(host) {
   host.append(status, skeleton);
 }
 
-export function renderInitialErrorState(host, onRetry, { description: descriptionText = "No usable board is available yet. Retry the fixture load." } = {}) {
+export function renderInitialErrorState(host, onRetry, { description: descriptionText = "No usable board is available yet. Retry the board load." } = {}) {
   host.replaceChildren();
   host.className = "board-region state-shell";
   host.setAttribute("aria-label", "Dish task board");

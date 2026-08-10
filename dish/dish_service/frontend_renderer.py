@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import html
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 
@@ -44,9 +45,6 @@ def render_body(body: str, *, config: RenderConfig) -> dict[str, str]:
 
     output: list[str] = []
     output_length = 0
-    paragraph: list[str] = []
-    list_kind: str | None = None
-    code: list[str] | None = None
 
     def emit(value: str) -> None:
         nonlocal output_length
@@ -54,6 +52,32 @@ def render_body(body: str, *, config: RenderConfig) -> dict[str, str]:
         if output_length > config.max_rendered_chars:
             raise DetailCapacityExceeded("rendered body exceeds the configured bound")
         output.append(value)
+
+    process_index = next(
+        (
+            index
+            for index in range(len(lines) - 1)
+            if lines[index] == "---" and lines[index + 1] == "## PROCESS RECORD"
+        ),
+        None,
+    )
+    if process_index is None:
+        _render_lines(lines, emit)
+    else:
+        _render_lines(lines[:process_index], emit)
+        emit('<details class="canonical-process-record"><summary>Process record and technical details</summary>')
+        _render_lines(lines[process_index + 1 :], emit)
+        emit("</details>")
+    rendered = "".join(output)
+    if len(rendered) > config.max_rendered_chars:
+        raise DetailCapacityExceeded("rendered body exceeds the configured bound")
+    return {"state": "sanitized_html", "html": rendered}
+
+
+def _render_lines(lines: list[str], emit: Callable[[str], None]) -> None:
+    paragraph: list[str] = []
+    list_kind: str | None = None
+    code: list[str] | None = None
 
     def flush_paragraph() -> None:
         nonlocal paragraph
@@ -105,10 +129,6 @@ def render_body(body: str, *, config: RenderConfig) -> dict[str, str]:
     if code is not None:
         raise RenderRejected("unclosed fenced code block")
     flush_paragraph(); close_list()
-    rendered = "".join(output)
-    if len(rendered) > config.max_rendered_chars:
-        raise DetailCapacityExceeded("rendered body exceeds the configured bound")
-    return {"state": "sanitized_html", "html": rendered}
 
 
 def plain_text_fallback(body: str, *, config: RenderConfig) -> dict[str, str]:

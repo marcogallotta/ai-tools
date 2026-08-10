@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "node tools/build.mjs",
+    "build:review": "node tools/build.mjs --review",
     "dev": "node tools/dev-server.mjs",
     "format:check": "node tools/lint.mjs --format-only",
     "lint": "node tools/lint.mjs",
@@ -13,6 +14,6 @@
     "test:browser": "npm run build && python3 tools/browser_harness.py test",
     "screenshots": "npm run build && python3 tools/browser_harness.py screenshots",
     "check": "npm run format:check && npm run lint && npm run schema:check && npm run test:unit && npm run build",
-    "review": "npm run build && node tools/dev-server.mjs"
+    "review": "npm run build:review && DISH_FRONTEND_STATIC_ROOT=review-dist node tools/dev-server.mjs"
   }
 }

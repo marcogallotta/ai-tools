@@ -2,6 +2,8 @@ function cardsInColumn(column) {
   return [...column.querySelectorAll(".task-card")];
 }
 
+const keyboardHosts = new WeakSet();
+
 function focusColumnTarget(column) {
   const card = column.querySelector(".task-card");
   const target = card ?? column.querySelector(".board-column__title");
@@ -36,20 +38,30 @@ function handleCardKey(event, card) {
   return false;
 }
 
+export function boardScrollBehavior(matchMedia = globalThis.matchMedia) {
+  if (typeof matchMedia !== "function") return "smooth";
+  return matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+}
+
+function handleBoardKeydown(event) {
+  const host = event.currentTarget;
+  const card = event.target.closest?.(".task-card");
+  if (card && handleCardKey(event, card)) {
+    event.preventDefault();
+    return;
+  }
+  if (event.target !== host) return;
+  const scroller = host.querySelector(".board-scroller");
+  if (!scroller) return;
+  const distance = event.key === "ArrowRight" ? 320 : event.key === "ArrowLeft" ? -320 : 0;
+  if (distance) {
+    scroller.scrollBy({ left: distance, behavior: boardScrollBehavior() });
+    event.preventDefault();
+  }
+}
+
 export function installBoardKeyboard(host) {
-  host.addEventListener("keydown", (event) => {
-    const card = event.target.closest?.(".task-card");
-    if (card && handleCardKey(event, card)) {
-      event.preventDefault();
-      return;
-    }
-    if (event.target !== host) return;
-    const scroller = host.querySelector(".board-scroller");
-    if (!scroller) return;
-    const distance = event.key === "ArrowRight" ? 320 : event.key === "ArrowLeft" ? -320 : 0;
-    if (distance) {
-      scroller.scrollBy({ left: distance, behavior: "smooth" });
-      event.preventDefault();
-    }
-  });
+  if (keyboardHosts.has(host)) return;
+  keyboardHosts.add(host);
+  host.addEventListener("keydown", handleBoardKeydown);
 }

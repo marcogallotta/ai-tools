@@ -7,6 +7,7 @@ function createSection(section, options) {
   region.className = "board-column";
   region.dataset.sectionId = section.id;
   region.setAttribute("aria-labelledby", `heading-${section.id}`);
+  region.setAttribute("aria-busy", "false");
 
   const header = document.createElement("header");
   header.className = "board-column__header";
@@ -39,7 +40,19 @@ function createSection(section, options) {
     loadMore.type = "button";
     loadMore.textContent = section.loadMoreBlocked ? "Reload required" : "Load more";
     loadMore.disabled = Boolean(section.loadMoreBlocked);
-    if (!section.loadMoreBlocked) loadMore.addEventListener("click", () => options.onLoadMore(section, region));
+    if (!section.loadMoreBlocked) loadMore.addEventListener("click", async () => {
+      if (region.getAttribute("aria-busy") === "true") return;
+      region.setAttribute("aria-busy", "true");
+      loadMore.disabled = true;
+      try {
+        await options.onLoadMore(section, region);
+      } finally {
+        if (region.isConnected) {
+          region.setAttribute("aria-busy", "false");
+          loadMore.disabled = false;
+        }
+      }
+    });
     region.append(loadMore);
   }
   return region;

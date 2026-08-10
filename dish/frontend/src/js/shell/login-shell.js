@@ -11,7 +11,7 @@ export function renderLoginShell(root, {
   root.hidden = false;
   root.dataset.shellState = model.kind;
 
-  const layout = document.createElement("div");
+  const layout = document.createElement("main");
   layout.className = "login-layout";
   const card = document.createElement("section");
   card.className = "panel-card";
@@ -67,7 +67,7 @@ export function renderLogoutPendingShell(root, { onRetry }) {
   root.replaceChildren();
   root.hidden = false;
   root.dataset.shellState = "logout-unresolved";
-  const layout = document.createElement("div");
+  const layout = document.createElement("main");
   layout.className = "login-layout";
   const card = document.createElement("section");
   card.className = "panel-card";

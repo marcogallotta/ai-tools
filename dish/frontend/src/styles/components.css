@@ -59,7 +59,7 @@
   color: var(--color-ink);
 }
 
-.prototype-badge {
+.environment-badge {
   display: inline-flex;
   align-items: center;
   min-height: 1.7rem;
@@ -107,7 +107,7 @@
   border-radius: var(--radius-medium);
   background: linear-gradient(110deg, #ebe8e1 20%, #f8f7f3 40%, #ebe8e1 60%);
   background-size: 200% 100%;
-  animation: fixture-loading 1.6s linear infinite;
+  animation: board-loading 1.6s linear infinite;
 }
 
 .initial-error-shell {
@@ -119,7 +119,7 @@
   text-align: center;
 }
 
-@keyframes fixture-loading {
+@keyframes board-loading {
   to { background-position-x: -200%; }
 }
 

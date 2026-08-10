@@ -31,7 +31,8 @@ select {
 }
 
 :focus-visible {
-  outline: 3px solid var(--color-focus);
+  outline: 3px solid var(--color-surface);
+  box-shadow: 0 0 0 5px var(--color-focus);
 }
 
 h1,

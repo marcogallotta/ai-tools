@@ -56,6 +56,7 @@ export function openTaskDetail(detail, origin, { onRequestClose, focusFallback, 
   const prior = refresh && activePanel?.panel?.dataset.taskDetail === detail.id ? {
     scrollTop: activePanel.panel.querySelector(".task-detail__body")?.scrollTop ?? 0,
     technicalOpen: Boolean(activePanel.panel.querySelector(".detail-technical")?.open),
+    processOpen: Boolean(activePanel.panel.querySelector(".canonical-process-record")?.open),
     focusInside: activePanel.panel.contains(document.activeElement),
   } : null;
   closeTaskDetail({ restoreFocus: false });
@@ -95,6 +96,10 @@ export function openTaskDetail(detail, origin, { onRequestClose, focusFallback, 
   const content = document.createElement("div");
   content.className = "detail-content";
   content.dataset.renderMode = renderSafeContent(content, detail);
+  if (prior?.processOpen) {
+    const processRecord = content.querySelector(".canonical-process-record");
+    if (processRecord) processRecord.open = true;
+  }
   if (facts.childElementCount) body.append(facts);
   body.append(contentHeading, content);
   if (detail.disclosures?.length || detail.projection) {

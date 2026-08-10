@@ -20,5 +20,5 @@ export function contentPresentation(detail) {
   if (blocks.every((block) => supportedKinds.has(block.kind) && typeof block.text === "string")) {
     return { mode: "rendered", blocks };
   }
-  return { mode: "fallback", text: "Content was rejected by the fixture renderer." };
+  return { mode: "fallback", text: "Content was rejected by the safe renderer." };
 }

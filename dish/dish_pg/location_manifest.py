@@ -44,6 +44,7 @@ _ASANA_OPT_FIELDS = ",".join(
         "completed",
         "memberships.project.gid",
         "memberships.section.gid",
+        "memberships.section.name",
     )
 )
 
@@ -132,7 +133,7 @@ def _required_mapping(value: object, *, field: str) -> Mapping[str, Any]:
 
 def _project_section(
     task: Mapping[str, Any], project_gid: str, *, environment: str
-) -> str | None:
+) -> tuple[str, str] | None:
     """Return the task's current section within `project_gid`, or None if the task has
     since left that project's membership (normal lifecycle -- e.g. moved to Cooking
     History once eaten). A departed task is still governed by dish; the caller falls
@@ -140,7 +141,7 @@ def _project_section(
     memberships = task.get("memberships")
     if not isinstance(memberships, list):
         raise LocationManifestError("Asana returned malformed task memberships")
-    sections: set[str] = set()
+    sections: list[tuple[str, object]] = []
     matching_memberships = 0
     for raw_membership in memberships:
         membership = _required_mapping(raw_membership, field="task membership")
@@ -157,16 +158,28 @@ def _project_section(
                 continue
         matching_memberships += 1
         section = _required_mapping(membership.get("section"), field="membership section")
-        sections.add(_canonical_gid(section.get("gid"), field="membership.section.gid"))
+        sections.append(
+            (
+                _canonical_gid(section.get("gid"), field="membership.section.gid"),
+                section.get("name"),
+            )
+        )
     label = "TEST" if environment == "test" else "production"
     if matching_memberships == 0:
         return None
-    if matching_memberships != 1 or len(sections) != 1:
+    distinct_gids = sorted({section_gid for section_gid, _name in sections})
+    if matching_memberships != 1 or len(distinct_gids) != 1:
         raise LocationManifestError(
             f"task has ambiguous placement in {label} project {project_gid}: "
-            f"sections={sorted(sections)}"
+            f"sections={distinct_gids}"
         )
-    return next(iter(sections))
+    section_gid, raw_name = sections[0]
+    if not isinstance(raw_name, str) or not raw_name.strip():
+        raise LocationManifestError("membership.section.name must be a nonblank string")
+    section_name = raw_name.strip()
+    if len(section_name) > 256:
+        raise LocationManifestError("membership.section.name exceeds 256 characters")
+    return section_gid, section_name
 
 
 def build_location_manifest(
@@ -194,10 +207,10 @@ def build_location_manifest(
         completed = task.get("completed")
         if not isinstance(completed, bool):
             raise LocationManifestError(f"task {task_gid} completed must be a boolean")
-        section_gid = _project_section(
+        section = _project_section(
             task, canonical_project_gid, environment=environment
         )
-        if section_gid is None:
+        if section is None:
             if not allow_departed_tasks:
                 raise LocationManifestError(
                     f"task {task_gid} has left the project and has no last known section"
@@ -206,6 +219,7 @@ def build_location_manifest(
             # project (moved to Cooking History, deleted, etc). Skip it
             # rather than failing the whole manifest build.
             continue
+        section_gid, section_name = section
         observed_at = now()
         if (
             not isinstance(observed_at, datetime)
@@ -218,6 +232,7 @@ def build_location_manifest(
             "project_ids": [str(target_uuid("project", canonical_project_gid))],
             "section_id": str(target_uuid("section", section_gid)),
             "section_gid": section_gid,
+            "section_name": section_name,
             "completed": completed,
             "observed_at": observed_at.isoformat(),
             "existence_state": "ordinary",

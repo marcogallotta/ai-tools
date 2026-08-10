@@ -37,5 +37,5 @@ export function renderSafeContent(host, detail) {
     element.textContent = block.text;
     host.append(element);
   }
-  return "fixture";
+  return "rendered";
 }

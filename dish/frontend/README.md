@@ -19,7 +19,10 @@ npm run screenshots
 npm run check
 ```
 
-`npm run review` creates a fresh fixture-only static build and serves the stable visual-review scenarios documented in `review-guide.md`. Review mode rejects backend and cross-origin browser requests.
+`npm run build` creates the production-shaped `dist/` tree. It contains no fixture payloads,
+prototype application, or review catalogue. `npm run review` instead creates and serves a separate
+fixture-only `review-dist/` tree for the stable visual-review scenarios documented in
+`review-guide.md`; review mode rejects backend and cross-origin browser requests.
 
 The implementation uses browser-native ES modules, Node's built-in unit-test runner, and a
 Playwright browser harness that drives the installed Chromium executable.
@@ -40,10 +43,18 @@ placement, completion, projection, or content-mutation authority.
 
 ## Current delivery status
 
-Delivery Stage 0 and fixture-backed Delivery Stage 1A–1F are implemented. The Stage 3 PostgreSQL
-board and the Stage 4 read-only task-detail/deep-link candidate can now be exercised through an
-explicit loopback-only local observation mode. Real authentication, production frontend routing, and
-authoritative PostgreSQL activation remain absent and governed by their readiness gates.
+Delivery Stage 0 and fixture-backed Delivery Stage 1A–1F are implemented. Integration candidates
+through Delivery Stage 5 are present behind the existing private/local observation boundaries,
+including authenticated private-shell wiring, PostgreSQL board/detail reads, canonical Dish-UUID
+deep links, and refresh/reconciliation behavior. The current Delivery Stage 6 pass hardens that
+integrated surface for focus restoration, busy/live-region semantics, reduced motion, contrast,
+collapsed supporting process detail, real imported section names, idempotent board keyboard
+handling, complete shell landmarks, and a production/review build split that keeps
+fixture/prototype code off production paths.
+
+This does not claim the human Delivery Stage 6 walkthrough, Gate A, Gate B, production activation,
+or Delivery Stage 7 browser-acceptance gate has passed. PostgreSQL remains non-authoritative until
+the separate authority/cutover process explicitly says otherwise.
 ## Integration readiness
 
 - Gate A authoring review: `../docs/frontend-gate-a-readiness.md`
@@ -96,9 +107,10 @@ npm --prefix frontend run build
 .venv/bin/python scripts/dish-frontend-local
 ```
 
-Open `http://127.0.0.1:4173/?source=postgresql`. Without `source=postgresql` the same build remains
-fixture-backed. `review=1` always forces fixture mode and blocks frontend API requests. In PostgreSQL
-mode, selecting a task opens fresh read-only detail and normalizes the URL to
+Open `http://127.0.0.1:4173/?source=postgresql`. The production-shaped build requires that explicit
+local PostgreSQL source selection; it no longer falls back to fixtures. Fixture review is available
+only through the separate `npm run review` build. In PostgreSQL mode, selecting a task opens fresh
+read-only detail and normalizes the URL to
 `/dishes/<stored-dish-uuid>/<decorative-title-slug>?source=postgresql`; the stored Dish UUID is
 authoritative and the slug is decorative. Direct load/reload and Back/Forward restore that local
 detail state. The UUID is an identifier, not an authorization credential. Destination remains omitted until Gate B names an

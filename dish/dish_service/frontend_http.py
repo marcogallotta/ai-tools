@@ -38,13 +38,11 @@ LOG = logging.getLogger("dish.frontend.private")
 _TASK_RE = re.compile(r"^/frontend/tasks/((?!00000000-0000-0000-0000-000000000000)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$")
 _SECTION_RE = re.compile(r"^/frontend/sections/(r1s-[A-Za-z0-9_-]{27})/tasks$")
 _HTML_TASK_RE = re.compile(r"^/dishes/(?!00000000-0000-0000-0000-000000000000)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[^/?#]{1,600}$")
-_HTML_FIXTURE_RE = re.compile(r"^/task/[a-z0-9][a-z0-9-]{0,79}$")
 _PUBLIC_STATIC_PREFIXES = ("/assets/", "/styles/", "/js/")
-_PROTECTED_FIXTURE_PREFIX = "/fixtures/"
 _MAX_STATIC_BYTES = 10 * 1024 * 1024
 
 def is_frontend_get(path: str) -> bool:
-    return path in {"/", "/login", "/frontend/session", "/frontend/board", "/openapi/frontend.json"} or (path.startswith(_PUBLIC_STATIC_PREFIXES) or path.startswith(_PROTECTED_FIXTURE_PREFIX)) or path.startswith("/frontend/sections/") or path.startswith("/frontend/tasks/") or path.startswith("/dishes/") or path.startswith("/task/")
+    return path in {"/", "/login", "/frontend/session", "/frontend/board", "/openapi/frontend.json"} or path.startswith(_PUBLIC_STATIC_PREFIXES) or path.startswith("/frontend/sections/") or path.startswith("/frontend/tasks/") or path.startswith("/dishes/")
 
 def is_frontend_post(path: str) -> bool:
     return path in {"/frontend/login", "/frontend/logout"}
@@ -63,13 +61,9 @@ def dispatch_get(handler, runtime) -> bool:
         require_host(handler.headers, origin=runtime.settings.origin)
         if path.startswith(_PUBLIC_STATIC_PREFIXES):
             _serve_static(handler, runtime, path)
-        elif path.startswith(_PROTECTED_FIXTURE_PREFIX):
-            _serve_protected_fixture(handler, runtime, path)
         elif path == "/login":
             _serve_html(handler, runtime, login=True)
         elif path == "/" or _HTML_TASK_RE.fullmatch(path):
-            _serve_protected_html(handler, runtime, path, parsed.query)
-        elif _HTML_FIXTURE_RE.fullmatch(path) and runtime.browser_runtime_mode == "private-fixture":
             _serve_protected_html(handler, runtime, path, parsed.query)
         elif path == "/frontend/session":
             _session(handler, runtime, parsed.query)
@@ -260,24 +254,13 @@ def _serve_protected_html(handler, runtime, path: str, query: str) -> None:
 
 def _serve_html(handler, runtime, *, login: bool) -> None:
     body = (runtime.static_root / "index.html").read_text(encoding="utf-8")
-    body = body.replace('name="dish-runtime-mode" content="fixture"', f'name="dish-runtime-mode" content="{runtime.browser_runtime_mode}"')
+    body = body.replace('name="dish-runtime-mode" content="local-observation"', f'name="dish-runtime-mode" content="{runtime.browser_runtime_mode}"')
     body = body.replace(
         'name="dish-refresh-interval-seconds" content="25"',
         f'name="dish-refresh-interval-seconds" content="{runtime.settings.refresh_interval_seconds}"',
     )
     _write_bytes(handler, http.HTTPStatus.OK, body.encode("utf-8"), "text/html; charset=utf-8", html=True)
 
-
-def _serve_protected_fixture(handler, runtime, path: str) -> None:
-    if runtime.browser_runtime_mode != "private-fixture":
-        _write_bytes(handler, http.HTTPStatus.NOT_FOUND, b"Not found\n", "text/plain; charset=utf-8"); return
-    token = session_cookie(handler.headers)
-    if not token:
-        _write_api_error(handler, http.HTTPStatus.UNAUTHORIZED, "auth_required", "Authentication is required."); return
-    try: runtime.auth.validate(token)
-    except FrontendAuthFailure as exc:
-        _write_auth_error(handler, exc); return
-    _serve_static(handler, runtime, path)
 def _serve_static(handler, runtime, path: str) -> None:
     candidate = resolve_static_candidate(runtime.static_root, path)
     if candidate is None:

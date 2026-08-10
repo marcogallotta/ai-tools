@@ -64,7 +64,7 @@ def module_bundle(entries: tuple[Path, ...]) -> str:
 
 
 def prepare_page(page, view: str, task_id: str | None = None, review_mode: bool = False) -> None:
-    page.set_content('<main id="app" class="app-root" aria-live="polite"></main>')
+    page.set_content('<div id="app" class="app-root"></div>')
     css = "\n".join((SRC / "styles" / name).read_text(encoding="utf-8") for name in STYLE_FILES)
     page.add_style_tag(content=css)
     bundle = module_bundle((
@@ -87,10 +87,17 @@ def assert_shells(browser) -> None:
     page = browser.new_page(viewport={"width": 1440, "height": 900})
     prepare_page(page, "login")
     page.locator('#app[data-shell-state="login"]').wait_for()
+    assert page.locator("main").count() == 1
     assert page.get_by_label("Shared password").is_disabled()
+    page.evaluate("renderLogoutPendingShell(document.querySelector('#app'), { onRetry: () => {} })")
+    assert page.locator("main").count() == 1
+    assert page.get_by_role("button", name="Retry sign out").is_visible()
     prepare_page(page, "app")
     page.locator('#app[data-shell-state="fixture-board"]').wait_for()
+    assert page.locator("main").count() == 1
+    assert page.locator("#app").get_attribute("aria-live") is None
     assert page.locator('[aria-label="Dish task board"]').is_visible()
+    assert page.locator(".board-column").first.get_attribute("aria-busy") == "false"
     assert page.get_by_role("button", name="Load more").is_visible()
     assert page.get_by_text(re.compile("Lease needs attention — 2 tasks")).is_visible()
     first = page.locator('[data-task-id="task-aubergine"]')
@@ -105,6 +112,31 @@ def assert_shells(browser) -> None:
     page.keyboard.press("Escape")
     assert page.get_by_role("dialog").count() == 0
     assert page.evaluate("document.activeElement.dataset.taskId") == "task-biryani"
+    page.emulate_media(reduced_motion="reduce")
+    page.locator('[aria-label="Dish task board"]').focus()
+    page.evaluate("""() => {
+      const scroller = document.querySelector('.board-scroller');
+      scroller.scrollBy = options => { window.__dishScrollBehavior = options.behavior; };
+    }""")
+    page.keyboard.press("ArrowRight")
+    assert page.evaluate("window.__dishScrollBehavior") == "auto"
+    calls = page.evaluate("""() => {
+      const host = document.querySelector('[aria-label="Dish task board"]');
+      const board = fixtureForScenario('board');
+      renderBoard(host, board, {
+        attentionLabels,
+        onSelect: () => {},
+        announce: () => {},
+        onLoadMore: async () => {},
+      });
+      const scroller = host.querySelector('.board-scroller');
+      window.__dishRepeatedRenderScrollCalls = 0;
+      scroller.scrollBy = () => { window.__dishRepeatedRenderScrollCalls += 1; };
+      host.focus();
+      host.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+      return window.__dishRepeatedRenderScrollCalls;
+    }""")
+    assert calls == 1
     prepare_page(page, "app", "task-biryani")
     assert page.get_by_role("dialog").is_visible()
     page.get_by_role("button", name="Close task detail").click()

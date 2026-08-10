@@ -30,7 +30,7 @@ export { LocalBoardRequestState } from "../features/refresh/request-state.js";
 export async function renderLocalPostgresqlBoard(root, {
   fetchImpl = globalThis.fetch,
   initialTaskId = null,
-  prototypeLabel = "LOCAL POSTGRESQL — NON-AUTHORITATIVE",
+  environmentLabel = "LOCAL POSTGRESQL — NON-AUTHORITATIVE",
   onAuthenticationLost = () => false,
   refreshIntervalMs = activeRefreshIntervalMs(),
   setTimer = globalThis.setTimeout.bind(globalThis),
@@ -38,7 +38,7 @@ export async function renderLocalPostgresqlBoard(root, {
   random = Math.random,
 } = {}) {
   const client = new FrontendHttpClient({ fetchImpl });
-  const { shell, main, noticeHost } = createApplicationFrame({ prototypeLabel });
+  const { shell, main, noticeHost } = createApplicationFrame({ environmentLabel });
   const live = document.createElement("p");
   live.className = "sr-only"; live.setAttribute("aria-live", "polite"); shell.append(live);
   root.replaceChildren(shell); root.dataset.shellState = "local-postgresql-loading";

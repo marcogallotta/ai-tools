@@ -2,10 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { applicationShellModel, loginShellModel } from "../../src/js/shell/shell-model.js";
 
- test("login shell remains explicitly non-integrated", () => {
+test("login shell exposes the private access model", () => {
   const model = loginShellModel();
   assert.equal(model.kind, "login");
-  assert.match(model.prototypeLabel, /not canonical data/i);
+  assert.match(model.description, /shared password/i);
 });
 
 test("protected shell is intentionally empty in Stage 0", () => {

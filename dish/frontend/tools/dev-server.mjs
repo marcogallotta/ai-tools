@@ -52,7 +52,9 @@ export async function startStaticServer({ root, port = 0 } = {}) {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "dist");
+  const root = process.env.DISH_FRONTEND_STATIC_ROOT
+    ? path.resolve(process.env.DISH_FRONTEND_STATIC_ROOT)
+    : path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "dist");
   const server = await startStaticServer({ root, port: Number(process.env.PORT ?? 4173) });
   console.log(`Dish frontend: ${server.origin}`);
 }

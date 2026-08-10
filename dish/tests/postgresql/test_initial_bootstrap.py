@@ -46,6 +46,7 @@ def _record(
     title: str = "[ready] Imported",
     section_id: uuid.UUID = DEFAULT_SECTION_ID,
     section_gid: str = DEFAULT_SECTION_GID,
+    section_name: str = "Research Queue",
 ) -> dict[str, object]:
     return {
         "task_id": str(task_id),
@@ -57,6 +58,7 @@ def _record(
         "project_ids": [str(DEFAULT_PROJECT_ID)],
         "section_id": str(section_id),
         "section_gid": section_gid,
+        "section_name": section_name,
         "completed": False,
         "observed_at": NOW.isoformat(),
         "operation_history": {"operations": [], "leases": [], "verification_cycles": []},
@@ -155,7 +157,17 @@ def test_bootstrap_baseline_and_import_run_end_to_end(tmp_path: Path) -> None:
             assert binding.protocol_release == "1.0.10"
             assert binding.schema_release == "2"
             assert session.get(models.GovernedProject, DEFAULT_PROJECT_ID) is not None
-            assert session.get(models.GovernedSection, DEFAULT_SECTION_ID) is not None
+            governed_section = session.get(models.GovernedSection, DEFAULT_SECTION_ID)
+            assert governed_section is not None
+            assert governed_section.logical_name == "Research Queue"
+            registry_entry = session.scalar(
+                select(models.SectionRegistryEntry).where(
+                    models.SectionRegistryEntry.registry_version_id == result.registry_version_id,
+                    models.SectionRegistryEntry.section_id == DEFAULT_SECTION_ID,
+                )
+            )
+            assert registry_entry is not None
+            assert registry_entry.display_name == "Research Queue"
             baseline = ShadowService(session).create_baseline(
                 generation_id=result.generation_id,
                 source_generation_identity=spec.source_generation,
@@ -210,15 +222,26 @@ def test_source_bundle_registers_every_distinct_section(tmp_path: Path) -> None:
     source = _source(
         tmp_path,
         _record(first_task, "3001"),
-        _record(second_task, "3002", section_id=OTHER_SECTION_ID, section_gid=OTHER_SECTION_GID),
+        _record(
+            second_task,
+            "3002",
+            section_id=OTHER_SECTION_ID,
+            section_gid=OTHER_SECTION_GID,
+            section_name="Verification Queue",
+        ),
     )
     bundle = inspect_source_bundle(source, project_id=DEFAULT_PROJECT_ID)
     assert bundle.sections == {
         DEFAULT_SECTION_ID: DEFAULT_SECTION_GID,
         OTHER_SECTION_ID: OTHER_SECTION_GID,
     }
+    assert bundle.section_names == {
+        DEFAULT_SECTION_ID: "Research Queue",
+        OTHER_SECTION_ID: "Verification Queue",
+    }
     sections = section_specs_from_bundle(bundle)
     assert [section.section_id for section in sections] == [DEFAULT_SECTION_ID, OTHER_SECTION_ID]
+    assert [section.section_name for section in sections] == ["Research Queue", "Verification Queue"]
     assert len({section.workflow_role for section in sections}) == len(sections)
 
 
@@ -229,6 +252,16 @@ def test_source_bundle_rejects_section_id_reused_for_a_different_gid(tmp_path: P
         _record(uuid.uuid4(), "3004", section_gid="9999999999999999"),
     )
     with pytest.raises(InitialBootstrapError, match="maps to both"):
+        inspect_source_bundle(source, project_id=DEFAULT_PROJECT_ID)
+
+
+def test_source_bundle_rejects_section_id_reused_for_a_different_name(tmp_path: Path) -> None:
+    source = _source(
+        tmp_path,
+        _record(uuid.uuid4(), "3005"),
+        _record(uuid.uuid4(), "3006", section_name="Different name"),
+    )
+    with pytest.raises(InitialBootstrapError, match="section_name"):
         inspect_source_bundle(source, project_id=DEFAULT_PROJECT_ID)
 
 

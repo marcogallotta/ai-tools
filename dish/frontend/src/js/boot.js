@@ -1,58 +1,48 @@
 import { DOCUMENT_TITLE } from "./config.js";
-import { installFixtureReviewBoundary } from "./review/review-boundary.js";
-import { isReviewScenario, scenarioTaskId } from "./review/review-catalog.js";
-import { createReviewToolbar } from "./review/review-toolbar.js";
-import { parsePostgresTaskRoute, parseTaskRoute } from "./features/routing/routes.js";
-import { renderLoginShell } from "./shell/login-shell.js";
+import { parsePostgresTaskRoute } from "./features/routing/routes.js";
 import { renderLocalPostgresqlBoard } from "./local/local-board-app.js";
 import { frontendDataSource } from "./local/source-selection.js";
 import { bootPrivateFrontend } from "./private/private-app.js";
+import { createApplicationFrame } from "./shell/application-shell.js";
 
 export function runtimeMode(documentRoot = document) {
-  return documentRoot.querySelector('meta[name="dish-runtime-mode"]')?.content ?? "fixture";
+  return documentRoot.querySelector('meta[name="dish-runtime-mode"]')?.content ?? "local-observation";
 }
 
-export function resolveInitialView(search = window.location.search, pathname = window.location.pathname) {
-  const parameters = new URLSearchParams(search);
-  const requestedScenario = parameters.get("scenario") ?? "board";
-  const view = parameters.get("view") === "login" ? "login" : "app";
-  const scenario = isReviewScenario(requestedScenario) && requestedScenario !== "login" ? requestedScenario : "board";
-  const dataSource = frontendDataSource(search);
-  const postgresRoute = dataSource === "postgresql" ? parsePostgresTaskRoute(pathname) : null;
-  return {
-    view,
-    scenario,
-    reviewMode: parameters.get("review") === "1",
-    taskId: parseTaskRoute(pathname) ?? scenarioTaskId(scenario),
-    postgresTaskId: postgresRoute?.taskId ?? null,
-    dataSource,
-  };
+function renderLocalSourceRequired(root) {
+  const { shell, main } = createApplicationFrame({ environmentLabel: "LOCAL OBSERVATION" });
+  const section = document.createElement("section");
+  section.className = "empty-shell";
+  const content = document.createElement("div");
+  const heading = document.createElement("h2");
+  heading.textContent = "PostgreSQL observation source not selected";
+  const description = document.createElement("p");
+  description.className = "muted";
+  description.textContent = "Open this local build with ?source=postgresql to inspect the read-only PostgreSQL observation surface.";
+  content.append(heading, description);
+  section.append(content);
+  main.append(section);
+  root.replaceChildren(shell);
+  root.hidden = false;
+  root.dataset.shellState = "local-source-required";
 }
 
 export async function boot(root = document.querySelector("#app")) {
   if (!root) throw new Error("Dish frontend root element is missing");
   document.title = DOCUMENT_TITLE;
   const mode = runtimeMode();
-  if (mode === "private-fixture" || mode === "private-postgresql") {
-    document.documentElement.dataset.reviewMode = "false";
+
+  if (mode === "private-disabled" || mode === "private-postgresql") {
     await bootPrivateFrontend(root, { mode });
     return;
   }
-
-  const initial = resolveInitialView();
-  if (initial.reviewMode) installFixtureReviewBoundary();
-  document.documentElement.dataset.reviewMode = String(initial.reviewMode);
-  if (initial.view === "login") {
-    renderLoginShell(root);
-    if (initial.reviewMode) root.prepend(createReviewToolbar("login"));
+  if (mode !== "local-observation") throw new Error("Dish frontend runtime mode is invalid");
+  if (frontendDataSource(window.location.search) !== "postgresql") {
+    renderLocalSourceRequired(root);
     return;
   }
-  if (initial.dataSource === "postgresql") {
-    void renderLocalPostgresqlBoard(root, { initialTaskId: initial.postgresTaskId });
-    return;
-  }
-  const { renderFixturePrototype } = await import("./prototype/prototype-app.js");
-  renderFixturePrototype(root, initial.scenario, initial.taskId, { reviewMode: initial.reviewMode });
+  const route = parsePostgresTaskRoute(window.location.pathname);
+  await renderLocalPostgresqlBoard(root, { initialTaskId: route?.taskId ?? null });
 }
 
 void boot();

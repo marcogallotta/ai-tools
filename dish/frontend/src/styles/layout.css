@@ -9,10 +9,6 @@
   padding: var(--space-6);
 }
 
-html[data-review-mode="true"] .login-layout {
-  padding-block-start: 6rem;
-}
-
 .application-shell {
   display: grid;
   grid-template-rows: auto auto auto minmax(0, 1fr);

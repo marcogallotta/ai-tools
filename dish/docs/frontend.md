@@ -106,8 +106,8 @@ infinite scrolling.
 Each card shows:
 
 - the task title;
-- one compact factual status line showing the current operation and phase when present, or
-  **No active operation** when no operation is active;
+- one compact factual status line showing the current operation and phase when present; ordinary
+  no-active-operation state is omitted rather than repeated on every card;
 - small attention indicators only for the approved Stage 1 categories: **ISOLATED**, lease attention,
   Verification attention, active hold, required recovery, active abandonment, active succession, or
   abnormal projection.
@@ -140,8 +140,9 @@ The task side panel:
 - remains open through background refresh while the selected task remains eligible for the board;
 - shows human-readable information rather than technical identifiers or diagnostics.
 
-The panel shows the task's current canonical content and current factual state only. Stage 1 has no
-history timeline or historical-content browser.
+The panel shows the task's current canonical content and current factual state only. Supporting
+canonical Process Record material is collapsed by default and remains available in-place. Stage 1
+has no history timeline or historical-content browser.
 
 The panel must show:
 

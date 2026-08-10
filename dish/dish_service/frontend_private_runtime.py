@@ -74,7 +74,7 @@ class FrontendPrivateRuntime:
 
     @property
     def browser_runtime_mode(self) -> str:
-        return "private-postgresql" if self.settings.postgresql_reads_enabled else "private-fixture"
+        return "private-postgresql" if self.settings.postgresql_reads_enabled else "private-disabled"
 
     @staticmethod
     def _board_config(settings: FrontendRuntimeSettings) -> FrontendBoardConfig | None:

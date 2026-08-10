@@ -6,7 +6,7 @@ import { loadFixtureContinuation, renderBoard } from "../features/board/board.js
 import { closeTaskDetail, openTaskDetail } from "../features/detail/task-detail.js";
 import { effectiveTaskContributions, groupNotices } from "../features/notices/notice-model.js";
 import { renderNotices } from "../features/notices/notices.js";
-import { BOARD_ROUTE, parseTaskRoute, taskRoute, writePrototypeRoute } from "../features/routing/routes.js";
+import { BOARD_ROUTE, parseTaskRoute, taskRoute, writePrototypeRoute } from "./prototype-routes.js";
 import { renderInitialErrorState, renderLoadingState } from "../features/refresh/state-shells.js";
 import { installFixtureReviewBoundary } from "../review/review-boundary.js";
 import { createReviewToolbar } from "../review/review-toolbar.js";
@@ -32,7 +32,7 @@ export function renderFixturePrototype(root, scenario = "board", initialTaskId =
   removeRouteListener?.();
   if (reviewMode) installFixtureReviewBoundary();
   closeTaskDetail({ restoreFocus: false });
-  const { shell, main, noticeHost } = createApplicationFrame();
+  const { shell, main, noticeHost } = createApplicationFrame({ environmentLabel: "Fixture prototype — not canonical data" });
   if (reviewMode) shell.querySelector(".app-header")?.after(createReviewToolbar(scenario));
   const live = document.createElement("p");
   live.className = "sr-only";

@@ -182,6 +182,7 @@ def test_manifest_matches_sqlite_corpus_and_exports_importer_compatible_source(
         "project_ids": [str(target_uuid("project", project_gid))],
         "section_id": str(target_uuid("section", "901")),
         "section_gid": "901",
+        "section_name": "Queue",
         "completed": False,
         "observed_at": "2026-08-03T09:01:00+00:00",
         "existence_state": "ordinary",
@@ -199,6 +200,8 @@ def test_manifest_matches_sqlite_corpus_and_exports_importer_compatible_source(
     assert records[0].spec.project_ids == (target_uuid("project", project_gid),)
     assert records[1].spec.section_id == target_uuid("section", "902")
     assert records[1].spec.completed is True
+    exported = [json.loads(line) for line in source.read_text(encoding="utf-8").splitlines()]
+    assert [record["section_name"] for record in exported] == ["Queue", "Queue"]
 
 @pytest.mark.parametrize(
     ("mutate", "message"),
@@ -207,6 +210,7 @@ def test_manifest_matches_sqlite_corpus_and_exports_importer_compatible_source(
         (lambda task: task.update(completed="false"), "must be a boolean"),
         (lambda task: task.update(memberships="bad"), "malformed task memberships"),
         (lambda task: task["memberships"].clear(), "no last known section"),
+        (lambda task: task["memberships"][0]["section"].update(name=""), "section.name"),
         (
             lambda task: task["memberships"].append(
                 {"project": {"gid": "900"}, "section": {"gid": "902"}}

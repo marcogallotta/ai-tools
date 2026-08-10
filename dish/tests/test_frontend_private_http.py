@@ -75,19 +75,16 @@ class FakeService:
 
 
 class FakeRuntime:
-    def __init__(self, tmp_path: Path, *, mode: str = "private-fixture") -> None:
+    def __init__(self, tmp_path: Path, *, mode: str = "private-disabled") -> None:
         self.settings = SimpleNamespace(origin="https://dish.example.test", refresh_interval_seconds=17)
         self.browser_runtime_mode = mode
         self.auth = FakeAuth()
         self.static_root = tmp_path / "dist"
         self.static_root.mkdir(parents=True)
         (self.static_root / "index.html").write_text(
-            '<meta name="dish-runtime-mode" content="fixture"><meta name="dish-refresh-interval-seconds" content="25"><main id="app"></main>\n',
+            '<meta name="dish-runtime-mode" content="local-observation"><meta name="dish-refresh-interval-seconds" content="25"><div id="app"></div>\n',
             encoding="utf-8",
         )
-        fixtures = self.static_root / "fixtures"
-        fixtures.mkdir()
-        (fixtures / "board.json").write_text('{"fixture":true}\n', encoding="utf-8")
         self.board_calls = 0
 
     def board(self):
@@ -164,7 +161,7 @@ def api(body: bytes):
     return json.loads(body.decode())
 
 
-def test_unauthenticated_html_redirects_and_authenticated_fixture_shell_is_served(private_server) -> None:
+def test_unauthenticated_html_redirects_and_authenticated_disabled_shell_is_served(private_server) -> None:
     server, _ = private_server
     status, headers, body = request(server, "GET", "/dishes/12345678-1234-5678-1234-567812345678/example", contract=None)
     assert status == 303
@@ -173,7 +170,7 @@ def test_unauthenticated_html_redirects_and_authenticated_fixture_shell_is_serve
 
     status, headers, body = request(server, "GET", "/", cookie=TOKEN, contract=None)
     assert status == 200
-    assert b'content="private-fixture"' in body
+    assert b'content="private-disabled"' in body
     assert b'name="dish-refresh-interval-seconds" content="17"' in body
     assert header_values(headers, "Cache-Control") == ["no-store"]
     assert header_values(headers, "Content-Security-Policy")
@@ -282,19 +279,19 @@ def test_action_listener_returns_404_for_frontend_routes(tmp_path: Path) -> None
         thread.join(timeout=3)
 
 
-def test_fixture_payload_requires_session_and_is_disabled_in_postgresql_mode(private_server, tmp_path: Path) -> None:
+def test_prototype_fixture_paths_are_not_part_of_private_frontend_surface(private_server, tmp_path: Path) -> None:
     server, _ = private_server
     status, _, body = request(server, "GET", "/fixtures/board.json", contract=None)
-    assert status == 401
-    assert api(body)["error"]["code"] == "auth_required"
+    assert status == 404
+    assert api(body)["error"] == "not_found"
 
     status, _, body = request(server, "GET", "/js/%2e%2e/fixtures/board.json", contract=None)
     assert status == 404
     assert body == b"Not found\n"
 
-    status, _, body = request(server, "GET", "/fixtures/board.json", cookie=TOKEN, contract=None)
-    assert status == 200
-    assert api(body) == {"fixture": True}
+    status, _, body = request(server, "GET", "/task/task-biryani", cookie=TOKEN, contract=None)
+    assert status == 404
+    assert api(body)["error"] == "not_found"
 
     runtime = FakeRuntime(tmp_path / "postgresql", mode="private-postgresql")
     pg_server = DishHTTPServer(("127.0.0.1", 0), FakeService(tmp_path), surface_mode="private", frontend_runtime=runtime)
@@ -303,7 +300,7 @@ def test_fixture_payload_requires_session_and_is_disabled_in_postgresql_mode(pri
     try:
         status, _, body = request(pg_server, "GET", "/fixtures/board.json", cookie=TOKEN, contract=None)
         assert status == 404
-        assert body == b"Not found\n"
+        assert api(body)["error"] == "not_found"
     finally:
         pg_server.shutdown()
         pg_server.server_close()

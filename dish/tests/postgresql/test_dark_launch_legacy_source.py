@@ -47,6 +47,7 @@ def _manifest(path, *, task_id, project_id, section_id):
                         "project_ids": [str(project_id)],
                         "section_id": str(section_id),
                         "section_gid": "901",
+                        "section_name": "Queue",
                         "completed": False,
                         "observed_at": "2026-08-03T09:01:00+00:00",
                     }
@@ -68,6 +69,7 @@ def test_legacy_source_is_deterministic_and_importer_compatible(tmp_path):
     record=next(iter_source(first))
     assert record.error is None and record.spec.task_id==task_id
     assert record.spec.title=="Title" and record.spec.body=="Body"
+    assert json.loads(first.read_text().splitlines()[0])["section_name"] == "Queue"
 
 
 def test_legacy_source_exports_completed_operation_and_attempt_history(tmp_path):

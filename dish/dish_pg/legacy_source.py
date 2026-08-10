@@ -253,6 +253,7 @@ def export_legacy_source(
                     "project_ids": [str(uuid.UUID(str(value))) for value in location["project_ids"]],
                     "section_id": str(uuid.UUID(str(location["section_id"]))),
                     "section_gid": str(location["section_gid"]),
+                    "section_name": str(location["section_name"]),
                     "completed": bool(location["completed"]),
                     "observed_at": str(location["observed_at"]),
                     "existence_state": str(location.get("existence_state", "ordinary")),

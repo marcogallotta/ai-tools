@@ -1,6 +1,6 @@
 import { applicationShellModel } from "./shell-model.js";
 
-export function createApplicationFrame({ prototypeLabel } = {}) {
+export function createApplicationFrame({ environmentLabel } = {}) {
   const model = applicationShellModel();
   const shell = document.createElement("div");
   shell.className = "application-shell";
@@ -18,10 +18,13 @@ export function createApplicationFrame({ prototypeLabel } = {}) {
   heading.className = "app-header__title";
   heading.textContent = model.heading;
   identity.append(mark, heading);
-  const badge = document.createElement("span");
-  badge.className = "prototype-badge";
-  badge.textContent = prototypeLabel ?? model.prototypeLabel;
-  header.append(identity, badge);
+  header.append(identity);
+  if (environmentLabel) {
+    const badge = document.createElement("span");
+    badge.className = "environment-badge";
+    badge.textContent = environmentLabel;
+    header.append(badge);
+  }
 
   const noticeHost = document.createElement("div");
   noticeHost.id = "notice-host";

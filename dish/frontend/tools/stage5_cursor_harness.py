@@ -54,17 +54,17 @@ def _prepare_cursor_page(browser, src: Path, *, error_code: str, error_status: i
     page.wait_for_function("typeof window.__dishRenderLocalBoard === 'function'")
     section_a = f'r1s-{"a" * 27}'
     section_b = f'r1s-{"b" * 27}'
-    task_a = f'r1t-{"a" * 27}'
-    task_b = f'r1t-{"b" * 27}'
-    task_c = f'r1t-{"c" * 27}'
+    task_a = "00000000-0000-0000-0000-0000000000a1"
+    task_b = "00000000-0000-0000-0000-0000000000b2"
+    task_c = "00000000-0000-0000-0000-0000000000c3"
     page.evaluate(
         """async config => {
-          const root = document.createElement("main"); root.id = "app"; root.className = "app-root"; document.body.append(root);
-          const state = { boardCalls: 0, continuationCalls: 0, boardCursorOverride: null }; window.__dishCursorScenario = state;
+          const root = document.createElement("div"); root.id = "app"; root.className = "app-root"; document.body.append(root);
+          const state = { boardCalls: 0, continuationCalls: 0, boardCursorOverride: null, omitTaskA: false, holdContinuation: false, releaseContinuation: null }; window.__dishCursorScenario = state;
           const card = (id, title, sectionId) => ({ task_id: id, title, section_id: sectionId, workflow_status: { state: "no_active_operation" }, attention_codes: [] });
-          const boardPayload = () => { state.boardCalls += 1; const cursorA = state.boardCursorOverride ?? (state.boardCalls > 1 && config.autoReplacement ? config.replacementCursor : "c1.same"); return {
+          const boardPayload = () => { state.boardCalls += 1; const cursorA = state.omitTaskA ? null : (state.boardCursorOverride ?? (state.boardCalls > 1 && config.autoReplacement ? config.replacementCursor : "c1.same")); return {
             snapshot_id: `d1-snapshot-${state.boardCalls}`, page_size: 1, notices: [], sections: [
-              { section_id: config.sectionA, section_label: "Section A", continuity_id: "d1-a", cards: [card(config.taskA, "Task A", config.sectionA)], next_cursor: cursorA },
+              { section_id: config.sectionA, section_label: "Section A", continuity_id: "d1-a", cards: state.omitTaskA ? [] : [card(config.taskA, "Task A", config.sectionA)], next_cursor: cursorA },
               { section_id: config.sectionB, section_label: "Section B", continuity_id: "d1-b", cards: [card(config.taskB, "Task B", config.sectionB)], next_cursor: "c1.other" },
             ],
           }; };
@@ -73,6 +73,7 @@ def _prepare_cursor_page(browser, src: Path, *, error_code: str, error_status: i
             if (url === "/frontend/board") return response(boardPayload());
             if (!url.startsWith(`/frontend/sections/${config.sectionA}/tasks`)) throw new Error(`Unexpected frontend request ${url}`);
             state.continuationCalls += 1; const cursor = new URL(url, "https://dish.invalid").searchParams.get("cursor");
+            if (state.holdContinuation) await new Promise(resolve => { state.releaseContinuation = resolve; });
             if (cursor === "c1.replacement") return response({ section_id: config.sectionA, continuity_id: "d1-a", cards: [card(config.taskC, "Task C", config.sectionA)], next_cursor: null, notices: [] });
             return response({ error: { code: config.errorCode, message: "Rejected cursor." } }, config.errorStatus);
           };
@@ -138,5 +139,40 @@ def assert_stage5_repeated_invalid_cursors(browser, src: Path) -> None:
     assert page.get_by_role("button", name="Reload page").count() == 0
     assert unaffected.get_by_role("button", name="Load more").is_enabled()
     assert page.evaluate("window.__dishCursorScenario.continuationCalls") == 2
+    page.evaluate("window.__dishCursorControl.stop()")
+    page.close()
+
+    page, section_a, _section_b = _prepare_cursor_page(
+        browser, src, error_code="cursor_invalid", error_status=400,
+    )
+    affected = page.locator(f'[data-section-id="{section_a}"]')
+    page.evaluate("window.__dishCursorScenario.holdContinuation = true")
+    affected.get_by_role("button", name="Load more").click()
+    page.wait_for_function(
+        "sectionId => document.querySelector(`[data-section-id=\"${sectionId}\"]`)?.getAttribute('aria-busy') === 'true'",
+        arg=section_a,
+    )
+    assert affected.get_by_role("button", name="Load more").is_disabled()
+    page.evaluate("window.__dishCursorScenario.holdContinuation = false; window.__dishCursorScenario.releaseContinuation()")
+    page.wait_for_function("window.__dishCursorScenario.boardCalls === 2")
+    affected = page.locator(f'[data-section-id="{section_a}"]')
+    assert affected.get_attribute("aria-busy") == "false"
+    page.evaluate("window.__dishCursorControl.stop()")
+    page.close()
+
+    page, section_a, _section_b = _prepare_cursor_page(
+        browser, src, error_code="cursor_invalid", error_status=400,
+    )
+    page.get_by_role("button", name=re.compile("Task A")).focus()
+    page.evaluate("window.__dishCursorScenario.omitTaskA = true")
+    page.evaluate("window.__dishCursorControl.refresh()")
+    page.wait_for_function(
+        "sectionId => window.__dishCursorScenario.boardCalls === 2 && "
+        "!document.querySelector('.task-card[data-task-id=\"00000000-0000-0000-0000-0000000000a1\"]') && "
+        "document.activeElement?.closest('.board-column')?.dataset.sectionId === sectionId",
+        arg=section_a,
+    )
+    assert page.evaluate("document.activeElement?.classList.contains('board-column__title')") is True
+    assert page.evaluate("document.activeElement?.closest('.board-column')?.dataset.sectionId") == section_a
     page.evaluate("window.__dishCursorControl.stop()")
     page.close()

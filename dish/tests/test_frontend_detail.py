@@ -155,3 +155,17 @@ def test_route_resolution_is_bounded_and_unknown_routes_fail_closed() -> None:
 def test_renderer_enforces_input_capacity() -> None:
     with pytest.raises(DetailCapacityExceeded):
         render_body("x" * 11, config=RenderConfig(max_body_chars=10))
+
+
+def test_renderer_collapses_canonical_process_record_only() -> None:
+    canonical = "WHY COOK IT\nUseful context.\n\n---\n## PROCESS RECORD\n### Planning brief\nStatus: ready\n"
+    rendered = render_body(canonical, config=RenderConfig())["html"]
+    assert "Useful context." in rendered
+    assert '<details class="canonical-process-record">' in rendered
+    assert "Process record and technical details" in rendered
+    assert "Planning brief" in rendered
+    assert rendered.index("Useful context.") < rendered.index("<details")
+
+    generic = render_body("Visible\n\n---\n\nStill visible", config=RenderConfig())["html"]
+    assert "canonical-process-record" not in generic
+    assert "<hr>" in generic
