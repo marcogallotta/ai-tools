@@ -17,8 +17,10 @@ It never restarts a service, changes DISH_DARK_LAUNCH_MODE, touches the
 kill switch, or installs/starts the shadow worker -- those remain Marco-only actions
 described later in the runbook. Intended to be run twice: once now as a rehearsal, and
 again from a freshly wiped PostgreSQL database immediately before capture is enabled, to
-keep the pre-capture staleness window as small as practical. There is no wipe step here;
-wiping the target database is a separate, explicitly authorized action.
+keep the pre-capture staleness window as small as practical. This command remains non-destructive
+when run directly. The reviewed maintenance-window wipe path is
+``scripts/dish-pg-production-reset``, which validates this command's preflight first, performs the
+reset, invokes this prepare sequence, and restores/verifies non-owner PostgreSQL access.
 
 Required environment variables (see the runbook for definitions):
   DISH_PRODUCTION_SERVICE_ENV   production service env when capture environment is production
@@ -61,6 +63,7 @@ Example:
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import subprocess
@@ -183,9 +186,33 @@ def resolve_source_commit() -> str:
     return completed.stdout.strip()
 
 
+def redact_database_url(value: str) -> str:
+    from sqlalchemy.engine import make_url
+
+    try:
+        return make_url(value).render_as_string(hide_password=True)
+    except Exception:
+        return "<redacted-database-url>"
+
+
+def redact_command(command: list[str]) -> list[str]:
+    redacted = list(command)
+    for index, value in enumerate(redacted[:-1]):
+        if value == "--database-url":
+            redacted[index + 1] = redact_database_url(redacted[index + 1])
+    return redacted
+
+
+def redact_output(value: str) -> str:
+    database_url = os.environ.get("DISH_PG_DATABASE_URL", "").strip()
+    if not database_url:
+        return value
+    return value.replace(database_url, redact_database_url(database_url))
+
+
 def run_step(name: str, command: list[str]) -> str:
     log(f"Step: {name}")
-    log("  " + " ".join(command))
+    log("  " + " ".join(redact_command(command)))
     child_env = dict(os.environ)
     existing_pythonpath = child_env.get("PYTHONPATH", "")
     child_env["PYTHONPATH"] = (
@@ -195,11 +222,11 @@ def run_step(name: str, command: list[str]) -> str:
         command, cwd=REPO_ROOT, text=True, capture_output=True, check=False, env=child_env
     )
     if completed.returncode != 0:
-        sys.stderr.write(completed.stdout)
-        sys.stderr.write(completed.stderr)
+        sys.stderr.write(redact_output(completed.stdout))
+        sys.stderr.write(redact_output(completed.stderr))
         raise PrepareError(f"step failed: {name} (exit {completed.returncode})")
     if completed.stdout.strip():
-        log(f"  output: {completed.stdout.strip()[:2000]}")
+        log(f"  output: {redact_output(completed.stdout.strip())[:2000]}")
     return completed.stdout
 
 
@@ -214,14 +241,29 @@ def migrate_schema(database_url: str) -> None:
     command.upgrade(cfg, "head")
 
 
-def main() -> int:
+def preflight() -> tuple[str, dict[str, str], str, str, str, str]:
+    environment = capture_environment()
+    env = require_env(environment)
+    validate_target_identity(environment, env)
+    source_commit = resolve_source_commit()
+    honest_repo = os.environ.get("DISH_HONEST_REPO", "/home/marco/honest-pantry").strip()
+    project_gid, project_id = resolve_project_identity(env["DISH_SERVICE_ENV"])
+    return environment, env, source_commit, honest_repo, project_gid, project_id
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--preflight-only",
+        action="store_true",
+        help="validate all prepare configuration needed before a destructive reset, then exit",
+    )
+    args = parser.parse_args(argv)
     try:
-        environment = capture_environment()
-        env = require_env(environment)
-        validate_target_identity(environment, env)
-        source_commit = resolve_source_commit()
-        honest_repo = os.environ.get("DISH_HONEST_REPO", "/home/marco/honest-pantry").strip()
-        project_gid, project_id = resolve_project_identity(env["DISH_SERVICE_ENV"])
+        environment, env, source_commit, honest_repo, project_gid, project_id = preflight()
+        if args.preflight_only:
+            log("Prepare preflight complete; no PostgreSQL mutation was performed.")
+            return 0
 
         migrate_schema(env["DISH_PG_DATABASE_URL"])
 

@@ -145,20 +145,38 @@ agreed way to handle this:
    production paths, credentials, and data, as a rehearsal. Capture stays off and PostgreSQL stays
    non-authoritative throughout, so this has no live effect; it validates the procedure end-to-end
    ahead of time.
-2. Before actually enabling capture, during a maintenance window, wipe the production PostgreSQL
-   database and redo the same sequence fresh, immediately followed by enabling capture. This keeps
-   the stale-snapshot gap as small as practical.
+2. Before actually enabling capture, during a maintenance window, use the reviewed production
+   reset command to wipe and rebuild PostgreSQL immediately before enabling capture. This keeps the
+   stale-snapshot gap as small as practical without any manual/inline database operations.
 
 `scripts/dish-pg-production-prepare` scripts steps 1-7 of the "Prepare immutable source and
-PostgreSQL authority" sequence below as one repeatable command, so both the rehearsal and the
-pre-go-live resync run identically. It takes the same environment variables documented in that
-section, never restarts the service, and never touches capture mode, the kill switch, or the
-worker. Run it once now, and again after the maintenance-window wipe.
+PostgreSQL authority" sequence below as one repeatable non-destructive command for rehearsals. It
+takes the same environment variables documented in that section, never restarts the service, and
+never touches capture mode, the kill switch, or the worker.
 
-There is no dedicated reset script; the wipe is a manual drop/recreate (or full truncate) of the
-production PostgreSQL database. It is a distinct destructive action from the rehearsal steps above
-and requires Marco's explicit authorization at the time it is performed, separate from any earlier
-authorization to run the rehearsal.
+The maintenance-window wipe is **only** `scripts/dish-pg-production-reset`; do not run manual
+`DROP DATABASE`, `CREATE DATABASE`, `pg_terminate_backend`, inline Python, or heredoc SQL against
+production. The reset requires Marco's explicit authorization for that specific wipe and an exact
+human confirmation of `DISH_PG_EXPECTED_DATABASE_NAME`:
+
+```sh
+.venv/bin/python scripts/dish-pg-production-reset \
+  --confirm-database-name "$DISH_PG_EXPECTED_DATABASE_NAME"
+```
+
+Before dropping anything, the reset runs the prepare preflight, verifies that the target URL,
+expected database, connected owner, and PostgreSQL maintenance identity agree, snapshots the
+existing database/schema/table/sequence/column grants, default privileges, and database-scoped
+settings, and refuses PostgreSQL subscriptions, prepared transactions, or logical replication
+slots. It then blocks new connections, reports and terminates active sessions for that exact
+database, rechecks that no blockers remain, and recreates the database with its existing owner,
+encoding, locale provider/settings, tablespace, and connection limit.
+
+After recreation, non-owner access remains fenced while `dish-pg-production-prepare` runs. Only
+after that sequence succeeds does the reset restore and verify the snapshotted access in one
+transaction. This includes `dish_frontend_observer` and any other non-owner roles represented by
+the preserved grants/settings. If prepare or grant verification fails, the command fails closed;
+do not repair production with ad hoc SQL -- fix/review the script or the stated blocker first.
 
 ### Backfill one task after `allow_open_operations`
 

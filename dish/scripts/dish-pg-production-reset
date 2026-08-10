@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""Reset, rebuild, and re-grant the production PostgreSQL dark-launch target.
+
+This is the only reviewed in-repo path for the maintenance-window production
+wipe.  It validates the existing prepare prerequisites first, snapshots access
+that a database drop would erase, fences/terminates connections, recreates the
+same database, runs ``dish-pg-production-prepare``, and then restores/verifies
+non-owner access.
+
+It never changes capture mode, the kill switch, service enablement, or worker
+state.  It must be run only after Marco has explicitly authorized the specific
+production reset.
+
+Example:
+
+  .venv/bin/python scripts/dish-pg-production-reset \
+    --confirm-database-name "$DISH_PG_EXPECTED_DATABASE_NAME"
+"""
+from __future__ import annotations
+
+import argparse
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from dish_pg.production_reset import (  # noqa: E402
+    ProductionResetError,
+    recreate_database,
+    redacted_database_url,
+    restore_database_access,
+    snapshot_database_state,
+    validate_cli_target,
+)
+
+
+def log(message: str) -> None:
+    print(f"[dish-pg-production-reset] {message}", flush=True)
+
+
+def _required_environment() -> tuple[str, str, str]:
+    database_url = os.environ.get("DISH_PG_DATABASE_URL", "").strip()
+    expected_database_name = os.environ.get(
+        "DISH_PG_EXPECTED_DATABASE_NAME", ""
+    ).strip()
+    capture_environment = os.environ.get("DISH_PG_CAPTURE_ENVIRONMENT", "").strip()
+    missing = []
+    if not database_url:
+        missing.append("DISH_PG_DATABASE_URL")
+    if not expected_database_name:
+        missing.append("DISH_PG_EXPECTED_DATABASE_NAME")
+    if not capture_environment:
+        missing.append("DISH_PG_CAPTURE_ENVIRONMENT")
+    if missing:
+        raise ProductionResetError(
+            "missing required environment variable(s): " + ", ".join(missing)
+        )
+    return database_url, expected_database_name, capture_environment
+
+
+def _run_prepare(*, preflight_only: bool) -> None:
+    command = [sys.executable, str(REPO_ROOT / "scripts/dish-pg-production-prepare")]
+    if preflight_only:
+        command.append("--preflight-only")
+    completed = subprocess.run(
+        command,
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+        env=dict(os.environ),
+    )
+    if completed.stdout:
+        sys.stdout.write(completed.stdout)
+    if completed.stderr:
+        sys.stderr.write(completed.stderr)
+    if completed.returncode != 0:
+        phase = "preflight" if preflight_only else "prepare"
+        raise ProductionResetError(
+            f"dish-pg-production-prepare {phase} failed (exit {completed.returncode})"
+        )
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--confirm-database-name",
+        required=True,
+        help="must exactly match DISH_PG_EXPECTED_DATABASE_NAME",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        database_url, expected_database_name, capture_environment = (
+            _required_environment()
+        )
+        validate_cli_target(
+            database_url=database_url,
+            expected_database_name=expected_database_name,
+            confirmed_database_name=args.confirm_database_name,
+            capture_environment=capture_environment,
+        )
+
+        log(
+            "target confirmed: "
+            + redacted_database_url(database_url)
+            + f" (database={expected_database_name})"
+        )
+        log("validating the complete prepare environment before destructive work")
+        _run_prepare(preflight_only=True)
+
+        log("snapshotting database identity, grants, default privileges, and settings")
+        snapshot = snapshot_database_state(database_url, expected_database_name)
+        non_owner_roles = sorted(
+            {
+                grant.grantee
+                for grant in snapshot.object_grants
+                if grant.grantee != "PUBLIC"
+            }
+        )
+        log(
+            f"snapshot complete: {len(snapshot.object_grants)} access grant(s), "
+            f"{len(snapshot.default_privileges)} default-privilege definition(s), "
+            f"{len(snapshot.settings)} database-scoped setting(s); "
+            f"non-owner role(s)={','.join(non_owner_roles) if non_owner_roles else 'none'}"
+        )
+
+        recreate_database(database_url, snapshot, log=log)
+
+        log("running the reviewed production prepare sequence against the fresh database")
+        try:
+            _run_prepare(preflight_only=False)
+        except ProductionResetError as exc:
+            raise ProductionResetError(
+                f"{exc}; non-owner database access remains fenced because the rebuild "
+                "did not complete"
+            ) from exc
+
+        log("restoring and verifying pre-reset non-owner access atomically")
+        restore_database_access(database_url, snapshot)
+        log("reset + prepare + re-grant sequence complete")
+        log("no capture-mode, kill-switch, service, or worker state was changed")
+        return 0
+    except ProductionResetError as exc:
+        log(f"FAILED: {exc}")
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
