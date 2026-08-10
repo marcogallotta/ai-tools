@@ -202,10 +202,15 @@ matching stable identities are verified and conflicting identities fail closed. 
 snapshot is idempotent. Task/content/placement/completion/registry rows and the bootstrap `ImportRun`
 are not rewritten.
 
-The current ReleaseCandidate contract still attests one primary source-import lineage and does not
-attest supplemental terminal-history runs. The backfill command reports that limitation and refuses
-to mutate a generation once a candidate for it is already `validated`, `approved`, or `activated`;
-do not treat an older candidate manifest as evidence for the supplemental run.
+Supplemental terminal-history application and ReleaseCandidate validation share one active-generation
+serialization gate. The final backfill transaction acquires that gate before it re-reads generation and
+candidate state, then holds it through supplemental `ImportRun` creation/reuse and terminal-history
+commit. A candidate that reaches `validated` first therefore blocks a waiting backfill; a backfill that
+commits first is visible before waiting validation can finish. Forward candidate manifests preserve the
+primary-only v3 fingerprint when no supplement exists; when supplemental history is present, the v3
+builder extension folds deterministic supplemental ImportRun/source/primary-linkage provenance and the
+exact imported operation/cycle/lease rows into `import_completion_sha256`. Revalidation treats later
+supplemental-history drift as stale.
 
 ## Install the worker while stopped
 

@@ -29,12 +29,17 @@ from .legacy_source import (
     _terminal_operation_history,
 )
 from .release import ALEMBIC_HEAD
+from .release_history import (
+    SUPPLEMENTAL_HISTORY_ATTESTATION_CONTRACT,
+    TERMINAL_HISTORY_IMPORT_KIND,
+    acquire_generation_release_gate,
+)
 from .repositories import AuthorityRepository, CoreAuthorityError
 from .services import CoreAuthorityService, ImportedOperationHistorySpec
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SNAPSHOT_FORMAT = "dish-terminal-history-backfill-source-v1"
-IMPORT_KIND = "terminal-history-backfill-v1"
+IMPORT_KIND = TERMINAL_HISTORY_IMPORT_KIND
 _COMMIT_RE = re.compile(r"[0-9a-f]{40,64}\Z")
 
 
@@ -78,7 +83,7 @@ class TerminalHistoryBackfillResult:
     inserted_verification_cycles: int
     matched_leases: int
     inserted_leases: int
-    candidate_attestation: str = "not-covered-by-current-release-candidate-contract"
+    candidate_attestation: str = SUPPLEMENTAL_HISTORY_ATTESTATION_CONTRACT
 
     def as_json(self) -> dict[str, object]:
         value = asdict(self)
@@ -303,7 +308,9 @@ def resolve_backfill_target(session: Session, *, task_gid: str) -> BackfillTarge
             "task bootstrap provenance does not reference a complete ImportRun"
         )
     generation = session.scalar(
-        select(models.AuthorityGeneration).where(models.AuthorityGeneration.status == "active")
+        select(models.AuthorityGeneration)
+        .where(models.AuthorityGeneration.status == "active")
+        .execution_options(populate_existing=True)
     )
     if generation is None:
         raise TerminalHistoryBackfillError("no active PostgreSQL authority generation exists")
@@ -334,17 +341,19 @@ def resolve_backfill_target(session: Session, *, task_gid: str) -> BackfillTarge
         )
     blocked_candidates = tuple(
         session.scalars(
-            select(release_models.ReleaseCandidate).where(
+            select(release_models.ReleaseCandidate)
+            .where(
                 release_models.ReleaseCandidate.generation_id == generation.generation_id,
                 release_models.ReleaseCandidate.status.in_(("validated", "approved", "activated")),
             )
+            .execution_options(populate_existing=True)
         )
     )
     if blocked_candidates:
         statuses = sorted({candidate.status for candidate in blocked_candidates})
         raise TerminalHistoryBackfillError(
-            "terminal-history backfill is blocked after release-candidate validation because "
-            "the current candidate contract does not attest supplemental import runs/history; "
+            "terminal-history backfill is blocked after release-candidate validation so the "
+            "validated corpus cannot change; "
             f"candidate_statuses={statuses}"
         )
     return BackfillTarget(
@@ -429,7 +438,7 @@ def _new_supplemental_run(
             "source_format": SNAPSHOT_FORMAT,
             "source_record_count": snapshot.record_count,
             "source_bundle_hash_method": "sha256-file-bytes",
-            "candidate_attestation": "not-covered-by-current-release-candidate-contract",
+            "candidate_attestation": SUPPLEMENTAL_HISTORY_ATTESTATION_CONTRACT,
         },
     )
     AuthorityRepository(session).add_import_run(row)
@@ -446,6 +455,13 @@ def apply_terminal_history_snapshot(
     clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
 ) -> TerminalHistoryBackfillResult:
     """Atomically verify existing history, create/reuse provenance, and insert only missing rows."""
+    generation = acquire_generation_release_gate(
+        session, generation_id=target.generation_id
+    )
+    if generation is None or generation.status != "active":
+        raise TerminalHistoryBackfillError(
+            "terminal-history backfill target generation is no longer active"
+        )
     current = resolve_backfill_target(session, task_gid=snapshot.task_gid)
     if not _same_target(target, current) or snapshot.task_id != current.task_id:
         raise TerminalHistoryBackfillError(

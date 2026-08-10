@@ -398,7 +398,7 @@ def test_terminal_backfill_is_provenance_safe_idempotent_and_preserves_task_auth
         assert supplemental.provenance["source_format"] == "dish-terminal-history-backfill-source-v1"
         assert supplemental.provenance["source_record_count"] == 1
         assert supplemental.provenance["candidate_attestation"] == (
-            "not-covered-by-current-release-candidate-contract"
+            "candidate-authority-v3+supplemental-terminal-history-v1"
         )
         assert session.get(wf.WorkflowOperation, old_operation).import_run_id == original_import_run
         assert session.get(wf.VerificationCycle, old_cycle).import_run_id == original_import_run

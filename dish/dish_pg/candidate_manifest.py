@@ -14,6 +14,10 @@ from . import models
 from . import stage5_models as tx
 from . import stage6_models as rel
 from .release_evidence import ReleaseAuthorityError, sha256_json
+from .release_history import (
+    SUPPLEMENTAL_HISTORY_ATTESTATION_CONTRACT,
+    TERMINAL_HISTORY_IMPORT_KIND,
+)
 
 MANIFEST_VERSION = 3
 BUILDER_CONTRACT_VERSION = "candidate-authority-v3"
@@ -248,6 +252,189 @@ def _import_completion_digest(
     )
 
 
+_SUPPLEMENTAL_PROVENANCE_FIELDS = (
+    "import_kind",
+    "generation_id",
+    "task_id",
+    "legacy_task_gid",
+    "primary_import_run_id",
+    "source_format",
+    "source_record_count",
+    "source_bundle_hash_method",
+)
+
+_SUPPLEMENTAL_HISTORY_TABLES = (
+    (
+        "workflow_operations",
+        (
+            "operation_id",
+            "generation_id",
+            "task_id",
+            "kind",
+            "lifecycle",
+            "phase",
+            "persisted_actions",
+            "import_run_id",
+            "creation_request_id",
+            "creation_execution_id",
+            "contract_binding_id",
+            "predecessor_operation_id",
+            "terminal_outcome",
+            "operation_revision",
+            "created_at",
+            "terminal_at",
+        ),
+    ),
+    (
+        "verification_cycles",
+        (
+            "cycle_id",
+            "generation_id",
+            "task_id",
+            "operation_id",
+            "reviewed_content_version_id",
+            "contract_binding_id",
+            "cycle_sequence",
+            "lifecycle",
+            "outcome",
+            "import_run_id",
+            "created_by_execution_id",
+            "created_at",
+            "terminal_at",
+        ),
+    ),
+    (
+        "service_leases",
+        (
+            "lease_id",
+            "generation_id",
+            "task_id",
+            "operation_id",
+            "run_id",
+            "import_run_id",
+            "source_run_id",
+            "owner_id",
+            "lease_kind",
+            "actor_role",
+            "actor_attempt_sequence",
+            "verification_cycle_id",
+            "state",
+            "issued_at",
+            "expires_at",
+            "lease_revision",
+            "terminal_at",
+        ),
+    ),
+)
+
+
+def _supplemental_terminal_history_digest(
+    session: Session,
+    *,
+    candidate: rel.ReleaseCandidate,
+    source_import_run_id: uuid.UUID,
+) -> str | None:
+    primary = session.get(models.ImportRun, source_import_run_id)
+    if primary is None:
+        raise ReleaseAuthorityError("candidate manifest source import run is missing")
+
+    generation_text = str(candidate.generation_id)
+    primary_text = str(source_import_run_id)
+    supplemental_imports: list[dict[str, Any]] = []
+    for run in session.scalars(select(models.ImportRun)).all():
+        provenance = run.provenance if isinstance(run.provenance, Mapping) else {}
+        if provenance.get("import_kind") != TERMINAL_HISTORY_IMPORT_KIND:
+            continue
+        if provenance.get("generation_id") != generation_text:
+            continue
+        if provenance.get("primary_import_run_id") != primary_text:
+            raise ReleaseAuthorityError(
+                "candidate supplemental terminal-history import has mismatched primary lineage"
+            )
+        if run.status != "complete" or run.legacy_generation_id != primary.legacy_generation_id:
+            raise ReleaseAuthorityError(
+                "candidate supplemental terminal-history import provenance is incomplete"
+            )
+
+        history_tables = [
+            _table_rows(
+                session,
+                table_name=table_name,
+                expected_columns=columns,
+                where=lambda table, dialect, import_run_id=run.import_run_id: _uuid_match(
+                    table.c.import_run_id, import_run_id, dialect
+                ),
+            )
+            for table_name, columns in _SUPPLEMENTAL_HISTORY_TABLES
+        ]
+        if not any(table["rows"] for table in history_tables):
+            raise ReleaseAuthorityError(
+                "candidate supplemental terminal-history import has no imported history"
+            )
+        supplemental_imports.append(
+            {
+                "import_run": {
+                    "import_run_id": str(run.import_run_id),
+                    "source_commit": run.source_commit,
+                    "source_release": run.source_release,
+                    "legacy_generation_id": run.legacy_generation_id,
+                    "baseline_high_water_mark": run.baseline_high_water_mark,
+                    "source_bundle_sha256": run.source_bundle_sha256,
+                    "status": run.status,
+                    "started_at": _canonical_value(run.started_at),
+                    "completed_at": _canonical_value(run.completed_at),
+                    "provenance": {
+                        field: _canonical_value(provenance.get(field), column_name=field)
+                        for field in _SUPPLEMENTAL_PROVENANCE_FIELDS
+                    },
+                },
+                "history": history_tables,
+            }
+        )
+
+    if not supplemental_imports:
+        return None
+    supplemental_imports.sort(key=sha256_json)
+    return sha256_json(
+        {
+            "contract": "supplemental-terminal-history-attestation-v1",
+            "generation_id": generation_text,
+            "primary_import_run_id": primary_text,
+            "imports": supplemental_imports,
+        }
+    )
+
+
+def _effective_import_completion_digest(
+    session: Session,
+    *,
+    candidate: rel.ReleaseCandidate,
+    source_import_run_id: uuid.UUID,
+) -> tuple[str, str]:
+    primary_digest = _import_completion_digest(
+        session,
+        candidate=candidate,
+        source_import_run_id=source_import_run_id,
+    )
+    supplemental_digest = _supplemental_terminal_history_digest(
+        session,
+        candidate=candidate,
+        source_import_run_id=source_import_run_id,
+    )
+    if supplemental_digest is None:
+        return primary_digest, BUILDER_CONTRACT_VERSION
+    return (
+        sha256_json(
+            {
+                "contract": "effective-import-completion-v2",
+                "primary_import_completion_sha256": primary_digest,
+                "supplemental_terminal_history_sha256": supplemental_digest,
+            }
+        ),
+        SUPPLEMENTAL_HISTORY_ATTESTATION_CONTRACT,
+    )
+
+
 def _typed_import_linkage_digest(
     session: Session, *, candidate: rel.ReleaseCandidate
 ) -> str:
@@ -425,6 +612,11 @@ def _identity(
         approval_reconciliation_run_id = _latest_reconciliation_run_id(
             session, candidate=candidate
         )
+    import_completion_sha256, builder_contract_version = _effective_import_completion_digest(
+        session,
+        candidate=candidate,
+        source_import_run_id=batch.import_run_id,
+    )
     identity: dict[str, object] = {
         "manifest_version": MANIFEST_VERSION,
         "candidate_id": str(candidate.candidate_id),
@@ -436,15 +628,11 @@ def _identity(
         "registry_version_id": str(registry.registry_version_id),
         "honest_binding_id": str(registry.contract_binding_id),
         "approval_reconciliation_run_id": str(approval_reconciliation_run_id),
-        "builder_contract_version": BUILDER_CONTRACT_VERSION,
+        "builder_contract_version": builder_contract_version,
         "mapping_membership_sha256": _mapping_membership_digest(
             session, candidate=candidate
         ),
-        "import_completion_sha256": _import_completion_digest(
-            session,
-            candidate=candidate,
-            source_import_run_id=batch.import_run_id,
-        ),
+        "import_completion_sha256": import_completion_sha256,
         "typed_import_linkage_sha256": _typed_import_linkage_digest(
             session, candidate=candidate
         ),
@@ -506,7 +694,7 @@ def build_candidate_manifest(
         ),
         readiness_inventory_sha256=None,
         readiness_completion_sha256=None,
-        builder_contract_version=BUILDER_CONTRACT_VERSION,
+        builder_contract_version=str(identity["builder_contract_version"]),
         built_at=built_at,
         **{field: str(identity[field]) for field in COMPONENT_FIELDS},
     )

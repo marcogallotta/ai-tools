@@ -23,6 +23,7 @@ from .cutover_chronology import _require_at_or_after, _require_aware, _utc_compa
 from .cutover_control import CutoverControlAuthority
 from .final_asana_closure import FinalAsanaClosureAuthority
 from .release_artifacts import observe_release_artifact
+from .release_history import acquire_generation_release_gate
 from .release_validation import (
     SUPPORTED_RECONCILIATION_ADAPTERS,
     active_mapping_membership,
@@ -1589,6 +1590,20 @@ class ReleaseCandidateService(
         validated_at: datetime,
     ) -> CandidateEvaluation:
         candidate = self._candidate(candidate_id)
+        generation = acquire_generation_release_gate(
+            self.session, generation_id=candidate.generation_id
+        )
+        if generation is None or generation.status != "active":
+            raise ReleaseAuthorityError(
+                "release candidate validation requires the active target generation"
+            )
+        candidate = self.session.scalar(
+            select(rel.ReleaseCandidate)
+            .where(rel.ReleaseCandidate.candidate_id == candidate_id)
+            .execution_options(populate_existing=True)
+        )
+        if candidate is None:
+            raise ReleaseAuthorityError("unknown release candidate")
         bundle = self.session.get(rel.EvidenceBundle, evidence_bundle_id)
         if bundle is None or bundle.candidate_id != candidate_id or bundle.bundle_kind != "release_candidate":
             raise ReleaseAuthorityError("validation bundle does not belong to release candidate")

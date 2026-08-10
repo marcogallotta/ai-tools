@@ -28,6 +28,7 @@ Authority transfer is explicit and one-way for the activated generation. Importe
 - Projection origin/effect settlement remain separate from canonical command authority.
 - Reconciliation is evidence/repair machinery, not an alternate canonical writer.
 - Forward candidate-authority manifests use contract v3: they bind the exact approval-time reconciliation run and exclude all post-burn worker-readiness state. Historical v2 fingerprints keep their original stored semantics.
+- Supplemental terminal-history application and candidate validation serialize on the active generation. Primary-only v3 manifest fingerprints retain their original bytes; when supplemental terminal history exists, the v3 builder extension folds a deterministic digest of supplemental ImportRun/source/primary linkage and exact imported terminal operations, verification cycles, and leases into `import_completion_sha256`.
 - Post-burn projection-worker readiness is one immutable `projection_worker_readiness` report with validator-owned `claim`, `exact_write`, and `restart` probes, exact worker/artifact identity, exact fresh reconciliation identity, and a report SHA-256 revalidated at first admission.
 
 ## Process and transaction boundaries
