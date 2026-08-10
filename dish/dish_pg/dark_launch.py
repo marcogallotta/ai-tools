@@ -465,8 +465,9 @@ def _parser() -> argparse.ArgumentParser:
         help="Permanently give up evaluating one terminal failed shadow delivery.",
         description=(
             "Permanently gives up on evaluating the selected terminal failed shadow delivery, "
-            "settles it only to unblock later rollout-sequence deliveries, and records an "
-            "operator-voided gap. This does not record a real comparison or transfer authority."
+            "settles that abandonment explicitly so the baseline can eventually close, and "
+            "records an operator-voided gap. This does not record a real comparison or transfer "
+            "authority."
         ),
     )
     void_failed.add_argument("--database-url", required=True)

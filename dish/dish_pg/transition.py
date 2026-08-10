@@ -540,7 +540,11 @@ class ShadowService:
                         tx.ShadowEnvelope.shadow_baseline_id == envelope.shadow_baseline_id,
                         tx.ShadowEnvelope.rollout_sequence.is_not(None),
                         tx.ShadowEnvelope.rollout_sequence < envelope.rollout_sequence,
-                        tx.ShadowDelivery.state != "delivered",
+                        # Preserve rollout ordering only across work that can still run.
+                        # A terminal failure is durable gap evidence, not a baseline-wide
+                        # cursor: otherwise one bad envelope permanently blinds every
+                        # later comparison until an operator mutates the failed row.
+                        tx.ShadowDelivery.state.in_(("pending", "claimed")),
                     )
                 ) or 0)
                 if blockers:
@@ -961,6 +965,57 @@ class ShadowService:
                 )
             if delivery is None or delivery.state != "failed":
                 raise TransitionAuthorityError("shadow delivery is not failed")
+            failed_envelope = self.session.get(tx.ShadowEnvelope, gap.envelope_id)
+            if (
+                failed_envelope is not None
+                and failed_envelope.rollout_sequence is not None
+            ):
+                later_rollout = self.session.execute(
+                    select(tx.ShadowDelivery.state, tx.ShadowComparison.target_result)
+                    .select_from(tx.ShadowDelivery)
+                    .join(
+                        tx.ShadowEnvelope,
+                        tx.ShadowEnvelope.envelope_id == tx.ShadowDelivery.envelope_id,
+                    )
+                    .outerjoin(
+                        tx.ShadowComparison,
+                        tx.ShadowComparison.envelope_id == tx.ShadowEnvelope.envelope_id,
+                    )
+                    .where(
+                        tx.ShadowEnvelope.shadow_baseline_id
+                        == baseline.shadow_baseline_id,
+                        tx.ShadowEnvelope.rollout_sequence.is_not(None),
+                        tx.ShadowEnvelope.rollout_sequence
+                        > failed_envelope.rollout_sequence,
+                    )
+                ).all()
+                later_rollout_prevents_requeue = False
+                for later_state, target_result in later_rollout:
+                    # An in-flight later evaluation may already be mutating target state
+                    # in another transaction. A completed real comparison proves that a
+                    # later command was evaluated against the current target sequence.
+                    # Terminal failures roll their evaluation transaction back, while
+                    # skip/operator-void settlements explicitly never evaluate a command.
+                    if later_state == "claimed":
+                        later_rollout_prevents_requeue = True
+                        break
+                    if later_state != "delivered":
+                        continue
+                    if not isinstance(target_result, Mapping):
+                        later_rollout_prevents_requeue = True
+                        break
+                    if target_result.get("shadow_execution") in {
+                        "skipped",
+                        "not_evaluated",
+                    }:
+                        continue
+                    later_rollout_prevents_requeue = True
+                    break
+                if later_rollout_prevents_requeue:
+                    raise TransitionAuthorityError(
+                        "shadow delivery recovery cannot requeue while later rollout is "
+                        "in flight or after later rollout evaluation"
+                    )
             terminal_at = delivery.terminal_at
             result = self.session.execute(
                 update(tx.ShadowDelivery)

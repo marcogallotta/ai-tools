@@ -70,7 +70,7 @@ def _fail(
     return service.session.get(tx.ShadowDelivery, delivery.delivery_id)
 
 
-def test_void_failed_delivery_unblocks_later_rollout_and_records_honest_gap(core_db):
+def test_void_failed_delivery_records_honest_gap_after_later_rollout_advanced(core_db):
     factory, ids = core_db
     with session_scope(factory) as session:
         context = _bootstrap_registry(session, ids, generation_status="active")
@@ -103,14 +103,25 @@ def test_void_failed_delivery_unblocks_later_rollout_and_records_honest_gap(core
         failed_revision = failed.delivery_revision
         failed_error = failed.last_error
 
-        blocked = service.claim_delivery(
+        next_token = _next(ids)
+        claimed_later = service.claim_delivery(
             worker_id="worker-2",
-            claim_token=_next(ids),
+            claim_token=next_token,
             now=NOW + timedelta(seconds=20),
             ttl=timedelta(minutes=2),
             shadow_baseline_id=baseline.shadow_baseline_id,
         )
-        assert blocked is None
+        assert claimed_later is not None
+        assert claimed_later.delivery_id == later.delivery_id
+        service.compare_delivery(
+            delivery_id=claimed_later.delivery_id,
+            claim_token=next_token,
+            claim_revision=claimed_later.delivery_revision,
+            worker_id="worker-2",
+            target_result={"ok": True, "command": "start", "code": "OK"},
+            comparator_release="test",
+            compared_at=NOW + timedelta(seconds=21),
+        )
 
         comparison = service.void_failed_delivery(
             delivery_id=earlier.delivery_id,
@@ -158,18 +169,6 @@ def test_void_failed_delivery_unblocks_later_rollout_and_records_honest_gap(core
         assert normal_skip_gap_count == 0
         assert session.scalar(select(func.count()).select_from(tx.ProjectionEpoch)) == 0
         assert session.get(models.AuthorityGeneration, context["generation_id"]).status == "active"
-
-        next_token = _next(ids)
-        claimed_later = service.claim_delivery(
-            worker_id="worker-2",
-            claim_token=next_token,
-            now=NOW + timedelta(seconds=31),
-            ttl=timedelta(minutes=2),
-            shadow_baseline_id=baseline.shadow_baseline_id,
-        )
-        assert claimed_later is not None
-        assert claimed_later.delivery_id == later.delivery_id
-
 
 @pytest.mark.parametrize("state", ["pending", "claimed", "delivered"])
 def test_void_failed_delivery_rejects_every_supported_nonfailed_state(core_db, state):
@@ -279,6 +278,8 @@ def test_void_failed_delivery_cli_requires_reason_and_warns_evaluation_is_perman
     assert help_exit.value.code == 0
     help_text = " ".join(capsys.readouterr().out.split())
     assert "Permanently gives up on evaluating" in help_text
+    assert "baseline can eventually close" in help_text
+    assert "unblock later rollout-sequence deliveries" not in help_text
     assert "does not record a real comparison or transfer authority" in help_text
 
     with pytest.raises(SystemExit) as missing_reason:

@@ -37,6 +37,11 @@ Production capture is read-only observation. The location manifest/export/spool/
 - Treatment and comparison eligibility derive from current command metadata plus explicit shadow-only exceptions; there is no second complete hand-maintained treatment oracle.
 - Captured/exported evidence remains bound to the source/environment/generation/corpus identities needed to interpret it; evidence from one identity must not silently certify another.
 - Evidence collection and successful comparison do not by themselves transfer authority.
+- Rollout ordering serializes work that can still execute (`pending`/`claimed` deliveries). A terminal
+  `failed` delivery remains durable open-gap evidence but is not a baseline-wide cursor and must not
+  block later comparison claims. Recovery of an earlier failed delivery is fenced while a later rollout
+  evaluation is in flight or after a later command has produced a real comparison; later terminal
+  failures and explicit skip/operator-void settlements do not by themselves make that retry unsafe.
 
 ## Process and transaction boundaries
 
@@ -48,7 +53,7 @@ Capture current completed-command/source evidence read-only, bind it to its sour
 
 ## Failure, replay, recovery, and concurrency
 
-Contradictory captured/current treatment or incompatible source/environment identity fails explicitly. Spool/worker claims are recoverable without making shadow execution authoritative. Unavailable target infrastructure is reported as unavailable rather than silently bypassed.
+Contradictory captured/current treatment or incompatible source/environment identity fails explicitly. Spool/worker claims are recoverable without making shadow execution authoritative. A delivery evaluation failure settles that envelope as `failed` plus an explicit `delivery_failure` gap while later rollout evidence remains claimable. Recovery may requeue the failed envelope only when no later rollout evaluation is currently claimed and no later rollout command has completed real evaluation; later failures that rolled back and explicit skip/operator-void settlements do not independently prevent recovery. Unavailable target infrastructure is reported as unavailable rather than silently bypassed.
 
 ## Change routing
 

@@ -225,6 +225,245 @@ def test_delivery_failure_recovery_requires_exact_not_applied_proof(workflow_db)
         assert current_delivery.delivery_revision == failed_revision + 1
 
 
+def test_failed_delivery_cannot_requeue_after_later_rollout_evaluated(workflow_db):
+    factory, ids, context, _task = workflow_db
+    first_token, second_token = uuid.uuid4(), uuid.uuid4()
+    with session_scope(factory) as session:
+        service, baseline = _authority_setup(session, ids, context)
+        first = _authority_envelope(
+            service,
+            baseline.shadow_baseline_id,
+            identity="failed-before-later-progress",
+            sequence=1,
+        )
+        second = _authority_envelope(
+            service,
+            baseline.shadow_baseline_id,
+            identity="later-progress",
+            sequence=2,
+            captured_at=NOW + timedelta(seconds=1),
+        )
+        first_claim = service.claim_delivery(
+            worker_id="worker-1",
+            claim_token=first_token,
+            now=NOW + timedelta(seconds=2),
+            ttl=timedelta(minutes=2),
+            shadow_baseline_id=baseline.shadow_baseline_id,
+        )
+        assert first_claim is not None
+        gap = service.fail_delivery(
+            delivery_id=first_claim.delivery_id,
+            claim_token=first_token,
+            claim_revision=first_claim.delivery_revision,
+            worker_id="worker-1",
+            error="definite rollback",
+            failed_at=NOW + timedelta(seconds=3),
+        )
+        later_claim = service.claim_delivery(
+            worker_id="worker-2",
+            claim_token=second_token,
+            now=NOW + timedelta(seconds=4),
+            ttl=timedelta(minutes=2),
+            shadow_baseline_id=baseline.shadow_baseline_id,
+        )
+        assert later_claim is not None
+        assert later_claim.envelope_id == second.envelope_id
+        service.compare_delivery(
+            delivery_id=later_claim.delivery_id,
+            claim_token=second_token,
+            claim_revision=later_claim.delivery_revision,
+            worker_id="worker-2",
+            target_result=dict(second.source_outcome),
+            comparator_release="test",
+            compared_at=NOW + timedelta(seconds=5),
+        )
+
+        with pytest.raises(
+            TransitionAuthorityError,
+            match="later rollout is in flight or after later rollout evaluation",
+        ):
+            service.resolve_gap(
+                gap_id=gap.gap_id,
+                resolution={
+                    "delivery_outcome": "not_applied",
+                    "evidence": "exact request journal proves rollback",
+                },
+                resolved_at=NOW + timedelta(seconds=6),
+            )
+        session.expire_all()
+        current_gap = session.get(tx.ShadowGap, gap.gap_id)
+        current_delivery = session.scalar(
+            select(tx.ShadowDelivery).where(
+                tx.ShadowDelivery.envelope_id == first.envelope_id
+            )
+        )
+        assert current_gap.state == "open"
+        assert current_delivery.state == "failed"
+
+
+@pytest.mark.parametrize("later_outcome", ["failed", "skipped", "voided"])
+def test_failed_delivery_can_requeue_after_later_terminal_no_evaluation(
+    workflow_db, later_outcome
+):
+    factory, ids, context, _task = workflow_db
+    first_token, second_token = uuid.uuid4(), uuid.uuid4()
+    with session_scope(factory) as session:
+        service, baseline = _authority_setup(session, ids, context)
+        first = _authority_envelope(
+            service,
+            baseline.shadow_baseline_id,
+            identity=f"failed-before-later-{later_outcome}",
+            sequence=1,
+        )
+        second = _authority_envelope(
+            service,
+            baseline.shadow_baseline_id,
+            identity=f"later-{later_outcome}",
+            sequence=2,
+            captured_at=NOW + timedelta(seconds=1),
+        )
+        first_claim = service.claim_delivery(
+            worker_id="worker-1",
+            claim_token=first_token,
+            now=NOW + timedelta(seconds=2),
+            ttl=timedelta(minutes=2),
+            shadow_baseline_id=baseline.shadow_baseline_id,
+        )
+        assert first_claim is not None
+        gap = service.fail_delivery(
+            delivery_id=first_claim.delivery_id,
+            claim_token=first_token,
+            claim_revision=first_claim.delivery_revision,
+            worker_id="worker-1",
+            error="definite rollback",
+            failed_at=NOW + timedelta(seconds=3),
+        )
+        later_claim = service.claim_delivery(
+            worker_id="worker-2",
+            claim_token=second_token,
+            now=NOW + timedelta(seconds=4),
+            ttl=timedelta(minutes=2),
+            shadow_baseline_id=baseline.shadow_baseline_id,
+        )
+        assert later_claim is not None
+        assert later_claim.envelope_id == second.envelope_id
+        if later_outcome == "failed":
+            service.fail_delivery(
+                delivery_id=later_claim.delivery_id,
+                claim_token=second_token,
+                claim_revision=later_claim.delivery_revision,
+                worker_id="worker-2",
+                error="later evaluation rolled back",
+                failed_at=NOW + timedelta(seconds=5),
+            )
+        elif later_outcome == "skipped":
+            service.skip_delivery(
+                delivery_id=later_claim.delivery_id,
+                claim_token=second_token,
+                claim_revision=later_claim.delivery_revision,
+                worker_id="worker-2",
+                reason="capture-only evidence",
+                comparator_release="test",
+                completed_at=NOW + timedelta(seconds=5),
+            )
+        else:
+            service.fail_delivery(
+                delivery_id=later_claim.delivery_id,
+                claim_token=second_token,
+                claim_revision=later_claim.delivery_revision,
+                worker_id="worker-2",
+                error="later evaluation rolled back",
+                failed_at=NOW + timedelta(seconds=5),
+            )
+            later_delivery = session.scalar(
+                select(tx.ShadowDelivery).where(
+                    tx.ShadowDelivery.envelope_id == second.envelope_id
+                )
+            )
+            assert later_delivery is not None
+            service.void_failed_delivery(
+                delivery_id=later_delivery.delivery_id,
+                reason="permanently abandon later evaluation",
+                comparator_release="test",
+                completed_at=NOW + timedelta(seconds=6),
+            )
+
+        resolved = service.resolve_gap(
+            gap_id=gap.gap_id,
+            resolution={
+                "delivery_outcome": "not_applied",
+                "evidence": "exact request journal proves rollback",
+            },
+            resolved_at=NOW + timedelta(seconds=7),
+        )
+        session.expire_all()
+        first_delivery = session.scalar(
+            select(tx.ShadowDelivery).where(
+                tx.ShadowDelivery.envelope_id == first.envelope_id
+            )
+        )
+        assert resolved.state == "resolved"
+        assert first_delivery.state == "pending"
+
+
+def test_failed_delivery_cannot_requeue_while_later_rollout_is_claimed(workflow_db):
+    factory, ids, context, _task = workflow_db
+    first_token, second_token = uuid.uuid4(), uuid.uuid4()
+    with session_scope(factory) as session:
+        service, baseline = _authority_setup(session, ids, context)
+        _authority_envelope(
+            service,
+            baseline.shadow_baseline_id,
+            identity="failed-before-later-in-flight",
+            sequence=1,
+        )
+        second = _authority_envelope(
+            service,
+            baseline.shadow_baseline_id,
+            identity="later-in-flight",
+            sequence=2,
+            captured_at=NOW + timedelta(seconds=1),
+        )
+        first_claim = service.claim_delivery(
+            worker_id="worker-1",
+            claim_token=first_token,
+            now=NOW + timedelta(seconds=2),
+            ttl=timedelta(minutes=2),
+            shadow_baseline_id=baseline.shadow_baseline_id,
+        )
+        assert first_claim is not None
+        gap = service.fail_delivery(
+            delivery_id=first_claim.delivery_id,
+            claim_token=first_token,
+            claim_revision=first_claim.delivery_revision,
+            worker_id="worker-1",
+            error="definite rollback",
+            failed_at=NOW + timedelta(seconds=3),
+        )
+        later_claim = service.claim_delivery(
+            worker_id="worker-2",
+            claim_token=second_token,
+            now=NOW + timedelta(seconds=4),
+            ttl=timedelta(minutes=2),
+            shadow_baseline_id=baseline.shadow_baseline_id,
+        )
+        assert later_claim is not None
+        assert later_claim.envelope_id == second.envelope_id
+
+        with pytest.raises(
+            TransitionAuthorityError,
+            match="later rollout is in flight or after later rollout evaluation",
+        ):
+            service.resolve_gap(
+                gap_id=gap.gap_id,
+                resolution={
+                    "delivery_outcome": "not_applied",
+                    "evidence": "exact request journal proves rollback",
+                },
+                resolved_at=NOW + timedelta(seconds=5),
+            )
+
+
 def test_stale_manual_recovery_cannot_reopen_disqualified_delivery(workflow_db):
     factory, ids, context, _task = workflow_db
     token = uuid.uuid4()

@@ -257,9 +257,11 @@ than guessing an operator policy.
 
 After capture is visibly accumulating and the status decision is acceptable, Marco may set
 `DISH_DARK_LAUNCH_MODE=execute`, restart the production legacy service, and start the worker.
-Envelopes captured in `capture` remain capture-only evidence. The worker drains in rollout order,
-records capture-only work as explicit gaps, validates the exact database identity and baseline, and
-exits before reading more work whenever the kill switch is engaged.
+Envelopes captured in `capture` remain capture-only evidence. The worker claims executable work in
+rollout order while earlier deliveries are still `pending` or `claimed`. A terminal `failed` delivery
+remains explicit gap evidence but does not halt later comparison collection for the whole baseline.
+The worker records capture-only work as explicit gaps, validates the exact database identity and
+baseline, and exits before reading more work whenever the kill switch is engaged.
 
 Inspect status repeatedly. Mismatches and gaps are evidence, not permission to change live authority.
 Do not enable projection effects, writer fencing, PostgreSQL admission, or production routing.
@@ -286,9 +288,10 @@ sudo /usr/bin/systemctl status dish-service-prod.service    # passwordless, exac
 
 Plain `journalctl` requires an interactive password and does not work non-interactively.
 
-Recovering a delivery stuck in a terminal `failed` state (open `delivery_failure` gap) requires
-proof the shadow attempt had no external effect — always true for dark launch, since shadow
-execution never has external effects enabled:
+Recovering a delivery in terminal `failed` state (open `delivery_failure` gap) requires proof the
+shadow attempt had no external effect — always true for dark launch, since shadow execution never
+has external effects enabled — and is safe to requeue only when no later rollout evaluation is in
+flight and no later rollout command has completed a real evaluation:
 
 ```sh
 scripts/dish-pg-dark-launch gap-resolve \
@@ -297,7 +300,13 @@ scripts/dish-pg-dark-launch gap-resolve \
   --reason "operator reason"
 ```
 
-This resolves the gap and requeues the delivery as `pending` for the worker to retry.
+This resolves the gap and requeues the delivery as `pending` for the worker to retry. It fails closed
+while a later rollout delivery is currently `claimed`, because that evaluation may already be mutating
+target state in another transaction, and after a later command has produced a real comparison, because
+replaying the earlier command then would make the recorded sequence out of order. A later delivery that
+ended in `failed` rolled its evaluation transaction back; an explicit capture-only skip or operator void
+did not evaluate the command. Those terminal no-evaluation outcomes, and later unattempted `pending`
+captures, do not by themselves prevent recovery.
 
 If the failed delivery is genuinely terminal and must never be retried or evaluated, Marco may
 explicitly void that one delivery instead:
@@ -312,9 +321,10 @@ scripts/dish-pg-dark-launch void-failed-delivery \
 
 This command accepts only a terminal `failed` delivery whose baseline is still `open` and whose
 generation is still `active` (the same liveness check `skip_delivery`/`fail_delivery` apply). It
-permanently gives up evaluating that envelope, settles the delivery as `delivered` only so strict
-rollout ordering can advance, records a `parity_class=gap` comparison whose target is explicitly
-`not_evaluated`, and opens a new `delivery_failure` gap with `audit_kind=operator_voided`. It also
+permanently gives up evaluating that envelope, settles the delivery as `delivered` so its terminal
+abandonment is explicit and the baseline can eventually close, records a `parity_class=gap`
+comparison whose target is explicitly `not_evaluated`, and opens a new `delivery_failure` gap with
+`audit_kind=operator_voided`. Later rollout evidence may already have advanced past the failed row. It also
 resolves the original `delivery_failure` gap opened when the delivery first failed, linking its
 resolution to the new gap's identity — so an operator reviewing open gap counts sees one gap close
 and one open, not two open gaps for the same delivery. The existing schema's allowed gap kinds do
@@ -323,9 +333,12 @@ operator action from both the original delivery failure and ordinary capture-tim
 skips. It does not enable external effects or transfer authority.
 
 Use `gap-resolve` (above), not `void-failed-delivery`, when the failure was transient or
-infrastructure-related (e.g. a schema mismatch since fixed) rather than genuinely unresolvable —
-`gap-resolve` requeues the delivery as `pending` for a real retry, while `void-failed-delivery`
-permanently gives up on it.
+infrastructure-related (e.g. a schema mismatch since fixed), the envelope should still be evaluated,
+and no later rollout evaluation is in flight or has completed a real comparison. Later failed, skipped,
+or operator-voided deliveries do not alone prevent retry. Once a later real evaluation is in flight or
+recorded, do not force an out-of-order retry in this baseline: `gap-resolve` refuses it.
+`void-failed-delivery` is only for an explicit decision to abandon that envelope's evaluation; otherwise
+use a clean superseding replay path rather than rewriting the current sequence.
 
 Known non-bug: `parity_class=gap` alone is not evidence of a problem. `rollout_mode` is pinned into
 each envelope's `pinned_inputs` at the moment of capture; an envelope captured while the service was
