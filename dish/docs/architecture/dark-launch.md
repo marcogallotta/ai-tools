@@ -10,7 +10,7 @@ Dark launch observes and exercises the PostgreSQL target without transferring li
 
 ## Authoritative implementation
 
-Current anchors include `dish_pg/location_manifest.py`, `dish_pg/legacy_source.py`, `dish_pg/dark_launch_readiness.py`, `dish_pg/importer.py`, `dish_pg/import_runtime.py`, `dish_service/shadow_capture.py`, `dish_service/shadow_spool.py`, `dish_shadow/policy.py`, and `dish_pg/shadow_worker.py`.
+Current anchors include `dish_pg/location_manifest.py`, `dish_pg/legacy_source.py`, `dish_pg/history_backfill.py`, `dish_pg/dark_launch_readiness.py`, `dish_pg/importer.py`, `dish_pg/import_runtime.py`, `dish_service/shadow_capture.py`, `dish_service/shadow_spool.py`, `dish_shadow/policy.py`, and `dish_pg/shadow_worker.py`.
 
 ## Actors, processes, and stores
 
@@ -36,6 +36,7 @@ Production capture is read-only observation. The location manifest/export/spool/
 - Shadow execution has no Asana I/O and shadow-origin work cannot project live effects, even if some other effect-enable/epoch configuration is incorrect or permissive.
 - Treatment and comparison eligibility derive from current command metadata plus explicit shadow-only exceptions; there is no second complete hand-maintained treatment oracle.
 - Captured/exported evidence remains bound to the source/environment/generation/corpus identities needed to interpret it; evidence from one identity must not silently certify another.
+- A task imported from an `allow_open_operations` source may receive later terminal operation/cycle/lease history only through a separate immutable supplemental `ImportRun`; the bootstrap `ImportRun` remains unchanged, and current ReleaseCandidate attestation does not silently expand to cover the supplement.
 - Evidence collection and successful comparison do not by themselves transfer authority.
 - Rollout ordering serializes work that can still execute (`pending`/`claimed` deliveries). A terminal
   `failed` delivery remains durable open-gap evidence but is not a baseline-wide cursor and must not

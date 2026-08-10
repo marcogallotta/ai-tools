@@ -160,6 +160,35 @@ production PostgreSQL database. It is a distinct destructive action from the reh
 and requires Marco's explicit authorization at the time it is performed, separate from any earlier
 authorization to run the rehearsal.
 
+### Backfill one task after `allow_open_operations`
+
+When a production prepare explicitly used `DISH_PG_ALLOW_OPEN_OPERATIONS=1`, the task itself was
+imported but any then-open operation, verification cycle, or service lease was absent from that
+immutable source bundle. After the relevant legacy history has become fully terminal, backfill only
+that task with the reviewed operator command instead of changing the original import run:
+
+```sh
+.venv/bin/python scripts/dish-pg-backfill-task "$TASK_GID" \
+  --database-url "$DISH_PG_DATABASE_URL" \
+  --expected-database-name "$DISH_PG_EXPECTED_DATABASE_NAME" \
+  --legacy-database "$DISH_DB_PATH" \
+  --snapshot-output "$DISH_PG_TERMINAL_HISTORY_SNAPSHOT"
+```
+
+`DISH_PG_TERMINAL_HISTORY_SNAPSHOT` is an operator-chosen retained evidence path for that one task.
+The command first requires the existing PostgreSQL `DishTask`, then reads SQLite in one read
+transaction and fails before any PostgreSQL import mutation if any operation is non-terminal, any
+verification cycle is open, or any lease is active. On success it records the exact one-task source
+bytes under a new immutable supplemental `ImportRun` and inserts only missing terminal-history rows;
+matching stable identities are verified and conflicting identities fail closed. Repeating the exact
+snapshot is idempotent. Task/content/placement/completion/registry rows and the bootstrap `ImportRun`
+are not rewritten.
+
+The current ReleaseCandidate contract still attests one primary source-import lineage and does not
+attest supplemental terminal-history runs. The backfill command reports that limitation and refuses
+to mutate a generation once a candidate for it is already `validated`, `approved`, or `activated`;
+do not treat an older candidate manifest as evidence for the supplemental run.
+
 ## Install the worker while stopped
 
 Marco may install the committed unit, reload systemd, and confirm that it remains disabled and

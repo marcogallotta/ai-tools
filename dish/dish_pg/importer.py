@@ -128,7 +128,7 @@ def _history_items(history: Mapping[str, object], field: str) -> list[Mapping[st
     return list(value)
 
 
-def _operation_history_from_mapping(record: Mapping[str, object]) -> ImportedOperationHistorySpec:
+def operation_history_from_mapping(record: Mapping[str, object]) -> ImportedOperationHistorySpec:
     value = record.get("operation_history")
     if not isinstance(value, Mapping):
         raise ValueError("operation_history is required; re-export the legacy source")
@@ -195,7 +195,7 @@ def _spec_from_mapping(record: Mapping[str, object]) -> ImportedTaskSpec:
         section_id=UUID(_required_string(record, "section_id")),
         completed=completed,
         observed_at=_parse_datetime(record.get("observed_at"), field="observed_at"),
-        operation_history=_operation_history_from_mapping(record),
+        operation_history=operation_history_from_mapping(record),
         existence_state=str(record.get("existence_state", "ordinary")),
     )
 
