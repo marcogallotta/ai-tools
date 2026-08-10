@@ -1702,7 +1702,9 @@
               "recovery_required",
               "abandonment_active",
               "succession_active",
-              "projection_abnormal"
+              "projection_abnormal",
+              "research_required",
+              "verification_required"
             ]
           },
           "label": {
@@ -1751,13 +1753,14 @@
             "type": "string",
             "enum": [
               "needs_you",
+              "workflow_queue",
               "system_activity"
             ]
           },
           "attention": {
             "type": "array",
             "minItems": 1,
-            "maxItems": 8,
+            "maxItems": 9,
             "items": {
               "$ref": "#/components/schemas/AdminAttention"
             }
@@ -1782,7 +1785,7 @@
             "properties": {
               "attention_codes": {
                 "type": "array",
-                "maxItems": 8,
+                "maxItems": 9,
                 "items": {
                   "type": "string"
                 }
@@ -1899,6 +1902,9 @@
               "needs_you",
               "human_review",
               "recovery",
+              "workflow_queue",
+              "research",
+              "verification",
               "system_activity",
               "affected_dishes"
             ],
@@ -1912,6 +1918,18 @@
                 "minimum": 0
               },
               "recovery": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "workflow_queue": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "research": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "verification": {
                 "type": "integer",
                 "minimum": 0
               },

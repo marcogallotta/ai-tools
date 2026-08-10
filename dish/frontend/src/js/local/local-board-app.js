@@ -6,9 +6,6 @@ import { appendSectionPage, mapBoardResponse, mapSectionPageResponse } from "../
 import { renderBoard } from "../features/board/board.js";
 import { mapTaskDetailResponse } from "../features/detail/api-detail-model.js";
 import { closeTaskDetail, openTaskDetail } from "../features/detail/task-detail.js";
-import { effectiveTaskContributions, groupNotices } from "../features/notices/notice-model.js";
-import { noticeRegistry } from "../features/notices/notice-registry.js";
-import { renderNotices } from "../features/notices/notices.js";
 import {
   blockRepeatedInvalidCursor,
   captureBoardViewState,
@@ -22,10 +19,7 @@ import { renderInitialErrorState, renderLoadingState } from "../features/refresh
 import { createApplicationFrame } from "../shell/application-shell.js";
 import { LocalBoardRequestState } from "../features/refresh/request-state.js";
 import { refreshFailureNotice } from "../features/refresh/failures.js";
-
-const localAttentionLabels = Object.freeze(Object.fromEntries(
-  Object.entries(noticeRegistry).map(([code, presentation]) => [code, presentation.label]),
-));
+import { createLocalNoticeState, localAttentionLabels } from "./local-notice-state.js";
 
 export { LocalBoardRequestState } from "../features/refresh/request-state.js";
 
@@ -46,31 +40,23 @@ export async function renderLocalPostgresqlBoard(root, {
   root.replaceChildren(shell); root.dataset.shellState = "local-postgresql-loading";
   let board = null; let selectedDetail = null; let selectedOrigin = null;
   let refreshTimer = null; let refreshFailures = 0; let boardRefreshPromise = null; let queuedRefresh = false;
-  let stopped = false; let refreshSuspended = false; let lastNoticeSignature = null;
-  const invalidRequestCursors = new Map(); const blockedInvalidRequestCursors = new Map(); const requestNotices = new Map();
+  let stopped = false; let refreshSuspended = false;
+  const invalidRequestCursors = new Map(); const blockedInvalidRequestCursors = new Map();
   const requestState = new LocalBoardRequestState();
 
   const reloadPage = () => window.location.reload();
-  const renderCurrentNotices = () => {
-    const serverDetail = selectedDetail?.notices?.map((notice) => ({ ...notice })) ?? [];
-    const notices = groupNotices(
-      effectiveTaskContributions(board ?? { sections: [] }, selectedDetail),
-      [...serverDetail, ...requestNotices.values()],
-    );
-    const signature = JSON.stringify(notices.map((notice) => [notice.code, notice.message, notice.action, notice.tasks]));
-    if (signature === lastNoticeSignature) return;
-    lastNoticeSignature = signature;
-    renderNotices(noticeHost, notices, {
-      onSelectTask: (taskId) => {
-        const origin = document.querySelector(`.task-card[data-task-id="${CSS.escape(taskId)}"]`);
-        void openDetail(taskId, origin, { navigation: selectedDetail ? "replace" : "push", fromBoard: !selectedDetail });
-      },
-      onRetry: () => { void requestBoardRefresh({ manual: true, forceAfterCurrent: true }); },
-      onReload: reloadPage,
-    });
-  };
-  const setRequestNotice = (scope, notice) => { requestNotices.set(scope, notice); renderCurrentNotices(); };
-  const clearRequestNotice = (scope) => { if (requestNotices.delete(scope)) renderCurrentNotices(); };
+  const noticeState = createLocalNoticeState({
+    noticeHost,
+    boardValue: () => board,
+    detailValue: () => selectedDetail,
+    onSelectTask: (taskId) => {
+      const origin = document.querySelector(`.task-card[data-task-id="${CSS.escape(taskId)}"]`);
+      void openDetail(taskId, origin, { navigation: selectedDetail ? "replace" : "push", fromBoard: !selectedDetail });
+    },
+    onRetry: () => { void requestBoardRefresh({ manual: true, forceAfterCurrent: true }); },
+    onReload: reloadPage,
+  });
+  const renderCurrentNotices = noticeState.render; const setRequestNotice = noticeState.set; const clearRequestNotice = noticeState.clear;
   const normalizeBoardRoute = (mode = "replace") => writePostgresRoute(BOARD_ROUTE, mode, {});
 
   const refreshAdminSummary = async () => {

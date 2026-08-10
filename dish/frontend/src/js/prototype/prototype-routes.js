@@ -1,4 +1,4 @@
-export const BOARD_ROUTE = "/";
+export const PROTOTYPE_BOARD_ROUTE = "/";
 export const TASK_ROUTE_PREFIX = "/task/";
 const fixtureRouteIdentity = /^[a-z0-9][a-z0-9-]{0,79}$/;
 
@@ -12,7 +12,7 @@ export function taskRoute(taskId) {
 }
 
 export function parseTaskRoute(pathname) {
-  if (pathname === BOARD_ROUTE) return null;
+  if (pathname === PROTOTYPE_BOARD_ROUTE) return null;
   if (!pathname.startsWith(TASK_ROUTE_PREFIX)) return null;
   const encoded = pathname.slice(TASK_ROUTE_PREFIX.length);
   if (!encoded || encoded.includes("/")) return null;

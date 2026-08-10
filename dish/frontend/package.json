@@ -13,7 +13,11 @@
     "test:unit": "node --test tests/unit/*.test.mjs",
     "test:browser": "npm run build && python3 tools/browser_harness.py test",
     "screenshots": "npm run build && python3 tools/browser_harness.py screenshots",
-    "check": "npm run format:check && npm run lint && npm run schema:check && npm run test:unit && npm run build",
-    "review": "npm run build:review && DISH_FRONTEND_STATIC_ROOT=review-dist node tools/dev-server.mjs"
+    "check": "npm run check:static && npm run test:acceptance:built",
+    "review": "npm run build:review && DISH_FRONTEND_STATIC_ROOT=review-dist node tools/dev-server.mjs",
+    "check:static": "npm run format:check && npm run lint && npm run schema:check && npm run test:unit && npm run build",
+    "test:acceptance:built": "../.venv/bin/python -m pytest -q tests/browser",
+    "test:acceptance": "npm run build && npm run test:acceptance:built",
+    "test:acceptance:high": "../.venv/bin/python -m pytest -q tests/browser/test_auth_session.py tests/browser/test_refresh_failures.py tests/browser/test_detail_history.py tests/browser/test_admin_acceptance.py"
   }
 }

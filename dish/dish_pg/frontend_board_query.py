@@ -36,6 +36,7 @@ class SectionFact:
     section_id: UUID
     ordinal: int
     section_label: str
+    workflow_role: str
     project_id: UUID
     project_label: str
     section_lifecycle: str
@@ -242,6 +243,7 @@ class FrontendBoardQuery:
                     ),
                     else_=models.SectionRegistryEntry.display_name,
                 ).label("section_label"),
+                models.SectionRegistryEntry.workflow_role,
                 models.GovernedSection.project_id,
                 models.GovernedProject.logical_name.label("project_label"),
                 models.GovernedSection.lifecycle.label("section_lifecycle"),

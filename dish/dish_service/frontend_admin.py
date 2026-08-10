@@ -11,7 +11,6 @@ from dish_service.frontend_contract import ATTENTION_BY_CODE, operation_status
 
 NEEDS_YOU_CODES = frozenset({"lease_attention", "verification_attention", "recovery_required"})
 SYSTEM_CODES = frozenset({"isolated", "hold_active", "abandonment_active", "succession_active", "projection_abnormal"})
-
 _ADMIN_ATTENTION = {
     "isolated": ("Dish is isolated", "This dish is outside the ordinary workflow path."),
     "lease_attention": ("Run authority expired", "Choose whether this invocation should be replaced before work continues."),
@@ -21,6 +20,8 @@ _ADMIN_ATTENTION = {
     "abandonment_active": ("Replacement is being prepared", "Dish is processing an abandonment/replacement sequence."),
     "succession_active": ("Replacement continuation exists", "A successor operation is active for this dish."),
     "projection_abnormal": ("External projection needs attention", "The downstream projection is delayed, blocked, uncertain, or drifting."),
+    "research_required": ("Needs research", "This dish is waiting in the Research queue."),
+    "verification_required": ("Needs verification", "This dish is waiting in the Verification queue."),
 }
 
 
@@ -54,6 +55,7 @@ class FrontendAdminService:
 
     def present(self, facts: FrontendAdminFacts) -> dict[str, Any]:
         section_labels = {section.section_id: section.section_label for section in facts.sections}
+        section_roles = {section.section_id: section.workflow_role for section in facts.sections}
         cards_by_id = {card.task_id: card for card in facts.cards}
         latest_by_task: dict[object, datetime] = {}
         for event in facts.events:
@@ -62,33 +64,50 @@ class FrontendAdminService:
         dishes = []
         needs_you_count = 0
         system_count = 0
+        workflow_queue_count = 0
         human_review_count = 0
         recovery_count = 0
+        research_count = 0
+        verification_count = 0
         for card in facts.cards:
             codes = self._attention_codes(card)
+            workflow_code = self._workflow_queue_code(card, section_roles.get(card.section_id))
+            if workflow_code is not None:
+                codes.append(workflow_code)
             if not codes:
                 continue
             needs_you = any(code in NEEDS_YOU_CODES for code in codes)
+            has_system_activity = any(code in SYSTEM_CODES for code in codes)
             if needs_you:
+                bucket = "needs_you"
                 needs_you_count += 1
-            else:
+            elif has_system_activity:
+                bucket = "system_activity"
                 system_count += 1
+            else:
+                bucket = "workflow_queue"
+                workflow_queue_count += 1
             if "verification_attention" in codes:
                 human_review_count += 1
             if "lease_attention" in codes or "recovery_required" in codes:
                 recovery_count += 1
+            if workflow_code == "research_required":
+                research_count += 1
+            elif workflow_code == "verification_required":
+                verification_count += 1
             dishes.append({
                 "task_id": str(card.task_id),
                 "title": card.title.strip(),
                 "section_label": section_labels.get(card.section_id, "Unknown section"),
                 "workflow_status": operation_status(card.operation_kind, card.operation_phase),
-                "bucket": "needs_you" if needs_you else "system_activity",
+                "bucket": bucket,
                 "attention": [self._attention_item(code) for code in codes],
                 "last_activity_at": self._iso(latest_by_task.get(card.task_id)),
                 "diagnostics": {"attention_codes": codes},
             })
 
-        dishes.sort(key=lambda item: (item["bucket"] != "needs_you", item["title"].casefold(), item["task_id"]))
+        bucket_order = {"needs_you": 0, "workflow_queue": 1, "system_activity": 2}
+        dishes.sort(key=lambda item: (bucket_order[item["bucket"]], item["title"].casefold(), item["task_id"]))
         journal = []
         for event in facts.events:
             card = cards_by_id.get(event.task_id)
@@ -114,6 +133,9 @@ class FrontendAdminService:
                 "needs_you": needs_you_count,
                 "human_review": human_review_count,
                 "recovery": recovery_count,
+                "workflow_queue": workflow_queue_count,
+                "research": research_count,
+                "verification": verification_count,
                 "system_activity": system_count,
                 "affected_dishes": len(dishes),
             },
@@ -134,6 +156,19 @@ class FrontendAdminService:
             "projection_abnormal": card.projection_abnormal,
         }
         return [code for code in ATTENTION_BY_CODE if active.get(code, False)]
+
+    @staticmethod
+    def _workflow_queue_code(card, section_role: str | None) -> str | None:
+        # Queue placement is a factual fallback only when no open operation exists,
+        # matching the task-detail advisory contract. An open operation is more
+        # specific than broad queue placement.
+        if card.operation_kind is not None or card.operation_phase is not None:
+            return None
+        if section_role == "research_queue":
+            return "research_required"
+        if section_role == "verification_queue":
+            return "verification_required"
+        return None
 
     @staticmethod
     def _attention_item(code: str) -> dict[str, str]:

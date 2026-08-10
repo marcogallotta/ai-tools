@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { BOARD_ROUTE, parseTaskRoute, taskRoute } from "../../src/js/prototype/prototype-routes.js";
+import { PROTOTYPE_BOARD_ROUTE, parseTaskRoute, taskRoute } from "../../src/js/prototype/prototype-routes.js";
 
 test("fixture task identities round-trip through the closed route grammar", () => {
-  assert.equal(BOARD_ROUTE, "/");
+  assert.equal(PROTOTYPE_BOARD_ROUTE, "/");
   assert.equal(taskRoute("task-biryani"), "/task/task-biryani");
   assert.equal(parseTaskRoute("/task/task-biryani"), "task-biryani");
 });

@@ -74,9 +74,16 @@ export function renderAdmin(host, admin) {
   const heading = document.createElement("h1"); heading.textContent = admin.summary.needsYou ? `${admin.summary.needsYou} ${admin.summary.needsYou === 1 ? "dish needs" : "dishes need"} you` : "Nothing needs you right now";
   const description = document.createElement("p"); description.className = "muted"; description.textContent = "Operational state first. Workflow mechanics and identifiers stay in diagnostics.";
   const counts = document.createElement("div"); counts.className = "admin-summary-grid";
-  counts.append(summaryCard(admin.summary.humanReview, "Human Review"), summaryCard(admin.summary.recovery, "Recovery"), summaryCard(admin.summary.systemActivity, "System handling it"));
+  counts.append(
+    summaryCard(admin.summary.humanReview, "Human Review"),
+    summaryCard(admin.summary.recovery, "Recovery"),
+    summaryCard(admin.summary.research, "Needs research"),
+    summaryCard(admin.summary.verification, "Needs verification"),
+    summaryCard(admin.summary.systemActivity, "System handling it"),
+  );
   intro.append(eyebrow, heading, description, counts); host.append(intro);
   host.append(group("Needs you", "Only states that require an operator decision or explicit recovery action.", admin.dishes.filter((dish) => dish.bucket === "needs_you"), "admin-needs-you"));
+  host.append(group("Workflow queue", "Dishes waiting for ordinary Research or Verification work. These do not increase the Marco-only needs-you count.", admin.dishes.filter((dish) => dish.bucket === "workflow_queue"), "admin-workflow"));
   host.append(group("System handling it", "Operationally relevant states that are visible without increasing the main needs-you count.", admin.dishes.filter((dish) => dish.bucket === "system_activity"), "admin-system"));
   const journal = document.createElement("section"); journal.className = "admin-journal"; journal.setAttribute("aria-labelledby", "operator-journal-title");
   const journalHeading = document.createElement("div"); journalHeading.className = "admin-group__heading";

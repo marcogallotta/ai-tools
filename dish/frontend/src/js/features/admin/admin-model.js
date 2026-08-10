@@ -5,8 +5,8 @@ const taskPattern = /^(?!00000000-0000-0000-0000-000000000000)[0-9a-f]{8}-[0-9a-
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const operationLabels = new Set(WORKFLOW_OPERATION_LABELS);
 const phaseLabels = new Set(WORKFLOW_PHASE_LABELS);
-const attentionCodes = new Set(TASK_ATTENTION_NOTICE_CODES);
-const buckets = new Set(["needs_you", "system_activity"]);
+const attentionCodes = new Set([...TASK_ATTENTION_NOTICE_CODES, "research_required", "verification_required"]);
+const buckets = new Set(["needs_you", "workflow_queue", "system_activity"]);
 
 export class AdminContractMismatch extends Error {
   constructor() {
@@ -38,7 +38,7 @@ function workflow(value) {
 }
 function diagnostics(value) {
   exactKeys(value, ["attention_codes"]);
-  if (!Array.isArray(value.attention_codes) || value.attention_codes.length > 8 || new Set(value.attention_codes).size !== value.attention_codes.length) mismatch();
+  if (!Array.isArray(value.attention_codes) || value.attention_codes.length > 9 || new Set(value.attention_codes).size !== value.attention_codes.length) mismatch();
   if (value.attention_codes.some((code) => !attentionCodes.has(code))) mismatch();
   return { attentionCodes: [...value.attention_codes] };
 }
@@ -49,7 +49,7 @@ function attention(value) {
 }
 function dish(value) {
   exactKeys(value, ["task_id", "title", "section_label", "workflow_status", "bucket", "attention", "last_activity_at", "diagnostics"]);
-  if (!buckets.has(value.bucket) || !Array.isArray(value.attention) || value.attention.length < 1 || value.attention.length > 8) mismatch();
+  if (!buckets.has(value.bucket) || !Array.isArray(value.attention) || value.attention.length < 1 || value.attention.length > 9) mismatch();
   const mappedAttention = value.attention.map(attention);
   if (new Set(mappedAttention.map((item) => item.code)).size !== mappedAttention.length) mismatch();
   const mappedDiagnostics = diagnostics(value.diagnostics);
@@ -78,16 +78,21 @@ function event(value) {
 
 export function mapAdminResponse(value) {
   exactKeys(value, ["generated_at", "summary", "dishes", "journal"]);
-  exactKeys(value.summary, ["needs_you", "human_review", "recovery", "system_activity", "affected_dishes"]);
+  exactKeys(value.summary, ["needs_you", "human_review", "recovery", "workflow_queue", "research", "verification", "system_activity", "affected_dishes"]);
   if (!Array.isArray(value.dishes) || value.dishes.length > 5000 || !Array.isArray(value.journal) || value.journal.length > 120) mismatch();
   const dishes = value.dishes.map(dish);
   if (new Set(dishes.map((item) => item.id)).size !== dishes.length) mismatch();
   const summary = {
     needsYou: count(value.summary.needs_you), humanReview: count(value.summary.human_review), recovery: count(value.summary.recovery),
+    workflowQueue: count(value.summary.workflow_queue), research: count(value.summary.research), verification: count(value.summary.verification),
     systemActivity: count(value.summary.system_activity), affectedDishes: count(value.summary.affected_dishes),
   };
-  if (summary.affectedDishes !== dishes.length || summary.needsYou + summary.systemActivity !== dishes.length) mismatch();
+  if (summary.affectedDishes !== dishes.length || summary.needsYou + summary.workflowQueue + summary.systemActivity !== dishes.length) mismatch();
   if (summary.needsYou !== dishes.filter((item) => item.bucket === "needs_you").length) mismatch();
+  if (summary.workflowQueue !== dishes.filter((item) => item.bucket === "workflow_queue").length) mismatch();
+  if (summary.systemActivity !== dishes.filter((item) => item.bucket === "system_activity").length) mismatch();
+  if (summary.research !== dishes.filter((item) => item.attention.some((entry) => entry.code === "research_required")).length) mismatch();
+  if (summary.verification !== dishes.filter((item) => item.attention.some((entry) => entry.code === "verification_required")).length) mismatch();
   return { generatedAt: date(value.generated_at), summary, dishes, journal: value.journal.map(event) };
 }
 

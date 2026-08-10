@@ -45,8 +45,8 @@ def card(**overrides):
 
 def test_admin_present_is_dish_first_and_human_review_counts_as_needs_you() -> None:
     facts = FrontendAdminFacts(
-        sections=(SectionFact(SECTION_ID, 1, "Verification Queue", PROJECT_ID, "Cooking", "active", "active"),),
-        cards=(card(),),
+        sections=(SectionFact(SECTION_ID, 1, "Verification Queue", "verification_queue", PROJECT_ID, "Cooking", "active", "active"),),
+        cards=(card(operation_kind="initial", operation_phase="held_human"),),
         events=(AdminAuditFact(EVENT_ID, REQUEST_ID, None, TASK_ID, None, "workflow_action_rejected", "agent", NOW),),
         evaluation_time=NOW,
     )
@@ -62,6 +62,9 @@ def test_admin_present_is_dish_first_and_human_review_counts_as_needs_you() -> N
         "needs_you": 1,
         "human_review": 1,
         "recovery": 0,
+        "workflow_queue": 0,
+        "research": 0,
+        "verification": 0,
         "system_activity": 0,
         "affected_dishes": 1,
     }
@@ -74,7 +77,7 @@ def test_admin_present_is_dish_first_and_human_review_counts_as_needs_you() -> N
 
 def test_admin_system_activity_does_not_increase_needs_you() -> None:
     facts = FrontendAdminFacts(
-        sections=(SectionFact(SECTION_ID, 1, "Research Queue", PROJECT_ID, "Cooking", "active", "active"),),
+        sections=(SectionFact(SECTION_ID, 1, "Operations", "operations", PROJECT_ID, "Cooking", "active", "active"),),
         cards=(card(verification_attention=False, hold_active=True),),
         events=(),
         evaluation_time=NOW,
@@ -87,3 +90,64 @@ def test_admin_system_activity_does_not_increase_needs_you() -> None:
     assert payload["summary"]["needs_you"] == 0
     assert payload["summary"]["system_activity"] == 1
     assert payload["dishes"][0]["bucket"] == "system_activity"
+
+
+def test_admin_queue_roles_are_visible_without_inflating_needs_you() -> None:
+    research_id = TASK_ID
+    verification_id = UUID("30000000-0000-0000-0000-000000000002")
+    facts = FrontendAdminFacts(
+        sections=(
+            SectionFact(SECTION_ID, 1, "Research Queue", "research_queue", PROJECT_ID, "Cooking", "active", "active"),
+            SectionFact(UUID("10000000-0000-0000-0000-000000000002"), 2, "Verification Queue", "verification_queue", PROJECT_ID, "Cooking", "active", "active"),
+        ),
+        cards=(
+            card(task_id=research_id, section_id=SECTION_ID, verification_attention=False),
+            card(
+                task_id=verification_id,
+                section_id=UUID("10000000-0000-0000-0000-000000000002"),
+                title="Tomato confit",
+                sort_title="tomato confit",
+                verification_attention=False,
+            ),
+        ),
+        events=(),
+        evaluation_time=NOW,
+    )
+    service = FrontendAdminService(
+        FakeQuery(), environment="test", config=FrontendAdminConfig(projection_delay=timedelta(minutes=15))
+    )
+
+    payload = service.present(facts)
+
+    assert payload["summary"] == {
+        "needs_you": 0,
+        "human_review": 0,
+        "recovery": 0,
+        "workflow_queue": 2,
+        "research": 1,
+        "verification": 1,
+        "system_activity": 0,
+        "affected_dishes": 2,
+    }
+    assert [dish["bucket"] for dish in payload["dishes"]] == ["workflow_queue", "workflow_queue"]
+    assert {dish["attention"][0]["code"] for dish in payload["dishes"]} == {
+        "research_required",
+        "verification_required",
+    }
+
+
+def test_open_operation_takes_precedence_over_queue_fallback() -> None:
+    facts = FrontendAdminFacts(
+        sections=(SectionFact(SECTION_ID, 1, "Research Queue", "research_queue", PROJECT_ID, "Cooking", "active", "active"),),
+        cards=(card(verification_attention=False, operation_kind="initial", operation_phase="prepare_required"),),
+        events=(),
+        evaluation_time=NOW,
+    )
+    service = FrontendAdminService(
+        FakeQuery(), environment="test", config=FrontendAdminConfig(projection_delay=timedelta(minutes=15))
+    )
+
+    payload = service.present(facts)
+
+    assert payload["summary"]["workflow_queue"] == 0
+    assert payload["summary"]["affected_dishes"] == 0

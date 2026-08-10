@@ -176,6 +176,45 @@ results, conditional lanes omitted with reasons, and any unresolved uncertainty.
 review these decisions; repeated mistakes should become clearer map rules, examples, inventories, or
 structural checks.
 
+## Frontend browser acceptance
+
+Delivery Stage 7 adds a committed Playwright suite under `frontend/tests/browser/`. It drives the
+production `frontend/dist` through the real private Dish HTTP surface with deterministic read-only
+acceptance state; it does not mount mocked frontend components. The normal frontend gate includes
+this suite after the static/unit/build checks:
+
+```sh
+npm --prefix frontend run check
+```
+
+For focused browser iteration, build once and run only the acceptance suite:
+
+```sh
+npm --prefix frontend run build
+.venv/bin/python -m pytest -q frontend/tests/browser
+```
+
+Or use the documented companion command, which rebuilds first:
+
+```sh
+npm --prefix frontend run test:acceptance
+```
+
+When local browser time is constrained, run the high-priority Stage 7 slice first. It covers auth/session replacement and expiry, reconciliation/history, controlled failures, and the Admin observation surface:
+
+```sh
+npm --prefix frontend run build
+npm --prefix frontend run test:acceptance:high
+```
+
+This focused command is an iteration aid, not a substitute for the full Stage 7 acceptance gate before delivery.
+
+The run writes `.test-artifacts/frontend-stage7/run.json` plus scenario screenshots. The report records
+the frontend build metadata, browser/configuration, scenario results, redirects, HTTP error responses,
+failed requests, console/page errors, and screenshot paths. Browser acceptance requires a Chromium
+installation that permits navigation to the synthetic HTTPS acceptance origin; a managed browser
+policy that blocks navigation is an unavailable test environment, not a passing gate.
+
 ## Named lane commands
 
 Use the single lane entrypoint when the change belongs to one of the recurring high-risk groups.

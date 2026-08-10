@@ -9,7 +9,7 @@ const requestId = "32345678-1234-5678-1234-567812345678";
 function payload() {
   return {
     generated_at: "2026-08-10T18:00:00+00:00",
-    summary: { needs_you: 1, human_review: 1, recovery: 0, system_activity: 0, affected_dishes: 1 },
+    summary: { needs_you: 1, human_review: 1, recovery: 0, workflow_queue: 0, research: 0, verification: 0, system_activity: 0, affected_dishes: 1 },
     dishes: [{
       task_id: taskId,
       title: "Miso soup",
@@ -44,4 +44,17 @@ test("admin contract rejects summary counts that disagree with dishes", () => {
   const value = payload();
   value.summary.needs_you = 2;
   assert.throws(() => mapAdminResponse(value), AdminContractMismatch);
+});
+
+
+test("admin contract maps ordinary workflow queue work without needs-you inflation", () => {
+  const value = payload();
+  value.summary = { needs_you: 0, human_review: 0, recovery: 0, workflow_queue: 1, research: 0, verification: 1, system_activity: 0, affected_dishes: 1 };
+  value.dishes[0].bucket = "workflow_queue";
+  value.dishes[0].attention = [{ code: "verification_required", label: "Needs verification", message: "This dish is waiting in the Verification queue." }];
+  value.dishes[0].diagnostics.attention_codes = ["verification_required"];
+  const mapped = mapAdminResponse(value);
+  assert.equal(mapped.summary.needsYou, 0);
+  assert.equal(mapped.summary.verification, 1);
+  assert.equal(mapped.dishes[0].bucket, "workflow_queue");
 });
