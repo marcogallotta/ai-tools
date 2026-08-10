@@ -25,6 +25,7 @@ Current production combines Honest assets, service-owned SQLite, and Asana. Post
 | Workflow operations, replay, leases, audit | SQLite | Intended to migrate to PostgreSQL |
 | Legal workflow transitions | Workflow/application policy over authoritative state | Rendered actions are projections |
 | Request identity/outcome | Replay authority | Permanent identity semantics |
+| Kill request-to-revocation binding | SQLite replay/kill authority | Exact immutable request, operation, owner, run, source authority, and revocation identity; written atomically with revocation |
 | PostgreSQL canonical state | PostgreSQL only after explicit cutover | Before cutover it is target/shadow evidence |
 | Dark-launch artifacts | No live authority | Evidence only |
 

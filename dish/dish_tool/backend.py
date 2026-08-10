@@ -361,6 +361,50 @@ class AsanaBackend:
             return tasks, None
         return tasks, next_cursor
 
+    def list_tasks_for_project(
+        self, project_gid: str, *, cursor: str | None = None
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        """List one page of tasks in a project with placement metadata for audits."""
+        import asana
+
+        function = asana.TasksApi(self.client()).get_tasks_for_project
+        options: dict[str, Any] = {
+            "opt_fields": (
+                "gid,name,completed,projects.gid,"
+                "memberships.project.gid,memberships.section.gid,memberships.section.name"
+            ),
+            "limit": 100,
+        }
+        if cursor is not None:
+            options["offset"] = cursor
+        envelope = self.call_envelope(
+            function,
+            project_gid,
+            options,
+            context=f"Cooking project {project_gid} tasks",
+        )
+        data = envelope["data"]
+        if not isinstance(data, list) or not all(isinstance(item, Mapping) for item in data):
+            raise DishRuleError(
+                "INTERNAL_ERROR",
+                "Asana returned malformed project task data",
+                rule="backend_response_malformed",
+            )
+        tasks = [dict(item) for item in data]
+        next_page = envelope.get("next_page")
+        if next_page is None:
+            return tasks, None
+        if not isinstance(next_page, Mapping):
+            raise DishRuleError(
+                "INTERNAL_ERROR",
+                "Asana returned malformed project task pagination data",
+                rule="backend_response_malformed",
+            )
+        next_cursor = str(next_page.get("offset") or "").strip()
+        if not next_cursor or next_cursor == cursor:
+            return tasks, None
+        return tasks, next_cursor
+
     def read_task(self, task_gid: str) -> dict[str, Any]:
         import asana
 

@@ -61,8 +61,8 @@ For semantic proposals, the durable lifecycle is:
 1. create and validate the exact proposal against the governed semantic subject;
 2. obtain human approval for that exact proposal;
 3. persist that approval without yet changing canonical task content;
-4. in the normal admin path, Dish mechanically claims/revalidates the exact approved proposal against current authoritative facts immediately after approval persistence;
-5. apply that proposal unchanged, or leave the durable approval intact and fail/reconcile if application is no longer safe or applicable. Low-level application can retry the same approved object without reapproval.
+4. in the normal admin path, Dish mechanically claims/revalidates the exact approved proposal against current authoritative facts immediately after approval persistence, using an exact `(dish-mechanical, run_id)` principal and the canonical operation-execution mutation fence;
+5. apply that proposal unchanged, or leave the durable approval intact and fail/reconcile if application is no longer safe or applicable. Low-level application can retry the same approved object without reapproval, but an explicitly revoked exact mechanical principal can never reclaim or apply it. A distinct successor run identity remains independently eligible.
 
 For Verification Human Review, the agent first states the unresolved issue and, when challenged, the supporting basis and repair routes considered. It should use a reasonable defensible estimate with stated assumptions instead of demanding false precision, and quantify any structured threshold blocker as one defensible estimate versus the limit and excess/shortfall. Nutrition estimates use the served edible portion expected to be consumed rather than gross raw inputs; non-consumed bones, shells, discarded liquid, and drained/rendered fat cannot establish a hard-limit breach. If no single estimate is defensible, the agent must not invent one merely to populate the blocker structure. If the exact governed repair is already knowable, Verification proposes that exact candidate through the semantic-proposal path. Only when a genuine Marco-only choice remains before such a candidate can exist does Dish park the exact held cycle. Marco then reviews the held item through the review queue, where approval records the substantive decision and follows the stored resume route while rejection dismisses the unanswered escalation itself as invalid and always returns the unchanged candidate to fresh Verification.
 
@@ -71,6 +71,7 @@ More generally, workflow execution reads authoritative state, derives legal tran
 ## Failure, replay, recovery, and concurrency
 
 Stale proposals, mismatched reviewed content, changed proposal identity/integrity, conflicting targets, or lost claims fail closed or move through explicit recovery. If the exact approved candidate is already canonical, recovery may reconcile that fact rather than demanding another human approval or blindly writing again.
+Proposal-claim ownership is the exact `(owner_id, run_id)` principal. Matching a run UUID alone never grants claim visibility, application availability, lease admission, resume, or renewal authority.
 
 Exact recovery mechanisms may evolve; durable identity, authorization, and no-silent-broadening guarantees are architectural, not today's function layout.
 

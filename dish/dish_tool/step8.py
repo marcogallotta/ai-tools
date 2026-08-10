@@ -1281,6 +1281,7 @@ def _confirmed_semantic_proposal_application(
     *,
     proposal: sqlite3.Row,
     applying_agent: str,
+    applying_owner_id: str,
     applying_run_id: str,
     expected_authorization_changes,
 ) -> dict[str, Any]:
@@ -1301,6 +1302,7 @@ def _confirmed_semantic_proposal_application(
         )
     if (
         proposal["claimed_agent"] != applying_agent
+        or proposal["claimed_owner_id"] != applying_owner_id
         or proposal["claimed_run_id"] != applying_run_id
     ):
         raise DishRuleError(
@@ -1309,6 +1311,7 @@ def _confirmed_semantic_proposal_application(
             rule="semantic_proposal_application_recovery_actor_mismatch",
             details={
                 "claimed_agent": proposal["claimed_agent"],
+                "claimed_owner_id": proposal["claimed_owner_id"],
                 "claimed_run_id": proposal["claimed_run_id"],
             },
         )
@@ -1369,6 +1372,7 @@ def _confirmed_semantic_proposal_application(
         "proposal_id": proposal["proposal_id"],
         "candidate_identity": proposal["candidate_identity"],
         "application_actor": applying_agent,
+        "application_owner_id": applying_owner_id,
         "application_run_id": applying_run_id,
     }
     if any(binding.get(key) != value for key, value in expected_binding.items()):
@@ -1477,7 +1481,7 @@ def apply_semantic_proposal(
     proposal_id: str,
     agent: str,
     model: str,
-    owner_id: str | None,
+    owner_id: str,
     run_id: str,
     request_id: str | None,
     schema=None,
@@ -1557,6 +1561,7 @@ def apply_semantic_proposal(
                 conn,
                 proposal=proposal,
                 applying_agent=agent,
+                applying_owner_id=owner_id,
                 applying_run_id=run_id,
                 expected_authorization_changes=expected_authorization_changes,
             )
@@ -1642,6 +1647,7 @@ def apply_semantic_proposal(
                         "proposal_id": clean_id,
                         "candidate_identity": proposal["candidate_identity"],
                         "application_actor": agent,
+                        "application_owner_id": owner_id,
                         "application_run_id": run_id,
                     },
                 },
@@ -1719,7 +1725,7 @@ def apply_semantic_proposal(
                     after_state={"Decisions": list(document.decisions)},
                 )
             applied = mark_semantic_proposal_applied(
-                conn, proposal_id=clean_id, run_id=run_id,
+                conn, proposal_id=clean_id, owner_id=owner_id, run_id=run_id,
                 applied_identity=confirmed.identity,
             )
             complete_operation_step(conn, op["operation_id"], proposal_step)
@@ -1773,7 +1779,7 @@ def apply_semantic_proposal(
                     authorization_ids=authorization_ids,
                 )
             release_semantic_proposal_claim(
-                conn, proposal_id=clean_id, run_id=run_id,
+                conn, proposal_id=clean_id, owner_id=owner_id, run_id=run_id,
                 reason=f"application failed before a confirmed write: {exc.rule or exc.code}",
             )
         raise

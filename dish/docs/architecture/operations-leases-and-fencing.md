@@ -24,6 +24,7 @@ Durable claim/lease identity determines which executor may continue a mutation. 
 
 - A stale or superseded executor cannot continue writing authoritative outcomes.
 - Marco kill/replace is an explicit durable revocation of one exact `(operation_id, owner_id, run_id)`. Historical lease state may identify which exact run Marco is killing after its lease was normally released, but history never implies revocation by itself. Ordinary lease loss remains recoverable until an explicit revocation exists; after revocation, that exact run may never acquire, reacquire, renew, or otherwise re-establish mutation authority for that operation.
+- Revocation is checked at the canonical mutation-claim writer boundary. Approved mechanical proposal application uses that same operation-execution claim/fence as connected `apply-proposal`; durable human approval substitutes for the actor-lease prerequisite only, not for execution fencing or exact-principal revocation.
 - Reclaim/recovery does not silently duplicate an uncertain external effect.
 - Same-run expired-lease recovery and different-run ownership transfer are distinct operations.
 - Different-run safe reclaim is allowed only from a mechanically clean inactive frontier; it fences
@@ -50,8 +51,11 @@ risk. Revocation is checked at lease acquisition/reacquisition and renewal and i
 release reasons, timestamps, missing leases, or proposal status. Historical lease evidence may select
 the exact owner/run targeted by an explicit kill. Connected-agent mutation execution revalidates that
 same owner/run, active actor lease, and non-revoked status atomically when the operation-execution claim
-is created; therefore either the execution claim wins and kill refuses, or kill wins and the execution
-claim rejects the revoked run. Safe reclaim also rechecks the requesting owner/run for explicit
+is created. Mechanical application of an already-approved proposal enters the same claim transaction with
+its exact `dish-mechanical` owner/run principal; approval removes only the need for a connected actor lease.
+Therefore either the execution claim wins and kill refuses as mutation-in-progress, or kill wins and the
+application claim rejects the revoked exact principal before any external proposal write. Safe reclaim also
+rechecks the requesting owner/run for explicit
 revocation inside its writer transaction before it fences the source or creates a successor. Read-only
 principal-aware views suppress mutation continuations for a revoked run rather than advertising an
 action that the authority boundary will reject. Safe reclaim records the source lease/owner/run and

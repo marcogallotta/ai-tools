@@ -700,3 +700,319 @@ def test_inspect_reports_explicit_revocation_even_before_lease_cleanup() -> None
     assert result["ok"], result
     assert result["data"]["outstanding_invocation"]["run_id"] == principal.run_id
     assert result["data"]["outstanding_invocation"]["authority_state"] == "revoked"
+
+
+def test_kill_mechanical_claim_then_review_approve_cannot_resurrect_exact_run(tmp_path) -> None:
+    import dish_tool.admin as admin_module
+    from dish_tool.constants import MECHANICAL_PROPOSAL_AGENT
+
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review_and_inspect(app, agent="codex", run_id="mechanical-kill-author")
+    candidate = tmp_path / "mechanical-kill-proposal.txt"
+    candidate.write_text(
+        TASK.replace("Locks: Keep crisp", "Locks: Keep crisp | Use whole scallion")
+    )
+    queued = app.execute(
+        "reject",
+        agent="codex",
+        model="gpt-5.6-sol",
+        submission_id=operation_id,
+        route="large",
+        reason="Linked governed correction",
+        file_path=str(candidate),
+        run_id="mechanical-kill-author",
+    )
+    proposal_id = queued["data"]["proposal_id"]
+    approved = approve_semantic_proposal(
+        app.conn,
+        proposal_id=proposal_id,
+        live_title=backend.title,
+        live_notes=backend.notes,
+        reason="Marco approved exact proposal",
+    )
+    mechanical_run = admin_module._mechanical_proposal_run_id(proposal_id)
+    claim_semantic_proposal(
+        app.conn,
+        proposal_id=proposal_id,
+        agent=MECHANICAL_PROPOSAL_AGENT,
+        owner_id="dish-mechanical",
+        run_id=mechanical_run,
+        request_id=None,
+    )
+    admin = DishAdminApplication(
+        app.conn, backend=backend, release_loader=app.release_loader
+    )
+
+    killed = admin.execute(
+        "kill", dish=operation_id, reason="replace killed mechanical proposal application"
+    )
+    assert killed["ok"], killed
+    assert killed["data"]["outcome"] == "checkpoint_preserved"
+    assert killed["data"]["fenced_invocation"]["owner_id"] == "dish-mechanical"
+    assert killed["data"]["fenced_invocation"]["run_id"] == mechanical_run
+    assert killed["data"]["fenced_invocation"]["proposal_id"] == proposal_id
+
+    writes_before = backend.writes
+    retried = admin.execute("review-approve", proposal_id=proposal_id)
+    assert not retried["ok"]
+    assert retried["errors"][0]["rule"] == "killed_run_revoked"
+    assert backend.writes == writes_before
+    proposal = app.conn.execute(
+        """SELECT status,claimed_owner_id,claimed_run_id,applied_at
+             FROM semantic_proposals WHERE proposal_id=?""",
+        (proposal_id,),
+    ).fetchone()
+    assert proposal["status"] == "approved"
+    assert proposal["claimed_owner_id"] is None
+    assert proposal["claimed_run_id"] is None
+    assert proposal["applied_at"] is None
+
+
+def test_kill_loses_closed_when_mechanical_application_holds_canonical_mutation_claim(
+    tmp_path,
+) -> None:
+    app, backend, operation_id, _ = make_app(tmp_path)
+    review_and_inspect(app, agent="codex", run_id="mechanical-race-author")
+    candidate = tmp_path / "mechanical-race-proposal.txt"
+    candidate.write_text(
+        TASK.replace("Locks: Keep crisp", "Locks: Keep crisp | Use whole scallion")
+    )
+    queued = app.execute(
+        "reject",
+        agent="codex",
+        model="gpt-5.6-sol",
+        submission_id=operation_id,
+        route="large",
+        reason="Linked governed correction",
+        file_path=str(candidate),
+        run_id="mechanical-race-author",
+    )
+    proposal_id = queued["data"]["proposal_id"]
+    admin = DishAdminApplication(
+        app.conn, backend=backend, release_loader=app.release_loader
+    )
+    kill_results: list[dict] = []
+
+    def try_kill_during_write(**_kwargs) -> None:
+        kill_results.append(
+            admin.execute(
+                "kill",
+                dish=operation_id,
+                reason="race with consequential proposal write",
+            )
+        )
+
+    backend.before("update_task_content", try_kill_during_write)
+    writes_before = backend.writes
+    applied = admin.execute(
+        "review-approve",
+        proposal_id=proposal_id,
+        reason="Marco approves this exact linked bundle.",
+    )
+
+    assert applied["ok"], applied
+    assert backend.writes == writes_before + 1
+    assert len(kill_results) == 1
+    blocked_kill = kill_results[0]
+    assert not blocked_kill["ok"]
+    assert blocked_kill["errors"][0]["rule"] == "kill_mutation_in_progress"
+    assert app.conn.execute(
+        "SELECT COUNT(*) FROM operation_run_revocations WHERE operation_id=?",
+        (operation_id,),
+    ).fetchone()[0] == 0
+
+
+def test_kill_request_replay_uses_durable_exact_binding_after_revocation_crash(
+    tmp_path, monkeypatch
+) -> None:
+    import uuid
+    import dish_tool.admin as admin_module
+    from tests.support.request_restore import SimulatedSigkill
+    from tests.support.service_foundation import _release_loader
+
+    db_path = tmp_path / "dish.db"
+    conn = initialize_database(db_path)
+    backend = Backend(section="pi", task_gid=_NUMERIC_TASK_GID)
+    source = _numeric_task_source(conn, backend)
+    killed_principal = ServicePrincipal("owner-before-crash", "run-before-crash")
+    lease = LeaseManager(conn).acquire(source["operation_id"], killed_principal)
+    conn.close()
+    honest = tmp_path / "honest"
+    honest.mkdir()
+    service = DishService(
+        ServiceConfig(
+            db_path=db_path,
+            honest_root=honest,
+            backup_dir=tmp_path / "backups",
+            agent_token="agent-secret",
+            admin_token="admin-secret",
+            action_token="action-secret",
+            port=0,
+        ),
+        backend_factory=lambda: backend,
+        release_loader=_release_loader(honest),
+    )
+    admin_principal = ServicePrincipal("marco", str(uuid.uuid4()))
+    request_id = str(uuid.uuid4())
+    original_commit = admin_module._commit_kill_revocation
+
+    def crash_after_revocation(*args, **kwargs):
+        result = original_commit(*args, **kwargs)
+        raise SimulatedSigkill("immediately after durable kill revocation")
+
+    monkeypatch.setattr(admin_module, "_commit_kill_revocation", crash_after_revocation)
+    with pytest.raises(SimulatedSigkill):
+        service.execute_admin(
+            "kill",
+            {"dish": _NUMERIC_TASK_GID, "reason": "replace crashed conversation"},
+            principal=admin_principal,
+            request_id=request_id,
+        )
+
+    conn = initialize_database(db_path)
+    try:
+        request = conn.execute(
+            "SELECT status,operation_id FROM service_requests WHERE request_id=?",
+            (request_id,),
+        ).fetchone()
+        binding = conn.execute(
+            "SELECT * FROM kill_request_bindings WHERE request_id=?", (request_id,)
+        ).fetchone()
+        revocation = conn.execute(
+            "SELECT * FROM operation_run_revocations WHERE revocation_id=?",
+            (binding["revocation_id"],),
+        ).fetchone()
+        assert request["status"] == "pending"
+        assert request["operation_id"] is None
+        assert binding["operation_id"] == source["operation_id"]
+        assert binding["task_gid"] == _NUMERIC_TASK_GID
+        assert binding["target_owner_id"] == killed_principal.owner_id
+        assert binding["target_run_id"] == killed_principal.run_id
+        assert binding["source_lease_id"] == lease["lease_id"]
+        assert binding["source_lease_was_active"] == 1
+        assert revocation["operation_id"] == source["operation_id"]
+        assert revocation["owner_id"] == killed_principal.owner_id
+        assert revocation["run_id"] == killed_principal.run_id
+    finally:
+        conn.close()
+
+    monkeypatch.setattr(admin_module, "_commit_kill_revocation", original_commit)
+    original_resolve = admin_module.resolve_admin_dish_target
+
+    def forbid_high_level_reresolution(conn_arg, raw):
+        assert str(raw) != _NUMERIC_TASK_GID, "replay resolved the Dish again"
+        return original_resolve(conn_arg, raw)
+
+    monkeypatch.setattr(
+        admin_module, "resolve_admin_dish_target", forbid_high_level_reresolution
+    )
+    replayed = service.execute_admin(
+        "kill",
+        {"dish": _NUMERIC_TASK_GID, "reason": "replace crashed conversation"},
+        principal=admin_principal,
+        request_id=request_id,
+    )
+    assert replayed["ok"], replayed
+    assert replayed["submission_id"] == source["operation_id"]
+    assert replayed["data"]["fenced_invocation"]["owner_id"] == killed_principal.owner_id
+    assert replayed["data"]["fenced_invocation"]["run_id"] == killed_principal.run_id
+
+    conn = initialize_database(db_path)
+    try:
+        settled = conn.execute(
+            "SELECT status,operation_id,task_gid,result_json FROM service_requests WHERE request_id=?",
+            (request_id,),
+        ).fetchone()
+        assert settled["status"] == "completed"
+        assert settled["operation_id"] == source["operation_id"]
+        assert settled["task_gid"] == _NUMERIC_TASK_GID
+        assert settled["result_json"]
+        assert conn.execute(
+            """SELECT COUNT(*) FROM operation_run_revocations
+                 WHERE operation_id=? AND owner_id=? AND run_id=?""",
+            (source["operation_id"], killed_principal.owner_id, killed_principal.run_id),
+        ).fetchone()[0] == 1
+    finally:
+        conn.close()
+
+
+def test_claimed_proposal_same_run_uuid_different_owner_has_no_claim_or_lease_authority(
+    tmp_path,
+) -> None:
+    import uuid
+
+    service, _backend, proposal_id, _task_gid = _approved_service_proposal_runtime(tmp_path)
+    shared_run = str(uuid.uuid4())
+    owner_a = ServicePrincipal("proposal-owner-a", shared_run)
+    owner_b = ServicePrincipal("proposal-owner-b", shared_run)
+    conn = initialize_database(service.config.db_path)
+    try:
+        proposal = conn.execute(
+            "SELECT operation_id,cycle_id FROM semantic_proposals WHERE proposal_id=?",
+            (proposal_id,),
+        ).fetchone()
+        operation_id = str(proposal["operation_id"])
+        LeaseManager(conn).acquire(
+            operation_id, owner_a, context_cycle_id=str(proposal["cycle_id"])
+        )
+        claim_semantic_proposal(
+            conn,
+            proposal_id=proposal_id,
+            agent="codex",
+            owner_id=owner_a.owner_id,
+            run_id=owner_a.run_id,
+            request_id=None,
+        )
+        LeaseManager(conn).release(
+            operation_id, owner_a, reason="leave claimed proposal for exact resume"
+        )
+    finally:
+        conn.close()
+
+    inspected = service.execute_agent(
+        "inspect",
+        {"agent": "codex", "submission_id": operation_id},
+        principal=owner_b,
+        request_id=str(uuid.uuid4()),
+    )
+    assert inspected["allowed_actions"] == []
+    assert inspected["data"]["service_access"]["state"] == "semantic_proposal_claimed_by_other_run"
+    assert inspected["data"]["service_access"]["owner_id"] == owner_a.owner_id
+    assert inspected["data"]["service_access"]["run_id"] == shared_run
+    assert inspected["data"]["semantic_proposal"]["claimed_owner_id"] == owner_a.owner_id
+
+    blocked = service.execute_agent(
+        "apply-proposal",
+        {"proposal_id": proposal_id, "agent": "codex", "model": "gpt-5.6-sol"},
+        principal=owner_b,
+        request_id=str(uuid.uuid4()),
+    )
+    assert not blocked["ok"]
+    assert blocked["errors"][0]["rule"] in {
+        "service_lease_claim_forbidden",
+        "semantic_proposal_claimed",
+    }
+
+    conn = initialize_database(service.config.db_path)
+    try:
+        active = LeaseManager(conn).active_for_operation(operation_id)
+        assert active is None or active["owner_id"] != owner_b.owner_id
+        proposal = conn.execute(
+            "SELECT status,claimed_owner_id,claimed_run_id FROM semantic_proposals WHERE proposal_id=?",
+            (proposal_id,),
+        ).fetchone()
+        assert proposal["status"] == "claimed"
+        assert proposal["claimed_owner_id"] == owner_a.owner_id
+        assert proposal["claimed_run_id"] == shared_run
+        with pytest.raises(DishRuleError) as excinfo:
+            claim_semantic_proposal(
+                conn,
+                proposal_id=proposal_id,
+                agent="codex",
+                owner_id=owner_b.owner_id,
+                run_id=shared_run,
+                request_id=None,
+            )
+        assert excinfo.value.rule == "semantic_proposal_claimed"
+    finally:
+        conn.close()

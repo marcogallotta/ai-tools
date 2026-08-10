@@ -174,3 +174,50 @@ def test_asana_auth_loader_and_timeout_configuration(tmp_path, monkeypatch):
         READ_TIMEOUT_SECONDS,
     )
 
+
+@pytest.mark.smoke
+def test_project_task_listing_requests_placement_fields_and_returns_cursor(monkeypatch):
+    import asana
+
+    captured: dict[str, Any] = {}
+
+    class TasksApi:
+        def __init__(self, client):
+            captured["client"] = client
+
+        def get_tasks_for_project(self, project_gid, opts, **kwargs):
+            captured["project_gid"] = project_gid
+            captured["opts"] = dict(opts)
+            captured["kwargs"] = dict(kwargs)
+            return {
+                "data": [
+                    {
+                        "gid": "1001",
+                        "name": "Dish",
+                        "completed": False,
+                        "projects": [{"gid": project_gid}],
+                        "memberships": [
+                            {
+                                "project": {"gid": project_gid},
+                                "section": {"gid": "rq", "name": "Research Queue"},
+                            }
+                        ],
+                    }
+                ],
+                "next_page": {"offset": "next-page"},
+            }
+
+    monkeypatch.setattr(asana, "TasksApi", TasksApi)
+    backend = AsanaBackend(api_client=object())
+
+    tasks, cursor = backend.list_tasks_for_project("cooking-project", cursor="page-1")
+
+    assert tasks[0]["gid"] == "1001"
+    assert cursor == "next-page"
+    assert captured["project_gid"] == "cooking-project"
+    assert captured["opts"]["offset"] == "page-1"
+    assert captured["opts"]["limit"] == 100
+    assert "memberships.project.gid" in captured["opts"]["opt_fields"]
+    assert "memberships.section.gid" in captured["opts"]["opt_fields"]
+    assert "memberships.section.name" in captured["opts"]["opt_fields"]
+    assert captured["kwargs"]["_request_timeout"] == ASANA_REQUEST_TIMEOUT

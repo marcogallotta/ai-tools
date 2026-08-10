@@ -13,9 +13,11 @@ from typing import Any, Callable, Mapping
 from .application_service import OperationApplicationService
 from .command_support import reject_undeclared_arguments
 from .database import (
+    bind_kill_request_in_transaction,
     bind_abandonment_execution_in_transaction,
     create_abandonment_attempt_in_transaction,
     get_abandonment_attempt,
+    kill_request_binding,
     complete_operation_step,
     declare_operation_step,
     record_audit,
@@ -59,6 +61,7 @@ def _is_recoverable_mechanical_proposal_claim(proposal: Mapping[str, Any]) -> bo
     return bool(proposal_id) and (
         proposal["status"] == "claimed"
         and proposal["claimed_agent"] == MECHANICAL_PROPOSAL_AGENT
+        and proposal["claimed_owner_id"] == "dish-mechanical"
         and proposal["claimed_run_id"] == _mechanical_proposal_run_id(proposal_id)
     )
 
@@ -347,12 +350,191 @@ def _replace_run_action(*, dish_reference: str, summary: str, effect: str) -> di
     return spec.payload()["human_action"] | {"shell_command": spec.shell_command()}
 
 
+
+def _json_object(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except (TypeError, ValueError):
+            return value
+    return value
+
+
+def _rows_as_dicts(rows: list[sqlite3.Row], *, json_fields: tuple[str, ...] = ()) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        for field in json_fields:
+            if field in item:
+                item[field] = _json_object(item[field])
+        output.append(item)
+    return output
+
+
+def _inspect_verbose_diagnostics(
+    conn: sqlite3.Connection, *, task_gid: str, operation_id: str | None
+) -> dict[str, Any]:
+    """Return bounded read-only durable evidence for operator debugging."""
+    content_head = conn.execute(
+        """SELECT task_gid,last_confirmed_identity,last_confirmed_title,schema_version,
+                  confirmed_at,last_confirmed_content_version_id
+             FROM task_content_state WHERE task_gid=?""",
+        (task_gid,),
+    ).fetchone()
+    history_operations = conn.execute(
+        """SELECT operation_id,operation_kind,status,phase,terminal_outcome,
+                  expected_identity,schema_version,expected_section_gid,
+                  migration_reconciliation_required,migration_reconciliation_reason,
+                  created_at,completed_at
+             FROM operations WHERE task_gid=?
+             ORDER BY created_at DESC, operation_id DESC LIMIT 10""",
+        (task_gid,),
+    ).fetchall()
+    audit_rows = conn.execute(
+        """SELECT event_id,event_type,operation_id,result_code,result_ok,governed_kind,
+                  actor_agent,actor_provenance,operation_execution_id,details,created_at
+             FROM audit_events WHERE task_gid=?
+             ORDER BY created_at DESC,event_id DESC LIMIT 50""",
+        (task_gid,),
+    ).fetchall()
+    diagnostics: dict[str, Any] = {
+        "content_head": None if content_head is None else dict(content_head),
+        "operation_history": _rows_as_dicts(history_operations),
+        "recent_audit_events": _rows_as_dicts(
+            audit_rows, json_fields=("details", "actor_provenance")
+        ),
+        "recent_audit_event_limit": 50,
+    }
+    if operation_id is None:
+        return diagnostics
+
+    operation = conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()
+    diagnostics["operation"] = None if operation is None else dict(operation)
+    table_queries: tuple[tuple[str, str, tuple[str, ...]], ...] = (
+        (
+            "verification_cycles",
+            """SELECT cycle_id,cycle_number,verifier_agent,run_id,independence_attestation,
+                      correction_class,outcome,route,resume_state,reviewed_content_version_id,
+                      reviewed_identity,signed_content_version_id,signed_identity,
+                      hold_content_version_id,hold_identity,hold_section_gid,created_at,completed_at
+                 FROM verification_cycles WHERE operation_id=?
+                 ORDER BY cycle_number,created_at""",
+            (),
+        ),
+        (
+            "service_requests",
+            """SELECT request_id,owner_id,run_id,command,status,task_gid,
+                      created_at,completed_at,resolved_at,result_json,resolution_result_json
+                 FROM service_requests WHERE operation_id=?
+                 ORDER BY created_at,request_id""",
+            ("result_json", "resolution_result_json"),
+        ),
+        (
+            "operation_executions",
+            """SELECT execution_id,request_id,command,status,baseline_json,evidence_json,
+                      resolution_evidence_json,created_at,completed_at,resolved_at
+                 FROM operation_executions WHERE operation_id=?
+                 ORDER BY created_at,execution_id""",
+            ("baseline_json", "evidence_json", "resolution_evidence_json"),
+        ),
+        (
+            "write_attempts",
+            """SELECT attempt_id,purpose,outcome,expected_identity,intended_identity,
+                      confirmed_content_version_id,expected_modified_at,version_source,
+                      version_reliable,context_json,started_at,finished_at
+                 FROM write_attempts WHERE operation_id=?
+                 ORDER BY started_at,attempt_id""",
+            ("context_json",),
+        ),
+        (
+            "movement_attempts",
+            """SELECT attempt_id,purpose,outcome,expected_section_gid,intended_section_gid,
+                      confirmed_section_gid,expected_modified_at,version_source,
+                      version_reliable,started_at,finished_at
+                 FROM movement_attempts WHERE operation_id=?
+                 ORDER BY started_at,attempt_id""",
+            (),
+        ),
+        (
+            "service_leases",
+            """SELECT lease_id,owner_id,run_id,lease_kind,actor_attempt_seq,context_cycle_id,
+                      acquired_at,renewed_at,expires_at,released_at,release_reason
+                 FROM service_leases WHERE operation_id=?
+                 ORDER BY acquired_at,lease_id""",
+            (),
+        ),
+        (
+            "semantic_proposals",
+            """SELECT proposal_id,cycle_id,baseline_identity,candidate_identity,proposal_reason,
+                      correction_class,proposer_agent,proposer_run_id,status,created_at,
+                      reviewed_at,review_reason,approved_by,claimed_at,claimed_owner_id,
+                      claimed_agent,claimed_run_id,claim_request_id,applied_at,applied_identity
+                 FROM semantic_proposals WHERE operation_id=?
+                 ORDER BY created_at,proposal_id""",
+            (),
+        ),
+        (
+            "abandonment_attempts",
+            """SELECT abandonment_id,source_lease_id,abandoned_owner_id,abandoned_run_id,
+                      attempt_cycle_id,status,outcome,successor_operation_id,successor_cycle_id,
+                      continuation_operation_id,continuation_cycle_id,current_execution_id,
+                      reason,created_at,updated_at,completed_at
+                 FROM abandonment_attempts WHERE source_operation_id=? OR successor_operation_id=?
+                 ORDER BY created_at,abandonment_id""",
+            (),
+        ),
+        (
+            "safe_reclaims",
+            """SELECT reclaim_id,source_lease_id,previous_owner_id,previous_run_id,
+                      source_cycle_id,requested_owner_id,requested_run_id,successor_operation_id,
+                      successor_cycle_id,stage,reason,status,created_at,claimed_at
+                 FROM safe_reclaims WHERE source_operation_id=? OR successor_operation_id=?
+                 ORDER BY created_at,reclaim_id""",
+            (),
+        ),
+        (
+            "operation_run_revocations",
+            """SELECT revocation_id,owner_id,run_id,source_lease_id,reason,revoked_at
+                 FROM operation_run_revocations WHERE operation_id=?
+                 ORDER BY revoked_at,revocation_id""",
+            (),
+        ),
+        (
+            "dish_inspect_facts",
+            """SELECT fact_id,cycle_id,reviewed_content_version_id,reviewed_identity,
+                      verifier_agent,run_id,independence_attestation,section_gid,created_at
+                 FROM dish_inspect_facts WHERE operation_id=?
+                 ORDER BY created_at,fact_id""",
+            (),
+        ),
+        (
+            "operation_successions",
+            """SELECT succession_id,source_operation_id,successor_operation_id,transition_type,
+                      transition_reason,source_cycle_id,successor_cycle_id,source_content_version_id,
+                      successor_content_version_id,candidate_transfer_kind,abandonment_id,created_at
+                 FROM operation_successions WHERE source_operation_id=? OR successor_operation_id=?
+                 ORDER BY created_at,succession_id""",
+            (),
+        ),
+    )
+    for name, query, json_fields in table_queries:
+        parameter_count = query.count("?")
+        rows = conn.execute(query, (operation_id,) * parameter_count).fetchall()
+        diagnostics[name] = _rows_as_dicts(rows, json_fields=json_fields)
+    return diagnostics
+
+
 def _command_inspect(
     self,
     *,
     trace: AdminTrace,
     dish: str | None = None,
     submission_id: str | None = None,
+    verbose: bool = False,
 ) -> dict[str, Any]:
     """Return a compact, human-oriented diagnostic for any known Dish."""
 
@@ -403,6 +585,13 @@ def _command_inspect(
             "verification_cycle": None,
             "abandonment": None,
             "authoritative_view": None,
+            "diagnostics": (
+                _inspect_verbose_diagnostics(
+                    self.conn, task_gid=str(target["task_gid"]), operation_id=None
+                )
+                if verbose
+                else None
+            ),
         }
         return result_envelope(
             command="inspect",
@@ -858,6 +1047,13 @@ def _command_inspect(
             "successor_operation_id": abandonment["successor_operation_id"],
         },
         "authoritative_view": view,
+        "diagnostics": (
+            _inspect_verbose_diagnostics(
+                self.conn, task_gid=str(operation["task_gid"]), operation_id=str(operation_id)
+            )
+            if verbose
+            else None
+        ),
     }
     return result_envelope(
         command="inspect",
@@ -867,6 +1063,88 @@ def _command_inspect(
         data=data,
     )
 
+def _commit_kill_revocation(
+    self,
+    *,
+    target: Mapping[str, Any],
+    operation_id: str,
+    revocation_target: Mapping[str, Any],
+    lease_was_active_at_resolution: bool,
+    clean_reason: str,
+) -> sqlite3.Row:
+    """Commit exact kill authority and request binding as one writer action."""
+    from dish_service.leases import LeaseManager
+    from .operation_execution import live_operation_execution_claim
+
+    target_owner = str(revocation_target["owner_id"])
+    target_run = str(revocation_target["run_id"])
+    source_lease_id = revocation_target.get("source_lease_id")
+    with immediate_transaction(self.conn, "kill_revoke_operation_run"):
+        claim = live_operation_execution_claim(self.conn, operation_id=operation_id)
+        if claim is not None:
+            raise DishRuleError(
+                "CONFLICT",
+                "Dish began committing a workflow mutation before the run could be revoked",
+                rule="kill_mutation_in_progress",
+                retryable=True,
+                details={"dish_id": target["dish_id"], "operation_id": operation_id},
+            )
+        revocation = revoke_operation_run_in_transaction(
+            self.conn,
+            operation_id=operation_id,
+            owner_id=target_owner,
+            run_id=target_run,
+            source_lease_id=source_lease_id,
+            reason=f"Marco kill/replace: {clean_reason}",
+        )
+        if self.invocation_request_id:
+            bind_kill_request_in_transaction(
+                self.conn,
+                request_id=self.invocation_request_id,
+                task_gid=str(target["task_gid"]),
+                operation_id=operation_id,
+                target_owner_id=target_owner,
+                target_run_id=target_run,
+                authority_source=str(revocation_target["authority_source"]),
+                source_lease_id=source_lease_id,
+                source_proposal_id=revocation_target.get("source_proposal_id"),
+                source_lease_was_active=lease_was_active_at_resolution,
+                first_observed_at=revocation_target.get("first_observed_at"),
+                last_activity_at=revocation_target.get("last_activity_at"),
+                revocation_id=str(revocation["revocation_id"]),
+            )
+        # Lease cleanup is secondary to revocation. If the selected lease
+        # disappeared before this writer transaction, the revocation still
+        # commits. A successor lease is never touched.
+        current = LeaseManager(self.conn).active_for_operation(operation_id)
+        if (
+            current is not None
+            and current["owner_id"] == target_owner
+            and current["run_id"] == target_run
+        ):
+            LeaseManager(self.conn).admin_expire_selected(
+                str(current["lease_id"]),
+                reason=f"Marco kill/replace: {clean_reason}",
+                manage_transaction=False,
+            )
+        # A claimed semantic proposal is preserved, not answered. Releasing
+        # the exact killed principal's claim is part of the same authority
+        # transaction so there is no revoked-but-still-claimed gap.
+        current_proposal = active_proposal_for_operation(self.conn, operation_id)
+        if (
+            current_proposal is not None
+            and current_proposal["status"] == "claimed"
+            and current_proposal["claimed_owner_id"] == target_owner
+            and current_proposal["claimed_run_id"] == target_run
+        ):
+            release_semantic_proposal_claim_in_transaction(
+                self.conn,
+                proposal_id=str(current_proposal["proposal_id"]),
+                owner_id=target_owner,
+                run_id=target_run,
+                reason=f"applying run killed by Marco: {clean_reason}",
+            )
+    return revocation
 
 
 def _command_kill(
@@ -886,7 +1164,23 @@ def _command_kill(
     clean_reason = _clean_required(
         reason, rule="kill_reason_required", label="replacement reason"
     )
-    target = resolve_admin_dish_target(self.conn, dish)
+    request_binding = (
+        kill_request_binding(self.conn, request_id=self.invocation_request_id)
+        if self.invocation_request_id
+        else None
+    )
+    if request_binding is not None:
+        from dish_tool.identifiers import stable_dish_uuid_for_asana_identity
+
+        bound_task_gid = str(request_binding["task_gid"])
+        target = {
+            "task_gid": bound_task_gid,
+            "dish_id": str(stable_dish_uuid_for_asana_identity("task", bound_task_gid)),
+            "operation_id": str(request_binding["operation_id"]),
+            "reference_kind": "kill_request_binding",
+        }
+    else:
+        target = resolve_admin_dish_target(self.conn, dish)
     trace.task_gid = str(target["task_gid"])
     operation_id = target.get("operation_id")
     if operation_id is None:
@@ -906,7 +1200,6 @@ def _command_kill(
             },
         )
 
-    from dish_service.leases import LeaseManager
     from .operation_execution import (
         live_operation_execution_claim,
         operation_recovery_pending,
@@ -926,9 +1219,9 @@ def _command_kill(
 
     abandonment = self.conn.execute(
         """SELECT * FROM abandonment_attempts
-             WHERE task_gid=? AND status!='completed'
+             WHERE source_operation_id=? AND status!='completed'
              ORDER BY created_at DESC LIMIT 1""",
-        (target["task_gid"],),
+        (operation_id,),
     ).fetchone()
     lease = self.conn.execute(
         """SELECT * FROM service_leases
@@ -943,73 +1236,95 @@ def _command_kill(
         (operation_id,),
     ).fetchone()
     proposal_before_kill = active_proposal_for_operation(self.conn, operation_id)
-    lease_was_active_at_resolution = lease is not None
 
-    # Resolve the exact run Marco named by killing this Dish before taking the
-    # writer lock. Historical lease state may identify that run even after its
-    # lease was normally released; history is evidence of identity only. It
-    # never *means* revoked. Revocation exists only after the explicit record is
-    # persisted below.
+    # Once the irreversible revocation has been bound to this request, replay
+    # uses only that exact authority identity. It never resolves the Dish or a
+    # current lease/proposal again, so a successor principal remains eligible.
     revocation_target: dict[str, Any] | None = None
-    if lease is not None:
+    if request_binding is not None:
+        lease_was_active_at_resolution = bool(
+            request_binding["source_lease_was_active"]
+        )
         revocation_target = {
-            "owner_id": str(lease["owner_id"]),
-            "run_id": str(lease["run_id"]),
-            "source_lease_id": str(lease["lease_id"]),
-            "first_observed_at": lease["acquired_at"],
-            "last_activity_at": lease["renewed_at"],
-            "authority_source": "actor_lease",
+            "owner_id": str(request_binding["target_owner_id"]),
+            "run_id": str(request_binding["target_run_id"]),
+            "source_lease_id": request_binding["source_lease_id"],
+            "source_proposal_id": request_binding["source_proposal_id"],
+            "first_observed_at": request_binding["first_observed_at"],
+            "last_activity_at": request_binding["last_activity_at"],
+            "authority_source": str(request_binding["authority_source"]),
         }
-    elif proposal_before_kill is not None and proposal_before_kill["status"] == "claimed":
-        claimed_owner = str(proposal_before_kill["claimed_owner_id"] or "").strip()
-        claimed_run = str(proposal_before_kill["claimed_run_id"] or "").strip()
-        claim_lease = None
-        if claimed_run:
-            claim_leases = self.conn.execute(
+    else:
+        lease_was_active_at_resolution = lease is not None
+
+        # Resolve the exact run Marco named by killing this Dish before taking
+        # the writer lock. Historical lease state may identify that run even
+        # after its lease was normally released; history is identity evidence
+        # only. Revocation exists only after the explicit record is persisted.
+        if lease is not None:
+            revocation_target = {
+                "owner_id": str(lease["owner_id"]),
+                "run_id": str(lease["run_id"]),
+                "source_lease_id": str(lease["lease_id"]),
+                "source_proposal_id": None,
+                "first_observed_at": lease["acquired_at"],
+                "last_activity_at": lease["renewed_at"],
+                "authority_source": "actor_lease",
+            }
+        elif (
+            proposal_before_kill is not None
+            and proposal_before_kill["status"] == "claimed"
+        ):
+            claimed_owner = str(
+                proposal_before_kill["claimed_owner_id"] or ""
+            ).strip()
+            claimed_run = str(
+                proposal_before_kill["claimed_run_id"] or ""
+            ).strip()
+            if not claimed_owner or not claimed_run:
+                raise DishRuleError(
+                    "CONFLICT",
+                    "Dish cannot prove the exact owner/run for this proposal claim; no authority was changed",
+                    rule="kill_revocation_identity_missing",
+                    details={
+                        "operation_id": operation_id,
+                        "proposal_id": proposal_before_kill["proposal_id"],
+                        "owner_id": claimed_owner or None,
+                        "run_id": claimed_run or None,
+                    },
+                )
+            claim_lease = self.conn.execute(
                 """SELECT * FROM service_leases
-                     WHERE operation_id=? AND lease_kind='actor' AND run_id=?
-                     ORDER BY actor_attempt_seq DESC""",
-                (operation_id, claimed_run),
-            ).fetchall()
-            claim_owners = {str(row["owner_id"]) for row in claim_leases}
-            if len(claim_owners) == 1:
-                claim_lease = claim_leases[0]
-                if not claimed_owner:
-                    claimed_owner = next(iter(claim_owners))
-        if not claimed_owner or not claimed_run:
-            raise DishRuleError(
-                "CONFLICT",
-                "Dish cannot prove the exact owner/run for this proposal claim; no authority was changed",
-                rule="kill_revocation_identity_missing",
-                details={
-                    "operation_id": operation_id,
-                    "proposal_id": proposal_before_kill["proposal_id"],
-                    "run_id": claimed_run or None,
-                },
-            )
-        revocation_target = {
-            "owner_id": claimed_owner,
-            "run_id": claimed_run,
-            "source_lease_id": (
-                None if claim_lease is None else str(claim_lease["lease_id"])
-            ),
-            "first_observed_at": (
-                proposal_before_kill["claimed_at"]
-                if claim_lease is None
-                else claim_lease["acquired_at"]
-            ),
-            "last_activity_at": proposal_before_kill["claimed_at"],
-            "authority_source": "semantic_proposal_claim",
-        }
-    elif latest_actor_lease is not None:
-        revocation_target = {
-            "owner_id": str(latest_actor_lease["owner_id"]),
-            "run_id": str(latest_actor_lease["run_id"]),
-            "source_lease_id": str(latest_actor_lease["lease_id"]),
-            "first_observed_at": latest_actor_lease["acquired_at"],
-            "last_activity_at": latest_actor_lease["renewed_at"],
-            "authority_source": "historical_actor_lease",
-        }
+                     WHERE operation_id=? AND lease_kind='actor'
+                       AND owner_id=? AND run_id=?
+                     ORDER BY actor_attempt_seq DESC LIMIT 1""",
+                (operation_id, claimed_owner, claimed_run),
+            ).fetchone()
+            revocation_target = {
+                "owner_id": claimed_owner,
+                "run_id": claimed_run,
+                "source_lease_id": (
+                    None if claim_lease is None else str(claim_lease["lease_id"])
+                ),
+                "source_proposal_id": str(proposal_before_kill["proposal_id"]),
+                "first_observed_at": (
+                    proposal_before_kill["claimed_at"]
+                    if claim_lease is None
+                    else claim_lease["acquired_at"]
+                ),
+                "last_activity_at": proposal_before_kill["claimed_at"],
+                "authority_source": "semantic_proposal_claim",
+            }
+        elif latest_actor_lease is not None:
+            revocation_target = {
+                "owner_id": str(latest_actor_lease["owner_id"]),
+                "run_id": str(latest_actor_lease["run_id"]),
+                "source_lease_id": str(latest_actor_lease["lease_id"]),
+                "source_proposal_id": None,
+                "first_observed_at": latest_actor_lease["acquired_at"],
+                "last_activity_at": latest_actor_lease["renewed_at"],
+                "authority_source": "historical_actor_lease",
+            }
 
     claim = live_operation_execution_claim(self.conn, operation_id=operation_id)
     if claim is not None:
@@ -1034,59 +1349,20 @@ def _command_kill(
     if revocation_target is not None:
         target_owner = str(revocation_target["owner_id"])
         target_run = str(revocation_target["run_id"])
-        source_lease_id = revocation_target["source_lease_id"]
-        with immediate_transaction(self.conn, "kill_revoke_operation_run"):
-            claim = live_operation_execution_claim(self.conn, operation_id=operation_id)
-            if claim is not None:
-                raise DishRuleError(
-                    "CONFLICT",
-                    "Dish began committing a workflow mutation before the run could be revoked",
-                    rule="kill_mutation_in_progress",
-                    retryable=True,
-                    details={"dish_id": target["dish_id"], "operation_id": operation_id},
-                )
-            revocation = revoke_operation_run_in_transaction(
-                self.conn,
-                operation_id=operation_id,
-                owner_id=target_owner,
-                run_id=target_run,
-                source_lease_id=source_lease_id,
-                reason=f"Marco kill/replace: {clean_reason}",
-            )
-            # Lease cleanup is secondary to revocation. If the selected lease
-            # disappeared before this writer transaction, the revocation still
-            # commits. A successor lease is never touched.
-            current = LeaseManager(self.conn).active_for_operation(operation_id)
-            if (
-                current is not None
-                and current["owner_id"] == target_owner
-                and current["run_id"] == target_run
-            ):
-                LeaseManager(self.conn).admin_expire_selected(
-                    str(current["lease_id"]),
-                    reason=f"Marco kill/replace: {clean_reason}",
-                    manage_transaction=False,
-                )
-            # A claimed semantic proposal is preserved, not answered. Releasing
-            # the exact killed run's claim is part of the same authority
-            # transaction so there is no revoked-but-still-claimed gap.
-            current_proposal = active_proposal_for_operation(self.conn, operation_id)
-            if (
-                current_proposal is not None
-                and current_proposal["status"] == "claimed"
-                and current_proposal["claimed_owner_id"] == target_owner
-                and current_proposal["claimed_run_id"] == target_run
-            ):
-                release_semantic_proposal_claim_in_transaction(
-                    self.conn,
-                    proposal_id=str(current_proposal["proposal_id"]),
-                    run_id=target_run,
-                    reason=f"applying run killed by Marco: {clean_reason}",
-                )
+        source_lease_id = revocation_target.get("source_lease_id")
+        revocation = _commit_kill_revocation(
+            self,
+            target=target,
+            operation_id=str(operation_id),
+            revocation_target=revocation_target,
+            lease_was_active_at_resolution=lease_was_active_at_resolution,
+            clean_reason=clean_reason,
+        )
         fenced = {
             "owner_id": target_owner,
             "run_id": target_run,
             "lease_id": source_lease_id,
+            "proposal_id": revocation_target.get("source_proposal_id"),
             "first_observed_at": revocation_target["first_observed_at"],
             "last_activity_at": revocation_target["last_activity_at"],
             "authority_source": revocation_target["authority_source"],
@@ -1121,7 +1397,7 @@ def _command_kill(
     # A semantic proposal is a deliberate durable checkpoint.  Killing its agent
     # run never answers the proposal for Marco.
     if proposal is not None:
-        inspected = _command_inspect(self, trace=AdminTrace(), dish=dish)
+        inspected = _command_inspect(self, trace=AdminTrace(), dish=str(operation_id))
         continuation = (
             dict(inspected["data"])
             if isinstance(inspected.get("data"), Mapping)
@@ -1174,7 +1450,7 @@ def _command_kill(
         # disposition: a clean handoff/safe-reclaim is already replacement-ready,
         # while a dead bound attempt still requires the existing durable
         # abandonment path.  This avoids treating every historical lease as dead.
-        inspected = _command_inspect(self, trace=AdminTrace(), dish=dish)
+        inspected = _command_inspect(self, trace=AdminTrace(), dish=str(operation_id))
         continuation = (
             dict(inspected["data"])
             if isinstance(inspected.get("data"), Mapping)
@@ -1282,7 +1558,7 @@ def _command_kill(
         )
         abandonment = get_abandonment_attempt(self.conn, abandonment_id)
 
-    inspected = _command_inspect(self, trace=AdminTrace(), dish=dish)
+    inspected = _command_inspect(self, trace=AdminTrace(), dish=str(operation_id))
     continuation = (
         dict(inspected["data"])
         if isinstance(inspected.get("data"), Mapping)
@@ -1350,6 +1626,388 @@ def _attention_signal(
     if shell_command:
         signal["shell_command"] = shell_command
     return signal
+
+
+
+_AUDIT_CATEGORY_ORDER = {
+    "real_inconsistency": 0,
+    "needs_migration_repair": 1,
+    "dish_known_asana_missing_or_unavailable": 2,
+    "asana_only": 3,
+    "expected_external_lifecycle": 4,
+    "healthy_current": 5,
+}
+
+
+def _audit_project_tasks(backend: Any, *, project_gid: str) -> list[dict[str, Any]]:
+    """Return one stable de-duplicated project listing without per-task reads."""
+    tasks: dict[str, dict[str, Any]] = {}
+    cursor: str | None = None
+    seen_cursors: set[str] = set()
+    while True:
+        page, next_cursor = backend.list_tasks_for_project(project_gid, cursor=cursor)
+        for raw in page:
+            if not isinstance(raw, Mapping):
+                raise DishRuleError(
+                    "INTERNAL_ERROR",
+                    "Asana returned malformed project task data",
+                    rule="backend_response_malformed",
+                )
+            task_gid = str(raw.get("gid") or "").strip()
+            if not task_gid:
+                raise DishRuleError(
+                    "INTERNAL_ERROR",
+                    "Asana returned a project task without a GID",
+                    rule="backend_response_malformed",
+                )
+            tasks[task_gid] = dict(raw)
+        if next_cursor is None:
+            break
+        if next_cursor in seen_cursors:
+            raise DishRuleError(
+                "INTERNAL_ERROR",
+                "Asana repeated a project-task pagination cursor",
+                rule="backend_pagination_loop",
+            )
+        seen_cursors.add(next_cursor)
+        cursor = next_cursor
+    return list(tasks.values())
+
+
+def _audit_known_task_gids(conn: sqlite3.Connection) -> set[str]:
+    rows = conn.execute(
+        """SELECT task_gid FROM task_content_state
+           UNION
+           SELECT task_gid FROM operations
+           UNION
+           SELECT task_gid FROM service_leases"""
+    ).fetchall()
+    return {str(row["task_gid"]) for row in rows if str(row["task_gid"] or "").strip()}
+
+
+def _audit_operation_rows(conn: sqlite3.Connection, *, task_gid: str) -> list[sqlite3.Row]:
+    return conn.execute(
+        """SELECT * FROM operations
+             WHERE task_gid=?
+             ORDER BY created_at DESC, operation_id DESC""",
+        (task_gid,),
+    ).fetchall()
+
+
+def _audit_item(
+    *,
+    task_gid: str,
+    title: str | None,
+    category: str,
+    reason: str,
+    section_gid: str | None,
+    section_name: str | None,
+    operation: sqlite3.Row | None,
+    dish_known: bool,
+    asana_present: bool,
+    detail: str,
+) -> dict[str, Any]:
+    from .identifiers import stable_dish_uuid_for_asana_identity
+
+    try:
+        dish_id = str(stable_dish_uuid_for_asana_identity("task", task_gid))
+    except ValueError:
+        dish_id = None
+    return {
+        "dish_id": dish_id,
+        "task_gid": task_gid,
+        "task_title": title,
+        "category": category,
+        "reason": reason,
+        "detail": detail,
+        "dish_known": dish_known,
+        "asana_present": asana_present,
+        "section_gid": section_gid,
+        "section_name": section_name,
+        "operation_id": None if operation is None else operation["operation_id"],
+        "operation_status": None if operation is None else operation["status"],
+        "operation_phase": None if operation is None else operation["phase"],
+        "expected_section_gid": None if operation is None else operation["expected_section_gid"],
+    }
+
+
+def _command_audit(self, *, trace: AdminTrace) -> dict[str, Any]:
+    """Audit configured Cooking population against durable Dish-known task identities."""
+    if self.backend is None:
+        raise DishRuleError(
+            "INTERNAL_ERROR",
+            "population audit requires backend access",
+            rule="admin_audit_unavailable",
+        )
+
+    from .command_support import _task_is_in_project, _task_section_gid
+    from .constants import COOKING_PROJECT_GID
+    from .models import SectionRegistry
+
+    sections = self.backend.list_sections(COOKING_PROJECT_GID)
+    registry = SectionRegistry.from_sections(sections)
+    section_names = {
+        str(item.get("gid") or "").strip(): str(item.get("name") or "").strip()
+        for item in sections
+        if str(item.get("gid") or "").strip()
+    }
+    project_tasks = _audit_project_tasks(self.backend, project_gid=COOKING_PROJECT_GID)
+    asana_by_gid = {
+        str(item.get("gid")): item
+        for item in project_tasks
+        if str(item.get("gid") or "").strip()
+    }
+    known_task_gids = _audit_known_task_gids(self.conn)
+    release = None if self.release_loader is None else self.release_loader()
+    current_schema_version = None if release is None else str(release.schema_version or "").strip() or None
+
+    items: list[dict[str, Any]] = []
+
+    for task_gid in sorted(set(asana_by_gid) | known_task_gids):
+        listed = asana_by_gid.get(task_gid)
+        dish_known = task_gid in known_task_gids
+        state = self.conn.execute(
+            "SELECT * FROM task_content_state WHERE task_gid=?", (task_gid,)
+        ).fetchone()
+        operations = _audit_operation_rows(self.conn, task_gid=task_gid) if dish_known else []
+        active_operations = [row for row in operations if row["status"] in {"open", "uncertain"}]
+        latest_operation = operations[0] if operations else None
+        operation_for_detail = active_operations[0] if len(active_operations) == 1 else latest_operation
+        migration_required = bool(
+            (state is not None and current_schema_version is not None and str(state["schema_version"]) != current_schema_version)
+            or any(bool(row["migration_reconciliation_required"]) for row in active_operations)
+        )
+
+        if listed is None:
+            try:
+                live_raw = self.backend.read_task(task_gid)
+            except DishRuleError as exc:
+                fallback_title = None if state is None else str(state["last_confirmed_title"] or "").strip() or None
+                items.append(
+                    _audit_item(
+                        task_gid=task_gid,
+                        title=fallback_title,
+                        category="dish_known_asana_missing_or_unavailable",
+                        reason=("asana_task_missing" if exc.code == "NOT_FOUND" else "asana_task_unavailable"),
+                        section_gid=None,
+                        section_name=None,
+                        operation=operation_for_detail,
+                        dish_known=True,
+                        asana_present=False,
+                        detail=(
+                            "Dish has durable records for this task, but Asana no longer returns the task."
+                            if exc.code == "NOT_FOUND"
+                            else f"Dish has durable records for this task, but its Asana state could not be read ({exc.code}/{exc.rule})."
+                        ),
+                    )
+                )
+                continue
+
+            title = str(live_raw.get("name") or "").strip() or (
+                None if state is None else str(state["last_confirmed_title"] or "").strip() or None
+            )
+            try:
+                in_project = _task_is_in_project(live_raw, COOKING_PROJECT_GID)
+                section_gid = _task_section_gid(live_raw, COOKING_PROJECT_GID) if in_project else None
+            except DishRuleError as exc:
+                items.append(
+                    _audit_item(
+                        task_gid=task_gid,
+                        title=title,
+                        category="real_inconsistency",
+                        reason=exc.rule,
+                        section_gid=None,
+                        section_name=None,
+                        operation=operation_for_detail,
+                        dish_known=True,
+                        asana_present=True,
+                        detail="The live task has ambiguous or malformed Cooking membership.",
+                    )
+                )
+                continue
+            if in_project:
+                items.append(
+                    _audit_item(
+                        task_gid=task_gid,
+                        title=title,
+                        category="real_inconsistency",
+                        reason="project_listing_membership_disagreement",
+                        section_gid=section_gid,
+                        section_name=section_names.get(section_gid or ""),
+                        operation=operation_for_detail,
+                        dish_known=True,
+                        asana_present=True,
+                        detail="A direct Asana read says the task is in Cooking, but the project population listing omitted it; rerun the audit before repair.",
+                    )
+                )
+            elif active_operations:
+                items.append(
+                    _audit_item(
+                        task_gid=task_gid,
+                        title=title,
+                        category="real_inconsistency",
+                        reason="active_operation_task_left_cooking",
+                        section_gid=None,
+                        section_name=None,
+                        operation=operation_for_detail,
+                        dish_known=True,
+                        asana_present=True,
+                        detail="Dish has an active operation, but the live task is no longer in the Cooking project.",
+                    )
+                )
+            else:
+                items.append(
+                    _audit_item(
+                        task_gid=task_gid,
+                        title=title,
+                        category="expected_external_lifecycle",
+                        reason="manual_lifecycle_outside_cooking",
+                        section_gid=None,
+                        section_name=None,
+                        operation=operation_for_detail,
+                        dish_known=True,
+                        asana_present=True,
+                        detail="The task exists outside Cooking with no active Dish operation; pre-cutover manual/archive lifecycle is expected.",
+                    )
+                )
+            continue
+
+        title = str(listed.get("name") or "").strip() or (
+            None if state is None else str(state["last_confirmed_title"] or "").strip() or None
+        )
+        try:
+            section_gid = _task_section_gid(listed, COOKING_PROJECT_GID)
+        except DishRuleError as exc:
+            items.append(
+                _audit_item(
+                    task_gid=task_gid,
+                    title=title,
+                    category="real_inconsistency",
+                    reason=exc.rule,
+                    section_gid=None,
+                    section_name=None,
+                    operation=operation_for_detail,
+                    dish_known=dish_known,
+                    asana_present=True,
+                    detail="The live task has ambiguous or malformed Cooking membership.",
+                )
+            )
+            continue
+        section_name = section_names.get(section_gid or "")
+
+        if not dish_known:
+            if section_gid in registry.excluded_gids:
+                category = "expected_external_lifecycle"
+                reason = "excluded_cooking_section"
+                detail = "This task is in a Cooking section that Dish intentionally does not govern."
+            else:
+                category = "asana_only"
+                reason = "not_recognized_by_dish"
+                detail = "This task is present in Cooking but has no durable Dish workflow/content record."
+            items.append(
+                _audit_item(
+                    task_gid=task_gid,
+                    title=title,
+                    category=category,
+                    reason=reason,
+                    section_gid=section_gid,
+                    section_name=section_name,
+                    operation=None,
+                    dish_known=False,
+                    asana_present=True,
+                    detail=detail,
+                )
+            )
+            continue
+
+        if len(active_operations) > 1:
+            items.append(
+                _audit_item(
+                    task_gid=task_gid,
+                    title=title,
+                    category="real_inconsistency",
+                    reason="multiple_nonterminal_operations",
+                    section_gid=section_gid,
+                    section_name=section_name,
+                    operation=operation_for_detail,
+                    dish_known=True,
+                    asana_present=True,
+                    detail="Dish has multiple non-terminal operations for one task.",
+                )
+            )
+            continue
+
+        active_operation = active_operations[0] if active_operations else None
+        expected_section = None if active_operation is None else active_operation["expected_section_gid"]
+        if active_operation is not None and section_gid in registry.excluded_gids:
+            category = "real_inconsistency"
+            reason = "active_operation_in_excluded_section"
+            detail = "An active Dish operation is attached to a task in an excluded Cooking section."
+        elif active_operation is not None and expected_section and section_gid != expected_section:
+            category = "real_inconsistency"
+            reason = "active_operation_section_mismatch"
+            detail = (
+                f"The active operation expects section {expected_section}, but Asana currently reports {section_gid or 'no section'}."
+            )
+        elif migration_required:
+            category = "needs_migration_repair"
+            reason = "durable_schema_or_migration_reconciliation"
+            detail = "Dish durable state is older than the current supported task schema or explicitly requires migration reconciliation."
+        elif active_operation is None and section_gid in registry.excluded_gids:
+            category = "expected_external_lifecycle"
+            reason = "manual_lifecycle_excluded_section"
+            detail = "The task is resting in a section Dish intentionally excludes from governed workflow."
+        elif (
+            active_operation is None
+            and latest_operation is not None
+            and latest_operation["status"] in {"completed", "cancelled"}
+            and latest_operation["expected_section_gid"]
+            and section_gid != latest_operation["expected_section_gid"]
+        ):
+            category = "expected_external_lifecycle"
+            reason = "manual_lifecycle_section_change"
+            detail = "The latest Dish operation is terminal and the task has since moved; pre-cutover manual placement is expected."
+        else:
+            category = "healthy_current"
+            reason = "current"
+            detail = "Asana placement and durable Dish state do not violate an active workflow invariant."
+        items.append(
+            _audit_item(
+                task_gid=task_gid,
+                title=title,
+                category=category,
+                reason=reason,
+                section_gid=section_gid,
+                section_name=section_name,
+                operation=active_operation or latest_operation,
+                dish_known=True,
+                asana_present=True,
+                detail=detail,
+            )
+        )
+
+    items.sort(
+        key=lambda item: (
+            _AUDIT_CATEGORY_ORDER.get(str(item["category"]), 99),
+            str(item.get("task_title") or item["task_gid"]).casefold(),
+            str(item["task_gid"]),
+        )
+    )
+    counts = {name: 0 for name in _AUDIT_CATEGORY_ORDER}
+    for item in items:
+        counts[str(item["category"])] = counts.get(str(item["category"]), 0) + 1
+
+    return result_envelope(
+        command="audit",
+        data={
+            "project_gid": COOKING_PROJECT_GID,
+            "asana_task_count": len(asana_by_gid),
+            "dish_known_count": len(known_task_gids),
+            "audited_task_count": len(items),
+            "category_counts": counts,
+            "items": items,
+        },
+    )
 
 
 def _durable_attention_items(conn: sqlite3.Connection) -> list[dict[str, Any]]:
@@ -2586,16 +3244,27 @@ def _command_review_approve(
     # as a low-level recovery/testing command, but do not require another AI agent for
     # the ordinary approved path.
     release = self.release_loader()
+    mechanical_service = OperationApplicationService(
+        self.conn,
+        self.backend,
+        owner_id="dish-mechanical",
+        run_id=mechanical_run_id,
+    )
+    assert mechanical_service.current is not None
     try:
-        applied = apply_semantic_proposal(
-            self.conn,
-            self.backend,
-            proposal_id=clean_id,
-            agent=MECHANICAL_PROPOSAL_AGENT,
-            model="dish-mechanical",
-            owner_id="dish-mechanical",
-            run_id=mechanical_run_id,
-            request_id=None,
+        applied, _ = mechanical_service.current.apply_mechanical_proposal(
+            str(approved["operation_id"]),
+            lambda: apply_semantic_proposal(
+                self.conn,
+                self.backend,
+                proposal_id=clean_id,
+                agent=MECHANICAL_PROPOSAL_AGENT,
+                model="dish-mechanical",
+                owner_id="dish-mechanical",
+                run_id=mechanical_run_id,
+                request_id=None,
+                schema=release.schema,
+            ),
             schema=release.schema,
         )
     except DishRuleError as exc:
@@ -3347,6 +4016,7 @@ _OPERATION_TARGET_COMMANDS = set(RESOLVED_OPERATION_TARGET_COMMANDS)
 
 CURRENT_ADMIN_COMMAND_HANDLERS = {
     "attention": _command_attention,
+    "audit": _command_audit,
     "active-leases": _command_active_leases,
     "kill": _command_kill,
     "review-queue": _command_review_queue,

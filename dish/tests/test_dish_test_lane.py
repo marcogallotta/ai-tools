@@ -24,10 +24,33 @@ def test_named_lanes_are_complete_and_obvious() -> None:
         "parallel-safe",
         "pglite",
         "release-cutover",
+        "round1c-journeys",
         "schema-migrations",
     )
     assert all(phases for phases in lanes.values())
     assert all(phase.name.strip() and phase.command for phases in lanes.values() for phase in phases)
+
+
+def test_round1c_lane_names_the_observed_failure_journey_contracts() -> None:
+    phase = _namespace()["LANES"]["round1c-journeys"][0]
+    selected = set(phase.command[4:])
+    expected = {
+        "tests/test_safe_reclaim_workflow.py::test_resolved_execution_with_stranded_request_blocks_until_request_recovery",
+        "tests/test_dish_partial_recovery_execution_journal.py::test_recover_inspect_settles_proven_requestless_execution_and_inspect_does_not_loop",
+        "tests/test_safe_reclaim_workflow.py::test_same_expired_run_still_gets_recover_lease_not_safe_reclaim",
+        "tests/test_abandonment_stage_successors.py::test_prepared_planning_claim_rejects_abandoned_run_then_binds_fresh_run",
+        "tests/test_human_review_queue_workflow.py::test_service_review_queue_resolves_human_hold_by_current_row_number",
+        "tests/test_semantic_proposal_bundle_workflow.py::test_governed_large_correction_queues_one_bundle_and_fresh_run_applies_it",
+        "tests/test_semantic_proposal_bundle_workflow.py::test_approved_proposal_is_not_advertised_after_exact_content_staleness",
+        "tests/test_action_surface_openapi.py::test_verification_action_schema_exposes_closed_correction_and_route_values",
+        "tests/test_action_surface_openapi.py::test_inspect_openapi_requires_request_id_in_generated_and_checked_in_schema",
+        "tests/test_authoritative_actions.py::test_submit_terminal_response_and_inspect_expose_no_stale_actions",
+        "tests/test_change_start_intent.py::test_direct_create_change_requires_signed_baseline_before_insert",
+        "tests/test_admin_round1b.py::test_inspect_resting_dish_by_frontend_url_uses_uuid_not_slug",
+        "tests/test_admin_population_audit.py",
+        "tests/test_admin_inspect_verbose.py",
+    }
+    assert expected <= selected
 
 
 def test_lane_reuses_invoking_interpreter_instead_of_discovering_archive_venv() -> None:

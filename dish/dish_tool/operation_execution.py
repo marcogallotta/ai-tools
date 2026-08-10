@@ -108,17 +108,21 @@ def _assert_current_service_authority(
     owner_id: str | None,
     run_id: str | None,
     authority_now: str | None = None,
+    require_actor_lease: bool = True,
 ) -> None:
     """Fence a service mutation at the execution-claim transaction boundary.
 
     Connected-agent lease admission happens before command dispatch.  That check
     is advisory by the time a later SQLite writer transaction begins: Marco may
     revoke the exact run in between.  When a service principal is supplied, the
-    execution claim therefore revalidates the same owner/run and its current
-    actor lease while holding the writer lock that creates the mutation claim.
+    execution claim therefore revalidates the same owner/run while holding the
+    writer lock that creates the mutation claim, and normally revalidates its
+    actor lease too. Approved mechanical proposal application deliberately omits
+    only the actor-lease requirement; it still supplies its exact principal and
+    is fenced by explicit revocation at this writer boundary.
 
-    Low-level/admin recovery callers that do not execute under an actor lease do
-    not supply a service principal and retain their existing authority boundary.
+    Low-level/admin recovery callers that supply no service principal retain
+    their existing authority boundary.
     """
 
     clean_owner = str(owner_id or "").strip() or None
@@ -149,6 +153,9 @@ def _assert_current_service_authority(
                 "revoked_at": revoked["revoked_at"],
             },
         )
+
+    if not require_actor_lease:
+        return
 
     lease = conn.execute(
         """SELECT * FROM service_leases
@@ -738,6 +745,7 @@ def claim_operation_execution(
     owner_id: str | None = None,
     run_id: str | None = None,
     authority_now: str | None = None,
+    require_actor_lease: bool = True,
 ) -> OperationExecutionClaim:
     """Atomically reserve an operation and persist this execution's baseline."""
     identity = current_process_identity()
@@ -759,6 +767,7 @@ def claim_operation_execution(
             owner_id=owner_id,
             run_id=run_id,
             authority_now=authority_now,
+            require_actor_lease=require_actor_lease,
         )
         existing = conn.execute(
             "SELECT * FROM operation_execution_claims WHERE operation_id=?",

@@ -3190,7 +3190,35 @@ BEGIN SELECT RAISE(ABORT, 'operation run revocations are append-only'); END;
 """
 
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31, 32: _MIGRATION_32, 33: _MIGRATION_33, 34: _MIGRATION_34, 35: _MIGRATION_35, 36: _MIGRATION_36, 37: _MIGRATION_37, 38: _MIGRATION_38, 39: _MIGRATION_39, 40: _MIGRATION_40, 41: _MIGRATION_41, 42: _MIGRATION_42, 43: _MIGRATION_43}
+_MIGRATION_44 = """
+CREATE TABLE kill_request_bindings (
+    request_id TEXT PRIMARY KEY REFERENCES service_requests(request_id),
+    task_gid TEXT NOT NULL,
+    operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+    target_owner_id TEXT NOT NULL CHECK(length(trim(target_owner_id)) > 0),
+    target_run_id TEXT NOT NULL CHECK(length(trim(target_run_id)) > 0),
+    authority_source TEXT NOT NULL CHECK(length(trim(authority_source)) > 0),
+    source_lease_id TEXT REFERENCES service_leases(lease_id),
+    source_proposal_id TEXT REFERENCES semantic_proposals(proposal_id),
+    source_lease_was_active INTEGER NOT NULL CHECK(source_lease_was_active IN (0,1)),
+    first_observed_at TEXT,
+    last_activity_at TEXT,
+    revocation_id TEXT NOT NULL UNIQUE REFERENCES operation_run_revocations(revocation_id),
+    created_at TEXT NOT NULL
+);
+CREATE INDEX kill_request_bindings_operation_idx
+    ON kill_request_bindings(operation_id, created_at);
+
+CREATE TRIGGER kill_request_bindings_immutable_update
+BEFORE UPDATE ON kill_request_bindings
+BEGIN SELECT RAISE(ABORT, 'kill request bindings are immutable'); END;
+CREATE TRIGGER kill_request_bindings_append_only_delete
+BEFORE DELETE ON kill_request_bindings
+BEGIN SELECT RAISE(ABORT, 'kill request bindings are append-only'); END;
+"""
+
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31, 32: _MIGRATION_32, 33: _MIGRATION_33, 34: _MIGRATION_34, 35: _MIGRATION_35, 36: _MIGRATION_36, 37: _MIGRATION_37, 38: _MIGRATION_38, 39: _MIGRATION_39, 40: _MIGRATION_40, 41: _MIGRATION_41, 42: _MIGRATION_42, 43: _MIGRATION_43, 44: _MIGRATION_44}
 
 
 def _content_digest(title: str, notes: str) -> str:
@@ -3218,6 +3246,7 @@ _SEMANTIC_RECORD_SELECTORS = {
     "service_leases": "lease_id",
     "operation_execution_claims": "claim_id",
     "operation_run_revocations": "revocation_id",
+    "kill_request_bindings": "request_id",
     "operation_executions": "execution_id",
     "abandonment_attempts": "abandonment_id",
     "operation_successions": "succession_id",

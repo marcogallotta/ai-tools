@@ -59,7 +59,7 @@ def build_parser() -> JsonArgumentParser:
             "the test profile; production administration remains Marco-only."
         ),
         epilog=(
-            "Normal use: attention, review-queue, inspect, active-leases, and kill. "
+            "Normal use: attention, audit, review-queue, inspect, active-leases, and kill. "
             "Advanced recovery, migration, backup, and governance commands remain callable "
             "when Dish returns one as an exact next action, but are intentionally omitted from "
             "this top-level help. review-queue may record Marco's reviewed decision or exact bundle "
@@ -89,6 +89,16 @@ def build_parser() -> JsonArgumentParser:
         "--non-interactive",
         action="store_true",
         help="print the attention summary and exit even in an interactive terminal",
+    )
+
+    subparsers.add_parser(
+        _admin_name("audit"),
+        help="audit the configured Cooking population against durable Dish records",
+        description=(
+            "Read-only population audit of configured Asana Cooking tasks versus Dish-known "
+            "records. Manual lifecycle placement after a completed workflow is reported as "
+            "expected, not corruption."
+        ),
     )
 
     subparsers.add_parser(
@@ -690,7 +700,9 @@ def _interactive_attention(
             print("That attention row has no canonical Dish identity.\n")
             continue
 
-        inspected = app.execute("inspect", dish=target)
+        inspected = app.execute(
+            "inspect", dish=target, verbose="--verbose" in arguments
+        )
         print()
         _emit_interactive_admin_result(inspected, arguments=arguments)
         if not inspected.get("ok"):
@@ -933,8 +945,10 @@ def main(
             command = parsed.pop("command")
             parsed.pop("profile", None)
             parsed.pop("json", None)
-            parsed.pop("verbose", None)
+            verbose_requested = bool(parsed.pop("verbose", False))
             non_interactive = bool(parsed.pop("non_interactive", False))
+            if command == "inspect":
+                parsed["verbose"] = verbose_requested
             interactive_terminal = (
                 not non_interactive
                 and "--json" not in arguments

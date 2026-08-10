@@ -412,6 +412,68 @@ def render_admin_result(
                         )
                     if operation_id:
                         lines.append(f"Refresh: dish-admin inspect {operation_id}")
+    elif command == "audit" and ok:
+        items = data.get("items") if isinstance(data.get("items"), list) else []
+        counts = data.get("category_counts") if isinstance(data.get("category_counts"), Mapping) else {}
+        lines.append("Cooking population audit")
+        lines.append(
+            f"Asana Cooking tasks: {int(data.get('asana_task_count') or 0)}; "
+            f"Dish-known: {int(data.get('dish_known_count') or 0)}; "
+            f"audited identities: {int(data.get('audited_task_count') or 0)}"
+        )
+        lines.append(
+            "Healthy: {healthy}; Expected/manual: {expected}; Asana-only: {asana_only}; "
+            "Dish-only/unavailable: {dish_only}; Inconsistent: {inconsistent}; Migration/repair: {migration}".format(
+                healthy=int(counts.get("healthy_current") or 0),
+                expected=int(counts.get("expected_external_lifecycle") or 0),
+                asana_only=int(counts.get("asana_only") or 0),
+                dish_only=int(counts.get("dish_known_asana_missing_or_unavailable") or 0),
+                inconsistent=int(counts.get("real_inconsistency") or 0),
+                migration=int(counts.get("needs_migration_repair") or 0),
+            )
+        )
+        visible = items if verbose else [
+            item for item in items
+            if isinstance(item, Mapping) and item.get("category") != "healthy_current"
+        ]
+        labels = {
+            "healthy_current": "HEALTHY",
+            "expected_external_lifecycle": "EXPECTED",
+            "asana_only": "ASANA ONLY",
+            "dish_known_asana_missing_or_unavailable": "DISH ONLY",
+            "real_inconsistency": "INCONSISTENT",
+            "needs_migration_repair": "MIGRATION/REPAIR",
+        }
+        if not visible:
+            lines.append("")
+            lines.append("No population difference or repair condition needs review.")
+        for index, item in enumerate(visible, start=1):
+            if not isinstance(item, Mapping):
+                continue
+            category = _clean(item.get("category")) or "unknown"
+            title = _clean(item.get("task_title")) or _clean(item.get("task_gid")) or "Dish"
+            lines.append("")
+            lines.append(f"{index}. [{labels.get(category, category.upper())}] {title}")
+            dish_id = _clean(item.get("dish_id"))
+            if dish_id:
+                lines.append(f"   Dish UUID: {dish_id}")
+            section_name = _clean(item.get("section_name"))
+            section_gid = _clean(item.get("section_gid"))
+            if section_name or section_gid:
+                lines.append(f"   Placement: {section_name or section_gid}")
+            detail = _clean(item.get("detail"))
+            if detail:
+                lines.append(f"   {detail}")
+            if verbose:
+                reason = _clean(item.get("reason"))
+                operation = _clean(item.get("operation_id"))
+                if reason:
+                    lines.append(f"   Rule: {reason}")
+                if operation:
+                    lines.append(f"   Operation: {operation}")
+        if not verbose and int(counts.get("healthy_current") or 0):
+            lines.append("")
+            lines.append("Healthy/current rows are hidden; use --verbose to list the complete population.")
     elif command == "active-leases" and ok:
         leases = data.get("leases") if isinstance(data.get("leases"), list) else []
         counts = data.get("state_counts") if isinstance(data.get("state_counts"), Mapping) else {}
@@ -578,6 +640,154 @@ def render_admin_result(
                     operator_instruction = _clean(data.get("operator_instruction"))
                     if operator_instruction:
                         lines.append(f"Next: {operator_instruction}")
+        diagnostics = data.get("diagnostics") if isinstance(data.get("diagnostics"), Mapping) else None
+        if verbose and diagnostics is not None:
+            lines.append("")
+            lines.append("Technical diagnostics")
+            content_head = diagnostics.get("content_head")
+            if isinstance(content_head, Mapping):
+                lines.append(
+                    "Content head: schema={schema}; identity={identity}; version={version}; confirmed={confirmed}".format(
+                        schema=_clean(content_head.get("schema_version")) or "unknown",
+                        identity=_clean(content_head.get("last_confirmed_identity")) or "unknown",
+                        version=_clean(content_head.get("last_confirmed_content_version_id")) or "unknown",
+                        confirmed=_clean(content_head.get("confirmed_at")) or "unknown",
+                    )
+                )
+            operation = diagnostics.get("operation")
+            if isinstance(operation, Mapping):
+                lines.append(
+                    "Operation detail: kind={kind}; status={status}; phase={phase}; expected_section={section}; terminal={terminal}".format(
+                        kind=_clean(operation.get("operation_kind")) or "unknown",
+                        status=_clean(operation.get("status")) or "unknown",
+                        phase=_clean(operation.get("phase")) or "unknown",
+                        section=_clean(operation.get("expected_section_gid")) or "none",
+                        terminal=_clean(operation.get("terminal_outcome")) or "none",
+                    )
+                )
+
+            cycle_rows = diagnostics.get("verification_cycles") if isinstance(diagnostics.get("verification_cycles"), list) else []
+            if cycle_rows:
+                lines.append("Verification cycles")
+                for row in cycle_rows:
+                    if not isinstance(row, Mapping):
+                        continue
+                    lines.append(
+                        "- #{number} {cycle}: run={run}; verifier={verifier}; outcome={outcome}; route={route}; completed={completed}".format(
+                            number=row.get("cycle_number"),
+                            cycle=_clean(row.get("cycle_id")) or "unknown",
+                            run=_clean(row.get("run_id")) or "none",
+                            verifier=_clean(row.get("verifier_agent")) or "none",
+                            outcome=_clean(row.get("outcome")) or "open",
+                            route=_clean(row.get("route")) or "none",
+                            completed=_clean(row.get("completed_at")) or "no",
+                        )
+                    )
+
+            request_rows = diagnostics.get("service_requests") if isinstance(diagnostics.get("service_requests"), list) else []
+            execution_rows = diagnostics.get("operation_executions") if isinstance(diagnostics.get("operation_executions"), list) else []
+            if request_rows or execution_rows:
+                lines.append("Requests / executions")
+                for row in request_rows:
+                    if isinstance(row, Mapping):
+                        lines.append(
+                            f"- request {_clean(row.get('request_id')) or 'unknown'}: "
+                            f"{_clean(row.get('command')) or 'unknown'} — {_clean(row.get('status')) or 'unknown'}"
+                        )
+                for row in execution_rows:
+                    if isinstance(row, Mapping):
+                        lines.append(
+                            f"- execution {_clean(row.get('execution_id')) or 'unknown'}: "
+                            f"{_clean(row.get('command')) or 'unknown'} — {_clean(row.get('status')) or 'unknown'}"
+                        )
+
+            write_rows = diagnostics.get("write_attempts") if isinstance(diagnostics.get("write_attempts"), list) else []
+            move_rows = diagnostics.get("movement_attempts") if isinstance(diagnostics.get("movement_attempts"), list) else []
+            if write_rows or move_rows:
+                lines.append("External effects")
+                for row in write_rows:
+                    if isinstance(row, Mapping):
+                        lines.append(
+                            f"- write {_clean(row.get('attempt_id')) or 'unknown'}: "
+                            f"{_clean(row.get('purpose')) or 'unknown'} — {_clean(row.get('outcome')) or 'unknown'}"
+                        )
+                for row in move_rows:
+                    if isinstance(row, Mapping):
+                        lines.append(
+                            f"- move {_clean(row.get('attempt_id')) or 'unknown'}: "
+                            f"{_clean(row.get('expected_section_gid')) or 'none'} → "
+                            f"{_clean(row.get('intended_section_gid')) or 'unknown'} — "
+                            f"{_clean(row.get('outcome')) or 'unknown'}"
+                        )
+
+            lease_rows = diagnostics.get("service_leases") if isinstance(diagnostics.get("service_leases"), list) else []
+            revocation_rows = diagnostics.get("operation_run_revocations") if isinstance(diagnostics.get("operation_run_revocations"), list) else []
+            if lease_rows or revocation_rows:
+                lines.append("Authority")
+                for row in lease_rows:
+                    if isinstance(row, Mapping):
+                        lines.append(
+                            f"- lease {_clean(row.get('lease_id')) or 'unknown'}: "
+                            f"owner={_clean(row.get('owner_id')) or 'unknown'}; "
+                            f"run={_clean(row.get('run_id')) or 'unknown'}; "
+                            f"released={_clean(row.get('released_at')) or 'no'}; "
+                            f"expires={_clean(row.get('expires_at')) or 'unknown'}"
+                        )
+                for row in revocation_rows:
+                    if isinstance(row, Mapping):
+                        lines.append(
+                            f"- revoked owner={_clean(row.get('owner_id')) or 'unknown'}; "
+                            f"run={_clean(row.get('run_id')) or 'unknown'}; "
+                            f"at={_clean(row.get('revoked_at')) or 'unknown'}; "
+                            f"reason={_clean(row.get('reason')) or 'unknown'}"
+                        )
+
+            for label, key, id_key in (
+                ("Semantic proposals", "semantic_proposals", "proposal_id"),
+                ("Abandonments", "abandonment_attempts", "abandonment_id"),
+                ("Safe reclaims", "safe_reclaims", "reclaim_id"),
+                ("Successions", "operation_successions", "succession_id"),
+                ("Inspect facts", "dish_inspect_facts", "fact_id"),
+            ):
+                rows = diagnostics.get(key) if isinstance(diagnostics.get(key), list) else []
+                if not rows:
+                    continue
+                lines.append(label)
+                for row in rows:
+                    if not isinstance(row, Mapping):
+                        continue
+                    summary_bits = []
+                    for field in ("status", "outcome", "transition_type", "stage", "run_id", "created_at"):
+                        value = _clean(row.get(field))
+                        if value:
+                            summary_bits.append(f"{field}={value}")
+                    lines.append(
+                        f"- {_clean(row.get(id_key)) or 'unknown'}"
+                        + (f": {'; '.join(summary_bits)}" if summary_bits else "")
+                    )
+
+            history_rows = diagnostics.get("operation_history") if isinstance(diagnostics.get("operation_history"), list) else []
+            if history_rows:
+                lines.append("Operation history")
+                for row in history_rows:
+                    if isinstance(row, Mapping):
+                        lines.append(
+                            f"- {_clean(row.get('operation_id')) or 'unknown'}: "
+                            f"{_clean(row.get('operation_kind')) or 'unknown'} / "
+                            f"{_clean(row.get('status')) or 'unknown'} / "
+                            f"{_clean(row.get('phase')) or 'unknown'}"
+                        )
+
+            audit_rows = diagnostics.get("recent_audit_events") if isinstance(diagnostics.get("recent_audit_events"), list) else []
+            if audit_rows:
+                lines.append(f"Recent durable events (latest {int(diagnostics.get('recent_audit_event_limit') or 50)})")
+                for row in audit_rows:
+                    if isinstance(row, Mapping):
+                        lines.append(
+                            f"- {_clean(row.get('created_at')) or 'unknown'} "
+                            f"{_clean(row.get('event_type')) or 'unknown'} "
+                            f"[{_clean(row.get('result_code')) or 'n/a'}]"
+                        )
     elif command == "kill" and ok:
         consequence = _clean(data.get("human_consequence"))
         lines.append("Result")

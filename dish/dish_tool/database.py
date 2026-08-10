@@ -642,6 +642,97 @@ def operation_run_revocation(
     ).fetchone()
 
 
+def kill_request_binding(
+    conn: sqlite3.Connection, *, request_id: str
+) -> sqlite3.Row | None:
+    return conn.execute(
+        "SELECT * FROM kill_request_bindings WHERE request_id=?", (request_id,)
+    ).fetchone()
+
+
+def bind_kill_request_in_transaction(
+    conn: sqlite3.Connection,
+    *,
+    request_id: str,
+    task_gid: str,
+    operation_id: str,
+    target_owner_id: str,
+    target_run_id: str,
+    authority_source: str,
+    source_lease_id: str | None,
+    source_proposal_id: str | None,
+    source_lease_was_active: bool,
+    first_observed_at: str | None,
+    last_activity_at: str | None,
+    revocation_id: str,
+) -> sqlite3.Row:
+    """Bind one admitted kill request to the exact authority it revoked.
+
+    The binding is committed in the same writer transaction as revocation, so a
+    response-loss replay can continue the original kill without resolving the Dish
+    again and accidentally selecting a successor operation or run.
+    """
+
+    _require_writer_transaction(conn, operation="kill request binding")
+    request = conn.execute(
+        "SELECT command FROM service_requests WHERE request_id=?", (request_id,)
+    ).fetchone()
+    if request is None or request["command"] != "kill":
+        raise DishRuleError(
+            "CONFLICT",
+            "kill revocation cannot be bound to a missing or different service request",
+            rule="kill_request_binding_request_invalid",
+            details={"request_id": request_id},
+        )
+    existing = kill_request_binding(conn, request_id=request_id)
+    expected = {
+        "task_gid": str(task_gid),
+        "operation_id": str(operation_id),
+        "target_owner_id": str(target_owner_id),
+        "target_run_id": str(target_run_id),
+        "authority_source": str(authority_source),
+        "source_lease_id": source_lease_id,
+        "source_proposal_id": source_proposal_id,
+        "source_lease_was_active": 1 if source_lease_was_active else 0,
+        "first_observed_at": first_observed_at,
+        "last_activity_at": last_activity_at,
+        "revocation_id": str(revocation_id),
+    }
+    if existing is not None:
+        if any(existing[key] != value for key, value in expected.items()):
+            raise DishRuleError(
+                "CONFLICT",
+                "kill request is already bound to different authority",
+                rule="kill_request_binding_conflict",
+                details={"request_id": request_id},
+            )
+        return existing
+    conn.execute(
+        """INSERT INTO kill_request_bindings(
+               request_id,task_gid,operation_id,target_owner_id,target_run_id,
+               authority_source,source_lease_id,source_proposal_id,
+               source_lease_was_active,first_observed_at,last_activity_at,
+               revocation_id,created_at
+           ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (
+            request_id,
+            str(task_gid),
+            str(operation_id),
+            str(target_owner_id),
+            str(target_run_id),
+            str(authority_source),
+            source_lease_id,
+            source_proposal_id,
+            1 if source_lease_was_active else 0,
+            first_observed_at,
+            last_activity_at,
+            str(revocation_id),
+            utc_now(),
+        ),
+    )
+    return kill_request_binding(conn, request_id=request_id)
+
+
 def revoke_operation_run_in_transaction(
     conn: sqlite3.Connection,
     *,
@@ -2354,6 +2445,11 @@ def resolve_admin_dish_target(conn: sqlite3.Connection, raw: Any) -> dict[str, A
     if exact_operation is not None:
         task_gid = str(exact_operation["task_gid"])
         reference_kind = "operation"
+        # An exact operation reference is recovery authority, not merely a way
+        # to discover the task. Preserve it even if that task now has a
+        # successor operation. High-level Dish/task references still resolve
+        # to the current active operation below.
+        operation = exact_operation
     else:
         task_gid = _admin_target_task_gid(conn, clean)
         reference_kind = "dish"
@@ -2364,7 +2460,7 @@ def resolve_admin_dish_target(conn: sqlite3.Connection, raw: Any) -> dict[str, A
                 rule="admin_dish_target_not_found",
                 details={"reference": clean},
             )
-    operation = _active_operation_for_admin_dish(conn, task_gid=task_gid)
+        operation = _active_operation_for_admin_dish(conn, task_gid=task_gid)
     try:
         dish_id = str(stable_dish_uuid_for_asana_identity("task", task_gid))
     except ValueError:

@@ -1526,11 +1526,12 @@ def _step_apply_semantic_proposal(
     trace.validation_scope = scope_for_command("reject")
     from .step8 import apply_semantic_proposal
     release = self._load_release("verification")
+    application_owner_id = self.invocation_owner_id or "dish-local"
     data, view = self.operation_service.current.apply_proposal(
         operation_id,
         lambda: apply_semantic_proposal(
             self.conn, self.backend, proposal_id=clean_id, agent=agent,
-            model=model, owner_id=self.invocation_owner_id, run_id=effective_run_id,
+            model=model, owner_id=application_owner_id, run_id=effective_run_id,
             request_id=self.invocation_request_id, schema=release.schema,
         ),
         schema=release.schema,

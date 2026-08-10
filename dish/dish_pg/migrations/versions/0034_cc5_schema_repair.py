@@ -28,7 +28,31 @@ _LEGACY_READINESS_TABLES = (
 
 
 def _assert_legacy_readiness_empty() -> None:
-    if op.get_context().as_sql:
+    context = op.get_context()
+    if context.as_sql:
+        if context.dialect.name != "postgresql":
+            raise RuntimeError(
+                "CC5 schema repair refuses offline rendering for non-PostgreSQL "
+                "dialects because the destructive readiness preflight cannot be "
+                "enforced there"
+            )
+        populated = "\n           OR ".join(
+            f"EXISTS (SELECT 1 FROM {table})" for table in _LEGACY_READINESS_TABLES
+        )
+        op.execute(
+            sa.text(
+                f"""
+                DO $$
+                BEGIN
+                    IF {populated} THEN
+                        RAISE EXCEPTION
+                            'CC5 schema repair refuses destructive worker-readiness consolidation while legacy evidence exists; export Class-C typed-readiness evidence and rebuild/reseed the dark-launch target before upgrading';
+                    END IF;
+                END
+                $$
+                """
+            )
+        )
         return
     bind = op.get_bind()
     counts = {

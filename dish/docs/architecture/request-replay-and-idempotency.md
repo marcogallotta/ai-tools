@@ -27,6 +27,7 @@ A mutation request ID permanently binds the admitted command, canonical argument
 - Lost-response recovery does not require inventing a new mutation identity.
 - Pending/uncertain execution is not treated as permission to reissue effects blindly.
 - If administrative recovery durably resolves a request-bound execution after response loss, the service request remains authoritative and must itself be settled from that exact execution evidence before ownership transfer may proceed.
+- An irreversible `kill` revocation is durably bound to the admitted kill request in the same writer transaction. That binding records the exact operation, owner, run, authority source, and revocation identity; replay follows that binding and never resolves the Dish again to choose a target.
 - Validation-only failures that are part of the request contract can be durably replayed when the runtime owns them.
 
 ## Process and transaction boundaries
@@ -50,6 +51,7 @@ Canonicalize request, reserve identity and its bound target, execute once, persi
 ## Failure, replay, recovery, and concurrency
 
 Concurrent duplicates converge on one request identity. Lost responses are resolved from durable evidence. Reconciliation/recovery mechanisms may supply the missing authoritative outcome without changing request identity or selecting a different target.
+For `kill`, a crash after revocation but before request settlement leaves the request pending with its exact kill binding already durable. Exact replay continues settlement from that binding; a successor operation remains a distinct eligible identity and is not retroactively selected by the old request.
 
 ## Change routing
 

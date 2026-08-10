@@ -262,6 +262,7 @@ class CurrentWorkflowService:
         claim_request_id: str | None | object = ...,
         abandonment_id: str | None = None,
         abandonment_execution_id: str | None = None,
+        require_actor_lease: bool = True,
     ) -> tuple[T, dict[str, object]]:
         execution_request_id = (
             self.request_id if claim_request_id is ... else claim_request_id
@@ -283,6 +284,7 @@ class CurrentWorkflowService:
                 authority_now=(
                     None if self.authority_now is None else self.authority_now()
                 ),
+                require_actor_lease=require_actor_lease,
             )
         result: T
         try:
@@ -470,6 +472,26 @@ class CurrentWorkflowService:
 
     def apply_proposal(self, operation_id: str, executor: Callable[[], T], *, schema=None):
         return self.mutate(operation_id, "apply-proposal", executor, schema=schema)
+
+    def apply_mechanical_proposal(
+        self, operation_id: str, executor: Callable[[], T], *, schema=None
+    ):
+        """Apply an approved proposal under the canonical execution fence.
+
+        Mechanical review application has durable proposal approval rather than an
+        actor lease. It still carries an exact owner/run, is checked for explicit
+        revocation in the execution-claim writer transaction, and holds the same
+        operation execution claim across the consequential write as connected
+        ``apply-proposal``.
+        """
+        return self._execute_claimed(
+            operation_id,
+            "apply-proposal",
+            executor,
+            schema=schema,
+            assert_action=True,
+            require_actor_lease=False,
+        )
 
     def submit(self, operation_id: str, executor: Callable[[], T], *, schema=None):
         return self.mutate(operation_id, "submit", executor, schema=schema)

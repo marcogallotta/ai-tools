@@ -25,6 +25,7 @@ from dish_tool.commands import DishApplication, expose_authoritative_view
 from dish_tool.constants import COOKING_PROJECT_GID, SCHEMA_VERSION
 from dish_tool.operation_execution import _recover_command_guidance
 from dish_tool.database import (
+    kill_request_binding,
     operation_run_revocation,
     planning_reopen_attempt_by_request,
     process_command_audit_repairs,
@@ -1209,9 +1210,10 @@ class DishService:
                 conn, operation_id, principal, op, agent=agent
             )
         if command == "apply-proposal":
-            from dish_tool.semantic_proposals import claimable_proposal_for_run
-            return bool(proposal_id) and claimable_proposal_for_run(
+            from dish_tool.semantic_proposals import claimable_proposal_for_principal
+            return bool(proposal_id) and claimable_proposal_for_principal(
                 conn, proposal_id=str(proposal_id), operation_id=operation_id,
+                owner_id=principal.owner_id,
                 run_id=principal.run_id,
             )
         if command in {"approve", "reject", "submit"}:
@@ -1264,7 +1266,8 @@ class DishService:
         active = leases.active_for_operation(operation_id)
         data["service_lease"] = self._lease_payload(active)
         proposal = conn.execute(
-            """SELECT proposal_id,status,candidate_identity,claimed_agent,claimed_run_id
+            """SELECT proposal_id,status,candidate_identity,claimed_agent,
+                      claimed_owner_id,claimed_run_id
                  FROM semantic_proposals
                 WHERE operation_id=? AND status IN ('pending','approved','claimed')
                 ORDER BY created_at,proposal_id LIMIT 1""",
@@ -1276,6 +1279,7 @@ class DishService:
                 "status": proposal["status"],
                 "candidate_identity": proposal["candidate_identity"],
                 "claimed_agent": proposal["claimed_agent"],
+                "claimed_owner_id": proposal["claimed_owner_id"],
                 "claimed_run_id": proposal["claimed_run_id"],
             }
         actions = list(result.get("allowed_actions") or [])
@@ -1367,14 +1371,17 @@ class DishService:
                         "rule": block.get("rule", "semantic_proposal_not_claimable"),
                         "proposal_id": proposal_id,
                     }
-            elif proposal["claimed_run_id"] == principal.run_id:
+            elif (
+                proposal["claimed_owner_id"] == principal.owner_id
+                and proposal["claimed_run_id"] == principal.run_id
+            ):
                 if "apply-proposal" in actions:
                     data["agent_action"] = {
                         "command": "apply-proposal",
                         "arguments": {"proposal_id": proposal_id},
                     }
                 access = {
-                    "state": "semantic_proposal_claimed_by_run",
+                    "state": "semantic_proposal_claimed_by_principal",
                     "proposal_id": proposal_id,
                 }
             else:
@@ -1391,6 +1398,7 @@ class DishService:
                     "state": "semantic_proposal_claimed_by_other_run",
                     "rule": "semantic_proposal_claimed",
                     "proposal_id": proposal_id,
+                    "owner_id": proposal["claimed_owner_id"],
                     "run_id": proposal["claimed_run_id"],
                     "required_admin_action": "inspect",
                 }
@@ -2877,8 +2885,19 @@ class DishService:
             )
             if prior is not None:
                 return prior
+            bound_kill = (
+                kill_request_binding(state.conn, request_id=request_id)
+                if command == "kill"
+                else None
+            )
+            if bound_kill is not None:
+                # The revocation already happened. Continue this exact request
+                # against the operation it irrevocably affected; do not run the
+                # generic pending reconciler or resolve the Dish again.
+                state.operation_id = str(bound_kill["operation_id"])
             if (
                 command != "reopen-planning"
+                and bound_kill is None
                 and request_may_reconcile_pending(
                     request_row, newly_admitted=state.replay_started
                 )

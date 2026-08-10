@@ -554,8 +554,9 @@ def test_confirmed_mechanical_write_recovery_is_idempotent_and_needs_no_reapprov
         "review-approve", proposal_id=proposal_id,
         reason="Marco approves this exact linked bundle.",
     )
-    assert failed["code"] == "CONFLICT"
-    assert failed["errors"][0]["rule"] == "forced_post_write_proposal_finalize_failure"
+    assert failed["code"] == "BACKEND_UNCERTAIN"
+    assert failed["errors"][0]["rule"] == "operation_partial_write_failure"
+    assert failed["errors"][0]["original_failure_rule"] == "forced_post_write_proposal_finalize_failure"
     assert failed["errors"][0]["approval_persisted"] is True
     assert failed["errors"][0]["proposal_status"] == "claimed"
     assert backend.writes == writes_before + 1
@@ -594,6 +595,7 @@ def test_confirmed_mechanical_write_recovery_is_idempotent_and_needs_no_reapprov
         "proposal_id": proposal_id,
         "candidate_identity": proposal["candidate_identity"],
         "application_actor": "dish",
+        "application_owner_id": "dish-mechanical",
         "application_run_id": proposal["claimed_run_id"],
     }
     assert app.conn.execute(
@@ -605,16 +607,18 @@ def test_confirmed_mechanical_write_recovery_is_idempotent_and_needs_no_reapprov
         "apply-proposal", proposal_id=proposal_id, agent="gpt",
         model="gpt-5.6-sol", run_id="different-application-run",
     )
-    assert wrong_run["code"] == "CONFLICT"
-    assert wrong_run["errors"][0]["rule"] == "semantic_proposal_claimed"
+    assert wrong_run["code"] == "BACKEND_UNCERTAIN"
+    assert wrong_run["errors"][0]["rule"] == "operation_partial_write_failure"
+    assert wrong_run["errors"][0]["original_failure_rule"] == "semantic_proposal_claimed"
     assert backend.writes == writes_before + 1
 
     # Nor can merely different live content be reconciled as this exact application.
     exact_candidate_notes = backend.notes
     backend.notes = backend.notes.replace("Use whole scallion", "Use half scallion")
     wrong_candidate = admin.execute("review-approve", proposal_id=proposal_id)
-    assert wrong_candidate["code"] == "CONFLICT"
-    assert wrong_candidate["errors"][0]["rule"] == "semantic_proposal_stale"
+    assert wrong_candidate["code"] == "BACKEND_UNCERTAIN"
+    assert wrong_candidate["errors"][0]["rule"] == "operation_partial_write_failure"
+    assert wrong_candidate["errors"][0]["original_failure_rule"] == "semantic_proposal_stale"
     assert backend.writes == writes_before + 1
     backend.notes = exact_candidate_notes
 
@@ -622,7 +626,8 @@ def test_confirmed_mechanical_write_recovery_is_idempotent_and_needs_no_reapprov
     assert inspect["ok"]
     assert inspect["data"]["admin_action"]["command"] == "review-approve"
     operation_inspect = admin.execute("inspect", submission_id=operation_id)
-    assert operation_inspect["data"]["human_actions"][0]["command"] == "review-approve"
+    assert operation_inspect["data"]["administrative_blocker"] is True
+    assert operation_inspect["data"]["human_actions"]
 
     monkeypatch.setattr(step8_module, "complete_operation_step", original_complete)
     retried = admin.execute("review-approve", proposal_id=proposal_id)
@@ -704,7 +709,8 @@ def test_confirmed_application_recovery_rejects_mismatched_durable_binding(
         "review-approve", proposal_id=proposal_id,
         reason="Marco approves this exact linked bundle.",
     )
-    assert failed["errors"][0]["rule"] == "forced_post_write_proposal_finalize_failure"
+    assert failed["errors"][0]["rule"] == "operation_partial_write_failure"
+    assert failed["errors"][0]["original_failure_rule"] == "forced_post_write_proposal_finalize_failure"
     monkeypatch.setattr(step8_module, "complete_operation_step", original_complete)
 
     attempt = app.conn.execute(
@@ -737,8 +743,9 @@ def test_confirmed_application_recovery_rejects_mismatched_durable_binding(
     )
 
     retried = admin.execute("review-approve", proposal_id=proposal_id)
-    assert retried["code"] == "CONFLICT"
-    assert retried["errors"][0]["rule"] == expected_rule
+    assert retried["code"] == "BACKEND_UNCERTAIN"
+    assert retried["errors"][0]["rule"] == "operation_partial_write_failure"
+    assert retried["errors"][0]["original_failure_rule"] == expected_rule
     assert backend.writes == writes_before + 1
     assert app.conn.execute(
         "SELECT status FROM semantic_proposals WHERE proposal_id=?", (proposal_id,)

@@ -228,8 +228,11 @@ lane; it never hides a failed inner phase behind one final aggregate result.
 | native PostgreSQL concurrency | `.venv/bin/python scripts/dish-test-lane native-concurrency` |
 | release and cutover | `.venv/bin/python scripts/dish-test-lane release-cutover` |
 | command and API contracts | `.venv/bin/python scripts/dish-test-lane command-api-contracts` |
+| Round 1C observed failure journeys | `.venv/bin/python scripts/dish-test-lane round1c-journeys` |
 | operational certification | `.venv/bin/python scripts/dish-test-lane operational-certification` |
 | reviewed parallel-safe inventory | `.venv/bin/python scripts/dish-test-lane parallel-safe --workers <count>` |
+
+`round1c-journeys` is the fixed confidence lane for the concrete workflow failures discovered during the 1A/1B dark-launch work. It intentionally reuses the strongest existing behavioral regressions rather than cloning them: stranded request/execution recovery, recover/inspect progress, expired-run ownership and safe reclaim, abandonment successors, same-verifier Human Review continuation, semantic-proposal application/staleness, Action schema/runtime vocabulary and inspect request IDs, post-mutation continuation refresh, Change signoff lineage, resting-dish inspect, and the Round 1C population-audit/verbose-inspect contracts. Keep that inventory literal and review changes to it as changes to the accepted confidence boundary.
 
 `native-concurrency` requires `DISH_TEST_POSTGRESQL_DSN`; `operational-certification` requires
 `DISH_PG_TEST_URL`. Missing infrastructure is reported as unavailable with exit status 3, never as a

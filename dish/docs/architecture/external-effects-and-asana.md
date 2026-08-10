@@ -45,6 +45,8 @@ Not every read-only or idempotent interaction requires the same reread pattern; 
 
 Persist enough intent to recover safely, perform the external operation, observe what actually happened when needed, settle the durable outcome, and reconcile drift/uncertainty.
 
+For pre-cutover population confidence, placement is interpreted in context rather than treated as a global synchronization invariant. Marco may legitimately move resting tasks through the ordinary external Cooking lifecycle, including later archival/history placement. A read-only population audit therefore classifies those resting/manual lifecycle differences separately from real drift. Placement becomes an inconsistency when it contradicts an active Dish operation's required/expected placement or another actual workflow invariant.
+
 ## Failure, replay, recovery, and concurrency
 
 Recovery continues the original effect identity. Fencing prevents stale workers from settling another attempt. Reconciliation handles discrepancies without granting external state canonical backend authority.

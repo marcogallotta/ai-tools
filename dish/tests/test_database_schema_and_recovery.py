@@ -58,7 +58,7 @@ def test_schema_creation_and_migration_are_idempotent(tmp_path):
         row[0]
         for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
     }
-    assert {"schema_migrations", "submissions", "audit_events"} <= tables
+    assert {"schema_migrations", "submissions", "audit_events", "kill_request_bindings"} <= tables
 
     submission_columns = {
         row[1] for row in conn.execute("PRAGMA table_info(submissions)")
@@ -396,7 +396,7 @@ def test_schema_43_converts_run_retirements_to_explicit_revocations(tmp_path):
     upgraded.execute("PRAGMA foreign_keys=ON")
     migrate_database(upgraded)
     try:
-        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 43
+        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 44
         assert upgraded.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='operation_run_retirements'"
         ).fetchone() is None
@@ -507,7 +507,7 @@ def test_schema_43_backfills_claimed_proposal_owner_from_exact_schema42_lease(tm
         assert row["status"] == "claimed"
         assert row["claimed_owner_id"] == "action:gpt"
         assert row["claimed_run_id"] == "claimed-run-v42"
-        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 43
+        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 44
     finally:
         upgraded.close()
 
