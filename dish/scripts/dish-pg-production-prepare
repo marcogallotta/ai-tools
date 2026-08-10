@@ -39,6 +39,12 @@ Optional:
                                  dish-pg-build-location-manifest's --environment. Use "test" only
                                  for a dry run of this script against TEST identity/paths before
                                  ever pointing it at real production data.
+  DISH_PG_ALLOW_DEPARTED_TASKS  "1" to explicitly skip tasks that have left the tracked project
+                                 (normal operator activity between snapshots) instead of failing
+                                 the whole prepare sequence. Off by default.
+  DISH_PG_ALLOW_OPEN_OPERATIONS "1" to explicitly skip a task's non-terminal (in-progress)
+                                 operations/cycles/leases instead of failing the export. Off by
+                                 default.
 
 Example:
 
@@ -182,27 +188,36 @@ def main() -> int:
         if capture_environment == "test":
             log("DISH_PG_CAPTURE_ENVIRONMENT=test -- this is a TEST-identity dry run, not production prepare.")
 
-        run_step(
-            f"capture {capture_environment} location manifest (read-only SQLite)",
-            [
-                sys.executable,
-                str(REPO_ROOT / "scripts/dish-pg-build-location-manifest"),
-                "--environment", capture_environment,
-                "--env-file", env["DISH_PRODUCTION_SERVICE_ENV"],
-                "--output", env["DISH_PG_LOCATION_MANIFEST"],
-            ],
-        )
+        allow_departed_tasks = os.environ.get("DISH_PG_ALLOW_DEPARTED_TASKS", "").strip() == "1"
+        allow_open_operations = os.environ.get("DISH_PG_ALLOW_OPEN_OPERATIONS", "").strip() == "1"
+        if allow_departed_tasks:
+            log("DISH_PG_ALLOW_DEPARTED_TASKS=1 -- skipping tasks that have left the tracked project.")
+        if allow_open_operations:
+            log("DISH_PG_ALLOW_OPEN_OPERATIONS=1 -- skipping tasks' non-terminal operation history.")
 
-        run_step(
-            "export legacy corpus",
-            [
-                sys.executable,
-                str(REPO_ROOT / "scripts/dish-pg-export-legacy"),
-                "--database", env["DISH_DB_PATH"],
-                "--location-manifest", env["DISH_PG_LOCATION_MANIFEST"],
-                "--output", env["DISH_PG_LEGACY_NDJSON"],
-            ],
-        )
+        manifest_command = [
+            sys.executable,
+            str(REPO_ROOT / "scripts/dish-pg-build-location-manifest"),
+            "--environment", capture_environment,
+            "--env-file", env["DISH_PRODUCTION_SERVICE_ENV"],
+            "--output", env["DISH_PG_LOCATION_MANIFEST"],
+        ]
+        if allow_departed_tasks:
+            manifest_command.append("--allow-departed-tasks")
+        run_step(f"capture {capture_environment} location manifest (read-only SQLite)", manifest_command)
+
+        export_command = [
+            sys.executable,
+            str(REPO_ROOT / "scripts/dish-pg-export-legacy"),
+            "--database", env["DISH_DB_PATH"],
+            "--location-manifest", env["DISH_PG_LOCATION_MANIFEST"],
+            "--output", env["DISH_PG_LEGACY_NDJSON"],
+        ]
+        if allow_departed_tasks:
+            export_command.append("--allow-departed-tasks")
+        if allow_open_operations:
+            export_command.append("--allow-open-operations")
+        run_step("export legacy corpus", export_command)
 
         receipt_stdout = run_step(
             "bootstrap PostgreSQL target",

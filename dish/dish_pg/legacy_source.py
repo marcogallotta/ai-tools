@@ -67,25 +67,33 @@ def _require_operation_history_tables(conn: sqlite3.Connection) -> None:
         )
 
 
-def _terminal_operation_history(conn: sqlite3.Connection, *, task_gid: str) -> dict[str, object]:
+def _terminal_operation_history(
+    conn: sqlite3.Connection, *, task_gid: str, allow_open_operations: bool = False
+) -> dict[str, object]:
     operations = conn.execute(
         """SELECT operation_id,operation_kind,status,phase,terminal_outcome,created_at,completed_at
              FROM operations WHERE task_gid=? ORDER BY created_at,operation_id""",
         (task_gid,),
     ).fetchall()
-    operation_ids = {str(row["operation_id"]) for row in operations}
+    operation_ids: set[str] = set()
     operation_records: list[dict[str, object]] = []
     for row in operations:
         if row["status"] not in {"completed", "cancelled"}:
-            raise LegacySourceError(
-                "operation-history export admits only terminal completed/cancelled operations: "
-                f"task_gid={task_gid} operation_id={row['operation_id']} status={row['status']}"
-            )
+            if not allow_open_operations:
+                raise LegacySourceError(
+                    "operation-history export admits only terminal completed/cancelled operations: "
+                    f"task_gid={task_gid} operation_id={row['operation_id']} status={row['status']}"
+                )
+            # Explicit operator opt-in: task has real in-progress work since
+            # the manifest was captured. Import terminal history only; skip
+            # this open operation and anything that references it below.
+            continue
         if row["phase"] != "terminal" or row["completed_at"] is None or not str(row["terminal_outcome"] or "").strip():
             raise LegacySourceError(
                 "terminal legacy operation has inconsistent terminal evidence: "
                 f"task_gid={task_gid} operation_id={row['operation_id']}"
             )
+        operation_ids.add(str(row["operation_id"]))
         operation_records.append({
             "operation_id": _canonical_uuid(row["operation_id"], field="operation_id"),
             "kind": str(row["operation_kind"]),
@@ -105,14 +113,21 @@ def _terminal_operation_history(conn: sqlite3.Connection, *, task_gid: str) -> d
     cycle_records: list[dict[str, object]] = []
     for row in cycles:
         if str(row["operation_id"]) not in operation_ids:
-            raise LegacySourceError(
-                f"verification cycle references operation outside task history: cycle_id={row['cycle_id']}"
-            )
+            if not allow_open_operations:
+                raise LegacySourceError(
+                    f"verification cycle references operation outside task history: cycle_id={row['cycle_id']}"
+                )
+            # Belongs to an operation that was skipped as non-terminal above.
+            continue
         if row["completed_at"] is None or row["outcome"] is None:
-            raise LegacySourceError(
-                "operation-history export does not admit open verification cycles: "
-                f"task_gid={task_gid} cycle_id={row['cycle_id']}"
-            )
+            if not allow_open_operations:
+                raise LegacySourceError(
+                    "operation-history export does not admit open verification cycles: "
+                    f"task_gid={task_gid} cycle_id={row['cycle_id']}"
+                )
+            # Cycle belongs to a terminal operation but is itself still open
+            # -- also normal in-progress activity. Skip it.
+            continue
         cycle_by_id[str(row["cycle_id"])] = row
         cycle_records.append({
             "cycle_id": _canonical_uuid(row["cycle_id"], field="cycle_id"),
@@ -137,14 +152,21 @@ def _terminal_operation_history(conn: sqlite3.Connection, *, task_gid: str) -> d
                 f"legacy lease lacks supported lease_kind: task_gid={task_gid} lease_id={row['lease_id']}"
             )
         if str(row["operation_id"]) not in operation_ids:
-            raise LegacySourceError(
-                f"legacy lease references operation outside task history: lease_id={row['lease_id']}"
-            )
+            if not allow_open_operations:
+                raise LegacySourceError(
+                    f"legacy lease references operation outside task history: lease_id={row['lease_id']}"
+                )
+            # Belongs to an operation that was skipped as non-terminal above.
+            continue
         if row["released_at"] is None:
-            raise LegacySourceError(
-                "operation-history export does not admit active service leases: "
-                f"task_gid={task_gid} lease_id={row['lease_id']}"
-            )
+            if not allow_open_operations:
+                raise LegacySourceError(
+                    "operation-history export does not admit active service leases: "
+                    f"task_gid={task_gid} lease_id={row['lease_id']}"
+                )
+            # Lease is still active on a terminal operation's earlier
+            # attempt -- also normal in-progress activity. Skip it.
+            continue
         if lease_kind == "actor" and row["actor_attempt_seq"] is None:
             raise LegacySourceError(
                 f"legacy actor lease lacks attempt sequence: task_gid={task_gid} lease_id={row['lease_id']}"
@@ -186,7 +208,14 @@ def _terminal_operation_history(conn: sqlite3.Connection, *, task_gid: str) -> d
     }
 
 
-def export_legacy_source(*, database: Path, location_manifest: Path, output: Path) -> int:
+def export_legacy_source(
+    *,
+    database: Path,
+    location_manifest: Path,
+    output: Path,
+    allow_departed_tasks: bool = False,
+    allow_open_operations: bool = False,
+) -> int:
     locations = _manifest(location_manifest)
     uri=f"file:{database.expanduser().resolve()}?mode=ro"
     conn=sqlite3.connect(uri, uri=True)
@@ -201,13 +230,18 @@ def export_legacy_source(*, database: Path, location_manifest: Path, output: Pat
         observed={row["task_gid"] for row in heads}
         missing=sorted(observed-set(locations))
         extras=sorted(set(locations)-observed)
-        if missing or extras:
+        if extras or (missing and not allow_departed_tasks):
             raise LegacySourceError(
                 f"location manifest corpus mismatch missing={missing} extras={extras}"
             )
         lines=[]
         for row in heads:
-            location=locations[row["task_gid"]]
+            location=locations.get(row["task_gid"])
+            if location is None:
+                # Explicit operator opt-in: manifest already excluded this
+                # task (left the tracked project). Skip it here too rather
+                # than exporting a task with no location.
+                continue
             try:
                 record={
                     "task_id": str(uuid.UUID(str(location["task_id"]))),
@@ -222,7 +256,9 @@ def export_legacy_source(*, database: Path, location_manifest: Path, output: Pat
                     "completed": bool(location["completed"]),
                     "observed_at": str(location["observed_at"]),
                     "existence_state": str(location.get("existence_state", "ordinary")),
-                    "operation_history": _terminal_operation_history(conn, task_gid=row["task_gid"]),
+                    "operation_history": _terminal_operation_history(
+                        conn, task_gid=row["task_gid"], allow_open_operations=allow_open_operations
+                    ),
                 }
             except (KeyError, TypeError, ValueError) as exc:
                 raise LegacySourceError(f"invalid location manifest task={row['task_gid']}: {exc}") from exc
@@ -238,12 +274,36 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--database", required=True, type=Path)
     parser.add_argument("--location-manifest", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument(
+        "--allow-departed-tasks",
+        action="store_true",
+        help=(
+            "Explicit operator opt-in: skip tasks the location manifest "
+            "already excluded (left the tracked project), instead of "
+            "failing on a corpus mismatch. Off by default."
+        ),
+    )
+    parser.add_argument(
+        "--allow-open-operations",
+        action="store_true",
+        help=(
+            "Explicit operator opt-in: skip a task's non-terminal "
+            "(in-progress) operations/cycles/leases instead of failing the "
+            "export. Off by default."
+        ),
+    )
     return parser
 
 
 def main(argv: list[str] | None=None) -> int:
     args=_parser().parse_args(argv)
-    count=export_legacy_source(database=args.database, location_manifest=args.location_manifest, output=args.output)
+    count=export_legacy_source(
+        database=args.database,
+        location_manifest=args.location_manifest,
+        output=args.output,
+        allow_departed_tasks=args.allow_departed_tasks,
+        allow_open_operations=args.allow_open_operations,
+    )
     print(json.dumps({"exported": count, "output": str(args.output)}, sort_keys=True))
     return 0
 

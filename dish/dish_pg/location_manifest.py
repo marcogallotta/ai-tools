@@ -169,36 +169,6 @@ def _project_section(
     return next(iter(sections))
 
 
-def _last_known_section_gid(database: Path, task_gid: str) -> str | None:
-    """Most recent confirmed section movement recorded locally for `task_gid`, used
-    as the section for a task that has since left the live project's membership."""
-    resolved = _resolve_existing(database, label="SQLite authority database")
-    uri = f"file:{resolved}?mode=ro"
-    try:
-        connection = sqlite3.connect(uri, uri=True)
-        try:
-            row = connection.execute(
-                """
-                SELECT movement_attempts.confirmed_section_gid
-                  FROM movement_attempts
-                  JOIN operations ON operations.operation_id = movement_attempts.operation_id
-                 WHERE operations.task_gid = ?
-                   AND movement_attempts.outcome = 'confirmed'
-                   AND movement_attempts.confirmed_section_gid IS NOT NULL
-                 ORDER BY movement_attempts.finished_at DESC
-                 LIMIT 1
-                """,
-                (task_gid,),
-            ).fetchone()
-        finally:
-            connection.close()
-    except sqlite3.Error as exc:
-        raise LocationManifestError(f"cannot read last known section: {exc}") from exc
-    if row is None:
-        return None
-    return _canonical_gid(row[0], field="movement_attempts.confirmed_section_gid")
-
-
 def build_location_manifest(
     *,
     database: Path,
@@ -207,6 +177,7 @@ def build_location_manifest(
     now: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
     environment: str = "test",
     require_nonzero: bool = False,
+    allow_departed_tasks: bool = False,
 ) -> dict[str, object]:
     """Read every SQLite task from Asana and build an exact corpus manifest."""
     if environment not in _CAPTURE_ENVIRONMENTS:
@@ -227,11 +198,14 @@ def build_location_manifest(
             task, canonical_project_gid, environment=environment
         )
         if section_gid is None:
-            section_gid = _last_known_section_gid(database, task_gid)
-            if section_gid is None:
+            if not allow_departed_tasks:
                 raise LocationManifestError(
                     f"task {task_gid} has left the project and has no last known section"
                 )
+            # Explicit operator opt-in: task is no longer in the tracked
+            # project (moved to Cooking History, deleted, etc). Skip it
+            # rather than failing the whole manifest build.
+            continue
         observed_at = now()
         if (
             not isinstance(observed_at, datetime)
@@ -598,7 +572,9 @@ def capture_test_location_manifest(*, env_file: Path, output: Path) -> int:
     return len(manifest["tasks"])
 
 
-def capture_production_location_manifest(*, env_file: Path, output: Path) -> int:
+def capture_production_location_manifest(
+    *, env_file: Path, output: Path, allow_departed_tasks: bool = False
+) -> int:
     database, project_gid, asana_pat, credential_file, dark_launch_spool = (
         load_production_configuration(env_file)
     )
@@ -627,6 +603,7 @@ def capture_production_location_manifest(*, env_file: Path, output: Path) -> int
                 read_task=read_task,
                 environment="production",
                 require_nonzero=True,
+                allow_departed_tasks=allow_departed_tasks,
             )
     except LocationManifestError:
         raise
@@ -648,6 +625,15 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--env-file", type=Path)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument(
+        "--allow-departed-tasks",
+        action="store_true",
+        help=(
+            "Explicit operator opt-in: skip tasks that have left the tracked "
+            "project and have no last known section, instead of failing the "
+            "whole manifest build. Off by default."
+        ),
+    )
     return parser
 
 
@@ -660,7 +646,9 @@ def main(argv: list[str] | None = None) -> int:
             )
         else:
             count = capture_production_location_manifest(
-                env_file=args.env_file or PRODUCTION_ENV_FILE, output=args.output
+                env_file=args.env_file or PRODUCTION_ENV_FILE,
+                output=args.output,
+                allow_departed_tasks=args.allow_departed_tasks,
             )
     except (LocationManifestError, OSError) as exc:
         print(f"dish-pg-build-location-manifest: {exc}", file=sys.stderr)
