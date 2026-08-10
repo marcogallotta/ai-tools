@@ -14,6 +14,7 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import select
 
+from dish_pg import models
 from dish_pg import stage5_models as tx
 from dish_pg.database import session_scope
 from dish_pg.projection_worker import ExternalAttempt, ExternalObservation, ProjectionWorker
@@ -191,7 +192,7 @@ def test_projection_worker_never_claims_real_shadow_evaluator_outbox(core_db) ->
                 "command": "create",
                 "arguments": {"title": "Native shadow only"},
             },
-            source_outcome={"ok": True},
+            source_outcome={"ok": True, "data": {"task_gid": "native-shadow-created-1"}},
             source_post_state={"captured": True},
             principal={
                 "owner_id": "owner-1",
@@ -235,3 +236,94 @@ def test_projection_worker_never_claims_real_shadow_evaluator_outbox(core_db) ->
         assert row.state == "pending"
         assert row.claim_owner is None
         assert row.claim_token is None
+
+
+def test_shadow_create_alias_resolves_follow_on_start_against_real_postgresql(core_db) -> None:
+    from dish_pg.shadow_worker import CommandPortShadowEvaluator
+    from dish_pg.transition import ShadowService
+
+    factory, ids = core_db
+    source_task_gid = "1217304161066314"
+    evaluator = CommandPortShadowEvaluator(
+        cursor_secret=b"native-shadow-cursor-secret-32b!"
+    )
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(session, ids, generation_status="active")
+        ProjectionService(session, uuid_factory=lambda: _next(ids)).activate_epoch(
+            generation_id=context["generation_id"],
+            activation_reason="native shadow create correlation",
+            created_at=NOW,
+        )
+        shadow = ShadowService(session, uuid_factory=lambda: _next(ids))
+        baseline = shadow.create_baseline(
+            generation_id=context["generation_id"],
+            source_generation_identity="legacy-native",
+            source_commit="worktree",
+            created_at=NOW,
+        )
+        create_envelope = shadow.capture_envelope(
+            shadow_baseline_id=baseline.shadow_baseline_id,
+            command_name="create",
+            source_request_identity="source-create-request",
+            canonical_input={
+                "command": "create",
+                "arguments": {"title": "Created after import"},
+            },
+            source_outcome={"ok": True, "data": {"task_gid": source_task_gid}},
+            source_post_state={"captured": True},
+            principal={
+                "owner_id": "owner-1",
+                "principal_class": "agent",
+                "run_id": "source-run-1",
+            },
+            pinned_inputs={"rollout_mode": "execute"},
+            capture_qualification="execute",
+            source_authority_generation="legacy-native",
+            rollout_sequence=1,
+            captured_at=NOW,
+        )
+        create_result = evaluator.evaluate(session, create_envelope)
+        alias = session.scalar(
+            select(models.TaskExternalAlias).where(
+                models.TaskExternalAlias.external_system == "asana",
+                models.TaskExternalAlias.external_id == source_task_gid,
+            )
+        )
+
+        assert create_result["ok"] is True
+        assert alias is not None
+        assert alias.origin == "projection"
+        assert alias.import_run_id is None
+        assert alias.projection_event_id is not None
+        assert alias.state == "active"
+
+        start_envelope = shadow.capture_envelope(
+            shadow_baseline_id=baseline.shadow_baseline_id,
+            command_name="start",
+            source_request_identity="source-start-request",
+            canonical_input={
+                "command": "start",
+                "arguments": {
+                    "task_gid": source_task_gid,
+                    "kind": "initial",
+                    "agent": "service",
+                },
+            },
+            source_outcome={"ok": True, "data": {"task_gid": source_task_gid}},
+            source_post_state={"captured": True},
+            principal={
+                "owner_id": "owner-1",
+                "principal_class": "agent",
+                "run_id": "source-run-1",
+            },
+            pinned_inputs={"rollout_mode": "execute"},
+            capture_qualification="execute",
+            source_authority_generation="legacy-native",
+            rollout_sequence=2,
+            captured_at=NOW + timedelta(seconds=1),
+        )
+        start_result = evaluator.evaluate(session, start_envelope)
+
+        assert start_result["ok"] is True
+        assert start_result["command"] == "start"
+        assert start_result["data"]["task_id"] == str(alias.task_id)

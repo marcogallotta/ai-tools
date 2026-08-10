@@ -21,8 +21,8 @@ def test_every_current_action_and_admin_command_has_a_treatment() -> None:
 def test_shadow_only_exceptions_keep_their_intended_treatments() -> None:
     import dish_shadow.policy as shadow_policy
 
-    assert len(shadow_policy._SHADOW_ONLY_OVERRIDES) == 11
-    assert treatment_for("create").treatment == "capture_only"
+    assert len(shadow_policy._SHADOW_ONLY_OVERRIDES) == 10
+    assert treatment_for("create").treatment == "execute"
     assert treatment_for("recover").treatment == "capture_only"
     assert treatment_for("repair-destination").treatment == "capture_only"
     assert treatment_for("proposals").treatment == "excluded"

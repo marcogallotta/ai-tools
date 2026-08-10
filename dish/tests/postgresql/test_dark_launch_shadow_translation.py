@@ -1,6 +1,7 @@
 from __future__ import annotations
 import uuid
 from datetime import timedelta
+from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 from dish_pg import models
@@ -10,6 +11,7 @@ from dish_pg.database import session_scope
 from dish_pg.shadow_worker import (
     ShadowIdentityMappingError,
     ShadowWorker,
+    _record_created_task_alias,
     _shadow_uuid,
     _translate_workflow_identifiers,
 )
@@ -31,6 +33,19 @@ from tests.support.postgresql.dark_launch_shadow_worker import (
     _spool,
     _real_verification_target,
 )
+
+
+@pytest.mark.parametrize("source_outcome", [{}, {"data": {}}, {"data": {"task_gid": "  "}}])
+def test_shadow_create_requires_captured_source_task_gid(source_outcome) -> None:
+    with pytest.raises(
+        ShadowIdentityMappingError,
+        match="source outcome has no task_gid",
+    ):
+        _record_created_task_alias(
+            None,
+            envelope=SimpleNamespace(source_outcome=source_outcome),
+            result=SimpleNamespace(data={}),
+        )
 
 
 def _add_imported_operation(session, *, context, task_id, operation_id, import_run_id=None):
@@ -181,7 +196,7 @@ def test_real_shadow_evaluator_tags_outbox_and_projection_claim_refuses_it(workf
             command_name="create",
             source_request_identity=str(request_id),
             canonical_input={"command": "create", "arguments": {"title": "Shadow only"}},
-            source_outcome={"ok": True},
+            source_outcome={"ok": True, "data": {"task_gid": "shadow-created-1"}},
             source_post_state={"captured": True},
             principal={
                 "owner_id": "owner-1",
@@ -195,14 +210,22 @@ def test_real_shadow_evaluator_tags_outbox_and_projection_claim_refuses_it(workf
             captured_at=NOW,
         )
 
-        target = CommandPortShadowEvaluator(cursor_secret=b"shadow-test-cursor-secret-32bytes!").evaluate(
-            session, envelope
+        evaluator = CommandPortShadowEvaluator(
+            cursor_secret=b"shadow-test-cursor-secret-32bytes!"
         )
+        target = evaluator.evaluate(session, envelope)
+        replayed = evaluator.evaluate(session, envelope)
         event = session.scalar(select(tx.ProjectionOutboxEvent))
+        alias = session.scalar(
+            select(models.TaskExternalAlias).where(
+                models.TaskExternalAlias.external_id == "shadow-created-1"
+            )
+        )
         registered_run = session.scalar(select(wf.ServiceRun))
         request = session.scalar(select(wf.ServiceRequest))
 
         assert target["ok"] is True
+        assert replayed["ok"] is True
         assert registered_run is not None
         assert registered_run.run_id != run_id
         assert registered_run.owner_id == "owner-1"
@@ -214,6 +237,20 @@ def test_real_shadow_evaluator_tags_outbox_and_projection_claim_refuses_it(workf
         assert event is not None
         assert event.origin == "shadow"
         assert event.state == "pending"
+        assert alias is not None
+        assert alias.task_id == event.task_id
+        assert alias.origin == "projection"
+        assert alias.import_run_id is None
+        assert alias.projection_event_id == event.projection_event_id
+        assert len(
+            list(
+                session.scalars(
+                    select(models.TaskExternalAlias).where(
+                        models.TaskExternalAlias.external_id == "shadow-created-1"
+                    )
+                )
+            )
+        ) == 1
         assert projection.claim_next(
             worker_id="projection-worker",
             now=NOW,

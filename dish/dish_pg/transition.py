@@ -937,6 +937,18 @@ class ShadowService:
         if gap.state != "open":
             raise TransitionAuthorityError("shadow gap is not open")
         resolution_payload = dict(resolution)
+        if gap.gap_kind == "uncomparable" and gap.envelope_id is not None and not waived:
+            envelope = self.session.get(tx.ShadowEnvelope, gap.envelope_id)
+            if (
+                envelope is not None
+                and envelope.command_name == "create"
+                and envelope.capture_qualification == "capture_only"
+                and gap.details.get("reason") == "dark-launch treatment is capture_only"
+            ):
+                raise TransitionAuthorityError(
+                    "capture-only create evidence is immutable and cannot be requeued; "
+                    "a superseding replay mechanism is required"
+                )
         if gap.gap_kind == "delivery_failure" and gap.envelope_id is not None and not waived:
             if resolution_payload.get("delivery_outcome") != "not_applied":
                 raise TransitionAuthorityError(

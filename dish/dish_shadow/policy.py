@@ -40,7 +40,6 @@ class DarkLaunchTreatment:
 # because that target contract still omits them; removing an exception requires
 # first adding the authoritative target command fact.
 _SHADOW_ONLY_OVERRIDES: dict[str, tuple[Treatment, str]] = {
-    "create": ("capture_only", "pre-cutover create correlation is not qualified"),
     "recover": ("capture_only", "projection-attempt identity is target-specific"),
     "repair-destination": ("capture_only", "projection-attempt identity is target-specific"),
     "proposals": ("excluded", "read-only source semantic-proposal queue"),

@@ -362,6 +362,73 @@ def _target_task_id_for_source_gid(session, source_task_gid: str) -> uuid.UUID |
     return aliases[0].task_id if len(aliases) == 1 else None
 
 
+def _record_created_task_alias(
+    session,
+    *,
+    envelope: tx.ShadowEnvelope,
+    result: CommandResult,
+) -> None:
+    source_data = envelope.source_outcome.get("data")
+    source_task_gid = (
+        str(source_data.get("task_gid") or "").strip()
+        if isinstance(source_data, Mapping)
+        else ""
+    )
+    if not source_task_gid:
+        raise ShadowIdentityMappingError(
+            "shadow-executed create source outcome has no task_gid"
+        )
+    try:
+        task_id = uuid.UUID(str(result.data["task_id"]))
+        projection_event_id = uuid.UUID(str(result.data["projection_event_id"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ShadowIdentityMappingError(
+            "shadow-executed create result lacks target correlation identity"
+        ) from exc
+
+    aliases = list(
+        session.scalars(
+            select(models.TaskExternalAlias).where(
+                models.TaskExternalAlias.external_system == "asana",
+                models.TaskExternalAlias.external_id == source_task_gid,
+            )
+        )
+    )
+    if aliases:
+        alias = aliases[0] if len(aliases) == 1 else None
+        if (
+            alias is None
+            or alias.task_id != task_id
+            or alias.origin != "projection"
+            or alias.import_run_id is not None
+            or alias.projection_event_id != projection_event_id
+            or alias.state != "active"
+        ):
+            raise ShadowIdentityMappingError(
+                "captured create task_gid already has a different target binding"
+            )
+        return
+
+    session.add(
+        models.TaskExternalAlias(
+            alias_id=_shadow_uuid(
+                envelope,
+                label="task_external_alias",
+                value=source_task_gid,
+            ),
+            task_id=task_id,
+            external_system="asana",
+            external_id=source_task_gid,
+            origin="projection",
+            import_run_id=None,
+            projection_event_id=projection_event_id,
+            state="active",
+            created_at=envelope.captured_at,
+            retired_at=None,
+        )
+    )
+
+
 def _source_operation_row(
     envelope: tx.ShadowEnvelope, source_value: str
 ) -> Mapping[str, Any] | None:
@@ -1396,6 +1463,8 @@ class CommandPortShadowEvaluator:
                 now=envelope.captured_at,
             )
         )
+        if envelope.command_name == "create" and result.ok:
+            _record_created_task_alias(session, envelope=envelope, result=result)
         session.flush()
         post_state = _target_authority_state(
             session,
