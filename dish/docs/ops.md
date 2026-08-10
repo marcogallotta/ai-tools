@@ -54,6 +54,23 @@ etc.) before trusting or removing it.
   2026-08-06 reproduced a real `record_replay_validation_failure` gap
   (see `ops-issues.md`); §4 still not run, blocked on the same gap.
 
+### TEST dark-launch state (2026-08-10)
+
+- `dish-service-test.service` is running with `DISH_DARK_LAUNCH_MODE=execute`;
+  `dish-shadow-worker-test.service` is running but remains disabled across host
+  reboot. The TEST PostgreSQL target is bootstrapped, its projection epoch has
+  external effects disabled, and SQLite/Asana remain authoritative.
+- Capture and shadow delivery are operational: the staged activation probes
+  drained to zero backlog with no delivery failure. The baseline is not
+  parity-clean. It has one expected `uncomparable` gap from the capture-only
+  probe and one mismatch from executing `inspect` against the synthetic seed;
+  the imported PostgreSQL seed lacks some legacy request/effect history.
+- This is acceptable for ongoing dark-launch testing and evidence collection:
+  the mismatch is evidence produced by the system, not a live-service failure.
+  Do **not** use the current baseline as clean cutover-acceptance evidence. Before
+  testing cutover, reset and re-bootstrap from representative, internally
+  consistent history, then require zero unexplained mismatches or open gaps.
+
 ## Production and test `dish-service`
 
 Live service topology, ports, env file locations, and credential loading
