@@ -4,7 +4,7 @@ The test and production services have separate loopback listeners:
 
 - test: `127.0.0.1:8765` private and `127.0.0.1:8766` Action;
 - production: `127.0.0.1:8775` private and `127.0.0.1:8776` Action;
-- router: `127.0.0.1:8786`, selecting one Action listener.
+- router: `127.0.0.1:8786`, with production at root and TEST under `/test`.
 
 Dish uses separate tailnet-only ports for the two private listeners. Public HTTPS points to the
 static router, never directly to either service:
@@ -19,11 +19,11 @@ Expected access paths:
 
 - test CLI/admin: `https://<node>.<tailnet>.ts.net:8444/` over the tailnet;
 - production CLI/admin: `https://<node>.<tailnet>.ts.net:8445/` over the tailnet;
-- GPT Action: `https://<node>.<tailnet>.ts.net/` over Funnel.
+- production GPT Action: `https://<node>.<tailnet>.ts.net/` over Funnel;
+- TEST GPT Action: `https://<node>.<tailnet>.ts.net/test/` over the same Funnel.
 
-Inspect the public selection with `deploy/caddy/dish-action-route status`. Route changes are made
-through that command, not by editing Tailscale or shell environment. Starting production does not
-select it.
+Inspect both fixed upstreams with `deploy/caddy/dish-action-route status`. Environment selection is
+made by importing the corresponding root or `/test` schema, not by changing Tailscale or Caddy.
 
 Before activation:
 
@@ -33,16 +33,15 @@ Before activation:
    service. Add the three Dish mappings without using `serve reset` or `funnel reset`.
 4. Inspect `tailscale serve status` and `tailscale funnel status`.
 5. Confirm ports 8444 and 8445 are tailnet-only and port 443 is public.
-6. Confirm the public endpoint returns 404 for `/v1/commands/*`, `/v1/admin/*`, `/health`, and
+6. Confirm the public endpoint returns 404 for root and `/test` CLI, admin, health, and
    backup/recovery routes.
-7. Confirm the Action token can call only `/v1/action/*` and cannot call the private listener with
-   Action scope.
-8. Fetch `https://<node>.<tailnet>.ts.net/openapi/action.json` and import that runtime schema, or
-   replace the placeholder server in `openapi/dish-action.openapi.json` with the exact Funnel URL.
+7. Confirm each environment's Action token works only on its matching root or `/test` Action path.
+8. Fetch `https://<node>.<tailnet>.ts.net/openapi/action.json` for production or
+   `https://<node>.<tailnet>.ts.net/test/openapi/action.json` for TEST.
 9. Validate the standard HTTPS Funnel URL in the GPT Action editor and Preview before activation.
 10. Confirm the CLI/admin tokens are absent from the GPT Action configuration.
-11. Confirm `dish-action-route status` reports the authorized environment and that a Caddy restart
-    preserves it from the autosaved native configuration.
+11. Confirm `dish-action-route status` reports both expected upstreams and that a Caddy restart
+    preserves the fixed split from the autosaved native configuration.
 
 Do not point Funnel at a private or direct Action listener. The same Tailscale HTTPS port cannot be
 both private Serve and public Funnel at once; the most recent configuration wins.

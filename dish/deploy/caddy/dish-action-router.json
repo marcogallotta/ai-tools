@@ -14,9 +14,21 @@
           ],
           "routes": [
             {
+              "match": [
+                {
+                  "path": [
+                    "/test/openapi/action.json",
+                    "/test/v1/action/*"
+                  ]
+                }
+              ],
               "handle": [
                 {
-                  "@id": "dish_action_proxy",
+                  "handler": "rewrite",
+                  "strip_path_prefix": "/test"
+                },
+                {
+                  "@id": "dish_action_test_proxy",
                   "handler": "reverse_proxy",
                   "upstreams": [
                     {
@@ -24,7 +36,22 @@
                     }
                   ]
                 }
-              ]
+              ],
+              "terminal": true
+            },
+            {
+              "handle": [
+                {
+                  "@id": "dish_action_prod_proxy",
+                  "handler": "reverse_proxy",
+                  "upstreams": [
+                    {
+                      "dial": "127.0.0.1:8776"
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
             }
           ]
         }

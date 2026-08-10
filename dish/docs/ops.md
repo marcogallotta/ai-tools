@@ -78,6 +78,10 @@ are documented once in `/home/marco/ai-tools/CLAUDE.md` under "Live Dish
 rehearsal credentials" — not duplicated here. Confirmed on 2026-08-04:
 `dish-shadow-worker.service` is not installed on this host.
 
+As of 2026-08-10, the public Action router has a fixed path split on the one
+Funnel origin: root routes to production and `/test` routes only the TEST
+schema and Action commands. The two services use distinct Action tokens.
+
 ## Private authenticated frontend
 
 - **What**: the local private frontend authenticates against the separate writable

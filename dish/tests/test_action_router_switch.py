@@ -25,60 +25,28 @@ def _load_router_module() -> ModuleType:
 
 
 router = _load_router_module()
-
-
-def _route_etag(dial: str) -> str:
-    body = json.dumps([{"dial": dial}]).encode("utf-8")
-    return f'"{router.PROXY_PATH} {router._fnv1a_32(body):08x}"'
+ROOT = Path(__file__).parents[1]
 
 
 class _CaddyFake(BaseHTTPRequestHandler):
-    dial = "127.0.0.1:8766"
-    etag = '"route-v1"'
-    patch_count = 0
-    received_if_match: str | None = None
-    send_etag = True
+    dials = dict(router.EXPECTED_DIALS)
 
     def do_GET(self) -> None:
-        if self.path == "/openapi/action.json":
-            self._json(200, {"openapi": "3.1.0"})
-            return
-        if self.path == router.PROXY_PATH:
-            value = [{"dial": type(self).dial}]
-            type(self).etag = _route_etag(type(self).dial)
-            headers = {"Etag": type(self).etag} if type(self).send_etag else None
-            self._json(200, value, headers)
-            return
-        self._json(404, {"error": "not found"})
-
-    def do_PATCH(self) -> None:
-        if self.path != router.PROXY_PATH:
+        environment = next(
+            (name for name, path in router.PROXY_PATHS.items() if path == self.path),
+            None,
+        )
+        if environment is None:
             self._json(404, {"error": "not found"})
             return
-        type(self).received_if_match = self.headers.get("If-Match")
-        if type(self).received_if_match != type(self).etag:
-            self._json(412, {"error": "etag mismatch"})
-            return
-        length = int(self.headers.get("Content-Length", "0"))
-        body = json.loads(self.rfile.read(length))
-        type(self).dial = body[0]["dial"]
-        type(self).patch_count += 1
-        type(self).etag = '"route-v2"'
-        self._json(200, None)
+        self._json(200, [{"dial": type(self).dials[environment]}])
 
     def log_message(self, _format: str, *args: object) -> None:
         return
 
-    def _json(
-        self,
-        status: int,
-        value: object,
-        headers: dict[str, str] | None = None,
-    ) -> None:
-        body = b"" if value is None else json.dumps(value).encode("utf-8")
+    def _json(self, status: int, value: object) -> None:
+        body = json.dumps(value).encode("utf-8")
         self.send_response(status)
-        for key, header_value in (headers or {}).items():
-            self.send_header(key, header_value)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -87,11 +55,7 @@ class _CaddyFake(BaseHTTPRequestHandler):
 
 @pytest.fixture
 def caddy_fake() -> Iterator[str]:
-    _CaddyFake.dial = "127.0.0.1:8766"
-    _CaddyFake.etag = '"route-v1"'
-    _CaddyFake.patch_count = 0
-    _CaddyFake.received_if_match = None
-    _CaddyFake.send_etag = True
+    _CaddyFake.dials = dict(router.EXPECTED_DIALS)
     server = ThreadingHTTPServer(("127.0.0.1", 0), _CaddyFake)
     thread = Thread(target=server.serve_forever)
     thread.start()
@@ -104,46 +68,36 @@ def caddy_fake() -> Iterator[str]:
         thread.join()
 
 
-def test_switch_preflights_uses_etag_and_confirms_readback(caddy_fake: str) -> None:
-    target = router.RouteTarget("prod", caddy_fake, "127.0.0.1:8776")
-
-    result = router.set_route(caddy_fake, target)
-
-    assert result == {
-        "environment": "prod",
-        "upstream": "127.0.0.1:8776",
-        "result": "switched",
+def test_status_reports_fixed_prod_and_test_routes(caddy_fake: str) -> None:
+    assert router.status(caddy_fake) == {
+        "mode": "fixed-path-split",
+        "routes": {
+            "prod": "127.0.0.1:8776",
+            "test": "127.0.0.1:8766",
+        },
+        "status": "ready",
     }
-    assert _CaddyFake.dial == "127.0.0.1:8776"
-    assert _CaddyFake.patch_count == 1
-    assert _CaddyFake.received_if_match == _route_etag("127.0.0.1:8766")
 
 
-def test_switch_is_idempotent_when_route_is_already_selected(caddy_fake: str) -> None:
-    target = router.RouteTarget("test", caddy_fake, "127.0.0.1:8766")
+def test_status_fails_closed_on_unexpected_route(caddy_fake: str) -> None:
+    _CaddyFake.dials["test"] = "127.0.0.1:9999"
 
-    result = router.set_route(caddy_fake, target)
+    result = router.status(caddy_fake)
 
-    assert result["result"] == "unchanged"
-    assert _CaddyFake.patch_count == 0
-
-
-def test_switch_reconstructs_caddy_etag_when_urllib_cannot_see_trailer(
-    caddy_fake: str,
-) -> None:
-    _CaddyFake.send_etag = False
-    target = router.RouteTarget("prod", caddy_fake, "127.0.0.1:8776")
-
-    result = router.set_route(caddy_fake, target)
-
-    assert result["result"] == "switched"
-    assert _CaddyFake.patch_count == 1
-    assert _CaddyFake.received_if_match == _route_etag("127.0.0.1:8766")
+    assert result["status"] == "unexpected"
 
 
-def test_production_cli_requires_both_authorizations(capsys: pytest.CaptureFixture[str]) -> None:
-    assert router.main(["set", "prod"]) == 2
-    assert "--authorize-route-change" in capsys.readouterr().err
+def test_router_keeps_prod_at_root_and_test_on_explicit_prefix() -> None:
+    config = json.loads((ROOT / "deploy/caddy/dish-action-router.json").read_text())
+    routes = config["apps"]["http"]["servers"]["dish_action_router"]["routes"]
 
-    assert router.main(["set", "prod", "--authorize-route-change"]) == 2
-    assert "--authorize-production-cutover" in capsys.readouterr().err
+    assert routes[0]["match"] == [
+        {"path": ["/test/openapi/action.json", "/test/v1/action/*"]}
+    ]
+    assert routes[0]["handle"][0] == {
+        "handler": "rewrite",
+        "strip_path_prefix": "/test",
+    }
+    assert routes[0]["handle"][1]["upstreams"] == [{"dial": "127.0.0.1:8766"}]
+    assert routes[1].get("match") is None
+    assert routes[1]["handle"][0]["upstreams"] == [{"dial": "127.0.0.1:8776"}]

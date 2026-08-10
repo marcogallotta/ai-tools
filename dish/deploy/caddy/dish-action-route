@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect or atomically switch the loopback Dish Action router."""
+"""Inspect the fixed TEST/production Dish Action router."""
 
 from __future__ import annotations
 
@@ -7,30 +7,18 @@ import argparse
 import json
 import sys
 import urllib.error
-import urllib.parse
 import urllib.request
-from dataclasses import dataclass
 from typing import Any
 
 
 ADMIN_URL = "http://127.0.0.1:2019"
-# Caddy returns the canonical /config/ path in the Etag trailer even when the
-# object is read through /id/. urllib cannot expose response trailers, so use
-# the canonical path here; its locally reconstructed Etag then matches Caddy.
-PROXY_PATH = "/config/apps/http/servers/dish_action_router/routes/0/handle/0/upstreams"
-ROUTER_URL = "http://127.0.0.1:8786"
-
-
-@dataclass(frozen=True)
-class RouteTarget:
-    name: str
-    action_url: str
-    dial: str
-
-
-TARGETS = {
-    "test": RouteTarget("test", "http://127.0.0.1:8766", "127.0.0.1:8766"),
-    "prod": RouteTarget("prod", "http://127.0.0.1:8776", "127.0.0.1:8776"),
+PROXY_PATHS = {
+    "test": "/id/dish_action_test_proxy/upstreams",
+    "prod": "/id/dish_action_prod_proxy/upstreams",
+}
+EXPECTED_DIALS = {
+    "test": "127.0.0.1:8766",
+    "prod": "127.0.0.1:8776",
 }
 
 
@@ -38,110 +26,47 @@ class RouteError(RuntimeError):
     pass
 
 
-def _request_json(
-    url: str,
-    *,
-    method: str = "GET",
-    value: Any | None = None,
-    headers: dict[str, str] | None = None,
-) -> tuple[Any, dict[str, str], bytes]:
-    request_headers = dict(headers or {})
-    body = None
-    if value is not None:
-        body = json.dumps(value, separators=(",", ":")).encode("utf-8")
-        request_headers["Content-Type"] = "application/json"
-    request = urllib.request.Request(url, data=body, headers=request_headers, method=method)
+def _request_json(url: str) -> Any:
+    request = urllib.request.Request(url, method="GET")
     try:
         with urllib.request.urlopen(request, timeout=5) as response:
             raw = response.read()
-            parsed = json.loads(raw) if raw else None
-            return parsed, {key.lower(): value for key, value in response.headers.items()}, raw
+            return json.loads(raw) if raw else None
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace").strip()
-        raise RouteError(f"{method} {url} returned HTTP {exc.code}: {detail}") from exc
+        raise RouteError(f"GET {url} returned HTTP {exc.code}: {detail}") from exc
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-        raise RouteError(f"{method} {url} failed: {exc}") from exc
+        raise RouteError(f"GET {url} failed: {exc}") from exc
 
 
-def _fnv1a_32(value: bytes) -> int:
-    result = 2166136261
-    for byte in value:
-        result ^= byte
-        result = (result * 16777619) & 0xFFFFFFFF
-    return result
-
-
-def _read_route(admin_url: str) -> tuple[str, str]:
-    url = f"{admin_url}{PROXY_PATH}"
-    upstreams, headers, raw = _request_json(url)
+def _read_upstream(admin_url: str, environment: str) -> str:
+    upstreams = _request_json(f"{admin_url}{PROXY_PATHS[environment]}")
     if not isinstance(upstreams, list) or len(upstreams) != 1:
-        raise RouteError("Caddy route must contain exactly one Dish Action upstream")
+        raise RouteError(f"Caddy {environment} route must contain exactly one upstream")
     upstream = upstreams[0]
     if not isinstance(upstream, dict) or not isinstance(upstream.get("dial"), str):
-        raise RouteError("Caddy Dish Action upstream has no string dial value")
-    # Caddy sends the config Etag as an HTTP trailer. urllib does not expose
-    # trailers, so reproduce Caddy's documented value from the exact response
-    # bytes when it is absent from the ordinary headers.
-    etag = headers.get("etag") or (
-        f'"{urllib.parse.urlsplit(url).path} {_fnv1a_32(raw):08x}"'
-    )
-    return upstream["dial"], etag
+        raise RouteError(f"Caddy {environment} route has no string dial value")
+    return upstream["dial"]
 
 
-def _target_name(dial: str) -> str:
-    for target in TARGETS.values():
-        if target.dial == dial:
-            return target.name
-    return "unknown"
-
-
-def _preflight(target: RouteTarget) -> None:
-    document, _, _ = _request_json(f"{target.action_url}/openapi/action.json")
-    if not isinstance(document, dict) or document.get("openapi") is None:
-        raise RouteError(f"{target.name} Action listener did not return an OpenAPI document")
-
-
-def status(admin_url: str) -> dict[str, str]:
-    dial, _ = _read_route(admin_url)
-    return {"environment": _target_name(dial), "upstream": dial}
-
-
-def set_route(admin_url: str, target: RouteTarget) -> dict[str, str]:
-    _preflight(target)
-    current_dial, etag = _read_route(admin_url)
-    if current_dial == target.dial:
-        return {"environment": target.name, "upstream": target.dial, "result": "unchanged"}
-
-    _request_json(
-        f"{admin_url}{PROXY_PATH}",
-        method="PATCH",
-        value=[{"dial": target.dial}],
-        headers={"If-Match": etag},
-    )
-    confirmed_dial, _ = _read_route(admin_url)
-    if confirmed_dial != target.dial:
-        raise RouteError(
-            f"route read-back mismatch: expected {target.dial}, got {confirmed_dial}"
-        )
-    return {"environment": target.name, "upstream": target.dial, "result": "switched"}
+def status(admin_url: str) -> dict[str, Any]:
+    routes = {
+        environment: _read_upstream(admin_url, environment)
+        for environment in ("prod", "test")
+    }
+    expected = routes == EXPECTED_DIALS
+    return {
+        "mode": "fixed-path-split",
+        "routes": routes,
+        "status": "ready" if expected else "unexpected",
+    }
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--admin-url", default=ADMIN_URL, help=argparse.SUPPRESS)
-    subparsers = parser.add_subparsers(dest="command", required=True)
-    subparsers.add_parser("status", help="read the active upstream from Caddy")
-    set_parser = subparsers.add_parser("set", help="switch the active upstream")
-    set_parser.add_argument("environment", choices=sorted(TARGETS))
-    set_parser.add_argument(
-        "--authorize-route-change",
-        action="store_true",
-        help="confirm that changing public Action routing was explicitly authorized",
-    )
-    set_parser.add_argument(
-        "--authorize-production-cutover",
-        action="store_true",
-        help="confirm that the separate production-cutover authorization was granted",
+    parser.add_subparsers(dest="command", required=True).add_parser(
+        "status", help="read both fixed Action upstreams from Caddy"
     )
     return parser
 
@@ -149,19 +74,12 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
-        if args.command == "status":
-            result = status(args.admin_url)
-        else:
-            if not args.authorize_route_change:
-                raise RouteError("set requires --authorize-route-change")
-            if args.environment == "prod" and not args.authorize_production_cutover:
-                raise RouteError("production requires --authorize-production-cutover")
-            result = set_route(args.admin_url, TARGETS[args.environment])
+        result = status(args.admin_url)
     except RouteError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
     print(json.dumps(result, sort_keys=True))
-    return 0
+    return 0 if result["status"] == "ready" else 2
 
 
 if __name__ == "__main__":

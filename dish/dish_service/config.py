@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
+from urllib.parse import urlsplit
 
 from dish_tool.constants import (
     DB_PATH,
@@ -26,6 +27,7 @@ class ServiceConfig:
     port: int = 8765
     action_bind_host: str = "127.0.0.1"
     action_port: int = 8766
+    action_public_base_url: str | None = None
     max_body_bytes: int = 2 * 1024 * 1024
     request_timeout_seconds: float = 30.0
     lease_ttl_seconds: int = 1800
@@ -181,6 +183,24 @@ class ServiceConfig:
                 "private and Action listeners must use distinct ports",
                 rule="service_ports_duplicate",
             )
+        if self.action_public_base_url is not None:
+            value = self.action_public_base_url
+            parsed = urlsplit(value)
+            if (
+                value != value.strip()
+                or parsed.scheme != "https"
+                or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.query
+                or parsed.fragment
+                or value.endswith("/")
+            ):
+                raise DishRuleError(
+                    "INVALID_ARGUMENT",
+                    "action_public_base_url must be an HTTPS URL without credentials, query, fragment, or trailing slash",
+                    rule="service_action_public_base_url_invalid",
+                )
 
     @classmethod
     def from_mapping(
@@ -206,6 +226,11 @@ class ServiceConfig:
             action_bind_host=str(env.get("DISH_ACTION_BIND", "127.0.0.1")).strip()
             or "127.0.0.1",
             action_port=int(env.get("DISH_ACTION_PORT", "8766")),
+            action_public_base_url=(
+                str(env["DISH_ACTION_PUBLIC_BASE_URL"])
+                if env.get("DISH_ACTION_PUBLIC_BASE_URL")
+                else None
+            ),
             max_body_bytes=int(
                 env.get("DISH_SERVICE_MAX_BODY_BYTES", str(2 * 1024 * 1024))
             ),

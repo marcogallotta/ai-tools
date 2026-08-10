@@ -22,7 +22,7 @@ Candidate files are ephemeral complete-text inputs. In service mode the client r
 |---|---|---|---|
 | `dish` CLI | private Tailscale Serve/tailnet endpoint | agent CLI bearer token | bounded agent commands and lease renewal |
 | `dish-admin` | private Tailscale Serve/tailnet endpoint | separate environment admin bearer token | test administration for agents; production administration for Marco |
-| GPT Action | public Tailscale Funnel endpoint on its own HTTPS port | dedicated Action bearer token | `/v1/action/*` commands and Action lease renewal only |
+| GPT Action | public Tailscale Funnel endpoint on its own HTTPS port; root is production and `/test` is TEST | separate environment Action bearer token | `/v1/action/*` commands and Action lease renewal only |
 | local tests | direct local application mode | local Asana test credential when required | controlled single-agent development only |
 
 Asana ABA protection is fail-closed. `DISH_ASANA_MODIFIED_AT_RELIABLE_EFFECTS` is unset by default and accepts only a comma-separated subset of `content,movement,completion`. Enable each class only after local verification against the deployed Asana workspace/API proves that every governed mutation in that class advances the observed `modified_at`, including rapid mutate-then-revert and read-after-write observations. An uncertified class cannot produce `not_applied` from a returned-to-baseline state.
@@ -42,8 +42,8 @@ The CLI uses `DISH_SERVICE_TOKEN_TEST` or `DISH_SERVICE_TOKEN_PROD` with the mat
 Interactive agent shells receive both environment-specific admin tokens, but agents may use only
 `DISH_ADMIN_TOKEN_TEST`; production administration remains Marco-only. The `--profile` flag selects
 one invocation, `DISH_PROFILE` supplies the process default, and production is the fallback default.
-A named profile never falls back to a generic token. The GPT Action stores only
-`DISH_SERVICE_ACTION_TOKEN`; its Caddy route is independent of private client profiles. No client
+A named profile never falls back to a generic token. Each environment's GPT Action stores only its
+matching `DISH_SERVICE_ACTION_TOKEN`; fixed Caddy paths are independent of private client profiles. No client
 receives the service database path or Asana credential.
 
 Environment selection follows intent, not caution: genuine Dish work uses production. Test is only

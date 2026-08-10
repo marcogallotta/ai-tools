@@ -60,6 +60,17 @@ def _post(server, path, payload, *, token="action-secret-12345"):
         connection.close()
 
 
+def _get(server, path, *, host="public.example.test"):
+    server_host, port = server.server_address
+    connection = HTTPConnection(server_host, port, timeout=3)
+    try:
+        connection.request("GET", path, headers={"Host": host})
+        response = connection.getresponse()
+        return response.status, json.loads(response.read())
+    finally:
+        connection.close()
+
+
 def _start(server):
     thread = start_server_thread(server, daemon=True, name="thread")
     return thread
@@ -78,6 +89,10 @@ def _stop(server, thread):
         ({"action_token": "short"}, "service_token_weak"),
         ({"bind_host": "0.0.0.0"}, "service_bind_not_loopback"),
         ({"port": 8765, "action_port": 8765}, "service_ports_duplicate"),
+        (
+            {"action_public_base_url": "http://public.example.test/test"},
+            "service_action_public_base_url_invalid",
+        ),
     ],
 )
 def test_runtime_configuration_fails_closed_before_listener_bind(tmp_path, overrides, rule):
@@ -99,6 +114,22 @@ def test_health_reports_missing_and_duplicate_credentials(tmp_path):
     duplicate_result = duplicate.health()
     assert not duplicate_result["ok"]
     assert duplicate_result["configuration"]["rule"] == "service_tokens_duplicate"
+
+
+def test_action_schema_uses_configured_public_base_url(tmp_path):
+    service = _service(
+        tmp_path,
+        action_public_base_url="https://public.example.test/test",
+    )
+    server = build_action_server(service)
+    thread = _start(server)
+    try:
+        status, document = _get(server, "/openapi/action.json")
+    finally:
+        _stop(server, thread)
+
+    assert status == 200
+    assert document["servers"] == [{"url": "https://public.example.test/test"}]
 
 
 @pytest.mark.parametrize(

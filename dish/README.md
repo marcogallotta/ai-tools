@@ -168,8 +168,8 @@ ASANA_ENV=/home/marco/.config/asana-cli/.env
 Only the service-host environment contains Asana credentials. Protect each environment file and
 state directory with owner-only permissions. All three service tokens are required for each live
 dual-listener process, must be distinct within that process, and must not use placeholder or short
-values. The Action token must match between test and production so an authorized router flip does
-not require an editor-secret change; CLI/admin tokens may remain environment-specific. Listener
+values. The Action token must differ between test and production so each fixed public path is
+independently authenticated; CLI/admin tokens also remain environment-specific. Listener
 hosts must remain loopback and all four service ports must be distinct. Invalid configuration fails
 before either listener binds.
 
@@ -189,7 +189,7 @@ DISH_SERVICE_BACKUP_DIR=/home/marco/.local/state/dish/prod/backups
 ```
 
 The production corpus and durable baselines are live in the production instance. The public Action
-route normally selects production; test remains separately available for explicit test work.
+router keeps production at the root URL and exposes test only under the explicit `/test` prefix.
 
 Install the two service units and Caddy router with:
 
@@ -231,11 +231,11 @@ The instances bind four loopback listeners:
 - test private/Action on `127.0.0.1:8765` and `127.0.0.1:8766`;
 - production private/Action on `127.0.0.1:8775` and `127.0.0.1:8776`.
 
-Caddy listens on `127.0.0.1:8786` and defaults to test on first start. Inspect the active route with
-`deploy/caddy/dish-action-route status`. An authorized change uses `set test` or `set prod`; every
-change requires `--authorize-route-change`, and production additionally requires
-`--authorize-production-cutover`. Caddy's autosaved native configuration preserves API changes
-across restart, and the command uses the route Etag plus an exact read-back.
+Caddy listens on `127.0.0.1:8786` with fixed routes: root paths reach production and `/test` Action
+paths reach test after the prefix is stripped. Inspect both upstreams with
+`deploy/caddy/dish-action-route status`. The TEST service must set
+`DISH_ACTION_PUBLIC_BASE_URL=https://<node>.<tailnet>.ts.net/test` so its generated schema retains
+the public prefix. Caddy's autosaved native configuration preserves the split across restart.
 
 Keep `DISH_DB_PATH` in one stable host-state location independent of any checkout or worktree. The
 service and both direct local entry points derive one common process lock and the persistent ownership
@@ -282,8 +282,9 @@ dish --profile test sections --agent claude
 Profiles select the matching URL and credential together; `--profile` overrides `DISH_PROFILE`,
 which overrides the production default. Interactive shells load both admin credentials, but agents
 may use only `dish-admin --profile test`; production administration remains Marco-only. Never place
-a CLI/admin token in the GPT Action configuration. GPT Action environment selection remains
-exclusively Caddy's public route and is unaffected by CLI profiles.
+a CLI/admin token in the GPT Action configuration. GPT Action environment selection is fixed by
+which schema the Custom GPT imports: root for production or `/test` for test. CLI profiles do not
+affect it.
 
 ## HTTP request boundary
 
