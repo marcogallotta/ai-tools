@@ -195,14 +195,20 @@ def test_admin_attention_is_a_first_class_read_only_command():
     parsed = build_parser().parse_args(["attention"])
     assert parsed.command == "attention"
 
+
+def test_admin_active_leases_is_a_first_class_read_only_command():
+    parsed = build_parser().parse_args(["active-leases"])
+    assert parsed.command == "active-leases"
+
 def test_admin_help_distinguishes_lease_recovery_expiry_and_abandonment(capsys):
     parser = build_parser()
     with pytest.raises(SystemExit):
         parser.parse_args(["--help"])
     root_help = " ".join(capsys.readouterr().out.split())
     assert "Start with `dish-admin inspect <dish>`" in root_help
-    assert "Normal replacement is `dish-admin kill <dish>`" in root_help
-    assert "recover-lease, expire-lease, and abandon-operation remain low-level escape hatches" in root_help
+    assert "Normal use: attention, review-queue, inspect, active-leases, and kill" in root_help
+    assert "Advanced recovery, migration, backup" in root_help
+    assert "recover-lease" not in root_help.split("options:")[0]
 
     with pytest.raises(SystemExit):
         parser.parse_args(["authorize-governed-change", "--help"])

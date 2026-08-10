@@ -200,6 +200,24 @@ def test_checked_in_openapi_is_synchronized_with_generator():
 
 
 @pytest.mark.smoke
+def test_inspect_openapi_requires_request_id_in_generated_and_checked_in_schema():
+    from pathlib import Path
+
+    checked = json.loads(
+        (Path(__file__).parent.parent / "openapi" / "dish-action.openapi.json").read_text()
+    )
+    for document in (action_openapi(), checked):
+        operation = document["paths"]["/v1/action/inspect"]["post"]
+        client = operation["requestBody"]["content"]["application/json"]["schema"][
+            "properties"
+        ]["client"]
+        assert operation["operationId"] == "dish_inspect"
+        assert operation["x-openai-isConsequential"] is True
+        assert client["required"] == ["run_id", "request_id"]
+        assert "request_id" in client["properties"]
+
+
+@pytest.mark.smoke
 def test_verification_targets_explain_ordinary_start_and_abandonment_scope():
     schema = action_openapi()["paths"]["/v1/action/start"]["post"]["requestBody"][
         "content"

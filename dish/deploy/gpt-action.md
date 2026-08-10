@@ -98,7 +98,7 @@ Before any task mutation:
 7. Confirm a second `dish-action-route status` read still reports both routes ready.
 8. Review the GPT configuration and confirm no CLI, admin, or Asana secret is present.
 9. Inspect every imported operation and visibly confirm `client.run_id` is constrained as a
-   non-nil canonical lowercase UUID; for `create`, `start`, `prepare`, `approve`, `reject`, `submit`,
+   non-nil canonical lowercase UUID; for `create`, `start`, `inspect`, `prepare`, `approve`, `reject`, `submit`,
    and `renew-lease`, also confirm `client.request_id` is required and has the same UUID constraints.
 
 Automated generator and checked-in-schema tests establish local acceptance only. Connected acceptance

@@ -35,6 +35,7 @@ from .semantic_proposals import (
     active_proposal_for_operation,
     approve_semantic_proposal,
     get_semantic_proposal,
+    list_semantic_proposals,
     proposal_payload,
     reject_semantic_proposal,
     release_semantic_proposal_claim,
@@ -1323,306 +1324,399 @@ def _command_kill(
         },
     )
 
-def _attention_category(data: Mapping[str, Any]) -> tuple[str, str]:
-    """Classify one inspect result conservatively for the read-only attention view."""
+def _attention_dish_identity(task_gid: str) -> str | None:
+    from dish_tool.identifiers import stable_dish_uuid_for_asana_identity
 
-    status = str(data.get("status") or "")
-    phase = str(data.get("phase") or "")
-    problem = str(data.get("problem") or "")
-    view = data.get("authoritative_view")
-    if not isinstance(view, Mapping):
-        view = {}
-    abandonment = data.get("abandonment")
-    proposal = data.get("semantic_proposal")
-    if isinstance(proposal, Mapping):
-        proposal_status = str(proposal.get("status") or "")
-        proposal_view = view.get("semantic_proposal")
-        proposal_block = (
-            proposal_view.get("block")
-            if isinstance(proposal_view, Mapping)
-            and isinstance(proposal_view.get("block"), Mapping)
-            else None
+    try:
+        return str(stable_dish_uuid_for_asana_identity("task", task_gid))
+    except ValueError:
+        return None
+
+
+def _attention_signal(
+    *,
+    kind: str,
+    category: str,
+    summary: str,
+    detail: str | None = None,
+    review_id: str | None = None,
+    shell_command: str | None = None,
+) -> dict[str, Any]:
+    signal = {"kind": kind, "category": category, "summary": summary}
+    if detail:
+        signal["detail"] = detail
+    if review_id:
+        signal["review_id"] = review_id
+    if shell_command:
+        signal["shell_command"] = shell_command
+    return signal
+
+
+def _durable_attention_items(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """Build the fleet attention model only from current durable Dish facts.
+
+    This is intentionally not equivalent to ``inspect``.  Fleet scanning must be fast
+    and must not perform one live Asana read per task.  Exact recovery legality remains
+    an ``inspect <dish>`` concern.  Abnormal durable rows may nominate terminal
+    operations; terminal status alone never suppresses a real attention signal.
+    """
+
+    operations = conn.execute(
+        """SELECT operation.*, state.last_confirmed_title
+             FROM operations AS operation
+             LEFT JOIN task_content_state AS state ON state.task_gid=operation.task_gid
+            WHERE operation.status IN ('open','uncertain')
+            ORDER BY operation.created_at, operation.operation_id"""
+    ).fetchall()
+
+    by_task: dict[str, dict[str, Any]] = {}
+    op_to_task: dict[str, str] = {}
+    operations_by_id: dict[str, sqlite3.Row] = {}
+
+    def seed_operation(operation: sqlite3.Row) -> None:
+        operation_id = str(operation["operation_id"])
+        task_gid = str(operation["task_gid"])
+        operations_by_id[operation_id] = operation
+        op_to_task[operation_id] = task_gid
+        item = by_task.setdefault(
+            task_gid,
+            {
+                "dish_id": _attention_dish_identity(task_gid),
+                "task_gid": task_gid,
+                "task_title": operation["last_confirmed_title"],
+                "operation_ids": [],
+                "signals": [],
+            },
         )
-        if proposal_status == "pending":
-            return "needs_marco", "a semantic proposal is waiting for Marco's review"
-        if proposal_status == "approved":
-            if "apply-proposal" in view.get("legal_actions", ()):
-                return "healthy", "an approved proposal is ready for a fresh agent to apply"
-            rule = None if proposal_block is None else proposal_block.get("rule")
-            return "unsafe", f"an approved proposal is blocked by {rule or 'authoritative state'}"
-        if proposal_status == "claimed":
-            if proposal_block is not None:
-                return "unsafe", (
-                    "a claimed proposal is blocked by "
-                    f"{proposal_block.get('rule') or 'authoritative state'}"
+        if operation_id not in item["operation_ids"]:
+            item["operation_ids"].append(operation_id)
+        if not item.get("task_title") and operation["last_confirmed_title"]:
+            item["task_title"] = operation["last_confirmed_title"]
+
+    for operation in operations:
+        seed_operation(operation)
+
+    def ensure_operation(operation_id: str) -> sqlite3.Row | None:
+        operation_id = str(operation_id)
+        operation = operations_by_id.get(operation_id)
+        if operation is not None:
+            return operation
+        operation = conn.execute(
+            """SELECT operation.*, state.last_confirmed_title
+                 FROM operations AS operation
+                 LEFT JOIN task_content_state AS state ON state.task_gid=operation.task_gid
+                WHERE operation.operation_id=?""",
+            (operation_id,),
+        ).fetchone()
+        if operation is None:
+            return None
+        seed_operation(operation)
+        return operation
+
+    def add(operation_id: str, signal: dict[str, Any]) -> None:
+        operation = ensure_operation(str(operation_id))
+        if operation is None:
+            return
+        task_gid = str(operation["task_gid"])
+        signals = by_task[task_gid]["signals"]
+        dedupe = (signal.get("kind"), signal.get("review_id"), signal.get("summary"))
+        if any(
+            (row.get("kind"), row.get("review_id"), row.get("summary")) == dedupe
+            for row in signals
+        ):
+            return
+        signals.append(signal)
+
+    pending_reviews = list_review_items(
+        conn, proposal_statuses=("pending",), include_human_holds=True
+    )
+    review_operations: set[str] = set()
+    for review in pending_reviews:
+        operation_id = str(review["operation_id"])
+        review_operations.add(operation_id)
+        review_id = str(review["review_id"])
+        item_type = str(review.get("item_type") or "semantic_proposal")
+        summary_data = review.get("review_summary")
+        summary_data = summary_data if isinstance(summary_data, Mapping) else {}
+        issue = str(summary_data.get("issue") or review.get("proposal_reason") or "").strip()
+        if item_type == "semantic_proposal":
+            summary = "Review a proposed governed change."
+            kind = "proposal_review"
+        elif item_type == "verification_hold":
+            summary = "Release or inspect the Verification hold."
+            kind = "verification_hold"
+        else:
+            summary = "Make the Human Review decision."
+            kind = "human_decision"
+        add(
+            operation_id,
+            _attention_signal(
+                kind=kind,
+                category="needs_marco",
+                summary=summary,
+                detail=issue or None,
+                review_id=review_id,
+                shell_command=f"dish-admin review-inspect {review_id}",
+            ),
+        )
+
+    for proposal in list_semantic_proposals(conn, statuses=("approved", "claimed")):
+        operation_id = str(proposal["operation_id"])
+        if proposal["status"] == "approved":
+            add(
+                operation_id,
+                _attention_signal(
+                    kind="approved_proposal",
+                    category="system",
+                    summary="Approved proposal is waiting for mechanical application.",
+                ),
+            )
+        else:
+            active = conn.execute(
+                """SELECT 1 FROM service_leases
+                     WHERE operation_id=? AND lease_kind='actor' AND released_at IS NULL
+                       AND julianday(expires_at)>julianday('now') LIMIT 1""",
+                (operation_id,),
+            ).fetchone()
+            if active is not None:
+                add(
+                    operation_id,
+                    _attention_signal(
+                        kind="proposal_application",
+                        category="system",
+                        summary="Approved proposal application is in progress.",
+                    ),
                 )
-            if data.get("service_lease") is not None:
-                return "healthy", "an agent is applying an approved proposal"
-            return "unsafe", "an approved proposal claim exists without an active applying lease"
-    if isinstance(abandonment, Mapping):
-        abandonment_status = str(abandonment.get("status") or "")
-        if abandonment_status == "awaiting_successor_claim":
-            return "healthy", "prepared successor is waiting for an agent"
-        if abandonment_status == "awaiting_hold_resolution":
-            return "needs_marco", "abandonment preserved a real Evidence or Human Review hold"
-        if abandonment_status == "blocked_manual_reconciliation":
-            return "unsafe", "abandonment reached an unsupported or contradictory frontier"
-        return "multi_step_safe", "abandonment has a deterministic continuation"
-
-    if status == "uncertain" or view.get("unresolved_attempts") or view.get("unresolved_execution_ids"):
-        return "unsafe", "an external effect or execution outcome is unresolved"
-    if status not in {"open", "uncertain"} and data.get("service_lease") is not None:
-        return "unsafe", "a terminal operation still has an active actor lease"
-    if phase in {"held_evidence", "held_human"}:
-        return "needs_marco", "the workflow is waiting for Marco's evidence or decision"
-    if view.get("destination_repair_required"):
-        return "needs_marco", "the approved destination requires an explicit Marco repair"
-
-    agent_actions = data.get("agent_actions_now")
-    if not isinstance(agent_actions, list):
-        agent_actions = []
-    agent_commands = {
-        str(action.get("command") or "")
-        for action in agent_actions
-        if isinstance(action, Mapping)
-    }
-    if "safe-reclaim" in agent_commands:
-        return "multi_step_safe", "a fresh agent can safely reclaim the inactive clean attempt"
-
-    actions = data.get("human_actions")
-    if not isinstance(actions, list):
-        actions = []
-    kinds = {
-        str(action.get("kind") or "")
-        for action in actions
-        if isinstance(action, Mapping)
-    }
-    if "reconcile-uncertain-effect" in kinds:
-        return "unsafe", "the live outcome must be reconciled before any cleanup"
-    if kinds & {"abandon-dead-verifier", "abandon-dead-agent", "reconcile-abandonment"}:
-        return "multi_step_safe", "the dead run can be retired through supported recovery"
-    if "expire-active-lease" in kinds:
-        return "healthy", "an unexpired lease currently owns the operation"
-    if kinds:
-        return "needs_marco", "the next step requires a Marco-admin decision or input"
-    if (
-        "cannot identify one safe" in problem.lower()
-        or "cannot safely choose" in problem.lower()
-        or "historical attempts do not identify" in problem.lower()
-    ):
-        return "needs_marco", "Dish cannot safely choose between multiple historical attempts"
-    return "healthy", "no administrative blocker is recorded"
-
-
-def _attention_candidate_operation_ids(conn: sqlite3.Connection) -> list[str]:
-    """Return only database-evidenced abnormal candidates, one per task."""
-
-    selected: list[str] = []
-    seen_tasks: set[str] = set()
+            else:
+                dish = by_task.get(op_to_task.get(operation_id, ""), {})
+                target = dish.get("dish_id") or dish.get("task_gid")
+                add(
+                    operation_id,
+                    _attention_signal(
+                        kind="proposal_claim_without_lease",
+                        category="needs_marco",
+                        summary="A claimed approved proposal has no active applying lease.",
+                        detail="Inspect the Dish to determine the exact deterministic recovery path.",
+                        shell_command=(f"dish-admin inspect {target}" if target else None),
+                    ),
+                )
 
     for row in conn.execute(
-        """SELECT task_gid, source_operation_id
-             FROM abandonment_attempts
-            WHERE status!='completed'
+        """SELECT operation_id,status FROM operation_executions
+            WHERE status IN ('started','uncertain')"""
+    ):
+        add(
+            str(row["operation_id"]),
+            _attention_signal(
+                kind="unresolved_execution",
+                category="unsafe",
+                summary="An operation execution outcome is unresolved.",
+                detail="Do not guess whether the external effect happened; inspect/reconcile it first.",
+            ),
+        )
+
+    for table, kind in (("write_attempts", "write"), ("movement_attempts", "movement")):
+        for row in conn.execute(
+            f"SELECT operation_id,outcome FROM {table} WHERE outcome IN ('started','uncertain')"
+        ):
+            add(
+                str(row["operation_id"]),
+                _attention_signal(
+                    kind=f"unresolved_{kind}",
+                    category="unsafe",
+                    summary=f"An external {kind} outcome is unresolved.",
+                ),
+            )
+
+    for row in conn.execute(
+        """SELECT * FROM abandonment_attempts WHERE status!='completed'
             ORDER BY created_at, abandonment_id"""
     ):
-        task_gid = str(row["task_gid"])
-        if task_gid in seen_tasks:
-            continue
-        seen_tasks.add(task_gid)
-        selected.append(str(row["source_operation_id"]))
+        operation_id = str(row["source_operation_id"])
+        status = str(row["status"])
+        if status == "awaiting_successor_claim":
+            signal = _attention_signal(
+                kind="successor_waiting",
+                category="system",
+                summary="The prior run was retired and a prepared successor is waiting for an agent.",
+            )
+        elif status == "awaiting_hold_resolution":
+            signal = _attention_signal(
+                kind="abandonment_hold",
+                category="needs_marco",
+                summary="Run replacement preserved a real Evidence/Human Review checkpoint.",
+            )
+        elif status == "blocked_manual_reconciliation":
+            signal = _attention_signal(
+                kind="abandonment_reconciliation",
+                category="unsafe",
+                summary="Run replacement reached a state requiring manual reconciliation.",
+            )
+        else:
+            signal = _attention_signal(
+                kind="abandonment_recovery",
+                category="needs_marco",
+                summary="Run replacement has a deterministic admin continuation still to perform.",
+            )
+        add(operation_id, signal)
 
+    active_leases: dict[str, sqlite3.Row] = {}
     for row in conn.execute(
-        """SELECT operation_id, task_gid
-             FROM operations
-            WHERE status='uncertain'
-               OR (status='open' AND phase IN ('held_evidence','held_human'))
-               OR (status='open' AND destination_movement_attempt_id IS NOT NULL
-                   AND movement_completed_at IS NULL)
-            ORDER BY created_at, operation_id"""
-    ):
-        task_gid = str(row["task_gid"])
-        if task_gid in seen_tasks:
-            continue
-        seen_tasks.add(task_gid)
-        selected.append(str(row["operation_id"]))
-
-    for row in conn.execute(
-        """SELECT operation.operation_id, operation.task_gid
-             FROM semantic_proposals AS proposal
-             JOIN operations AS operation ON operation.operation_id=proposal.operation_id
-            WHERE proposal.status IN ('pending','approved','claimed')
-            ORDER BY proposal.created_at, proposal.proposal_id"""
-    ):
-        task_gid = str(row["task_gid"])
-        if task_gid in seen_tasks:
-            continue
-        seen_tasks.add(task_gid)
-        selected.append(str(row["operation_id"]))
-
-    for row in conn.execute(
-        """SELECT operation.operation_id, operation.task_gid
+        """SELECT lease.*, revocation.revocation_id
              FROM service_leases AS lease
-             JOIN operations AS operation ON operation.operation_id=lease.operation_id
-            WHERE lease.lease_kind='actor' AND lease.released_at IS NULL
-              AND (lease.expires_at<=? OR operation.status!='open')
-            ORDER BY lease.acquired_at, lease.lease_id""",
-        (utc_now(),),
+             LEFT JOIN operation_run_revocations AS revocation
+               ON revocation.operation_id=lease.operation_id
+              AND revocation.owner_id=lease.owner_id
+              AND revocation.run_id=lease.run_id
+            WHERE lease.lease_kind='actor' AND lease.released_at IS NULL"""
     ):
-        task_gid = str(row["task_gid"])
-        if task_gid in seen_tasks:
+        operation_id = str(row["operation_id"])
+        active_leases[operation_id] = row
+        operation = ensure_operation(operation_id)
+        if operation is None:
             continue
-        seen_tasks.add(task_gid)
-        selected.append(str(row["operation_id"]))
+        if row["revocation_id"] is not None:
+            add(
+                operation_id,
+                _attention_signal(
+                    kind="revoked_lease_open",
+                    category="unsafe",
+                    summary="A revoked run still has an unreleased actor lease.",
+                ),
+            )
+        elif operation["status"] != "open":
+            add(
+                operation_id,
+                _attention_signal(
+                    kind="terminal_lease_open",
+                    category="unsafe",
+                    summary="A non-open operation still has an unreleased actor lease.",
+                ),
+            )
+        elif bool(
+            conn.execute(
+                "SELECT julianday(?)<=julianday('now')", (row["expires_at"],)
+            ).fetchone()[0]
+        ):
+            dish = by_task[op_to_task[operation_id]]
+            target = dish.get("dish_id") or dish.get("task_gid")
+            add(
+                operation_id,
+                _attention_signal(
+                    kind="expired_lease",
+                    category="needs_marco",
+                    summary="An unreleased actor lease has expired.",
+                    detail="Inspect the Dish before deciding whether to replace or recover the run.",
+                    shell_command=f"dish-admin inspect {target}",
+                ),
+            )
 
-    for row in conn.execute(
-        """SELECT operation.operation_id, operation.task_gid
-             FROM operations AS operation
-            WHERE operation.status='open'
-              AND operation.phase IN ('prepare_required','await_verification','await_submission')
-              AND operation.run_id IS NOT NULL
-              AND NOT EXISTS (
-                    SELECT 1 FROM service_leases AS lease
-                     WHERE lease.operation_id=operation.operation_id
-                       AND lease.lease_kind='actor' AND lease.released_at IS NULL
-                  )
-            ORDER BY operation.created_at, operation.operation_id"""
-    ):
-        task_gid = str(row["task_gid"])
-        if task_gid in seen_tasks:
-            continue
-        seen_tasks.add(task_gid)
-        selected.append(str(row["operation_id"]))
+    for operation in operations:
+        operation_id = str(operation["operation_id"])
+        if operation["status"] == "uncertain":
+            add(
+                operation_id,
+                _attention_signal(
+                    kind="uncertain_operation",
+                    category="unsafe",
+                    summary="Workflow state is uncertain and requires reconciliation.",
+                ),
+            )
+        if operation["phase"] == "held_evidence" and operation_id not in review_operations:
+            dish = by_task[str(operation["task_gid"])]
+            target = dish.get("dish_id") or dish.get("task_gid")
+            add(
+                operation_id,
+                _attention_signal(
+                    kind="evidence_hold",
+                    category="needs_marco",
+                    summary="Dish is waiting for Marco-supplied evidence.",
+                    shell_command=f"dish-admin inspect {target}",
+                ),
+            )
+        elif operation["phase"] == "held_human" and operation_id not in review_operations:
+            dish = by_task[str(operation["task_gid"])]
+            target = dish.get("dish_id") or dish.get("task_gid")
+            add(
+                operation_id,
+                _attention_signal(
+                    kind="human_hold",
+                    category="needs_marco",
+                    summary="Dish is waiting for a Marco decision.",
+                    shell_command=f"dish-admin inspect {target}",
+                ),
+            )
+        if (
+            operation["status"] == "open"
+            and operation_id not in active_leases
+            and str(operation["run_id"] or "").strip()
+            and not any(
+                signal["category"] in {"needs_marco", "unsafe"}
+                for signal in by_task[str(operation["task_gid"])]["signals"]
+            )
+        ):
+            dish = by_task[str(operation["task_gid"])]
+            target = dish.get("dish_id") or dish.get("task_gid")
+            add(
+                operation_id,
+                _attention_signal(
+                    kind="inactive_run",
+                    category="system",
+                    summary="The operation has no active actor lease.",
+                    detail="A fresh agent may be able to continue; inspect only if exact recovery guidance is needed.",
+                    shell_command=f"dish-admin inspect {target}",
+                ),
+            )
 
-    for row in conn.execute(
-        """SELECT operation.operation_id, operation.task_gid
-             FROM operation_executions AS execution
-             JOIN operations AS operation ON operation.operation_id=execution.operation_id
-            WHERE execution.status IN ('started','uncertain')
-            ORDER BY execution.created_at, execution.execution_id"""
-    ):
-        task_gid = str(row["task_gid"])
-        if task_gid in seen_tasks:
+    precedence = {"system": 0, "needs_marco": 1, "unsafe": 2}
+    result: list[dict[str, Any]] = []
+    for item in by_task.values():
+        signals = item["signals"]
+        if not signals:
             continue
-        seen_tasks.add(task_gid)
-        selected.append(str(row["operation_id"]))
-    return selected
+        category = max((str(signal["category"]) for signal in signals), key=precedence.get)
+        item["category"] = category
+        item["needs_you"] = category in {"needs_marco", "unsafe"}
+        item["operation_id"] = item["operation_ids"][-1]
+        result.append(item)
+    result.sort(
+        key=lambda item: (
+            -precedence[str(item["category"])],
+            str(item.get("task_title") or item.get("task_gid") or ""),
+        )
+    )
+    return result
 
 
 def _command_attention(self, *, trace: AdminTrace) -> dict[str, Any]:
-    """List abnormal workflow state across Dish without mutating any item."""
+    """Return a fast dish-first fleet attention summary from durable state only."""
 
-    if self.backend is None or self.operation_service is None:
-        raise DishRuleError(
-            "INTERNAL_ERROR",
-            "attention scan requires backend access",
-            rule="attention_scan_unavailable",
-        )
-
-    items: list[dict[str, Any]] = []
-    category_counts = {
-        "safe_cleanup": 0,
-        "multi_step_safe": 0,
-        "needs_marco": 0,
-        "unsafe": 0,
-    }
-    healthy_count = 0
+    items = _durable_attention_items(self.conn)
     workflow_record_count = int(
         self.conn.execute("SELECT COUNT(*) FROM operations").fetchone()[0]
     )
-    operation_ids = _attention_candidate_operation_ids(self.conn)
-    for operation_id in operation_ids:
-        try:
-            inspected = _command_inspect(
-                self, trace=AdminTrace(), submission_id=operation_id
-            )
-            data = inspected.get("data")
-            if not inspected.get("ok") or not isinstance(data, Mapping):
-                raise DishRuleError(
-                    str(inspected.get("code") or "INTERNAL_ERROR"),
-                    str(
-                        (data or {}).get("message")
-                        if isinstance(data, Mapping)
-                        else "inspection failed"
-                    ),
-                    rule="attention_item_inspection_failed",
-                )
-            category, category_reason = _attention_category(data)
-            if category == "healthy":
-                healthy_count += 1
-                continue
-            category_counts[category] += 1
-            items.append(
-                {
-                    "category": category,
-                    "category_reason": category_reason,
-                    "task_title": data.get("task_title"),
-                    "task_gid": data.get("task_gid"),
-                    "asana_url": data.get("asana_url"),
-                    "operation_id": data.get("operation_id"),
-                    "status": data.get("status"),
-                    "phase": data.get("phase"),
-                    "problem": data.get("problem"),
-                    "human_actions": data.get("human_actions") or [],
-                    "agent_actions_now": data.get("agent_actions_now") or [],
-                    "service_lease": data.get("service_lease"),
-                    "latest_actor_attempt": data.get("latest_actor_attempt"),
-                    "verification_cycle": data.get("verification_cycle"),
-                    "abandonment": data.get("abandonment"),
-                }
-            )
-        except DishRuleError as exc:
-            operation = self.conn.execute(
-                "SELECT task_gid,status,phase FROM operations WHERE operation_id=?",
-                (operation_id,),
-            ).fetchone()
-            if (
-                exc.rule == "task_not_in_cooking"
-                and operation is not None
-                and operation["status"] not in {"open", "uncertain"}
-            ):
-                healthy_count += 1
-                continue
-            category_counts["unsafe"] += 1
-            items.append(
-                {
-                    "category": "unsafe",
-                    "category_reason": "Dish could not establish a trustworthy inspection result",
-                    "task_title": None,
-                    "task_gid": None if operation is None else operation["task_gid"],
-                    "operation_id": operation_id,
-                    "status": None if operation is None else operation["status"],
-                    "phase": None if operation is None else operation["phase"],
-                    "problem": str(exc),
-                    "errors": [{"rule": exc.rule, **dict(exc.details)}],
-                    "human_actions": [],
-                    "agent_actions_now": [],
-                }
-            )
-        except Exception as exc:
-            category_counts["unsafe"] += 1
-            items.append(
-                {
-                    "category": "unsafe",
-                    "category_reason": "Dish could not complete inspection for this operation",
-                    "task_title": None,
-                    "task_gid": None,
-                    "operation_id": operation_id,
-                    "status": None,
-                    "phase": None,
-                    "problem": "unexpected inspection failure",
-                    "errors": [{"rule": "attention_item_unexpected_failure", "error_type": type(exc).__name__}],
-                    "human_actions": [],
-                    "agent_actions_now": [],
-                }
-            )
-
+    active_task_gids = {
+        str(row[0])
+        for row in self.conn.execute(
+            "SELECT DISTINCT task_gid FROM operations WHERE status IN ('open','uncertain')"
+        )
+    }
+    active_task_count = len(active_task_gids)
+    category_counts = {"system": 0, "needs_marco": 0, "unsafe": 0}
+    for item in items:
+        category_counts[str(item["category"])] += 1
+    needs_you_count = category_counts["needs_marco"] + category_counts["unsafe"]
+    active_attention_count = sum(
+        1 for item in items if str(item.get("task_gid") or "") in active_task_gids
+    )
+    healthy_count = max(active_task_count - active_attention_count, 0)
     trace.state = "ok"
     trace.audit_details.update(
         {
             "checked_count": workflow_record_count,
-            "live_inspection_count": len(operation_ids),
+            "live_inspection_count": 0,
             "attention_count": len(items),
+            "needs_you_count": needs_you_count,
             "category_counts": dict(category_counts),
         }
     )
@@ -1631,15 +1725,87 @@ def _command_attention(self, *, trace: AdminTrace) -> dict[str, Any]:
         state="ok",
         data={
             "checked_count": workflow_record_count,
-            "live_inspection_count": len(operation_ids),
+            "active_dish_count": active_task_count,
+            "live_inspection_count": 0,
             "attention_count": len(items),
+            "needs_you_count": needs_you_count,
+            "system_count": category_counts["system"],
             "healthy_count": healthy_count,
             "category_counts": category_counts,
             "attention_items": items,
             "read_only": True,
-            "message": "Attention scan completed without changing workflow state.",
+            "source": "durable_dish_state",
+            "message": "Attention summary completed without live task reads or workflow mutation.",
         },
     )
+
+
+def _command_active_leases(self, *, trace: AdminTrace) -> dict[str, Any]:
+    """List unreleased actor leases from durable Dish state without live task reads."""
+
+    from dish_tool.identifiers import stable_dish_uuid_for_asana_identity
+
+    now = utc_now()
+    rows = self.conn.execute(
+        """SELECT lease.*, operation.status AS operation_status,
+                  operation.phase AS operation_phase,
+                  state.last_confirmed_title, revocation.revocation_id
+             FROM service_leases AS lease
+             JOIN operations AS operation ON operation.operation_id=lease.operation_id
+             LEFT JOIN task_content_state AS state ON state.task_gid=lease.task_gid
+             LEFT JOIN operation_run_revocations AS revocation
+               ON revocation.operation_id=lease.operation_id
+              AND revocation.owner_id=lease.owner_id
+              AND revocation.run_id=lease.run_id
+            WHERE lease.lease_kind='actor' AND lease.released_at IS NULL
+            ORDER BY lease.expires_at, lease.acquired_at, lease.lease_id"""
+    ).fetchall()
+    leases: list[dict[str, Any]] = []
+    counts = {"active": 0, "expired": 0, "revoked": 0}
+    for row in rows:
+        if row["revocation_id"] is not None:
+            authority_state = "revoked"
+        else:
+            expired = bool(
+                self.conn.execute(
+                    "SELECT julianday(?)<=julianday(?)", (row["expires_at"], now)
+                ).fetchone()[0]
+            )
+            authority_state = "expired" if expired else "active"
+        counts[authority_state] += 1
+        try:
+            dish_id = str(stable_dish_uuid_for_asana_identity("task", row["task_gid"]))
+        except ValueError:
+            dish_id = None
+        leases.append(
+            {
+                "dish_id": dish_id,
+                "task_gid": row["task_gid"],
+                "task_title": row["last_confirmed_title"],
+                "operation_id": row["operation_id"],
+                "stage": row["operation_phase"],
+                "operation_status": row["operation_status"],
+                "authority_state": authority_state,
+                "owner_id": row["owner_id"],
+                "run_id": row["run_id"],
+                "lease_id": row["lease_id"],
+                "acquired_at": row["acquired_at"],
+                "renewed_at": row["renewed_at"],
+                "expires_at": row["expires_at"],
+            }
+        )
+    trace.state = "ok"
+    return result_envelope(
+        command="active-leases",
+        state="ok",
+        data={
+            "count": len(leases),
+            "state_counts": counts,
+            "leases": leases,
+            "read_only": True,
+        },
+    )
+
 
 def _command_holds(self, *, trace: AdminTrace) -> dict[str, Any]:
     if self.backend is None or self.operation_service is None:
@@ -2187,7 +2353,7 @@ def _command_review_queue(
     self, *, trace: AdminTrace, status: str = "active"
 ) -> dict[str, Any]:
     status_map = {
-        "active": ("pending", "approved", "claimed"),
+        "active": ("pending",),
         "pending": ("pending",),
         "approved": ("approved", "claimed"),
         "all": ("pending", "approved", "claimed", "applied", "rejected", "stale"),
@@ -3181,6 +3347,7 @@ _OPERATION_TARGET_COMMANDS = set(RESOLVED_OPERATION_TARGET_COMMANDS)
 
 CURRENT_ADMIN_COMMAND_HANDLERS = {
     "attention": _command_attention,
+    "active-leases": _command_active_leases,
     "kill": _command_kill,
     "review-queue": _command_review_queue,
     "review-inspect": _command_review_inspect,

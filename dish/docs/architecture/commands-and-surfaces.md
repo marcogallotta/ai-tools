@@ -52,6 +52,14 @@ A surface authenticates/validates its protocol, maps the request into a shared c
 
 For the connected GPT specifically, checked-in source capability and the deployed Action schema can differ temporarily. The current shared Action specification is the source-side exposure contract; deployment synchronization is an operational concern.
 
+### Current human admin presentation
+
+`dish-admin` intentionally has a small normal operator surface even though older recovery and maintenance commands remain callable for exact handoffs and scripting. Root help presents the normal entry points (`attention`, `review-queue`, `inspect`, `active-leases`, and `kill`); low-level recovery, migration, backup, governance, and direct review mutation commands are compatibility/escape-hatch surfaces rather than the normal navigation model. Hiding a command from root help does not remove or weaken its backend authority checks.
+
+`attention` is a read-only fleet summary over durable Dish state. It groups signals by Dish, distinguishes Marco-required/unsafe items from system/recoverable items, and deliberately performs no per-Dish live Asana inspection. It is therefore a fast triage surface, not an authority oracle: `inspect <dish>` remains the exact source for legal recovery actions. In a real terminal, attention rows can be selected to drill into that exact per-Dish inspect state without copying an identifier; `--non-interactive`, `--json`, and non-TTY use remain one-shot. `active-leases` is likewise a durable read-only diagnostic; raw lease/run identifiers belong in verbose output.
+
+The default `review-queue` means items actually waiting for Marco (`pending`). Approved/claimed proposal states remain available through explicit status filters but do not inflate the normal decision inbox. In a real terminal, `review-queue` is interactive: selection first renders the exact durable review item, including governed before/after changes or the Human Review decision context, and only then offers the corresponding approve/reject/record/dismiss/release action. Non-TTY output, `--json`, and `--non-interactive` preserve one-shot/scriptable behavior. Interactive selection uses the queue number only to select from the rendered snapshot; mutations target the selected durable review UUID.
+
 ## Failure, replay, recovery, and concurrency
 
 Mutation request identity/replay is handled by the shared replay mechanism. Surfaces may communicate recovery guidance but should not invent a second idempotency/retry identity model.

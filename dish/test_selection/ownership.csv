@@ -735,6 +735,7 @@ tests/test_admin_attention.py,test,1,4,isolated-test; smoke-owned,,,none,,exact 
 tests/test_admin_command_spec.py,test,1,4,isolated-test; authority,,,none,,exact changed test/module,,
 tests/test_admin_human_rendering.py,test,1,4,isolated-test,,,none,,exact changed test/module,,
 tests/test_admin_review_queue_human_output.py,test,1,4,isolated-test,,,none,,exact changed test/module,,
+tests/test_admin_review_interactive.py,test,1,4,isolated-test,,,none,,exact changed test/module,,
 tests/test_admin_semantic_review_rendering.py,test,1,4,isolated-test,,,none,,exact changed test/module,,
 tests/test_admin_round1b.py,test,1,4,isolated-test; authority,,,none,,exact changed test/module; smoke,,
 tests/test_admin_task_target_resolution.py,test,1,4,isolated-test,,,none,,exact changed test/module,,

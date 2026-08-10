@@ -10,6 +10,13 @@ def _clean(value: Any) -> str | None:
     return text or None
 
 
+def _compact_value(value: Any, *, limit: int = 110) -> str:
+    text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+    if len(text) <= limit:
+        return text
+    return text[: max(limit - 1, 1)].rstrip() + "…"
+
+
 def _command_from_action(action: Mapping[str, Any]) -> str | None:
     return _clean(
         action.get("shell_command")
@@ -110,7 +117,12 @@ def _agent_handoff_line(
         return None
     title = _clean(data.get("task_title"))
     task_gid = _clean(result.get("task_gid") or data.get("task_gid"))
-    target = title or (f"task {task_gid}" if task_gid else "this task")
+    dish_id = _clean(data.get("dish_id"))
+    target = (
+        f"dish {dish_id}"
+        if dish_id
+        else (title or (f"task {task_gid}" if task_gid else "this task"))
+    )
     phase = _clean(data.get("phase"))
     required = data.get("required_action")
     required_arguments = (
@@ -210,7 +222,7 @@ def _success_lines(command: str, data: Mapping[str, Any]) -> list[str]:
 
 
 def render_admin_result(
-    result: Mapping[str, Any], *, profile: str, verbose: bool = False
+    result: Mapping[str, Any], *, profile: str, verbose: bool = False, interactive: bool = False
 ) -> str:
     data = result.get("data") if isinstance(result.get("data"), Mapping) else {}
     errors = result.get("errors") if isinstance(result.get("errors"), list) else []
@@ -232,6 +244,7 @@ def render_admin_result(
     ok = bool(result.get("ok"))
     command = _clean(result.get("command")) or "command"
     if command in {"review-queue", "review-inspect"} and ok:
+        suppress_generic_actions = True
         if command == "review-queue":
             items = data.get("review_items") if isinstance(data.get("review_items"), list) else data.get("proposals") if isinstance(data.get("proposals"), list) else []
             lines.append(f"Review items: {len(items)}")
@@ -261,26 +274,49 @@ def render_admin_result(
                     lines.append(f"   Blocker: {blocker}")
                 decision = _clean(summary.get("decision"))
                 if decision and decision != issue:
-                    lines.append(f"   Decision: {decision}")
+                    lines.append(f"   Decision needed: {decision}")
+                next_step = _clean(summary.get("simplest_next_step"))
+                if next_step and item_type != "semantic_proposal":
+                    lines.append(f"   Options: {next_step}")
                 changes = proposal.get("changes") if isinstance(proposal.get("changes"), list) else []
-                fields = _clean(", ".join(str(item.get("field")) for item in changes if isinstance(item, Mapping)))
-                if fields:
-                    lines.append(f"   Changes: {fields}")
-                lines.append(f"   Inspect: dish-admin review-inspect {proposal_id}")
-                if item_type == "semantic_proposal" and status == "PENDING":
-                    # Approval binds the complete linked candidate bundle, which is shown only
-                    # by review-inspect. Do not offer approval from this compact queue summary.
-                    lines.append(f"   Reject template: dish-admin review-reject {proposal_id} --reason '<why>'")
-                elif item_type == "human_review":
+                rendered_changes = 0
+                for change in changes:
+                    if not isinstance(change, Mapping) or "before" not in change or "after" not in change:
+                        continue
+                    field = _clean(change.get("field")) or "change"
                     lines.append(
-                        f"   Decision template: dish-admin review-approve {proposal_id} --reason '<Marco decision>'"
+                        f"   Change: {field}: {_compact_value(change.get('before'))} → "
+                        f"{_compact_value(change.get('after'))}"
                     )
-                    lines.append(f"   Dismiss template: dish-admin review-reject {proposal_id} --reason '<why escalation is invalid>'")
-                elif item_type == "verification_hold":
-                    lines.append(f"   Release: dish-admin review-approve {proposal_id}")
+                    rendered_changes += 1
+                    if rendered_changes == 2:
+                        break
+                if rendered_changes < len([change for change in changes if isinstance(change, Mapping)]):
+                    lines.append(f"   Changes: {len(changes)} total; open the item for the complete bundle.")
+                elif not rendered_changes:
+                    fields = _clean(", ".join(str(item.get("field")) for item in changes if isinstance(item, Mapping)))
+                    if fields:
+                        lines.append(f"   Changes: {fields}")
+                if not interactive:
+                    lines.append(f"   Inspect: dish-admin review-inspect {proposal_id}")
+                    if item_type == "semantic_proposal" and status == "PENDING":
+                        # Approval binds the complete linked candidate bundle, which is shown only
+                        # by review-inspect. Do not offer approval from this compact queue summary.
+                        lines.append(f"   Reject template: dish-admin review-reject {proposal_id} --reason '<why>'")
+                    elif item_type == "human_review":
+                        lines.append(
+                            f"   Decision template: dish-admin review-approve {proposal_id} --reason '<Marco decision>'"
+                        )
+                        lines.append(f"   Dismiss template: dish-admin review-reject {proposal_id} --reason '<why escalation is invalid>'")
+                    elif item_type == "verification_hold":
+                        lines.append(f"   Release: dish-admin review-approve {proposal_id}")
             if items:
                 lines.append("")
-                lines.append("Queue numbers are accepted only for the current queue view; UUIDs are safer to copy or share.")
+                lines.append(
+                    "Select a number to inspect the exact decision or bundle."
+                    if interactive
+                    else "Queue numbers are accepted only for the current queue view; UUIDs are safer to copy or share."
+                )
         else:
             proposal = data.get("review_item") if isinstance(data.get("review_item"), Mapping) else data.get("proposal") if isinstance(data.get("proposal"), Mapping) else {}
             proposal_id = _clean(proposal.get("review_id") or proposal.get("proposal_id")) or "unknown"
@@ -336,17 +372,17 @@ def render_admin_result(
                     lines.append("Detail")
                     lines.extend(f"{label}: {value}" for label, value in detail_rows)
             status = _clean(proposal.get("status"))
-            if status == "pending" and item_type == "semantic_proposal":
+            if status == "pending" and item_type == "semantic_proposal" and not interactive:
                 lines.append("")
                 lines.append(f"Approve: dish-admin review-approve {proposal_id}")
                 lines.append(f"Reject template: dish-admin review-reject {proposal_id} --reason '<why>'")
-            elif status == "pending" and item_type == "human_review":
+            elif status == "pending" and item_type == "human_review" and not interactive:
                 lines.append("")
                 command = _clean(data.get("admin_command") or data.get("admin_command_template"))
                 if command:
                     lines.append(f"Decision template: {command}")
                 lines.append(f"Dismiss template: dish-admin review-reject {proposal_id} --reason '<why escalation is invalid>'")
-            elif status == "pending" and item_type == "verification_hold":
+            elif status == "pending" and item_type == "verification_hold" and not interactive:
                 lines.append("")
                 lines.append(f"Release hold: dish-admin review-approve {proposal_id}")
             elif status == "approved":
@@ -376,67 +412,96 @@ def render_admin_result(
                         )
                     if operation_id:
                         lines.append(f"Refresh: dish-admin inspect {operation_id}")
-    elif command == "attention" and ok:
-        items = (
-            data.get("attention_items")
-            if isinstance(data.get("attention_items"), list)
-            else []
-        )
-        counts = (
-            data.get("category_counts")
-            if isinstance(data.get("category_counts"), Mapping)
-            else {}
-        )
-        lines.append("Dish attention")
-        lines.append(f"Workflow records checked: {int(data.get('checked_count') or 0)}")
-        lines.append(f"Live task inspections: {int(data.get('live_inspection_count') or 0)}")
-        lines.append(f"Need attention: {int(data.get('attention_count') or 0)}")
+    elif command == "active-leases" and ok:
+        leases = data.get("leases") if isinstance(data.get("leases"), list) else []
+        counts = data.get("state_counts") if isinstance(data.get("state_counts"), Mapping) else {}
+        lines.append(f"Unreleased actor leases: {len(leases)}")
         lines.append(
-            "Safe multi-step: {multi}; Needs Marco: {marco}; Unsafe: {unsafe}".format(
-                multi=int(counts.get("multi_step_safe") or 0),
+            "Active: {active}; Expired: {expired}; Revoked: {revoked}".format(
+                active=int(counts.get("active") or 0),
+                expired=int(counts.get("expired") or 0),
+                revoked=int(counts.get("revoked") or 0),
+            )
+        )
+        if not leases:
+            lines.append("No Dish run currently holds an unreleased actor lease.")
+        for index, lease in enumerate(leases, start=1):
+            if not isinstance(lease, Mapping):
+                continue
+            title = _clean(lease.get("task_title")) or _clean(lease.get("dish_id")) or _clean(lease.get("task_gid")) or "Dish"
+            state = (_clean(lease.get("authority_state")) or "unknown").upper()
+            stage = _clean(lease.get("stage")) or "unknown stage"
+            lines.append("")
+            lines.append(f"{index}. [{state}] {title}")
+            lines.append(f"   Stage: {stage}")
+            dish_id = _clean(lease.get("dish_id"))
+            if dish_id:
+                lines.append(f"   Dish UUID: {dish_id}")
+            if verbose:
+                lines.append(f"   Operation: {_clean(lease.get('operation_id')) or 'unknown'}")
+                lines.append(f"   Owner: {_clean(lease.get('owner_id')) or 'unknown'}")
+                lines.append(f"   Run: {_clean(lease.get('run_id')) or 'unknown'}")
+                lines.append(f"   Lease: {_clean(lease.get('lease_id')) or 'unknown'}")
+                lines.append(f"   Acquired: {_clean(lease.get('acquired_at')) or 'unknown'}")
+                lines.append(f"   Renewed: {_clean(lease.get('renewed_at')) or 'unknown'}")
+                lines.append(f"   Expires: {_clean(lease.get('expires_at')) or 'unknown'}")
+
+    elif command == "attention" and ok:
+        items = data.get("attention_items") if isinstance(data.get("attention_items"), list) else []
+        counts = data.get("category_counts") if isinstance(data.get("category_counts"), Mapping) else {}
+        needs_you = int(data.get("needs_you_count") or 0)
+        system_count = int(data.get("system_count") or 0)
+        lines.append("Dish attention")
+        lines.append(f"Needs you: {needs_you} dish{'es' if needs_you != 1 else ''}")
+        lines.append(
+            "Needs Marco: {marco}; Unsafe/reconcile: {unsafe}; System/recoverable: {system}".format(
                 marco=int(counts.get("needs_marco") or 0),
                 unsafe=int(counts.get("unsafe") or 0),
+                system=system_count,
             )
         )
         if not items:
             lines.append("")
-            lines.append("No abnormal workflow state needs Marco's attention.")
-        category_labels = {
-            "safe_cleanup": "SAFE CLEANUP",
-            "multi_step_safe": "SAFE MULTI-STEP",
-            "needs_marco": "NEEDS MARCO",
-            "unsafe": "UNSAFE / REVIEW",
-        }
-        for index, item in enumerate(items, start=1):
+            lines.append("No active Dish workflow needs attention.")
+        visible_items = items if verbose else [
+            item for item in items
+            if isinstance(item, Mapping) and bool(item.get("needs_you"))
+        ]
+        if system_count and not verbose:
+            lines.append("System/recoverable items are hidden here; use --verbose to list them.")
+        labels = {"needs_marco": "NEEDS YOU", "unsafe": "UNSAFE", "system": "SYSTEM"}
+        for index, item in enumerate(visible_items, start=1):
             if not isinstance(item, Mapping):
                 continue
+            title = _clean(item.get("task_title")) or _clean(item.get("dish_id")) or _clean(item.get("task_gid")) or "Dish"
+            category = _clean(item.get("category")) or "system"
             lines.append("")
-            label = category_labels.get(
-                _clean(item.get("category")) or "", "ATTENTION"
+            lines.append(f"{index}. [{labels.get(category, 'ATTENTION')}] {title}")
+            dish_id = _clean(item.get("dish_id"))
+            if dish_id:
+                lines.append(f"   Dish UUID: {dish_id}")
+            signals = item.get("signals") if isinstance(item.get("signals"), list) else []
+            for signal in signals:
+                if not isinstance(signal, Mapping):
+                    continue
+                summary = _clean(signal.get("summary"))
+                detail = _clean(signal.get("detail"))
+                command_text = _clean(signal.get("shell_command"))
+                if summary:
+                    lines.append(f"   - {summary}")
+                if detail and detail != summary:
+                    lines.append(f"     {detail}")
+                if command_text and not interactive:
+                    lines.append(f"     Inspect: {command_text}")
+        if visible_items and interactive:
+            lines.append("")
+            lines.append("Select a Dish number to inspect its exact current state.")
+        if verbose:
+            lines.append("")
+            lines.append(
+                f"Durable workflow records: {int(data.get('checked_count') or 0)}; "
+                f"live task inspections: {int(data.get('live_inspection_count') or 0)}"
             )
-            title = (
-                _clean(item.get("task_title"))
-                or _clean(item.get("task_gid"))
-                or "Task"
-            )
-            lines.append(f"{index}. [{label}] {title}")
-            problem = _clean(item.get("problem"))
-            if problem:
-                lines.append(f"   Problem: {problem}")
-            operation = _clean(item.get("operation_id"))
-            if operation:
-                lines.append(f"   Operation: {operation}")
-            item_actions = item.get("human_actions")
-            if isinstance(item_actions, list):
-                for action in item_actions:
-                    if not isinstance(action, Mapping):
-                        continue
-                    summary = _clean(action.get("summary"))
-                    shell = _command_from_action(action)
-                    if summary:
-                        lines.append(f"   Next: {summary}")
-                    if shell:
-                        lines.append(f"   {_command_label(action)}: {shell}")
     elif command == "holds" and ok:
         holds = data.get("holds") if isinstance(data.get("holds"), list) else []
         lines.append(f"Open holds: {len(holds)}")

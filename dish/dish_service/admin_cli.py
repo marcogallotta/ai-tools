@@ -59,10 +59,11 @@ def build_parser() -> JsonArgumentParser:
             "the test profile; production administration remains Marco-only."
         ),
         epilog=(
-            "Normal replacement is `dish-admin kill <dish>`; it retires Dish authority and "
-            "prepares the safe continuation without claiming to terminate an external process. "
-            "recover-lease, expire-lease, and abandon-operation remain low-level escape hatches. "
-            "None of these commands approves or submits a dish."
+            "Normal use: attention, review-queue, inspect, active-leases, and kill. "
+            "Advanced recovery, migration, backup, and governance commands remain callable "
+            "when Dish returns one as an exact next action, but are intentionally omitted from "
+            "this top-level help. review-queue may record Marco's reviewed decision or exact bundle "
+            "approval; no admin command submits a dish."
         ),
     )
     add_profile_argument(parser)
@@ -74,33 +75,54 @@ def build_parser() -> JsonArgumentParser:
         "--verbose", action="store_true",
         help="include technical rule and response details in human output",
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
+
+    attention = subparsers.add_parser(
+        _admin_name("attention"),
+        help="show the Dish workflows that currently need Marco or operational attention",
+        description=(
+            "Show a fast durable-state summary of Dish workflows needing Marco or operational "
+            "attention. In a terminal you can select a Dish to inspect its exact current state."
+        ),
+    )
+    attention.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="print the attention summary and exit even in an interactive terminal",
+    )
 
     subparsers.add_parser(
-        _admin_name("attention"),
-        help=(
-            "scan all active Dish workflow records for stale ownership, abandonments, "
-            "holds, and uncertain effects without changing anything"
-        ),
+        _admin_name("active-leases"),
+        help="list unreleased Dish actor leases and show whether each is active or expired",
     )
 
     review_queue = subparsers.add_parser(
         _admin_name("review-queue"),
-        help="list durable semantic proposals and Human Review items waiting for Marco",
+        help="review the durable decisions and change bundles currently waiting for Marco",
+        description=(
+            "Review items waiting for Marco. In an interactive terminal the default flow lets "
+            "you select an item, inspect the exact decision or bundle, and act without copying "
+            "UUIDs between commands."
+        ),
     )
     review_queue.add_argument(
         "--status", choices=("active", "pending", "approved", "all"), default="active"
     )
+    review_queue.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="print the queue and exit even when running in an interactive terminal",
+    )
 
     review_inspect = subparsers.add_parser(
         _admin_name("review-inspect"),
-        help="show one review item by UUID or current queue number",
+        help=argparse.SUPPRESS,
     )
     review_inspect.add_argument("proposal_id")
 
     review_approve = subparsers.add_parser(
         _admin_name("review-approve"),
-        help="approve a semantic bundle or resolve a Human Review item",
+        help=argparse.SUPPRESS,
     )
     review_approve.add_argument("proposal_id")
     review_approve.add_argument(
@@ -113,13 +135,13 @@ def build_parser() -> JsonArgumentParser:
 
     review_reject = subparsers.add_parser(
         _admin_name("review-reject"),
-        help="reject a pending semantic bundle or dismiss an unanswered Human Review escalation",
+        help=argparse.SUPPRESS,
     )
     review_reject.add_argument("proposal_id")
     review_reject.add_argument("--reason", required=True)
 
     subparsers.add_parser(
-        _admin_name("holds"), help="list every currently open Evidence or Human Review hold"
+        _admin_name("holds"), help=argparse.SUPPRESS
     )
 
     _submission_target_help = (
@@ -141,7 +163,7 @@ def build_parser() -> JsonArgumentParser:
     kill = subparsers.add_parser(
         _admin_name("kill"),
         help=(
-            "retire the outstanding Dish run's authority and mechanically prepare the "
+            "revoke the outstanding Dish run's authority and mechanically prepare the "
             "safe continuation; this does not terminate an external ChatGPT process"
         ),
     )
@@ -154,7 +176,8 @@ def build_parser() -> JsonArgumentParser:
 
     recover = subparsers.add_parser(
         _admin_name("recover"),
-        help=(
+        help=argparse.SUPPRESS,
+        description=(
             "reconcile an uncertain external write or movement from a fresh live reread; "
             "this is not lease recovery"
         ),
@@ -173,7 +196,8 @@ def build_parser() -> JsonArgumentParser:
 
     repair_destination = subparsers.add_parser(
         _admin_name("repair-destination"),
-        help="replace only the approved destination after an unrecoverable final movement failure",
+        help=argparse.SUPPRESS,
+        description="replace only the approved destination after an unrecoverable final movement failure",
     )
     repair_destination.add_argument("submission_id", help=_submission_target_help)
     repair_destination.add_argument("--destination-section-gid", required=True)
@@ -181,14 +205,15 @@ def build_parser() -> JsonArgumentParser:
     repair_destination.add_argument("--run-id")
 
     discard = subparsers.add_parser(
-        _admin_name("discard"), help="abandon a stale open operation without applying it"
+        _admin_name("discard"), help=argparse.SUPPRESS, description="abandon a stale open operation without applying it"
     )
     discard.add_argument("submission_id", help=_submission_target_help)
     discard.add_argument("--reason", default="no reason given")
 
     abandon = subparsers.add_parser(
         _admin_name("abandon-operation"),
-        help=(
+        help=argparse.SUPPRESS,
+        description=(
             "declare that a prior agent run will not return, retire its exact attempt, and "
             "prepare the safe continuation returned by Dish"
         ),
@@ -202,7 +227,8 @@ def build_parser() -> JsonArgumentParser:
 
     reconcile_abandonment = subparsers.add_parser(
         _admin_name("reconcile-abandonment"),
-        help=(
+        help=argparse.SUPPRESS,
+        description=(
             "continue an abandonment that Dish could not finish automatically after rereading "
             "the current task and durable evidence"
         ),
@@ -217,7 +243,8 @@ def build_parser() -> JsonArgumentParser:
 
     reopen = subparsers.add_parser(
         _admin_name("reopen"),
-        help="apply a substantive reset to a held Verification candidate",
+        help=argparse.SUPPRESS,
+        description="apply a substantive reset to a held Verification candidate",
     )
     reopen.add_argument("submission_id", help=_submission_target_help)
     reopen.add_argument(
@@ -236,19 +263,22 @@ def build_parser() -> JsonArgumentParser:
 
     resolved = subparsers.add_parser(
         _admin_name("resolved"),
-        help="release a Verification hold into a fresh Verification round",
+        help=argparse.SUPPRESS,
+        description="release a Verification hold into a fresh Verification round",
     )
     resolved.add_argument("submission_id", help=_submission_target_help)
 
     migrate = subparsers.add_parser(
         _admin_name("migrate"),
-        help="migrate one individually encountered older-schema task after cutover",
+        help=argparse.SUPPRESS,
+        description="migrate one individually encountered older-schema task after cutover",
     )
     migrate.add_argument("task_gid")
 
     reopen_planning = subparsers.add_parser(
         _admin_name("reopen-planning"),
-        help="explicitly reopen one completed bare task before a new Planning operation",
+        help=argparse.SUPPRESS,
+        description="explicitly reopen one completed bare task before a new Planning operation",
     )
     reopen_planning.add_argument("task_gid")
     reopen_planning.add_argument("--reason", default="no reason given")
@@ -259,7 +289,8 @@ def build_parser() -> JsonArgumentParser:
 
     recover_lease = subparsers.add_parser(
         _admin_name("recover-lease"),
-        help=(
+        help=argparse.SUPPRESS,
+        description=(
             "release an expired lease only so the same durable agent run can resume; this never "
             "transfers workflow or Verification-cycle ownership to a fresh run"
         )
@@ -269,7 +300,8 @@ def build_parser() -> JsonArgumentParser:
 
     expire_lease = subparsers.add_parser(
         _admin_name("expire-lease"),
-        help=(
+        help=argparse.SUPPRESS,
+        description=(
             "release an active lease when its process is gone; this does not transfer durable "
             "workflow ownership, so rerun dish-admin inspect afterward"
         ),
@@ -283,12 +315,13 @@ def build_parser() -> JsonArgumentParser:
 
     backup_create = subparsers.add_parser(
         _admin_name("backup-create"),
-        help="create a validated online snapshot of the shared database",
+        help=argparse.SUPPRESS,
+        description="create a validated online snapshot of the shared database",
     )
     backup_create.add_argument("--label", default="manual")
 
     backup_restore = subparsers.add_parser(
-        _admin_name("backup-restore"), help="restore a managed shared-database snapshot"
+        _admin_name("backup-restore"), help=argparse.SUPPRESS, description="restore a managed shared-database snapshot"
     )
     backup_restore.add_argument("backup_id")
 
@@ -298,7 +331,7 @@ def build_parser() -> JsonArgumentParser:
     )
     authorize = subparsers.add_parser(
         _admin_name("authorize-governed-change"),
-        help=authorize_description,
+        help=argparse.SUPPRESS,
         description=authorize_description,
     )
     authorize.add_argument("submission_id", help=_submission_target_help)
@@ -327,7 +360,7 @@ def build_parser() -> JsonArgumentParser:
         ),
     }
     for name, help_text in _hold_help.items():
-        hold = subparsers.add_parser(name, help=help_text, description=help_text)
+        hold = subparsers.add_parser(name, help=argparse.SUPPRESS, description=help_text)
         hold.add_argument("submission_id", help=_submission_target_help)
         hold.add_argument("--detail", required=True, help=_hold_detail_help[name])
         hold.add_argument("--resume-status", required=True, choices=("pending-research", "pending-verification"))
@@ -338,6 +371,16 @@ def build_parser() -> JsonArgumentParser:
         hold.add_argument("--expected-task-gid", required=True)
         hold.add_argument("--expected-cycle-id")
         hold.add_argument("--expected-hold-identity")
+
+    # Keep compatibility/escape-hatch commands callable without presenting them as
+    # normal operator choices in the root help. argparse does not natively hide
+    # subparser choices, so remove only their pseudo-actions from help rendering;
+    # the actual parser map remains intact.
+    subparsers._choices_actions = [
+        action
+        for action in subparsers._choices_actions
+        if action.help != argparse.SUPPRESS
+    ]
     return parser
 
 
@@ -585,6 +628,225 @@ def _argument_context(argv: Sequence[str]) -> dict[str, str | None]:
     return {"command": command, "submission_id": submission_id, "task_gid": task_gid}
 
 
+def _emit_interactive_admin_result(
+    result: dict[str, object], *, arguments: Sequence[str]
+) -> None:
+    print(
+        render_admin_result(
+            result,
+            profile=_output_profile(arguments),
+            verbose="--verbose" in arguments,
+            interactive=True,
+        ),
+        end="",
+    )
+
+
+def _prompt_review(input_fn, prompt: str) -> str:
+    try:
+        return str(input_fn(prompt) or "").strip()
+    except (EOFError, KeyboardInterrupt):
+        return "q"
+
+
+def _interactive_attention(
+    app,
+    *,
+    arguments: Sequence[str],
+    input_fn=None,
+) -> int:
+    """Drill from the fleet attention summary into exact per-Dish inspect state."""
+
+    if input_fn is None:
+        input_fn = input
+
+    while True:
+        result = app.execute("attention")
+        _emit_interactive_admin_result(result, arguments=arguments)
+        if not result.get("ok"):
+            return exit_status(str(result.get("code") or "INTERNAL_ERROR"))
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        rows = data.get("attention_items") if isinstance(data.get("attention_items"), list) else []
+        visible = (
+            rows
+            if "--verbose" in arguments
+            else [row for row in rows if isinstance(row, dict) and bool(row.get("needs_you"))]
+        )
+        if not visible:
+            return 0
+
+        choice = _prompt_review(input_fn, "\nDish number (q to quit): ").lower()
+        if choice in {"q", "quit", "exit"}:
+            return 0
+        if not choice.isdecimal() or not (1 <= int(choice) <= len(visible)):
+            print(f"Choose a number from 1 to {len(visible)}, or q to quit.\n")
+            continue
+        selected = visible[int(choice) - 1]
+        if not isinstance(selected, dict):
+            print("That attention row is not inspectable.\n")
+            continue
+        target = str(selected.get("dish_id") or selected.get("task_gid") or "").strip()
+        if not target:
+            print("That attention row has no canonical Dish identity.\n")
+            continue
+
+        inspected = app.execute("inspect", dish=target)
+        print()
+        _emit_interactive_admin_result(inspected, arguments=arguments)
+        if not inspected.get("ok"):
+            return exit_status(str(inspected.get("code") or "INTERNAL_ERROR"))
+        answer = _prompt_review(input_fn, "\n[b] Back to attention  [q] Quit: ").lower()
+        if answer in {"q", "quit", "exit"}:
+            return 0
+        print()
+
+
+def _interactive_review_queue(
+    app,
+    *,
+    status: str,
+    arguments: Sequence[str],
+    input_fn=None,
+) -> int:
+    """Run the human review queue as a decision workflow in a real terminal.
+
+    Queue numbers are used only to select from the just-rendered snapshot. All
+    subsequent commands target the durable review UUID returned in that row.
+    """
+
+    if input_fn is None:
+        input_fn = input
+
+    while True:
+        queue = app.execute("review-queue", status=status)
+        _emit_interactive_admin_result(queue, arguments=arguments)
+        if not queue.get("ok"):
+            return exit_status(str(queue.get("code") or "INTERNAL_ERROR"))
+        data = queue.get("data") if isinstance(queue.get("data"), dict) else {}
+        items = data.get("review_items") if isinstance(data.get("review_items"), list) else []
+        if not items:
+            return 0
+
+        choice = _prompt_review(input_fn, "\nReview number (q to quit): ").lower()
+        if choice in {"q", "quit", "exit"}:
+            return 0
+        if not choice.isdecimal() or not (1 <= int(choice) <= len(items)):
+            print(f"Choose a number from 1 to {len(items)}, or q to quit.\n")
+            continue
+
+        selected = items[int(choice) - 1]
+        if not isinstance(selected, dict):
+            print("That queue row is not reviewable.\n")
+            continue
+        review_id = str(selected.get("review_id") or selected.get("proposal_id") or "").strip()
+        if not review_id:
+            print("That queue row has no durable review ID.\n")
+            continue
+
+        inspected = app.execute("review-inspect", proposal_id=review_id)
+        print()
+        _emit_interactive_admin_result(inspected, arguments=arguments)
+        if not inspected.get("ok"):
+            return exit_status(str(inspected.get("code") or "INTERNAL_ERROR"))
+        inspect_data = inspected.get("data") if isinstance(inspected.get("data"), dict) else {}
+        item = inspect_data.get("review_item") if isinstance(inspect_data.get("review_item"), dict) else {}
+        item_type = str(item.get("item_type") or "semantic_proposal")
+        item_status = str(item.get("status") or "")
+
+        if item_status != "pending":
+            answer = _prompt_review(input_fn, "\n[b] Back to queue  [q] Quit: ").lower()
+            if answer in {"q", "quit", "exit"}:
+                return 0
+            print()
+            continue
+
+        if item_type == "human_review":
+            action = _prompt_review(
+                input_fn,
+                "\n[d] Record Marco decision  [x] Dismiss invalid escalation  [b] Back  [q] Quit: ",
+            ).lower()
+            if action in {"q", "quit", "exit"}:
+                return 0
+            if action in {"b", "back", ""}:
+                print()
+                continue
+            if action == "d":
+                decision = _prompt_review(
+                    input_fn, "Marco's decision and brief reasoning: "
+                )
+                if decision.lower() in {"q", "quit", "exit"}:
+                    return 0
+                if not decision:
+                    print("No decision recorded.\n")
+                    continue
+                result = app.execute(
+                    "review-approve", proposal_id=review_id, reason=decision
+                )
+            elif action == "x":
+                reason = _prompt_review(
+                    input_fn, "Why is this escalation invalid? "
+                )
+                if reason.lower() in {"q", "quit", "exit"}:
+                    return 0
+                if not reason:
+                    print("No dismissal recorded.\n")
+                    continue
+                result = app.execute(
+                    "review-reject", proposal_id=review_id, reason=reason
+                )
+            else:
+                print("Choose d, x, b, or q.\n")
+                continue
+        elif item_type == "verification_hold":
+            action = _prompt_review(
+                input_fn, "\n[r] Release hold to fresh Verification  [b] Back  [q] Quit: "
+            ).lower()
+            if action in {"q", "quit", "exit"}:
+                return 0
+            if action in {"b", "back", ""}:
+                print()
+                continue
+            if action != "r":
+                print("Choose r, b, or q.\n")
+                continue
+            result = app.execute("review-approve", proposal_id=review_id)
+        else:
+            action = _prompt_review(
+                input_fn,
+                "\n[a] Approve exact shown bundle  [r] Reject proposal  [b] Back  [q] Quit: ",
+            ).lower()
+            if action in {"q", "quit", "exit"}:
+                return 0
+            if action in {"b", "back", ""}:
+                print()
+                continue
+            if action == "a":
+                result = app.execute(
+                    "review-approve",
+                    proposal_id=review_id,
+                    reason="Approved interactively after reviewing the exact linked change bundle.",
+                )
+            elif action == "r":
+                reason = _prompt_review(input_fn, "Reason for rejection: ")
+                if reason.lower() in {"q", "quit", "exit"}:
+                    return 0
+                if not reason:
+                    print("No rejection recorded.\n")
+                    continue
+                result = app.execute(
+                    "review-reject", proposal_id=review_id, reason=reason
+                )
+            else:
+                print("Choose a, r, b, or q.\n")
+                continue
+
+        print()
+        _emit_interactive_admin_result(result, arguments=arguments)
+        if not result.get("ok"):
+            return exit_status(str(result.get("code") or "INTERNAL_ERROR"))
+        print()
+
+
 def _attach_recovery_continuation(
     app, result: dict, *, submission_id: str
 ) -> dict:
@@ -672,7 +934,22 @@ def main(
             parsed.pop("profile", None)
             parsed.pop("json", None)
             parsed.pop("verbose", None)
-            if command == "recover-lease":
+            non_interactive = bool(parsed.pop("non_interactive", False))
+            interactive_terminal = (
+                not non_interactive
+                and "--json" not in arguments
+                and sys.stdin.isatty()
+                and sys.stdout.isatty()
+            )
+            if command == "attention" and interactive_terminal:
+                interactive_exit = _interactive_attention(app, arguments=arguments)
+                result = None
+            elif command == "review-queue" and interactive_terminal:
+                interactive_exit = _interactive_review_queue(
+                    app, status=parsed.get("status", "active"), arguments=arguments
+                )
+                result = None
+            elif command == "recover-lease":
                 method = getattr(app, "recover_lease", None)
                 if method is None:
                     result = error_envelope(
@@ -755,6 +1032,8 @@ def main(
             submission_id=context["submission_id"],
         )
     try:
+        if result is None:
+            return interactive_exit
         _emit_result(result, arguments=arguments)
         return exit_status(result["code"])
     finally:
