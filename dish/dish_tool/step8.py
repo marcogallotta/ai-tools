@@ -1477,6 +1477,7 @@ def apply_semantic_proposal(
     proposal_id: str,
     agent: str,
     model: str,
+    owner_id: str | None,
     run_id: str,
     request_id: str | None,
     schema=None,
@@ -1491,7 +1492,7 @@ def apply_semantic_proposal(
     initial_proposal = get_semantic_proposal(conn, clean_id)
     was_claimed = initial_proposal["status"] == "claimed"
     proposal = claim_semantic_proposal(
-        conn, proposal_id=clean_id, agent=agent, run_id=run_id,
+        conn, proposal_id=clean_id, agent=agent, owner_id=owner_id, run_id=run_id,
         request_id=request_id,
     )
     write_confirmed = False

@@ -3,22 +3,36 @@ from __future__ import annotations
 import json
 import uuid
 
+import pytest
+
 from dish_service.application import DishService
+from dish_service.leases import LeaseManager, ServicePrincipal
 from dish_service.request_replay import (
     begin_request,
     complete_request,
     settle_resolved_operation_requests,
 )
-from dish_tool.database import record_marco_authorization
+from dish_tool.database import (
+    record_marco_authorization,
+    revoke_operation_run_in_transaction,
+)
 from dish_tool.database_initialization import initialize_database
+from dish_tool.errors import DishRuleError
 from dish_tool.operation_execution import (
     claim_operation_execution,
     execution_recovery_state,
     finish_operation_execution,
 )
+from dish_tool.safe_reclaim import execute_safe_reclaim
+from dish_tool.transactions import immediate_transaction
+from tests.support.abandonment import Backend as AbandonmentBackend
 from tests.support.lease_authority import _principal, _service, _start
 from tests.support.service_leases import Clock
 from tests.support.verification import TASK
+from tests.test_admin_task_target_resolution import (
+    _NUMERIC_TASK_GID,
+    _numeric_task_source,
+)
 
 
 def _verification_with_expired_lease(tmp_path):
@@ -435,6 +449,55 @@ def test_safe_reclaim_restarts_clean_preconstruction_stage_with_linked_successor
     )
     assert resumed["ok"] is True
     assert resumed["submission_id"] == successor
+
+
+def test_revoked_run_cannot_safe_reclaim_an_inactive_attempt(tmp_path):
+    conn = initialize_database(":memory:")
+    backend = AbandonmentBackend(section="pi", task_gid=_NUMERIC_TASK_GID)
+    operation = _numeric_task_source(conn, backend)
+    operation_id = str(operation["operation_id"])
+    revoked = ServicePrincipal("owner", "killed-reclaimer")
+    killed_lease = LeaseManager(conn).acquire(operation_id, revoked)
+    LeaseManager(conn).release(
+        operation_id, None, reason="first run ended", admin=True
+    )
+    with immediate_transaction(conn, "test_revoke_safe_reclaimer"):
+        revoke_operation_run_in_transaction(
+            conn,
+            operation_id=operation_id,
+            owner_id=revoked.owner_id,
+            run_id=revoked.run_id,
+            source_lease_id=killed_lease["lease_id"],
+            reason="test explicit kill",
+        )
+
+    later = ServicePrincipal("owner", "later-run")
+    later_lease = LeaseManager(conn).acquire(operation_id, later)
+    LeaseManager(conn).release(
+        operation_id, None, reason="later run ended", admin=True
+    )
+
+    with pytest.raises(DishRuleError) as excinfo:
+        execute_safe_reclaim(
+            conn,
+            backend,
+            operation_id=operation_id,
+            lease_id=later_lease["lease_id"],
+            requested_owner_id=revoked.owner_id,
+            requested_run_id=revoked.run_id,
+            requested_agent="gpt",
+            request_id=str(uuid.uuid4()),
+        )
+
+    assert excinfo.value.rule == "killed_run_revoked"
+    source = conn.execute(
+        "SELECT status,phase,terminal_outcome FROM operations WHERE operation_id=?",
+        (operation_id,),
+    ).fetchone()
+    assert tuple(source) == ("open", "prepare_required", None)
+    assert conn.execute(
+        "SELECT 1 FROM safe_reclaims WHERE source_operation_id=?", (operation_id,)
+    ).fetchone() is None
 
 
 def test_safe_reclaim_planning_successor_preserves_intent_gate_and_remains_claimable(tmp_path):

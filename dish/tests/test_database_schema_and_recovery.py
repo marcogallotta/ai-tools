@@ -352,3 +352,179 @@ def test_legacy_submission_write_attempt_evidence_remains_readable(tmp_path):
         123,
         "legacy-start",
     )
+
+
+@pytest.mark.database_boundary
+@pytest.mark.production_sqlite_pragmas
+@pytest.mark.database_boundary_upgrade
+def test_schema_43_converts_run_retirements_to_explicit_revocations(tmp_path):
+    db_path = tmp_path / "schema-42-run-retirement.db"
+    conn = sqlite3.connect(db_path, isolation_level=None)
+    try:
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            "CREATE TABLE schema_migrations "
+            "(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        for version in range(1, 43):
+            _execute_script_statements(conn, MIGRATIONS[version])
+            conn.execute(
+                "INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)",
+                (version, f"v{version}"),
+            )
+            conn.execute(f"PRAGMA user_version={version}")
+        conn.execute(
+            """INSERT INTO operations (
+                   operation_id,task_gid,operation_kind,status,expected_identity,
+                   schema_version,created_at
+               ) VALUES ('op-v42','task-v42','initial','open',?, '2','2026-08-10T00:00:00Z')""",
+            ("a" * 64,),
+        )
+        conn.execute(
+            """INSERT INTO operation_run_retirements(
+                   retirement_id,operation_id,owner_id,run_id,source_lease_id,reason,retired_at
+               ) VALUES('retirement-v42','op-v42','owner-v42','run-v42',NULL,
+                        'Marco kill/replace: historical explicit kill','2026-08-10T00:00:01Z')"""
+        )
+        conn.execute("COMMIT")
+    finally:
+        conn.close()
+
+    upgraded = sqlite3.connect(db_path, isolation_level=None)
+    upgraded.row_factory = sqlite3.Row
+    upgraded.execute("PRAGMA foreign_keys=ON")
+    migrate_database(upgraded)
+    try:
+        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 43
+        assert upgraded.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='operation_run_retirements'"
+        ).fetchone() is None
+        row = upgraded.execute(
+            "SELECT * FROM operation_run_revocations WHERE revocation_id='retirement-v42'"
+        ).fetchone()
+        assert row is not None
+        assert (row["operation_id"], row["owner_id"], row["run_id"]) == (
+            "op-v42",
+            "owner-v42",
+            "run-v42",
+        )
+        assert row["source_lease_id"] is None
+        assert row["revoked_at"] == "2026-08-10T00:00:01Z"
+        assert "claimed_owner_id" in {
+            column[1] for column in upgraded.execute("PRAGMA table_info(semantic_proposals)")
+        }
+    finally:
+        upgraded.close()
+
+
+def _schema42_claimed_proposal_db(
+    db_path,
+    *,
+    include_exact_lease: bool,
+) -> None:
+    conn = sqlite3.connect(db_path, isolation_level=None)
+    try:
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            "CREATE TABLE schema_migrations "
+            "(version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)"
+        )
+        for version in range(1, 43):
+            _execute_script_statements(conn, MIGRATIONS[version])
+            conn.execute(
+                "INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)",
+                (version, f"v{version}"),
+            )
+            conn.execute(f"PRAGMA user_version={version}")
+        conn.execute(
+            """INSERT INTO operations(
+                   operation_id,task_gid,operation_kind,status,expected_identity,
+                   schema_version,phase,created_at
+               ) VALUES('op-claimed-v42','task-claimed-v42','initial','open',?,
+                        '2','await_verification','2026-08-10T00:00:00Z')""",
+            ("a" * 64,),
+        )
+        conn.execute(
+            """INSERT INTO verification_cycles(
+                   cycle_id,operation_id,task_gid,cycle_number,protocol_release,
+                   created_at,protocol_text
+               ) VALUES('cycle-claimed-v42','op-claimed-v42','task-claimed-v42',1,
+                        '1.0.11','2026-08-10T00:00:01Z','verification protocol')"""
+        )
+        if include_exact_lease:
+            conn.execute(
+                """INSERT INTO service_leases(
+                       lease_id,operation_id,task_gid,owner_id,run_id,acquired_at,
+                       renewed_at,expires_at,released_at,release_reason,lease_kind,
+                       actor_attempt_seq,context_cycle_id
+                   ) VALUES('lease-claimed-v42','op-claimed-v42','task-claimed-v42',
+                            'action:gpt','claimed-run-v42','2026-08-10T00:00:02Z',
+                            '2026-08-10T00:00:02Z','2026-08-10T00:30:02Z',
+                            '2026-08-10T00:05:00Z','normal release','actor',1,
+                            'cycle-claimed-v42')"""
+            )
+        conn.execute(
+            """INSERT INTO semantic_proposals(
+                   proposal_id,task_gid,operation_id,cycle_id,baseline_identity,
+                   candidate_identity,candidate_title,candidate_notes,proposal_reason,
+                   explanation_json,linked_changes_json,agent_attested_decisions_json,
+                   protocol_release,protocol_text,correction_class,proposer_agent,
+                   proposer_run_id,status,created_at,reviewed_at,review_reason,approved_by,
+                   claimed_at,claimed_agent,claimed_run_id,claim_request_id
+               ) VALUES(
+                   'proposal-claimed-v42','task-claimed-v42','op-claimed-v42',
+                   'cycle-claimed-v42',?,?, 'Candidate','notes','approved correction',
+                   '{}','[]','[]','1.0.11','verification protocol','large','codex',
+                   'proposal-author-v42','claimed','2026-08-10T00:00:03Z',
+                   '2026-08-10T00:00:04Z','Marco approved','Marco',
+                   '2026-08-10T00:00:05Z','codex','claimed-run-v42',NULL
+               )""",
+            ("a" * 64, "b" * 64),
+        )
+        conn.execute("COMMIT")
+    finally:
+        conn.close()
+
+
+@pytest.mark.database_boundary
+@pytest.mark.production_sqlite_pragmas
+@pytest.mark.database_boundary_upgrade
+def test_schema_43_backfills_claimed_proposal_owner_from_exact_schema42_lease(tmp_path):
+    db_path = tmp_path / "schema-42-claimed-proposal.db"
+    _schema42_claimed_proposal_db(db_path, include_exact_lease=True)
+
+    upgraded = sqlite3.connect(db_path, isolation_level=None)
+    upgraded.row_factory = sqlite3.Row
+    upgraded.execute("PRAGMA foreign_keys=ON")
+    migrate_database(upgraded)
+    try:
+        row = upgraded.execute(
+            "SELECT status,claimed_owner_id,claimed_run_id FROM semantic_proposals "
+            "WHERE proposal_id='proposal-claimed-v42'"
+        ).fetchone()
+        assert row["status"] == "claimed"
+        assert row["claimed_owner_id"] == "action:gpt"
+        assert row["claimed_run_id"] == "claimed-run-v42"
+        assert upgraded.execute("PRAGMA user_version").fetchone()[0] == 43
+    finally:
+        upgraded.close()
+
+
+@pytest.mark.database_boundary
+@pytest.mark.production_sqlite_pragmas
+@pytest.mark.database_boundary_upgrade
+def test_schema_43_refuses_claimed_proposal_without_provable_owner(tmp_path):
+    db_path = tmp_path / "schema-42-ownerless-claimed-proposal.db"
+    _schema42_claimed_proposal_db(db_path, include_exact_lease=False)
+
+    conn = sqlite3.connect(db_path, isolation_level=None)
+    conn.execute("PRAGMA foreign_keys=ON")
+    with pytest.raises(sqlite3.IntegrityError, match="cannot prove owner"):
+        migrate_database(conn)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 42
+    assert "claimed_owner_id" not in {
+        column[1] for column in conn.execute("PRAGMA table_info(semantic_proposals)")
+    }
+    conn.close()

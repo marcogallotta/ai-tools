@@ -25,6 +25,7 @@ from dish_tool.commands import DishApplication, expose_authoritative_view
 from dish_tool.constants import COOKING_PROJECT_GID, SCHEMA_VERSION
 from dish_tool.operation_execution import _recover_command_guidance
 from dish_tool.database import (
+    operation_run_revocation,
     planning_reopen_attempt_by_request,
     process_command_audit_repairs,
     resolve_admin_abandonment_target,
@@ -1191,19 +1192,15 @@ class DishService:
         agent: str | None = None,
         proposal_id: str | None = None,
     ) -> bool:
-        # Marco kill/replace retirement is exact authority state independent of
-        # lease cleanup.  A retired owner/run cannot use the missing-lease path
-        # to reacquire or reclaim an approved semantic proposal.
-        retired = conn.execute(
-            """SELECT 1 FROM operation_run_retirements
-                 WHERE operation_id=? AND owner_id=? AND run_id=?
-                 LIMIT 1""",
-            (operation_id, principal.owner_id, principal.run_id),
-        ).fetchone()
-        if retired is not None:
-            return False
         op = self._operation_row(conn, operation_id)
         if op is None or op["status"] != "open":
+            return False
+        if operation_run_revocation(
+            conn,
+            operation_id=operation_id,
+            owner_id=principal.owner_id,
+            run_id=principal.run_id,
+        ) is not None:
             return False
         if command == "prepare" or self._is_preconstruction_research_reject(
             op, command
@@ -1304,6 +1301,19 @@ class DishService:
             else:
                 actions = []
                 access = {"state": "terminal"}
+        elif (revoked := operation_run_revocation(
+            conn,
+            operation_id=operation_id,
+            owner_id=principal.owner_id,
+            run_id=principal.run_id,
+        )) is not None:
+            actions = []
+            access = {
+                "state": "revoked",
+                "rule": "killed_run_revoked",
+                "revocation_id": revoked["revocation_id"],
+                "revoked_at": revoked["revoked_at"],
+            }
         elif proposal is not None:
             proposal_id = str(proposal["proposal_id"])
             proposal_status = str(proposal["status"])
@@ -2031,8 +2041,13 @@ class DishService:
             state.conn,
             state.backend,
             release_loader=lambda role=None: self._release(role),
+            invocation_owner_id=state.principal.owner_id,
             invocation_run_id=state.invocation_run_id,
             invocation_request_id=request_id,
+            invocation_authority_now=lambda: state.leases.now()
+            .astimezone(timezone.utc)
+            .isoformat(timespec="microseconds")
+            .replace("+00:00", "Z"),
         )
 
     def _resolve_agent_operation(
@@ -2112,6 +2127,8 @@ class DishService:
     ) -> None:
         prepared = state.prepared_arguments
         operation_id = state.operation_id
+        if operation_id and (command in _LEASED_AGENT_COMMANDS or (command == "start" and prepared.get("kind") == "verification")):
+            state.leases.assert_not_revoked(operation_id, state.principal)
         if command in _LEASED_AGENT_COMMANDS:
             if not operation_id:
                 raise DishRuleError(

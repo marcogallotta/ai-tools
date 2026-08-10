@@ -3091,8 +3091,106 @@ BEFORE DELETE ON operation_run_retirements
 BEGIN SELECT RAISE(ABORT, 'operation run retirements are append-only'); END;
 """
 
+_MIGRATION_43 = """
+ALTER TABLE semantic_proposals ADD COLUMN claimed_owner_id TEXT;
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31, 32: _MIGRATION_32, 33: _MIGRATION_33, 34: _MIGRATION_34, 35: _MIGRATION_35, 36: _MIGRATION_36, 37: _MIGRATION_37, 38: _MIGRATION_38, 39: _MIGRATION_39, 40: _MIGRATION_40, 41: _MIGRATION_41, 42: _MIGRATION_42}
+-- Schema 42 persisted the proposal run but not its service owner. Recover the
+-- exact owner only from deterministic evidence. Dish's mechanical applicant has
+-- one fixed owner; connected applicants can be recovered from their durable
+-- request identity, exact operation/run lease history, or an existing explicit
+-- schema-42 retirement record. History supplies identity here; it does not by
+-- itself create revocation.
+UPDATE semantic_proposals
+   SET claimed_owner_id='dish-mechanical'
+ WHERE status='claimed' AND claimed_agent='dish';
+
+UPDATE semantic_proposals
+   SET claimed_owner_id=(
+       SELECT request.owner_id
+         FROM service_requests AS request
+        WHERE request.request_id=semantic_proposals.claim_request_id
+          AND request.run_id=semantic_proposals.claimed_run_id
+        LIMIT 1
+   )
+ WHERE status='claimed'
+   AND claimed_owner_id IS NULL
+   AND claim_request_id IS NOT NULL;
+
+UPDATE semantic_proposals
+   SET claimed_owner_id=(
+       SELECT MIN(lease.owner_id)
+         FROM service_leases AS lease
+        WHERE lease.operation_id=semantic_proposals.operation_id
+          AND lease.run_id=semantic_proposals.claimed_run_id
+       HAVING COUNT(DISTINCT lease.owner_id)=1
+   )
+ WHERE status='claimed' AND claimed_owner_id IS NULL;
+
+UPDATE semantic_proposals
+   SET claimed_owner_id=(
+       SELECT MIN(retired.owner_id)
+         FROM operation_run_retirements AS retired
+        WHERE retired.operation_id=semantic_proposals.operation_id
+          AND retired.run_id=semantic_proposals.claimed_run_id
+       HAVING COUNT(DISTINCT retired.owner_id)=1
+   )
+ WHERE status='claimed' AND claimed_owner_id IS NULL;
+
+CREATE TABLE migration_43_claim_owner_guard (value INTEGER);
+CREATE TRIGGER migration_43_claim_owner_guard_abort
+BEFORE INSERT ON migration_43_claim_owner_guard
+WHEN NEW.value=0
+BEGIN SELECT RAISE(ABORT, 'schema 43 cannot prove owner of claimed semantic proposal'); END;
+INSERT INTO migration_43_claim_owner_guard(value)
+SELECT 0 FROM semantic_proposals
+ WHERE status='claimed' AND claimed_owner_id IS NULL
+ LIMIT 1;
+DROP TRIGGER migration_43_claim_owner_guard_abort;
+DROP TABLE migration_43_claim_owner_guard;
+
+CREATE TRIGGER semantic_proposals_claim_owner_consistency_update
+BEFORE UPDATE OF status,claimed_owner_id,claimed_run_id ON semantic_proposals
+WHEN (NEW.claimed_owner_id IS NOT NULL AND NEW.claimed_run_id IS NULL)
+  OR (NEW.status IN ('pending','approved','rejected','stale') AND NEW.claimed_owner_id IS NOT NULL)
+BEGIN SELECT RAISE(ABORT, 'semantic proposal claim owner is inconsistent'); END;
+
+CREATE TABLE operation_run_revocations (
+    revocation_id TEXT PRIMARY KEY,
+    operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+    owner_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    source_lease_id TEXT REFERENCES service_leases(lease_id),
+    reason TEXT NOT NULL,
+    revoked_at TEXT NOT NULL,
+    CHECK (length(trim(owner_id))>0),
+    CHECK (length(trim(run_id))>0),
+    CHECK (length(trim(reason))>0),
+    UNIQUE(operation_id, owner_id, run_id)
+);
+CREATE INDEX operation_run_revocations_operation_idx
+    ON operation_run_revocations(operation_id, revoked_at);
+
+INSERT INTO operation_run_revocations(
+    revocation_id,operation_id,owner_id,run_id,source_lease_id,reason,revoked_at
+)
+SELECT retirement_id,operation_id,owner_id,run_id,source_lease_id,reason,retired_at
+  FROM operation_run_retirements;
+
+DROP TRIGGER operation_run_retirements_immutable_update;
+DROP TRIGGER operation_run_retirements_append_only_delete;
+DROP INDEX operation_run_retirements_operation_idx;
+DROP TABLE operation_run_retirements;
+
+CREATE TRIGGER operation_run_revocations_immutable_update
+BEFORE UPDATE ON operation_run_revocations
+BEGIN SELECT RAISE(ABORT, 'operation run revocations are immutable'); END;
+CREATE TRIGGER operation_run_revocations_append_only_delete
+BEFORE DELETE ON operation_run_revocations
+BEGIN SELECT RAISE(ABORT, 'operation run revocations are append-only'); END;
+"""
+
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31, 32: _MIGRATION_32, 33: _MIGRATION_33, 34: _MIGRATION_34, 35: _MIGRATION_35, 36: _MIGRATION_36, 37: _MIGRATION_37, 38: _MIGRATION_38, 39: _MIGRATION_39, 40: _MIGRATION_40, 41: _MIGRATION_41, 42: _MIGRATION_42, 43: _MIGRATION_43}
 
 
 def _content_digest(title: str, notes: str) -> str:
@@ -3119,7 +3217,7 @@ _SEMANTIC_RECORD_SELECTORS = {
     "operations": "operation_id",
     "service_leases": "lease_id",
     "operation_execution_claims": "claim_id",
-    "operation_run_retirements": "retirement_id",
+    "operation_run_revocations": "revocation_id",
     "operation_executions": "execution_id",
     "abandonment_attempts": "abandonment_id",
     "operation_successions": "succession_id",
@@ -3129,14 +3227,14 @@ _SEMANTIC_RECORD_SELECTORS = {
 _SEMANTIC_PROVENANCE_FIELDS = (
     "task_gid", "operation_id", "request_id", "execution_id", "command",
     "challenge_id", "created_request_id", "claimed_request_id",
-    "run_id", "actor_run_id", "owner_id", "cycle_id", "source_cycle_id",
+    "run_id", "actor_run_id", "owner_id", "claimed_owner_id", "cycle_id", "source_cycle_id",
 )
 _SEMANTIC_TIMESTAMP_FIELDS = (
     "created_at", "confirmed_at", "started_at", "finished_at", "completed_at",
     "acquired_at", "renewed_at", "expires_at", "released_at", "reserved_at",
     "claimed_at", "consumed_at", "resolved_at", "process_start", "expected_modified_at",
     "confirmed_modified_at", "content_write_completed_at",
-    "signoff_completed_at", "movement_completed_at", "retired_at",
+    "signoff_completed_at", "movement_completed_at", "revoked_at",
 )
 
 
@@ -4475,10 +4573,10 @@ def _validate_backup_and_reset_evidence(
                 "verification_hold_reset_binding", "verification_hold_resets", row["reset_id"],
             ))
 
-def _validate_operation_run_retirement_evidence(
+def _validate_operation_run_revocation_evidence(
     conn: sqlite3.Connection, problems: list[dict[str, Any]]
 ) -> None:
-    for row in conn.execute("SELECT * FROM operation_run_retirements"):
+    for row in conn.execute("SELECT * FROM operation_run_revocations"):
         operation = conn.execute(
             "SELECT 1 FROM operations WHERE operation_id=?", (row["operation_id"],)
         ).fetchone()
@@ -4499,9 +4597,9 @@ def _validate_operation_run_retirement_evidence(
         ):
             problems.append(_semantic_problem(
                 conn,
-                "operation_run_retirement_binding",
-                "operation_run_retirements",
-                row["retirement_id"],
+                "operation_run_revocation_binding",
+                "operation_run_revocations",
+                row["revocation_id"],
                 related_record_type=(
                     "service_leases" if row["source_lease_id"] is not None else "operations"
                 ),
@@ -4868,7 +4966,7 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
     _validate_execution_and_lease_evidence(conn, problems)
     _validate_planning_intent_evidence(conn, problems)
     _validate_backup_and_reset_evidence(conn, problems)
-    _validate_operation_run_retirement_evidence(conn, problems)
+    _validate_operation_run_revocation_evidence(conn, problems)
     _validate_abandonment_attempt_evidence(conn, problems)
     _validate_succession_evidence(conn, problems)
     _validate_safe_reclaim_evidence(conn, problems)

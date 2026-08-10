@@ -25,7 +25,7 @@ from .task_document import (
     validate_task_document,
 )
 from .errors import DishRuleError
-from .transactions import immediate_transaction
+from .transactions import immediate_transaction, require_transaction
 
 _ACTIVE = ("pending", "approved", "claimed")
 
@@ -1076,12 +1076,33 @@ def claim_semantic_proposal(
     agent: str,
     run_id: str,
     request_id: str | None,
+    owner_id: str | None = None,
 ) -> sqlite3.Row:
     now = utc_now()
     with immediate_transaction(conn, "claim_semantic_proposal"):
         row = get_semantic_proposal(conn, proposal_id)
+        clean_owner = str(owner_id or "").strip() or None
         if row["status"] == "claimed":
-            if row["claimed_run_id"] == run_id and row["claimed_agent"] == agent:
+            if (
+                row["claimed_run_id"] == run_id
+                and row["claimed_agent"] == agent
+                and (clean_owner is None or row["claimed_owner_id"] in {None, clean_owner})
+            ):
+                if clean_owner is not None and row["claimed_owner_id"] is None:
+                    cursor = conn.execute(
+                        """UPDATE semantic_proposals
+                              SET claimed_owner_id=?
+                            WHERE proposal_id=? AND status='claimed'
+                              AND claimed_run_id=? AND claimed_owner_id IS NULL""",
+                        (clean_owner, proposal_id, run_id),
+                    )
+                    if cursor.rowcount != 1:
+                        raise DishRuleError(
+                            "CONFLICT",
+                            "proposal claim owner changed during idempotent recovery",
+                            rule="semantic_proposal_claim_race",
+                        )
+                    row = get_semantic_proposal(conn, proposal_id)
                 return row
             raise DishRuleError(
                 "CONFLICT", "approved proposal is already claimed by another run",
@@ -1095,9 +1116,10 @@ def claim_semantic_proposal(
             )
         cursor = conn.execute(
             """UPDATE semantic_proposals
-                  SET status='claimed',claimed_at=?,claimed_agent=?,claimed_run_id=?,claim_request_id=?
+                  SET status='claimed',claimed_at=?,claimed_agent=?,claimed_owner_id=?,
+                      claimed_run_id=?,claim_request_id=?
                 WHERE proposal_id=? AND status='approved'""",
-            (now, agent, run_id, request_id, proposal_id),
+            (now, agent, clean_owner, run_id, request_id, proposal_id),
         )
         if cursor.rowcount != 1:
             raise DishRuleError(
@@ -1111,37 +1133,46 @@ def claim_semantic_proposal(
             actor_source=audit_source,
             details={
                 "proposal_id": proposal_id, "request_id": request_id,
-                "application_actor": agent,
+                "application_actor": agent, "owner_id": clean_owner,
             },
             result_code="OK", result_ok=True,
         )
         return get_semantic_proposal(conn, proposal_id)
 
 
+def release_semantic_proposal_claim_in_transaction(
+    conn: sqlite3.Connection, *, proposal_id: str, run_id: str, reason: str
+) -> None:
+    require_transaction(conn, operation="release semantic proposal claim")
+    row = get_semantic_proposal(conn, proposal_id)
+    if row["status"] != "claimed" or row["claimed_run_id"] != run_id:
+        return
+    conn.execute(
+        """UPDATE semantic_proposals
+              SET status='approved',claimed_at=NULL,claimed_agent=NULL,claimed_owner_id=NULL,
+                  claimed_run_id=NULL,claim_request_id=NULL
+            WHERE proposal_id=? AND status='claimed' AND claimed_run_id=?""",
+        (proposal_id, run_id),
+    )
+    audit_agent, audit_source = _proposal_audit_actor(str(row["claimed_agent"]))
+    record_audit(
+        conn, submission_id=None, task_gid=row["task_gid"], operation_id=row["operation_id"],
+        event_type="semantic_proposal.claim_released", actor_agent=audit_agent,
+        actor_run_id=run_id, actor_source=audit_source,
+        details={
+            "proposal_id": proposal_id, "reason": reason,
+            "application_actor": row["claimed_agent"],
+        },
+        result_code="OK", result_ok=True,
+    )
+
+
 def release_semantic_proposal_claim(
     conn: sqlite3.Connection, *, proposal_id: str, run_id: str, reason: str
 ) -> None:
     with immediate_transaction(conn, "release_semantic_proposal_claim"):
-        row = get_semantic_proposal(conn, proposal_id)
-        if row["status"] != "claimed" or row["claimed_run_id"] != run_id:
-            return
-        conn.execute(
-            """UPDATE semantic_proposals
-                  SET status='approved',claimed_at=NULL,claimed_agent=NULL,
-                      claimed_run_id=NULL,claim_request_id=NULL
-                WHERE proposal_id=? AND status='claimed' AND claimed_run_id=?""",
-            (proposal_id, run_id),
-        )
-        audit_agent, audit_source = _proposal_audit_actor(str(row["claimed_agent"]))
-        record_audit(
-            conn, submission_id=None, task_gid=row["task_gid"], operation_id=row["operation_id"],
-            event_type="semantic_proposal.claim_released", actor_agent=audit_agent,
-            actor_run_id=run_id, actor_source=audit_source,
-            details={
-                "proposal_id": proposal_id, "reason": reason,
-                "application_actor": row["claimed_agent"],
-            },
-            result_code="OK", result_ok=True,
+        release_semantic_proposal_claim_in_transaction(
+            conn, proposal_id=proposal_id, run_id=run_id, reason=reason
         )
 
 

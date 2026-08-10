@@ -538,16 +538,24 @@ class DishApplication:
         backend: CommandBackend,
         *,
         release_loader: Callable[..., ResolvedRelease],
+        invocation_owner_id: str | None = None,
         invocation_run_id: str | None = None,
         invocation_request_id: str | None = None,
+        invocation_authority_now: Callable[[], str] | None = None,
     ) -> None:
         self.conn = conn
         self.backend = backend
         self.release_loader = release_loader
+        self.invocation_owner_id = str(invocation_owner_id or "").strip() or None
         self.invocation_run_id = str(invocation_run_id or "").strip() or None
         self.invocation_request_id = str(invocation_request_id or "").strip() or None
         self.operation_service = OperationApplicationService(
-            conn, backend, request_id=self.invocation_request_id
+            conn,
+            backend,
+            request_id=self.invocation_request_id,
+            owner_id=self.invocation_owner_id,
+            run_id=self.invocation_run_id,
+            authority_now=invocation_authority_now,
         )
         parameters = inspect.signature(release_loader).parameters.values()
         self._release_loader_accepts_role = any(
@@ -1522,7 +1530,7 @@ def _step_apply_semantic_proposal(
         operation_id,
         lambda: apply_semantic_proposal(
             self.conn, self.backend, proposal_id=clean_id, agent=agent,
-            model=model, run_id=effective_run_id,
+            model=model, owner_id=self.invocation_owner_id, run_id=effective_run_id,
             request_id=self.invocation_request_id, schema=release.schema,
         ),
         schema=release.schema,

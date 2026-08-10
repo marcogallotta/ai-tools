@@ -632,17 +632,17 @@ def _require_writer_transaction(conn: sqlite3.Connection, *, operation: str) -> 
         raise RuntimeError(f"{operation} requires an existing SQLite writer transaction")
 
 
-def operation_run_retirement(
+def operation_run_revocation(
     conn: sqlite3.Connection, *, operation_id: str, owner_id: str, run_id: str
 ) -> sqlite3.Row | None:
     return conn.execute(
-        """SELECT * FROM operation_run_retirements
+        """SELECT * FROM operation_run_revocations
              WHERE operation_id=? AND owner_id=? AND run_id=?""",
         (operation_id, owner_id, run_id),
     ).fetchone()
 
 
-def retire_operation_run_in_transaction(
+def revoke_operation_run_in_transaction(
     conn: sqlite3.Connection,
     *,
     operation_id: str,
@@ -650,24 +650,24 @@ def retire_operation_run_in_transaction(
     run_id: str,
     reason: str,
     source_lease_id: str | None = None,
-    retired_at: str | None = None,
+    revoked_at: str | None = None,
 ) -> sqlite3.Row:
     """Durably revoke one exact service owner/run for one operation.
 
-    Retirement is authority state in its own right.  A source lease is optional
+    Revocation is authority state in its own right. A source lease is optional
     evidence and may already be released; callers must not rely on changing that
     lease row to establish revocation.
     """
 
-    _require_writer_transaction(conn, operation="operation run retirement")
+    _require_writer_transaction(conn, operation="operation run revocation")
     clean_owner = str(owner_id or "").strip()
     clean_run = str(run_id or "").strip()
     clean_reason = str(reason or "").strip()
     if not clean_owner or not clean_run or not clean_reason:
         raise DishRuleError(
             "INVALID_ARGUMENT",
-            "operation run retirement requires owner, run, and reason",
-            rule="operation_run_retirement_identity_required",
+            "operation run revocation requires owner, run, and reason",
+            rule="operation_run_revocation_identity_required",
         )
     operation = conn.execute(
         "SELECT task_gid FROM operations WHERE operation_id=?", (operation_id,)
@@ -689,22 +689,22 @@ def retire_operation_run_in_transaction(
         ):
             raise DishRuleError(
                 "CONFLICT",
-                "retirement source lease does not match the exact owner/run",
-                rule="operation_run_retirement_lease_mismatch",
+                "revocation source lease does not match the exact owner/run",
+                rule="operation_run_revocation_lease_mismatch",
             )
-    existing = operation_run_retirement(
+    existing = operation_run_revocation(
         conn, operation_id=operation_id, owner_id=clean_owner, run_id=clean_run
     )
     if existing is not None:
         return existing
-    stamp = retired_at or utc_now()
-    retirement_id = str(uuid.uuid4())
+    stamp = revoked_at or utc_now()
+    revocation_id = str(uuid.uuid4())
     conn.execute(
-        """INSERT INTO operation_run_retirements(
-               retirement_id,operation_id,owner_id,run_id,source_lease_id,reason,retired_at
+        """INSERT INTO operation_run_revocations(
+               revocation_id,operation_id,owner_id,run_id,source_lease_id,reason,revoked_at
            ) VALUES(?,?,?,?,?,?,?)""",
         (
-            retirement_id,
+            revocation_id,
             operation_id,
             clean_owner,
             clean_run,
@@ -718,12 +718,12 @@ def retire_operation_run_in_transaction(
         submission_id=None,
         task_gid=operation["task_gid"],
         operation_id=operation_id,
-        event_type="operation.run_retired",
+        event_type="operation.run_revoked",
         actor_agent=None,
         actor_source="marco-admin",
         actor_run_id=clean_run,
         details={
-            "retirement_id": retirement_id,
+            "revocation_id": revocation_id,
             "owner_id": clean_owner,
             "run_id": clean_run,
             "source_lease_id": source_lease_id,
@@ -732,7 +732,7 @@ def retire_operation_run_in_transaction(
         result_code="OK",
         result_ok=True,
     )
-    return operation_run_retirement(
+    return operation_run_revocation(
         conn, operation_id=operation_id, owner_id=clean_owner, run_id=clean_run
     )
 

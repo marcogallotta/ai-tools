@@ -57,10 +57,21 @@ class CurrentWorkflowService:
         backend,
         *,
         request_id: str | None = None,
+        owner_id: str | None = None,
+        run_id: str | None = None,
+        authority_now: Callable[[], str] | None = None,
     ) -> None:
         self.conn = conn
         self.backend = backend
         self.request_id = str(request_id or "").strip() or None
+        clean_owner = str(owner_id or "").strip() or None
+        clean_run = str(run_id or "").strip() or None
+        # A run ID carried by direct/internal DishApplication callers is not a
+        # service principal by itself. Enforce service authority only when the
+        # transport supplied the complete authenticated owner/run pair.
+        self.owner_id = clean_owner if clean_owner and clean_run else None
+        self.run_id = clean_run if clean_owner and clean_run else None
+        self.authority_now = authority_now
 
     def operation(self, operation_id: str) -> sqlite3.Row:
         row = self.conn.execute("SELECT * FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
@@ -267,6 +278,11 @@ class CurrentWorkflowService:
                 operation_id=operation_id,
                 command=command,
                 request_id=execution_request_id,
+                owner_id=self.owner_id,
+                run_id=self.run_id,
+                authority_now=(
+                    None if self.authority_now is None else self.authority_now()
+                ),
             )
         result: T
         try:
@@ -590,13 +606,23 @@ class OperationApplicationService:
         backend=None,
         *,
         request_id: str | None = None,
+        owner_id: str | None = None,
+        run_id: str | None = None,
+        authority_now: Callable[[], str] | None = None,
     ) -> None:
         self.conn = conn
         self.legacy = LegacyReadOnlyAdapter(conn)
         self.current = (
             None
             if backend is None
-            else CurrentWorkflowService(conn, backend, request_id=request_id)
+            else CurrentWorkflowService(
+                conn,
+                backend,
+                request_id=request_id,
+                owner_id=owner_id,
+                run_id=run_id,
+                authority_now=authority_now,
+            )
         )
 
     def route(self, identifier: str, *, command: str, protocol_version: str) -> RoutedTarget:

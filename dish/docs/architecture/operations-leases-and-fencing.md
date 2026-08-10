@@ -23,6 +23,7 @@ Durable claim/lease identity determines which executor may continue a mutation. 
 ## Invariants
 
 - A stale or superseded executor cannot continue writing authoritative outcomes.
+- Marco kill/replace is an explicit durable revocation of one exact `(operation_id, owner_id, run_id)`. Historical lease state may identify which exact run Marco is killing after its lease was normally released, but history never implies revocation by itself. Ordinary lease loss remains recoverable until an explicit revocation exists; after revocation, that exact run may never acquire, reacquire, renew, or otherwise re-establish mutation authority for that operation.
 - Reclaim/recovery does not silently duplicate an uncertain external effect.
 - Same-run expired-lease recovery and different-run ownership transfer are distinct operations.
 - Different-run safe reclaim is allowed only from a mechanically clean inactive frontier; it fences
@@ -42,11 +43,19 @@ Acquire/validate execution ownership, perform bounded work, renew when appropria
 
 ## Failure, replay, recovery, and concurrency
 
-Current SQLite/service behavior distinguishes three paths: `recover-lease` for the same durable run,
-agent-callable `safe-reclaim` for a different run only when the committed clean-frontier predicate
-passes, and formal abandonment/reconciliation for genuine recovery risk. Safe reclaim records the
-source lease/owner/run and successor lineage durably and forbids the replaced run from claiming that
-successor.
+Current SQLite/service behavior distinguishes four authority paths: ordinary same-run lease recovery,
+explicit Marco revocation for `kill`, agent-callable `safe-reclaim` for a different run only when the
+committed clean-frontier predicate passes, and formal abandonment/reconciliation for genuine recovery
+risk. Revocation is checked at lease acquisition/reacquisition and renewal and is not inferred from
+release reasons, timestamps, missing leases, or proposal status. Historical lease evidence may select
+the exact owner/run targeted by an explicit kill. Connected-agent mutation execution revalidates that
+same owner/run, active actor lease, and non-revoked status atomically when the operation-execution claim
+is created; therefore either the execution claim wins and kill refuses, or kill wins and the execution
+claim rejects the revoked run. Safe reclaim also rechecks the requesting owner/run for explicit
+revocation inside its writer transaction before it fences the source or creates a successor. Read-only
+principal-aware views suppress mutation continuations for a revoked run rather than advertising an
+action that the authority boundary will reject. Safe reclaim records the source lease/owner/run and
+successor lineage durably and forbids the replaced run from claiming that successor.
 
 For `safe-reclaim`, the first eligibility result is advisory. The writer transaction reruns the complete
 predicate while holding the SQLite writer lock, including stage/frontier, Verification-cycle, lease

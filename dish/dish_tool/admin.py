@@ -19,7 +19,7 @@ from .database import (
     complete_operation_step,
     declare_operation_step,
     record_audit,
-    retire_operation_run_in_transaction,
+    revoke_operation_run_in_transaction,
     resolve_admin_abandonment_target,
     resolve_admin_dish_target,
     resolve_admin_operation_target,
@@ -38,6 +38,7 @@ from .semantic_proposals import (
     proposal_payload,
     reject_semantic_proposal,
     release_semantic_proposal_claim,
+    release_semantic_proposal_claim_in_transaction,
 )
 from .step8 import apply_semantic_proposal
 from .constants import MECHANICAL_PROPOSAL_AGENT
@@ -760,8 +761,19 @@ def _command_inspect(
     if outstanding_lease is None and replacement_action_present:
         outstanding_lease = latest_lease
     if outstanding_lease is not None:
-        if outstanding_lease["released_at"] is not None:
-            authority_state = "retired"
+        revocation = self.conn.execute(
+            """SELECT revocation_id,revoked_at FROM operation_run_revocations
+                 WHERE operation_id=? AND owner_id=? AND run_id=?""",
+            (
+                operation_id,
+                outstanding_lease["owner_id"],
+                outstanding_lease["run_id"],
+            ),
+        ).fetchone()
+        if revocation is not None:
+            authority_state = "revoked"
+        elif outstanding_lease["released_at"] is not None:
+            authority_state = "released"
         else:
             authority_state = (
                 "active"
@@ -923,41 +935,80 @@ def _command_kill(
              ORDER BY actor_attempt_seq DESC LIMIT 1""",
         (operation_id,),
     ).fetchone()
+    latest_actor_lease = self.conn.execute(
+        """SELECT * FROM service_leases
+             WHERE operation_id=? AND lease_kind='actor'
+             ORDER BY actor_attempt_seq DESC LIMIT 1""",
+        (operation_id,),
+    ).fetchone()
     proposal_before_kill = active_proposal_for_operation(self.conn, operation_id)
     lease_was_active_at_resolution = lease is not None
 
-    # Resolve the exact authority Marco is replacing before taking the writer
-    # lock, but establish retirement only inside that lock.  A claimed proposal
-    # can outlive its active actor lease, so recover its service owner from the
-    # durable lease history for the exact claimed run.
-    retirement_source = lease
-    if retirement_source is None and proposal_before_kill is not None and proposal_before_kill["status"] == "claimed":
+    # Resolve the exact run Marco named by killing this Dish before taking the
+    # writer lock. Historical lease state may identify that run even after its
+    # lease was normally released; history is evidence of identity only. It
+    # never *means* revoked. Revocation exists only after the explicit record is
+    # persisted below.
+    revocation_target: dict[str, Any] | None = None
+    if lease is not None:
+        revocation_target = {
+            "owner_id": str(lease["owner_id"]),
+            "run_id": str(lease["run_id"]),
+            "source_lease_id": str(lease["lease_id"]),
+            "first_observed_at": lease["acquired_at"],
+            "last_activity_at": lease["renewed_at"],
+            "authority_source": "actor_lease",
+        }
+    elif proposal_before_kill is not None and proposal_before_kill["status"] == "claimed":
+        claimed_owner = str(proposal_before_kill["claimed_owner_id"] or "").strip()
         claimed_run = str(proposal_before_kill["claimed_run_id"] or "").strip()
+        claim_lease = None
         if claimed_run:
-            retirement_source = self.conn.execute(
+            claim_leases = self.conn.execute(
                 """SELECT * FROM service_leases
                      WHERE operation_id=? AND lease_kind='actor' AND run_id=?
-                     ORDER BY actor_attempt_seq DESC LIMIT 1""",
+                     ORDER BY actor_attempt_seq DESC""",
                 (operation_id, claimed_run),
-            ).fetchone()
-            if retirement_source is None:
-                raise DishRuleError(
-                    "CONFLICT",
-                    "Dish cannot prove the service owner for the claimed proposal run",
-                    rule="kill_retirement_identity_missing",
-                    details={
-                        "operation_id": operation_id,
-                        "proposal_id": proposal_before_kill["proposal_id"],
-                        "run_id": claimed_run,
-                    },
-                )
-    if retirement_source is None:
-        retirement_source = self.conn.execute(
-            """SELECT * FROM service_leases
-                 WHERE operation_id=? AND lease_kind='actor'
-                 ORDER BY actor_attempt_seq DESC LIMIT 1""",
-            (operation_id,),
-        ).fetchone()
+            ).fetchall()
+            claim_owners = {str(row["owner_id"]) for row in claim_leases}
+            if len(claim_owners) == 1:
+                claim_lease = claim_leases[0]
+                if not claimed_owner:
+                    claimed_owner = next(iter(claim_owners))
+        if not claimed_owner or not claimed_run:
+            raise DishRuleError(
+                "CONFLICT",
+                "Dish cannot prove the exact owner/run for this proposal claim; no authority was changed",
+                rule="kill_revocation_identity_missing",
+                details={
+                    "operation_id": operation_id,
+                    "proposal_id": proposal_before_kill["proposal_id"],
+                    "run_id": claimed_run or None,
+                },
+            )
+        revocation_target = {
+            "owner_id": claimed_owner,
+            "run_id": claimed_run,
+            "source_lease_id": (
+                None if claim_lease is None else str(claim_lease["lease_id"])
+            ),
+            "first_observed_at": (
+                proposal_before_kill["claimed_at"]
+                if claim_lease is None
+                else claim_lease["acquired_at"]
+            ),
+            "last_activity_at": proposal_before_kill["claimed_at"],
+            "authority_source": "semantic_proposal_claim",
+        }
+    elif latest_actor_lease is not None:
+        revocation_target = {
+            "owner_id": str(latest_actor_lease["owner_id"]),
+            "run_id": str(latest_actor_lease["run_id"]),
+            "source_lease_id": str(latest_actor_lease["lease_id"]),
+            "first_observed_at": latest_actor_lease["acquired_at"],
+            "last_activity_at": latest_actor_lease["renewed_at"],
+            "authority_source": "historical_actor_lease",
+        }
 
     claim = live_operation_execution_claim(self.conn, operation_id=operation_id)
     if claim is not None:
@@ -969,7 +1020,7 @@ def _command_kill(
             details={
                 "dish_id": target["dish_id"],
                 "operation_id": operation_id,
-                "run_id": None if retirement_source is None else retirement_source["run_id"],
+                "run_id": None if revocation_target is None else revocation_target["run_id"],
                 "command": claim["command"],
                 "acquired_at": claim["acquired_at"],
                 "human_consequence": (
@@ -979,21 +1030,21 @@ def _command_kill(
         )
 
     fenced = None
-    if retirement_source is not None:
-        target_owner = str(retirement_source["owner_id"])
-        target_run = str(retirement_source["run_id"])
-        source_lease_id = str(retirement_source["lease_id"])
-        with immediate_transaction(self.conn, "kill_retire_operation_run"):
+    if revocation_target is not None:
+        target_owner = str(revocation_target["owner_id"])
+        target_run = str(revocation_target["run_id"])
+        source_lease_id = revocation_target["source_lease_id"]
+        with immediate_transaction(self.conn, "kill_revoke_operation_run"):
             claim = live_operation_execution_claim(self.conn, operation_id=operation_id)
             if claim is not None:
                 raise DishRuleError(
                     "CONFLICT",
-                    "Dish began committing a workflow mutation before the run could be fenced",
+                    "Dish began committing a workflow mutation before the run could be revoked",
                     rule="kill_mutation_in_progress",
                     retryable=True,
                     details={"dish_id": target["dish_id"], "operation_id": operation_id},
                 )
-            retirement = retire_operation_run_in_transaction(
+            revocation = revoke_operation_run_in_transaction(
                 self.conn,
                 operation_id=operation_id,
                 owner_id=target_owner,
@@ -1001,10 +1052,9 @@ def _command_kill(
                 source_lease_id=source_lease_id,
                 reason=f"Marco kill/replace: {clean_reason}",
             )
-            # Lease cleanup is secondary to retirement.  If the selected lease
-            # was released/replaced before this transaction, touch only a current
-            # lease still owned by the exact retired principal; a successor lease
-            # is never expired.
+            # Lease cleanup is secondary to revocation. If the selected lease
+            # disappeared before this writer transaction, the revocation still
+            # commits. A successor lease is never touched.
             current = LeaseManager(self.conn).active_for_operation(operation_id)
             if (
                 current is not None
@@ -1016,15 +1066,32 @@ def _command_kill(
                     reason=f"Marco kill/replace: {clean_reason}",
                     manage_transaction=False,
                 )
+            # A claimed semantic proposal is preserved, not answered. Releasing
+            # the exact killed run's claim is part of the same authority
+            # transaction so there is no revoked-but-still-claimed gap.
+            current_proposal = active_proposal_for_operation(self.conn, operation_id)
+            if (
+                current_proposal is not None
+                and current_proposal["status"] == "claimed"
+                and current_proposal["claimed_owner_id"] == target_owner
+                and current_proposal["claimed_run_id"] == target_run
+            ):
+                release_semantic_proposal_claim_in_transaction(
+                    self.conn,
+                    proposal_id=str(current_proposal["proposal_id"]),
+                    run_id=target_run,
+                    reason=f"applying run killed by Marco: {clean_reason}",
+                )
         fenced = {
             "owner_id": target_owner,
             "run_id": target_run,
             "lease_id": source_lease_id,
-            "first_observed_at": retirement_source["acquired_at"],
-            "last_activity_at": retirement_source["renewed_at"],
-            "authority_state": "retired",
-            "retired_at": retirement["retired_at"],
-            "retirement_id": retirement["retirement_id"],
+            "first_observed_at": revocation_target["first_observed_at"],
+            "last_activity_at": revocation_target["last_activity_at"],
+            "authority_source": revocation_target["authority_source"],
+            "authority_state": "revoked",
+            "revoked_at": revocation["revoked_at"],
+            "revocation_id": revocation["revocation_id"],
         }
 
     # Reconcile interrupted effects before moving ownership.  This is plumbing,
@@ -1049,16 +1116,6 @@ def _command_kill(
         )
 
     proposal = active_proposal_for_operation(self.conn, operation_id)
-    if proposal is not None and proposal["status"] == "claimed":
-        claimed_run = str(proposal["claimed_run_id"] or "")
-        if fenced is not None and claimed_run == fenced["run_id"]:
-            release_semantic_proposal_claim(
-                self.conn,
-                proposal_id=str(proposal["proposal_id"]),
-                run_id=claimed_run,
-                reason=f"applying run replaced by Marco: {clean_reason}",
-            )
-            proposal = active_proposal_for_operation(self.conn, operation_id)
 
     # A semantic proposal is a deliberate durable checkpoint.  Killing its agent
     # run never answers the proposal for Marco.
@@ -1146,15 +1203,15 @@ def _command_kill(
                 else "no_outstanding_invocation"
             )
             consequence = (
-                "The prior run is durably retired. The workflow is mechanically ready for a fresh agent to reclaim."
+                "The prior run is durably revoked. The workflow is mechanically ready for a fresh agent to reclaim."
                 if safe_reclaim_ready and fenced is not None
                 else "The prior run already has no Dish authority. The workflow is mechanically ready for a fresh agent to reclaim."
                 if safe_reclaim_ready
-                else "The prior run is durably retired. The real Evidence/Human Review checkpoint remains intact."
+                else "The prior run is durably revoked. The real Evidence/Human Review checkpoint remains intact."
                 if held and fenced is not None
                 else "The prior run already has no Dish authority. The real Evidence/Human Review checkpoint remains intact."
                 if held
-                else "The exact prior run is durably retired; no additional recovery work is required."
+                else "The exact prior run is durably revoked; no additional recovery work is required."
                 if fenced is not None
                 else "Nothing was changed; Dish has no currently authorized or dead-bound run that needs replacement."
             )
@@ -2370,6 +2427,7 @@ def _command_review_approve(
             proposal_id=clean_id,
             agent=MECHANICAL_PROPOSAL_AGENT,
             model="dish-mechanical",
+            owner_id="dish-mechanical",
             run_id=mechanical_run_id,
             request_id=None,
             schema=release.schema,

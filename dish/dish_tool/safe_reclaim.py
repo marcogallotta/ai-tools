@@ -13,6 +13,7 @@ from .constants import COOKING_PROJECT_GID
 from .database import (
     complete_operation_step,
     declare_operation_step,
+    operation_run_revocation,
     record_actor_fact,
     record_audit,
 )
@@ -686,6 +687,24 @@ def execute_safe_reclaim(
     ).fetchone()[0] is None else "terminated_actor_lease"
 
     with immediate_transaction(conn, "execute_safe_reclaim"):
+        revoked = operation_run_revocation(
+            conn,
+            operation_id=operation_id,
+            owner_id=requested_owner_id,
+            run_id=requested_run_id,
+        )
+        if revoked is not None:
+            raise DishRuleError(
+                "AGENT_MISMATCH",
+                "This Dish run has been killed.",
+                rule="killed_run_revoked",
+                details={
+                    "operation_id": operation_id,
+                    "revocation_id": revoked["revocation_id"],
+                    "revoked_at": revoked["revoked_at"],
+                },
+            )
+
         # Re-run the complete predicate while holding the SQLite writer lock.  This
         # revalidates every DB-owned eligibility fact and performs a final live-task
         # identity/placement read before the source can be terminalized.  Any drift

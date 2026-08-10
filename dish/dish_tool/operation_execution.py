@@ -101,6 +101,94 @@ def _identity(row: Mapping[str, Any]) -> ProcessIdentity:
     )
 
 
+def _assert_current_service_authority(
+    conn: sqlite3.Connection,
+    *,
+    operation_id: str,
+    owner_id: str | None,
+    run_id: str | None,
+    authority_now: str | None = None,
+) -> None:
+    """Fence a service mutation at the execution-claim transaction boundary.
+
+    Connected-agent lease admission happens before command dispatch.  That check
+    is advisory by the time a later SQLite writer transaction begins: Marco may
+    revoke the exact run in between.  When a service principal is supplied, the
+    execution claim therefore revalidates the same owner/run and its current
+    actor lease while holding the writer lock that creates the mutation claim.
+
+    Low-level/admin recovery callers that do not execute under an actor lease do
+    not supply a service principal and retain their existing authority boundary.
+    """
+
+    clean_owner = str(owner_id or "").strip() or None
+    clean_run = str(run_id or "").strip() or None
+    if clean_owner is None and clean_run is None:
+        return
+    if clean_owner is None or clean_run is None:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "operation execution authority requires both service owner and run identity",
+            rule="operation_execution_authority_identity_required",
+        )
+
+    revoked = conn.execute(
+        """SELECT revocation_id,revoked_at
+             FROM operation_run_revocations
+            WHERE operation_id=? AND owner_id=? AND run_id=?""",
+        (operation_id, clean_owner, clean_run),
+    ).fetchone()
+    if revoked is not None:
+        raise DishRuleError(
+            "AGENT_MISMATCH",
+            "This Dish run has been killed.",
+            rule="killed_run_revoked",
+            details={
+                "operation_id": operation_id,
+                "revocation_id": revoked["revocation_id"],
+                "revoked_at": revoked["revoked_at"],
+            },
+        )
+
+    lease = conn.execute(
+        """SELECT * FROM service_leases
+             WHERE operation_id=? AND lease_kind='actor' AND released_at IS NULL""",
+        (operation_id,),
+    ).fetchone()
+    if lease is None:
+        raise DishRuleError(
+            "AGENT_MISMATCH",
+            "this run no longer has current Dish mutation authority",
+            rule="service_lease_missing",
+            details={"operation_id": operation_id},
+        )
+    if lease["owner_id"] != clean_owner or lease["run_id"] != clean_run:
+        raise DishRuleError(
+            "AGENT_MISMATCH",
+            "service lease belongs to another client run",
+            rule="service_lease_owner_mismatch",
+            details={
+                "operation_id": operation_id,
+                "owner_id": lease["owner_id"],
+                "run_id": lease["run_id"],
+            },
+        )
+    expired = conn.execute(
+        "SELECT julianday(?)<=julianday(?)",
+        (lease["expires_at"], authority_now or utc_now()),
+    ).fetchone()[0]
+    if expired:
+        raise DishRuleError(
+            "CONFLICT",
+            "service lease expired and requires administrative recovery",
+            rule="service_lease_expired",
+            details={
+                "operation_id": operation_id,
+                "expires_at": lease["expires_at"],
+            },
+        )
+
+
 def _max_rowid(conn: sqlite3.Connection, table: str, operation_id: str) -> int:
     row = conn.execute(
         f"SELECT COALESCE(MAX(rowid), 0) FROM {table} WHERE operation_id=?",
@@ -647,6 +735,9 @@ def claim_operation_execution(
     operation_id: str,
     command: str,
     request_id: str | None = None,
+    owner_id: str | None = None,
+    run_id: str | None = None,
+    authority_now: str | None = None,
 ) -> OperationExecutionClaim:
     """Atomically reserve an operation and persist this execution's baseline."""
     identity = current_process_identity()
@@ -662,6 +753,13 @@ def claim_operation_execution(
             raise DishRuleError(
                 "NOT_FOUND", "operation not found", rule="operation_not_found"
             )
+        _assert_current_service_authority(
+            conn,
+            operation_id=operation_id,
+            owner_id=owner_id,
+            run_id=run_id,
+            authority_now=authority_now,
+        )
         existing = conn.execute(
             "SELECT * FROM operation_execution_claims WHERE operation_id=?",
             (operation_id,),

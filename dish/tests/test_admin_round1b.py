@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from dish_service.admin_cli import build_parser
 from dish_service.application import DishService
 from dish_service.config import ServiceConfig
@@ -94,7 +96,7 @@ def test_kill_frontend_url_fences_run_and_prepares_safe_successor() -> None:
     assert result["data"]["outcome"] == "replacement_ready"
     assert result["data"]["dish_id"] == _dish_id()
     assert result["data"]["fenced_invocation"]["run_id"] == "dead-run"
-    assert result["data"]["fenced_invocation"]["authority_state"] == "retired"
+    assert result["data"]["fenced_invocation"]["authority_state"] == "revoked"
     released = conn.execute(
         "SELECT released_at,release_reason FROM service_leases WHERE lease_id=?",
         (lease["lease_id"],),
@@ -127,9 +129,20 @@ def test_kill_inactive_safe_reclaimable_run_does_not_invent_abandonment() -> Non
 
     assert result["ok"], result
     assert result["data"]["outcome"] == "replacement_ready"
-    assert result["data"]["fenced_invocation"]["run_id"] == lease["run_id"]
-    assert result["data"]["fenced_invocation"]["authority_state"] == "retired"
+    fenced = result["data"]["fenced_invocation"]
+    assert fenced["owner_id"] == lease["owner_id"]
+    assert fenced["run_id"] == lease["run_id"]
+    assert fenced["lease_id"] == lease["lease_id"]
+    assert fenced["authority_source"] == "historical_actor_lease"
+    assert fenced["authority_state"] == "revoked"
     assert result["data"].get("abandonment") is None
+    revocation = conn.execute(
+        """SELECT * FROM operation_run_revocations
+             WHERE operation_id=? AND owner_id=? AND run_id=?""",
+        (operation["operation_id"], lease["owner_id"], lease["run_id"]),
+    ).fetchone()
+    assert revocation is not None
+    assert revocation["source_lease_id"] == lease["lease_id"]
     assert conn.execute(
         "SELECT COUNT(*) FROM abandonment_attempts WHERE source_operation_id=?",
         (operation["operation_id"],),
@@ -137,6 +150,20 @@ def test_kill_inactive_safe_reclaimable_run_does_not_invent_abandonment() -> Non
     assert conn.execute(
         "SELECT released_at FROM service_leases WHERE lease_id=?", (lease["lease_id"],)
     ).fetchone()["released_at"] is not None
+
+    old = ServicePrincipal(str(lease["owner_id"]), str(lease["run_id"]))
+    with pytest.raises(DishRuleError) as excinfo:
+        LeaseManager(conn).acquire(operation["operation_id"], old)
+    assert excinfo.value.rule == "killed_run_revoked"
+    with pytest.raises(DishRuleError) as excinfo:
+        claim_operation_execution(
+            conn,
+            operation_id=operation["operation_id"],
+            command="prepare",
+            owner_id=old.owner_id,
+            run_id=old.run_id,
+        )
+    assert excinfo.value.rule == "killed_run_revoked"
 
 
 
@@ -204,7 +231,11 @@ def test_kill_fails_closed_while_workflow_mutation_is_actively_committing() -> N
         operation["operation_id"], ServicePrincipal("owner", "live-run")
     )
     claim_operation_execution(
-        conn, operation_id=operation["operation_id"], command="prepare"
+        conn,
+        operation_id=operation["operation_id"],
+        command="prepare",
+        owner_id="owner",
+        run_id="live-run",
     )
     app = DishAdminApplication(conn, backend=backend)
 
@@ -264,28 +295,28 @@ def test_kill_release_is_durable_revocation_before_abandonment_finishes(monkeypa
 
     import dish_tool.admin as admin_module
 
-    def fail_after_retirement(*args, **kwargs):
+    def fail_after_revocation(*args, **kwargs):
         raise DishRuleError(
             "BACKEND_UNCERTAIN",
-            "injected after kill retirement",
-            rule="test_kill_post_retirement_failure",
+            "injected after kill revocation",
+            rule="test_kill_post_revocation_failure",
         )
 
-    monkeypatch.setattr(admin_module, "_command_abandon_operation", fail_after_retirement)
+    monkeypatch.setattr(admin_module, "_command_abandon_operation", fail_after_revocation)
     result = app.execute("kill", dish=_dish_id(), reason="replace dead conversation")
     assert not result["ok"]
 
-    retired = conn.execute(
+    released = conn.execute(
         "SELECT released_at,release_reason FROM service_leases WHERE operation_id=? ORDER BY actor_attempt_seq DESC LIMIT 1",
         (operation["operation_id"],),
     ).fetchone()
-    assert retired["released_at"] is not None
-    assert retired["release_reason"].startswith("Marco kill/replace:")
+    assert released["released_at"] is not None
+    assert released["release_reason"].startswith("Marco kill/replace:")
 
     try:
         LeaseManager(conn).acquire(operation["operation_id"], old)
     except DishRuleError as exc:
-        assert exc.rule == "killed_run_reacquire_forbidden"
+        assert exc.rule == "killed_run_revoked"
     else:
         raise AssertionError("killed run reacquired the source operation")
 
@@ -325,6 +356,7 @@ def test_kill_preserved_claimed_proposal_cannot_be_reclaimed_by_killed_run(tmp_p
         agent="codex",
         run_id=old.run_id,
         request_id=None,
+        owner_id=old.owner_id,
     )
     admin = DishAdminApplication(
         app.conn, backend=backend, release_loader=app.release_loader
@@ -343,7 +375,7 @@ def test_kill_preserved_claimed_proposal_cannot_be_reclaimed_by_killed_run(tmp_p
     try:
         LeaseManager(app.conn).acquire(operation_id, old, context_cycle_id=approved["cycle_id"])
     except DishRuleError as exc:
-        assert exc.rule == "killed_run_reacquire_forbidden"
+        assert exc.rule == "killed_run_revoked"
     else:
         raise AssertionError("killed proposal applier reacquired the source operation")
 
@@ -373,7 +405,7 @@ def test_kill_preserved_claimed_proposal_cannot_be_reclaimed_by_killed_run(tmp_p
         request_id=str(uuid.uuid4()),
     )
     assert not blocked_apply["ok"]
-    assert blocked_apply["errors"][0]["rule"] == "service_lease_claim_forbidden"
+    assert blocked_apply["errors"][0]["rule"] == "killed_run_revoked"
     assert backend.writes == writes_before_retry
     proposal_after_retry = app.conn.execute(
         "SELECT status,claimed_run_id FROM semantic_proposals WHERE proposal_id=?",
@@ -383,8 +415,60 @@ def test_kill_preserved_claimed_proposal_cannot_be_reclaimed_by_killed_run(tmp_p
     assert proposal_after_retry["claimed_run_id"] is None
 
 
+def test_revoked_run_inspect_does_not_advertise_approved_proposal_application(tmp_path) -> None:
+    service, _backend, proposal_id, _task_gid = _approved_service_proposal_runtime(
+        tmp_path
+    )
+    principal = ServicePrincipal("action", "killed-proposal-inspector")
+    conn = initialize_database(service.config.db_path)
+    try:
+        proposal = conn.execute(
+            "SELECT operation_id FROM semantic_proposals WHERE proposal_id=?",
+            (proposal_id,),
+        ).fetchone()
+        operation_id = str(proposal["operation_id"])
+    finally:
+        conn.close()
 
-def test_kill_retirement_survives_selected_lease_release_before_writer_lock(monkeypatch) -> None:
+    import uuid
+
+    before = service.execute_agent(
+        "inspect",
+        {"agent": "codex", "submission_id": operation_id},
+        principal=principal,
+        request_id=str(uuid.uuid4()),
+    )
+    assert "apply-proposal" in before["allowed_actions"]
+
+    conn = initialize_database(service.config.db_path)
+    try:
+        from dish_tool.database import revoke_operation_run_in_transaction
+        from dish_tool.transactions import immediate_transaction
+
+        with immediate_transaction(conn, "test_revoke_proposal_inspector"):
+            revoke_operation_run_in_transaction(
+                conn,
+                operation_id=operation_id,
+                owner_id=principal.owner_id,
+                run_id=principal.run_id,
+                reason="test explicit kill",
+            )
+    finally:
+        conn.close()
+
+    after = service.execute_agent(
+        "inspect",
+        {"agent": "codex", "submission_id": operation_id},
+        principal=principal,
+        request_id=str(uuid.uuid4()),
+    )
+    assert after["allowed_actions"] == []
+    assert after["data"]["service_access"]["state"] == "revoked"
+    assert after["data"]["service_access"]["rule"] == "killed_run_revoked"
+
+
+
+def test_kill_revocation_survives_selected_lease_release_before_writer_lock(monkeypatch) -> None:
     conn = initialize_database(":memory:")
     backend = Backend(section="pi", task_gid=_NUMERIC_TASK_GID)
     operation = _numeric_task_source(conn, backend)
@@ -413,23 +497,23 @@ def test_kill_retirement_survives_selected_lease_release_before_writer_lock(monk
     assert killed["ok"], killed
     assert killed["data"]["fenced_invocation"]["run_id"] == old.run_id
 
-    retirement = conn.execute(
-        """SELECT * FROM operation_run_retirements
+    revocation = conn.execute(
+        """SELECT * FROM operation_run_revocations
              WHERE operation_id=? AND owner_id=? AND run_id=?""",
         (operation["operation_id"], old.owner_id, old.run_id),
     ).fetchone()
-    assert retirement is not None
-    assert retirement["source_lease_id"] == selected["lease_id"]
+    assert revocation is not None
+    assert revocation["source_lease_id"] == selected["lease_id"]
 
     try:
         LeaseManager(conn).acquire(operation["operation_id"], old)
     except DishRuleError as exc:
-        assert exc.rule == "killed_run_reacquire_forbidden"
+        assert exc.rule == "killed_run_revoked"
     else:
-        raise AssertionError("run released before kill lock reacquired after retirement")
+        raise AssertionError("run released before kill lock reacquired after revocation")
 
 
-def test_kill_claimed_proposal_without_active_lease_retires_exact_run_and_preserves_successor(tmp_path) -> None:
+def test_kill_claimed_proposal_without_active_lease_revokes_exact_run_and_preserves_successor(tmp_path) -> None:
     app, backend, operation_id, _ = make_app(tmp_path)
     review_and_inspect(app, agent="codex", run_id="proposal-author-no-lease")
     candidate = tmp_path / "proposal-killed-no-lease.txt"
@@ -455,7 +539,7 @@ def test_kill_claimed_proposal_without_active_lease_retires_exact_run_and_preser
         reason="Marco approved exact proposal",
     )
     old = ServicePrincipal("action", "proposal-applier-no-lease")
-    lease = LeaseManager(app.conn).acquire(
+    LeaseManager(app.conn).acquire(
         operation_id, old, context_cycle_id=approved["cycle_id"]
     )
     claim_semantic_proposal(
@@ -464,6 +548,7 @@ def test_kill_claimed_proposal_without_active_lease_retires_exact_run_and_preser
         agent="codex",
         run_id=old.run_id,
         request_id=None,
+        owner_id=old.owner_id,
     )
     LeaseManager(app.conn).release(
         operation_id, old, reason="proposal applier conversation ended"
@@ -485,20 +570,26 @@ def test_kill_claimed_proposal_without_active_lease_retires_exact_run_and_preser
     ).fetchone()
     assert proposal["status"] == "approved"
     assert proposal["claimed_run_id"] is None
-    retirement = app.conn.execute(
-        """SELECT * FROM operation_run_retirements
+    revocation = app.conn.execute(
+        """SELECT * FROM operation_run_revocations
              WHERE operation_id=? AND owner_id=? AND run_id=?""",
         (operation_id, old.owner_id, old.run_id),
     ).fetchone()
-    assert retirement is not None
-    assert retirement["source_lease_id"] == lease["lease_id"]
+    assert revocation is not None
+    assert revocation["source_lease_id"] is not None
+    source = app.conn.execute(
+        "SELECT owner_id,run_id,released_at FROM service_leases WHERE lease_id=?",
+        (revocation["source_lease_id"],),
+    ).fetchone()
+    assert (source["owner_id"], source["run_id"]) == (old.owner_id, old.run_id)
+    assert source["released_at"] is not None
 
     try:
         LeaseManager(app.conn).acquire(
             operation_id, old, context_cycle_id=approved["cycle_id"]
         )
     except DishRuleError as exc:
-        assert exc.rule == "killed_run_reacquire_forbidden"
+        assert exc.rule == "killed_run_revoked"
     else:
         raise AssertionError("killed proposal applier reacquired without an active lease")
 
@@ -528,7 +619,7 @@ def test_kill_claimed_proposal_without_active_lease_retires_exact_run_and_preser
         request_id=str(uuid.uuid4()),
     )
     assert not blocked_apply["ok"]
-    assert blocked_apply["errors"][0]["rule"] == "service_lease_claim_forbidden"
+    assert blocked_apply["errors"][0]["rule"] == "killed_run_revoked"
     assert backend.writes == writes_before_retry
     proposal_after_retry = app.conn.execute(
         "SELECT status,claimed_run_id FROM semantic_proposals WHERE proposal_id=?",
@@ -542,3 +633,70 @@ def test_kill_claimed_proposal_without_active_lease_retires_exact_run_and_preser
         operation_id, successor, context_cycle_id=approved["cycle_id"]
     )
     assert successor_lease["run_id"] == successor.run_id
+
+
+def test_killed_run_cannot_renew_even_if_a_matching_lease_row_remains(tmp_path) -> None:
+    app, backend, operation_id, _ = make_app(tmp_path)
+    old = ServicePrincipal("action", "renew-killed-run")
+    lease = LeaseManager(app.conn).acquire(operation_id, old)
+    from dish_tool.database import revoke_operation_run_in_transaction
+    from dish_tool.transactions import immediate_transaction
+
+    with immediate_transaction(app.conn, "test_revoke_without_lease_cleanup"):
+        revoke_operation_run_in_transaction(
+            app.conn,
+            operation_id=operation_id,
+            owner_id=old.owner_id,
+            run_id=old.run_id,
+            source_lease_id=lease["lease_id"],
+            reason="test exact revocation",
+        )
+
+    try:
+        LeaseManager(app.conn).renew(operation_id, old)
+    except DishRuleError as exc:
+        assert exc.rule == "killed_run_revoked"
+        assert str(exc) == "This Dish run has been killed."
+    else:
+        raise AssertionError("killed run renewed authority")
+
+
+def test_normal_non_kill_lease_release_allows_same_run_to_reacquire(tmp_path) -> None:
+    app, _backend, operation_id, _ = make_app(tmp_path)
+    principal = ServicePrincipal("action", "normal-reacquire")
+    leases = LeaseManager(app.conn)
+    first = leases.acquire(operation_id, principal)
+    leases.admin_expire_selected(first["lease_id"], reason="ordinary process expiry")
+
+    second = leases.acquire(operation_id, principal)
+    assert second["run_id"] == principal.run_id
+    assert second["owner_id"] == principal.owner_id
+    assert second["lease_id"] != first["lease_id"]
+
+
+def test_inspect_reports_explicit_revocation_even_before_lease_cleanup() -> None:
+    conn = initialize_database(":memory:")
+    backend = Backend(section="pi", task_gid=_NUMERIC_TASK_GID)
+    operation = _numeric_task_source(conn, backend)
+    principal = ServicePrincipal("owner", "revoked-before-cleanup")
+    lease = LeaseManager(conn).acquire(operation["operation_id"], principal)
+    from dish_tool.database import revoke_operation_run_in_transaction
+    from dish_tool.transactions import immediate_transaction
+
+    with immediate_transaction(conn, "test_explicit_revocation_visibility"):
+        revoke_operation_run_in_transaction(
+            conn,
+            operation_id=operation["operation_id"],
+            owner_id=principal.owner_id,
+            run_id=principal.run_id,
+            source_lease_id=lease["lease_id"],
+            reason="test explicit revocation",
+        )
+
+    result = DishAdminApplication(conn, backend=backend).execute(
+        "inspect", dish=_dish_id()
+    )
+
+    assert result["ok"], result
+    assert result["data"]["outstanding_invocation"]["run_id"] == principal.run_id
+    assert result["data"]["outstanding_invocation"]["authority_state"] == "revoked"

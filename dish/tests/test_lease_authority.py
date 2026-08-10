@@ -5,7 +5,9 @@ import uuid
 from dish_service.application import DishService
 from dish_service.config import ServiceConfig
 from dish_service.leases import LeaseManager, ServicePrincipal
+from dish_tool.database import revoke_operation_run_in_transaction
 from dish_tool.database_initialization import initialize_database
+from dish_tool.transactions import immediate_transaction
 from tests.support.service_foundation import _release_loader
 from tests.support.service_leases import Clock
 from tests.support.verification import Backend, TASK
@@ -50,6 +52,58 @@ def test_inspect_actions_are_principal_aware_and_read_only(tmp_path):
         assert lease["released_at"] is None
     finally:
         conn.close()
+
+
+def test_revoked_run_inspect_does_not_advertise_missing_lease_mutations(tmp_path):
+    service, _backend = _service(tmp_path)
+    owner = _principal("action", "killed-owner-run")
+    started = _start(service, owner)
+    operation_id = started["submission_id"]
+
+    conn = initialize_database(service.config.db_path)
+    try:
+        LeaseManager(conn).release(
+            operation_id,
+            None,
+            reason="test process ended before explicit kill",
+            admin=True,
+        )
+    finally:
+        conn.close()
+
+    before_kill = service.execute_agent(
+        "inspect",
+        {"agent": "gpt", "submission_id": operation_id},
+        principal=owner,
+        request_id=str(uuid.uuid4()),
+    )
+    assert "prepare" in before_kill["allowed_actions"]
+    assert before_kill["data"]["service_access"]["state"] == "claimable_by_run"
+
+    conn = initialize_database(service.config.db_path)
+    try:
+        with immediate_transaction(conn, "test_revoke_inspect_principal"):
+            revoke_operation_run_in_transaction(
+                conn,
+                operation_id=operation_id,
+                owner_id=owner.owner_id,
+                run_id=owner.run_id,
+                reason="test explicit kill",
+            )
+    finally:
+        conn.close()
+
+    inspected = service.execute_agent(
+        "inspect",
+        {"agent": "gpt", "submission_id": operation_id},
+        principal=owner,
+        request_id=str(uuid.uuid4()),
+    )
+
+    assert inspected["ok"]
+    assert inspected["allowed_actions"] == []
+    assert inspected["data"]["service_access"]["state"] == "revoked"
+    assert inspected["data"]["service_access"]["rule"] == "killed_run_revoked"
 
 
 def test_expired_recovery_releases_admin_and_original_run_may_reclaim(tmp_path):

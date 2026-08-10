@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from dish_tool.errors import DishRuleError
-from dish_tool.database import operation_run_retirement
+from dish_tool.database import operation_run_revocation
 from dish_tool.operation_execution import (
     operation_recovery_pending,
     unresolved_operation_executions,
@@ -99,28 +99,28 @@ class LeaseManager:
             raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
         return row
 
-    def _retirement(self, operation_id: str, principal: ServicePrincipal):
-        return operation_run_retirement(
+    def _revocation(self, operation_id: str, principal: ServicePrincipal):
+        return operation_run_revocation(
             self.conn,
             operation_id=operation_id,
             owner_id=principal.owner_id,
             run_id=principal.run_id,
         )
 
-    def _assert_not_retired(
+    def assert_not_revoked(
         self, operation_id: str, principal: ServicePrincipal
     ) -> None:
-        retired = self._retirement(operation_id, principal)
-        if retired is None:
+        revoked = self._revocation(operation_id, principal)
+        if revoked is None:
             return
         raise DishRuleError(
             "AGENT_MISMATCH",
-            "this client run was durably retired by Marco for this operation",
-            rule="killed_run_reacquire_forbidden",
+            "This Dish run has been killed.",
+            rule="killed_run_revoked",
             details={
                 "operation_id": operation_id,
-                "retirement_id": retired["retirement_id"],
-                "retired_at": retired["retired_at"],
+                "revocation_id": revoked["revocation_id"],
+                "revoked_at": revoked["revoked_at"],
             },
         )
 
@@ -132,7 +132,7 @@ class LeaseManager:
         now: datetime,
     ):
         if row is not None:
-            self._assert_not_retired(str(row["operation_id"]), principal)
+            self.assert_not_revoked(str(row["operation_id"]), principal)
         if row is None:
             raise DishRuleError(
                 "CONFLICT", "operation has no active service lease",
@@ -207,7 +207,7 @@ class LeaseManager:
         expiry = now + timedelta(seconds=self.ttl_seconds)
         with immediate_transaction(self.conn, "acquire_service_lease"):
             op = self._operation(operation_id)
-            self._assert_not_retired(operation_id, principal)
+            self.assert_not_revoked(operation_id, principal)
             if op["status"] != "open":
                 raise DishRuleError(
                     "WRONG_STATE",
