@@ -6,6 +6,7 @@ Read `README.md` for repository purpose and host integration. For every change u
 
 - Genuine work uses production. Test is only for experiments, rehearsals, destructive testing, or Marco's explicit request. Confirm the target before an ambiguous mutation.
 - Agents may use `dish-admin --profile test`; production administration is Marco-only.
+- Do not run raw destructive SQL against production. A reviewed script must be written. Marco's explicit approval is required for genuine exceptions.
 - The production and test services are separate. Never print credentials, change the public Action route, or alter live dark-launch enablement without Marco's explicit authorization.
 - Dark launch is evidence collection only. SQLite and Asana remain authoritative until an explicit, fenced cutover. Read-only status checks are permitted; operating procedure is in `dish/docs/database-backend-dark-launch-runbook.md`.
 - A pasted live GPT transcript may refer to the deployed Action. Verify current state read-only before acting on an existing operation.
