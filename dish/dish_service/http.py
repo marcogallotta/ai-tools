@@ -353,7 +353,13 @@ class DishRequestHandler(BaseHTTPRequestHandler):
         if path == "/openapi/action.json":
             host = self.headers.get("Host") or "dish.example.invalid"
             server_url = self.server.service.config.action_public_base_url or f"https://{host}"
-            self._write_json(HTTPStatus.OK, action_openapi(server_url=server_url))
+            provider = getattr(self.server.service, "action_openapi", None)
+            document = (
+                provider(server_url=server_url)
+                if provider is not None
+                else action_openapi(server_url=server_url)
+            )
+            self._write_json(HTTPStatus.OK, document)
             return
         self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
 

@@ -8,6 +8,7 @@ import socketserver
 import threading
 import urllib.error
 import urllib.request
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -210,6 +211,80 @@ def _set_service_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DISH_SERVICE_ACTION_TOKEN", "section3-action-token")
 
 
+def test_postgresql_authority_runtime_is_opt_in() -> None:
+    args = service_main.build_parser().parse_args([])
+    assert args.postgresql_test_runtime is False
+
+
+def test_postgresql_authority_env_selects_pg_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setenv("DISH_AUTHORITY_BACKEND", "postgresql")
+    monkeypatch.setattr(
+        service_main,
+        "_run_postgresql_test_runtime",
+        lambda _args: calls.append("postgresql") or 0,
+    )
+
+    assert service_main.main([]) == 0
+    assert calls == ["postgresql"]
+
+
+def test_postgresql_runtime_arguments_can_come_from_test_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    args = service_main.build_parser().parse_args([])
+    values = {
+        "DISH_PG_DATABASE_URL": "postgresql+psycopg://user:pass@localhost/dish_agent_test",
+        "DISH_PG_EXPECTED_DATABASE_NAME": "dish_agent_test",
+        "DISH_PG_EXPECTED_SCHEMA_HEAD": "0035_persistence_constraint_integrity",
+        "DISH_PG_EXPECTED_RELEASE": "dish@test",
+        "DISH_PG_EXPECTED_GENERATION_ID": "00000000-0000-4000-8000-000000000123",
+        "DISH_PG_CURSOR_SECRET": "a-long-enough-test-cursor-secret",
+        "DISH_PG_AUTHORITY_STATE_DIR": str(tmp_path / "pg-authority"),
+    }
+    for key, value in values.items():
+        monkeypatch.setenv(key, value)
+
+    assert (
+        service_main._required_postgresql_runtime_argument(args, "database_url")
+        == values["DISH_PG_DATABASE_URL"]
+    )
+    assert service_main._required_postgresql_runtime_argument(
+        args, "expected_generation_id"
+    ) == uuid.UUID(values["DISH_PG_EXPECTED_GENERATION_ID"])
+    assert (
+        service_main._required_postgresql_runtime_argument(args, "state_dir")
+        == tmp_path / "pg-authority"
+    )
+
+
+def test_default_test_startup_keeps_legacy_service_composition(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[str] = []
+    config = ServiceConfig(
+        db_path=tmp_path / "legacy.sqlite3",
+        honest_root=tmp_path,
+        agent_token="legacy-agent-token",
+        admin_token="legacy-admin-token",
+        action_token="legacy-action-token",
+    )
+    monkeypatch.setattr(service_main.ServiceConfig, "from_env", lambda: config)
+    monkeypatch.setattr(
+        service_main, "_run_configured_service", lambda observed: calls.append("legacy") or 0
+    )
+    monkeypatch.setattr(
+        service_main,
+        "_run_postgresql_test_runtime",
+        lambda _args: calls.append("postgresql") or 0,
+    )
+
+    assert service_main.main([]) == 0
+    assert calls == ["legacy"]
+
+
 def test_postgresql_service_mode_requires_test_profile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -236,12 +311,14 @@ def test_postgresql_service_mode_reuses_loopback_service_configuration(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _set_service_env(monkeypatch)
+    monkeypatch.setenv("DISH_ACTION_PUBLIC_BASE_URL", "https://dish.example.invalid/test")
     for key in list(os.environ):
         if "ASANA" in key.upper():
             monkeypatch.delenv(key, raising=False)
     config = service_main._postgresql_runtime_config(_service_args(tmp_path))
     assert config.bind_host == "127.0.0.1"
     assert config.action_bind_host == "127.0.0.1"
+    assert config.action_public_base_url == "https://dish.example.invalid/test"
     assert config.legacy_writer_fence_path is None
 
 

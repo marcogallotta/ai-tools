@@ -127,3 +127,23 @@ schema and Action commands. The two services use distinct Action tokens.
 - **URL**: `https://127.0.0.1:4443/`. The Caddy internal root currently trusted by
   the local browser remains under `/home/marco/.local/share/caddy`; the managed
   Caddy unit reuses that state rather than issuing from another local CA.
+## Opt-in PostgreSQL-authoritative TEST rehearsal
+
+Normal `dish-service-test.service` remains legacy SQLite/Asana-authoritative. To rehearse the
+cutover runtime without Asana, keep the same service unit and set `DISH_AUTHORITY_BACKEND=postgresql`
+in the TEST environment together with the `DISH_PG_*` identity values documented in
+`deploy/systemd/service-test.env.example`. Also set `DISH_PROFILE=test` and remove/comment every
+populated Asana variable, including `ASANA_ENV`; PostgreSQL-authority startup fails closed if any
+environment key containing `ASANA` is populated. There is no fallback to the legacy service.
+
+Initialize the disposable TEST database with the existing PostgreSQL path: migrate it to the checked-in
+head, run `scripts/dish-pg-bootstrap-initial` against an importer-compatible synthetic or prebuilt
+NDJSON corpus, then run `scripts/dish-pg-import-legacy` with the bootstrap receipt identities. Those
+commands consume local corpus/checkouts and require no Asana read. Use the existing cutover/rehearsal
+admission tooling when mutation admission is required; do not create a TEST-only authority path.
+
+The Action listener remains the shared `dish-service` listener. In PostgreSQL authority mode its
+`/openapi/action.json` is supplied by the existing PostgreSQL Action contract and advertises only
+implemented PostgreSQL commands. `proposals`, `apply-proposal`, and `safe-reclaim` are intentionally
+not advertised: they require independent PostgreSQL workflow feature work rather than #67 transport
+or configuration wiring. Existing `--postgresql-test-runtime` rehearsal invocations remain supported.

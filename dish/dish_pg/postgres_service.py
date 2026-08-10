@@ -1,9 +1,9 @@
-"""TEST-only PostgreSQL authority adapter for the existing Dish HTTP service.
+"""PostgreSQL authority adapter for the existing Dish HTTP service.
 
-This module deliberately reuses ``dish-service`` and ``dish_service.http``.  It
+This module deliberately reuses ``dish-service`` and ``dish_service.http``. It
 does not introduce another listener, routing table, authentication model, or
-command framework.  The adapter is available only when the service process is
-started with its explicit PostgreSQL rehearsal flag and a TEST-only database.
+command framework. TEST rehearsal and a future cutover runtime therefore share
+this service composition; environment/startup policy decides where it may run.
 """
 from __future__ import annotations
 
@@ -24,8 +24,10 @@ from dish_tool.errors import DishRuleError
 from dish_tool.results import error_envelope
 
 from . import models
+from .command_contract import ACTION_COMMANDS
 from .command_port import CommandCall, CommandPortError, PostgresCommandPort
 from .database import DatabaseSettings, create_database_engine, session_factory, session_scope
+from .openapi import postgres_action_openapi
 from .workflow import (
     VALIDATION_FAILURE_REQUEST_KIND,
     RequestIdentityConflict,
@@ -97,7 +99,7 @@ def _section4_control_point(
 class PostgresRuntimeService:
     """Expose PostgreSQL command authority through the established HTTP service."""
 
-    _SUPPORTED_HTTP_SURFACES = frozenset({"agent"})
+    _SUPPORTED_HTTP_SURFACES = frozenset({"agent", "action"})
 
     def __init__(
         self,
@@ -122,17 +124,25 @@ class PostgresRuntimeService:
     def close(self) -> None:
         self._engine.dispose()
 
-    def supports_http_route(self, surface: str, _command: str) -> bool:
-        """Expose only routes implemented by this TEST-only adapter.
+    def supports_http_route(self, surface: str, command: str) -> bool:
+        """Expose only routes implemented by the PostgreSQL authority adapter.
 
-        The shared service transport has lease, administration, backup, action,
-        and argument-failure routes for the production ``DishService`` facade.
-        This adapter intentionally implements only the agent command boundary;
-        unsupported routes must therefore be hidden before dispatch rather than
-        falling through to missing facade methods.
+        The shared transport owns more private/admin routes than this adapter.
+        The public Action surface is intentionally limited to the already
+        implemented PostgreSQL command contract; unsupported legacy Action
+        commands remain hidden rather than falling through to another backend.
         """
 
-        return surface in self._SUPPORTED_HTTP_SURFACES
+        if surface == "agent":
+            return True
+        if surface == "action":
+            return command in ACTION_COMMANDS
+        return False
+
+    def action_openapi(self, *, server_url: str) -> dict[str, Any]:
+        """Return the PostgreSQL Action contract served by the shared listener."""
+
+        return postgres_action_openapi(server_url=server_url)
 
     def _identity(self) -> dict[str, Any]:
         try:
@@ -345,6 +355,23 @@ class PostgresRuntimeService:
                 retryable=True,
                 details={"error_type": type(exc).__name__},
             ) from exc
+
+
+    def renew_lease(
+        self,
+        operation_id: str,
+        principal: ServicePrincipal,
+        *,
+        request_id: str,
+    ) -> dict[str, Any]:
+        """Bridge the shared lease route into the canonical PostgreSQL command."""
+
+        return self.execute_agent(
+            "renew-lease",
+            {"operation_id": operation_id},
+            principal=principal,
+            request_id=request_id,
+        )
 
     def execute_agent(
         self,

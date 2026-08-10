@@ -102,7 +102,7 @@ def valid_scenario_evidence(identity: dict) -> dict:
                 "asana_environment_keys": [],
                 "bind_host": "127.0.0.1",
                 "action_bind_host": "127.0.0.1",
-                "supported_http_surfaces": ["agent"],
+                "supported_http_surfaces": ["action", "agent"],
             },
         },
         "command_boundary": {"result": {"ok": True}},

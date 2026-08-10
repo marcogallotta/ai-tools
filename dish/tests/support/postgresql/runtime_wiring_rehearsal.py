@@ -223,7 +223,7 @@ def _exercise_unsupported_routes(
             },
         ),
         (
-            f"{action_base_url}/v1/action/renew-lease",
+            f"{action_base_url}/v1/action/proposals",
             action_token,
             {
                 "client": {"run_id": str(run_id), "request_id": str(next(ids))},
@@ -681,7 +681,7 @@ def run_runtime_wiring_rehearsal(core_db, tmp_path) -> dict[str, object]:
         assert health["isolation"]["asana_environment_keys"] == []
         assert health["isolation"]["bind_host"] == "127.0.0.1"
         assert health["isolation"]["action_bind_host"] == "127.0.0.1"
-        assert health["isolation"]["supported_http_surfaces"] == ["agent"]
+        assert health["isolation"]["supported_http_surfaces"] == ["action", "agent"]
         evidence["service_health"] = health
         evidence["unsupported_test_service_routes"] = _exercise_unsupported_routes(
             private_base_url=private_base_url,

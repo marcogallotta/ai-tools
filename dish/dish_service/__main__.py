@@ -218,12 +218,41 @@ def _run_configured_service(config: ServiceConfig) -> int:
                 frontend_runtime.close()
 
 
+_POSTGRESQL_RUNTIME_ENV = {
+    "database_url": "DISH_PG_DATABASE_URL",
+    "expected_database": "DISH_PG_EXPECTED_DATABASE_NAME",
+    "expected_schema_head": "DISH_PG_EXPECTED_SCHEMA_HEAD",
+    "expected_release": "DISH_PG_EXPECTED_RELEASE",
+    "expected_generation_id": "DISH_PG_EXPECTED_GENERATION_ID",
+    "cursor_secret": "DISH_PG_CURSOR_SECRET",
+    "state_dir": "DISH_PG_AUTHORITY_STATE_DIR",
+}
+
+
 def _required_postgresql_runtime_argument(args, name: str):
     value = getattr(args, name)
     if value is None or (isinstance(value, str) and not value.strip()):
+        env_key = _POSTGRESQL_RUNTIME_ENV[name]
+        value = os.environ.get(env_key)
+        if name == "state_dir" and value:
+            value = Path(value)
+        elif name == "expected_generation_id" and value:
+            try:
+                value = uuid.UUID(value)
+            except ValueError as exc:
+                raise DishRuleError(
+                    "INVALID_ARGUMENT",
+                    f"{env_key} must be a UUID",
+                    rule="postgresql_runtime_argument_invalid",
+                    details={"argument": name},
+                ) from exc
+    if value is None or (isinstance(value, str) and not value.strip()):
         raise DishRuleError(
             "INVALID_ARGUMENT",
-            f"--{name.replace('_', '-')} is required for the PostgreSQL TEST runtime",
+            (
+                f"--{name.replace('_', '-')} or {_POSTGRESQL_RUNTIME_ENV[name]} "
+                "is required for the PostgreSQL TEST runtime"
+            ),
             rule="postgresql_runtime_argument_required",
             details={"argument": name},
         )
@@ -256,6 +285,7 @@ def _postgresql_runtime_config(args) -> ServiceConfig:
         port=int(os.environ.get("DISH_SERVICE_PORT", "0")),
         action_bind_host=os.environ.get("DISH_ACTION_BIND", "127.0.0.1"),
         action_port=int(os.environ.get("DISH_ACTION_PORT", "0")),
+        action_public_base_url=os.environ.get("DISH_ACTION_PUBLIC_BASE_URL"),
         agent_token=os.environ.get("DISH_SERVICE_AGENT_TOKEN"),
         admin_token=os.environ.get("DISH_SERVICE_ADMIN_TOKEN"),
         action_token=os.environ.get("DISH_SERVICE_ACTION_TOKEN"),
@@ -325,7 +355,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     try:
-        if args.postgresql_test_runtime:
+        authority_backend = os.environ.get("DISH_AUTHORITY_BACKEND", "legacy").strip().lower()
+        if authority_backend not in {"legacy", "postgresql"}:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "DISH_AUTHORITY_BACKEND must be legacy or postgresql",
+                rule="authority_backend_invalid",
+            )
+        if args.postgresql_test_runtime or authority_backend == "postgresql":
             return _run_postgresql_test_runtime(args)
         config = ServiceConfig.from_env()
         config.validate_runtime(require_action=True)

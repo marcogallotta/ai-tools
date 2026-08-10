@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+from dataclasses import replace
 from pathlib import Path
 
 from sqlalchemy import func, select
@@ -252,3 +253,108 @@ def test_http_postgresql_validation_persistence_unavailable_is_503(
         "PostgreSQL authority is unavailable; validation failure was not recorded"
     )
     assert validation_calls == 1
+
+
+def test_postgresql_runtime_exposes_only_implemented_action_commands(
+    workflow_db, tmp_path: Path
+) -> None:
+    factory, ids, context, _task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=run_id,
+        )
+
+    service = runtime_service(factory, tmp_path)
+    service.config = replace(
+        service.config,
+        action_token="postgres-action-token",
+        action_public_base_url="https://dish-pg-test.example.invalid/test",
+    )
+    assert service.supports_http_route("agent", "recover") is True
+    assert service.supports_http_route("action", "sections") is True
+    assert service.supports_http_route("action", "renew-lease") is True
+    assert service.supports_http_route("action", "proposals") is False
+    assert service.supports_http_route("action", "apply-proposal") is False
+    assert service.supports_http_route("action", "safe-reclaim") is False
+
+    with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="action") as server:
+        thread = start_server_thread(server, name="postgres-action-http")
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        request = urllib.request.Request(
+            f"{base}/v1/action/sections",
+            data=json.dumps(
+                {"client": {"run_id": str(run_id)}, "arguments": {"agent": "gpt"}}
+            ).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": "Bearer postgres-action-token",
+                "Content-Type": "application/json",
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=3.0) as response:
+                result = json.loads(response.read().decode("utf-8"))
+            with urllib.request.urlopen(
+                urllib.request.Request(
+                    f"{base}/openapi/action.json",
+                    headers={"Authorization": "Bearer postgres-action-token"},
+                ),
+                timeout=3.0,
+            ) as response:
+                openapi = json.loads(response.read().decode("utf-8"))
+        finally:
+            stop_server(server, thread)
+
+    assert result["ok"] is True
+    assert result["command"] == "sections"
+    assert openapi["servers"] == [{"url": "https://dish-pg-test.example.invalid/test"}]
+    assert "/v1/action/sections" in openapi["paths"]
+    assert "/v1/action/renew-lease" in openapi["paths"]
+    assert "/v1/action/proposals" not in openapi["paths"]
+    assert "/v1/action/apply-proposal" not in openapi["paths"]
+    assert "/v1/action/safe-reclaim" not in openapi["paths"]
+
+
+def test_postgresql_runtime_renew_lease_reuses_command_port(
+    workflow_db, tmp_path: Path, monkeypatch
+) -> None:
+    factory, ids, context, _task_id = workflow_db
+    run_id = _next(ids)
+    request_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=run_id,
+        )
+
+    service = runtime_service(factory, tmp_path)
+    captured: dict[str, object] = {}
+
+    def execute(command, arguments, *, principal, request_id):
+        captured.update(
+            command=command,
+            arguments=dict(arguments),
+            principal=principal,
+            request_id=request_id,
+        )
+        return {"ok": True}
+
+    monkeypatch.setattr(service, "execute_agent", execute)
+    principal = ServicePrincipal.from_values("gpt-action", str(run_id))
+    result = service.renew_lease(
+        "00000000-0000-4000-8000-000000000111",
+        principal,
+        request_id=str(request_id),
+    )
+
+    assert result == {"ok": True}
+    assert captured == {
+        "command": "renew-lease",
+        "arguments": {"operation_id": "00000000-0000-4000-8000-000000000111"},
+        "principal": principal,
+        "request_id": str(request_id),
+    }
