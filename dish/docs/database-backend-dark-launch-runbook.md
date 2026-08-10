@@ -384,6 +384,51 @@ Configuration rollback is separate:
 
 ## TEST dark-launch acceptance sequence
 
+### Maintained TEST deployment
+
+TEST has repository-owned wiring parallel to production:
+
+- `deploy/systemd/dish-postgres-test.service` owns the PostgreSQL container;
+- `deploy/systemd/dish-shadow-worker-test.service` owns the persistent shadow worker;
+- `service-test.env.example` contains the capture-side settings; and
+- `dark-launch-test.env.example` contains only the worker's PostgreSQL and local-evidence settings.
+
+Keep the TEST worker disabled and stopped until the target is bootstrapped. The two environment
+files must use the same spool path, kill switch, and shared numeric limits. The worker file must not
+receive Asana credentials, service tokens, Action tokens, or projection-adapter credentials.
+
+Before installing either unit, decide how to preserve or reprovision `dish_frontend_auth_test`.
+Changing from the older `postgresql` Compose project to `dish-postgres-test` changes Compose's
+default volume identity; an unplanned switch can make the frontend auth database appear empty.
+
+For a clean TEST bootstrap, clear the TEST Asana project and legacy SQLite/state evidence as one
+coordinated reset, then create one seed task through TEST Dish. No separate Asana synchronization is
+required, but the importer rejects an empty source bundle. Capture the resulting non-empty TEST
+manifest and prepare the empty target with:
+
+```sh
+DISH_TEST_SERVICE_ENV=/home/marco/.config/dish-service/test.env \
+DISH_DB_PATH=/home/marco/.local/state/dish/test/shared.sqlite3 \
+DISH_PG_DATABASE_URL='postgresql+psycopg://dish:...@127.0.0.1:55432/dish_stage_a_test' \
+DISH_PG_EXPECTED_DATABASE_NAME=dish_stage_a_test \
+DISH_PG_LOCATION_MANIFEST=/home/marco/.local/state/dish/test/dark-launch-evidence/location-manifest.json \
+DISH_PG_LEGACY_NDJSON=/home/marco/.local/state/dish/test/dark-launch-evidence/legacy.ndjson \
+DISH_PG_BOOTSTRAP_RECEIPT=/home/marco/.local/state/dish/test/dark-launch-evidence/bootstrap-receipt.json \
+DISH_DARK_LAUNCH_SOURCE_GENERATION=<exact-test-legacy-release> \
+HONEST_SOURCE_COMMIT=<sha> \
+DISH_DARK_LAUNCH_SPOOL_PATH=/home/marco/.local/state/dish/test/dark-launch-spool.sqlite3 \
+  .venv/bin/python scripts/dish-pg-test-prepare
+```
+
+The TEST entrypoint forces TEST manifest identity and rejects a non-`_test` database or evidence
+paths outside the TEST state root before migration. It performs the same migrate, manifest, export,
+bootstrap, baseline, import, and effects-disabled epoch sequence as production prepare. It does not
+change capture mode, restart a service, operate the kill switch, or start the worker.
+
+After prepare succeeds, put its baseline ID in the TEST worker environment. Staged activation is a
+separate operation: first enable capture and verify SQLite/Asana behavior is unchanged, then enable
+execute mode and start the TEST worker. PostgreSQL remains non-authoritative throughout.
+
 This acceptance package is separate from production readiness and from the §§1–4 PostgreSQL
 validation program. Run it only against the real TEST service and `dish_stage_a_dark_test` database:
 

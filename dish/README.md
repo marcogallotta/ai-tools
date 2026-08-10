@@ -84,6 +84,12 @@ epoch state, kill switch, and installed worker unit without mutating those autho
 `dish-pg-dark-launch status` output adds explicit health decisions from operator-supplied backlog,
 lag, capacity, mismatch, and gap thresholds. Both commands redact credential values.
 
+For a maintained TEST mirror, use `deploy/systemd/dish-shadow-worker-test.service`,
+`deploy/systemd/dark-launch-test.env.example`, and the complete dark-launch block in
+`deploy/systemd/service-test.env.example`. `scripts/dish-pg-test-prepare` forces TEST source and
+target identity and leaves capture mode, services, and worker lifecycle unchanged. See the TEST
+deployment section of the dark-launch runbook before installing anything.
+
 `dish-pg-production-shaped-rehearsal` is the rerunnable Section 4 local rehearsal. Supply an exact
 clean Honest checkout, a sanitized production-shaped NDJSON corpus, its
 `dish-production-shaped-corpus-manifest-v1` manifest, the received archive/commit identity, and

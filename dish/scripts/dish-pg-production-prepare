@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""Repeatable production PostgreSQL prepare sequence (rehearse now, resync before go-live).
+"""Repeatable PostgreSQL prepare sequence (rehearse now, resync before go-live).
 
 Runs the "Prepare immutable source and PostgreSQL authority" sequence from
 docs/database-backend-dark-launch-runbook.md end to end, against the explicit
-production paths and credentials supplied via environment variables:
+source environment, paths, and credentials supplied via environment variables:
 
   1. Migrate the target PostgreSQL database to the repository Alembic head.
-  2. Capture the location manifest from the real production SQLite database (read-only).
+  2. Capture the location manifest from the selected SQLite database (read-only).
   3. Export the legacy corpus using that manifest.
   4. Bootstrap the PostgreSQL target from that export (target must be empty).
   5. Create one open baseline bound to the bootstrap generation.
   6. Import the receipt-bound legacy export.
   7. Activate one effects-disabled projection epoch.
 
-It never restarts the production service, changes DISH_DARK_LAUNCH_MODE, touches the
+It never restarts a service, changes DISH_DARK_LAUNCH_MODE, touches the
 kill switch, or installs/starts the shadow worker -- those remain Marco-only actions
 described later in the runbook. Intended to be run twice: once now as a rehearsal, and
 again from a freshly wiped PostgreSQL database immediately before capture is enabled, to
@@ -21,9 +21,10 @@ keep the pre-capture staleness window as small as practical. There is no wipe st
 wiping the target database is a separate, explicitly authorized action.
 
 Required environment variables (see the runbook for definitions):
-  DISH_PRODUCTION_SERVICE_ENV   e.g. /home/marco/.config/dish-service/prod.env
-  DISH_DB_PATH                  production SQLite database path
-  DISH_PG_DATABASE_URL          production PostgreSQL connection URL
+  DISH_PRODUCTION_SERVICE_ENV   production service env when capture environment is production
+  DISH_TEST_SERVICE_ENV         TEST service env when capture environment is test
+  DISH_DB_PATH                  matching SQLite database path
+  DISH_PG_DATABASE_URL          matching PostgreSQL connection URL
   DISH_PG_EXPECTED_DATABASE_NAME
   DISH_PG_LOCATION_MANIFEST     output path for the location manifest
   DISH_PG_LEGACY_NDJSON         output path for the legacy export
@@ -35,10 +36,8 @@ Required environment variables (see the runbook for definitions):
 
 Optional:
   DISH_HONEST_REPO              defaults to /home/marco/honest-pantry
-  DISH_PG_CAPTURE_ENVIRONMENT   "production" (default) or "test" -- passed straight through to
-                                 dish-pg-build-location-manifest's --environment. Use "test" only
-                                 for a dry run of this script against TEST identity/paths before
-                                 ever pointing it at real production data.
+  DISH_PG_CAPTURE_ENVIRONMENT   "production" (default) or "test". The dedicated
+                                 dish-pg-test-prepare entrypoint forces "test".
   DISH_PG_ALLOW_DEPARTED_TASKS  "1" to explicitly skip tasks that have left the tracked project
                                  (normal operator activity between snapshots) instead of failing
                                  the whole prepare sequence. Off by default.
@@ -73,7 +72,6 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 REQUIRED_ENV = (
-    "DISH_PRODUCTION_SERVICE_ENV",
     "DISH_DB_PATH",
     "DISH_PG_DATABASE_URL",
     "DISH_PG_EXPECTED_DATABASE_NAME",
@@ -85,6 +83,11 @@ REQUIRED_ENV = (
     "DISH_DARK_LAUNCH_SPOOL_PATH",
 )
 
+SERVICE_ENV_KEYS = {
+    "production": "DISH_PRODUCTION_SERVICE_ENV",
+    "test": "DISH_TEST_SERVICE_ENV",
+}
+
 
 class PrepareError(RuntimeError):
     pass
@@ -94,14 +97,54 @@ def log(message: str) -> None:
     print(f"[dish-pg-production-prepare] {message}", flush=True)
 
 
-def require_env() -> dict[str, str]:
+def capture_environment() -> str:
+    value = os.environ.get("DISH_PG_CAPTURE_ENVIRONMENT", "production").strip()
+    if value not in SERVICE_ENV_KEYS:
+        raise PrepareError(
+            "DISH_PG_CAPTURE_ENVIRONMENT must be 'production' or 'test', "
+            f"got {value!r}"
+        )
+    return value
+
+
+def require_env(environment: str) -> dict[str, str]:
     values = {key: os.environ.get(key, "").strip() for key in REQUIRED_ENV}
+    service_env_key = SERVICE_ENV_KEYS[environment]
+    values["DISH_SERVICE_ENV"] = os.environ.get(service_env_key, "").strip()
     missing = [key for key, value in values.items() if not value]
     if missing:
+        missing = [service_env_key if key == "DISH_SERVICE_ENV" else key for key in missing]
         raise PrepareError(
             "missing required environment variable(s): " + ", ".join(missing)
         )
     return values
+
+
+def validate_target_identity(environment: str, env: dict[str, str]) -> None:
+    from sqlalchemy.engine import make_url
+
+    expected = env["DISH_PG_EXPECTED_DATABASE_NAME"]
+    actual = make_url(env["DISH_PG_DATABASE_URL"]).database
+    if actual != expected:
+        raise PrepareError(
+            "DISH_PG_DATABASE_URL database does not match "
+            "DISH_PG_EXPECTED_DATABASE_NAME"
+        )
+    if environment == "test":
+        if not expected.endswith("_test"):
+            raise PrepareError("TEST prepare requires a database name ending in '_test'")
+        test_root = Path("/home/marco/.local/state/dish/test")
+        for key in (
+            "DISH_DB_PATH",
+            "DISH_PG_LOCATION_MANIFEST",
+            "DISH_PG_LEGACY_NDJSON",
+            "DISH_PG_BOOTSTRAP_RECEIPT",
+            "DISH_DARK_LAUNCH_SPOOL_PATH",
+        ):
+            try:
+                Path(env[key]).resolve(strict=False).relative_to(test_root)
+            except ValueError as exc:
+                raise PrepareError(f"TEST prepare requires {key} under {test_root}") from exc
 
 
 def resolve_project_identity(service_env_path: str) -> tuple[str, str]:
@@ -173,20 +216,17 @@ def migrate_schema(database_url: str) -> None:
 
 def main() -> int:
     try:
-        env = require_env()
+        environment = capture_environment()
+        env = require_env(environment)
+        validate_target_identity(environment, env)
         source_commit = resolve_source_commit()
         honest_repo = os.environ.get("DISH_HONEST_REPO", "/home/marco/honest-pantry").strip()
-        project_gid, project_id = resolve_project_identity(env["DISH_PRODUCTION_SERVICE_ENV"])
+        project_gid, project_id = resolve_project_identity(env["DISH_SERVICE_ENV"])
 
         migrate_schema(env["DISH_PG_DATABASE_URL"])
 
-        capture_environment = os.environ.get("DISH_PG_CAPTURE_ENVIRONMENT", "production").strip()
-        if capture_environment not in ("production", "test"):
-            raise PrepareError(
-                f"DISH_PG_CAPTURE_ENVIRONMENT must be 'production' or 'test', got {capture_environment!r}"
-            )
-        if capture_environment == "test":
-            log("DISH_PG_CAPTURE_ENVIRONMENT=test -- this is a TEST-identity dry run, not production prepare.")
+        if environment == "test":
+            log("TEST identity enforced; production source and state paths are rejected.")
 
         allow_departed_tasks = os.environ.get("DISH_PG_ALLOW_DEPARTED_TASKS", "").strip() == "1"
         allow_open_operations = os.environ.get("DISH_PG_ALLOW_OPEN_OPERATIONS", "").strip() == "1"
@@ -198,13 +238,13 @@ def main() -> int:
         manifest_command = [
             sys.executable,
             str(REPO_ROOT / "scripts/dish-pg-build-location-manifest"),
-            "--environment", capture_environment,
-            "--env-file", env["DISH_PRODUCTION_SERVICE_ENV"],
+            "--environment", environment,
+            "--env-file", env["DISH_SERVICE_ENV"],
             "--output", env["DISH_PG_LOCATION_MANIFEST"],
         ]
         if allow_departed_tasks:
             manifest_command.append("--allow-departed-tasks")
-        run_step(f"capture {capture_environment} location manifest (read-only SQLite)", manifest_command)
+        run_step(f"capture {environment} location manifest (read-only SQLite)", manifest_command)
 
         export_command = [
             sys.executable,

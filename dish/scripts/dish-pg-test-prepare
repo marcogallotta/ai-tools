@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+"""Run the maintained PostgreSQL prepare sequence with TEST identity enforced."""
+from __future__ import annotations
+
+import os
+import runpy
+from pathlib import Path
+
+os.environ["DISH_PG_CAPTURE_ENVIRONMENT"] = "test"
+script = Path(__file__).with_name("dish-pg-production-prepare")
+runpy.run_path(str(script), run_name="__main__")
