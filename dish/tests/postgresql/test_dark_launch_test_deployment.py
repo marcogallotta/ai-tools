@@ -8,6 +8,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 TEST_UNIT = ROOT / "deploy/systemd/dish-shadow-worker-test.service"
+TEST_POSTGRES_UNIT = ROOT / "deploy/systemd/dish-postgres-test.service"
 TEST_WORKER_ENV = ROOT / "deploy/systemd/dark-launch-test.env.example"
 TEST_SERVICE_ENV = ROOT / "deploy/systemd/service-test.env.example"
 PREPARE = ROOT / "scripts/dish-pg-production-prepare"
@@ -60,6 +61,13 @@ def test_test_worker_unit_is_test_isolated_and_credential_free() -> None:
         for name in worker
     )
     assert all("/dish/prod" not in value for value in worker.values())
+
+
+def test_test_postgres_unit_preserves_existing_compose_volume_identity() -> None:
+    unit = TEST_POSTGRES_UNIT.read_text(encoding="utf-8")
+
+    assert "docker compose -p postgresql " in unit
+    assert "docker compose -p dish-postgres-test " not in unit
 
 
 def test_test_service_has_explicit_matching_capture_configuration() -> None:

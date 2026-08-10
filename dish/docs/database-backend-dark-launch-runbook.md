@@ -397,9 +397,8 @@ Keep the TEST worker disabled and stopped until the target is bootstrapped. The 
 files must use the same spool path, kill switch, and shared numeric limits. The worker file must not
 receive Asana credentials, service tokens, Action tokens, or projection-adapter credentials.
 
-Before installing either unit, decide how to preserve or reprovision `dish_frontend_auth_test`.
-Changing from the older `postgresql` Compose project to `dish-postgres-test` changes Compose's
-default volume identity; an unplanned switch can make the frontend auth database appear empty.
+The maintained TEST unit deliberately retains the older `postgresql` Compose project identity so
+it adopts the existing `postgresql_pgdata` volume and preserves `dish_frontend_auth_test`.
 
 For a clean TEST bootstrap, clear the TEST Asana project and legacy SQLite/state evidence as one
 coordinated reset, then create one seed task through TEST Dish. No separate Asana synchronization is
