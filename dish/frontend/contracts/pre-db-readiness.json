@@ -50,7 +50,7 @@
     "in-memory production authentication",
     "fixture-backed production API routes",
     "queries against the legacy schema",
-    "raw UUID or Asana GID browser identities",
+    "Asana GID browser identities or non-canonical task route aliases",
     "attention inferred from English labels or free text",
     "frontend code that calls Asana",
     "temporary workflow policy in route handlers or browser code",

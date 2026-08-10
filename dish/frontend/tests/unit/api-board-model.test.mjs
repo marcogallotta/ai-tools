@@ -8,8 +8,8 @@ import {
 } from "../../src/js/features/board/api-board-model.js";
 
 const sectionId = `r1s-${"s".repeat(27)}`;
-const taskA = `r1t-${"a".repeat(27)}`;
-const taskB = `r1t-${"b".repeat(27)}`;
+const taskA = "12345678-1234-5678-1234-567812345678";
+const taskB = "12345678-1234-5678-1234-567812345679";
 
 function boardDto() {
   return {
@@ -68,9 +68,9 @@ test("continuation is bound to section continuity and rejects duplicate task ide
   assert.throws(() => appendSectionPage(board, sectionId, duplicate), BoardContractMismatch);
 });
 
-test("raw UUID-shaped identities and mismatched notice sets fail closed", () => {
+test("legacy opaque task identities and mismatched notice sets fail closed", () => {
   const raw = boardDto();
-  raw.sections[0].cards[0].task_id = "12345678-1234-5678-1234-567812345678";
+  raw.sections[0].cards[0].task_id = `r1t-${"x".repeat(27)}`;
   assert.throws(() => mapBoardResponse(raw), BoardContractMismatch);
 
   const badNotices = boardDto();

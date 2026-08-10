@@ -69,7 +69,8 @@ def test_detail_query_reads_current_eligible_content_and_isolated_state(core_db)
     assert payload["title"] == "Exact detail"
     assert payload["section_label"] == "Research Queue"
     assert payload["attention_codes"][0] == "isolated"
-    assert str(imported.task_id) not in str(payload)
+    assert payload["task_id"] == str(imported.task_id)
+    assert "4001" not in str(payload)
 
 
 def test_detail_uses_canonical_workflow_role_name_for_import_placeholder(core_db) -> None:

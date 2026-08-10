@@ -298,7 +298,7 @@ crashed, or merely idle.
 
 The admin UI/CLI should synthesize outstanding work with enough context to identify it quickly:
 
-- task title plus canonical task identifier/link;
+- dish title plus canonical Dish identifier/link;
 - stage (Planning, Research, Verification, etc.);
 - known run/operation association;
 - when Dish first observed the current work;
@@ -317,7 +317,7 @@ and safe mutation authority; system safety must not wait for Marco to notice a s
 ### `kill` / replace intent
 
 The normal operator interface should support one high-level action to declare a specific presented
-invocation/run abandoned. CLI vocabulary such as `dish-admin kill <TASK_OR_RUN>` is acceptable; a UI
+invocation/run abandoned. The normal CLI is `dish-admin kill <dish>`; a UI
 may expose an X or "replace" action instead.
 
 "Kill" is a logical Dish action: fence/retire the old Dish authority and prepare a safe continuation.
@@ -427,14 +427,19 @@ operator burden; prefer the smallest bridge that preserves the eventual Dish-own
 `dish-admin` is for Marco, not for another AI. Human outcome comes first; internal mechanics are
 secondary detail.
 
-### Inspect any task
+### Inspect any Dish
 
-`dish-admin inspect <task>` must diagnose **any** known task, including a resting task with no open
+`dish-admin inspect <dish>` must diagnose **any** known Dish, including a resting Dish with no open
 operation. A missing open operation is a state fact, not a reason the diagnostic command cannot work.
+`<dish>` may be the canonical stored Dish UUID, the legacy Asana task GID/accepted Asana task URL, or
+the canonical frontend deep link `/dishes/<uuid>/<decorative-title-slug>`. In the frontend form the UUID
+is the actual stored Dish UUID and is authoritative; the slug is decorative and must not participate in
+identity matching. Exact operation IDs remain a low-level backward-compatible diagnostic input, not the
+normal product noun.
 
 Normal output should answer:
 
-- what task this is;
+- what Dish this is;
 - what state it is in;
 - what prevents progress, if anything;
 - what Marco can do now;
@@ -688,8 +693,6 @@ PostgreSQL task/read model makes the actual query needs clear.
 These are current gaps or evidence-qualified mismatches against the accepted direction, not a claim
 that every root cause below has complete regression coverage:
 
-- `dish-admin inspect <task>` currently resolves through an open operation and can return "no open
-  operation for that task" for a resting task; the desired product behavior is task-level diagnosis.
 - **Reproduction/test evidence — manual reproduction, 2026-08-09:** the exact sequence Verification
   hold -> Marco resolution without material edit -> original verifier `start kind=verification`
   reproduced `CONFLICT` with rule `actor_fact_conflict`. This establishes the supplied-baseline failure;
@@ -698,10 +701,8 @@ that every root cause below has complete regression coverage:
 - Normal review approval still advertises a separate connected-agent `apply-proposal`; automatic exact
   application after revalidation is the accepted UX/design conclusion, while ADR-0003 requires only
   durable separation of approval and application.
-- There is no first-class operator inventory that presents outstanding work from observable Dish
-  records plus a high-level per-item replace action. Marco also requested bulk replacement, but its
-  partial-success/mixed-safety semantics remain an implementation-design detail rather than a proven
-  production requirement.
+- Bulk replacement remains intentionally undesigned at the per-item/partial-failure level; 1B adds
+  per-Dish inspect/replace without inventing atomic `kill-all` semantics.
 - Project-wide population reconciliation/audit is not yet a complete operator capability; its proposed
   categories above have not yet been validated against the full production corpus.
 - The Honest Verification protocol needs the served-edible-consumed nutrition/reproducibility

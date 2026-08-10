@@ -1,8 +1,8 @@
 export const BOARD_ROUTE = "/";
 export const TASK_ROUTE_PREFIX = "/task/";
-export const POSTGRES_TASK_ROUTE_PREFIX = "/tasks/";
+export const POSTGRES_TASK_ROUTE_PREFIX = "/dishes/";
 const fixtureRouteIdentity = /^[a-z0-9][a-z0-9-]{0,79}$/;
-const postgresRouteIdentity = /^r1t-[A-Za-z0-9_-]{27}$/;
+const postgresRouteIdentity = /^(?!00000000-0000-0000-0000-000000000000)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 export function isPrototypeApplicationView(search) {
   return new URLSearchParams(search).get("view") === "app";

@@ -25,7 +25,7 @@ from dish_service.frontend_tokens import CursorInvalid, CursorStale
 from tests.support.thread_teardown import start_server_thread, stop_server
 
 SECTION_ID = "r1s-" + "s" * 27
-TASK_ID = "r1t-" + "t" * 27
+TASK_ID = "12345678-1234-5678-1234-567812345678"
 _DEFAULT_HOST = object()
 
 

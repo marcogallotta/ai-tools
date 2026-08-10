@@ -3066,7 +3066,33 @@ BEFORE DELETE ON semantic_proposal_changes
 BEGIN SELECT RAISE(ABORT, 'semantic proposal changes are append-only'); END;
 """
 
-MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31, 32: _MIGRATION_32, 33: _MIGRATION_33, 34: _MIGRATION_34, 35: _MIGRATION_35, 36: _MIGRATION_36, 37: _MIGRATION_37, 38: _MIGRATION_38, 39: _MIGRATION_39, 40: _MIGRATION_40, 41: _MIGRATION_41}
+_MIGRATION_42 = """
+CREATE TABLE operation_run_retirements (
+    retirement_id TEXT PRIMARY KEY,
+    operation_id TEXT NOT NULL REFERENCES operations(operation_id),
+    owner_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    source_lease_id TEXT REFERENCES service_leases(lease_id),
+    reason TEXT NOT NULL,
+    retired_at TEXT NOT NULL,
+    CHECK (length(trim(owner_id))>0),
+    CHECK (length(trim(run_id))>0),
+    CHECK (length(trim(reason))>0),
+    UNIQUE(operation_id, owner_id, run_id)
+);
+CREATE INDEX operation_run_retirements_operation_idx
+    ON operation_run_retirements(operation_id, retired_at);
+
+CREATE TRIGGER operation_run_retirements_immutable_update
+BEFORE UPDATE ON operation_run_retirements
+BEGIN SELECT RAISE(ABORT, 'operation run retirements are immutable'); END;
+CREATE TRIGGER operation_run_retirements_append_only_delete
+BEFORE DELETE ON operation_run_retirements
+BEGIN SELECT RAISE(ABORT, 'operation run retirements are append-only'); END;
+"""
+
+
+MIGRATIONS = {1: _MIGRATION_1, 2: _MIGRATION_2, 3: _MIGRATION_3, 4: _MIGRATION_4, 5: _MIGRATION_5, 6: _MIGRATION_6, 7: _MIGRATION_7, 8: _MIGRATION_8, 9: _MIGRATION_9, 10: _MIGRATION_10, 11: _MIGRATION_11, 12: _MIGRATION_12, 13: _MIGRATION_13, 14: _MIGRATION_14, 15: _MIGRATION_15, 16: _MIGRATION_16, 17: _MIGRATION_17, 18: _MIGRATION_18, 19: _MIGRATION_19, 20: _MIGRATION_20, 21: _MIGRATION_21, 22: _MIGRATION_22, 23: _MIGRATION_23, 24: _MIGRATION_24, 25: _MIGRATION_25, 26: _MIGRATION_26, 27: _MIGRATION_27, 28: _MIGRATION_28, 29: _MIGRATION_29, 30: _MIGRATION_30, 31: _MIGRATION_31, 32: _MIGRATION_32, 33: _MIGRATION_33, 34: _MIGRATION_34, 35: _MIGRATION_35, 36: _MIGRATION_36, 37: _MIGRATION_37, 38: _MIGRATION_38, 39: _MIGRATION_39, 40: _MIGRATION_40, 41: _MIGRATION_41, 42: _MIGRATION_42}
 
 
 def _content_digest(title: str, notes: str) -> str:
@@ -3093,6 +3119,7 @@ _SEMANTIC_RECORD_SELECTORS = {
     "operations": "operation_id",
     "service_leases": "lease_id",
     "operation_execution_claims": "claim_id",
+    "operation_run_retirements": "retirement_id",
     "operation_executions": "execution_id",
     "abandonment_attempts": "abandonment_id",
     "operation_successions": "succession_id",
@@ -3109,7 +3136,7 @@ _SEMANTIC_TIMESTAMP_FIELDS = (
     "acquired_at", "renewed_at", "expires_at", "released_at", "reserved_at",
     "claimed_at", "consumed_at", "resolved_at", "process_start", "expected_modified_at",
     "confirmed_modified_at", "content_write_completed_at",
-    "signoff_completed_at", "movement_completed_at",
+    "signoff_completed_at", "movement_completed_at", "retired_at",
 )
 
 
@@ -4448,6 +4475,40 @@ def _validate_backup_and_reset_evidence(
                 "verification_hold_reset_binding", "verification_hold_resets", row["reset_id"],
             ))
 
+def _validate_operation_run_retirement_evidence(
+    conn: sqlite3.Connection, problems: list[dict[str, Any]]
+) -> None:
+    for row in conn.execute("SELECT * FROM operation_run_retirements"):
+        operation = conn.execute(
+            "SELECT 1 FROM operations WHERE operation_id=?", (row["operation_id"],)
+        ).fetchone()
+        lease = None
+        if row["source_lease_id"] is not None:
+            lease = conn.execute(
+                "SELECT operation_id,owner_id,run_id FROM service_leases WHERE lease_id=?",
+                (row["source_lease_id"],),
+            ).fetchone()
+        if operation is None or (
+            row["source_lease_id"] is not None
+            and (
+                lease is None
+                or lease["operation_id"] != row["operation_id"]
+                or lease["owner_id"] != row["owner_id"]
+                or lease["run_id"] != row["run_id"]
+            )
+        ):
+            problems.append(_semantic_problem(
+                conn,
+                "operation_run_retirement_binding",
+                "operation_run_retirements",
+                row["retirement_id"],
+                related_record_type=(
+                    "service_leases" if row["source_lease_id"] is not None else "operations"
+                ),
+                related_record_id=(row["source_lease_id"] or row["operation_id"]),
+            ))
+
+
 def _validate_abandonment_attempt_evidence(
     conn: sqlite3.Connection, problems: list[dict[str, Any]]
 ) -> None:
@@ -4807,6 +4868,7 @@ def _validate_semantic_evidence(conn: sqlite3.Connection) -> None:
     _validate_execution_and_lease_evidence(conn, problems)
     _validate_planning_intent_evidence(conn, problems)
     _validate_backup_and_reset_evidence(conn, problems)
+    _validate_operation_run_retirement_evidence(conn, problems)
     _validate_abandonment_attempt_evidence(conn, problems)
     _validate_succession_evidence(conn, problems)
     _validate_safe_reclaim_evidence(conn, problems)

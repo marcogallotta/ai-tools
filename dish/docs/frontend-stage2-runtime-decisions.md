@@ -17,7 +17,7 @@ The initial route grammar is:
 
 - unauthenticated: `GET /login`, versioned/public files below `GET /assets/`, `GET /styles/`, and
   `GET /js/`, plus `POST /frontend/login`;
-- protected HTML: `GET /`, canonical Stage 4 `GET /tasks/{opaque_task_route}/{decorative_slug}`, and the
+- protected HTML: `GET /`, canonical Stage 4 `GET /dishes/{stored_dish_uuid}/{decorative_slug}`, and the
   authenticated fixture-only `GET /task/{fixture_id}` review path;
 - protected API: the six operations in `frontend/openapi/frontend.openapi.json` plus
   `GET /openapi/frontend.json`;

@@ -437,6 +437,7 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
             properties = deepcopy(common)
             properties["correction"] = {
                 "type": "string",
+                "enum": [correction],
                 "const": correction,
                 "description": (
                     "Approve the exact inspected candidate without supplying file_text."
@@ -482,6 +483,7 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
         properties = deepcopy(common)
         properties["route"] = {
             "type": "string",
+            "enum": [route],
             "const": route,
             "description": f"Select the {route} rejection route.",
         }

@@ -1,7 +1,7 @@
 import * as boardContract from "../board/api-board-model.js";
 import { noticeRegistry } from "../notices/notice-registry.js";
 
-const detailTaskRoutePattern = /^r1t-[A-Za-z0-9_-]{27}$/;
+const detailTaskRoutePattern = /^(?!00000000-0000-0000-0000-000000000000)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const attentionOrder = Object.freeze([
   "isolated",
   "lease_attention",

@@ -458,3 +458,34 @@ def test_dead_verifier_failure_and_admin_inspect_return_same_safe_reclaim_action
         inspect_action["arguments"]["lease_id"]
         == blocked_action["arguments"]["lease_id"]
     )
+
+
+def test_fresh_verifier_on_clean_expired_other_run_is_told_to_safe_reclaim_not_admin(tmp_path):
+    clock = Clock()
+    service, _backend = _service(tmp_path, clock=clock, ttl=60)
+    constructor = _agent("gpt", "constructor-safe-reclaim-guidance")
+    started = service.execute_agent(
+        "start", {"agent": "gpt", "task_gid": "t", "kind": "initial"}, principal=constructor,
+    )
+    operation_id = started["submission_id"]
+    assert service.execute_agent("prepare", _prepare_args(operation_id), principal=constructor)["ok"]
+
+    old = _agent("codex", "old-verifier-safe-reclaim-guidance")
+    assert service.execute_agent(
+        "start",
+        {"agent": "codex", "task_gid": "t", "kind": "verification", "independence_attestation": "independent"},
+        principal=old,
+    )["ok"]
+    clock.advance(61)
+
+    fresh = _agent("codex", "fresh-verifier-safe-reclaim-guidance")
+    blocked = service.execute_agent(
+        "reject", _reject_large_args(operation_id), principal=fresh,
+    )
+    assert blocked["code"] in {"CONFLICT", "AGENT_MISMATCH"}
+    assert blocked["allowed_actions"] == ["safe-reclaim"]
+    assert blocked["data"]["service_access"]["state"] == "safe_reclaim_available"
+    assert blocked["data"]["agent_action"]["command"] == "safe-reclaim"
+    assert blocked["data"]["legal_next_actions"] == ["safe-reclaim"]
+    assert "required_admin_action" not in blocked["data"]["service_access"]
+    assert "no Marco/admin recovery is required" in blocked["data"]["legal_next_step"]

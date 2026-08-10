@@ -1,6 +1,7 @@
-"""Opaque browser identities and retry-safe stateless continuation cursors.
+"""Browser route identities and retry-safe stateless continuation cursors.
 
-Route identities are one-way HMAC labels over internal UUIDs. Cursor packaging
+Task routes use the canonical stored Dish UUID. Section routes remain one-way HMAC
+labels over internal UUIDs. Cursor packaging
 uses a random nonce, a domain-separated HMAC-derived mask, and a separate HMAC
 tag. The mask exists only to meet the frontend contract's opacity requirement:
 cursor contents are not credentials and this module is not an authorization
@@ -51,14 +52,15 @@ def _b64decode(value: str) -> bytes:
 
 
 def route_identity(*, secret: bytes, environment: str, kind: str, object_id: UUID) -> str:
-    """Return a deterministic, non-raw route identity for a task or section."""
+    """Return the canonical task UUID or an opaque section route identity."""
 
     _require_secret(secret)
     if kind not in {"task", "section"}:
         raise ValueError("route identity kind must be task or section")
     if not environment or len(environment) > 64:
         raise ValueError("frontend environment must be 1..64 characters")
-    tag = "t" if kind == "task" else "s"
+    if kind == "task":
+        return str(object_id)
     material = b"\0".join(
         (
             b"dish-frontend-route-v1",
@@ -68,7 +70,7 @@ def route_identity(*, secret: bytes, environment: str, kind: str, object_id: UUI
         )
     )
     digest = hmac.new(secret, material, hashlib.sha256).digest()[:_ROUTE_DIGEST_BYTES]
-    return f"r1{tag}-{_b64encode(digest)}"
+    return f"r1s-{_b64encode(digest)}"
 
 
 def opaque_digest(*, secret: bytes, environment: str, purpose: str, payload: Any) -> str:

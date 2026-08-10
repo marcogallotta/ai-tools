@@ -175,7 +175,7 @@ def assert_local_postgresql(browser) -> None:
     page.locator('#app[data-shell-state="local-postgresql-detail"]').wait_for()
     page.get_by_role("heading", name=expected_title, exact=True).wait_for()
     detail_path = page.locator("body").evaluate("() => location.pathname")
-    assert re.match(r"^/tasks/r1t-[A-Za-z0-9_-]{27}/[^/]+$", detail_path)
+    assert re.match(r"^/dishes/(?!00000000-0000-0000-0000-000000000000)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[^/]+$", detail_path)
     page.reload(wait_until="networkidle")
     page.get_by_role("heading", name=expected_title, exact=True).wait_for()
     assert page.locator("body").evaluate("() => location.pathname") == detail_path

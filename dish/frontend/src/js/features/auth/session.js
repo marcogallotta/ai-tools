@@ -5,7 +5,7 @@ export const SESSION_REVALIDATE_MS = 25000;
 export const SESSION_CHANNEL = "dish-frontend-session-v1";
 
 const SESSION_INVALID_CODES = new Set(["auth_required", "session_expired", "session_revoked"]);
-const TASK_PATH = /^\/tasks\/r1t-[A-Za-z0-9_-]{27}\/[^/?#]{1,600}$/;
+const TASK_PATH = /^\/dishes\/(?!00000000-0000-0000-0000-000000000000)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[^/?#]{1,600}$/;
 
 export class SessionContractMismatch extends Error {
   constructor() {

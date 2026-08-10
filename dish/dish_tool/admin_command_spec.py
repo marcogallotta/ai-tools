@@ -38,12 +38,8 @@ ADMIN_COMMAND_SPECS = {
         _spec("review-inspect", lease_free=True),
         _spec("review-approve", operation_scoped=True),
         _spec("review-reject", operation_scoped=True),
-        _spec(
-            "inspect",
-            lease_free=True,
-            resolve_operation=True,
-            operation_scoped=True,
-        ),
+        _spec("inspect", lease_free=True),
+        _spec("kill", lease_free=True),
         _spec("holds", lease_free=True),
         _spec("recover", resolve_operation=True, operation_scoped=True),
         _spec(

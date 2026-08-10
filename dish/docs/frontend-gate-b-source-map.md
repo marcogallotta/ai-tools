@@ -92,7 +92,7 @@ read-only owners rather than alter it into a browser DTO service:
 | `dish_pg/frontend_board_query.py` | One coherent bootstrap query, section continuation query, card fact aggregation, attention inputs, and internal snapshot/continuity inputs. |
 | `dish_pg/frontend_detail_query.py` | One coherent eligible-task fact bundle containing canonical content and disclosure/advisory inputs for the local Stage 4 candidate. |
 | `dish_pg/frontend_projection_query.py` | Bounded abnormal-projection fact capture used by the local Stage 4 candidate; final reducer/threshold semantics remain B-07-gated. |
-| `dish_service/frontend_tokens.py` | Stateless bounded typed/environment-scoped route identities, opaque digests, and retry-safe expiring cursor tokens; no raw UUID/GID exposure. |
+| `dish_service/frontend_tokens.py` | Canonical stored Dish UUID task routes, typed/environment-scoped opaque section routes, opaque digests, and retry-safe expiring cursor tokens; no Asana GID exposure. |
 | `dish_service/frontend_contract.py` | Versioned Stage 3 operation/phase/attention labels, severities, normalization candidate, and deterministic registry order. |
 | `dish_service/frontend_board.py` | Closed board DTO builder, capacity/configuration validation, notices, snapshot/continuity identities, and stateless cursor lifecycle. |
 | `dish_service/frontend_disclosure.py` | Versioned category/source registry and bounded factual detail formatting. |
@@ -226,7 +226,7 @@ valid tokens map to `cursor_stale`.
 `PostgresReadModel.task_view()` must not be adapted by merely deleting fields from its serialized
 result. It currently:
 
-- accepts raw UUID/Asana task references instead of browser identities;
+- accepts canonical stored Dish UUIDs directly; Asana task references remain outside the browser identity contract;
 - does not enforce incomplete + active-registry + current-membership eligibility;
 - calls `_workflow_snapshot()`, which performs several scalar queries and computes `legal_actions`;
 - exposes operation IDs/revisions and technical content/revision identities in its internal object;
@@ -354,7 +354,7 @@ Before Stage 4, additionally record:
 | PostgreSQL integration | Coherent generation/registry/task joins, eligibility, empty sections, duplicates, movement, completion, retirement, isolation decision, and threshold times. |
 | Query-bound tests | Fixed query count, no per-card loop, statement/response bounds, capacity errors. |
 | Cursor tests | Tamper, wrong type/environment/section/page size, expiry, cleanup, stale state, unavailable validator, lost-response retry. |
-| Identity tests | No raw UUID/GID leakage, legacy normalization, collision handling, object/environment scoping. |
+| Identity tests | Canonical Dish UUID task routing, no Asana GID leakage, legacy-route rejection/normalization as applicable, and section object/environment scoping. |
 | DTO/schema tests | Closed objects, registry synchronization, cross-field disclosure/attention requirements, unknown-code rejection. |
 | Rendering tests | Approved corpus, raw HTML escaping, dangerous URL neutralization, fallback taxonomy, deterministic output. |
 | Browser acceptance | Real density/order, Load more, deep links, moved/completed/retired tasks, projection/attention presentations, last-safe-view behavior. |

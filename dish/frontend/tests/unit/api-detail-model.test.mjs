@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { DetailContractMismatch, mapTaskDetailResponse } from "../../src/js/features/detail/api-detail-model.js";
 
-const TASK_ID = `r1t-${"t".repeat(27)}`;
+const TASK_ID = "12345678-1234-5678-1234-567812345678";
 
 function payload() {
   return {
@@ -25,7 +25,7 @@ function payload() {
   };
 }
 
-test("Stage 4 detail maps closed DTO with opaque identity and non-authorizing advisory", () => {
+test("Stage 4 detail maps closed DTO with canonical Dish UUID and non-authorizing advisory", () => {
   const detail = mapTaskDetailResponse(payload());
   assert.equal(detail.id, TASK_ID);
   assert.equal(detail.bodyPresentation.state, "sanitized_html");
@@ -46,11 +46,11 @@ test("fallback body requires exactly one render_rejected notice", () => {
   assert.throws(() => mapTaskDetailResponse(raw), DetailContractMismatch);
 });
 
-test("detail rejects missing disclosure and raw UUID route identity", () => {
+test("detail rejects missing disclosure and invalid task route identity", () => {
   const missing = payload();
   missing.disclosures = [];
   assert.throws(() => mapTaskDetailResponse(missing), DetailContractMismatch);
   const raw = payload();
-  raw.task_id = "00000000-0000-0000-0000-000000000001";
+  raw.task_id = `r1t-${"x".repeat(27)}`;
   assert.throws(() => mapTaskDetailResponse(raw), DetailContractMismatch);
 });

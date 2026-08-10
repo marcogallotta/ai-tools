@@ -23,7 +23,7 @@ from dish_service.frontend_tokens import CursorInvalid, CursorStale
 LOG = logging.getLogger("dish.frontend.local")
 _MAX_STATIC_BYTES = 10 * 1024 * 1024
 _SECTION_ROUTE_RE = re.compile(r"r1s-[A-Za-z0-9_-]{27}")
-_TASK_ROUTE_RE = re.compile(r"r1t-[A-Za-z0-9_-]{27}")
+_TASK_ROUTE_RE = re.compile(r"(?!00000000-0000-0000-0000-000000000000)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 
 
 class LocalBoardBackend(Protocol):

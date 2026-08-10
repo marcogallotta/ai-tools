@@ -54,14 +54,15 @@ def build_parser() -> JsonArgumentParser:
         prog="dish-admin",
         description=(
             "Human administration for blocked or exceptional Dish workflows. Start with "
-            "`dish-admin inspect TASK_OR_OPERATION`; use low-level mutation commands only when "
+            "`dish-admin inspect <dish>`; use low-level mutation commands only when "
             "Dish returns them as the safe next action. Agents may use this tool only against "
             "the test profile; production administration remains Marco-only."
         ),
         epilog=(
-            "Common recovery rule: recover-lease lets the same durable agent run continue; "
-            "expire-lease only releases an active lease; abandon-operation is for a run that "
-            "will not return. None of these commands approves or submits a dish."
+            "Normal replacement is `dish-admin kill <dish>`; it retires Dish authority and "
+            "prepares the safe continuation without claiming to terminate an external process. "
+            "recover-lease, expire-lease, and abandon-operation remain low-level escape hatches. "
+            "None of these commands approves or submits a dish."
         ),
     )
     add_profile_argument(parser)
@@ -122,15 +123,34 @@ def build_parser() -> JsonArgumentParser:
     )
 
     _submission_target_help = (
-        "exact operation ID, task GID, or supported Asana task URL "
-        "(a task GID/URL resolves to that task's open operation)"
+        "exact operation ID, Dish/task GID, supported Asana task URL, Dish UUID, or "
+        "frontend /dishes/<uuid>/<decorative-title-slug> URL"
+    )
+    _dish_target_help = (
+        "Dish GID, Dish UUID, supported Asana task URL, or frontend "
+        "/dishes/<uuid>/<decorative-title-slug> URL; the UUID is authoritative and "
+        "the decorative slug is ignored"
     )
 
     inspect_admin = subparsers.add_parser(
         _admin_name("inspect"),
-        help="explain what a task is waiting on and show Marco's safe next actions",
+        help="explain what a Dish is waiting on and show Marco's safe next actions",
     )
-    inspect_admin.add_argument("submission_id", help=_submission_target_help)
+    inspect_admin.add_argument("dish", metavar="DISH", help=_dish_target_help)
+
+    kill = subparsers.add_parser(
+        _admin_name("kill"),
+        help=(
+            "retire the outstanding Dish run's authority and mechanically prepare the "
+            "safe continuation; this does not terminate an external ChatGPT process"
+        ),
+    )
+    kill.add_argument("dish", metavar="DISH", help=_dish_target_help)
+    kill.add_argument(
+        "--reason",
+        default="Marco requested replacement of the outstanding Dish run.",
+        help="durable reason recorded for the fencing/replacement decision",
+    )
 
     recover = subparsers.add_parser(
         _admin_name("recover"),

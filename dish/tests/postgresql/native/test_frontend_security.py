@@ -306,8 +306,8 @@ def test_native_frontend_runtime_physically_isolates_auth_writes_from_observatio
             assert len(continuation["cards"]) == 1
             detail = runtime.detail(task_route_id=task_route_id)
             assert detail["task_id"] == task_route_id
-            assert str(first_task_id) not in repr((board, continuation, detail))
-            assert str(second_task_id) not in repr((board, continuation, detail))
+            assert task_route_id == str(first_task_id)
+            assert continuation["cards"][0]["task_id"] == str(second_task_id)
 
             with runtime.observation_engine.connect() as connection:
                 transaction = connection.begin()

@@ -36,6 +36,27 @@ _CANONICAL_DISH_UUID_RE = re.compile(CANONICAL_DISH_UUID_PATTERN)
 MAX_ASANA_GID = (1 << 63) - 1
 MAX_ASANA_GID_LENGTH = len(str(MAX_ASANA_GID))
 
+ASANA_IDENTITY_SCHEME = "dish-asana-gid-uuid5-v1"
+# uuid5(uuid.NAMESPACE_URL, "urn:dish:identity:asana:v1")
+ASANA_IDENTITY_NAMESPACE = uuid.UUID("a8ad7ec4-ec82-5764-b89e-1fed9c62e4a1")
+_ASANA_IDENTITY_KINDS = frozenset({"task", "project", "section"})
+
+
+def stable_dish_uuid_for_asana_identity(entity_kind: str, asana_gid: Any) -> uuid.UUID:
+    """Return the stable PostgreSQL Dish UUID for one typed legacy Asana identity.
+
+    This is the shared identity authority used by both migration/import tooling and
+    legacy admin target resolution.  It intentionally validates only the canonical
+    positive-decimal spelling here; surface-specific range checks remain with the
+    caller.
+    """
+    if entity_kind not in _ASANA_IDENTITY_KINDS:
+        raise ValueError(f"unsupported Asana identity kind: {entity_kind}")
+    gid = str(asana_gid or "").strip()
+    if _NUMERIC_GID_RE.fullmatch(gid) is None:
+        raise ValueError(f"{entity_kind}_gid must be a canonical positive decimal Asana GID")
+    return uuid.uuid5(ASANA_IDENTITY_NAMESPACE, f"{entity_kind}:{gid}")
+
 
 def _invalid_identifier(
     field: str, rule: str, message: str, *, expected_format: str | None = None

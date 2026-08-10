@@ -12,7 +12,7 @@ from tests.support.postgresql.core import _bootstrap_registry, _import_one, _nex
 pytestmark = [pytest.mark.postgresql, pytest.mark.native_postgresql]
 
 
-def test_local_frontend_backend_reads_native_postgresql_without_raw_ids(core_db) -> None:
+def test_local_frontend_backend_reads_native_postgresql_with_canonical_dish_uuid(core_db) -> None:
     factory, ids = core_db
     with session_scope(factory) as session:
         context = _bootstrap_registry(
@@ -33,11 +33,10 @@ def test_local_frontend_backend_reads_native_postgresql_without_raw_ids(core_db)
 
     assert board["sections"][0]["cards"][0]["title"] == "[ready] Exact imported task"
     assert board["sections"][0]["section_id"].startswith("r1s-")
-    assert board["sections"][0]["cards"][0]["task_id"].startswith("r1t-")
-    assert str(task_id) not in repr(board)
+    assert board["sections"][0]["cards"][0]["task_id"] == str(task_id)
 
 
-def test_local_frontend_backend_reads_native_postgresql_task_detail_without_raw_ids(core_db) -> None:
+def test_local_frontend_backend_reads_native_postgresql_task_detail_by_canonical_dish_uuid(core_db) -> None:
     factory, ids = core_db
     with session_scope(factory) as session:
         context = _bootstrap_registry(
@@ -62,4 +61,4 @@ def test_local_frontend_backend_reads_native_postgresql_task_detail_without_raw_
     assert detail["title"] == "[ready] Exact imported task"
     assert detail["body_presentation"]["state"] == "sanitized_html"
     assert detail["advisory"]["invokable_by_frontend"] is False
-    assert str(task_id) not in repr(detail)
+    assert detail["task_id"] == str(task_id)

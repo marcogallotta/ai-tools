@@ -25,7 +25,7 @@ from dish_service.frontend_renderer import (
 )
 from dish_service.frontend_tokens import route_identity
 
-_TASK_ROUTE_RE = re.compile(r"r1t-[A-Za-z0-9_-]{27}")
+_TASK_ROUTE_RE = re.compile(r"(?!00000000-0000-0000-0000-000000000000)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 _ATTENTION_TO_DISCLOSURE = {
     "lease_attention": "lease",
     "verification_attention": "verification",
@@ -37,7 +37,7 @@ _ATTENTION_TO_DISCLOSURE = {
 
 
 class TaskNotFound(LookupError):
-    """Opaque task route does not identify a known bounded candidate."""
+    """Task UUID route does not identify a known bounded candidate."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +56,7 @@ class FrontendDetailConfig:
 
 
 class FrontendDetailService:
-    """Resolve an opaque task route and present one closed Stage 4 DTO."""
+    """Resolve a canonical stored Dish UUID and present one closed Stage 4 DTO."""
 
     def __init__(
         self,

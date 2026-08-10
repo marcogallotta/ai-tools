@@ -500,3 +500,19 @@ def test_action_guidance_routes_exact_human_review_repairs_to_semantic_proposals
     assert "reasonable defensible estimate" in text
     assert "Large correction" in text
     assert "Marco-only choice remains" in text
+
+
+def test_action_guidance_spells_out_verification_correction_and_route_vocabularies() -> None:
+    result = {
+        "command": "inspect",
+        "code": "OK",
+        "allowed_actions": ["approve", "reject"],
+        "data": {},
+        "errors": [],
+    }
+    guidance = action_agent_guidance(result)
+    text = " ".join(guidance["instructions"])
+    assert "correction=none" in text
+    assert "correction=small" in text
+    assert "large, evidence, or human-review" in text
+    assert "Small correction is not a rejection route" in text

@@ -1,5 +1,6 @@
 import json
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -258,3 +259,21 @@ def test_change_start_schema_requires_the_runtime_change_intent_arguments():
     assert {"task_gid", "agent", "kind", "change_level", "change_reason"}.issubset(
         change["required"]
     )
+
+
+def test_verification_action_schema_exposes_closed_correction_and_route_values() -> None:
+    checked = json.loads((Path(__file__).parent.parent / "openapi" / "dish-action.openapi.json").read_text())
+    approve = checked["paths"]["/v1/action/approve"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
+    approve_values = {
+        branch["properties"]["correction"]["enum"][0]
+        for branch in approve["oneOf"]
+    }
+    assert approve_values == {"none", "small"}
+    assert all(branch["properties"]["correction"]["enum"] == [branch["properties"]["correction"]["const"]] for branch in approve["oneOf"])
+
+    reject = checked["paths"]["/v1/action/reject"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
+    reject_values = {
+        branch["properties"]["route"]["enum"][0]
+        for branch in reject["oneOf"]
+    }
+    assert reject_values == {"large", "evidence", "human-review"}

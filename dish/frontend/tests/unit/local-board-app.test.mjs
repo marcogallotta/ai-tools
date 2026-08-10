@@ -69,8 +69,8 @@ test("accepted bootstrap replacement invalidates older continuation work", () =>
 
 test("newer detail requests fence stale detail responses and close invalidates in-flight work", () => {
   const state = new LocalBoardRequestState();
-  const first = state.beginDetail("r1t-" + "a".repeat(27));
-  const second = state.beginDetail("r1t-" + "b".repeat(27));
+  const first = state.beginDetail("12345678-1234-5678-1234-567812345678");
+  const second = state.beginDetail("12345678-1234-5678-1234-567812345679");
   assert.equal(state.isCurrentDetail(first), false);
   assert.equal(state.isCurrentDetail(second), true);
   state.cancelDetail();

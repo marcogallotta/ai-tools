@@ -18,18 +18,18 @@ SECRET = b"stage-3-test-token-secret-32-bytes-minimum"
 NOW = datetime(2026, 8, 7, 20, 0, tzinfo=timezone.utc)
 
 
-def test_route_identity_is_stable_typed_environment_scoped_and_non_raw() -> None:
+def test_task_route_identity_is_canonical_stored_uuid_while_section_identity_remains_scoped() -> None:
     task_id = UUID("12345678-1234-5678-1234-567812345678")
     first = route_identity(secret=SECRET, environment="test", kind="task", object_id=task_id)
     second = route_identity(secret=SECRET, environment="test", kind="task", object_id=task_id)
     section = route_identity(secret=SECRET, environment="test", kind="section", object_id=task_id)
     production = route_identity(secret=SECRET, environment="production", kind="task", object_id=task_id)
 
-    assert first == second
-    assert first != section
-    assert first != production
-    assert str(task_id) not in first
-    assert task_id.hex not in first
+    assert first == second == str(task_id)
+    assert production == str(task_id)
+    assert section != first
+    assert str(task_id) not in section
+    assert task_id.hex not in section
 
 
 def test_cursor_is_opaque_tamper_resistant_and_environment_bound() -> None:

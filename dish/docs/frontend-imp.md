@@ -481,17 +481,16 @@ A card DTO contains only:
 - zero or more approved attention codes.
 
 Ordering keys, database revisions, authority generations, and other internal consistency inputs remain
-server-owned and are not browser DTO fields. Browser-facing task and section route identities are
-non-raw, non-sensitive, bounded, stable for routine deep links, and scoped to the correct object type
-and environment. They must not expose a database UUID, Asana GID, other external identifier, or secret;
-the contract does not mandate encryption, a stored alias table, or any other particular encoding.
+server-owned and are not browser DTO fields. Browser-facing task and section identities have different contracts. A task route identity is the
+canonical stored Dish UUID and is stable across environments; a section route identity remains bounded,
+non-sensitive, opaque, and scoped to its object type and environment. Neither identity is an
+authorization credential, and neither may expose an Asana GID, secret, or unrelated external identifier.
 They are validated as data and never interpolated into SQL, filesystem paths, templates, or logs.
-A malformed, wrong-type, wrong-environment, or out-of-bound route identity fails as `request_invalid`;
-a well-formed task identity that resolves to no task fails as `task_not_found`. Every accepted legacy
-or alternate representation is normalized by the server to one current
-browser-facing identity before board, detail, pagination, URL, or client state is committed. Current
-card/detail responses return that current identity so a task not already present on a loaded board page
-can still be reconciled without duplicate panels or history entries.
+A malformed, wrong-type, wrong-environment where applicable, or out-of-bound route identity fails as
+`request_invalid`; a well-formed task UUID that resolves to no Dish fails as `task_not_found`. The
+canonical task deep link is `/dishes/<uuid>/<decorative-title-slug>`; only the UUID participates in
+identity resolution. Current card/detail responses return that UUID so a Dish not already present on a
+loaded board page can still be reconciled without duplicate panels or history entries.
 
 The Stage 1 attention-code registry is limited to:
 
@@ -974,12 +973,11 @@ board and opens the selected task when it remains eligible.
 The UI provides no dedicated **Open in new tab** control. Normal browser behavior may open a deep
 link in another tab, where it renders the same board-plus-panel product.
 
-The selected task identity is transmitted as the current bounded URL-safe, non-raw, non-sensitive
-browser-facing route identity defined in Section 5.1. It is absent from the human-readable
-presentation and does not expose a database UUID, Asana GID, other external identifier, or secret.
-When an accepted legacy form is used, the server normalizes it to the current identity before visible
-client state or browser history is committed, so old and current forms cannot create duplicate panels
-or history loops. When authentication is required, the return target must match the closed board-route grammar: the
+The selected Dish identity is transmitted as the canonical stored UUID defined in Section 5.1 and the
+route is `/dishes/<uuid>/<decorative-title-slug>`. The UUID is authoritative; the slug never participates
+in identity or authorization. The UUID may appear in route/DTO identity fields but not as a substitute
+for human-readable presentation, and Asana GIDs, secrets, legal-action authority, and unrelated internal
+identifiers remain excluded. Legacy task-route aliases are not canonical browser history identities. When authentication is required, the return target must match the closed board-route grammar: the
 board root plus, at most, one syntactically valid frontend task route identity. It is a bounded, normalized
 relative path on the same origin; arbitrary private API, login, logout, schema, or static-asset paths,
 schemes, authority components, protocol-relative paths, dot-segment traversal, duplicate parameters,
@@ -1004,10 +1002,13 @@ another non-sensitive route label may be used when route classification is neede
 CSRF headers, password bodies, opaque session/cursor values, task titles and content, dynamic project,
 section, operation, phase, advisory, disclosure, projection, and notice text, and any return-target
 value. Diagnostic correlation may use generated request or trace identifiers, but no
-such identifier is exposed as task authority or browser presentation. Browser-history entries and operating-system metadata surfaces populated from the document URL or
-title receive only the opaque deep-link URL and fixed generic document title, never task titles,
-section labels, warning text, or canonical content. This metadata rule does not claim to suppress the
-ordinary on-screen application content from user-visible window previews or screen capture.
+such identifier is exposed as task authority or browser presentation. Browser-history entries and
+operating-system metadata surfaces populated from the document URL may receive the canonical
+`/dishes/<uuid>/<decorative-title-slug>` deep link; the UUID is a non-secret identifier and the
+decorative slug may reveal a normalized title. The document title remains fixed and generic, and these
+surfaces must not receive canonical content, section labels, warning text, or workflow diagnostics. This
+metadata rule does not claim to suppress the ordinary on-screen application content from user-visible
+window previews or screen capture.
 
 ## 10. Accessibility and interaction mechanics
 
@@ -1473,7 +1474,7 @@ passing against the production-shaped build.
   contain no sensitive dynamic values, and do not make the browser infer authority;
 - unknown attention, disclosure, notice, member, or required response states fail closed as local
   `contract_mismatch`; no unknown human-disclosure fact is silently omitted;
-- task and section route identities are bounded, non-raw, non-sensitive, stable for routine use,
+- task route identities are canonical stored Dish UUIDs; section route identities remain bounded, opaque, non-sensitive, and environment/type scoped,
   correctly typed, normalized to one current identity, and never displayed as technical information;
   malformed or mis-scoped identities fail as `request_invalid`, while a well-formed unknown task
   identity fails as `task_not_found`;

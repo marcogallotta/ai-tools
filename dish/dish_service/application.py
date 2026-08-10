@@ -1191,6 +1191,17 @@ class DishService:
         agent: str | None = None,
         proposal_id: str | None = None,
     ) -> bool:
+        # Marco kill/replace retirement is exact authority state independent of
+        # lease cleanup.  A retired owner/run cannot use the missing-lease path
+        # to reacquire or reclaim an approved semantic proposal.
+        retired = conn.execute(
+            """SELECT 1 FROM operation_run_retirements
+                 WHERE operation_id=? AND owner_id=? AND run_id=?
+                 LIMIT 1""",
+            (operation_id, principal.owner_id, principal.run_id),
+        ).fetchone()
+        if retired is not None:
+            return False
         op = self._operation_row(conn, operation_id)
         if op is None or op["status"] != "open":
             return False
@@ -2513,21 +2524,75 @@ class DishService:
                 )
                 result["retryable"] = False
         if error.rule == "service_lease_expired":
-            view = (
-                self._exposed_operation_view(
-                    state.conn, operation_id, app=state.app
-                )
+            active = (
+                state.leases.active_for_operation(operation_id)
                 if operation_id
                 else None
             )
-            result = self._apply_expired_lease_guidance(
-                result,
-                operation_id=operation_id or "unknown",
-                after_recovery_actions=(
-                    list(view.get("legal_actions") or []) if view is not None else []
-                ),
-                authoritative_view=view,
-            )
+            reclaim = None
+            if (
+                operation_id
+                and active is not None
+                and not state.leases.is_owned_by(active, state.principal)
+                and state.backend is not None
+            ):
+                from dish_tool.safe_reclaim import safe_reclaim_eligibility
+
+                reclaim = safe_reclaim_eligibility(
+                    state.conn,
+                    state.backend,
+                    operation_id=operation_id,
+                    requested_owner_id=state.principal.owner_id,
+                    requested_run_id=state.principal.run_id,
+                    lease_id=active["lease_id"],
+                    now=state.leases.now(),
+                )
+            if reclaim is not None and reclaim.eligible:
+                data = result.setdefault("data", {})
+                reclaim_arguments = {
+                    "submission_id": operation_id,
+                    "lease_id": reclaim.lease_id,
+                }
+                agent = str(arguments.get("agent") or "").strip()
+                if agent:
+                    reclaim_arguments["agent"] = agent
+                data.update({
+                    "safe_reclaim": reclaim.to_dict(),
+                    "agent_action": {
+                        "command": "safe-reclaim",
+                        "arguments": reclaim_arguments,
+                    },
+                    "service_access": {
+                        "state": "safe_reclaim_available",
+                        "previous_owner_id": reclaim.previous_owner_id,
+                        "previous_run_id": reclaim.previous_run_id,
+                        "lease_id": reclaim.lease_id,
+                    },
+                    "legal_next_step": (
+                        "The prior run is inactive and the attempt is mechanically clean. "
+                        "Call safe-reclaim with data.agent_action.arguments exactly; no Marco/admin recovery is required."
+                    ),
+                })
+                self._synchronize_exposed_actions(
+                    result, ["safe-reclaim"], ensure_legal_next=True
+                )
+                result["retryable"] = False
+            else:
+                view = (
+                    self._exposed_operation_view(
+                        state.conn, operation_id, app=state.app
+                    )
+                    if operation_id
+                    else None
+                )
+                result = self._apply_expired_lease_guidance(
+                    result,
+                    operation_id=operation_id or "unknown",
+                    after_recovery_actions=(
+                        list(view.get("legal_actions") or []) if view is not None else []
+                    ),
+                    authoritative_view=view,
+                )
         if request_id and command in _REPLAYED_AGENT_COMMANDS and state.replay_started:
             result.setdefault("data", {})["request_id"] = request_id
             state.replay.complete(state.conn, request_id=request_id, result=result)

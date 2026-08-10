@@ -1069,7 +1069,7 @@
                           ]
                         },
                         "uniqueItems": true,
-                        "description": "Use only to explicitly attest an append-only `Human — Marco:` Decision that Marco actually stated in conversation. This records agent-attributed provenance; it does not authorize any other governed-field mutation."
+                        "description": "Use only to explicitly attest an append-only `Human \u2014 Marco:` Decision that Marco actually stated in conversation. This records agent-attributed provenance; it does not authorize any other governed-field mutation."
                       }
                     },
                     "type": "object",
@@ -1187,6 +1187,9 @@
                           },
                           "correction": {
                             "type": "string",
+                            "enum": [
+                              "none"
+                            ],
                             "const": "none",
                             "description": "Approve the exact inspected candidate without supplying file_text."
                           }
@@ -1235,6 +1238,9 @@
                           },
                           "correction": {
                             "type": "string",
+                            "enum": [
+                              "small"
+                            ],
                             "const": "small",
                             "description": "Apply and approve a complete Small corrected candidate supplied as file_text."
                           },
@@ -1350,6 +1356,9 @@
                           },
                           "route": {
                             "type": "string",
+                            "enum": [
+                              "large"
+                            ],
                             "const": "large",
                             "description": "Select the large rejection route."
                           },
@@ -1377,7 +1386,7 @@
                               ]
                             },
                             "uniqueItems": true,
-                            "description": "On a Large-correction retry, name only governed fields Dish asked the agent to confirm as intentionally changed. Naming Decisions also attests that an append-only `Human — Marco:` entry reflects something Marco actually stated; it does not authorize another governed field."
+                            "description": "On a Large-correction retry, name only governed fields Dish asked the agent to confirm as intentionally changed. Naming Decisions also attests that an append-only `Human \u2014 Marco:` entry reflects something Marco actually stated; it does not authorize another governed field."
                           }
                         }
                       },
@@ -1412,6 +1421,9 @@
                           },
                           "route": {
                             "type": "string",
+                            "enum": [
+                              "evidence"
+                            ],
                             "const": "evidence",
                             "description": "Select the evidence rejection route."
                           },
@@ -1473,6 +1485,9 @@
                           },
                           "route": {
                             "type": "string",
+                            "enum": [
+                              "human-review"
+                            ],
                             "const": "human-review",
                             "description": "Select the human-review rejection route."
                           },

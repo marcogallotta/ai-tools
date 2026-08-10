@@ -124,9 +124,10 @@ that imply mutation authority. New attention categories cannot be inferred or in
 they require an explicit frontend-contract update.
 
 Selecting a card opens the task in the side panel. Stage 1 has no dedicated **Open in new tab**
-control and no separate full-page task screen. The selected task is represented in the URL by a non-raw, non-sensitive browser-facing identity so
-that a reload or revisited deep link restores the same board-plus-panel view without exposing a
-canonical database or external-system identifier.
+control and no separate full-page task screen. The selected Dish is represented in the URL as `/dishes/<stored-dish-uuid>/<decorative-title-slug>`.
+The stored Dish UUID is the authoritative route identity and the slug is presentation-only, so a reload
+or revisited deep link restores the same board-plus-panel view. The UUID is not an authorization
+credential and does not replace the normal authenticated frontend boundary.
 
 ### 3.3 Task side panel
 

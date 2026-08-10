@@ -166,7 +166,7 @@ def api(body: bytes):
 
 def test_unauthenticated_html_redirects_and_authenticated_fixture_shell_is_served(private_server) -> None:
     server, _ = private_server
-    status, headers, body = request(server, "GET", "/tasks/r1t-AAAAAAAAAAAAAAAAAAAAAAAAAAA/example", contract=None)
+    status, headers, body = request(server, "GET", "/dishes/12345678-1234-5678-1234-567812345678/example", contract=None)
     assert status == 303
     assert header_values(headers, "Location")[0].startswith("/login?return=rt1.")
     assert body == b""

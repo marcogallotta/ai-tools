@@ -141,6 +141,17 @@ def action_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
                 "outcome, quantified material issue if any, simplest fix, and only the Marco decision actually needed."
             )
 
+        if "approve" in actions:
+            instructions.append(
+                "For Verification approval, correction is closed: use correction=none for a clean signoff; "
+                "use correction=small only when supplying the complete Small corrected candidate as file_text. "
+                "Do not send clean, minor, large, or any other correction value."
+            )
+        if "reject" in actions:
+            instructions.append(
+                "For Verification rejection, route is closed to large, evidence, or human-review. "
+                "A Small correction is not a rejection route; apply it through approve with correction=small."
+            )
         if command == "approve" and "submit" in actions:
             instructions.append("Call submit in this same run.")
 

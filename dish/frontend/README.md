@@ -99,9 +99,9 @@ npm --prefix frontend run build
 Open `http://127.0.0.1:4173/?source=postgresql`. Without `source=postgresql` the same build remains
 fixture-backed. `review=1` always forces fixture mode and blocks frontend API requests. In PostgreSQL
 mode, selecting a task opens fresh read-only detail and normalizes the URL to
-`/tasks/<opaque-task-route>/<decorative-title-slug>?source=postgresql`; the opaque route identity is
+`/dishes/<stored-dish-uuid>/<decorative-title-slug>?source=postgresql`; the stored Dish UUID is
 authoritative and the slug is decorative. Direct load/reload and Back/Forward restore that local
-detail state without exposing the task UUID. Destination remains omitted until Gate B names an
+detail state. The UUID is an identifier, not an authorization credential. Destination remains omitted until Gate B names an
 accepted canonical source.
 
 The local server defaults to `postgresql+psycopg://dish:dish@127.0.0.1:55432/dish_stage_a_test`.
@@ -116,7 +116,7 @@ path remains legacy SQLite/location evidence through `scripts/dish-pg-export-leg
 empty-target-only; test fixture helpers are not runtime population tooling.
 
 With the server running against a populated local database, exercise the real board/detail browser
-path (including detail open, deep-link reload, UUID non-exposure, and close) with:
+path (including detail open, deep-link reload, canonical Dish UUID routing, and close) with:
 
 ```sh
 DISH_FRONTEND_LOCAL_URL='http://127.0.0.1:4173/?source=postgresql' \

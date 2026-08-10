@@ -632,6 +632,111 @@ def _require_writer_transaction(conn: sqlite3.Connection, *, operation: str) -> 
         raise RuntimeError(f"{operation} requires an existing SQLite writer transaction")
 
 
+def operation_run_retirement(
+    conn: sqlite3.Connection, *, operation_id: str, owner_id: str, run_id: str
+) -> sqlite3.Row | None:
+    return conn.execute(
+        """SELECT * FROM operation_run_retirements
+             WHERE operation_id=? AND owner_id=? AND run_id=?""",
+        (operation_id, owner_id, run_id),
+    ).fetchone()
+
+
+def retire_operation_run_in_transaction(
+    conn: sqlite3.Connection,
+    *,
+    operation_id: str,
+    owner_id: str,
+    run_id: str,
+    reason: str,
+    source_lease_id: str | None = None,
+    retired_at: str | None = None,
+) -> sqlite3.Row:
+    """Durably revoke one exact service owner/run for one operation.
+
+    Retirement is authority state in its own right.  A source lease is optional
+    evidence and may already be released; callers must not rely on changing that
+    lease row to establish revocation.
+    """
+
+    _require_writer_transaction(conn, operation="operation run retirement")
+    clean_owner = str(owner_id or "").strip()
+    clean_run = str(run_id or "").strip()
+    clean_reason = str(reason or "").strip()
+    if not clean_owner or not clean_run or not clean_reason:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "operation run retirement requires owner, run, and reason",
+            rule="operation_run_retirement_identity_required",
+        )
+    operation = conn.execute(
+        "SELECT task_gid FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()
+    if operation is None:
+        raise DishRuleError(
+            "NOT_FOUND", "operation not found", rule="operation_not_found"
+        )
+    if source_lease_id is not None:
+        lease = conn.execute(
+            "SELECT operation_id,owner_id,run_id FROM service_leases WHERE lease_id=?",
+            (source_lease_id,),
+        ).fetchone()
+        if (
+            lease is None
+            or lease["operation_id"] != operation_id
+            or lease["owner_id"] != clean_owner
+            or lease["run_id"] != clean_run
+        ):
+            raise DishRuleError(
+                "CONFLICT",
+                "retirement source lease does not match the exact owner/run",
+                rule="operation_run_retirement_lease_mismatch",
+            )
+    existing = operation_run_retirement(
+        conn, operation_id=operation_id, owner_id=clean_owner, run_id=clean_run
+    )
+    if existing is not None:
+        return existing
+    stamp = retired_at or utc_now()
+    retirement_id = str(uuid.uuid4())
+    conn.execute(
+        """INSERT INTO operation_run_retirements(
+               retirement_id,operation_id,owner_id,run_id,source_lease_id,reason,retired_at
+           ) VALUES(?,?,?,?,?,?,?)""",
+        (
+            retirement_id,
+            operation_id,
+            clean_owner,
+            clean_run,
+            source_lease_id,
+            clean_reason,
+            stamp,
+        ),
+    )
+    record_audit(
+        conn,
+        submission_id=None,
+        task_gid=operation["task_gid"],
+        operation_id=operation_id,
+        event_type="operation.run_retired",
+        actor_agent=None,
+        actor_source="marco-admin",
+        actor_run_id=clean_run,
+        details={
+            "retirement_id": retirement_id,
+            "owner_id": clean_owner,
+            "run_id": clean_run,
+            "source_lease_id": source_lease_id,
+            "reason": clean_reason,
+        },
+        result_code="OK",
+        result_ok=True,
+    )
+    return operation_run_retirement(
+        conn, operation_id=operation_id, owner_id=clean_owner, run_id=clean_run
+    )
+
+
 def get_abandonment_attempt(
     conn: sqlite3.Connection, abandonment_id: str
 ) -> sqlite3.Row:
@@ -2137,10 +2242,42 @@ def transition_operation(conn: sqlite3.Connection, operation_id: str, *, phase: 
     return updated
 
 
-def _admin_target_task_gid(raw: Any) -> str | None:
-    """Classify an admin CLI target as an Asana task GID/URL, or None if it is
-    already an exact dish identifier (operation/abandonment ID)."""
-    from dish_tool.identifiers import require_asana_gid
+def _known_task_gid_for_dish_uuid(conn: sqlite3.Connection, dish_id: str) -> str | None:
+    """Resolve one stable imported Dish UUID against legacy-known task identities."""
+    from dish_tool.identifiers import stable_dish_uuid_for_asana_identity
+
+    rows = conn.execute(
+        """SELECT task_gid FROM task_content_state
+           UNION
+           SELECT task_gid FROM operations
+           UNION
+           SELECT task_gid FROM service_leases"""
+    ).fetchall()
+    matches = []
+    for row in rows:
+        task_gid = str(row["task_gid"])
+        try:
+            candidate = stable_dish_uuid_for_asana_identity("task", task_gid)
+        except ValueError:
+            # Synthetic non-Asana identities exist only in legacy test fixtures and
+            # cannot have a canonical imported Dish UUID.
+            continue
+        if str(candidate) == dish_id:
+            matches.append(task_gid)
+    if len(matches) > 1:
+        raise DishRuleError(
+            "CONFLICT",
+            "Dish UUID resolves to multiple legacy task identities",
+            rule="admin_dish_identity_ambiguous",
+            details={"dish_id": dish_id, "task_gids": sorted(matches)},
+        )
+    return None if not matches else matches[0]
+
+
+def _admin_target_task_gid(conn: sqlite3.Connection, raw: Any) -> str | None:
+    """Classify an admin target as a task identity, or ``None`` for exact IDs."""
+    from dish_tool.dish_urls import dish_uuid_from_url
+    from dish_tool.identifiers import require_asana_gid, require_dish_uuid
     from dish_tool.task_urls import task_gid_from_url
 
     clean = str(raw or "").strip()
@@ -2148,28 +2285,114 @@ def _admin_target_task_gid(raw: Any) -> str | None:
         return None
     if clean.isdecimal():
         return require_asana_gid(clean, field="task_gid")
-    if "://" in clean:
-        return task_gid_from_url(clean)
-    return None
+    if "://" in clean or clean.startswith("/dishes/"):
+        try:
+            dish_id = dish_uuid_from_url(clean)
+        except DishRuleError as dish_error:
+            if "/dishes/" in clean or clean.startswith("/dishes/"):
+                raise dish_error
+            return task_gid_from_url(clean)
+        task_gid = _known_task_gid_for_dish_uuid(conn, dish_id)
+        if task_gid is None:
+            raise DishRuleError(
+                "NOT_FOUND",
+                "Dish URL does not identify a known Dish",
+                rule="admin_dish_target_not_found",
+                details={"dish_id": dish_id},
+            )
+        return task_gid
+    try:
+        dish_id = require_dish_uuid(clean, field="dish_id")
+    except DishRuleError:
+        return None
+    return _known_task_gid_for_dish_uuid(conn, dish_id)
+
+
+def _active_operation_for_admin_dish(
+    conn: sqlite3.Connection, *, task_gid: str
+) -> sqlite3.Row | None:
+    rows = conn.execute(
+        """SELECT * FROM operations
+             WHERE task_gid=? AND status IN ('open','uncertain')
+             ORDER BY created_at DESC, operation_id DESC""",
+        (task_gid,),
+    ).fetchall()
+    if len(rows) > 1:
+        raise DishRuleError(
+            "CONFLICT",
+            "Dish has multiple non-terminal operations",
+            rule="admin_dish_operation_ambiguous",
+            details={
+                "task_gid": task_gid,
+                "operation_ids": [str(row["operation_id"]) for row in rows],
+            },
+        )
+    return None if not rows else rows[0]
+
+
+def resolve_admin_dish_target(conn: sqlite3.Connection, raw: Any) -> dict[str, Any]:
+    """Resolve a high-level ``<dish>`` reference without requiring an open operation.
+
+    Accepted references are a task GID, supported Asana task URL, canonical stored
+    Dish UUID, canonical frontend ``/dishes/<uuid>/<slug>`` URL, or (for backward
+    compatibility) an exact operation ID.  The returned UUID is always the stable
+    PostgreSQL Dish identity; the decorative frontend slug never participates in
+    identity resolution.
+    """
+    from dish_tool.identifiers import stable_dish_uuid_for_asana_identity
+
+    clean = str(raw or "").strip()
+    if not clean:
+        raise DishRuleError(
+            "INVALID_ARGUMENT", "Dish reference is required", rule="dish_target_required"
+        )
+    exact_operation = None
+    if not clean.isdecimal() and "://" not in clean and not clean.startswith("/dishes/"):
+        exact_operation = conn.execute(
+            "SELECT * FROM operations WHERE operation_id=?", (clean,)
+        ).fetchone()
+    if exact_operation is not None:
+        task_gid = str(exact_operation["task_gid"])
+        reference_kind = "operation"
+    else:
+        task_gid = _admin_target_task_gid(conn, clean)
+        reference_kind = "dish"
+        if task_gid is None:
+            raise DishRuleError(
+                "NOT_FOUND",
+                "Dish reference is not known",
+                rule="admin_dish_target_not_found",
+                details={"reference": clean},
+            )
+    operation = _active_operation_for_admin_dish(conn, task_gid=task_gid)
+    try:
+        dish_id = str(stable_dish_uuid_for_asana_identity("task", task_gid))
+    except ValueError:
+        dish_id = None
+    return {
+        "task_gid": task_gid,
+        "dish_id": dish_id,
+        "operation_id": None if operation is None else str(operation["operation_id"]),
+        "reference_kind": reference_kind,
+    }
 
 
 def resolve_admin_operation_target(conn: sqlite3.Connection, raw: Any) -> str:
-    """Resolve a submission_id admin argument that may be an Asana task GID
-    or task URL into the exact open operation ID for that task. An argument
-    that is not recognizable as a task GID/URL passes through unchanged, on
-    the assumption it is already an exact operation ID."""
+    """Resolve a task/Dish reference to the exact open/non-terminal operation ID."""
     clean = str(raw or "").strip()
-    task_gid = _admin_target_task_gid(clean)
+    exact = conn.execute(
+        "SELECT operation_id FROM operations WHERE operation_id=?", (clean,)
+    ).fetchone()
+    if exact is not None:
+        return clean
+    task_gid = _admin_target_task_gid(conn, clean)
     if task_gid is None:
         return clean
-    row = conn.execute(
-        "SELECT operation_id FROM operations WHERE task_gid=? AND status='open'",
-        (task_gid,),
-    ).fetchone()
+    row = _active_operation_for_admin_dish(conn, task_gid=task_gid)
     if row is None:
         raise DishRuleError(
             "NOT_FOUND",
-            "no open operation for that task",
+            "no open operation for that Dish",
             rule="admin_operation_target_not_found",
             details={"task_gid": task_gid},
         )
@@ -2177,10 +2400,14 @@ def resolve_admin_operation_target(conn: sqlite3.Connection, raw: Any) -> str:
 
 
 def resolve_admin_abandonment_target(conn: sqlite3.Connection, raw: Any) -> str:
-    """Resolve an abandonment_id admin argument that may be an Asana task GID
-    or task URL into the exact non-completed abandonment ID for that task."""
+    """Resolve a task/Dish reference into the exact non-completed abandonment ID."""
     clean = str(raw or "").strip()
-    task_gid = _admin_target_task_gid(clean)
+    exact = conn.execute(
+        "SELECT abandonment_id FROM abandonment_attempts WHERE abandonment_id=?", (clean,)
+    ).fetchone()
+    if exact is not None:
+        return clean
+    task_gid = _admin_target_task_gid(conn, clean)
     if task_gid is None:
         return clean
     row = conn.execute(
@@ -2190,7 +2417,7 @@ def resolve_admin_abandonment_target(conn: sqlite3.Connection, raw: Any) -> str:
     if row is None:
         raise DishRuleError(
             "NOT_FOUND",
-            "no active abandonment for that task",
+            "no active abandonment for that Dish",
             rule="admin_abandonment_target_not_found",
             details={"task_gid": task_gid},
         )

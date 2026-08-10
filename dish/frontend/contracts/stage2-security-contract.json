@@ -12,7 +12,7 @@
     ],
     "protected_html": [
       "GET /",
-      "GET /tasks/{task_id}/{slug}",
+      "GET /dishes/{task_id}/{slug}",
       "GET /task/{fixture_id}"
     ],
     "protected_api": [

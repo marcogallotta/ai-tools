@@ -135,6 +135,9 @@ def _success_lines(command: str, data: Mapping[str, Any]) -> list[str]:
         lines = [effect]
     else:
         summaries = {
+            "kill": (
+                "The requested Dish-run replacement completed.",
+            ),
             "authorize-governed-change": (
                 "Authorization recorded. The task itself was not changed.",
                 "Have the agent retry the same exact candidate.",
@@ -219,9 +222,9 @@ def render_admin_result(
     task_gid = _clean(result.get("task_gid") or data.get("task_gid"))
     operation_id = _clean(result.get("submission_id") or data.get("operation_id"))
     if title:
-        lines.append(f"Task: {title}")
+        lines.append(f"Dish: {title}")
     elif task_gid:
-        lines.append(f"Task: {task_gid}")
+        lines.append(f"Dish: {task_gid}")
     if operation_id:
         lines.append(f"Operation: {operation_id}")
     lines.append("")
@@ -457,36 +460,73 @@ def render_admin_result(
                     lines.append(f"   {_command_label(action)}: {shell}")
     elif command == "inspect" and ok:
         inspect_actions = _actions(data, (row for row in errors if isinstance(row, Mapping)))
-        abandonment_decision = _decision_first_abandonment_action(inspect_actions)
-        recovery_action = _compact_recovery_action(inspect_actions)
         lines.append("Status")
-        lines.append(_clean(data.get("problem")) or "No administrative blocker is recorded.")
-        if abandonment_decision is not None:
-            action, question = abandonment_decision
-            lines.append(question)
-            shell = _command_from_action(action)
-            if shell:
-                lines.append(f"If yes, {_command_label(action)}: {shell}")
-            suppress_generic_actions = True
-        elif recovery_action is not None:
-            shell = _command_from_action(recovery_action)
-            if shell:
-                lines.append(f"Run: {shell}")
-            suppress_generic_actions = True
+        if _clean(data.get("status")) == "resting":
+            lines.append("No workflow is currently running for this Dish.")
+            lines.append("Nothing needs recovery or replacement.")
         else:
-            waiting = _clean(data.get("waiting_for"))
+            lines.append(_clean(data.get("problem")) or "No administrative blocker is recorded.")
+            invocation = data.get("outstanding_invocation")
+            replace_action = next(
+                (
+                    action
+                    for action in inspect_actions
+                    if _clean(action.get("command")) == "kill"
+                ),
+                None,
+            )
+            if isinstance(invocation, Mapping):
+                run_id = _clean(invocation.get("run_id")) or "unknown"
+                authority = (_clean(invocation.get("authority_state")) or "unknown").upper()
+                stage = _clean(invocation.get("stage"))
+                last_activity = _clean(invocation.get("last_activity_at"))
+                lines.append(f"Outstanding run: {run_id} — {authority}")
+                if stage:
+                    lines.append(f"Stage: {stage}")
+                if last_activity:
+                    lines.append(f"Last Dish activity: {last_activity}")
+            if replace_action is not None:
+                lines.append("Choice: leave this run alone, or replace it.")
+                shell = _command_from_action(replace_action)
+                if shell:
+                    lines.append(f"Replace template: {shell}")
+                suppress_generic_actions = True
+            else:
+                abandonment_decision = _decision_first_abandonment_action(inspect_actions)
+                recovery_action = _compact_recovery_action(inspect_actions)
+                if abandonment_decision is not None:
+                    action, question = abandonment_decision
+                    lines.append(question)
+                    shell = _command_from_action(action)
+                    if shell:
+                        lines.append(f"If yes, {_command_label(action)}: {shell}")
+                    suppress_generic_actions = True
+                elif recovery_action is not None:
+                    shell = _command_from_action(recovery_action)
+                    if shell:
+                        lines.append(f"Run: {shell}")
+                    suppress_generic_actions = True
+                else:
+                    waiting = _clean(data.get("waiting_for"))
+                    if waiting:
+                        lines.append(f"Waiting for: {waiting}")
+                    operator_instruction = _clean(data.get("operator_instruction"))
+                    if operator_instruction:
+                        lines.append(f"Next: {operator_instruction}")
+    elif command == "kill" and ok:
+        consequence = _clean(data.get("human_consequence"))
+        lines.append("Result")
+        lines.append(consequence or "Dish completed the requested run replacement safely.")
+        continuation = data.get("continuation")
+        if isinstance(continuation, Mapping):
+            waiting = _clean(continuation.get("waiting_for"))
+            problem = _clean(continuation.get("problem"))
+            if problem and problem != consequence:
+                lines.append(f"Current Dish state: {problem}")
             if waiting:
-                lines.append(f"Waiting for: {waiting}")
-            operator_instruction = _clean(data.get("operator_instruction"))
-            if operator_instruction:
-                lines.append(f"Next: {operator_instruction}")
-            lease = data.get("service_lease")
-            if isinstance(lease, Mapping):
-                owner = _clean(lease.get("run_id")) or "unknown"
-                expiry = _clean(lease.get("expires_at"))
-                lines.append(
-                    f"Owned by run: {owner}" + (f" until {expiry}" if expiry else "")
-                )
+                lines.append(f"Now waiting for: {waiting}")
+        suppress_generic_actions = True
+        suppress_generic_agent_actions = True
     elif ok:
         post_recovery = _post_recovery_view(data) if command in {"recover", "recover-lease"} else None
         if post_recovery is not None and bool(post_recovery.get("administrative_blocker")):
@@ -509,7 +549,17 @@ def render_admin_result(
             lines.extend(_success_lines(command, data))
     else:
         message = _clean(data.get("message")) or "The command could not be completed."
+        consequence = next(
+            (
+                _clean(row.get("human_consequence"))
+                for row in errors
+                if isinstance(row, Mapping) and _clean(row.get("human_consequence"))
+            ),
+            None,
+        )
         lines.append(f"Could not {command}")
+        if consequence:
+            lines.append(consequence)
         lines.append(message)
 
     actions = _actions(data, (row for row in errors if isinstance(row, Mapping)))

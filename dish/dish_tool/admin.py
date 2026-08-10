@@ -19,7 +19,9 @@ from .database import (
     complete_operation_step,
     declare_operation_step,
     record_audit,
+    retire_operation_run_in_transaction,
     resolve_admin_abandonment_target,
+    resolve_admin_dish_target,
     resolve_admin_operation_target,
     utc_now,
 )
@@ -35,6 +37,7 @@ from .semantic_proposals import (
     get_semantic_proposal,
     proposal_payload,
     reject_semantic_proposal,
+    release_semantic_proposal_claim,
 )
 from .step8 import apply_semantic_proposal
 from .constants import MECHANICAL_PROPOSAL_AGENT
@@ -321,10 +324,35 @@ def _inspect_expired_or_released_cycle_lease(
     ).fetchone()
 
 
+def _replace_run_action(*, dish_reference: str, summary: str, effect: str) -> dict[str, Any]:
+    """Return the one high-level Marco action for retiring/replacing a Dish run."""
+    spec = template_action(
+        kind="replace-outstanding-run",
+        command="kill",
+        positional=(dish_reference,),
+        options=(("--reason", "<why this Dish run should be replaced>"),),
+        prompt_fields=(
+            PromptField(
+                "reason",
+                "Why this Dish run should be replaced",
+                "<why this Dish run should be replaced>",
+            ),
+        ),
+        summary=summary,
+        effect=effect,
+        after_success={"instruction": "Follow the safe continuation returned by Dish."},
+    )
+    return spec.payload()["human_action"] | {"shell_command": spec.shell_command()}
+
+
 def _command_inspect(
-    self, *, trace: AdminTrace, submission_id: str
+    self,
+    *,
+    trace: AdminTrace,
+    dish: str | None = None,
+    submission_id: str | None = None,
 ) -> dict[str, Any]:
-    """Return a compact, human-oriented diagnostic over authoritative state."""
+    """Return a compact, human-oriented diagnostic for any known Dish."""
 
     if self.backend is None or self.operation_service is None:
         raise DishRuleError(
@@ -332,14 +360,9 @@ def _command_inspect(
             "admin inspection requires backend access",
             rule="admin_inspect_unavailable",
         )
-    operation_id = _clean_required(
-        submission_id, rule="operation_id_required", label="operation ID or task"
-    )
-    operation = self.conn.execute(
-        "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
-    ).fetchone()
-    if operation is None:
-        raise DishRuleError("NOT_FOUND", "operation not found", rule="operation_not_found")
+    target_reference = dish if dish is not None else submission_id
+    target = resolve_admin_dish_target(self.conn, target_reference)
+    trace.task_gid = str(target["task_gid"])
 
     from .constants import COOKING_PROJECT_GID
     from .task_store import read_complete_task
@@ -348,6 +371,54 @@ def _command_inspect(
         _repair_destination_continuation,
         expose_authoritative_view,
     )
+
+    operation_id = target.get("operation_id")
+    if operation_id is None:
+        live = read_complete_task(
+            self.backend, task_gid=target["task_gid"], project_gid=COOKING_PROJECT_GID
+        )
+        trace.submission_id = None
+        trace.state = "resting"
+        data = {
+            "dish_id": target["dish_id"],
+            "task_title": live.title,
+            "task_gid": target["task_gid"],
+            "asana_url": f"https://app.asana.com/0/0/{target['task_gid']}",
+            "operation_id": None,
+            "operation_kind": None,
+            "status": "resting",
+            "phase": None,
+            "waiting_for": "the next requested Dish workflow",
+            "problem": "This Dish has no open workflow operation.",
+            "operator_instruction": None,
+            "administrative_blocker": False,
+            "human_actions": [],
+            "agent_actions_now": [],
+            "semantic_proposal": None,
+            "service_lease": None,
+            "latest_actor_attempt": None,
+            "outstanding_invocation": None,
+            "verification_cycle": None,
+            "abandonment": None,
+            "authoritative_view": None,
+        }
+        return result_envelope(
+            command="inspect",
+            task_gid=target["task_gid"],
+            submission_id=None,
+            state="resting",
+            data=data,
+        )
+
+    operation = self.conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()
+    if operation is None:
+        raise DishRuleError(
+            "INTERNAL_ERROR",
+            "resolved Dish operation is missing",
+            rule="admin_dish_operation_missing",
+        )
 
     release = None if self.release_loader is None else self.release_loader()
     schema = None if release is None else release.schema
@@ -418,30 +489,24 @@ def _command_inspect(
             if isinstance(human_action, Mapping):
                 actions.append(dict(human_action))
         if abandonment["status"] == "awaiting_successor_claim":
-            problem = "Abandonment is complete and a prepared successor is waiting for an agent claim."
+            problem = "The prior run is retired; confirmed work is preserved and a fresh agent can continue safely."
         elif abandonment["status"] == "awaiting_hold_resolution":
-            problem = "Abandonment preserved a governed hold that Marco must resolve."
+            problem = "The prior run is retired; the real Evidence/Human Review checkpoint is preserved and still needs Marco."
         else:
-            problem = "A permanent-run abandonment is active and must be reconciled."
+            problem = "The prior run is retired, but Dish still needs deterministic reconciliation before a safe continuation is known."
     elif operation["status"] == "uncertain" or view.get("unresolved_attempts"):
         administrative_blocker = True
-        spec = exact_action(
-            kind="reconcile-uncertain-effect",
-            command="recover",
-            positional=(operation_id,),
-            summary="Automatically inspect and reconcile the interrupted effect.",
-            effect=(
-                "Settle only outcomes that fresh live evidence proves; stop without guessing "
-                "if the result remains ambiguous."
-            ),
-            details=(
-                "Automatic inspection is the normal recovery path.",
-                "Manual --outcome applied / not-applied are advanced assertions only.",
-            ),
-            after_success={"instruction": "Rerun dish-admin inspect."},
+        actions.append(
+            _replace_run_action(
+                dish_reference=str(target["dish_id"] or target["task_gid"]),
+                summary="Replace the interrupted run.",
+                effect=(
+                    "Dish will first reconcile only what fresh evidence proves, then retire the "
+                    "old run's authority and prepare the safe continuation."
+                ),
+            )
         )
-        actions.append(spec.payload()["human_action"] | {"shell_command": spec.shell_command()})
-        problem = "An interrupted external write or movement must be reconciled before work can continue."
+        problem = "An interrupted external write or movement belongs to the current run and must be reconciled before replacement."
     elif proposal is not None and proposal["status"] == "pending":
         administrative_blocker = True
         waiting_for = "Marco review of the queued semantic proposal"
@@ -506,23 +571,16 @@ def _command_inspect(
             waiting_for = "the agent currently applying Marco's approved proposal"
             problem = "An agent run has claimed the approved proposal for exact application."
             if active_lease is not None:
-                spec = template_action(
-                    kind="expire-active-lease",
-                    command="expire-lease",
-                    positional=(active_lease["lease_id"],),
-                    options=(("--reason", "<why the applying run is no longer available>"),),
-                    prompt_fields=(
-                        PromptField(
-                            "reason",
-                            "Why the applying run is unavailable",
-                            "<why the applying run is no longer available>",
+                actions.append(
+                    _replace_run_action(
+                        dish_reference=str(target["dish_id"] or target["task_gid"]),
+                        summary="Replace the applying run.",
+                        effect=(
+                            "Retire that run's Dish authority while preserving Marco's exact approved "
+                            "proposal for deterministic re-application."
                         ),
-                    ),
-                    summary="Release the applying run's lease only if that run is gone.",
-                    effect="This does not discard the approved proposal; inspect again afterward.",
-                    after_success={"instruction": "Rerun dish-admin inspect on this operation."},
+                    )
                 )
-                actions.append(spec.payload()["human_action"] | {"shell_command": spec.shell_command()})
             else:
                 operator_instruction = (
                     "The proposal claim has no active lease. Do not abandon the operation or guess a "
@@ -530,20 +588,17 @@ def _command_inspect(
                 )
     elif active_lease is not None:
         administrative_blocker = True
-        spec = template_action(
-            kind="expire-active-lease",
-            command="expire-lease",
-            positional=(active_lease["lease_id"],),
-            options=(("--reason", "<why the active run is no longer available>"),),
-            prompt_fields=(
-                PromptField("reason", "Why the active run is unavailable", "<why the active run is no longer available>"),
-            ),
-            summary="Release the active lease only if its agent run is gone.",
-            effect="This does not transfer cycle ownership; rerun inspect afterward to abandon the dead attempt if needed.",
-            after_success={"instruction": "Rerun dish-admin inspect on this task."},
+        actions.append(
+            _replace_run_action(
+                dish_reference=str(target["dish_id"] or target["task_gid"]),
+                summary="Replace the current run.",
+                effect=(
+                    "Retire only this run's Dish authority, preserve confirmed work and real "
+                    "checkpoints, and prepare the safe continuation mechanically."
+                ),
+            )
         )
-        actions.append(spec.payload()["human_action"] | {"shell_command": spec.shell_command()})
-        problem = "An agent run currently holds the operation lease."
+        problem = "A Dish run currently owns this workflow operation."
     elif safe_reclaim is not None and safe_reclaim.eligible:
         waiting_for = "a fresh agent to reclaim the inactive clean attempt"
         problem = (
@@ -609,40 +664,25 @@ def _command_inspect(
             if safe_reclaim is not None else set()
         )
         if failed_rules & recovery_rules:
-            spec = exact_action(
-                kind="reconcile-before-ownership-transfer",
-                command="recover",
-                positional=(operation_id,),
-                summary="Automatically reconcile the interrupted execution before ownership moves.",
-                effect=(
-                    "Settle only recovery evidence that the fresh live inspection proves; "
-                    "leave ambiguous effects blocked."
-                ),
-                details=(
-                    "Automatic inspection is the normal recovery path.",
-                    "Manual --outcome applied / not-applied are advanced assertions only.",
-                ),
-                after_success={"instruction": "Rerun dish-admin inspect."},
+            actions.append(
+                _replace_run_action(
+                    dish_reference=str(target["dish_id"] or target["task_gid"]),
+                    summary="Replace the interrupted verifier run.",
+                    effect=(
+                        "Dish will reconcile the interrupted execution first, then preserve the "
+                        "candidate and prepare a fresh Verification continuation."
+                    ),
+                )
             )
-            actions.append(spec.payload()["human_action"] | {"shell_command": spec.shell_command()})
             problem = "The prior verifier is inactive, but its interrupted execution must be reconciled before another run can take over."
         elif lease is not None:
-            spec = template_action(
-                kind="abandon-dead-verifier",
-                command="abandon-operation",
-                positional=(operation_id,),
-                options=(
-                    ("--lease-id", lease["lease_id"]),
-                    ("--reason", "<why the verifier run is permanently unavailable>"),
-                ),
-                prompt_fields=(
-                    PromptField("reason", "Why the verifier run is permanently unavailable", "<why the verifier run is permanently unavailable>"),
-                ),
-                summary="Abandon the dead verifier attempt.",
-                effect="Preserve the candidate and prepare a fresh Verification continuation.",
-                after_success={"instruction": "Follow the exact continuation returned by Dish."},
+            actions.append(
+                _replace_run_action(
+                    dish_reference=str(target["dish_id"] or target["task_gid"]),
+                    summary="Replace the inactive verifier run.",
+                    effect="Preserve the candidate and prepare a fresh Verification continuation.",
+                )
             )
-            actions.append(spec.payload()["human_action"] | {"shell_command": spec.shell_command()})
             problem = "The open Verification cycle belongs to a prior run with no active lease."
         else:
             problem = (
@@ -667,27 +707,19 @@ def _command_inspect(
             if safe_reclaim is not None else set()
         )
         if failed_rules & recovery_rules:
-            spec = exact_action(
-                kind="reconcile-before-ownership-transfer",
-                command="recover",
-                positional=(operation_id,),
-                summary="Automatically reconcile the interrupted execution before ownership moves.",
-                effect=(
-                    "Settle only recovery evidence that the fresh live inspection proves; "
-                    "leave ambiguous effects blocked."
-                ),
-                details=(
-                    "Automatic inspection is the normal recovery path.",
-                    "Manual --outcome applied / not-applied are advanced assertions only.",
-                ),
-                after_success={"instruction": "Rerun dish-admin inspect."},
-            )
             actions.append(
-                spec.payload()["human_action"] | {"shell_command": spec.shell_command()}
+                _replace_run_action(
+                    dish_reference=str(target["dish_id"] or target["task_gid"]),
+                    summary="Replace the interrupted run.",
+                    effect=(
+                        "Dish will reconcile the interrupted execution first, then preserve "
+                        "confirmed work and prepare the safe continuation."
+                    ),
+                )
             )
             problem = (
                 "The prior run is inactive, but its interrupted execution must be reconciled "
-                "before ownership can move."
+                "before replacement."
             )
         else:
             try:
@@ -704,33 +736,57 @@ def _command_inspect(
                     "raw records; rerun inspect with --verbose and report the result for repair."
                 )
             else:
-                spec = template_action(
-                    kind="abandon-dead-agent",
-                    command="abandon-operation",
-                    positional=(operation_id,),
-                    options=(
-                        ("--lease-id", lease["lease_id"]),
-                        ("--reason", "<why the agent run is permanently unavailable>"),
-                    ),
-                    prompt_fields=(
-                        PromptField(
-                            "reason",
-                            "Why the agent run is permanently unavailable",
-                            "<why the agent run is permanently unavailable>",
-                        ),
-                    ),
-                    summary="Abandon the dead agent attempt.",
-                    effect="Preserve confirmed work and prepare the stage's safe successor.",
-                    after_success={
-                        "instruction": "Follow the exact continuation returned by Dish."
-                    },
+                actions.append(
+                    _replace_run_action(
+                        dish_reference=str(target["dish_id"] or target["task_gid"]),
+                        summary="Replace the inactive run.",
+                        effect="Preserve confirmed work and prepare the stage's safe successor.",
+                    )
                 )
-                actions.append(spec.payload()["human_action"])
                 problem = "The operation belongs to a prior agent run with no active lease."
     trace.submission_id = operation_id
     trace.task_gid = operation["task_gid"]
     trace.state = operation["status"]
+    outstanding_invocation = None
+    replacement_action_present = any(
+        isinstance(item, Mapping) and item.get("command") == "kill" for item in actions
+    )
+    outstanding_lease = self.conn.execute(
+        """SELECT * FROM service_leases
+             WHERE operation_id=? AND lease_kind='actor' AND released_at IS NULL
+             ORDER BY actor_attempt_seq DESC LIMIT 1""",
+        (operation_id,),
+    ).fetchone()
+    if outstanding_lease is None and replacement_action_present:
+        outstanding_lease = latest_lease
+    if outstanding_lease is not None:
+        if outstanding_lease["released_at"] is not None:
+            authority_state = "retired"
+        else:
+            authority_state = (
+                "active"
+                if self.conn.execute(
+                    "SELECT julianday(?) > julianday('now')",
+                    (outstanding_lease["expires_at"],),
+                ).fetchone()[0]
+                else "expired"
+            )
+        outstanding_invocation = {
+            "dish_id": target["dish_id"],
+            "operation_id": operation_id,
+            "stage": operation["phase"],
+            "owner_id": outstanding_lease["owner_id"],
+            "run_id": outstanding_lease["run_id"],
+            "lease_id": outstanding_lease["lease_id"],
+            "first_observed_at": outstanding_lease["acquired_at"],
+            "last_activity_at": outstanding_lease["renewed_at"],
+            "authority_state": authority_state,
+            "expires_at": outstanding_lease["expires_at"],
+            "replacement_required": replacement_action_present,
+        }
+
     data = {
+        "dish_id": target["dish_id"],
         "task_title": live.title,
         "task_gid": operation["task_gid"],
         "asana_url": f"https://app.asana.com/0/0/{operation['task_gid']}",
@@ -772,6 +828,7 @@ def _command_inspect(
             "expires_at": latest_lease["expires_at"],
             "cycle_id": latest_lease["context_cycle_id"],
         },
+        "outstanding_invocation": outstanding_invocation,
         "verification_cycle": None if cycle is None else {
             "cycle_id": cycle["cycle_id"],
             "run_id": cycle["run_id"],
@@ -797,6 +854,417 @@ def _command_inspect(
         data=data,
     )
 
+
+
+def _command_kill(
+    self,
+    *,
+    trace: AdminTrace,
+    dish: str,
+    reason: str,
+) -> dict[str, Any]:
+    """Fence one outstanding Dish run and drive its safe replacement mechanically."""
+    if self.backend is None or self.operation_service is None:
+        raise DishRuleError(
+            "INTERNAL_ERROR",
+            "Dish replacement requires backend access",
+            rule="admin_kill_unavailable",
+        )
+    clean_reason = _clean_required(
+        reason, rule="kill_reason_required", label="replacement reason"
+    )
+    target = resolve_admin_dish_target(self.conn, dish)
+    trace.task_gid = str(target["task_gid"])
+    operation_id = target.get("operation_id")
+    if operation_id is None:
+        inspected = _command_inspect(self, trace=AdminTrace(), dish=dish)
+        data = inspected.get("data") if isinstance(inspected.get("data"), Mapping) else {}
+        return result_envelope(
+            command="kill",
+            task_gid=target["task_gid"],
+            submission_id=None,
+            state="resting",
+            data={
+                "dish_id": target["dish_id"],
+                "outcome": "no_outstanding_invocation",
+                "human_consequence": "Nothing was changed; this Dish has no workflow run to replace.",
+                "fenced_invocation": None,
+                "continuation": dict(data),
+            },
+        )
+
+    from dish_service.leases import LeaseManager
+    from .operation_execution import (
+        live_operation_execution_claim,
+        operation_recovery_pending,
+        unresolved_operation_executions,
+    )
+
+    operation = self.conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()
+    if operation is None:
+        raise DishRuleError(
+            "INTERNAL_ERROR", "resolved Dish operation is missing",
+            rule="admin_dish_operation_missing",
+        )
+    trace.submission_id = str(operation_id)
+    trace.state = str(operation["status"])
+
+    abandonment = self.conn.execute(
+        """SELECT * FROM abandonment_attempts
+             WHERE task_gid=? AND status!='completed'
+             ORDER BY created_at DESC LIMIT 1""",
+        (target["task_gid"],),
+    ).fetchone()
+    lease = self.conn.execute(
+        """SELECT * FROM service_leases
+             WHERE operation_id=? AND lease_kind='actor' AND released_at IS NULL
+             ORDER BY actor_attempt_seq DESC LIMIT 1""",
+        (operation_id,),
+    ).fetchone()
+    proposal_before_kill = active_proposal_for_operation(self.conn, operation_id)
+    lease_was_active_at_resolution = lease is not None
+
+    # Resolve the exact authority Marco is replacing before taking the writer
+    # lock, but establish retirement only inside that lock.  A claimed proposal
+    # can outlive its active actor lease, so recover its service owner from the
+    # durable lease history for the exact claimed run.
+    retirement_source = lease
+    if retirement_source is None and proposal_before_kill is not None and proposal_before_kill["status"] == "claimed":
+        claimed_run = str(proposal_before_kill["claimed_run_id"] or "").strip()
+        if claimed_run:
+            retirement_source = self.conn.execute(
+                """SELECT * FROM service_leases
+                     WHERE operation_id=? AND lease_kind='actor' AND run_id=?
+                     ORDER BY actor_attempt_seq DESC LIMIT 1""",
+                (operation_id, claimed_run),
+            ).fetchone()
+            if retirement_source is None:
+                raise DishRuleError(
+                    "CONFLICT",
+                    "Dish cannot prove the service owner for the claimed proposal run",
+                    rule="kill_retirement_identity_missing",
+                    details={
+                        "operation_id": operation_id,
+                        "proposal_id": proposal_before_kill["proposal_id"],
+                        "run_id": claimed_run,
+                    },
+                )
+    if retirement_source is None:
+        retirement_source = self.conn.execute(
+            """SELECT * FROM service_leases
+                 WHERE operation_id=? AND lease_kind='actor'
+                 ORDER BY actor_attempt_seq DESC LIMIT 1""",
+            (operation_id,),
+        ).fetchone()
+
+    claim = live_operation_execution_claim(self.conn, operation_id=operation_id)
+    if claim is not None:
+        raise DishRuleError(
+            "CONFLICT",
+            "Dish is currently committing a workflow mutation; no authority was changed",
+            rule="kill_mutation_in_progress",
+            retryable=True,
+            details={
+                "dish_id": target["dish_id"],
+                "operation_id": operation_id,
+                "run_id": None if retirement_source is None else retirement_source["run_id"],
+                "command": claim["command"],
+                "acquired_at": claim["acquired_at"],
+                "human_consequence": (
+                    "The current write was left untouched. Retry kill after that mutation settles."
+                ),
+            },
+        )
+
+    fenced = None
+    if retirement_source is not None:
+        target_owner = str(retirement_source["owner_id"])
+        target_run = str(retirement_source["run_id"])
+        source_lease_id = str(retirement_source["lease_id"])
+        with immediate_transaction(self.conn, "kill_retire_operation_run"):
+            claim = live_operation_execution_claim(self.conn, operation_id=operation_id)
+            if claim is not None:
+                raise DishRuleError(
+                    "CONFLICT",
+                    "Dish began committing a workflow mutation before the run could be fenced",
+                    rule="kill_mutation_in_progress",
+                    retryable=True,
+                    details={"dish_id": target["dish_id"], "operation_id": operation_id},
+                )
+            retirement = retire_operation_run_in_transaction(
+                self.conn,
+                operation_id=operation_id,
+                owner_id=target_owner,
+                run_id=target_run,
+                source_lease_id=source_lease_id,
+                reason=f"Marco kill/replace: {clean_reason}",
+            )
+            # Lease cleanup is secondary to retirement.  If the selected lease
+            # was released/replaced before this transaction, touch only a current
+            # lease still owned by the exact retired principal; a successor lease
+            # is never expired.
+            current = LeaseManager(self.conn).active_for_operation(operation_id)
+            if (
+                current is not None
+                and current["owner_id"] == target_owner
+                and current["run_id"] == target_run
+            ):
+                LeaseManager(self.conn).admin_expire_selected(
+                    str(current["lease_id"]),
+                    reason=f"Marco kill/replace: {clean_reason}",
+                    manage_transaction=False,
+                )
+        fenced = {
+            "owner_id": target_owner,
+            "run_id": target_run,
+            "lease_id": source_lease_id,
+            "first_observed_at": retirement_source["acquired_at"],
+            "last_activity_at": retirement_source["renewed_at"],
+            "authority_state": "retired",
+            "retired_at": retirement["retired_at"],
+            "retirement_id": retirement["retirement_id"],
+        }
+
+    # Reconcile interrupted effects before moving ownership.  This is plumbing,
+    # not a second Marco decision.
+    operation = self.conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
+    ).fetchone()
+    if (
+        operation is not None
+        and (
+            operation["status"] == "uncertain"
+            or operation_recovery_pending(self.conn, operation_id)
+            or unresolved_operation_executions(self.conn, operation_id)
+        )
+    ):
+        _step9_admin_recover(
+            self,
+            trace=AdminTrace(submission_id=operation_id),
+            submission_id=operation_id,
+            outcome="inspect",
+            reason=f"kill/replace recovery: {clean_reason}",
+        )
+
+    proposal = active_proposal_for_operation(self.conn, operation_id)
+    if proposal is not None and proposal["status"] == "claimed":
+        claimed_run = str(proposal["claimed_run_id"] or "")
+        if fenced is not None and claimed_run == fenced["run_id"]:
+            release_semantic_proposal_claim(
+                self.conn,
+                proposal_id=str(proposal["proposal_id"]),
+                run_id=claimed_run,
+                reason=f"applying run replaced by Marco: {clean_reason}",
+            )
+            proposal = active_proposal_for_operation(self.conn, operation_id)
+
+    # A semantic proposal is a deliberate durable checkpoint.  Killing its agent
+    # run never answers the proposal for Marco.
+    if proposal is not None:
+        inspected = _command_inspect(self, trace=AdminTrace(), dish=dish)
+        continuation = (
+            dict(inspected["data"])
+            if isinstance(inspected.get("data"), Mapping)
+            else {}
+        )
+        return result_envelope(
+            command="kill",
+            task_gid=target["task_gid"],
+            submission_id=operation_id,
+            state=continuation.get("status") or trace.state,
+            data={
+                "dish_id": target["dish_id"],
+                "outcome": "checkpoint_preserved",
+                "human_consequence": (
+                    "The prior run can no longer act. The existing semantic proposal remains exactly as Marco's review checkpoint."
+                ),
+                "fenced_invocation": fenced,
+                "preserved_checkpoint": {
+                    "kind": "semantic_proposal",
+                    "proposal_id": proposal["proposal_id"],
+                    "status": proposal["status"],
+                },
+                "continuation": continuation,
+            },
+        )
+
+    # If another kill already began abandonment, continue it rather than asking
+    # Marco to operate the reconciliation internals.
+    if abandonment is None and fenced is not None and lease_was_active_at_resolution:
+        abandoned = _command_abandon_operation(
+            self,
+            trace=AdminTrace(submission_id=operation_id),
+            submission_id=operation_id,
+            reason=clean_reason,
+            lease_id=str(fenced["lease_id"]),
+        )
+        abandonment_data = (
+            dict(abandoned["data"])
+            if isinstance(abandoned.get("data"), Mapping)
+            else {}
+        )
+        abandonment_id = str(abandonment_data.get("abandonment_id") or "")
+    elif abandonment is not None:
+        abandonment_id = str(abandonment["abandonment_id"])
+        abandonment_data = _decorate_abandonment_result(
+            self.conn, {"abandonment_id": abandonment_id}
+        )
+    else:
+        # No authority is currently live.  Inspect the authoritative workflow
+        # disposition: a clean handoff/safe-reclaim is already replacement-ready,
+        # while a dead bound attempt still requires the existing durable
+        # abandonment path.  This avoids treating every historical lease as dead.
+        inspected = _command_inspect(self, trace=AdminTrace(), dish=dish)
+        continuation = (
+            dict(inspected["data"])
+            if isinstance(inspected.get("data"), Mapping)
+            else {}
+        )
+        continuation_actions = continuation.get("human_actions")
+        replacement_required = (
+            isinstance(continuation_actions, list)
+            and any(
+                isinstance(item, Mapping) and item.get("command") == "kill"
+                for item in continuation_actions
+            )
+        )
+        if not replacement_required:
+            agent_actions = continuation.get("agent_actions_now")
+            safe_reclaim_ready = (
+                isinstance(agent_actions, list)
+                and any(
+                    isinstance(item, Mapping) and item.get("command") == "safe-reclaim"
+                    for item in agent_actions
+                )
+            )
+            held = continuation.get("phase") in {"held_evidence", "held_human"}
+            outcome = (
+                "replacement_ready" if safe_reclaim_ready
+                else "checkpoint_preserved" if held
+                else "no_outstanding_invocation"
+            )
+            consequence = (
+                "The prior run is durably retired. The workflow is mechanically ready for a fresh agent to reclaim."
+                if safe_reclaim_ready and fenced is not None
+                else "The prior run already has no Dish authority. The workflow is mechanically ready for a fresh agent to reclaim."
+                if safe_reclaim_ready
+                else "The prior run is durably retired. The real Evidence/Human Review checkpoint remains intact."
+                if held and fenced is not None
+                else "The prior run already has no Dish authority. The real Evidence/Human Review checkpoint remains intact."
+                if held
+                else "The exact prior run is durably retired; no additional recovery work is required."
+                if fenced is not None
+                else "Nothing was changed; Dish has no currently authorized or dead-bound run that needs replacement."
+            )
+            return result_envelope(
+                command="kill",
+                task_gid=target["task_gid"],
+                submission_id=operation_id,
+                state=continuation.get("status") or trace.state,
+                data={
+                    "dish_id": target["dish_id"],
+                    "outcome": outcome,
+                    "human_consequence": consequence,
+                    "fenced_invocation": fenced,
+                    "continuation": continuation,
+                },
+            )
+
+        try:
+            dead_lease = _select_abandonment_lease(
+                self.conn, operation_id=operation_id, lease_id=None
+            )
+        except DishRuleError as exc:
+            return result_envelope(
+                command="kill",
+                task_gid=target["task_gid"],
+                submission_id=operation_id,
+                state=continuation.get("status") or trace.state,
+                data={
+                    "dish_id": target["dish_id"],
+                    "outcome": "manual_reconciliation_required",
+                    "human_consequence": (
+                        "The prior run has no live Dish authority, but current durable records do not identify one safe attempt to replace. Nothing further was changed."
+                    ),
+                    "fenced_invocation": None,
+                    "continuation": continuation,
+                    "replacement_block": {"rule": exc.rule, "message": str(exc)},
+                },
+            )
+        abandoned = _command_abandon_operation(
+            self,
+            trace=AdminTrace(submission_id=operation_id),
+            submission_id=operation_id,
+            reason=clean_reason,
+            lease_id=str(dead_lease["lease_id"]),
+        )
+        abandonment_data = (
+            dict(abandoned["data"])
+            if isinstance(abandoned.get("data"), Mapping)
+            else {}
+        )
+        abandonment_id = str(abandonment_data.get("abandonment_id") or "")
+
+    # One automatic reconciliation retry covers the supported fresh-reread
+    # frontier.  If it remains blocked, that is a real repair condition rather
+    # than another hidden operator step.
+    abandonment = get_abandonment_attempt(self.conn, abandonment_id)
+    if abandonment["status"] in {"started", "blocked_manual_reconciliation"}:
+        reconciled = _command_reconcile_abandonment(
+            self,
+            trace=AdminTrace(submission_id=operation_id),
+            abandonment_id=abandonment_id,
+        )
+        abandonment_data = (
+            dict(reconciled["data"])
+            if isinstance(reconciled.get("data"), Mapping)
+            else abandonment_data
+        )
+        abandonment = get_abandonment_attempt(self.conn, abandonment_id)
+
+    inspected = _command_inspect(self, trace=AdminTrace(), dish=dish)
+    continuation = (
+        dict(inspected["data"])
+        if isinstance(inspected.get("data"), Mapping)
+        else {}
+    )
+    status = str(abandonment["status"])
+    if status == "awaiting_successor_claim":
+        outcome = "replacement_ready"
+        consequence = (
+            "The prior run can no longer act. Confirmed work was preserved and the safe continuation is ready for a fresh agent."
+        )
+    elif status == "awaiting_hold_resolution":
+        outcome = "checkpoint_preserved"
+        consequence = (
+            "The prior run can no longer act. The real Evidence/Human Review checkpoint was preserved and still needs Marco's decision."
+        )
+    elif status == "completed":
+        outcome = "replacement_complete"
+        consequence = (
+            "The prior run can no longer act and Dish completed the safe replacement path."
+        )
+    else:
+        outcome = "manual_reconciliation_required"
+        consequence = (
+            "The prior run can no longer act, but fresh evidence still does not prove one safe continuation. No further workflow authority was guessed."
+        )
+    return result_envelope(
+        command="kill",
+        task_gid=target["task_gid"],
+        submission_id=operation_id,
+        state=continuation.get("status") or trace.state,
+        data={
+            "dish_id": target["dish_id"],
+            "outcome": outcome,
+            "human_consequence": consequence,
+            "fenced_invocation": fenced,
+            "abandonment": abandonment_data.get("abandonment"),
+            "continuation": continuation,
+        },
+    )
 
 def _attention_category(data: Mapping[str, Any]) -> tuple[str, str]:
     """Classify one inspect result conservatively for the read-only attention view."""
@@ -2655,6 +3123,7 @@ _OPERATION_TARGET_COMMANDS = set(RESOLVED_OPERATION_TARGET_COMMANDS)
 
 CURRENT_ADMIN_COMMAND_HANDLERS = {
     "attention": _command_attention,
+    "kill": _command_kill,
     "review-queue": _command_review_queue,
     "review-inspect": _command_review_inspect,
     "review-approve": _command_review_approve,

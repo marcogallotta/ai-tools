@@ -1,7 +1,7 @@
 import { noticeRegistry, TASK_ATTENTION_NOTICE_CODES } from "../notices/notice-registry.js";
 
 const routePatterns = Object.freeze({
-  task: /^r1t-[A-Za-z0-9_-]{27}$/,
+  task: /^(?!00000000-0000-0000-0000-000000000000)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
   section: /^r1s-[A-Za-z0-9_-]{27}$/,
 });
 const attentionOrder = TASK_ATTENTION_NOTICE_CODES;

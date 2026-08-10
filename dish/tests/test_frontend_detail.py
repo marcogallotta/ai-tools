@@ -78,7 +78,7 @@ def service(current: DetailFacts, *, max_candidates: int = 20) -> FrontendDetail
     )
 
 
-def test_detail_presentation_is_closed_non_authorizing_and_uuid_free() -> None:
+def test_detail_presentation_is_closed_non_authorizing_and_uses_canonical_dish_uuid() -> None:
     current = facts()
     current_service = service(current)
     route = route_identity(secret=SECRET, environment="test", kind="task", object_id=TASK_ID)
@@ -100,7 +100,7 @@ def test_detail_presentation_is_closed_non_authorizing_and_uuid_free() -> None:
     assert payload["destination_label"] is None
     assert "legal_actions" not in payload
     assert "allowed_actions" not in payload
-    assert str(TASK_ID) not in str(payload)
+    assert payload["task_id"] == str(TASK_ID)
 
 
 def test_verification_attention_without_cycle_gets_factual_disclosure() -> None:
@@ -140,7 +140,7 @@ def test_route_resolution_is_bounded_and_unknown_routes_fail_closed() -> None:
     current = facts()
     current_service = service(current, max_candidates=1)
     with pytest.raises(TaskNotFound):
-        current_service.capture("r1t-" + "x" * 27)
+        current_service.capture("12345678-1234-5678-1234-567812345679")
 
     overflowing = FrontendDetailService(
         FakeQuery(current, extras=2),

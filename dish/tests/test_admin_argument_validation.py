@@ -185,10 +185,11 @@ def test_recover_parser_defaults_to_automatic_inspect_and_accepts_explicit_inspe
     assert parsed.outcome == "inspect"
 
 def test_admin_inspect_is_a_first_class_human_command():
-    operation_id = str(uuid.uuid4())
-    parsed = build_parser().parse_args(["inspect", operation_id])
+    dish_id = str(uuid.uuid4())
+    parsed = build_parser().parse_args(["inspect", dish_id])
     assert parsed.command == "inspect"
-    assert parsed.submission_id == operation_id
+    assert parsed.dish == dish_id
+    assert not hasattr(parsed, "submission_id")
 
 def test_admin_attention_is_a_first_class_read_only_command():
     parsed = build_parser().parse_args(["attention"])
@@ -199,10 +200,9 @@ def test_admin_help_distinguishes_lease_recovery_expiry_and_abandonment(capsys):
     with pytest.raises(SystemExit):
         parser.parse_args(["--help"])
     root_help = " ".join(capsys.readouterr().out.split())
-    assert "Start with `dish-admin inspect TASK_OR_OPERATION`" in root_help
-    assert "recover-lease lets the same durable agent run continue" in root_help
-    assert "expire-lease only releases an active lease" in root_help
-    assert "abandon-operation is for a run that will not return" in root_help
+    assert "Start with `dish-admin inspect <dish>`" in root_help
+    assert "Normal replacement is `dish-admin kill <dish>`" in root_help
+    assert "recover-lease, expire-lease, and abandon-operation remain low-level escape hatches" in root_help
 
     with pytest.raises(SystemExit):
         parser.parse_args(["authorize-governed-change", "--help"])

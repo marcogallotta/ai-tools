@@ -22,6 +22,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
+from dish_tool.identifiers import (
+    ASANA_IDENTITY_NAMESPACE,
+    ASANA_IDENTITY_SCHEME as IDENTITY_SCHEME,
+    stable_dish_uuid_for_asana_identity,
+)
+
 TEST_ENV_FILE = Path("/home/marco/.config/dish-service/test.env")
 PRODUCTION_ENV_FILE = Path("/home/marco/.config/dish-service/prod.env")
 TEST_STATE_ROOT = Path("/home/marco/.local/state/dish/test")
@@ -29,9 +35,6 @@ PRODUCTION_STATE_ROOT = Path("/home/marco/.local/state/dish/prod")
 TEST_COOKING_PROJECT_GID = "1216693403164366"
 PRODUCTION_COOKING_PROJECT_GID = "1217084805070730"
 PRODUCTION_ASANA_ENV_FILE = Path("/home/marco/.config/asana-cli/.env")
-IDENTITY_SCHEME = "dish-asana-gid-uuid5-v1"
-# uuid5(uuid.NAMESPACE_URL, "urn:dish:identity:asana:v1")
-ASANA_IDENTITY_NAMESPACE = uuid.UUID("a8ad7ec4-ec82-5764-b89e-1fed9c62e4a1")
 _ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 _ENTITY_KINDS = frozenset({"task", "project", "section"})
 _CAPTURE_ENVIRONMENTS = frozenset({"test", "production"})
@@ -61,7 +64,7 @@ def target_uuid(entity_kind: str, asana_gid: object) -> uuid.UUID:
     if entity_kind not in _ENTITY_KINDS:
         raise LocationManifestError(f"unsupported Asana identity kind: {entity_kind}")
     gid = _canonical_gid(asana_gid, field=f"{entity_kind}_gid")
-    return uuid.uuid5(ASANA_IDENTITY_NAMESPACE, f"{entity_kind}:{gid}")
+    return stable_dish_uuid_for_asana_identity(entity_kind, gid)
 
 
 def _absolute_path(path: Path) -> Path:

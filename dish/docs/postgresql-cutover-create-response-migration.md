@@ -253,9 +253,9 @@ There is no permitted deployment step that temporarily sets `task_gid` to the Di
    a nominally successful create with no canonical Dish identifier.
 4. Current GPT deployment instructions tell agents to find and use `task_gid`, with no canonical
    `dish_id` create-success path.
-5. Current frontend routes use an opaque fixture/task identity while the frontend source map says no
-   browser-safe canonical route-identity authority exists; returning a configured Dish URL now would
-   be unproven.
+5. The frontend now uses `/dishes/<stored-dish-uuid>/<decorative-title-slug>` as its canonical task
+   route. The stored UUID is authoritative and the slug is decorative; this route identity still does
+   not imply that create-response URL generation/correlation is proven for cutover.
 6. Shadow translation accepts source `task_gid` or `task_id` as a generic task reference. Without an
    explicit identity role this can collapse Asana and Dish identities.
 7. The PostgreSQL cutover registry treats create as retained while dark-launch policy correctly keeps

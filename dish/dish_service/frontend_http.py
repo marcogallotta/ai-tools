@@ -35,16 +35,16 @@ from .frontend_tokens import CursorInvalid, CursorStale
 from .frontend_private_runtime import FrontendDataReadsDisabled
 
 LOG = logging.getLogger("dish.frontend.private")
-_TASK_RE = re.compile(r"^/frontend/tasks/(r1t-[A-Za-z0-9_-]{27})$")
+_TASK_RE = re.compile(r"^/frontend/tasks/((?!00000000-0000-0000-0000-000000000000)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$")
 _SECTION_RE = re.compile(r"^/frontend/sections/(r1s-[A-Za-z0-9_-]{27})/tasks$")
-_HTML_TASK_RE = re.compile(r"^/tasks/r1t-[A-Za-z0-9_-]{27}/[^/?#]{1,600}$")
+_HTML_TASK_RE = re.compile(r"^/dishes/(?!00000000-0000-0000-0000-000000000000)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[^/?#]{1,600}$")
 _HTML_FIXTURE_RE = re.compile(r"^/task/[a-z0-9][a-z0-9-]{0,79}$")
 _PUBLIC_STATIC_PREFIXES = ("/assets/", "/styles/", "/js/")
 _PROTECTED_FIXTURE_PREFIX = "/fixtures/"
 _MAX_STATIC_BYTES = 10 * 1024 * 1024
 
 def is_frontend_get(path: str) -> bool:
-    return path in {"/", "/login", "/frontend/session", "/frontend/board", "/openapi/frontend.json"} or (path.startswith(_PUBLIC_STATIC_PREFIXES) or path.startswith(_PROTECTED_FIXTURE_PREFIX)) or path.startswith("/frontend/sections/") or path.startswith("/frontend/tasks/") or path.startswith("/tasks/") or path.startswith("/task/")
+    return path in {"/", "/login", "/frontend/session", "/frontend/board", "/openapi/frontend.json"} or (path.startswith(_PUBLIC_STATIC_PREFIXES) or path.startswith(_PROTECTED_FIXTURE_PREFIX)) or path.startswith("/frontend/sections/") or path.startswith("/frontend/tasks/") or path.startswith("/dishes/") or path.startswith("/task/")
 
 def is_frontend_post(path: str) -> bool:
     return path in {"/frontend/login", "/frontend/logout"}

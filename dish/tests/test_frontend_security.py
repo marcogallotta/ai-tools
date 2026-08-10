@@ -328,7 +328,7 @@ def test_private_runtime_routes_auth_and_observation_to_distinct_factories(
     assert runtime.auth_factory is auth_factory
     assert runtime.observation_factory is observation_factory
     assert runtime.board() == {"source": "observation"}
-    assert runtime.detail(task_route_id="r1t-task") == {"source": "observation-detail"}
+    assert runtime.detail(task_route_id="12345678-1234-5678-1234-567812345678") == {"source": "observation-detail"}
     board_query.assert_called_once_with(board_session)
     detail_query.assert_called_once_with(detail_session)
     assert any(
