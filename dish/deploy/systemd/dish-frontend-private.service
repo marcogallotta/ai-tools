@@ -27,4 +27,4 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/marco/.local/state/dish/frontend-local-auth /home/marco/ai-tools/dish/frontend/dist
+ReadWritePaths=/home/marco/.local/state/dish/frontend-local-auth /home/marco/ai-tools/dish/frontend
