@@ -29,6 +29,8 @@ _TASK_ROUTE_RE = re.compile(r"(?!00000000-0000-0000-0000-000000000000)[0-9a-f]{8
 class LocalBoardBackend(Protocol):
     def bootstrap(self) -> dict[str, Any]: ...
 
+    def admin(self) -> dict[str, Any]: ...
+
     def continuation(self, *, section_route_id: str, cursor: str) -> dict[str, Any]: ...
 
     def detail(self, *, task_route_id: str) -> dict[str, Any]: ...
@@ -89,6 +91,9 @@ class FrontendLocalRequestHandler(BaseHTTPRequestHandler):
         parsed = urlsplit(self.path)
         if parsed.path == "/frontend/board":
             self._board(parsed.query)
+            return
+        if parsed.path == "/frontend/admin":
+            self._admin(parsed.query)
             return
         task_route = _task_route_from_path(parsed.path)
         if task_route is not None:
@@ -171,6 +176,20 @@ class FrontendLocalRequestHandler(BaseHTTPRequestHandler):
                 "internal_error",
                 "Board data could not be loaded.",
             )
+
+    def _admin(self, query: str) -> None:
+        if not self._require_contract():
+            return
+        if query:
+            self._write_api_error(HTTPStatus.BAD_REQUEST, "request_invalid", "Admin request is invalid.")
+            return
+        try:
+            self._write_api_json(HTTPStatus.OK, self.server.backend.admin())
+        except BoardReadUnavailable:
+            self._write_api_error(HTTPStatus.SERVICE_UNAVAILABLE, "service_unavailable", "Admin data is temporarily unavailable.")
+        except Exception as exc:
+            LOG.error("local frontend admin read failed type=%s", type(exc).__name__)
+            self._write_api_error(HTTPStatus.SERVICE_UNAVAILABLE, "internal_error", "Admin data could not be loaded.")
 
     def _section_page(self, section_route_id: str, query: str) -> None:
         if not self._require_contract():

@@ -12,11 +12,16 @@ _ADVISORIES = {
 }
 
 
-def workflow_advisory(phase: str | None) -> dict[str, str | bool]:
-    code, message = _ADVISORIES.get(
-        phase,
-        ("workflow.none", "No next step is currently available."),
-    )
+def workflow_advisory(phase: str | None, *, section_workflow_role: str | None = None) -> dict[str, str | bool]:
+    if phase is None and section_workflow_role == "verification_queue":
+        code, message = "workflow.verification_required", "This dish needs Verification."
+    elif phase is None and section_workflow_role == "research_queue":
+        code, message = "workflow.research_required", "This dish needs Research."
+    else:
+        code, message = _ADVISORIES.get(
+            phase,
+            ("workflow.none", "No next step is currently available."),
+        )
     return {
         "code": code,
         "message": message,

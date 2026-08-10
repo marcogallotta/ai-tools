@@ -1,5 +1,7 @@
 import { activeRefreshIntervalMs } from "../config.js";
 import { FrontendApiError, FrontendHttpClient } from "../api/http-transport.js";
+import { mapAdminResponse } from "../features/admin/admin-model.js";
+import { renderBoardAdminSummary } from "../features/admin/admin.js";
 import { appendSectionPage, mapBoardResponse, mapSectionPageResponse } from "../features/board/api-board-model.js";
 import { renderBoard } from "../features/board/board.js";
 import { mapTaskDetailResponse } from "../features/detail/api-detail-model.js";
@@ -15,7 +17,7 @@ import {
   resetSectionContinuation,
   restoreBoardViewState,
 } from "../features/refresh/reconciliation.js";
-import { BOARD_ROUTE, parsePostgresTaskRoute, postgresTaskRoute, writePostgresRoute } from "../features/routing/routes.js";
+import { BOARD_ROUTE, parsePostgresTaskRoute, postgresSourceSuffix, postgresTaskRoute, writePostgresRoute } from "../features/routing/routes.js";
 import { renderInitialErrorState, renderLoadingState } from "../features/refresh/state-shells.js";
 import { createApplicationFrame } from "../shell/application-shell.js";
 import { LocalBoardRequestState } from "../features/refresh/request-state.js";
@@ -38,7 +40,7 @@ export async function renderLocalPostgresqlBoard(root, {
   random = Math.random,
 } = {}) {
   const client = new FrontendHttpClient({ fetchImpl });
-  const { shell, main, noticeHost } = createApplicationFrame({ environmentLabel });
+  const { shell, main, noticeHost, utilityHost } = createApplicationFrame({ environmentLabel, navigationSuffix: postgresSourceSuffix() });
   const live = document.createElement("p");
   live.className = "sr-only"; live.setAttribute("aria-live", "polite"); shell.append(live);
   root.replaceChildren(shell); root.dataset.shellState = "local-postgresql-loading";
@@ -70,6 +72,17 @@ export async function renderLocalPostgresqlBoard(root, {
   const setRequestNotice = (scope, notice) => { requestNotices.set(scope, notice); renderCurrentNotices(); };
   const clearRequestNotice = (scope) => { if (requestNotices.delete(scope)) renderCurrentNotices(); };
   const normalizeBoardRoute = (mode = "replace") => writePostgresRoute(BOARD_ROUTE, mode, {});
+
+  const refreshAdminSummary = async () => {
+    try {
+      renderBoardAdminSummary(utilityHost, mapAdminResponse(await client.admin()));
+      const link = utilityHost.querySelector(".board-admin-summary__link");
+      if (link) link.href = `/admin${postgresSourceSuffix()}`;
+    } catch (error) {
+      if (onAuthenticationLost(error)) stop();
+      else utilityHost.replaceChildren();
+    }
+  };
 
   const closeDetailForRoute = ({ restoreFocus = true } = {}) => {
     requestState.cancelDetail(); selectedDetail = null;
@@ -202,6 +215,7 @@ export async function renderLocalPostgresqlBoard(root, {
       }
       clearRequestNotice("board-refresh"); clearRequestNotice("initial-load");
       renderCurrent({ viewState });
+      void refreshAdminSummary();
       const detailOkay = await refreshDetail({ background: true });
       if (manual) live.textContent = "Board refreshed.";
       scheduleRefresh({ failed: !detailOkay }); return detailOkay;

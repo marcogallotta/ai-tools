@@ -5,6 +5,7 @@ export const SESSION_REVALIDATE_MS = 25000;
 export const SESSION_CHANNEL = "dish-frontend-session-v1";
 
 const SESSION_INVALID_CODES = new Set(["auth_required", "session_expired", "session_revoked"]);
+const ADMIN_PATH = "/admin";
 const TASK_PATH = /^\/dishes\/(?!00000000-0000-0000-0000-000000000000)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/[^/?#]{1,600}$/;
 
 export class SessionContractMismatch extends Error {
@@ -54,7 +55,7 @@ export function returnTargetFromSearch(search) {
     const padded = encoded + "=".repeat((4 - (encoded.length % 4)) % 4);
     const bytes = Uint8Array.from(atob(padded.replace(/-/g, "+").replace(/_/g, "/")), (char) => char.charCodeAt(0));
     const target = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    return target === "/" || TASK_PATH.test(target) ? target : "/";
+    return target === "/" || target === ADMIN_PATH || TASK_PATH.test(target) ? target : "/";
   } catch {
     return "/";
   }
@@ -62,7 +63,7 @@ export function returnTargetFromSearch(search) {
 
 export function loginLocationForCurrentPage() {
   const pathname = window.location.pathname;
-  const target = pathname === "/" || TASK_PATH.test(pathname) ? pathname : "/";
+  const target = pathname === "/" || pathname === ADMIN_PATH || TASK_PATH.test(pathname) ? pathname : "/";
   const bytes = new TextEncoder().encode(target);
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);

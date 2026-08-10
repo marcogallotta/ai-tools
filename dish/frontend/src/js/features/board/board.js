@@ -1,6 +1,6 @@
 import { installBoardKeyboard } from "../accessibility/board-keyboard.js";
 import { createTaskCard } from "../cards/card.js";
-import { appendContinuation, loadedTaskText, sectionHeading } from "./board-model.js";
+import { appendContinuation, sectionHeading } from "./board-model.js";
 
 function createSection(section, options) {
   const region = document.createElement("section");
@@ -16,10 +16,7 @@ function createSection(section, options) {
   heading.className = "board-column__title";
   heading.textContent = sectionHeading(section);
   heading.tabIndex = -1;
-  const count = document.createElement("p");
-  count.className = "board-column__count";
-  count.textContent = loadedTaskText(section.cards.length, section.hasMore);
-  header.append(heading, count);
+  header.append(heading);
 
   const list = document.createElement("div");
   list.className = "board-column__cards";

@@ -79,6 +79,14 @@ const SECTION_ERROR_CODES = Object.freeze({
   ]),
 });
 
+const ADMIN_ERROR_CODES = Object.freeze({
+  400: new Set(["request_invalid"]),
+  401: new Set(["auth_required", "session_expired", "session_revoked"]),
+  403: new Set(["client_update_required", "origin_rejected"]),
+  422: new Set(["request_invalid"]),
+  503: new Set(["service_unavailable", "internal_error"]),
+});
+
 const DETAIL_ERROR_CODES = Object.freeze({
   400: new Set(["request_invalid"]),
   401: new Set(["auth_required", "session_expired", "session_revoked"]),
@@ -190,6 +198,12 @@ export class FrontendHttpClient {
   async board() {
     return readFrontendJson(await this.client.getFrontendBoard(), {
       errorCodesByStatus: BOARD_ERROR_CODES,
+    });
+  }
+
+  async admin() {
+    return readFrontendJson(await this.client.getFrontendAdmin(), {
+      errorCodesByStatus: ADMIN_ERROR_CODES,
     });
   }
 

@@ -2,6 +2,12 @@ export const BOARD_ROUTE = "/";
 export const POSTGRES_TASK_ROUTE_PREFIX = "/dishes/";
 const postgresRouteIdentity = /^(?!00000000-0000-0000-0000-000000000000)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+export function postgresSourceSuffix(search = globalThis.window?.location?.search ?? "") {
+  const params = new URLSearchParams(search);
+  const sources = params.getAll("source");
+  return sources.length === 1 && sources[0] === "postgresql" ? "?source=postgresql" : "";
+}
+
 export function postgresTaskRoute(taskId, title) {
   if (!postgresRouteIdentity.test(taskId)) throw new Error("Invalid PostgreSQL task route identity");
   return `${POSTGRES_TASK_ROUTE_PREFIX}${taskId}/${titleSlug(title)}`;
@@ -16,7 +22,7 @@ export function parsePostgresTaskRoute(pathname) {
 
 export function writePostgresRoute(path, mode = "replace", state = {}) {
   try {
-    history[`${mode}State`](state, "", `${path}${window.location.search}`);
+    history[`${mode}State`](state, "", `${path}${postgresSourceSuffix()}`);
     return true;
   } catch {
     return false;

@@ -22,6 +22,7 @@ STYLE_FILES = (
     "board.css",
     "detail.css",
     "notices.css",
+    "admin.css",
     "review.css",
 )
 IMPORT_RE = re.compile(r'^import\s+.*?\s+from\s+["\'](.+?)["\'];?\s*$', re.MULTILINE)

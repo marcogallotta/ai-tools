@@ -12,12 +12,13 @@
     ],
     "protected_html": [
       "GET /",
-      "GET /dishes/{task_id}/{slug}",
-      "GET /task/{fixture_id}"
+      "GET /admin",
+      "GET /dishes/{task_id}/{slug}"
     ],
     "protected_api": [
       "GET /frontend/session",
       "GET /frontend/board",
+      "GET /frontend/admin",
       "GET /frontend/sections/{section_id}/tasks",
       "GET /frontend/tasks/{task_id}",
       "GET /openapi/frontend.json"

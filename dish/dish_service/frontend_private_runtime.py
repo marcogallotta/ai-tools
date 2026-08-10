@@ -12,8 +12,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from dish_pg.database import DatabaseSettings, create_database_engine, session_factory
+from dish_pg.frontend_admin_query import FrontendAdminQuery
 from dish_pg.frontend_board_query import BoardReadUnavailable, FrontendBoardQuery
 from dish_pg.frontend_detail_query import FrontendDetailQuery
+from .frontend_admin import FrontendAdminConfig, FrontendAdminService
 from .frontend_auth import FrontendAuthService
 from .frontend_board import FrontendBoardConfig, FrontendBoardService
 from .frontend_detail import FrontendDetailConfig, FrontendDetailService
@@ -111,6 +113,23 @@ class FrontendPrivateRuntime:
 
     def board(self) -> dict[str, Any]:
         return self._board_read(lambda service: service.bootstrap())
+
+    def admin(self) -> dict[str, Any]:
+        config = self._required_board_config()
+        session = self._required_observation_factory()()
+        try:
+            with session.begin():
+                session.execute(text("SET TRANSACTION READ ONLY"))
+                service = FrontendAdminService(
+                    FrontendAdminQuery(session),
+                    environment=_PRIVATE_ENVIRONMENT,
+                    config=FrontendAdminConfig(projection_delay=config.projection_delay),
+                )
+                return service.read()
+        except SQLAlchemyError as exc:
+            raise BoardReadUnavailable("private PostgreSQL admin read is unavailable") from exc
+        finally:
+            session.close()
 
     def continuation(self, *, section_route_id: str, cursor: str) -> dict[str, Any]:
         return self._board_read(lambda service: service.continuation(section_route_id=section_route_id, cursor=cursor))

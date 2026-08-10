@@ -143,28 +143,35 @@ def _inline(value: str) -> str:
     for match in _LINK_RE.finditer(value):
         pieces.append(html.escape(value[cursor:match.start()], quote=False))
         label = html.escape(match.group(1), quote=False)
-        href = _safe_href(match.group(2))
-        pieces.append(label if href is None else f'<a href="{html.escape(href, quote=True)}">{label}</a>')
+        link = _safe_link(match.group(2))
+        if link is None:
+            pieces.append(label)
+        else:
+            href, external = link
+            attributes = f'href="{html.escape(href, quote=True)}"'
+            if external:
+                attributes += ' target="_blank" rel="noopener noreferrer"'
+            pieces.append(f'<a {attributes}>{label}</a>')
         cursor = match.end()
     pieces.append(html.escape(value[cursor:], quote=False))
     return "".join(pieces)
 
 
-def _safe_href(raw: str) -> str | None:
+def _safe_link(raw: str) -> tuple[str, bool] | None:
     if raw.startswith("//") or "\\" in raw:
         return None
     parsed = urlsplit(raw)
-    # Production canonical-origin ownership is still Gate A/3D-gated. Until a
-    # canonical origin is injected into this renderer, keep the local Stage 4
-    # candidate to normalized same-origin relative references only rather than
-    # guessing whether an absolute HTTP(S) URL is same-origin.
-    if parsed.scheme or parsed.netloc:
+    if parsed.scheme:
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return None
+        return raw, True
+    if parsed.netloc:
         return None
     if raw.startswith("#"):
-        return "/" + raw
+        return "/" + raw, False
     if raw.startswith("/"):
-        return raw
-    return "/" + raw.lstrip("./")
+        return raw, False
+    return "/" + raw.lstrip("./"), False
 
 
 __all__ = [

@@ -1,5 +1,6 @@
 import { DOCUMENT_TITLE } from "./config.js";
 import { parsePostgresTaskRoute } from "./features/routing/routes.js";
+import { renderLocalPostgresqlAdmin } from "./local/local-admin-app.js";
 import { renderLocalPostgresqlBoard } from "./local/local-board-app.js";
 import { frontendDataSource } from "./local/source-selection.js";
 import { bootPrivateFrontend } from "./private/private-app.js";
@@ -39,6 +40,10 @@ export async function boot(root = document.querySelector("#app")) {
   if (mode !== "local-observation") throw new Error("Dish frontend runtime mode is invalid");
   if (frontendDataSource(window.location.search) !== "postgresql") {
     renderLocalSourceRequired(root);
+    return;
+  }
+  if (window.location.pathname === "/admin") {
+    await renderLocalPostgresqlAdmin(root);
     return;
   }
   const route = parsePostgresTaskRoute(window.location.pathname);

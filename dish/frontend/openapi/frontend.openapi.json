@@ -906,6 +906,138 @@
           }
         }
       }
+    },
+    "/frontend/admin": {
+      "get": {
+        "operationId": "getFrontendAdmin",
+        "security": [
+          {
+            "frontendSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Dish-Frontend-Contract",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "const": "dish-frontend-v1"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Read the operator admin overview and journal"
+      }
     }
   },
   "components": {
@@ -1548,6 +1680,264 @@
           },
           "target": {
             "$ref": "#/components/schemas/DetailNoticeTarget"
+          }
+        }
+      },
+      "AdminAttention": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "label",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": [
+              "isolated",
+              "lease_attention",
+              "verification_attention",
+              "hold_active",
+              "recovery_required",
+              "abandonment_active",
+              "succession_active",
+              "projection_abnormal"
+            ]
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          }
+        }
+      },
+      "AdminDish": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "task_id",
+          "title",
+          "section_label",
+          "workflow_status",
+          "bucket",
+          "attention",
+          "last_activity_at",
+          "diagnostics"
+        ],
+        "properties": {
+          "task_id": {
+            "$ref": "#/components/schemas/TaskRouteIdentity"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "section_label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "workflow_status": {
+            "$ref": "#/components/schemas/WorkflowStatus"
+          },
+          "bucket": {
+            "type": "string",
+            "enum": [
+              "needs_you",
+              "system_activity"
+            ]
+          },
+          "attention": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "$ref": "#/components/schemas/AdminAttention"
+            }
+          },
+          "last_activity_at": {
+            "oneOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "diagnostics": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "attention_codes"
+            ],
+            "properties": {
+              "attention_codes": {
+                "type": "array",
+                "maxItems": 8,
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "AdminJournalDiagnostics": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "event_type",
+          "actor",
+          "request_id",
+          "command_execution_id",
+          "operation_id"
+        ],
+        "properties": {
+          "event_type": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 96
+          },
+          "actor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "request_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "command_execution_id": {
+            "oneOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "operation_id": {
+            "oneOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "AdminJournalEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "event_id",
+          "task_id",
+          "title",
+          "occurred_at",
+          "summary",
+          "diagnostics"
+        ],
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "task_id": {
+            "$ref": "#/components/schemas/TaskRouteIdentity"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 220
+          },
+          "diagnostics": {
+            "$ref": "#/components/schemas/AdminJournalDiagnostics"
+          }
+        }
+      },
+      "AdminResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "generated_at",
+          "summary",
+          "dishes",
+          "journal"
+        ],
+        "properties": {
+          "generated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "summary": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "needs_you",
+              "human_review",
+              "recovery",
+              "system_activity",
+              "affected_dishes"
+            ],
+            "properties": {
+              "needs_you": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "human_review": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "recovery": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "system_activity": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "affected_dishes": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "dishes": {
+            "type": "array",
+            "maxItems": 5000,
+            "items": {
+              "$ref": "#/components/schemas/AdminDish"
+            }
+          },
+          "journal": {
+            "type": "array",
+            "maxItems": 120,
+            "items": {
+              "$ref": "#/components/schemas/AdminJournalEvent"
+            }
           }
         }
       }

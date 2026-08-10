@@ -15,8 +15,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
 
 from dish_pg.database import DatabaseSettings, create_database_engine, session_factory
+from dish_pg.frontend_admin_query import FrontendAdminQuery
 from dish_pg.frontend_board_query import BoardReadUnavailable, FrontendBoardQuery
 from dish_pg.frontend_detail_query import FrontendDetailQuery
+from dish_service.frontend_admin import FrontendAdminConfig, FrontendAdminService
 from dish_service.frontend_board import FrontendBoardConfig, FrontendBoardService
 from dish_service.frontend_detail import FrontendDetailConfig, FrontendDetailService
 from dish_service.frontend_local_http import (
@@ -77,6 +79,23 @@ class PostgresLocalBoardBackend:
 
     def bootstrap(self) -> dict[str, Any]:
         return self._read(lambda service: service.bootstrap())
+
+    def admin(self) -> dict[str, Any]:
+        session = self.factory()
+        try:
+            with session.begin():
+                if session.get_bind().dialect.name != "postgresql":
+                    raise BoardReadUnavailable("local frontend requires PostgreSQL")
+                session.execute(text("SET TRANSACTION READ ONLY"))
+                return FrontendAdminService(
+                    FrontendAdminQuery(session),
+                    environment=_LOCAL_ENVIRONMENT,
+                    config=FrontendAdminConfig(projection_delay=self.config.projection_delay),
+                ).read()
+        except SQLAlchemyError as exc:
+            raise BoardReadUnavailable("local PostgreSQL admin read is unavailable") from exc
+        finally:
+            session.close()
 
     def continuation(self, *, section_route_id: str, cursor: str) -> dict[str, Any]:
         return self._read(

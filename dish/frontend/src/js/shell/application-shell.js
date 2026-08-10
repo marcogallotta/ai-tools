@@ -1,6 +1,6 @@
 import { applicationShellModel } from "./shell-model.js";
 
-export function createApplicationFrame({ environmentLabel } = {}) {
+export function createApplicationFrame({ environmentLabel, navigationSuffix = "" } = {}) {
   const model = applicationShellModel();
   const shell = document.createElement("div");
   shell.className = "application-shell";
@@ -19,6 +19,18 @@ export function createApplicationFrame({ environmentLabel } = {}) {
   heading.textContent = model.heading;
   identity.append(mark, heading);
   header.append(identity);
+
+  const nav = document.createElement("nav");
+  nav.className = "app-header__nav";
+  nav.setAttribute("aria-label", "Primary");
+  const boardLink = document.createElement("a");
+  boardLink.href = `/${navigationSuffix}`;
+  boardLink.textContent = "Cooking";
+  const adminLink = document.createElement("a");
+  adminLink.href = `/admin${navigationSuffix}`;
+  adminLink.textContent = "Admin";
+  nav.append(boardLink, adminLink);
+  header.append(nav);
   if (environmentLabel) {
     const badge = document.createElement("span");
     badge.className = "environment-badge";
@@ -28,12 +40,14 @@ export function createApplicationFrame({ environmentLabel } = {}) {
 
   const noticeHost = document.createElement("div");
   noticeHost.id = "notice-host";
+  const utilityHost = document.createElement("div");
+  utilityHost.id = "utility-host";
   const main = document.createElement("main");
   main.className = "shell-main";
   main.id = "board-shell";
   main.tabIndex = -1;
-  shell.append(header, noticeHost, main);
-  return { shell, main, noticeHost, model };
+  shell.append(header, noticeHost, utilityHost, main);
+  return { shell, main, noticeHost, utilityHost, model };
 }
 
 export function renderApplicationShell(root) {

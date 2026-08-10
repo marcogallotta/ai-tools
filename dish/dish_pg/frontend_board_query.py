@@ -131,6 +131,32 @@ class FrontendBoardQuery:
             has_more_by_section=has_more,
         )
 
+    def active_cards(
+        self,
+        *,
+        registry: BoardRegistryFacts,
+        projection_delay: timedelta,
+        max_cards: int,
+    ) -> tuple[CardFact, ...]:
+        """Return all active board cards up to an explicit operator-read bound."""
+        if max_cards <= 0:
+            raise ValueError("max_cards must be positive")
+        context = registry.context
+        rows = list(
+            self.session.execute(
+                self._base_card_statement(context=context, projection_delay=projection_delay)
+                .order_by(
+                    models.SectionRegistryEntry.ordinal,
+                    func.lower(models.ContentVersion.title),
+                    models.DishTask.task_id,
+                )
+                .limit(max_cards + 1)
+            ).mappings()
+        )
+        if len(rows) > max_cards:
+            raise BoardReadUnavailable("frontend active-card capacity exceeded")
+        return tuple(self._card_fact(row) for row in rows)
+
     def continuation(
         self,
         *,

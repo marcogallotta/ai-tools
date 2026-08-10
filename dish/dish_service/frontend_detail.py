@@ -112,7 +112,10 @@ class FrontendDetailService:
             "attention_codes": attention_codes,
             "body_presentation": body,
             "disclosures": disclosures,
-            "advisory": workflow_advisory(facts.operation_phase),
+            "advisory": workflow_advisory(
+                facts.operation_phase,
+                section_workflow_role=facts.section_workflow_role,
+            ),
             "projection": projection,
             "notices": notices,
         }

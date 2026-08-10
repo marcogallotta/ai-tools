@@ -45,6 +45,7 @@ def facts(**overrides) -> DetailFacts:
         body="# Canonical\n\n<script>alert(1)</script>\n\n[bad](javascript:alert(1))\n\n[slash](\\\\evil.example)\n\n[external](https://evil.example)\n\n[local](docs/help)\n",
         existence_state="isolated",
         section_label="Research Queue",
+        section_workflow_role="research_queue",
         project_label="Cooking",
         operation_kind="initial",
         operation_phase="prepare_required",
@@ -90,7 +91,7 @@ def test_detail_presentation_is_closed_non_authorizing_and_uses_canonical_dish_u
     assert payload["body_presentation"]["state"] == "sanitized_html"
     assert "<script>" not in payload["body_presentation"]["html"]
     assert "javascript:" not in payload["body_presentation"]["html"]
-    assert "evil.example" not in payload["body_presentation"]["html"]
+    assert 'href="https://evil.example" target="_blank" rel="noopener noreferrer"' in payload["body_presentation"]["html"]
     assert 'href="/docs/help"' in payload["body_presentation"]["html"]
     assert [item["code"] for item in payload["disclosures"]] == [
         "lease", "verification", "hold", "recovery", "abandonment", "succession"
@@ -112,6 +113,23 @@ def test_verification_attention_without_cycle_gets_factual_disclosure() -> None:
         "label": "Verification",
         "detail": "Verification is awaiting human review.",
     }]
+
+
+
+def test_queue_role_supplies_real_advisory_when_no_operation_is_open() -> None:
+    current = facts(
+        operation_kind=None,
+        operation_phase=None,
+        section_label="Verification Queue",
+        section_workflow_role="verification_queue",
+    )
+    payload = service(current).present(current)
+    assert payload["advisory"] == {
+        "code": "workflow.verification_required",
+        "message": "This dish needs Verification.",
+        "perspective": "workflow",
+        "invokable_by_frontend": False,
+    }
 
 
 def test_renderer_fallback_is_inert_and_has_exact_notice() -> None:

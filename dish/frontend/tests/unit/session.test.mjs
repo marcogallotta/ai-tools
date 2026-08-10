@@ -46,11 +46,24 @@ test("opaque login return targets restore only approved same-origin application 
   try {
     const task = "/dishes/12345678-1234-5678-1234-567812345678/current-title";
     assert.equal(returnTargetFromSearch(`?return=rt1.${encodeTarget(task)}`), task);
+    assert.equal(returnTargetFromSearch(`?return=rt1.${encodeTarget("/admin")}`), "/admin");
     assert.equal(returnTargetFromSearch(`?return=rt1.${encodeTarget("https://evil.example/")}`), "/");
     assert.equal(returnTargetFromSearch(`?return=rt1.${encodeTarget("/frontend/session")}`), "/");
     assert.equal(returnTargetFromSearch(`?return=rt1.${encodeTarget(`${task}?x=1`)}`), "/");
     assert.equal(returnTargetFromSearch(`?return=rt1.${encodeTarget("/dishes/../frontend/session")}`), "/");
     assert.equal(returnTargetFromSearch("?return=rt1.bad&return=rt1.other"), "/");
+  } finally {
+    globalThis.window = previous;
+  }
+});
+
+test("admin location becomes an opaque login return token", () => {
+  const previous = globalThis.window;
+  globalThis.window = { location: { origin: "https://dish.example.test", pathname: "/admin", search: "" } };
+  try {
+    const location = loginLocationForCurrentPage();
+    assert.match(location, /^\/login\?return=rt1\.[A-Za-z0-9_-]+$/);
+    assert.equal(returnTargetFromSearch(location.slice("/login".length)), "/admin");
   } finally {
     globalThis.window = previous;
   }

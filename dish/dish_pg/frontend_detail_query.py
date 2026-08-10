@@ -54,6 +54,7 @@ class DetailFacts:
     body: str
     existence_state: str
     section_label: str
+    section_workflow_role: str
     project_label: str
     operation_kind: str | None
     operation_phase: str | None
@@ -110,6 +111,7 @@ class FrontendDetailQuery:
             body=row["body"],
             existence_state=row["existence_state"],
             section_label=row["section_label"],
+            section_workflow_role=row["section_workflow_role"],
             project_label=row["project_label"],
             operation_kind=row["operation_kind"],
             operation_phase=row["operation_phase"],
@@ -171,6 +173,7 @@ class FrontendDetailQuery:
                     ),
                     else_=models.SectionRegistryEntry.display_name,
                 ).label("section_label"),
+                models.SectionRegistryEntry.workflow_role.label("section_workflow_role"),
                 models.GovernedProject.logical_name.label("project_label"),
                 workflow.WorkflowOperation.operation_id,
                 workflow.WorkflowOperation.kind.label("operation_kind"),

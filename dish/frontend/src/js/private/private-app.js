@@ -7,6 +7,7 @@ import {
   returnTargetFromSearch,
 } from "../features/auth/session.js";
 import { parsePostgresTaskRoute } from "../features/routing/routes.js";
+import { renderLocalPostgresqlAdmin } from "../local/local-admin-app.js";
 import { renderLocalPostgresqlBoard } from "../local/local-board-app.js";
 import { createApplicationFrame } from "../shell/application-shell.js";
 import { renderLoginShell, renderLogoutPendingShell } from "../shell/login-shell.js";
@@ -134,11 +135,18 @@ export async function bootPrivateFrontend(root, { mode, fetchImpl = globalThis.f
 
   let protectedController = null;
   if (mode === "private-postgresql") {
-    protectedController = await renderLocalPostgresqlBoard(root, {
-      initialTaskId: parsePostgresTaskRoute(window.location.pathname)?.taskId ?? null,
-      environmentLabel: "POSTGRESQL — NON-AUTHORITATIVE",
-      onAuthenticationLost,
-    });
+    if (window.location.pathname === "/admin") {
+      protectedController = await renderLocalPostgresqlAdmin(root, {
+        environmentLabel: "POSTGRESQL — NON-AUTHORITATIVE",
+        onAuthenticationLost,
+      });
+    } else {
+      protectedController = await renderLocalPostgresqlBoard(root, {
+        initialTaskId: parsePostgresTaskRoute(window.location.pathname)?.taskId ?? null,
+        environmentLabel: "POSTGRESQL — NON-AUTHORITATIVE",
+        onAuthenticationLost,
+      });
+    }
   } else {
     renderReadsDisabled(root);
   }

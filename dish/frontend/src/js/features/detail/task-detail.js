@@ -1,5 +1,7 @@
 import { detailStatusText } from "./detail-model.js";
 import { renderSafeContent } from "./safe-content.js";
+import { noticeRegistry } from "../notices/notice-registry.js";
+import { postgresSourceSuffix } from "../routing/routes.js";
 
 let activePanel = null;
 
@@ -91,6 +93,31 @@ export function openTaskDetail(detail, origin, { onRequestClose, focusFallback, 
   const statusText = detailStatusText(detail);
   if (statusText) facts.append(definitionRow("Status", statusText));
   if (detail.destinationLabel) facts.append(definitionRow("Destination", detail.destinationLabel));
+  if (detail.attention?.length) {
+    const adminStrip = document.createElement("section");
+    adminStrip.className = "detail-admin-strip";
+    const adminText = document.createElement("p");
+    const labels = detail.attention.map((code) => noticeRegistry[code]?.label).filter(Boolean);
+    adminText.textContent = `Admin: ${labels.join(" · ")}`;
+    const adminLink = document.createElement("a");
+    adminLink.href = `/admin${postgresSourceSuffix()}#dish=${encodeURIComponent(detail.id)}`;
+    adminLink.textContent = "Open in Admin";
+    adminStrip.append(adminText, adminLink);
+    body.append(adminStrip);
+  }
+  const advisory = detail.advisory
+    ? (detail.advisory.code !== "workflow.none" ? detail.advisory : null)
+    : (detail.nextStep ? { message: detail.nextStep } : null);
+  if (advisory) {
+    const next = document.createElement("section");
+    next.className = "detail-next-step";
+    const nextHeading = document.createElement("h3");
+    nextHeading.textContent = "What needs to happen next";
+    const nextText = document.createElement("p");
+    nextText.textContent = advisory.message;
+    next.append(nextHeading, nextText);
+    body.append(next);
+  }
   const contentHeading = document.createElement("h3");
   contentHeading.textContent = "Current canonical content";
   const content = document.createElement("div");
@@ -122,14 +149,6 @@ export function openTaskDetail(detail, origin, { onRequestClose, focusFallback, 
     }
     body.append(technical);
   }
-  const next = document.createElement("section");
-  next.className = "detail-next-step";
-  const nextHeading = document.createElement("h3");
-  nextHeading.textContent = "What needs to happen next";
-  const nextText = document.createElement("p");
-  nextText.textContent = detail.advisory?.message ?? detail.nextStep;
-  next.append(nextHeading, nextText);
-  body.append(next);
   panel.append(header, body);
   document.body.append(panel);
   document.body.dataset.detailOpen = "true";

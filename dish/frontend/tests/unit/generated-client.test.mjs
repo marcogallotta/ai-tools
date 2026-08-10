@@ -6,6 +6,7 @@ import { FRONTEND_OPERATION_IDS, GeneratedFrontendClient } from "../../src/js/ap
   assert.deepEqual(FRONTEND_OPERATION_IDS, [
     "frontendLogin",
     "frontendLogout",
+    "getFrontendAdmin",
     "getFrontendBoard",
     "getFrontendSectionTasks",
     "getFrontendSession",

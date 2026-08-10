@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { boardFixture, attentionLabels } from "../../fixtures/stage1-board.js";
-import { appendContinuation, loadedTaskText, sectionHeading } from "../../src/js/features/board/board-model.js";
+import { appendContinuation, sectionHeading } from "../../src/js/features/board/board-model.js";
 import { cardAccessibleName, workflowStatusText } from "../../src/js/features/cards/card-model.js";
 
 test("fixture covers every approved attention category", () => {
@@ -26,5 +26,4 @@ test("card labels remain factual and concise", () => {
   const card = boardFixture.sections[0].cards[0];
   assert.equal(workflowStatusText(card.status), "");
   assert.match(cardAccessibleName(card, attentionLabels), /Lease needs attention/);
-  assert.equal(loadedTaskText(1, true), "1 task loaded; more available");
 });

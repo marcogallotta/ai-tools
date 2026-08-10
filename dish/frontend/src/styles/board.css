@@ -42,12 +42,6 @@
   line-height: 1.25;
 }
 
-.board-column__count {
-  margin: 0;
-  color: var(--color-ink-muted);
-  font-size: 0.7rem;
-  font-variant-numeric: tabular-nums;
-}
 
 .board-column__cards {
   display: grid;
