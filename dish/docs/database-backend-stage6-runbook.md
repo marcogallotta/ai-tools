@@ -666,6 +666,18 @@ process death:
    replacement is permitted only after the exact run is durably aborted before rollback burn, and
    the generation admission control must remain closed while it is rebound.
 
+Before a production maintenance window, certify this restart table with the maintained TEST-only
+runner and retain its off-repository report:
+
+```sh
+scripts/dish-pg-cutover-activation-rehearsal \
+  --output /secure/evidence/stage6-activation-report.json \
+  --evidence-dir /secure/evidence/stage6-activation
+```
+
+Only `status=passed` with `evidence_validation.ok=true` certifies the non-production checkpoint/process
+rehearsal. `status=blocked` keeps this rehearsal incomplete and never authorizes production work.
+
 State meanings:
 
 | Cutover state | Mutation admission | Ordinary abort |
