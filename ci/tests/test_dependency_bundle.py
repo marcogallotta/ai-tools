@@ -131,9 +131,27 @@ def test_bundle_runtime_fails_closed_on_libc_mismatch(tmp_path: Path, monkeypatc
         "platform_architecture": target["platform_architecture"],
         "sysconfig_platform": target["sysconfig_platform"],
         "libc_name": target["libc_name"],
-        "libc_version": "9.99",
+        "libc_version": "2.0",
     }
     monkeypatch.delenv("AI_TOOLS_GITHUB_RUNNER", raising=False)
     monkeypatch.setattr(module, "_runtime_facts", lambda: facts)
     with pytest.raises(module.BundleError, match="runtime compatibility mismatch for libc_version"):
         module._verify_runtime(target)
+
+
+def test_bundle_runtime_allows_newer_libc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    module = _module()
+    root = _fake_repo(tmp_path)
+    target = module.expected_metadata(root)["target"]
+    facts = {
+        "python_implementation": target["python_implementation"],
+        "python_version": target["python_version"],
+        "platform_system": target["platform_system"],
+        "platform_architecture": target["platform_architecture"],
+        "sysconfig_platform": target["sysconfig_platform"],
+        "libc_name": target["libc_name"],
+        "libc_version": "9.99",
+    }
+    monkeypatch.delenv("AI_TOOLS_GITHUB_RUNNER", raising=False)
+    monkeypatch.setattr(module, "_runtime_facts", lambda: facts)
+    module._verify_runtime(target)

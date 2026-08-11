@@ -207,13 +207,20 @@ def _verify_runtime(target: dict[str, Any], *, builder: dict[str, Any] | None = 
         ("platform_architecture", target["platform_architecture"]),
         ("sysconfig_platform", target["sysconfig_platform"]),
         ("libc_name", target["libc_name"]),
-        ("libc_version", target["libc_version"]),
     )
     for key, expected in checks:
         if facts[key] != expected:
             raise BundleError(
                 f"runtime compatibility mismatch for {key}: expected {expected!r}, got {facts[key]!r}"
             )
+    # glibc has forward-compatible symbol versioning: a bundle built against an
+    # older glibc runs fine on a newer one, but not the reverse, so this is a
+    # minimum-version check rather than the exact match used for the other facts.
+    if _version_tuple(facts["libc_version"]) < _version_tuple(target["libc_version"]):
+        raise BundleError(
+            "runtime compatibility mismatch for libc_version: "
+            f"expected >= {target['libc_version']!r}, got {facts['libc_version']!r}"
+        )
     if builder:
         required_libc = str(builder.get("libc_name", ""))
         required_version = str(builder.get("libc_version", ""))
