@@ -54,9 +54,8 @@ def test_semantic_review_queue_commands_are_first_class_admin_commands():
     assert build_parser().parse_args(["review-inspect", proposal_id]).proposal_id == proposal_id
     approved = build_parser().parse_args(["review-approve", proposal_id])
     assert approved.command == "review-approve"
-    # The legacy CLI may still inject the semantic-proposal default reason. The
-    # application layer must reject that synthetic text for Human Review items.
-    assert approved.reason == "Approved after reviewing the exact linked change bundle."
+    # Human Review must never inherit a synthetic semantic-proposal approval reason.
+    assert approved.reason is None
     rejected = build_parser().parse_args([
         "review-reject", proposal_id, "--reason", "wrong interpretation"
     ])

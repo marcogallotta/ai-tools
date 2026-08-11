@@ -135,10 +135,22 @@ def test_action_openapi_documents_client_uuid_contract_and_reject_routes():
     assert set(variants["large"]["properties"]["governed_change_fields"]["items"]["enum"]) >= {
         "Purpose", "Locks", "Decisions"
     }
-    human_review_props = variants["human-review"]["properties"]
+    human_review = variants["human-review"]
+    human_review_props = human_review["properties"]
     for name in ("human_review_confirmed", "human_review_basis", "repairs_considered"):
         assert name in human_review_props
-        assert name not in variants["human-review"]["required"]
+        assert name not in human_review["required"]
+    assert "human_review_options" in human_review["required"]
+    options = human_review_props["human_review_options"]
+    assert options["minItems"] == 1
+    assert options["maxItems"] == 6
+    option = options["items"]
+    assert option["required"] == ["label", "decision"]
+    assert option["additionalProperties"] is False
+    authorization = option["properties"]["authorization"]
+    assert authorization["required"] == ["field", "before", "after"]
+    assert authorization["additionalProperties"] is False
+    assert "Exemptions" in authorization["properties"]["field"]["enum"]
 
     start = spec["paths"]["/v1/action/start"]["post"]["requestBody"]["content"]["application/json"]["schema"]["properties"]["arguments"]
     start_variants = {item["properties"]["kind"]["const"]: item for item in start["oneOf"]}

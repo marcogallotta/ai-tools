@@ -53,6 +53,9 @@ def test_initial_research_can_hold_before_prepare_and_resume_same_operation(
             "human_review_confirmed": True,
             "human_review_basis": "The remaining pre-construction choice requires Marco's authority.",
             "repairs_considered": "Within-authority research routes were considered and cannot settle that choice.",
+            "human_review_options": [
+                {"label": "Use Marco's chosen route", "decision": "Use Marco's chosen route for the next Research step."}
+            ],
         } if route == "human-review" else {}),
     )
     assert held["ok"]

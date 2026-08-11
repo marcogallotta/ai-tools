@@ -274,9 +274,19 @@ def render_admin_result(
                     lines.append(f"   Blocker: {blocker}")
                 decision = _clean(summary.get("decision"))
                 if decision and decision != issue:
-                    lines.append(f"   Decision needed: {decision}")
+                    lines.append(f"   Question: {decision}")
+                hr_options = proposal.get("human_review_options") if isinstance(proposal.get("human_review_options"), list) else []
+                for option in hr_options:
+                    if not isinstance(option, Mapping):
+                        continue
+                    option_id = _clean(option.get("option_id")) or "?"
+                    label_text = _clean(option.get("label")) or _clean(option.get("decision")) or "Option"
+                    recommended = " (recommended)" if bool(option.get("recommended")) else ""
+                    lines.append(f"   {option_id}. {label_text}{recommended}")
+                if item_type == "human_review":
+                    lines.append("   Other. Type a different instruction for the next agent.")
                 next_step = _clean(summary.get("simplest_next_step"))
-                if next_step and item_type != "semantic_proposal":
+                if next_step and item_type not in {"semantic_proposal", "human_review"}:
                     lines.append(f"   Options: {next_step}")
                 changes = proposal.get("changes") if isinstance(proposal.get("changes"), list) else []
                 rendered_changes = 0
@@ -305,9 +315,11 @@ def render_admin_result(
                         lines.append(f"   Reject template: dish-admin review-reject {proposal_id} --reason '<why>'")
                     elif item_type == "human_review":
                         lines.append(
-                            f"   Decision template: dish-admin review-approve {proposal_id} --reason '<Marco decision>'"
+                            f"   Choose: dish-admin review-approve {proposal_id} --choice A"
                         )
-                        lines.append(f"   Dismiss template: dish-admin review-reject {proposal_id} --reason '<why escalation is invalid>'")
+                        lines.append(
+                            f"   Other: dish-admin review-approve {proposal_id} --choice other --reason '<instruction>'"
+                        )
                     elif item_type == "verification_hold":
                         lines.append(f"   Release: dish-admin review-approve {proposal_id}")
             if items:
@@ -321,7 +333,7 @@ def render_admin_result(
             proposal = data.get("review_item") if isinstance(data.get("review_item"), Mapping) else data.get("proposal") if isinstance(data.get("proposal"), Mapping) else {}
             proposal_id = _clean(proposal.get("review_id") or proposal.get("proposal_id")) or "unknown"
             item_type = _clean(proposal.get("item_type")) or "semantic_proposal"
-            heading = "Human Review" if item_type == "human_review" else "Review"
+            heading = "Human decision" if item_type == "human_review" else "Review"
             lines.append(f"{heading} {proposal_id}")
             lines.append(f"Status: {_clean(proposal.get('status')) or 'unknown'}")
             summary = proposal.get("review_summary") if isinstance(proposal.get("review_summary"), Mapping) else {}
@@ -333,10 +345,34 @@ def render_admin_result(
                 lines.append(f"Blocker: {blocker}")
             decision = _clean(summary.get("decision"))
             if decision and decision != issue:
-                lines.append(f"Decision: {decision}")
+                lines.append(f"Question: {decision}")
             next_step = _clean(summary.get("simplest_next_step"))
-            if next_step:
+            if next_step and item_type != "human_review":
                 lines.append(f"Next: {next_step}")
+            if item_type == "human_review":
+                hr_options = proposal.get("human_review_options") if isinstance(proposal.get("human_review_options"), list) else []
+                lines.append("")
+                lines.append("Choices")
+                if hr_options:
+                    for option in hr_options:
+                        if not isinstance(option, Mapping):
+                            continue
+                        option_id = _clean(option.get("option_id")) or "?"
+                        label_text = _clean(option.get("label")) or "Option"
+                        decision_text = _clean(option.get("decision"))
+                        recommended = " — recommended" if bool(option.get("recommended")) else ""
+                        lines.append(f"{option_id}. {label_text}{recommended}")
+                        if decision_text and decision_text != label_text:
+                            lines.append(f"   {decision_text}")
+                        authorization = option.get("authorization")
+                        if isinstance(authorization, Mapping):
+                            lines.append(
+                                f"   Authorizes {authorization.get('field')}: "
+                                f"{_compact_value(authorization.get('before'))} → {_compact_value(authorization.get('after'))}"
+                            )
+                else:
+                    lines.append("No agent-authored choices were stored for this older review.")
+                lines.append("Other. Type a different instruction for the next agent.")
 
             changes = proposal.get("changes") if isinstance(proposal.get("changes"), list) else []
             if changes:
@@ -378,10 +414,12 @@ def render_admin_result(
                 lines.append(f"Reject template: dish-admin review-reject {proposal_id} --reason '<why>'")
             elif status == "pending" and item_type == "human_review" and not interactive:
                 lines.append("")
-                command = _clean(data.get("admin_command") or data.get("admin_command_template"))
-                if command:
-                    lines.append(f"Decision template: {command}")
-                lines.append(f"Dismiss template: dish-admin review-reject {proposal_id} --reason '<why escalation is invalid>'")
+                options = proposal.get("human_review_options") if isinstance(proposal.get("human_review_options"), list) else []
+                if options:
+                    lines.append(f"Choose recommended A: dish-admin review-approve {proposal_id} --choice A")
+                lines.append(
+                    f"Other instruction: dish-admin review-approve {proposal_id} --choice other --reason '<instruction>'"
+                )
             elif status == "pending" and item_type == "verification_hold" and not interactive:
                 lines.append("")
                 lines.append(f"Release hold: dish-admin review-approve {proposal_id}")
@@ -508,12 +546,12 @@ def render_admin_result(
                 lines.append(f"   Renewed: {_clean(lease.get('renewed_at')) or 'unknown'}")
                 lines.append(f"   Expires: {_clean(lease.get('expires_at')) or 'unknown'}")
 
-    elif command == "attention" and ok:
-        items = data.get("attention_items") if isinstance(data.get("attention_items"), list) else []
+    elif command in {"issues", "attention"} and ok:
+        items = data.get("issue_items") if isinstance(data.get("issue_items"), list) else data.get("attention_items") if isinstance(data.get("attention_items"), list) else []
         counts = data.get("category_counts") if isinstance(data.get("category_counts"), Mapping) else {}
         needs_you = int(data.get("needs_you_count") or 0)
         system_count = int(data.get("system_count") or 0)
-        lines.append("Dish attention")
+        lines.append("Dish issues")
         lines.append(f"Needs you: {needs_you} dish{'es' if needs_you != 1 else ''}")
         lines.append(
             "Needs Marco: {marco}; Unsafe/reconcile: {unsafe}; System/recoverable: {system}".format(
@@ -524,7 +562,7 @@ def render_admin_result(
         )
         if not items:
             lines.append("")
-            lines.append("No active Dish workflow needs attention.")
+            lines.append("No current Dish issue needs review.")
         visible_items = items if verbose else [
             item for item in items
             if isinstance(item, Mapping) and bool(item.get("needs_you"))
@@ -538,7 +576,7 @@ def render_admin_result(
             title = _clean(item.get("task_title")) or _clean(item.get("dish_id")) or _clean(item.get("task_gid")) or "Dish"
             category = _clean(item.get("category")) or "system"
             lines.append("")
-            lines.append(f"{index}. [{labels.get(category, 'ATTENTION')}] {title}")
+            lines.append(f"{index}. [{labels.get(category, 'ISSUE')}] {title}")
             dish_id = _clean(item.get("dish_id"))
             if dish_id:
                 lines.append(f"   Dish UUID: {dish_id}")
@@ -788,6 +826,28 @@ def render_admin_result(
                             f"{_clean(row.get('event_type')) or 'unknown'} "
                             f"[{_clean(row.get('result_code')) or 'n/a'}]"
                         )
+    elif command in {"kill-all", "kill-all-expired"}:
+        selected = int(data.get("selected_count") or 0)
+        killed = int(data.get("killed_count") or 0)
+        failed = int(data.get("failed_count") or 0)
+        lines.append("Bulk run replacement")
+        lines.append(f"Selected: {selected}; Revoked: {killed}; Failed: {failed}")
+        consequence = _clean(data.get("human_consequence"))
+        if consequence:
+            lines.append(consequence)
+        rows = data.get("results") if isinstance(data.get("results"), list) else []
+        for index, row in enumerate(rows, start=1):
+            if not isinstance(row, Mapping):
+                continue
+            title = _clean(row.get("task_title")) or _clean(row.get("task_gid")) or "Dish"
+            status = "OK" if bool(row.get("ok")) else (_clean(row.get("code")) or "FAILED")
+            lines.append(f"{index}. [{status}] {title}")
+            if verbose:
+                lines.append(f"   Operation: {_clean(row.get('operation_id')) or 'unknown'}")
+                lines.append(f"   Run: {_clean(row.get('run_id')) or 'unknown'}")
+                lines.append(f"   Lease: {_clean(row.get('lease_id')) or 'unknown'}")
+        suppress_generic_actions = True
+        suppress_generic_agent_actions = True
     elif command == "kill" and ok:
         consequence = _clean(data.get("human_consequence"))
         lines.append("Result")

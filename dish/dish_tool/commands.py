@@ -360,30 +360,24 @@ def _evidence_hold_continuation(
         }
 
     op = conn.execute("SELECT task_gid FROM operations WHERE operation_id=?", (operation_id,)).fetchone()
-    if admin_action == "record-human-decision" and cycle is not None:
+    human_review_id = None
+    if admin_action == "record-human-decision":
+        if cycle is not None:
+            human_review_id = cycle["cycle_id"]
+        elif preconstruction is not None:
+            human_review_id = operation_id
+    if human_review_id is not None:
         consequences = human_review_consequence_metadata(resume_status)
-        approval_after_resolution = consequences["approval"]
-        dismissal_after_resolution = consequences["dismissal"]
         review_spec = exact_action(
             kind="review-human-decision",
             command="review-inspect",
-            positional=(cycle["cycle_id"],),
-            summary="Review the one decision that is blocking this task.",
-            effect="Show the compact issue and let Marco approve the decision or dismiss an invalid escalation.",
-            after_success={"instruction": "Use the review action Dish returns; do not reconstruct hold-resolution commands."},
-        )
-        dismiss_spec = template_action(
-            kind="dismiss-human-review",
-            command="review-reject",
-            positional=(cycle["cycle_id"],),
-            options=(("--reason", "<why this escalation is invalid>"),),
-            prompt_fields=(PromptField("reason", "Why this escalation is invalid", "<why this escalation is invalid>"),),
-            summary="Dismiss this Human Review escalation as invalid.",
+            positional=(human_review_id,),
+            summary="Review the decision that is blocking this task.",
             effect=(
-                "Preserve the escalation and dismissal reason, record no Marco decision or governed authorization, "
-                "and return the unchanged candidate to fresh Verification."
+                "Show the issue in ordinary language, the agent's recommended choice first, "
+                "other plausible choices, and a free-text Other route."
             ),
-            after_success=dismissal_after_resolution,
+            after_success={"instruction": "Use one of the stored review choices or Marco's own instruction."},
         )
         return {
             "phase": phase,
@@ -396,7 +390,6 @@ def _evidence_hold_continuation(
             **review_spec.payload(),
             "human_actions": [
                 review_spec.payload()["human_action"] | {"shell_command": review_spec.shell_command()},
-                dismiss_spec.payload()["human_action"] | {"shell_command": dismiss_spec.shell_command()},
             ],
             "resolution_effect": {
                 "review_only": True,
@@ -405,13 +398,11 @@ def _evidence_hold_continuation(
                 "authorizes_governed_field_changes": False,
             },
             "directive": (
-                "Keep the Marco-facing result short: state the decision needed, quantify any threshold blocker, "
-                "and say that the item is available in Dish review. Do not dump hold IDs, resume state, evidence "
-                "detail, or a raw record-human-decision command unless Marco explicitly asks for protocol detail."
+                "Tell Marco the real issue in ordinary language and say the item is available in Dish review. "
+                "Do not describe it as an escalation or expose hold IDs, resume state, or raw hold-resolution commands."
             ),
             "after_resolution": {
-                "approval": approval_after_resolution,
-                "dismissal": dismissal_after_resolution,
+                "approval": consequences["approval"],
             },
         }
     options: list[tuple[str, object | None]] = [
@@ -449,23 +440,6 @@ def _evidence_hold_continuation(
     )
     command = spec.shell_command()
     alternative_human_actions = [spec.payload()["human_action"]]
-    if admin_action == "record-human-decision" and cycle is not None:
-        dismiss_spec = template_action(
-            kind="dismiss-human-review",
-            command="review-reject",
-            positional=(cycle["cycle_id"],),
-            options=(("--reason", "<why this escalation is invalid>"),),
-            prompt_fields=(PromptField("reason", "Why this escalation is invalid", "<why this escalation is invalid>"),),
-            summary="Dismiss this Human Review escalation as invalid.",
-            effect=(
-                "Preserve the rejected escalation in the audit trail, record no Marco decision or governed authorization, "
-                "and resume the unchanged task so a fresh verifier can reassess it."
-            ),
-            after_success=human_review_consequence_metadata(resume_status)["dismissal"],
-        )
-        alternative_human_actions.append(
-            dismiss_spec.payload()["human_action"] | {"shell_command": dismiss_spec.shell_command()}
-        )
     next_action = after_resolution["legal_actions"][0] if after_resolution["legal_actions"] else None
     resume_clause = f" with `{next_action}`." if next_action else "."
     if admin_action == "record-human-decision":
@@ -1416,7 +1390,7 @@ def _step8_approve(self, *, trace: CommandTrace, agent: str, model: str | None =
         validation_scope=trace.validation_scope,
     )
 
-def _step8_reject(self, *, trace: CommandTrace, agent: str, model: str | None = None, submission_id: str, reason: str, route: str | None = None, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, blocker_metric: str | None = None, blocker_actual: float | None = None, blocker_limit: float | None = None, blocker_delta: float | None = None, blocker_unit: str | None = None, blocker_basis: str | None = None, human_review_confirmed: bool = False, human_review_basis: str | None = None, repairs_considered: str | None = None, governed_change_fields=None) -> dict[str, Any]:
+def _step8_reject(self, *, trace: CommandTrace, agent: str, model: str | None = None, submission_id: str, reason: str, route: str | None = None, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, blocker_metric: str | None = None, blocker_actual: float | None = None, blocker_limit: float | None = None, blocker_delta: float | None = None, blocker_unit: str | None = None, blocker_basis: str | None = None, human_review_confirmed: bool = False, human_review_basis: str | None = None, repairs_considered: str | None = None, human_review_options=None, governed_change_fields=None) -> dict[str, Any]:
     operation_id = _clean_required(submission_id, rule="operation_id_required", label="operation ID")
     reason = validate_rejection_reason(reason)
     route_release = self._load_release(None)
@@ -1449,7 +1423,7 @@ def _step8_reject(self, *, trace: CommandTrace, agent: str, model: str | None = 
     trace.submission_id = operation_id; trace.task_gid = exists["task_gid"]; trace.state = "open"
     data, view = self.operation_service.current.reject(
         operation_id,
-        lambda: reject_route(self.conn, self.backend, operation_id=operation_id, agent=agent, model=model, route=route, reason=reason, file_path=file_path, resume_status=resume_status, run_id=run_id, independence_attestation=clean_attestation, request_id=self.invocation_request_id, schema=release.schema, honest_root=release.root, blocker_metric=blocker_metric, blocker_actual=blocker_actual, blocker_limit=blocker_limit, blocker_delta=blocker_delta, blocker_unit=blocker_unit, blocker_basis=blocker_basis, human_review_confirmed=human_review_confirmed, human_review_basis=human_review_basis, repairs_considered=repairs_considered, governed_change_fields=governed_change_fields),
+        lambda: reject_route(self.conn, self.backend, operation_id=operation_id, agent=agent, model=model, route=route, reason=reason, file_path=file_path, resume_status=resume_status, run_id=run_id, independence_attestation=clean_attestation, request_id=self.invocation_request_id, schema=release.schema, honest_root=release.root, blocker_metric=blocker_metric, blocker_actual=blocker_actual, blocker_limit=blocker_limit, blocker_delta=blocker_delta, blocker_unit=blocker_unit, blocker_basis=blocker_basis, human_review_confirmed=human_review_confirmed, human_review_basis=human_review_basis, repairs_considered=repairs_considered, human_review_options=human_review_options, governed_change_fields=governed_change_fields),
         schema=release.schema,
     )
     trace.state = view["status"]

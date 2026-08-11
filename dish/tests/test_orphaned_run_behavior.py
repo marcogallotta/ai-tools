@@ -340,7 +340,10 @@ def test_hold_resolution_does_not_grant_a_fresh_run_authority(tmp_path):
          "resume_status": "pending-research",
          "human_review_confirmed": True,
          "human_review_basis": "Only Marco can resolve the remaining choice within settled authority.",
-         "repairs_considered": "Plausible within-authority repairs were considered and do not resolve the choice."},
+         "repairs_considered": "Plausible within-authority repairs were considered and do not resolve the choice.",
+         "human_review_options": [
+             {"label": "Use Marco's chosen construction route", "decision": "Use Marco's chosen route before construction."}
+         ]},
         principal=researcher,
     )
     assert held["ok"]

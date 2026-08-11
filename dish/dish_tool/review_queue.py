@@ -66,6 +66,79 @@ def _format_quantified_blocker(blocker: object) -> str | None:
     return f"{label}{number(actual)}{suffix} vs {number(limit)}{suffix} ({sign}{number(delta)}{suffix})"
 
 
+
+
+def _normalize_human_review_options(raw_options: object) -> list[dict[str, Any]]:
+    options: list[dict[str, Any]] = []
+    if not isinstance(raw_options, list):
+        return options
+    for index, raw in enumerate(raw_options):
+        if not isinstance(raw, Mapping):
+            continue
+        label = str(raw.get("label") or "").strip()
+        decision = str(raw.get("decision") or "").strip()
+        if not label or not decision:
+            continue
+        options.append({
+            "option_id": str(raw.get("option_id") or chr(ord("A") + index)),
+            "label": label,
+            "decision": decision,
+            "recommended": index == 0,
+            "authorization": raw.get("authorization") if isinstance(raw.get("authorization"), Mapping) else None,
+        })
+    return options
+
+
+def _human_review_summary(
+    *, reason: str, basis: str | None, blocker: object, options: list[dict[str, Any]],
+    resume_status: object, preconstruction: bool = False,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    blocker_summary = _format_quantified_blocker(blocker)
+    consequences = human_review_consequence_metadata(resume_status)
+    review_summary = {
+        "outcome": "needs Marco decision",
+        "issue": reason,
+        "quantified_blocker": blocker_summary,
+        "decision": basis or reason,
+        "simplest_next_step": (
+            "Choose the recommended option, another agent-proposed option, or type your own instruction."
+            if options
+            else "Type Marco's instruction for the next agent; this older review has no stored agent options."
+        ),
+        "approval_consequence": consequences["approval"],
+        "dismissal_consequence": consequences["dismissal"],
+    }
+    explanation = {
+        "problem": reason,
+        "cause": (
+            "Research reached a durable Human Review stop before constructing a candidate."
+            if preconstruction
+            else "Verification reached a durable Human Review stop."
+        ),
+        "why_not_ordinary_correction": (
+            "The agent found a real choice it is not authorized to make for Marco."
+        ),
+        "recommended_resolution": (
+            "Choose A for the agent's recommended route, choose another stored option, or type a different instruction."
+            if options
+            else "Type the decision or instruction Marco wants the next agent to follow."
+        ),
+        "scope": (
+            "This task and this exact blocked Research operation only."
+            if preconstruction
+            else "This task and this exact held Verification cycle only."
+        ),
+        "command_effect": (
+            "Choosing a stored option records that exact Marco decision. If the option carries one exact governed-field "
+            "authorization, Dish records that authorization for the continuation agent. Free text is recorded as instruction only."
+            if not preconstruction
+            else "Choosing a stored option or free text records Marco's instruction and returns this same operation to Research construction."
+        ),
+        "after_success": consequences["approval"]["instruction"],
+        "dismissal_after_success": consequences["dismissal"]["instruction"],
+    }
+    return review_summary, explanation
+
 def _hold_context(conn: sqlite3.Connection, operation_id: str, cycle_id: str) -> dict[str, Any]:
     row = conn.execute(
         """SELECT intended_json FROM operation_steps
@@ -86,12 +159,14 @@ def _hold_context(conn: sqlite3.Connection, operation_id: str, cycle_id: str) ->
     basis = str(intended.get("human_review_basis") or "").strip() or None
     repairs = str(intended.get("repairs_considered") or "").strip() or None
     blocker = intended.get("quantified_blocker")
+    options = _normalize_human_review_options(intended.get("human_review_options"))
     return {
         "reason": reason,
         "human_review_basis": basis,
         "repairs_considered": repairs,
         "quantified_blocker": blocker if isinstance(blocker, Mapping) else None,
         "quantified_blocker_summary": _format_quantified_blocker(blocker),
+        "human_review_options": options,
     }
 
 
@@ -124,23 +199,21 @@ def _human_review_items(conn: sqlite3.Connection) -> tuple[dict[str, Any], ...]:
         blocker_summary = context["quantified_blocker_summary"]
         decision = context["human_review_basis"] or reason
         consequences = human_review_consequence_metadata(row["resume_state"])
-        review_summary = {
-            "outcome": "needs Marco decision" if kind == "human_review" else "verification hold",
-            "issue": reason,
-            "quantified_blocker": blocker_summary,
-            "decision": decision if kind == "human_review" else None,
-            "simplest_next_step": (
-                (
-                    "Approve the substantive decision to return this task to "
-                    f"{consequences['approval']['next_stage'].title()}, or dismiss the invalid escalation "
-                    "to return the unchanged candidate to fresh Verification."
-                )
-                if kind == "human_review"
-                else "Release the unchanged candidate to a fresh Verification round."
-            ),
-            "approval_consequence": consequences["approval"] if kind == "human_review" else None,
-            "dismissal_consequence": consequences["dismissal"] if kind == "human_review" else None,
-        }
+        options = context["human_review_options"] if kind == "human_review" else []
+        if kind == "human_review":
+            review_summary, explanation = _human_review_summary(
+                reason=reason, basis=context["human_review_basis"],
+                blocker=context["quantified_blocker"], options=options,
+                resume_status=row["resume_state"],
+            )
+        else:
+            review_summary = {
+                "outcome": "verification hold", "issue": reason,
+                "quantified_blocker": blocker_summary, "decision": None,
+                "simplest_next_step": "Release the unchanged candidate to a fresh Verification round.",
+                "approval_consequence": None, "dismissal_consequence": None,
+            }
+            explanation = None
         items.append(
             {
                 "item_type": kind,
@@ -154,44 +227,23 @@ def _human_review_items(conn: sqlite3.Connection) -> tuple[dict[str, Any], ...]:
                 "proposal_reason": reason,
                 "human_review_basis": context["human_review_basis"],
                 "repairs_considered": context["repairs_considered"],
+                "human_review_options": options,
                 "quantified_blocker": context["quantified_blocker"],
                 "review_summary": review_summary,
                 "resume_status": row["resume_state"],
                 "hold_identity": row["hold_identity"],
                 "created_at": row["cycle_created_at"] or row["created_at"],
-                "explanation": {
+                "explanation": explanation if kind == "human_review" else {
                     "problem": reason,
-                    "cause": "Verification reached a durable Human Review stop.",
-                    "why_not_ordinary_correction": (
-                        "The verifier reported that a Marco-only choice remained, so Dish parked the operation. "
-                        "The agent may not infer Marco's answer or mutate governed fields from that report."
-                    ),
-                    "recommended_resolution": (
-                        "If the escalation is valid, record Marco's exact decision and reasoning. "
-                        "If the agent-authored escalation itself is invalid and Marco has not made a substantive decision, "
-                        "dismiss it with a reason and resume Verification."
-                        if kind == "human_review"
-                        else "Release the three-round Verification hold into a fresh round."
-                    ),
+                    "cause": "Verification reached its durable loop-breaker hold.",
+                    "recommended_resolution": "Release the three-round Verification hold into a fresh round.",
                     "scope": "This task and this exact held Verification cycle only.",
-                    "command_effect": (
-                        "Recording a decision persists Marco's substantive decision; dismissing the escalation records only why the prior "
-                        "agent-authored hold was invalid. Neither path edits or authorizes governed fields."
-                        if kind == "human_review"
-                        else "The resolved command releases the unchanged candidate into a fresh Verification round."
-                    ),
+                    "command_effect": "The resolved command releases the unchanged candidate into a fresh Verification round.",
                     "after_success": (
-                        consequences["approval"]["instruction"]
-                        if kind == "human_review"
-                        else (
-                            "An eligible verifier may continue from the resumed operation; if the "
-                            "original verifier is still live and made no material edit, that same "
-                            "run may continue from fresh durable state."
-                        )
+                        "An eligible verifier may continue from the resumed operation; if the original verifier is still live "
+                        "and made no material edit, that same run may continue from fresh durable state."
                     ),
-                    "dismissal_after_success": (
-                        consequences["dismissal"]["instruction"] if kind == "human_review" else None
-                    ),
+                    "dismissal_after_success": None,
                 },
                 "changes": [],
                 "linked_changes": [],
@@ -199,6 +251,62 @@ def _human_review_items(conn: sqlite3.Connection) -> tuple[dict[str, Any], ...]:
         )
     return tuple(items)
 
+
+
+def _preconstruction_human_review_items(conn: sqlite3.Connection) -> tuple[dict[str, Any], ...]:
+    rows = conn.execute(
+        """SELECT operation.operation_id, operation.task_gid, operation.created_at,
+                  operation.expected_identity, state.last_confirmed_title, step.intended_json
+             FROM operations AS operation
+             JOIN operation_steps AS step
+               ON step.operation_id=operation.operation_id
+              AND step.step_name='research_preconstruction_hold'
+              AND step.completed_at IS NOT NULL
+             LEFT JOIN task_content_state AS state ON state.task_gid=operation.task_gid
+            WHERE operation.status='open' AND operation.phase='held_human'
+            ORDER BY operation.created_at, operation.operation_id"""
+    ).fetchall()
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            intended = json.loads(row["intended_json"] or "{}")
+        except (TypeError, ValueError):
+            intended = {}
+        if not isinstance(intended, dict) or intended.get("route") != "human-review":
+            continue
+        reason = str(intended.get("reason") or "").strip() or "Marco's decision is required before Research can continue."
+        basis = str(intended.get("human_review_basis") or "").strip() or None
+        repairs = str(intended.get("repairs_considered") or "").strip() or None
+        blocker = intended.get("quantified_blocker")
+        options = _normalize_human_review_options(intended.get("human_review_options"))
+        review_summary, explanation = _human_review_summary(
+            reason=reason, basis=basis, blocker=blocker, options=options,
+            resume_status="pending-research", preconstruction=True,
+        )
+        items.append({
+            "item_type": "human_review",
+            "review_id": row["operation_id"],
+            "proposal_id": row["operation_id"],
+            "status": "pending",
+            "task_gid": row["task_gid"],
+            "operation_id": row["operation_id"],
+            "cycle_id": None,
+            "candidate_title": row["last_confirmed_title"],
+            "proposal_reason": reason,
+            "human_review_basis": basis,
+            "repairs_considered": repairs,
+            "human_review_options": options,
+            "quantified_blocker": blocker if isinstance(blocker, Mapping) else None,
+            "review_summary": review_summary,
+            "resume_status": "pending-research",
+            "hold_identity": row["expected_identity"],
+            "created_at": row["created_at"],
+            "preconstruction": True,
+            "explanation": explanation,
+            "changes": [],
+            "linked_changes": [],
+        })
+    return tuple(items)
 
 def list_review_items(
     conn: sqlite3.Connection,
@@ -214,6 +322,7 @@ def list_review_items(
         items.append(item)
     if include_human_holds and "pending" in proposal_statuses:
         items.extend(_human_review_items(conn))
+        items.extend(_preconstruction_human_review_items(conn))
     items.sort(key=lambda item: (str(item.get("created_at") or ""), str(item.get("review_id") or "")))
     return tuple(items)
 
@@ -260,7 +369,7 @@ def resolve_review_item(
             item["item_type"] = "semantic_proposal"
             item["review_id"] = item["proposal_id"]
             return item
-    for item in _human_review_items(conn):
+    for item in (*_human_review_items(conn), *_preconstruction_human_review_items(conn)):
         if item["review_id"] == clean:
             return dict(item)
     raise DishRuleError(

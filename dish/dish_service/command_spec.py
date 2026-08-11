@@ -328,6 +328,42 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
                 "type": "string",
                 "description": "Specific plausible repairs considered and why they do not resolve the issue within existing authority.",
             },
+            "human_review_options": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 6,
+                "description": (
+                    "Concrete human choices for this Human Review, ordered best-first. The first "
+                    "item is always the agent's recommended route. Include plausible alternatives; "
+                    "Dish always gives Marco a free-text Other choice in the admin UI."
+                ),
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["label", "decision"],
+                    "properties": {
+                        "label": {"type": "string"},
+                        "decision": {"type": "string"},
+                        "authorization": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": ["field", "before", "after"],
+                            "properties": {
+                                "field": {
+                                    "type": "string",
+                                    "enum": [
+                                        "Dish candidate", "Purpose", "Role", "Priors", "Locks",
+                                        "Exemptions", "Research emphasis", "Destination section",
+                                        "Researched by",
+                                    ],
+                                },
+                                "before": {"type": "string"},
+                                "after": {"type": "string"},
+                            },
+                        },
+                    },
+                },
+            },
             "governed_change_fields": {
                 "type": "array",
                 "items": {
@@ -508,9 +544,9 @@ def action_openapi_argument_schema(command: str) -> dict[str, Any]:
         "human-review": dict(
             extra=(
                 "resume_status", *blocker_fields, "human_review_confirmed",
-                "human_review_basis", "repairs_considered",
+                "human_review_basis", "repairs_considered", "human_review_options",
             ),
-            required=("resume_status",),
+            required=("resume_status", "human_review_options"),
         ),
     }
     return {
@@ -544,22 +580,53 @@ def _validate_scalar(field: str, value: Any, schema: Mapping[str, Any]) -> None:
         valid = isinstance(value, str)
     elif expected == "boolean":
         valid = isinstance(value, bool)
+    elif expected == "number":
+        valid = isinstance(value, (int, float)) and not isinstance(value, bool)
     elif expected == "array":
         valid = isinstance(value, list)
+    elif expected == "object":
+        valid = isinstance(value, dict)
     if not valid:
         raise _argument_error(
             f"{field} has the wrong type", "argument_type_invalid", field=field
         )
     if expected == "array":
+        if "minItems" in schema and len(value) < int(schema["minItems"]):
+            raise _argument_error(
+                f"{field} has too few items", "argument_item_count_invalid", field=field
+            )
+        if "maxItems" in schema and len(value) > int(schema["maxItems"]):
+            raise _argument_error(
+                f"{field} has too many items", "argument_item_count_invalid", field=field
+            )
         item_schema = schema.get("items") or {}
-        for item in value:
-            if item_schema.get("type") == "string" and not isinstance(item, str):
+        for index, item in enumerate(value):
+            _validate_scalar(f"{field}[{index}]", item, item_schema)
+    if expected == "object":
+        properties = schema.get("properties") or {}
+        missing = [name for name in schema.get("required", []) if name not in value]
+        if missing:
+            raise _argument_error(
+                f"{field}.{missing[0]} is required",
+                "argument_required",
+                field=f"{field}.{missing[0]}",
+            )
+        if schema.get("additionalProperties") is False:
+            extras = sorted(set(value) - set(properties))
+            if extras:
                 raise _argument_error(
-                    f"{field} contains an invalid item",
-                    "argument_item_type_invalid",
-                    field=field,
+                    f"{field}.{extras[0]} is not accepted",
+                    "argument_unexpected",
+                    field=f"{field}.{extras[0]}",
                 )
+        for name, nested in value.items():
+            if name in properties:
+                _validate_scalar(f"{field}.{name}", nested, properties[name])
     if "enum" in schema and value not in schema["enum"]:
+        raise _argument_error(
+            f"{field} has an unsupported value", "argument_value_invalid", field=field
+        )
+    if "const" in schema and value != schema["const"]:
         raise _argument_error(
             f"{field} has an unsupported value", "argument_value_invalid", field=field
         )

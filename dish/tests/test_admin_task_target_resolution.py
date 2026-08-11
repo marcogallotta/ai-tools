@@ -285,5 +285,5 @@ def test_admin_inspect_prioritizes_hold_resolution_over_historical_lease():
     assert result["data"]["agent_actions_now"] == []
     actions = result["data"]["human_actions"]
     assert len(actions) == 1
-    assert actions[0]["command"] == "record-human-decision"
+    assert actions[0]["command"] == "review-inspect"
     assert "abandon-operation" not in actions[0]["shell_command"]

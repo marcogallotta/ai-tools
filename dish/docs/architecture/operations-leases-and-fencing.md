@@ -49,7 +49,11 @@ explicit Marco revocation for `kill`, agent-callable `safe-reclaim` for a differ
 committed clean-frontier predicate passes, and formal abandonment/reconciliation for genuine recovery
 risk. Revocation is checked at lease acquisition/reacquisition and renewal and is not inferred from
 release reasons, timestamps, missing leases, or proposal status. Historical lease evidence may select
-the exact owner/run targeted by an explicit kill. Connected-agent mutation execution revalidates that
+the exact owner/run targeted by an explicit kill. `kill-all-expired` and `kill-all` are bulk operator
+frontends over that same exact-run revocation path, not lease-release primitives: they snapshot exact
+lease/owner/run identity, require explicit confirmation, and apply kill per target. Snapshot mismatch,
+renewal, or successor replacement conflicts that target rather than broadening revocation to the new
+principal; partial results are reported per target and no atomic-all claim is made. Connected-agent mutation execution revalidates that
 same owner/run, active actor lease, and non-revoked status atomically when the operation-execution claim
 is created. Mechanical application of an already-approved proposal enters the same claim transaction with
 its exact `dish-mechanical` owner/run principal; approval removes only the need for a connected actor lease.

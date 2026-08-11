@@ -528,6 +528,19 @@ def _inspect_verbose_diagnostics(
     return diagnostics
 
 
+def _admin_inspect_task_title(backend: Any, task_gid: str) -> str:
+    """Read a known Dish title without treating Asana organization as admin authority."""
+    raw = backend.read_task(task_gid)
+    returned_gid = str(raw.get("gid") or "").strip()
+    if returned_gid != task_gid:
+        raise DishRuleError(
+            "INTERNAL_ERROR",
+            "backend returned the wrong task",
+            rule="backend_response_malformed",
+        )
+    return str(raw.get("name") or "")
+
+
 def _command_inspect(
     self,
     *,
@@ -549,7 +562,6 @@ def _command_inspect(
     trace.task_gid = str(target["task_gid"])
 
     from .constants import COOKING_PROJECT_GID
-    from .task_store import read_complete_task
     from .commands import (
         _evidence_hold_continuation,
         _repair_destination_continuation,
@@ -558,14 +570,12 @@ def _command_inspect(
 
     operation_id = target.get("operation_id")
     if operation_id is None:
-        live = read_complete_task(
-            self.backend, task_gid=target["task_gid"], project_gid=COOKING_PROJECT_GID
-        )
+        task_title = _admin_inspect_task_title(self.backend, str(target["task_gid"]))
         trace.submission_id = None
         trace.state = "resting"
         data = {
             "dish_id": target["dish_id"],
-            "task_title": live.title,
+            "task_title": task_title,
             "task_gid": target["task_gid"],
             "asana_url": f"https://app.asana.com/0/0/{target['task_gid']}",
             "operation_id": None,
@@ -613,12 +623,32 @@ def _command_inspect(
 
     release = None if self.release_loader is None else self.release_loader()
     schema = None if release is None else release.schema
-    live = read_complete_task(
-        self.backend, task_gid=operation["task_gid"], project_gid=COOKING_PROJECT_GID
-    )
-    view = expose_authoritative_view(
-        self.operation_service.authoritative_view(operation_id, schema=schema)
-    )
+    task_title = _admin_inspect_task_title(self.backend, str(operation["task_gid"]))
+    authoritative_view_inspection_error: DishRuleError | None = None
+    try:
+        view = expose_authoritative_view(
+            self.operation_service.authoritative_view(operation_id, schema=schema)
+        )
+    except DishRuleError as exc:
+        if exc.rule in {
+            "task_not_in_cooking",
+            "task_membership_malformed",
+            "task_membership_ambiguous",
+            "task_projects_malformed",
+        }:
+            authoritative_view_inspection_error = exc
+            view = {
+                "status": operation["status"],
+                "phase": operation["phase"],
+                "legal_actions": [],
+                "recovery_required": False,
+                "live_task_organization_unavailable": {
+                    "rule": exc.rule,
+                    "message": str(exc),
+                },
+            }
+        else:
+            raise
     cycle = self.conn.execute(
         """SELECT * FROM verification_cycles WHERE operation_id=?
              ORDER BY cycle_number DESC LIMIT 1""",
@@ -645,12 +675,24 @@ def _command_inspect(
     ).fetchone()
     proposal = active_proposal_for_operation(self.conn, operation_id)
     safe_reclaim = None
+    safe_reclaim_inspection_error: DishRuleError | None = None
     if active_lease is None and latest_lease is not None:
         from .safe_reclaim import safe_reclaim_eligibility
-        safe_reclaim = safe_reclaim_eligibility(
-            self.conn, self.backend, operation_id=operation_id,
-            lease_id=latest_lease["lease_id"],
-        )
+        try:
+            safe_reclaim = safe_reclaim_eligibility(
+                self.conn, self.backend, operation_id=operation_id,
+                lease_id=latest_lease["lease_id"],
+            )
+        except DishRuleError as exc:
+            if exc.rule in {
+                "task_not_in_cooking",
+                "task_membership_malformed",
+                "task_membership_ambiguous",
+                "task_projects_malformed",
+            }:
+                safe_reclaim_inspection_error = exc
+            else:
+                raise
 
     actions: list[dict[str, Any]] = []
     agent_actions_override: list[dict[str, Any] | str] | None = None
@@ -805,6 +847,17 @@ def _command_inspect(
                 },
             }
         ]
+    elif safe_reclaim_inspection_error is not None or authoritative_view_inspection_error is not None:
+        waiting_for = "workflow continuation after the next authoritative live-task check"
+        problem = (
+            "This Dish remains inspectable, but its current Asana organization prevents Dish "
+            "from proving a safe automatic reclaim from this read-only admin view."
+        )
+        operator_instruction = (
+            "No admin repair is implied by project or section placement alone. A later workflow "
+            "attempt must revalidate the live task before it can mutate anything."
+        )
+        agent_actions_override = []
     elif operation["phase"] in {"held_evidence", "held_human"}:
         administrative_blocker = True
         continuation = _evidence_hold_continuation(self.conn, operation_id, view)
@@ -989,7 +1042,7 @@ def _command_inspect(
 
     data = {
         "dish_id": target["dish_id"],
-        "task_title": live.title,
+        "task_title": task_title,
         "task_gid": operation["task_gid"],
         "asana_url": f"https://app.asana.com/0/0/{operation['task_gid']}",
         "operation_id": operation_id,
@@ -1153,6 +1206,10 @@ def _command_kill(
     trace: AdminTrace,
     dish: str,
     reason: str,
+    expected_owner_id: str | None = None,
+    expected_run_id: str | None = None,
+    expected_lease_id: str | None = None,
+    expected_lease_expires_at: str | None = None,
 ) -> dict[str, Any]:
     """Fence one outstanding Dish run and drive its safe replacement mechanically."""
     if self.backend is None or self.operation_service is None:
@@ -1325,6 +1382,50 @@ def _command_kill(
                 "last_activity_at": latest_actor_lease["renewed_at"],
                 "authority_source": "historical_actor_lease",
             }
+
+    if request_binding is None and any(
+        value is not None
+        for value in (
+            expected_owner_id,
+            expected_run_id,
+            expected_lease_id,
+            expected_lease_expires_at,
+        )
+    ):
+        actual = revocation_target or {}
+        actual_lease_id = actual.get("source_lease_id")
+        mismatch = (
+            (expected_owner_id is not None and str(actual.get("owner_id") or "") != expected_owner_id)
+            or (expected_run_id is not None and str(actual.get("run_id") or "") != expected_run_id)
+            or (expected_lease_id is not None and str(actual_lease_id or "") != expected_lease_id)
+        )
+        if not mismatch and expected_lease_expires_at is not None:
+            lease_row = None
+            if actual_lease_id is not None:
+                lease_row = self.conn.execute(
+                    "SELECT expires_at FROM service_leases WHERE lease_id=?",
+                    (str(actual_lease_id),),
+                ).fetchone()
+            mismatch = (
+                lease_row is None
+                or str(lease_row["expires_at"] or "") != expected_lease_expires_at
+            )
+        if mismatch:
+            raise DishRuleError(
+                "CONFLICT",
+                "The exact Dish run selected for bulk kill changed before it could be revoked",
+                rule="bulk_kill_target_changed",
+                retryable=True,
+                details={
+                    "operation_id": operation_id,
+                    "expected_owner_id": expected_owner_id,
+                    "expected_run_id": expected_run_id,
+                    "expected_lease_id": expected_lease_id,
+                    "actual_owner_id": actual.get("owner_id"),
+                    "actual_run_id": actual.get("run_id"),
+                    "actual_lease_id": actual_lease_id,
+                },
+            )
 
     claim = live_operation_execution_claim(self.conn, operation_id=operation_id)
     if claim is not None:
@@ -1600,6 +1701,199 @@ def _command_kill(
         },
     )
 
+def _bulk_kill_candidates(
+    conn: sqlite3.Connection, *, expired_only: bool
+) -> list[dict[str, Any]]:
+    """Snapshot exact unreleased, non-revoked actor principals for bulk kill."""
+    now = utc_now()
+    rows = conn.execute(
+        """SELECT lease.operation_id,lease.task_gid,lease.owner_id,lease.run_id,
+                  lease.lease_id,lease.expires_at,state.last_confirmed_title
+             FROM service_leases AS lease
+             JOIN operations AS operation ON operation.operation_id=lease.operation_id
+             LEFT JOIN task_content_state AS state ON state.task_gid=lease.task_gid
+             LEFT JOIN operation_run_revocations AS revocation
+               ON revocation.operation_id=lease.operation_id
+              AND revocation.owner_id=lease.owner_id
+              AND revocation.run_id=lease.run_id
+            WHERE lease.lease_kind='actor'
+              AND lease.released_at IS NULL
+              AND revocation.revocation_id IS NULL
+            ORDER BY lease.expires_at,lease.acquired_at,lease.lease_id"""
+    ).fetchall()
+    output: list[dict[str, Any]] = []
+    for row in rows:
+        expired = bool(
+            conn.execute(
+                "SELECT julianday(?)<=julianday(?)", (row["expires_at"], now)
+            ).fetchone()[0]
+        )
+        if expired_only and not expired:
+            continue
+        output.append(
+            {
+                "operation_id": str(row["operation_id"]),
+                "task_gid": str(row["task_gid"]),
+                "task_title": row["last_confirmed_title"],
+                "owner_id": str(row["owner_id"]),
+                "run_id": str(row["run_id"]),
+                "lease_id": str(row["lease_id"]),
+                "expires_at": str(row["expires_at"]),
+                "authority_state": "expired" if expired else "active",
+            }
+        )
+    return output
+
+
+def _command_bulk_kill(
+    self,
+    *,
+    trace: AdminTrace,
+    command: str,
+    expired_only: bool,
+    reason: str,
+    confirmed: bool,
+) -> dict[str, Any]:
+    if not confirmed:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "Bulk kill requires explicit confirmation",
+            rule="bulk_kill_confirmation_required",
+            details={"required_flag": "--yes"},
+        )
+    clean_reason = _clean_required(
+        reason, rule="kill_reason_required", label="replacement reason"
+    )
+    candidates = _bulk_kill_candidates(self.conn, expired_only=expired_only)
+    trace.state = "ok"
+    if not candidates:
+        return result_envelope(
+            command=command,
+            state="ok",
+            data={
+                "selected_count": 0,
+                "killed_count": 0,
+                "failed_count": 0,
+                "results": [],
+                "human_consequence": "No matching Dish runs currently hold unreleased actor leases.",
+            },
+        )
+
+    request_seed = self.invocation_request_id or str(uuid.uuid4())
+    results: list[dict[str, Any]] = []
+    failures = 0
+    for candidate in candidates:
+        child_request_id = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                "dish-admin-bulk-kill:"
+                + ":".join(
+                    (
+                        request_seed,
+                        candidate["operation_id"],
+                        candidate["owner_id"],
+                        candidate["run_id"],
+                        candidate["lease_id"],
+                    )
+                ),
+            )
+        )
+        from dish_service.request_replay import begin_request, complete_request, stored_result
+
+        child_arguments = {
+            "dish": candidate["operation_id"],
+            "reason": clean_reason,
+            "expected_owner_id": candidate["owner_id"],
+            "expected_run_id": candidate["run_id"],
+            "expected_lease_id": candidate["lease_id"],
+            "expected_lease_expires_at": (
+                candidate["expires_at"] if expired_only else None
+            ),
+        }
+        request_row, _new = begin_request(
+            self.conn,
+            request_id=child_request_id,
+            owner_id="marco-admin-bulk",
+            run_id=self.invocation_run_id or request_seed,
+            command="kill",
+            arguments=child_arguments,
+        )
+        child_result = stored_result(request_row)
+        if child_result is None:
+            child = DishAdminApplication(
+                self.conn,
+                backend=self.backend,
+                release_loader=self.release_loader,
+                invocation_request_id=child_request_id,
+                invocation_run_id=self.invocation_run_id,
+                recovery_request_settler=self.recovery_request_settler,
+            )
+            child_result = child.execute("kill", **child_arguments)
+            child_result = complete_request(
+                self.conn, request_id=child_request_id, result=child_result
+            )
+        ok = bool(child_result.get("ok"))
+        failures += 0 if ok else 1
+        child_data = child_result.get("data") if isinstance(child_result.get("data"), Mapping) else {}
+        results.append(
+            {
+                **candidate,
+                "ok": ok,
+                "code": child_result.get("code"),
+                "outcome": child_data.get("outcome"),
+                "human_consequence": child_data.get("human_consequence"),
+                "errors": child_result.get("errors") if not ok else [],
+            }
+        )
+
+    data = {
+        "selected_count": len(candidates),
+        "killed_count": len(candidates) - failures,
+        "failed_count": failures,
+        "results": results,
+        "human_consequence": (
+            f"Revoked {len(candidates) - failures} of {len(candidates)} selected Dish runs."
+            if failures
+            else f"Revoked all {len(candidates)} selected Dish runs."
+        ),
+        "atomic": False,
+    }
+    if failures:
+        error = DishRuleError(
+            "CONFLICT",
+            "One or more exact Dish runs changed or could not be safely killed; successful kills were preserved",
+            rule="bulk_kill_partial_failure",
+            retryable=True,
+            details={
+                "selected_count": len(candidates),
+                "killed_count": len(candidates) - failures,
+                "failed_count": failures,
+            },
+        )
+        result = error_envelope(command, error, state="partial")
+        result["data"].update(data)
+        return result
+    return result_envelope(command=command, state="ok", data=data)
+
+
+def _command_kill_all(
+    self, *, trace: AdminTrace, reason: str, confirmed: bool
+) -> dict[str, Any]:
+    return _command_bulk_kill(
+        self, trace=trace, command="kill-all", expired_only=False,
+        reason=reason, confirmed=confirmed,
+    )
+
+
+def _command_kill_all_expired(
+    self, *, trace: AdminTrace, reason: str, confirmed: bool
+) -> dict[str, Any]:
+    return _command_bulk_kill(
+        self, trace=trace, command="kill-all-expired", expired_only=True,
+        reason=reason, confirmed=confirmed,
+    )
+
+
 def _attention_dish_identity(task_gid: str) -> str | None:
     from dish_tool.identifiers import stable_dish_uuid_for_asana_identity
 
@@ -1732,7 +2026,12 @@ def _audit_item(
 
 
 def _command_audit(self, *, trace: AdminTrace) -> dict[str, Any]:
-    """Audit configured Cooking population against durable Dish-known task identities."""
+    """Audit Cooking discovery population against durable Dish-owned workflow integrity.
+
+    Asana section, due date, and project membership are operator-managed during the
+    pre-cutover period. They may be reported as context but never make a Dish
+    inconsistent.
+    """
     if self.backend is None:
         raise DishRuleError(
             "INTERNAL_ERROR",
@@ -1806,70 +2105,39 @@ def _command_audit(self, *, trace: AdminTrace) -> dict[str, Any]:
             title = str(live_raw.get("name") or "").strip() or (
                 None if state is None else str(state["last_confirmed_title"] or "").strip() or None
             )
-            try:
-                in_project = _task_is_in_project(live_raw, COOKING_PROJECT_GID)
-                section_gid = _task_section_gid(live_raw, COOKING_PROJECT_GID) if in_project else None
-            except DishRuleError as exc:
-                items.append(
-                    _audit_item(
-                        task_gid=task_gid,
-                        title=title,
-                        category="real_inconsistency",
-                        reason=exc.rule,
-                        section_gid=None,
-                        section_name=None,
-                        operation=operation_for_detail,
-                        dish_known=True,
-                        asana_present=True,
-                        detail="The live task has ambiguous or malformed Cooking membership.",
-                    )
-                )
-                continue
+            in_project = _task_is_in_project(live_raw, COOKING_PROJECT_GID)
+            section_gid = None
             if in_project:
-                items.append(
-                    _audit_item(
-                        task_gid=task_gid,
-                        title=title,
-                        category="real_inconsistency",
-                        reason="project_listing_membership_disagreement",
-                        section_gid=section_gid,
-                        section_name=section_names.get(section_gid or ""),
-                        operation=operation_for_detail,
-                        dish_known=True,
-                        asana_present=True,
-                        detail="A direct Asana read says the task is in Cooking, but the project population listing omitted it; rerun the audit before repair.",
-                    )
+                try:
+                    section_gid = _task_section_gid(live_raw, COOKING_PROJECT_GID)
+                except DishRuleError:
+                    # Placement shape is observational in the pre-cutover audit.
+                    section_gid = None
+            category = "needs_migration_repair" if migration_required else "healthy_current"
+            reason = (
+                "durable_schema_or_migration_reconciliation"
+                if migration_required
+                else "operator_managed_asana_organization"
+            )
+            detail = (
+                "Dish durable state is older than the current supported task schema or explicitly requires migration reconciliation."
+                if migration_required
+                else "Dish knows this task. Section, due date, and project membership are operator-managed and are not audit inconsistencies."
+            )
+            items.append(
+                _audit_item(
+                    task_gid=task_gid,
+                    title=title,
+                    category=category,
+                    reason=reason,
+                    section_gid=section_gid,
+                    section_name=section_names.get(section_gid or ""),
+                    operation=operation_for_detail,
+                    dish_known=True,
+                    asana_present=True,
+                    detail=detail,
                 )
-            elif active_operations:
-                items.append(
-                    _audit_item(
-                        task_gid=task_gid,
-                        title=title,
-                        category="real_inconsistency",
-                        reason="active_operation_task_left_cooking",
-                        section_gid=None,
-                        section_name=None,
-                        operation=operation_for_detail,
-                        dish_known=True,
-                        asana_present=True,
-                        detail="Dish has an active operation, but the live task is no longer in the Cooking project.",
-                    )
-                )
-            else:
-                items.append(
-                    _audit_item(
-                        task_gid=task_gid,
-                        title=title,
-                        category="expected_external_lifecycle",
-                        reason="manual_lifecycle_outside_cooking",
-                        section_gid=None,
-                        section_name=None,
-                        operation=operation_for_detail,
-                        dish_known=True,
-                        asana_present=True,
-                        detail="The task exists outside Cooking with no active Dish operation; pre-cutover manual/archive lifecycle is expected.",
-                    )
-                )
+            )
             continue
 
         title = str(listed.get("name") or "").strip() or (
@@ -1877,22 +2145,8 @@ def _command_audit(self, *, trace: AdminTrace) -> dict[str, Any]:
         )
         try:
             section_gid = _task_section_gid(listed, COOKING_PROJECT_GID)
-        except DishRuleError as exc:
-            items.append(
-                _audit_item(
-                    task_gid=task_gid,
-                    title=title,
-                    category="real_inconsistency",
-                    reason=exc.rule,
-                    section_gid=None,
-                    section_name=None,
-                    operation=operation_for_detail,
-                    dish_known=dish_known,
-                    asana_present=True,
-                    detail="The live task has ambiguous or malformed Cooking membership.",
-                )
-            )
-            continue
+        except DishRuleError:
+            section_gid = None
         section_name = section_names.get(section_gid or "")
 
         if not dish_known:
@@ -1938,39 +2192,17 @@ def _command_audit(self, *, trace: AdminTrace) -> dict[str, Any]:
             continue
 
         active_operation = active_operations[0] if active_operations else None
-        expected_section = None if active_operation is None else active_operation["expected_section_gid"]
-        if active_operation is not None and section_gid in registry.excluded_gids:
-            category = "real_inconsistency"
-            reason = "active_operation_in_excluded_section"
-            detail = "An active Dish operation is attached to a task in an excluded Cooking section."
-        elif active_operation is not None and expected_section and section_gid != expected_section:
-            category = "real_inconsistency"
-            reason = "active_operation_section_mismatch"
-            detail = (
-                f"The active operation expects section {expected_section}, but Asana currently reports {section_gid or 'no section'}."
-            )
-        elif migration_required:
+        if migration_required:
             category = "needs_migration_repair"
             reason = "durable_schema_or_migration_reconciliation"
             detail = "Dish durable state is older than the current supported task schema or explicitly requires migration reconciliation."
-        elif active_operation is None and section_gid in registry.excluded_gids:
-            category = "expected_external_lifecycle"
-            reason = "manual_lifecycle_excluded_section"
-            detail = "The task is resting in a section Dish intentionally excludes from governed workflow."
-        elif (
-            active_operation is None
-            and latest_operation is not None
-            and latest_operation["status"] in {"completed", "cancelled"}
-            and latest_operation["expected_section_gid"]
-            and section_gid != latest_operation["expected_section_gid"]
-        ):
-            category = "expected_external_lifecycle"
-            reason = "manual_lifecycle_section_change"
-            detail = "The latest Dish operation is terminal and the task has since moved; pre-cutover manual placement is expected."
         else:
             category = "healthy_current"
             reason = "current"
-            detail = "Asana placement and durable Dish state do not violate an active workflow invariant."
+            detail = (
+                "Dish durable state is internally current. Section, due date, and project membership "
+                "are operator-managed and are not audit inconsistencies."
+            )
         items.append(
             _audit_item(
                 task_gid=task_gid,
@@ -2006,9 +2238,9 @@ def _command_audit(self, *, trace: AdminTrace) -> dict[str, Any]:
             "audited_task_count": len(items),
             "category_counts": counts,
             "items": items,
+            "ignored_asana_fields": ["section", "due_date", "project_membership"],
         },
     )
-
 
 def _durable_attention_items(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """Build the fleet attention model only from current durable Dish facts.
@@ -2262,9 +2494,12 @@ def _durable_attention_items(conn: sqlite3.Connection) -> list[dict[str, Any]]:
                 operation_id,
                 _attention_signal(
                     kind="expired_lease",
-                    category="needs_marco",
-                    summary="An unreleased actor lease has expired.",
-                    detail="Inspect the Dish before deciding whether to replace or recover the run.",
+                    category="system",
+                    summary="An inactive actor lease has expired.",
+                    detail=(
+                        "This is recoverable ownership state, not a Marco decision by itself. "
+                        "Inspect only when exact continuation guidance is needed."
+                    ),
                     shell_command=f"dish-admin inspect {target}",
                 ),
             )
@@ -2346,8 +2581,8 @@ def _durable_attention_items(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return result
 
 
-def _command_attention(self, *, trace: AdminTrace) -> dict[str, Any]:
-    """Return a fast dish-first fleet attention summary from durable state only."""
+def _command_issues(self, *, trace: AdminTrace) -> dict[str, Any]:
+    """Return a fast dish-first fleet issue summary from durable state only."""
 
     items = _durable_attention_items(self.conn)
     workflow_record_count = int(
@@ -2373,30 +2608,40 @@ def _command_attention(self, *, trace: AdminTrace) -> dict[str, Any]:
         {
             "checked_count": workflow_record_count,
             "live_inspection_count": 0,
-            "attention_count": len(items),
+            "issue_count": len(items),
+            "attention_count": len(items),  # compatibility for older clients
             "needs_you_count": needs_you_count,
             "category_counts": dict(category_counts),
         }
     )
     return result_envelope(
-        command="attention",
+        command="issues",
         state="ok",
         data={
             "checked_count": workflow_record_count,
             "active_dish_count": active_task_count,
             "live_inspection_count": 0,
-            "attention_count": len(items),
+            "issue_count": len(items),
+            "attention_count": len(items),  # compatibility for older clients
             "needs_you_count": needs_you_count,
             "system_count": category_counts["system"],
             "healthy_count": healthy_count,
             "category_counts": category_counts,
-            "attention_items": items,
+            "issue_items": items,
+            "attention_items": items,  # compatibility for older clients
             "read_only": True,
             "source": "durable_dish_state",
-            "message": "Attention summary completed without live task reads or workflow mutation.",
+            "message": "Issue summary completed without live task reads or workflow mutation.",
         },
     )
 
+
+
+def _command_attention(self, *, trace: AdminTrace) -> dict[str, Any]:
+    """Hidden compatibility alias for the operator-facing ``issues`` command."""
+    result = _command_issues(self, trace=trace)
+    result["command"] = "attention"
+    return result
 
 def _command_active_leases(self, *, trace: AdminTrace) -> dict[str, Any]:
     """List unreleased actor leases from durable Dish state without live task reads."""
@@ -3080,44 +3325,39 @@ def _command_review_inspect(
         else:
             consequences = human_review_consequence_metadata(item.get("resume_status"))
             approval_consequence = consequences["approval"]
-            spec = template_action(
-                kind="approve-human-review",
-                command="review-approve",
-                positional=(item["review_id"],),
-                options=(("--reason", "<Marco's decision and brief reason>"),),
-                prompt_fields=(
-                    PromptField(
-                        "reason",
-                        "Marco's decision and brief reason",
-                        "<Marco's decision and brief reason>",
+            stored_options = item.get("human_review_options") if isinstance(item.get("human_review_options"), list) else []
+            if stored_options:
+                recommended = stored_options[0]
+                spec = exact_action(
+                    kind="choose-human-review-option",
+                    command="review-approve",
+                    positional=(item["review_id"],),
+                    options=(("--choice", str(recommended.get("option_id") or "A")),),
+                    summary=f"Choose {recommended.get('option_id') or 'A'} — {recommended.get('label') or 'recommended route'}.",
+                    effect=(
+                        "Record the exact stored Marco decision for this choice, release the hold, and follow its stored resume route. "
+                        "If the choice carries an exact governed authorization, record that authorization without editing the candidate."
                     ),
-                ),
-                summary="Approve this Human Review decision and release the hold.",
-                effect=(
-                    "Dish records Marco's substantive decision and follows the hold's stored resume route; "
-                    "it does not silently edit governed fields."
-                ),
-                after_success=approval_consequence,
-            )
+                    after_success=approval_consequence,
+                )
+            else:
+                spec = template_action(
+                    kind="record-human-review-instruction",
+                    command="review-approve",
+                    positional=(item["review_id"],),
+                    options=(("--choice", "other"), ("--reason", "<Marco's instruction>")),
+                    prompt_fields=(PromptField("reason", "Marco's instruction", "<Marco's instruction>"),),
+                    summary="Record Marco's instruction for this older Human Review.",
+                    effect="Record the instruction and release the hold without inventing a governed authorization.",
+                    after_success=approval_consequence,
+                )
         data.update(spec.payload())
         if item["item_type"] == "human_review":
-            dismiss_spec = template_action(
-                kind="dismiss-human-review",
-                command="review-reject",
-                positional=(item["review_id"],),
-                options=(("--reason", "<why this escalation is invalid>"),),
-                prompt_fields=(PromptField("reason", "Why this escalation is invalid", "<why this escalation is invalid>"),),
-                summary="Dismiss this Human Review escalation as invalid.",
-                effect=(
-                    "Preserve the escalation and dismissal reason in the audit trail, record no Marco decision, "
-                    "and release the unchanged task to fresh Verification."
-                ),
-                after_success=human_review_consequence_metadata(item.get("resume_status"))["dismissal"],
-            )
-            data["human_actions"] = [
-                data["human_action"],
-                dismiss_spec.payload()["human_action"] | {"shell_command": dismiss_spec.shell_command()},
-            ]
+            # Normal Human Review is a question for Marco, not an escalation
+            # object to approve/dismiss.  Keep the low-level review-reject
+            # command available for exceptional administration, but do not
+            # advertise it as part of the ordinary review contract.
+            data["human_actions"] = [data["human_action"]]
     return result_envelope(
         command="review-inspect", task_gid=item["task_gid"],
         submission_id=item["operation_id"], state=item["status"],
@@ -3126,7 +3366,8 @@ def _command_review_inspect(
 
 
 def _command_review_approve(
-    self, *, trace: AdminTrace, proposal_id: str, reason: str | None = None, detail: str | None = None
+    self, *, trace: AdminTrace, proposal_id: str, reason: str | None = None,
+    detail: str | None = None, choice: str | None = None
 ) -> dict[str, Any]:
     if self.backend is None:
         raise DishRuleError(
@@ -3147,20 +3388,60 @@ def _command_review_approve(
         })
         return result
     if item["item_type"] == "human_review":
-        legacy_semantic_default = "Approved after reviewing the exact linked change bundle."
-        clean_detail = str(detail or reason or "").strip()
-        if clean_detail == legacy_semantic_default and not str(detail or "").strip():
-            clean_detail = ""
+        selected_option = None
+        clean_choice = str(choice or "").strip()
+        options = item.get("human_review_options") if isinstance(item.get("human_review_options"), list) else []
+        if clean_choice and clean_choice.casefold() != "other":
+            for option in options:
+                if isinstance(option, Mapping) and str(option.get("option_id") or "").casefold() == clean_choice.casefold():
+                    selected_option = option
+                    break
+            if selected_option is None:
+                raise DishRuleError(
+                    "INVALID_ARGUMENT",
+                    "Human Review choice is not one of the stored agent options",
+                    rule="human_review_choice_invalid",
+                    details={
+                        "review_id": item["review_id"],
+                        "allowed": [str(option.get("option_id")) for option in options if isinstance(option, Mapping)] + ["other"],
+                    },
+                )
+            clean_detail = str(selected_option.get("decision") or "").strip()
+        else:
+            clean_detail = str(detail or reason or "").strip()
+            legacy_semantic_default = "Approved after reviewing the exact linked change bundle."
+            if (
+                not clean_choice
+                and clean_detail == legacy_semantic_default
+                and not str(detail or "").strip()
+            ):
+                clean_detail = ""
         if not clean_detail:
             raise DishRuleError(
                 "INVALID_ARGUMENT",
-                "Human Review approval requires Marco's decision",
+                "Human Review requires a stored option choice or Marco's own instruction",
                 rule="human_review_detail_required",
                 details={
                     "review_id": item["review_id"],
-                    "required_input": "Pass --reason with Marco's decision and brief reasoning.",
+                    "required_input": "Choose a stored option or pass --choice other --reason '<instruction>'.",
                     "inspect_command": f"dish-admin review-inspect {item['review_id']}",
                 },
+            )
+        authorization_result = None
+        if selected_option is not None and isinstance(selected_option.get("authorization"), Mapping):
+            authorization = selected_option["authorization"]
+            authorization_result = _command_authorize_governed_change(
+                self,
+                trace=AdminTrace(submission_id=item["operation_id"]),
+                submission_id=item["operation_id"],
+                field=str(authorization["field"]),
+                before=authorization["before"],
+                after=authorization["after"],
+                reason=(
+                    f"Human Review {item['review_id']} choice {selected_option['option_id']}: "
+                    f"{clean_detail}"
+                ),
+                run_id=self.invocation_run_id,
             )
         result = _command_record_human_decision(
             self,
@@ -3177,16 +3458,21 @@ def _command_review_approve(
         result["command"] = "review-approve"
         actual_resume = result.get("data", {}).get("resume_status")
         consequence = human_review_consequence_metadata(actual_resume)["approval"]
+        authorization_note = (
+            " The selected choice also recorded its exact governed-field authorization; it did not edit the candidate."
+            if authorization_result is not None
+            else " No governed field was edited or authorized."
+        )
         if consequence["next_stage"] == "research":
             effect = (
                 "Marco's substantive decision was recorded. The task returned to Research and the held "
-                "Verification operation completed; no governed field was edited or authorized."
+                "Verification operation completed." + authorization_note
             )
             next_step = "Continue the task through Research; do not treat this as a fresh Verification release."
         else:
             effect = (
                 "Marco's substantive decision was recorded and the unchanged candidate was released to a fresh "
-                "Verification cycle; no governed field was edited or authorized."
+                "Verification cycle." + authorization_note
             )
             next_step = (
                 "An eligible verifier may continue Verification. If the original verifier is "
@@ -3196,6 +3482,13 @@ def _command_review_approve(
             "effect": effect,
             "next_step": next_step,
             "approval_consequence": consequence,
+            "selected_choice": (
+                None if selected_option is None else selected_option.get("option_id")
+            ),
+            "selected_decision": clean_detail,
+            "governed_authorization": (
+                None if authorization_result is None else authorization_result.get("data")
+            ),
         })
         return result
     if self.release_loader is None:
@@ -4015,10 +4308,13 @@ _OPERATION_TARGET_COMMANDS = set(RESOLVED_OPERATION_TARGET_COMMANDS)
 
 
 CURRENT_ADMIN_COMMAND_HANDLERS = {
+    "issues": _command_issues,
     "attention": _command_attention,
     "audit": _command_audit,
     "active-leases": _command_active_leases,
     "kill": _command_kill,
+    "kill-all": _command_kill_all,
+    "kill-all-expired": _command_kill_all_expired,
     "review-queue": _command_review_queue,
     "review-inspect": _command_review_inspect,
     "review-approve": _command_review_approve,

@@ -255,6 +255,10 @@ def test_connected_advertised_workflow_actions_are_callable(
             human_review_confirmed=True,
             human_review_basis="Only Marco can resolve the remaining choice within settled authority.",
             repairs_considered="Plausible within-authority repairs were considered and do not resolve the choice.",
+            human_review_options=[
+                {"label": "Wait for Marco's chosen construction route", "decision": "Use Marco's chosen route before constructing the candidate."},
+                {"label": "Return with another research option", "decision": "Research another plausible route before construction."},
+            ],
         )
 
     assert result["ok"] is True

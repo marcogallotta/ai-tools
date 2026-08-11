@@ -101,6 +101,7 @@ def test_resolution_rejects_mismatched_stable_hold_binding(tmp_path):
         human_review_confirmed=True,
         human_review_basis="Only Marco can resolve the remaining choice within settled authority.",
         repairs_considered="Plausible within-authority repairs were considered and do not resolve the choice.",
+        human_review_options=[{"label": "Use Marco's decision", "decision": "Apply Marco's chosen resolution."}],
         run_id="review",
     )
     assert held["ok"]
@@ -203,6 +204,10 @@ def test_human_review_requires_neutral_escalation_preflight_before_hold(tmp_path
         human_review_confirmed=True,
         human_review_basis="Meeting the ceiling would require Marco to change the settled construction or grant an exemption.",
         repairs_considered="Recalculated served edible fat and tested lower retained oil; neither resolves the ceiling without changing a settled lock.",
+        human_review_options=[
+            {"label": "Approve an exception", "decision": "Approve an exception to the nutrition ceiling for this dish."},
+            {"label": "Change the settled construction", "decision": "Change the settled construction to meet the ceiling."},
+        ],
     )
     assert held["ok"]
     assert "Status: pending-human-review" in backend.notes

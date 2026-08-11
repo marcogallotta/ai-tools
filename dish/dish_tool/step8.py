@@ -75,6 +75,9 @@ def _preconstruction_research_hold(
     file_path: str | None,
     model: str | None,
     quantified_blocker: dict[str, Any] | None = None,
+    human_review_basis: str | None = None,
+    repairs_considered: str | None = None,
+    human_review_options: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     if route not in {"evidence", "human-review"}:
         raise DishRuleError(
@@ -128,6 +131,9 @@ def _preconstruction_research_hold(
         "resume_status": "pending-research",
         "candidate_content_existed": False,
         "quantified_blocker": quantified_blocker,
+        "human_review_basis": str(human_review_basis or "").strip() or None,
+        "repairs_considered": str(repairs_considered or "").strip() or None,
+        "human_review_options": human_review_options or [],
     }
     target_phase = "held_evidence" if route == "evidence" else "held_human"
     with savepoint_transaction(conn, "research_preconstruction_hold"):
@@ -757,16 +763,76 @@ def _resume_rejected_cycle(
 
 
 
-def _human_review_preflight(*, route: str, reason: str, confirmed=False, basis=None, repairs_considered=None, quantified_blocker=None) -> None:
+def _validated_human_review_options(options) -> list[dict[str, Any]]:
+    if not isinstance(options, list) or not (1 <= len(options) <= 6):
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "Human Review requires between one and six concrete choices",
+            rule="human_review_options_required",
+        )
+    normalized: list[dict[str, Any]] = []
+    allowed_fields = {
+        "Dish candidate", "Purpose", "Role", "Priors", "Locks", "Exemptions",
+        "Research emphasis", "Destination section", "Researched by",
+    }
+    for index, raw in enumerate(options):
+        if not isinstance(raw, dict):
+            raise DishRuleError(
+                "INVALID_ARGUMENT", "Human Review choices must be objects",
+                rule="human_review_option_invalid", details={"index": index},
+            )
+        label = str(raw.get("label") or "").strip()
+        decision = str(raw.get("decision") or "").strip()
+        if not label or not decision:
+            raise DishRuleError(
+                "INVALID_ARGUMENT", "Each Human Review choice needs a label and concrete decision",
+                rule="human_review_option_invalid", details={"index": index},
+            )
+        authorization = raw.get("authorization")
+        normalized_authorization = None
+        if authorization is not None:
+            if not isinstance(authorization, dict):
+                raise DishRuleError(
+                    "INVALID_ARGUMENT", "Human Review option authorization must be an object",
+                    rule="human_review_option_authorization_invalid", details={"index": index},
+                )
+            field = str(authorization.get("field") or "").strip()
+            before = authorization.get("before")
+            after = authorization.get("after")
+            if field not in allowed_fields or not isinstance(before, str) or not isinstance(after, str):
+                raise DishRuleError(
+                    "INVALID_ARGUMENT", "Human Review option authorization is incomplete or unsupported",
+                    rule="human_review_option_authorization_invalid", details={"index": index},
+                )
+            if before == after:
+                raise DishRuleError(
+                    "INVALID_ARGUMENT", "Human Review option authorization must change the governed field",
+                    rule="human_review_option_authorization_noop", details={"index": index, "field": field},
+                )
+            normalized_authorization = {"field": field, "before": before, "after": after}
+        normalized.append(
+            {
+                "option_id": chr(ord("A") + index),
+                "label": label,
+                "decision": decision,
+                "recommended": index == 0,
+                "authorization": normalized_authorization,
+            }
+        )
+    return normalized
+
+
+def _human_review_preflight(*, route: str, reason: str, confirmed=False, basis=None, repairs_considered=None, quantified_blocker=None, options=None) -> list[dict[str, Any]]:
     if route != "human-review":
-        return
+        return []
     clean_basis = str(basis or "").strip()
     clean_repairs = str(repairs_considered or "").strip()
-    if confirmed and clean_basis and clean_repairs:
-        return
+    normalized_options = _validated_human_review_options(options) if options is not None else []
+    if confirmed and clean_basis and clean_repairs and normalized_options:
+        return normalized_options
     raise DishRuleError(
         "CONFIRMATION_REQUIRED",
-        "Human Review needs a deliberate escalation preflight before Dish parks the task",
+        "Human Review needs a deliberate decision preflight before Dish parks the task",
         rule="human_review_preflight_required",
         details={
             "unresolved_issue": reason,
@@ -774,7 +840,7 @@ def _human_review_preflight(*, route: str, reason: str, confirmed=False, basis=N
             "decision_standard": (
                 "Use a reasonable defensible estimate, with its assumptions stated, when an exact yield, portion, or "
                 "similar value is unknowable. Do not invent a midpoint when no single estimate is defensible. Uncertainty "
-                "alone is not a blocker: escalate only when it could materially change a safety, nutrition, settled-intent, "
+                "alone is not a blocker: ask Marco only when it could materially change a safety, nutrition, settled-intent, "
                 "or executability conclusion. A structured numeric threshold blocker must state one defensible estimate, "
                 "the limit, and the material excess or shortfall."
             ),
@@ -783,25 +849,56 @@ def _human_review_preflight(*, route: str, reason: str, confirmed=False, basis=N
                 "ask Marco an open-ended Human Review question. Submit that candidate as a Large correction so Dish "
                 "queues the exact semantic proposal for Marco to approve or reject."
             ),
-            "questions": [
-                "After a reasonable defensible estimate, is this still materially blocking?",
-                "Can the task be repaired while preserving Marco's existing decisions and locks?",
-                "Can you construct the exact governed fix now and send it through the semantic-proposal review flow?",
-                "What specific unresolved choice remains that only Marco can answer before an exact candidate exists?",
-            ],
             "human_review_is_allowed": (
                 "Human Review is appropriate when a genuine unresolved human choice remains after reasonable "
-                "estimation and within-authority repair. It is not a precision fallback for facts that can be "
-                "estimated well enough to make the decision."
+                "estimation and within-authority repair."
             ),
+            "questions": [
+                "What is the plain-language issue Marco needs to decide?",
+                "What route do you recommend, and why?",
+                "What other plausible routes should Marco be able to choose?",
+                "Can you construct the exact governed fix now and send it through the semantic-proposal review flow?",
+                "Can any option carry one exact governed-field authorization rather than another round of clarification?",
+            ],
             "retry": {
                 "fresh_request_id": True,
                 "human_review_confirmed": True,
-                "human_review_basis": "<one concise Marco-only decision that must be answered before an exact candidate can exist>",
-                "repairs_considered": "<specific repairs/approximations considered and why the material issue remains>",
+                "human_review_basis": "<one concise question Marco is actually deciding>",
+                "repairs_considered": "<what you tried or considered before asking Marco>",
+                "human_review_options": [
+                    {
+                        "label": "<recommended route>",
+                        "decision": "<exact decision to record if Marco chooses A>",
+                    },
+                    {
+                        "label": "<another plausible route>",
+                        "decision": "<exact decision to record if Marco chooses B>",
+                    },
+                ],
             },
         },
     )
+
+
+def _validate_human_review_option_authorizations(document, options: list[dict[str, Any]]) -> None:
+    for option in options:
+        authorization = option.get("authorization")
+        if not isinstance(authorization, dict):
+            continue
+        field = authorization["field"]
+        actual = str(document.planning_brief.values.get(field, ""))
+        if actual != authorization["before"]:
+            raise DishRuleError(
+                "CONFLICT",
+                "A proposed Human Review option no longer matches the reviewed governed field",
+                rule="human_review_option_authorization_stale",
+                details={
+                    "option_id": option["option_id"],
+                    "field": field,
+                    "expected_before": authorization["before"],
+                    "actual_before": actual,
+                },
+            )
 
 
 def _governed_change_needs_intent_confirmation(change) -> bool:
@@ -941,7 +1038,7 @@ def _validated_quantified_blocker(*, metric=None, actual=None, limit=None, delta
     return {"metric": str(metric).strip(), "actual": actual_n, "limit": limit_n, "delta": delta_n, "unit": str(unit).strip(), "basis": str(basis).strip()}
 
 
-def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, model: str | None = None, route: str, reason: str, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, request_id: str | None = None, schema=None, honest_root=None, blocker_metric=None, blocker_actual=None, blocker_limit=None, blocker_delta=None, blocker_unit=None, blocker_basis=None, human_review_confirmed: bool = False, human_review_basis: str | None = None, repairs_considered: str | None = None, governed_change_fields=None):
+def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, agent: str, model: str | None = None, route: str, reason: str, file_path: str | None = None, resume_status: str | None = None, run_id: str | None = None, independence_attestation: str | None = None, request_id: str | None = None, schema=None, honest_root=None, blocker_metric=None, blocker_actual=None, blocker_limit=None, blocker_delta=None, blocker_unit=None, blocker_basis=None, human_review_confirmed: bool = False, human_review_basis: str | None = None, repairs_considered: str | None = None, human_review_options=None, governed_change_fields=None):
 
     route = str(route or "").strip()
     reason = validate_rejection_reason(reason)
@@ -960,10 +1057,10 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         resume_status=resume_status,
         independence_attestation=independence_attestation,
     )
-    _human_review_preflight(
+    normalized_human_review_options = _human_review_preflight(
         route=route, reason=reason, confirmed=human_review_confirmed,
         basis=human_review_basis, repairs_considered=repairs_considered,
-        quantified_blocker=quantified_blocker,
+        quantified_blocker=quantified_blocker, options=human_review_options,
     )
     resumed = _resume_rejected_cycle(
         conn, backend, operation_id=operation_id, agent=agent, route=route,
@@ -985,6 +1082,20 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         and op["operation_kind"] == "initial"
         and op["content_write_completed_at"] is None
     ):
+        if route == "human-review" and any(
+            isinstance(option.get("authorization"), dict)
+            for option in normalized_human_review_options
+        ):
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "pre-construction Human Review choices cannot carry governed-field authorization",
+                rule="preconstruction_human_review_authorization_unavailable",
+                details={
+                    "reason": (
+                        "No reviewed candidate exists yet, so Dish cannot bind an exact governed before/after authorization."
+                    )
+                },
+            )
         return _preconstruction_research_hold(
             conn,
             op=op,
@@ -997,6 +1108,9 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
             file_path=file_path,
             model=model,
             quantified_blocker=quantified_blocker,
+            human_review_basis=human_review_basis,
+            repairs_considered=repairs_considered,
+            human_review_options=normalized_human_review_options,
         )
     op, cycle = _rows(conn, operation_id)
     authority_attestation = cycle["independence_attestation"]
@@ -1013,6 +1127,10 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
     if live.identity != persisted_reviewed:
         raise DishRuleError("CONFLICT", "live candidate changed after verifier review", rule="stale_verifier_review")
     document = parse_task_document(f"{live.title}\n{live.notes}")
+    if route == "human-review":
+        _validate_human_review_option_authorizations(
+            document, normalized_human_review_options
+        )
     require_status(document.state, {"pending-verification"}, action="Verification outcome")
     state = dict(document.state.values)
     changes = tuple(document.material_changes)
@@ -1182,6 +1300,7 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
         "quantified_blocker": quantified_blocker,
         "human_review_basis": str(human_review_basis or "").strip() or None,
         "repairs_considered": str(repairs_considered or "").strip() or None,
+        "human_review_options": normalized_human_review_options,
         "actor_agent": agent,
         "actor_run_id": run_id,
         "actor_attestation": authority_attestation,
@@ -1258,7 +1377,7 @@ def reject_route(conn: sqlite3.Connection, backend: Any, *, operation_id: str, a
                 before_state={"Decisions": list(before_document.decisions)},
                 after_state={"Decisions": list(document.decisions)},
             )
-        record_audit(conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id, event_type="verification.rejected", actor_agent=agent, details={"cycle_id": cycle["cycle_id"], "route": route, "reason": reason, "quantified_blocker": quantified_blocker, "human_review_basis": str(human_review_basis or "").strip() or None, "repairs_considered": str(repairs_considered or "").strip() or None, "verification_hold": verification_hold, "identity": confirmed.identity}, result_code="OK", result_ok=True, governed_kind="decision", before_state={"outcome": None, "reviewed_identity": cycle["reviewed_identity"], "status": "pending-verification"}, after_state={"outcome": outcome, "route": route, "resume_state": document.state.values["Resume status"], "status": document.state.values["Status"]}, actor_run_id=run_id, actor_attestation=authority_attestation)
+        record_audit(conn, submission_id=None, task_gid=op["task_gid"], operation_id=operation_id, event_type="verification.rejected", actor_agent=agent, details={"cycle_id": cycle["cycle_id"], "route": route, "reason": reason, "quantified_blocker": quantified_blocker, "human_review_basis": str(human_review_basis or "").strip() or None, "repairs_considered": str(repairs_considered or "").strip() or None, "human_review_options": normalized_human_review_options, "verification_hold": verification_hold, "identity": confirmed.identity}, result_code="OK", result_ok=True, governed_kind="decision", before_state={"outcome": None, "reviewed_identity": cycle["reviewed_identity"], "status": "pending-verification"}, after_state={"outcome": outcome, "route": route, "resume_state": document.state.values["Resume status"], "status": document.state.values["Status"]}, actor_run_id=run_id, actor_attestation=authority_attestation)
     return {
         "operation_id": operation_id,
         "route": route,

@@ -20,6 +20,10 @@ def test_human_review_hold_appears_in_review_queue_and_can_be_resolved_by_number
         human_review_confirmed=True,
         human_review_basis="Only Marco can resolve the remaining choice within settled authority.",
         repairs_considered="Plausible within-authority repairs were considered and do not resolve the choice.",
+        human_review_options=[
+            {"label": "Treat this as a non-main tasting portion", "decision": "Treat this dish as a non-main tasting portion."},
+            {"label": "Keep it as a complete main meal", "decision": "Keep it as a complete main meal and revise the composition to fit."},
+        ],
         run_id="human-review-author",
     )
     assert held["ok"]
@@ -52,9 +56,7 @@ def test_human_review_hold_appears_in_review_queue_and_can_be_resolved_by_number
     assert approval["command"] == "review-approve"
     assert approval["after_success"]["resume_status"] == "pending-verification"
     assert approval["after_success"]["next_stage"] == "verification"
-    dismissal = next(action for action in inspected["data"]["human_actions"] if action["command"] == "review-reject")
-    assert dismissal["after_success"]["resume_status"] == "pending-verification"
-    assert dismissal["after_success"]["next_stage"] == "verification"
+    assert [action["command"] for action in inspected["data"]["human_actions"]] == ["review-approve"]
 
     resolved = admin.execute(
         "review-approve",
@@ -77,7 +79,9 @@ def test_review_approve_human_review_rejects_legacy_semantic_default_reason(tmp_
         "reject", agent="codex", submission_id=operation_id, route="human-review",
         reason="Marco must choose.", resume_status="pending-verification",
         human_review_confirmed=True, human_review_basis="Only Marco can choose.",
-        repairs_considered="No exact governed repair exists before Marco chooses.", run_id="legacy-default",
+        repairs_considered="No exact governed repair exists before Marco chooses.",
+        human_review_options=[{"label": "Choose the route", "decision": "Use Marco's chosen route."}],
+        run_id="legacy-default",
     )
     assert held["ok"]
     cycle_id = app.conn.execute(
@@ -147,6 +151,10 @@ def test_service_review_queue_resolves_human_hold_by_current_row_number(tmp_path
             "human_review_confirmed": True,
             "human_review_basis": "Only Marco can resolve the remaining choice within settled authority.",
             "repairs_considered": "Plausible within-authority repairs were considered and do not resolve the choice.",
+            "human_review_options": [
+                {"label": "Treat this as a non-main tasting portion", "decision": "Treat this dish as a non-main tasting portion."},
+                {"label": "Keep it as a complete main meal", "decision": "Keep it as a complete main meal and revise the composition to fit."},
+            ],
         },
         principal=verifier,
     )
@@ -215,7 +223,11 @@ def test_review_reject_dismisses_unanswered_human_review_without_recording_decis
         run_id="bad-review",
         human_review_confirmed=True,
         human_review_basis="The estimate appears to require a nutrition exemption.",
-        repairs_considered="No repair was accepted before escalation.",
+        repairs_considered="No repair was accepted before asking Marco.",
+        human_review_options=[
+            {"label": "Approve the nutrition exception", "decision": "Approve the nutrition exception for this dish."},
+            {"label": "Rework the estimate", "decision": "Rework the nutrition estimate before deciding."},
+        ],
         blocker_metric="fat",
         blocker_actual=51,
         blocker_limit=40,
@@ -240,10 +252,8 @@ def test_review_reject_dismisses_unanswered_human_review_without_recording_decis
 
     inspected = admin.execute("inspect", submission_id=operation_id)
     kinds = [item["kind"] for item in inspected["data"]["human_actions"]]
-    assert kinds == ["review-human-decision", "dismiss-human-review"]
-    dismiss_action = next(action for action in inspected["data"]["human_actions"] if action["command"] == "review-reject")
-    assert dismiss_action["after_success"]["resume_status"] == "pending-verification"
-    assert dismiss_action["after_success"]["next_stage"] == "verification"
+    assert kinds == ["review-human-decision"]
+    assert all(item["command"] != "review-reject" for item in inspected["data"]["human_actions"])
 
     dismissed = admin.execute(
         "review-reject",
@@ -297,6 +307,10 @@ def test_review_approve_pending_research_human_review_advertises_and_returns_res
         human_review_confirmed=True,
         human_review_basis="Only Marco can decide whether the research premise should change.",
         repairs_considered="Verification cannot construct the exact research change without Marco's choice.",
+        human_review_options=[
+            {"label": "Return to Research", "decision": "Return this concern to Research before Verification continues."},
+            {"label": "Continue from the current premise", "decision": "Keep the current research premise and continue Verification."},
+        ],
     )
     assert held["ok"]
     cycle_id = app.conn.execute(
@@ -304,11 +318,10 @@ def test_review_approve_pending_research_human_review_advertises_and_returns_res
         (operation_id,),
     ).fetchone()[0]
 
-    # Agent-facing continuation must distinguish approval (Research) from dismissal (Verification).
+    # Normal agent-facing continuation advertises only the Marco decision workflow.
     assert held["data"]["after_resolution"]["approval"]["resume_status"] == "pending-research"
     assert held["data"]["after_resolution"]["approval"]["next_stage"] == "research"
-    assert held["data"]["after_resolution"]["dismissal"]["resume_status"] == "pending-verification"
-    assert held["data"]["after_resolution"]["dismissal"]["next_stage"] == "verification"
+    assert "dismissal" not in held["data"]["after_resolution"]
 
     admin = DishAdminApplication(
         app.conn, backend=backend, release_loader=lambda: app._load_release("verification")
@@ -368,7 +381,11 @@ def test_review_reject_pending_research_human_review_forces_fresh_verification(t
         run_id="bad-review-research",
         human_review_confirmed=True,
         human_review_basis="The verifier treated the estimate as needing a Marco-only route choice.",
-        repairs_considered="The verifier did not establish a defensible repair before escalating.",
+        repairs_considered="The verifier did not establish a defensible repair before asking Marco.",
+        human_review_options=[
+            {"label": "Return to Research", "decision": "Return this nutrition question to Research."},
+            {"label": "Continue Verification", "decision": "Continue Verification using the current research premise."},
+        ],
     )
     assert held["ok"]
     source_cycle_id = app.conn.execute(
@@ -384,9 +401,7 @@ def test_review_reject_pending_research_human_review_forces_fresh_verification(t
     approval = review["data"]["human_action"]
     assert approval["after_success"]["resume_status"] == "pending-research"
     assert approval["after_success"]["next_stage"] == "research"
-    dismissal = next(action for action in review["data"]["human_actions"] if action["command"] == "review-reject")
-    assert dismissal["after_success"]["resume_status"] == "pending-verification"
-    assert dismissal["after_success"]["next_stage"] == "verification"
+    assert [action["command"] for action in review["data"]["human_actions"]] == ["review-approve"]
 
     dismissed = admin.execute(
         "review-reject",

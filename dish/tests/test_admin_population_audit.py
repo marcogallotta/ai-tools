@@ -129,31 +129,31 @@ def test_population_audit_classifies_current_manual_asana_only_missing_and_migra
     rows = _by_gid(result)
 
     assert rows["1001"]["category"] == "healthy_current"
-    assert rows["1002"]["category"] == "expected_external_lifecycle"
-    assert rows["1002"]["reason"] == "manual_lifecycle_section_change"
+    assert rows["1002"]["category"] == "healthy_current"
+    assert rows["1002"]["reason"] == "current"
     assert rows["1003"]["category"] == "asana_only"
     assert rows["1004"]["category"] == "expected_external_lifecycle"
     assert rows["1004"]["reason"] == "excluded_cooking_section"
     assert rows["1005"]["category"] == "needs_migration_repair"
     assert rows["1006"]["category"] == "dish_known_asana_missing_or_unavailable"
     assert rows["1006"]["reason"] == "asana_task_missing"
-    assert rows["1007"]["category"] == "real_inconsistency"
-    assert rows["1007"]["reason"] == "active_operation_section_mismatch"
-    assert rows["1008"]["category"] == "expected_external_lifecycle"
-    assert rows["1008"]["reason"] == "manual_lifecycle_outside_cooking"
+    assert rows["1007"]["category"] == "healthy_current"
+    assert rows["1007"]["reason"] == "current"
+    assert rows["1008"]["category"] == "healthy_current"
+    assert rows["1008"]["reason"] == "operator_managed_asana_organization"
 
     counts = result["data"]["category_counts"]
     assert counts == {
-        "real_inconsistency": 1,
+        "real_inconsistency": 0,
         "needs_migration_repair": 1,
         "dish_known_asana_missing_or_unavailable": 1,
         "asana_only": 1,
-        "expected_external_lifecycle": 3,
-        "healthy_current": 1,
+        "expected_external_lifecycle": 1,
+        "healthy_current": 4,
     }
 
 
-def test_population_audit_active_task_leaving_cooking_is_real_inconsistency(tmp_path):
+def test_population_audit_ignores_active_task_project_membership(tmp_path):
     backend = AuditBackend(
         tasks=[{"gid": "2001", "title": "Active outside", "notes": "notes", "section_gid": "rq"}],
         outside_project={"2001"},
@@ -170,8 +170,29 @@ def test_population_audit_active_task_leaving_cooking_is_real_inconsistency(tmp_
     )
 
     row = _by_gid(app.execute("audit"))["2001"]
-    assert row["category"] == "real_inconsistency"
-    assert row["reason"] == "active_operation_task_left_cooking"
+    assert row["category"] == "healthy_current"
+    assert row["reason"] == "operator_managed_asana_organization"
+
+
+def test_population_audit_ignores_active_section_mismatch(tmp_path):
+    backend = AuditBackend(
+        tasks=[{"gid": "2002", "title": "Moved by Marco", "notes": "notes", "section_gid": "vq"}],
+    )
+    conn, app = _app(tmp_path, backend)
+    identity = _known(conn, "2002")
+    create_operation(
+        conn,
+        task_gid="2002",
+        operation_kind="initial",
+        expected_identity=identity.digest,
+        schema_version="2",
+        expected_section_gid="rq",
+    )
+
+    row = _by_gid(app.execute("audit"))["2002"]
+    assert row["category"] == "healthy_current"
+    assert row["reason"] == "current"
+
 
 
 def test_population_audit_paginates_project_listing_without_per_task_reads(tmp_path):

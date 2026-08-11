@@ -52,11 +52,13 @@ workflow procedure.
   `client.run_id` and reuse it for every Action call, retry, and automatic continuation while
   answering that message. A later Marco message uses a new run ID. Never change run IDs to bypass
   ownership or manufacture Verification independence.
-- For every Action mutation, create a fresh canonical lowercase UUID as `client.request_id`. If a
-  mutation response is lost, replay only the exact same request with the same request ID. Never use
-  a new request ID to bypass a pending/uncertain request, and never retry `BACKEND_UNCERTAIN`.
-  Read-only Actions do not accept request IDs; if a read fails at transport level with no Dish
-  envelope, retry that exact read at most twice, then stop and report it.
+- For every Action whose imported schema requires `client.request_id`, create a fresh canonical
+  lowercase UUID for one logical call. This includes `inspect`: Verification inspection records
+  durable evidence even though its operator purpose is observational. If a replay-bound response is
+  lost, replay only the exact same request with the same request ID. Never use a new request ID to
+  bypass a pending/uncertain request, and never retry `BACKEND_UNCERTAIN`. Truly read-only Actions
+  that omit request IDs may be retried at transport level at most twice when no Dish envelope was
+  received, then stop and report it.
 - Treat each Dish result as workflow authority. Follow `allowed_actions`, `service_access`,
   `data.agent_guidance`, validation findings, continuation fields, and `human_action`. Never infer a
   transition or invent/reconstruct operation, cycle, lease, hold, proposal, recovery, target, or
@@ -103,10 +105,26 @@ Before any task mutation:
 
 Automated generator and checked-in-schema tests establish local acceptance only. Connected acceptance
 is not established until this exact schema is re-imported and the UUID constraints above are visibly
-verified in the GPT editor, followed by the Preview call.
+verified in the GPT editor, followed by the Preview call. Whenever the Action schema changes, refresh
+or re-import the TEST GPT Action before interpreting connected-GPT failures as backend defects.
 
-Then run the complete disposable-task procedure in `live-test-project-rehearsal.md`. Preview success for
-`sections` is connectivity proof, not authorization for production Cooking.
+After every Action-schema refresh, run this minimal TEST contract check before broader rehearsal:
+
+1. Start a fresh Verification run through the connected TEST Action with a fresh `client.run_id` and
+   `client.request_id`.
+2. Confirm the result succeeds and `allowed_actions` contains `inspect`.
+3. Confirm the imported `dish_inspect` operation visibly accepts and requires both `client.run_id` and
+   `client.request_id`.
+4. Call public `dish_inspect` with the same run ID and a new unique request ID; it must succeed rather
+   than fail because the public schema cannot represent the runtime request.
+5. If desired, replay that exact inspect with the same request ID to confirm idempotent recovery. If
+   the imported schema makes request ID required, schema-level rejection of an omitted request ID is
+   sufficient; do not fabricate a lower-level bypass merely to exercise runtime rejection.
+
+Classify inability to represent step 4 as a stale/incomplete connected Action schema and re-import it;
+do not route around the public contract. Then run the complete disposable-task procedure in
+`live-test-project-rehearsal.md`. Preview success for `sections` is connectivity proof, not authorization
+for production Cooking.
 
 ## Token rotation
 

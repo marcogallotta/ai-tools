@@ -135,6 +135,9 @@ def test_preconstruction_reject_reclaims_same_stage_actor_without_cycle_context(
                 "human_review_confirmed": True,
                 "human_review_basis": "The remaining pre-construction choice requires Marco's authority.",
                 "repairs_considered": "Within-authority research routes were considered and cannot settle that choice.",
+            "human_review_options": [
+                {"label": "Use Marco's chosen route", "decision": "Use Marco's chosen route for the next Research step."}
+            ],
             } if route == "human-review" else {}),
         },
         principal=fresh_run,
@@ -156,6 +159,9 @@ def test_preconstruction_reject_reclaims_same_stage_actor_without_cycle_context(
                 "human_review_confirmed": True,
                 "human_review_basis": "The remaining pre-construction choice requires Marco's authority.",
                 "repairs_considered": "Within-authority research routes were considered and cannot settle that choice.",
+            "human_review_options": [
+                {"label": "Use Marco's chosen route", "decision": "Use Marco's chosen route for the next Research step."}
+            ],
             } if route == "human-review" else {}),
         },
         principal=researcher,

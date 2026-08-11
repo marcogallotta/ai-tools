@@ -49,6 +49,12 @@ def test_round1c_lane_names_the_observed_failure_journey_contracts() -> None:
         "tests/test_admin_round1b.py::test_inspect_resting_dish_by_frontend_url_uses_uuid_not_slug",
         "tests/test_admin_population_audit.py",
         "tests/test_admin_inspect_verbose.py",
+        "tests/test_admin_attention.py::test_issues_treats_expired_open_lease_as_system_recoverable_not_marco_required",
+        "tests/test_admin_attention.py::test_inspect_known_dish_remains_available_after_operator_moves_task_outside_cooking",
+        "tests/test_admin_bulk_kill.py::test_bulk_kill_exact_precondition_does_not_kill_successor_run",
+        "tests/test_human_review_choice_contract.py::test_review_queue_persists_ranked_choices_and_A_is_recommended",
+        "tests/test_human_review_choice_contract.py::test_structured_choice_records_exact_unused_authorization_for_continuation",
+        "tests/test_human_review_choice_contract.py::test_other_records_free_text_without_inventing_authorization",
     }
     assert expected <= selected
 

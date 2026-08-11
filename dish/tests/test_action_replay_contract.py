@@ -107,10 +107,11 @@ def test_action_and_runtime_docs_preserve_replay_inventory_and_decision_rules():
     )
 
     assert "data.agent_guidance" in action_guide
-    assert "For every Action mutation, create a fresh canonical lowercase UUID" in action_guide
+    assert "For every Action whose imported schema requires `client.request_id`" in action_guide
+    assert "This includes `inspect`" in action_guide
     assert "replay only the exact same request with the same request ID" in action_guide
     assert "Never use a new request ID to bypass a pending/uncertain request" in action_guide
-    assert "Read-only Actions do not accept request IDs" in action_guide
+    assert "Truly read-only Actions" in action_guide
     assert "State-specific procedures" in action_guide
 
     assert "expected argument, state, authorization, and workflow failures are stored" in runtime

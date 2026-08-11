@@ -198,6 +198,9 @@ def test_hold_rejection_inherits_persisted_attestation(route, tmp_path):
             "human_review_confirmed": True,
             "human_review_basis": "A genuine Marco-only choice remains after evidence review.",
             "repairs_considered": "Within-authority repairs were considered and do not resolve that choice.",
+            "human_review_options": [
+                {"label": "Use Marco's chosen route", "decision": "Use Marco's chosen resolution for this blocker."}
+            ],
         } if route == "human-review" else {}),
     )
     assert held["ok"]
@@ -311,6 +314,9 @@ def test_blocked_start_preserves_held_operation_guidance(
             "human_review_confirmed": True,
             "human_review_basis": "A genuine Marco-only choice remains after evidence review.",
             "repairs_considered": "Within-authority repairs were considered and do not resolve that choice.",
+            "human_review_options": [
+                {"label": "Use Marco's chosen route", "decision": "Use Marco's chosen resolution for this blocker."}
+            ],
         } if route == "human-review" else {}),
     )
     assert held["ok"]

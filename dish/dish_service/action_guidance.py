@@ -76,10 +76,12 @@ def action_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
             )
         if error_rule == "human_review_preflight_required":
             instructions.append(
-                "Do the escalation preflight yourself rather than dumping its questions on Marco. Use a reasonable defensible "
-                "estimate, with assumptions stated, where exact values are unknowable; uncertainty alone is not a blocker. If you can already "
-                "construct the exact governed fix, use a Large correction so Dish queues that exact proposal for review. "
-                "Escalate to Human Review only when a material Marco-only choice remains before an exact candidate can exist."
+                "Do the Human Review preflight yourself rather than dumping protocol questions on Marco. Explain the real issue "
+                "in ordinary language. Supply one to six concrete plausible choices ordered best-first: choice A is always your "
+                "recommended route, and the later admin UI also gives Marco a free-text Other choice. Use a reasonable defensible "
+                "estimate, with assumptions stated, where exact values are unknowable; uncertainty alone is not a blocker. If you can "
+                "already construct the exact governed fix, use a Large correction so Dish queues that exact proposal for review. "
+                "Use Human Review only when a material Marco-only choice remains before an exact candidate can exist."
             )
         legal_next = _text(data.get("legal_next_step"))
         if legal_next:

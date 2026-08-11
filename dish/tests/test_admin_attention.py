@@ -186,6 +186,44 @@ def test_attention_surfaces_incomplete_abandonment_on_terminal_source_operation(
 
 
 @pytest.mark.smoke
+def test_issues_is_primary_and_attention_alias_keeps_compatibility():
+    conn = initialize_database(":memory:")
+    backend = Backend(section="pi")
+    source = _source(conn, backend, kind="planning")
+    _released_actor_lease(conn, source["operation_id"])
+
+    primary = DishAdminApplication(conn, backend=backend).execute("issues")
+    alias = DishAdminApplication(conn, backend=backend).execute("attention")
+
+    assert primary["command"] == "issues"
+    assert primary["data"]["issue_count"] == 1
+    assert primary["data"]["issue_items"][0]["operation_id"] == source["operation_id"]
+    assert alias["command"] == "attention"
+    assert alias["data"]["attention_items"] == primary["data"]["issue_items"]
+
+
+@pytest.mark.smoke
+def test_issues_treats_expired_open_lease_as_system_recoverable_not_marco_required():
+    from datetime import datetime, timezone
+
+    conn = initialize_database(":memory:")
+    backend = Backend(section="pi")
+    source = _source(conn, backend, kind="planning", run_id="expired-run")
+    LeaseManager(
+        conn, now=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc)
+    ).acquire(source["operation_id"], ServicePrincipal("owner", "expired-run"))
+
+    result = DishAdminApplication(conn, backend=backend).execute("issues")
+
+    assert result["data"]["needs_you_count"] == 0
+    assert result["data"]["system_count"] == 1
+    item = result["data"]["issue_items"][0]
+    assert item["category"] == "system"
+    assert item["needs_you"] is False
+    assert [signal["kind"] for signal in item["signals"]] == ["expired_lease"]
+
+
+@pytest.mark.smoke
 def test_active_leases_lists_unreleased_actor_leases_without_backend_reads():
     conn = initialize_database(":memory:")
     backend = Backend(section="pi")
@@ -263,3 +301,50 @@ def test_review_queue_active_filter_means_waiting_for_marco(monkeypatch):
 
     assert result["ok"]
     assert captured == {"statuses": ("pending",), "holds": True}
+
+@pytest.mark.smoke
+def test_inspect_known_dish_remains_available_after_operator_moves_task_outside_cooking():
+    from datetime import datetime, timezone
+
+    from dish_tool.database import confirm_task_content, create_operation
+    from dish_tool.identifiers import stable_dish_uuid_for_asana_identity
+    from dish_tool.models import OperationActors
+    from tests.support.asana_backend import StatefulAsanaBackend
+
+    task_gid = "1217333270126271"
+
+    class OutsideBackend(StatefulAsanaBackend):
+        def read_task(self, gid: str):
+            row = super().read_task(gid)
+            row["projects"] = [{"gid": "operator-managed-project"}]
+            row["memberships"] = [
+                {
+                    "project": {"gid": "operator-managed-project"},
+                    "section": {"gid": "operator-managed-section"},
+                }
+            ]
+            return row
+
+    conn = initialize_database(":memory:")
+    backend = OutsideBackend(task_gid=task_gid, title="Moved dish", notes="notes", section="rq")
+    baseline = confirm_task_content(
+        conn, task_gid=task_gid, title=backend.title, notes=backend.notes,
+        schema_version="2", boundary="test",
+    )
+    operation = create_operation(
+        conn, task_gid=task_gid, operation_kind="planning",
+        expected_identity=baseline.digest, schema_version="2", expected_section_gid="rq",
+        actors=OperationActors(editor_agent="gpt", run_id="expired-run"),
+    )
+    LeaseManager(
+        conn, now=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc)
+    ).acquire(operation["operation_id"], ServicePrincipal("owner", "expired-run"))
+    dish_id = str(stable_dish_uuid_for_asana_identity("task", task_gid))
+
+    result = DishAdminApplication(conn, backend=backend).execute("inspect", dish=dish_id)
+
+    assert result["ok"] is True
+    assert result["data"]["task_title"] == backend.title
+    assert result["data"]["operation_id"] == operation["operation_id"]
+    assert "remains inspectable" in result["data"]["problem"]
+    assert result["data"]["human_actions"] == []

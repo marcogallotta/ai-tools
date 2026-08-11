@@ -98,7 +98,7 @@ def test_interactive_semantic_review_inspects_uuid_before_approval(capsys):
     assert f"dish-admin review-inspect {review_id}" not in output
 
 
-def test_interactive_human_review_records_the_actual_decision(capsys):
+def test_interactive_human_review_chooses_recommended_option_without_command_jargon(capsys):
     review_id = str(uuid.uuid4())
     item = {
         "item_type": "human_review",
@@ -106,17 +106,32 @@ def test_interactive_human_review_records_the_actual_decision(capsys):
         "proposal_id": review_id,
         "status": "pending",
         "candidate_title": "Pasta al limone",
-        "proposal_reason": "Protein is below the main-dish threshold.",
+        "proposal_reason": "This dish has about 25 g protein; a main dish normally needs 35 g.",
+        "human_review_options": [
+            {
+                "option_id": "A",
+                "label": "Increase the cheese enough to meet the target",
+                "decision": "Increase the cheese enough to meet the main-dish protein target.",
+                "recommended": True,
+                "authorization": None,
+            },
+            {
+                "option_id": "B",
+                "label": "Approve a protein exemption",
+                "decision": "Keep the dish as-is and approve a protein exemption.",
+                "recommended": False,
+                "authorization": None,
+            },
+        ],
         "review_summary": {
-            "issue": "Protein is below the main-dish threshold.",
-            "decision": "Choose whether to redesign the dish or change its role.",
-            "simplest_next_step": "Record Marco's substantive choice, or dismiss an invalid escalation.",
+            "issue": "This dish has about 25 g protein; a main dish normally needs 35 g.",
+            "decision": "How should this dish handle the protein shortfall?",
+            "simplest_next_step": "Choose A, another option, or type your own instruction.",
         },
         "changes": [],
     }
     app = ReviewApp(item)
-    decision = "Keep it as a main and pair it with the planned protein side."
-    input_fn, prompts = _answers("1", "d", decision)
+    input_fn, prompts = _answers("1", "a")
 
     status = admin_cli._interactive_review_queue(
         app, status="active", arguments=(), input_fn=input_fn
@@ -124,12 +139,41 @@ def test_interactive_human_review_records_the_actual_decision(capsys):
 
     assert status == 0
     approve = next(arguments for command, arguments in app.calls if command == "review-approve")
-    assert approve == {"proposal_id": review_id, "reason": decision}
-    assert any("Record Marco decision" in prompt for prompt in prompts)
-    assert any("decision and brief reasoning" in prompt for prompt in prompts)
+    assert approve == {"proposal_id": review_id, "choice": "A"}
+    assert not any("escalation" in prompt.lower() for prompt in prompts)
     output = capsys.readouterr().out
-    assert "Decision needed: Choose whether to redesign the dish or change its role." in output
-    assert "Options: Record Marco's substantive choice" in output
+    assert "Issue: This dish has about 25 g protein" in output
+    assert "A. Increase the cheese enough to meet the target (recommended)" in output
+    assert "Other. Type a different instruction" in output
+
+
+def test_interactive_human_review_other_records_free_text_instruction():
+    review_id = str(uuid.uuid4())
+    item = {
+        "item_type": "human_review",
+        "review_id": review_id,
+        "proposal_id": review_id,
+        "status": "pending",
+        "candidate_title": "Dish",
+        "proposal_reason": "A human choice is needed.",
+        "human_review_options": [],
+        "review_summary": {"issue": "A human choice is needed."},
+        "changes": [],
+    }
+    app = ReviewApp(item)
+    input_fn, _ = _answers("1", "o", "Keep it as a main and pair it with lentils.")
+
+    status = admin_cli._interactive_review_queue(
+        app, status="active", arguments=(), input_fn=input_fn
+    )
+
+    assert status == 0
+    approve = next(arguments for command, arguments in app.calls if command == "review-approve")
+    assert approve == {
+        "proposal_id": review_id,
+        "choice": "other",
+        "reason": "Keep it as a main and pair it with lentils.",
+    }
 
 
 def test_interactive_queue_renderer_shows_change_not_command_hopping():
@@ -234,20 +278,20 @@ def test_interactive_review_inspect_suppresses_low_level_action_templates():
     assert "What you can do" not in rendered
 
 
-class AttentionApp:
+class IssuesApp:
     def __init__(self):
         self.calls: list[tuple[str, dict]] = []
 
     def execute(self, command: str, **arguments):
         self.calls.append((command, dict(arguments)))
-        if command == "attention":
+        if command in {"issues", "attention"}:
             return _envelope(
                 command,
                 data={
                     "needs_you_count": 1,
                     "system_count": 0,
                     "category_counts": {"needs_marco": 1, "unsafe": 0, "system": 0},
-                    "attention_items": [
+                    "issue_items": [
                         {
                             "dish_id": "11111111-1111-5111-8111-111111111111",
                             "task_gid": "1217333270126271",
@@ -279,16 +323,16 @@ class AttentionApp:
         raise AssertionError(command)
 
 
-def test_interactive_attention_drills_into_canonical_dish_without_command_hopping(capsys):
-    app = AttentionApp()
+def test_interactive_issues_drills_into_canonical_dish_without_command_hopping(capsys):
+    app = IssuesApp()
     input_fn, prompts = _answers("1", "q")
 
-    status = admin_cli._interactive_attention(app, arguments=(), input_fn=input_fn)
+    status = admin_cli._interactive_issues(app, arguments=(), input_fn=input_fn)
 
     assert status == 0
     assert app.calls == [
-        ("attention", {}),
-        ("inspect", {"dish": "11111111-1111-5111-8111-111111111111"}),
+        ("issues", {}),
+        ("inspect", {"dish": "11111111-1111-5111-8111-111111111111", "verbose": False}),
     ]
     output = capsys.readouterr().out
     assert "Select a Dish number to inspect its exact current state." in output
@@ -297,14 +341,14 @@ def test_interactive_attention_drills_into_canonical_dish_without_command_hoppin
     assert any("Dish number" in prompt for prompt in prompts)
 
 
-def test_attention_cli_non_interactive_flag_preserves_one_shot_summary(monkeypatch, capsys):
-    app = AttentionApp()
+def test_issues_cli_non_interactive_flag_preserves_one_shot_summary(monkeypatch, capsys):
+    app = IssuesApp()
     monkeypatch.setattr(admin_cli.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(admin_cli.sys.stdout, "isatty", lambda: True)
 
-    assert admin_cli.main(["attention", "--non-interactive"], application=app) == 0
+    assert admin_cli.main(["issues", "--non-interactive"], application=app) == 0
 
-    assert app.calls == [("attention", {})]
+    assert app.calls == [("issues", {})]
     output = capsys.readouterr().out
     assert "dish-admin review-inspect review-1" in output
     assert "Select a Dish number" not in output

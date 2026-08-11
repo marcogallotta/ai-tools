@@ -109,6 +109,10 @@ def test_human_review_route_reports_private_continuation_without_exposing_it(tmp
         human_review_confirmed=True,
         human_review_basis="Only Marco can resolve the remaining choice within settled authority.",
         repairs_considered="Plausible within-authority repairs were considered and do not resolve the choice.",
+        human_review_options=[
+            {"label": "Use serving format one", "decision": "Use the first valid serving format."},
+            {"label": "Use serving format two", "decision": "Use the second valid serving format."},
+        ],
     )
     assert result["ok"]
     assert result["allowed_actions"] == []
@@ -125,9 +129,9 @@ def test_human_review_route_reports_private_continuation_without_exposing_it(tmp
         "authorizes_governed_field_changes": False,
     }
     directive = result["data"]["directive"]
-    assert "Keep the Marco-facing result short" in directive
-    assert "Do not dump hold IDs" in directive
-    assert "record-human-decision" in directive
+    assert "real issue in ordinary language" in directive
+    assert "escalation" in directive  # only to say not to describe it that way
+    assert "expose hold IDs" in directive
 
 @pytest.mark.smoke
 def test_marco_reopen_requires_substantive_change_and_retains_cycles(tmp_path):

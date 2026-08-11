@@ -140,24 +140,24 @@ def test_human_renderer_labels_input_commands_as_templates_but_exact_recovery_as
     assert "Run: dish-admin recover operation-1" in rendered_exact
 
 
-def test_human_renderer_summarizes_global_attention_items():
+def test_human_renderer_summarizes_global_issue_items():
     from dish_tool.admin_human import render_admin_result
 
     result = {
         "ok": True,
-        "command": "attention",
+        "command": "issues",
         "code": "OK",
         "state": "ok",
         "retryable": False,
         "allowed_actions": [],
         "data": {
             "checked_count": 3,
-            "attention_count": 1,
+            "issue_count": 1,
             "needs_you_count": 1,
             "system_count": 0,
             "healthy_count": 2,
             "category_counts": {"system": 0, "needs_marco": 1, "unsafe": 0},
-            "attention_items": [
+            "issue_items": [
                 {
                     "category": "needs_marco",
                     "needs_you": True,
@@ -177,7 +177,7 @@ def test_human_renderer_summarizes_global_attention_items():
 
     rendered = render_admin_result(result, profile="prod")
 
-    assert "Dish attention" in rendered
+    assert "Dish issues" in rendered
     assert "Needs you: 1 dish" in rendered
     assert "[NEEDS YOU] Laap gai" in rendered
     assert "dish-admin inspect 11111111-1111-4111-8111-111111111111" in rendered
@@ -421,15 +421,15 @@ def test_active_leases_renderer_keeps_raw_ids_in_verbose_output():
     assert "Lease: lease-1" in verbose
 
 
-def test_attention_renderer_hides_system_items_until_verbose():
+def test_issues_renderer_hides_system_items_until_verbose():
     from dish_tool.admin_human import render_admin_result
 
     result = {
-        "ok": True, "command": "attention", "code": "OK", "allowed_actions": [],
+        "ok": True, "command": "issues", "code": "OK", "allowed_actions": [],
         "data": {
             "checked_count": 2, "live_inspection_count": 0, "needs_you_count": 0,
             "system_count": 1, "category_counts": {"system": 1, "needs_marco": 0, "unsafe": 0},
-            "attention_items": [{
+            "issue_items": [{
                 "category": "system", "needs_you": False, "task_title": "Quiet dish",
                 "signals": [{"summary": "Inactive run can be resumed by an agent."}],
             }],

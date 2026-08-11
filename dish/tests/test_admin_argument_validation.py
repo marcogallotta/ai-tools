@@ -191,7 +191,12 @@ def test_admin_inspect_is_a_first_class_human_command():
     assert parsed.dish == dish_id
     assert not hasattr(parsed, "submission_id")
 
-def test_admin_attention_is_a_first_class_read_only_command():
+def test_admin_issues_is_the_first_class_read_only_command():
+    parsed = build_parser().parse_args(["issues"])
+    assert parsed.command == "issues"
+
+
+def test_admin_attention_remains_a_hidden_compatibility_alias():
     parsed = build_parser().parse_args(["attention"])
     assert parsed.command == "attention"
 
@@ -206,9 +211,10 @@ def test_admin_help_distinguishes_lease_recovery_expiry_and_abandonment(capsys):
         parser.parse_args(["--help"])
     root_help = " ".join(capsys.readouterr().out.split())
     assert "Start with `dish-admin inspect <dish>`" in root_help
-    assert "Normal use: attention, audit, review-queue, inspect, active-leases, and kill" in root_help
+    assert "Normal use: issues, audit, review-queue, inspect, active-leases, and kill" in root_help
     assert "Advanced recovery, migration, backup" in root_help
     assert "recover-lease" not in root_help.split("options:")[0]
+    assert "attention" not in root_help.split("options:")[0]
 
     with pytest.raises(SystemExit):
         parser.parse_args(["authorize-governed-change", "--help"])

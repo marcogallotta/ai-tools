@@ -33,7 +33,8 @@ def _spec(
 ADMIN_COMMAND_SPECS = {
     spec.name: spec
     for spec in (
-        _spec("attention", lease_free=True),
+        _spec("issues", lease_free=True),
+        _spec("attention", lease_free=True),  # hidden compatibility alias
         _spec("audit", lease_free=True),
         _spec("active-leases", lease_free=True),
         _spec("review-queue", lease_free=True),
@@ -42,6 +43,8 @@ ADMIN_COMMAND_SPECS = {
         _spec("review-reject", operation_scoped=True),
         _spec("inspect", lease_free=True),
         _spec("kill", lease_free=True),
+        _spec("kill-all", lease_free=True),
+        _spec("kill-all-expired", lease_free=True),
         _spec("holds", lease_free=True),
         _spec("recover", resolve_operation=True, operation_scoped=True),
         _spec(
