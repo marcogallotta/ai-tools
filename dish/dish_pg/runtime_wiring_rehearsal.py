@@ -338,7 +338,7 @@ def _validate_evidence(
             errors.append("service did not prove the TEST profile")
         if isolation.get("asana_environment_keys") != []:
             errors.append("service process had reachable Asana environment")
-        if isolation.get("supported_http_surfaces") != ["agent"]:
+        if isolation.get("supported_http_surfaces") != ["action", "agent"]:
             errors.append("PostgreSQL TEST service exposed unsupported HTTP surfaces")
         if isolation.get("bind_host") != "127.0.0.1" or isolation.get(
             "action_bind_host"
