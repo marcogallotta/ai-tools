@@ -4,11 +4,33 @@ This is the standing contract for Dish implementation and fix agents. Task hando
 
 ## Start from the supplied authority
 
-Use the exact authoritative HEAD/archive supplied with the task. Report its Git commit when available; otherwise report the authoritative archive hash and say that Git metadata is unavailable.
+Use the exact authoritative source supplied with the task. Report the exact source identity available for that authority (for example the supplied archive SHA-256 or an explicitly supplied commit identity). Do not invent a different source identity.
 
 Before changing Dish code, follow root `CLAUDE.md` and start at `dish/docs/architecture/index.md` for subsystem routing.
 
 Do not silently substitute another base or assume an unmerged parallel patch has landed.
+
+## Patch application and commit handoff
+
+Before applying a patch on a live checkout, determine the repository root with:
+
+```sh
+git rev-parse --show-toplevel
+```
+
+Patch paths must be interpreted relative to the repository root. If operating from a subdirectory, use the appropriate explicit directory/path handling rather than assuming `git apply` selected the intended files.
+
+A zero-error patch command is **not** proof that the patch changed the intended tree. Immediately after applying, verify:
+
+```sh
+git status --short
+git diff --stat
+git diff --check
+```
+
+Confirm that the expected files are actually modified before staging or committing. If the expected diff is absent, stop and correct the application path instead of reporting success.
+
+When committing a reviewed patch, commit that patch as its own commit unless the handoff explicitly says otherwise. Do not combine unrelated reviewed patches opportunistically.
 
 ## Scope and authority
 

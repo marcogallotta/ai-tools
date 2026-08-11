@@ -12,6 +12,8 @@ For Dish work, read the standing role contract before acting:
 
 These documents contain stable role policy so task handoffs can stay short and contain only the task-specific delta. If a handoff conflicts with a standing role contract, flag the conflict rather than silently choosing a new policy.
 
+For patch application or commit/integration work, follow the patch-application verification rule in `dish/docs/agents/implementation.md`: determine the repository root first and verify the expected diff exists after application. A successful command exit alone is not evidence that a patch was applied.
+
 ## Dish safety and environments
 
 - Genuine work uses production. Test is only for experiments, rehearsals, destructive testing, or Marco's explicit request. Confirm the target before an ambiguous mutation.
