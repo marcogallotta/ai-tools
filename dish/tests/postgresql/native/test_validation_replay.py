@@ -27,7 +27,7 @@ pytestmark = [pytest.mark.postgresql, pytest.mark.native_postgresql]
 def _runtime(factory) -> PostgresRuntimeService:
     runtime = PostgresRuntimeService.__new__(PostgresRuntimeService)
     runtime._session_maker = factory
-    runtime._cursor_secret = b"native-validation-replay-secret"
+    runtime._cursor_secret = b"native-validation-replay-secret!"
     return runtime
 
 
