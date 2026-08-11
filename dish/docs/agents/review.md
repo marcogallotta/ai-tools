@@ -8,6 +8,10 @@ For an ordinary merge review, answer:
 
 > Is there a sufficiently serious defect introduced or preserved by this patch that we should not merge yet?
 
+Your result is a **review verdict**, not an instruction to Marco to merge. The coordinator is the
+final integration/merge authority because it owns current live state, parallel-work dependencies,
+rebases, migration ordering, and missing certification.
+
 Classify findings:
 
 - `BLOCKER` — materially unsafe or wrong to merge;
@@ -73,11 +77,23 @@ Block the pending patch only when the finding is confirmed against that exact pa
 
 Return:
 
-1. `MERGE` or `BLOCK`;
-2. `BLOCKER` findings with concrete failure mechanism;
-3. useful `FOLLOW-UP`/`OBSERVATION` findings;
-4. exact missing environment-specific certification, if any;
-5. whether another deep review is required.
+1. `VERDICT: MERGE` or `VERDICT: BLOCK`;
+2. exact reviewed base/HEAD identity and patch identity;
+3. `BLOCKER` findings with concrete failure mechanism;
+4. useful `FOLLOW-UP`/`OBSERVATION` findings only when they matter;
+5. known integration/rebase/migration-order dependencies;
+6. whether another deep review is actually required;
+7. a concise **COORDINATOR HANDOFF** containing only facts needed for the coordinator's final disposition;
+8. an exact testing line for Marco:
+   - `TESTS TO RUN: <exact command(s)>` for genuinely missing local/environment-specific certification; or
+   - `TESTS TO RUN: NONE.`
+
+Do not merely say that native PostgreSQL, browser, or other environment certification is missing:
+provide the exact established command when one is required. Do not invent a command or test node.
+
+Do **not** tell Marco to merge directly. `VERDICT: MERGE` means the reviewed semantic patch is
+acceptable within the review scope; the coordinator may still require a mechanical update, rebase,
+integration-order adjustment, targeted fix, or missing certification before issuing `MERGE`.
 
 ### If a fix is required
 
@@ -103,6 +119,16 @@ Then state the after-fix disposition as exactly one of:
 
 If your instructions change later, reissue the entire replacement handoff; never provide an addendum that requires Marco to combine messages.
 
-### If mergeable
+### After a blocker fix
 
-State the merge verdict clearly and separate missing local/environment certification from tests already supplied by the implementation agent.
+If a prior review already established the surrounding design and isolated a concrete blocker, the
+next review should normally be a **focused recheck of that blocker**, not a fresh broad review.
+Reopen broader review only when the fix materially changes the previously accepted design or exposes
+a new concrete merge-critical uncertainty.
+
+### If verdict is merge
+
+State `VERDICT: MERGE` clearly, provide the coordinator handoff, and give `TESTS TO RUN` exactly
+as required above. Never ask Marco to rerun evidence already supplied by the implementation agent.
+
+Do not issue `MERGE` as an integration instruction and do not tell Marco to merge directly.

@@ -64,16 +64,23 @@ Do not let the delta become a second policy manual.
 
 ## Always handoff-ready
 
-`LIVE_DELTA.md` must be safe to give to a fresh coordinator at any time. Update it when material state changes.
+For an **intentional coordinator replacement**, prefer a repository-first handoff:
 
-A successor should be able to read:
+1. prepare one synchronization patch containing durable process/state not yet represented in HEAD;
+2. get that patch reviewed and landed;
+3. confirm the new authoritative HEAD;
+4. hand the successor that repository.
+
+When this succeeds, the successor should not need conversation history or a standing external policy bundle.
+
+`LIVE_DELTA.md` remains the crash/emergency fallback for orchestration state that could not be synchronized before replacement. Keep it safe to hand to a fresh coordinator at any time and update it when material state changes.
+
+A successor should be able to continue from:
 
 1. root `CLAUDE.md`;
 2. this file;
-3. exact repository HEAD/checkpoint;
-4. current `LIVE_DELTA.md`;
-
-and continue without replaying conversation history.
+3. exact authoritative repository HEAD;
+4. `LIVE_DELTA.md` only when post-HEAD orchestration state still exists.
 
 If the live delta is unavailable, repository HEAD remains durable truth but pending orchestration may be missing. Ask Marco for the latest handoff before making decisions about unmerged work.
 
@@ -82,16 +89,28 @@ If the live delta is unavailable, repository HEAD remains durable truth but pend
 For each returned patch:
 
 1. identify the exact base and patch identity;
-2. perform a bounded merge-gate review;
-3. classify the review route:
-   - `NORMAL` — ordinary high-signal merge review;
-   - `SPECIALIST` — core correctness depends on a high-consequence invariant that needs deeper reasoning;
-   - `AUDIT ONLY` — normal merge review is sufficient; deeper search belongs in periodic audit.
-4. when `SPECIALIST`, give Marco a complete standalone handoff for a fresh reviewer and continue coordinating other work.
+2. perform the required bounded merge-gate review;
+3. decide **where** that review should happen based on coordination cost:
+   - keep it central when the coordinator can reach the needed decision quickly without materially stalling orchestration;
+   - fork a fresh review/specialist agent when doing the work centrally would make the coordinator the bottleneck;
+   - avoid forking trivial work when Marco's manual coordination would become the larger bottleneck.
+4. err slightly toward keeping manual coordination load off Marco, especially as coordinator replacement becomes cheaper.
 
-Escalation is about semantic risk, not patch size. Typical specialist boundaries include authority/identity, PostgreSQL concurrency, destructive migration/recovery, security/trust, and irreversible release/cutover behavior.
+`SPECIALIST` describes delegated expertise/context, not an automatically deeper review standard. A difficult authority, concurrency, migration, security, or release question may still be reviewed centrally when it is fast. Conversely, fork work when the time/context cost is large enough to stall coordination.
 
-Do not perform an exhaustive specialist review yourself merely because a patch is difficult.
+Review depth and delegation are separate decisions. Deeper defect hunting beyond the merge question belongs in the audit layer unless a concrete merge-critical concern requires it.
+
+## Time pressure
+
+When Marco explicitly says `TIME PRESSURE`, treat it as a literal hard operational constraint.
+
+Prioritize the shortest safe decision that unblocks the immediate next action. Do not spend that window improving process docs, expanding handoffs, performing optional review, or searching for additional defect classes once the immediate merge question is adequately answered. Defer process cleanup and deeper assurance to later work/audit unless there is concrete evidence of immediate material danger.
+
+## Human review escalation
+
+Marco is the only human driving the project. Escalate something specifically for Marco's judgment only when his decision is genuinely necessary and materially affects the next action.
+
+Keep such escalations focused on the most important decision. Do not dump background, speculative findings, or information that does not change what he needs to decide or do.
 
 ## Merge gate
 
