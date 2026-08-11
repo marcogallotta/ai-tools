@@ -14,9 +14,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_action_snapshot_does_not_depend_on_stage9_execution_module() -> None:
-    source = (ROOT / "dish_tool" / "application_service.py").read_text(encoding="utf-8")
-    assert "from .submission_authority import submission_authority_facts" in source
-    assert "from .step9 import" not in source
+    application_source = (ROOT / "dish_tool" / "application_service.py").read_text(
+        encoding="utf-8"
+    )
+    snapshot_source = (ROOT / "dish_tool" / "workflow_snapshot.py").read_text(
+        encoding="utf-8"
+    )
+    assert "from .workflow_snapshot import build_workflow_snapshot" in application_source
+    assert "from .step9 import" not in application_source
+    assert "from .submission_authority import submission_authority_facts" in snapshot_source
+    assert "from .step9 import" not in snapshot_source
 
 
 def test_stage9_keeps_compatibility_surface_backed_by_neutral_authority() -> None:
