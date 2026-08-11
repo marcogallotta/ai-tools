@@ -2,6 +2,16 @@
 
 Read `README.md` for repository purpose and host integration. For every change under `dish/`, start at [`dish/docs/architecture/index.md`](dish/docs/architecture/index.md) and follow its task routing to the relevant ownership and invariant documents. Operational commands belong in runbooks; maintained architecture claims belong only in the architecture knowledge base.
 
+## Agent roles
+
+For Dish work, read the standing role contract before acting:
+
+- **Coordinator/master:** [`dish/docs/agents/coordinator.md`](dish/docs/agents/coordinator.md)
+- **Implementation/fix agent:** [`dish/docs/agents/implementation.md`](dish/docs/agents/implementation.md)
+- **Patch/review specialist:** [`dish/docs/agents/review.md`](dish/docs/agents/review.md)
+
+These documents contain stable role policy so task handoffs can stay short and contain only the task-specific delta. If a handoff conflicts with a standing role contract, flag the conflict rather than silently choosing a new policy.
+
 ## Dish safety and environments
 
 - Genuine work uses production. Test is only for experiments, rehearsals, destructive testing, or Marco's explicit request. Confirm the target before an ambiguous mutation.
