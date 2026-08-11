@@ -240,12 +240,10 @@ def test_manifest_fails_closed_on_malformed_or_inexact_task(
         )
 
 
-def test_manifest_falls_back_to_last_known_section_when_task_has_left_the_project(
+def test_manifest_omits_departed_task_when_operator_allows_it(
     tmp_path: Path,
 ) -> None:
-    """dish still governs a task after it leaves live project membership (e.g. moved to
-    Cooking History once eaten) -- the manifest uses its last known section instead of
-    failing closed."""
+    """The explicit production opt-in permanently excludes a departed task."""
     database = tmp_path / "test.sqlite3"
     _database(database, "100", last_known_sections={"100": "901"})
     project_gid = "900"
@@ -256,8 +254,9 @@ def test_manifest_falls_back_to_last_known_section_when_task_has_left_the_projec
         project_gid=project_gid,
         read_task=lambda _gid: departed,
         environment="production",
+        allow_departed_tasks=True,
     )
-    assert value["tasks"]["100"]["section_id"] == str(target_uuid("section", "901"))
+    assert "100" not in value["tasks"]
 
 
 def test_test_manifest_preserves_project_membership_failures(tmp_path: Path) -> None:
