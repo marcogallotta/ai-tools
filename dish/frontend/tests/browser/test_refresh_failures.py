@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import expect
 
 from frontend.tests.browser.support.payloads import CardSpec, TASK_ALPHA, TASK_BETA, TASK_DELTA, TASK_GAMMA
@@ -94,7 +95,11 @@ def test_session_service_failure_conceals_protected_content(acceptance):
     _cards(acceptance)
     acceptance.login()
     acceptance.runtime.auth.validation_failure = "session_unavailable"
-    acceptance.page.evaluate("window.dispatchEvent(new Event('pageshow'))")
+    try:
+        acceptance.page.evaluate("window.dispatchEvent(new Event('pageshow'))")
+    except PlaywrightError as error:
+        if "Execution context was destroyed" not in str(error):
+            raise
     expect(acceptance.page).to_have_url(re.compile(r"/login\?return="))
     expect(acceptance.page.locator('#app:not([hidden])')).to_have_attribute("data-shell-state", "login")
     acceptance.assert_clean(allowed_http_errors=[(503, "/frontend/session")])
