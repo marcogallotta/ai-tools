@@ -10,9 +10,6 @@ from typing import Any
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
-DEFAULT_POSTGRESQL_DSN = (
-    "postgresql+psycopg://dish:dish@127.0.0.1:55432/dish_stage_a_test"
-)
 NATIVE_POSTGRESQL_UNAVAILABLE = (
     "native PostgreSQL unavailable: rerun with --postgresql and an isolated "
     "DISH_TEST_POSTGRESQL_DSN; SQLite and PGlite are not certification substitutes"
@@ -38,13 +35,23 @@ class NativePostgreSQLIdentity:
         return asdict(self)
 
 
-def postgresql_dsn() -> str:
-    return os.environ.get("DISH_TEST_POSTGRESQL_DSN", DEFAULT_POSTGRESQL_DSN)
+def postgresql_dsn() -> str | None:
+    """Return the explicitly configured DSN, or None if unconfigured.
+
+    There is deliberately no fallback default: a fallback that happens to be
+    reachable (e.g. shared TEST infrastructure) would let native-certification
+    silently drop and re-migrate a real database's schema instead of failing
+    closed. Callers that connect must go through probe_native_postgresql(),
+    which turns an unset DSN into NativePostgreSQLUnavailable.
+    """
+    return os.environ.get("DISH_TEST_POSTGRESQL_DSN")
 
 
-def redacted_dsn(dsn: str) -> str:
+def redacted_dsn(dsn: str | None) -> str:
     """Return a report-safe DSN without credentials or query secrets."""
 
+    if not dsn:
+        return "(DISH_TEST_POSTGRESQL_DSN not set)"
     url = make_url(dsn)
     return url.render_as_string(hide_password=True)
 
@@ -53,6 +60,11 @@ def probe_native_postgresql(dsn: str | None = None) -> NativePostgreSQLIdentity:
     """Connect once and prove the target is native PostgreSQL, not SQLite/PGlite."""
 
     target = dsn or postgresql_dsn()
+    if not target:
+        raise NativePostgreSQLUnavailable(
+            "DISH_TEST_POSTGRESQL_DSN is not set; native PostgreSQL certification "
+            "requires an explicit isolated DSN and never defaults to shared infrastructure"
+        )
     engine = create_engine(target, future=True, pool_pre_ping=True)
     try:
         if engine.dialect.name != "postgresql":

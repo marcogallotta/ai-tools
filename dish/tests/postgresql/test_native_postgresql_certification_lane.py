@@ -10,10 +10,29 @@ from tests.support.postgresql.certification import (
     discover_native_postgresql_inventory,
     NativePostgreSQLIdentity,
     NativePostgreSQLUnavailable,
+    postgresql_dsn,
+    probe_native_postgresql,
+    redacted_dsn,
 )
 
 pytestmark = pytest.mark.smoke
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_postgresql_dsn_has_no_shared_infrastructure_fallback(monkeypatch) -> None:
+    """An unset DISH_TEST_POSTGRESQL_DSN must never resolve to a real database.
+
+    A prior default silently pointed at TEST's actual dark-launch database
+    (127.0.0.1:55432/dish_stage_a_test). native_migration_database and
+    tests/support/postgresql/core.py's _reset_postgresql_schema() DROP and
+    re-migrate whatever schema this resolves to, so an unconfigured DSN must
+    fail closed via NativePostgreSQLUnavailable, not connect to anything.
+    """
+    monkeypatch.delenv("DISH_TEST_POSTGRESQL_DSN", raising=False)
+    assert postgresql_dsn() is None
+    assert redacted_dsn(postgresql_dsn()) == "(DISH_TEST_POSTGRESQL_DSN not set)"
+    with pytest.raises(NativePostgreSQLUnavailable):
+        probe_native_postgresql()
 
 
 def test_native_postgresql_certification_inventory_is_derived_and_nonempty() -> None:
