@@ -21,7 +21,7 @@ def test_every_current_action_and_admin_command_has_a_treatment() -> None:
 def test_shadow_only_exceptions_keep_their_intended_treatments() -> None:
     import dish_shadow.policy as shadow_policy
 
-    assert len(shadow_policy._SHADOW_ONLY_OVERRIDES) == 12
+    assert len(shadow_policy._SHADOW_ONLY_OVERRIDES) == 17
     assert treatment_for("create").treatment == "execute"
     assert treatment_for("recover").treatment == "capture_only"
     assert treatment_for("repair-destination").treatment == "capture_only"
@@ -32,7 +32,12 @@ def test_shadow_only_exceptions_keep_their_intended_treatments() -> None:
     assert treatment_for("review-inspect").treatment == "excluded"
     assert treatment_for("review-approve").treatment == "capture_only"
     assert treatment_for("review-reject").treatment == "capture_only"
+    assert treatment_for("issues").treatment == "excluded"
+    assert treatment_for("audit").treatment == "excluded"
+    assert treatment_for("active-leases").treatment == "excluded"
     assert treatment_for("kill").treatment == "capture_only"
+    assert treatment_for("kill-all").treatment == "capture_only"
+    assert treatment_for("kill-all-expired").treatment == "capture_only"
 
 
 def test_operator_queue_commands_are_explicitly_shadow_excluded() -> None:
