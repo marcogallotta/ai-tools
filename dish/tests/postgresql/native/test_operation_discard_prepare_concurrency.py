@@ -13,6 +13,7 @@ from dish_pg import stage5_models as tx
 from dish_pg.command_port import CommandCall, PostgresCommandPort
 from dish_pg.database import session_scope
 from dish_pg.transition import ProjectionService
+from dish_pg.workflow import WorkflowAuthorityRepository
 from tests.support.canonical import TASK
 from tests.support.postgresql.command import _add_verification_queue
 from tests.support.postgresql.concurrency import (
@@ -36,6 +37,19 @@ def _require_native_postgresql(request: pytest.FixtureRequest) -> None:
 
 
 
+class _DelayedOperationRepository(WorkflowAuthorityRepository):
+    def __init__(self, *args, gate: TransactionGate, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._gate = gate
+
+    def _locked_operation(self, *, generation_id, operation_id):
+        self._gate.block()
+        return super()._locked_operation(
+            generation_id=generation_id,
+            operation_id=operation_id,
+        )
+
+
 class _DelayedOperationPort(PostgresCommandPort):
     def __init__(
         self,
@@ -44,11 +58,7 @@ class _DelayedOperationPort(PostgresCommandPort):
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
-        self._gate = gate
-
-    def _lock_operation_transition(self, operation_id):
-        self._gate.block()
-        return super()._lock_operation_transition(operation_id)
+        self.workflow.repo = _DelayedOperationRepository(self.session, gate=gate)
 
 
 def _command_port(session, *, delayed=None) -> PostgresCommandPort:
