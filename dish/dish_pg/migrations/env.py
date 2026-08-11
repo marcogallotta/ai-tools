@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -19,6 +20,10 @@ from dish_pg import import_link_models  # noqa: F401 -- register typed import li
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name, disable_existing_loggers=False)
+
+_env_database_url = os.environ.get("DISH_PG_DATABASE_URL")
+if _env_database_url:
+    config.set_main_option("sqlalchemy.url", _env_database_url)
 
 target_metadata = Base.metadata
 
