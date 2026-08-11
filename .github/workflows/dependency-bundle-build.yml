@@ -1,0 +1,70 @@
+name: Build and publish dependency bundle
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-publish:
+    name: Build and publish canonical dependency bundle
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Compute expected bundle identity
+        id: expected
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/dependency_bundle.py expected \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --github-output "$GITHUB_OUTPUT"
+          python3 scripts/dependency_bundle.py expected \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --json
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ steps.expected.outputs.python_version }}
+
+      - name: Build canonical staging wheelhouse
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf wheelhouse-serial
+          mkdir -p wheelhouse-serial
+          python -m pip download --only-binary=:all: \
+            -r dish/requirements-test.txt -d wheelhouse-serial
+          python -m pip download --only-binary=:all: \
+            -r tools/requirements.txt -d wheelhouse-serial
+          python -m pip download --only-binary=:all: \
+            -r dish/requirements-flake.txt -d wheelhouse-serial
+
+      - name: Build immutable bundle assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .ci/dependency-bundle-publication
+          python scripts/dependency_bundle.py build \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --wheelhouse wheelhouse-serial \
+            --output-dir .ci/dependency-bundle-publication \
+            --source-commit "$GITHUB_SHA"
+
+      - name: Publish authoritative Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARCHIVE_NAME: ${{ steps.expected.outputs.archive_name }}
+          CHECKSUM_NAME: ${{ steps.expected.outputs.checksum_name }}
+          MANIFEST_NAME: ${{ steps.expected.outputs.manifest_name }}
+        run: |
+          set -euo pipefail
+          python scripts/dependency_bundle.py publish \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --archive ".ci/dependency-bundle-publication/$ARCHIVE_NAME" \
+            --checksum ".ci/dependency-bundle-publication/$CHECKSUM_NAME" \
+            --manifest ".ci/dependency-bundle-publication/$MANIFEST_NAME" \
+            --source-commit "$GITHUB_SHA"

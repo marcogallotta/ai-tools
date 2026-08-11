@@ -108,9 +108,12 @@ $OUT/$BUNDLE_ID.manifest.json
 ```
 
 The authoritative publication is the GitHub Release tagged
-`dependency-bundle-$BUNDLE_ID`. Publication originates on the trusted machine holding the canonical
-wheelhouse; GitHub Actions is deliberately not asked to reconstruct private/inaccessible inputs.
-Verify and publish with the same checkout and source commit:
+`dependency-bundle-$BUNDLE_ID`. Publication runs via manual dispatch of the
+`dependency-bundle-build` GitHub Actions workflow, which builds the staging wheelhouse and the
+bundle assets on a `ubuntu-24.04` runner matching `ci/dependency-bundle-target.json` and publishes
+the Release from that same run. Trigger it from a checkout of the commit whose dependency manifests
+are being bundled. A local build/publish from the commands below remains available for a dependency
+that a hosted runner cannot fetch; verify and publish with the same checkout and source commit:
 
 ```sh
 "$BUNDLE_PYTHON" scripts/dependency_bundle.py publish \
