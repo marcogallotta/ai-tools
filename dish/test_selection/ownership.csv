@@ -241,6 +241,10 @@ dish_tool/workflow_policy.py,production,4,4,authority,tests/test_workflow_policy
 dish_tool/workflow_snapshot.py,production,4,4,authority; read-model,tests/test_application_service.py,tests/test_access_contract.py; tests/test_semantic_proposal_bundle_workflow.py; tests/test_service_runtime_boundary.py,none,,focused authority/identity; smoke,Add database-boundary when durable SQLite fact selection changes. | Add mutation evidence when authoritative live-task reread or canonical identity semantics change.,critical authority or canonical-identity invariant changes; durable SQLite state or recovery semantics change
 dish_tool/abandonment_view.py,production,4,4,authority; recovery; workflow-policy,tests/test_abandonment_admin_workflow.py; tests/test_application_service.py,tests/test_abandonment_reconciliation.py; tests/test_service_runtime_boundary.py,none,,focused authority/identity; focused recovery/persistence; smoke,Add database-boundary when persisted abandonment fact selection changes. | Add mutation evidence when abandonment recovery action semantics change.,durable SQLite state or recovery semantics change; critical authority or recovery invariant changes
 docs/abandoned-run-ownership-design.md,documentation,1,1,documentation,,,none,,,,
+docs/agents/coordinator.md,documentation,1,1,agent-policy; documentation,,,none,,,,
+docs/agents/index.md,documentation,1,1,agent-policy; documentation,,,none,,,,
+docs/agents/process-improvement-todo.md,documentation,1,1,agent-policy; documentation,,,none,,,,
+docs/agents/workflow.md,documentation,1,1,agent-policy; documentation,,,none,,,,
 docs/architecture.md,documentation,1,1,documentation,,,none,,,,
 docs/architecture/authority-and-data-ownership.md,documentation,1,1,architecture; documentation,tests/test_architecture_knowledge_base.py,,none,,,,
 docs/architecture/commands-and-surfaces.md,documentation,1,1,architecture; documentation,tests/test_architecture_knowledge_base.py,,none,,,,

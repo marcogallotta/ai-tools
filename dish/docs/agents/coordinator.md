@@ -8,9 +8,11 @@ A coordinator must be replaceable without depending on one conversation survivin
 
 Current coordination state is:
 
-> last landed repository checkpoint + one external `LIVE_DELTA.md`
+> exact authoritative repository HEAD + adopted Asana coordination projects + one external `LIVE_DELTA.md` for remaining orchestration state
 
-The repository is durable truth. The external live delta contains only post-checkpoint orchestration state that is not yet represented in Git.
+The repository is durable code/process/architecture truth, and GitHub is source/history authority. Adopted Asana projects are live orchestration truth for their lanes. The external live delta contains only transient coordination state that is not already represented in authoritative HEAD or an adopted Asana project.
+
+TEST/production deployment state is separate from source history. Do not infer what is running from GitHub HEAD or Asana. Use available read-only environment evidence when it matters, and record missing deployment identity as unresolved state rather than guessing.
 
 The coordinator may prepare patches, but it does not create repository history itself. Repository synchronization is delegated work followed by normal review and a confirmed merge.
 
@@ -48,7 +50,7 @@ Do not choose by filename or filesystem modification time.
 
 ## What belongs in the live delta
 
-Keep only post-checkpoint coordination state:
+Keep only post-checkpoint coordination state that is not already maintained in an adopted Asana project:
 
 - returned but unmerged patches and exact identities;
 - current review/specialist-review rounds;
@@ -59,6 +61,8 @@ Keep only post-checkpoint coordination state:
 - new durable decisions not yet represented in HEAD;
 - active audit findings while they are being triaged/fixed;
 - immediate next actions.
+
+For adopted projects, section placement, task notes, and task comments are the live state. Do not mirror that state into `LIVE_DELTA.md` merely for coordinator visibility.
 
 Do not let the delta become a second policy manual.
 
@@ -78,11 +82,33 @@ When this succeeds, the successor should not need conversation history or a stan
 A successor should be able to continue from:
 
 1. root `CLAUDE.md`;
-2. this file;
+2. `dish/docs/agents/index.md` and this role contract;
 3. exact authoritative repository HEAD;
-4. `LIVE_DELTA.md` only when post-HEAD orchestration state still exists.
+4. `Dish — Coordinator` plus the relevant adopted specialist Asana projects;
+5. `LIVE_DELTA.md` only when orchestration state still exists outside those projects.
 
-If the live delta is unavailable, repository HEAD remains durable truth but pending orchestration may be missing. Ask Marco for the latest handoff before making decisions about unmerged work.
+If Asana or the live delta is unavailable, repository HEAD remains durable truth but transient orchestration may be missing. Ask Marco for the latest handoff before making decisions about unmerged work.
+
+## Asana live coordination
+
+The adopted pilot projects are:
+
+- coordinator-owned work: `Dish — Coordinator` (`1217382473444945`);
+- Workflow specialist work: `Dish — Workflow` (`1217381674871544`).
+
+The coordinator owns cross-project visibility. A specialist should be able to operate by scanning its own project; do not make specialists scan every Dish development project merely so the coordinator can reconstruct global state.
+
+Rules:
+
+- keep coordinator-owned process, integration, and cross-lane work in `Dish — Coordinator`;
+- treat each adopted specialist project as the complete transient state for that lane and follow its standing role contract;
+- scan the relevant adopted projects before dispatch, overlap, replacement, blocker, or status decisions;
+- do not create a shared global execution mirror solely for coordinator visibility;
+- do not duplicate tasks or require synchronized duplicate lifecycle moves across projects. Multi-home only when one work item genuinely belongs in more than one area, not as a visibility substitute;
+- section placement is lifecycle state, task notes are the current takeover snapshot, and comments preserve meaningful chronology;
+- update material state as part of the work. If project state is stale or missing, correct it before relying on it for takeover or dispatch;
+- record exact GitHub commit, patch, branch, PR, or artifact identities in task state when they matter. GitHub remains the authority for source/history and code artifacts;
+- when TEST/production runtime identity matters, record the observed environment evidence or explicitly record that it is unknown. Never substitute repository HEAD for deployed-state evidence.
 
 ## Patch intake and review routing
 

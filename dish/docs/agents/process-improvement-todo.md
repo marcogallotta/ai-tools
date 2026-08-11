@@ -23,7 +23,7 @@ These are explicitly **not adopted policy yet**. They are retained so they survi
 ## Human and specialist roles
 
 - Refine the small set of situations that genuinely require Marco's explicit human judgment; keep those escalations focused on the highest-value decision.
-- Investigate durable coordinator-like standing contracts for recurring specialist agents (workflow, frontend, PostgreSQL, release/cutover, etc.) so task handoffs carry live delta rather than repeated stable instructions.
+- Extend the adopted standing-contract pattern beyond Workflow to recurring specialist agents such as frontend, PostgreSQL, and release/cutover after the pilot demonstrates reliable takeover.
 
 ## Workflow / PostgreSQL cutover discussion
 
@@ -33,14 +33,13 @@ These are explicitly **not adopted policy yet**. They are retained so they survi
 
 ## Live coordination / Asana / Git
 
-- Design a shared live-development control plane using Asana rather than coordinator-local drift files: queued/proposed work, in-flight work, exact working HEAD/base, expected file/semantic overlap, review state, audit state, blockers, missing certification, and completion history should be visible to agents and Marco.
-- Explore specialist-role projects plus one shared execution project, including multi-homing so specialist backlogs can feed a single global queue without duplicating state.
-- Define safe task state transitions/claiming rules and the minimum task metadata needed for a replacement agent to take over directly from repository + Asana without a bespoke handoff bundle.
-- Explore using GitHub/remote Git as the normal code-artifact transport: Asana task -> exact base/work state -> agent branch/commit/PR -> exact commit/PR identity written back to Asana -> reviewer/merge flow. Prefer Git identities over anonymous patch-file transport when feasible.
-- Verify the practical GitHub connector/tooling path available to coordinator/reviewer/implementation agents before adopting it.
-- The current Asana connector can list/read attachment metadata/URLs but does not expose attachment upload. Investigate whether attachment upload needs a different integration; do not assume Asana itself lacks API support.
-- Keep Git/repository as durable code/process/architecture truth. Treat Asana as candidate live orchestration truth only after the coordination design is reviewed and adopted.
-- Reassess whether `LIVE_DELTA.md` is still needed as anything more than an emergency fallback once Asana-backed live state is reliable.
+- The `Dish — Coordinator` and `Dish — Workflow` Asana projects are the adopted pilot for live coordination. Validate that a replacement coordinator/Workflow specialist can take over from repository + Asana without conversation reconstruction, then expand the specialist-project pattern deliberately.
+- Define safe claiming/concurrency before multiple autonomous agents can independently claim the same `Ready` work; section movement alone is not an atomic claim mechanism.
+- Investigate moving concurrent local Codex/Claude implementation and investigation work out of one shared `main` checkout and into isolated Git worktrees, including creation/cleanup ownership, exact-base identity, integration, and collision rules.
+- Investigate a first-class read-only way for agents to determine the exact code/schema/config/runtime currently deployed in TEST and production. GitHub source/history and Asana coordination state must not be treated as proof of deployed state.
+- GitHub is adopted source/history authority. Keep exact Git identities in Asana task state when relevant; do not make Asana attachments a second code-artifact transport.
+- Use specialist projects rather than a shared global execution mirror for coordinator visibility. Revisit multi-homing only for genuinely cross-area work and avoid any design that requires duplicate lifecycle synchronization.
+- Reassess whether `LIVE_DELTA.md` is still needed as anything more than an emergency/unadopted-lane fallback once the Asana pilot is proven reliable.
 
 ## Audit design follow-up
 

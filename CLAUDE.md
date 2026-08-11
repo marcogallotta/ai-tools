@@ -4,13 +4,11 @@ Read `README.md` for repository purpose and host integration. For every change u
 
 ## Agent roles
 
-For Dish work, read the standing role contract before acting:
+For Dish work, role routing lives in [`dish/docs/agents/index.md`](dish/docs/agents/index.md).
 
-- **Coordinator/master:** [`dish/docs/agents/coordinator.md`](dish/docs/agents/coordinator.md)
-- **Implementation/fix agent:** [`dish/docs/agents/implementation.md`](dish/docs/agents/implementation.md)
-- **Patch/review specialist:** [`dish/docs/agents/review.md`](dish/docs/agents/review.md)
+If you are told to assume, act as, or hand work to a named Dish role, read that index first and then the mapped standing role contract before acting. Do not infer role policy from a nearby file or repeat stable role rules in task handoffs.
 
-These documents contain stable role policy so task handoffs can stay short and contain only the task-specific delta. If a handoff conflicts with a standing role contract, flag the conflict rather than silently choosing a new policy.
+Standing role contracts contain stable policy so task handoffs can stay short and contain only the task-specific delta. If a handoff conflicts with a standing role contract, flag the conflict rather than silently choosing a new policy.
 
 For patch application or commit/integration work, follow the patch-application verification rule in `dish/docs/agents/implementation.md`: determine the repository root first and verify the expected diff exists after application. A successful command exit alone is not evidence that a patch was applied.
 
