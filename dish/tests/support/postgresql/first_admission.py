@@ -34,7 +34,7 @@ from tests.support.postgresql.release import (
 )
 from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
 
-def _prepare_approved_cutover(factory, ids, context, task_id):
+def _prepare_approved_cutover(factory, ids, context, task_id, *, rehearsal_kind: str | None = None):
     with session_scope(factory) as session:
         service, candidate_id = _prepare_candidate(session, ids, context, task_id)
         bundle = service.build_evidence_bundle(
@@ -67,8 +67,23 @@ def _prepare_approved_cutover(factory, ids, context, task_id):
             manifest={"path": "/var/lib/dish/legacy-writer-fence.json"},
             prepared_at=NOW + timedelta(minutes=5),
         )
+        rehearsal_id = None
+        if rehearsal_kind is not None:
+            if rehearsal_kind != "cutover":
+                raise AssertionError("cutover fixture only supports durable cutover rehearsal identity")
+            candidate = service._candidate(candidate_id)
+            run = service.start_rehearsal(
+                candidate_id=candidate_id,
+                rehearsal_kind=rehearsal_kind,
+                environment_identity=candidate.rehearsal_environment_identity,
+                source_manifest_sha256=candidate.source_manifest_sha256,
+                started_at=NOW + timedelta(minutes=5),
+            )
+            rehearsal_id = run.rehearsal_id
         cutover = service.prepare_cutover(
-            candidate_id=candidate_id, started_at=NOW + timedelta(minutes=5)
+            candidate_id=candidate_id,
+            started_at=NOW + timedelta(minutes=5),
+            rehearsal_id=rehearsal_id,
         )
         return candidate_id, closure.closure_id, cutover.cutover_run_id, fence.fence_id
 

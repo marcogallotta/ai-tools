@@ -173,13 +173,16 @@ class AuthorityActivation(Base):
     honest_binding_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid, ForeignKey("honest_contract_bindings.binding_id", ondelete="RESTRICT", name="fk_authact_honest")
     )
+    rehearsal_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("rehearsal_runs.rehearsal_id", ondelete="RESTRICT", name="fk_authact_rehearsal")
+    )
     schema_head: Mapped[str] = mapped_column(String(64), nullable=False)
     dish_release: Mapped[str] = mapped_column(String(128), nullable=False)
     honest_release: Mapped[str] = mapped_column(String(128), nullable=False)
     protocol_release: Mapped[str] = mapped_column(String(128), nullable=False)
     openapi_release: Mapped[str] = mapped_column(String(128), nullable=False)
     routing_release: Mapped[str] = mapped_column(String(128), nullable=False)
-    projection_epoch: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
+    projection_epoch: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     outcome: Mapped[str] = mapped_column(String(16), nullable=False)
     rollback_burned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -199,7 +202,20 @@ class AuthorityActivation(Base):
             "(outcome = 'aborted' AND rollback_burned_at IS NULL)",
             name="rollback_burn_matches_outcome",
         ),
-        UniqueConstraint("generation_id", "outcome", name="uq_activation_generation_outcome"),
+        Index(
+            "uq_authority_activation_live_generation",
+            "generation_id",
+            unique=True,
+            postgresql_where=text("outcome = 'activated'"),
+            sqlite_where=text("outcome = 'activated'"),
+        ),
+        Index(
+            "uq_authority_activation_live_projection_epoch",
+            "projection_epoch",
+            unique=True,
+            postgresql_where=text("outcome = 'activated'"),
+            sqlite_where=text("outcome = 'activated'"),
+        ),
     )
 
 
@@ -962,13 +978,58 @@ def _install_sqlite_immutability_triggers() -> None:
     for table_name in IMMUTABLE_TABLE_NAMES:
         table = Base.metadata.tables[table_name]
         safe = table_name.replace("-", "_")
+        if table_name == "authority_activations":
+            update_ddl = DDL(
+                """
+                CREATE TRIGGER authority_activations_immutable_update
+                BEFORE UPDATE ON authority_activations
+                BEGIN
+                    SELECT CASE WHEN
+                        OLD.activation_id IS NOT NEW.activation_id
+                        OR OLD.generation_id IS NOT NEW.generation_id
+                        OR OLD.import_run_id IS NOT NEW.import_run_id
+                        OR OLD.cutover_approval_id IS NOT NEW.cutover_approval_id
+                        OR OLD.legacy_bundle_id IS NOT NEW.legacy_bundle_id
+                        OR OLD.registry_version_id IS NOT NEW.registry_version_id
+                        OR OLD.honest_binding_id IS NOT NEW.honest_binding_id
+                        OR OLD.rehearsal_id IS NOT NEW.rehearsal_id
+                        OR OLD.schema_head IS NOT NEW.schema_head
+                        OR OLD.dish_release IS NOT NEW.dish_release
+                        OR OLD.honest_release IS NOT NEW.honest_release
+                        OR OLD.protocol_release IS NOT NEW.protocol_release
+                        OR OLD.openapi_release IS NOT NEW.openapi_release
+                        OR OLD.routing_release IS NOT NEW.routing_release
+                        OR OLD.projection_epoch IS NOT NEW.projection_epoch
+                        OR OLD.recorded_at IS NOT NEW.recorded_at
+                    THEN RAISE(ABORT, 'immutable authority row') END;
+                    SELECT CASE WHEN
+                        OLD.outcome <> 'activated'
+                        OR NEW.outcome <> 'aborted'
+                        OR OLD.rehearsal_id IS NULL
+                        OR NEW.rollback_burned_at IS NOT NULL
+                        OR NOT EXISTS (
+                            SELECT 1
+                              FROM cutover_runs cr
+                              JOIN rehearsal_runs rr
+                                ON rr.rehearsal_id = cr.rehearsal_id
+                             WHERE cr.rehearsal_id = OLD.rehearsal_id
+                               AND cr.state = 'rehearsal_torn_down'
+                               AND rr.status = 'running'
+                               AND rr.rehearsal_kind = 'cutover'
+                        )
+                    THEN RAISE(ABORT, 'immutable authority row') END;
+                END
+                """
+            )
+        else:
+            update_ddl = DDL(
+                f"CREATE TRIGGER {safe}_immutable_update BEFORE UPDATE ON {table_name} "
+                "BEGIN SELECT RAISE(ABORT, 'immutable authority row'); END"
+            )
         event.listen(
             table,
             "after_create",
-            DDL(
-                f"CREATE TRIGGER {safe}_immutable_update BEFORE UPDATE ON {table_name} "
-                "BEGIN SELECT RAISE(ABORT, 'immutable authority row'); END"
-            ).execute_if(dialect="sqlite"),
+            update_ddl.execute_if(dialect="sqlite"),
         )
         event.listen(
             table,

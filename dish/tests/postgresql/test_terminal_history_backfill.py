@@ -632,7 +632,7 @@ def test_0036_preexisting_import_fails_closed_until_exact_revocations_reconciled
     engine.dispose()
 
     command.upgrade(config, "head")
-    assert ALEMBIC_HEAD == "0037_release_identity_contract"
+    assert ALEMBIC_HEAD == "0038_cutover_rehearsal_identity"
 
     engine = create_engine(f"sqlite+pysqlite:///{database}", future=True)
     factory = sessionmaker(

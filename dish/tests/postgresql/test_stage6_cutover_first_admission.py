@@ -8,6 +8,7 @@ from alembic.config import Config
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from dish_pg import models
+from dish_pg import reservation_models as reservations
 from dish_pg import stage3_models as wf
 from dish_pg import stage6_models as rel
 from dish_pg.database import session_scope
@@ -42,6 +43,145 @@ from tests.support.postgresql.release import (
 from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
 
 
+
+
+def _cutover_rehearsal_id(session, candidate_id):
+    rehearsal = session.scalar(
+        select(rel.RehearsalRun).where(
+            rel.RehearsalRun.candidate_id == candidate_id,
+            rel.RehearsalRun.rehearsal_kind == "cutover",
+        )
+    )
+    assert rehearsal is not None
+    return rehearsal.rehearsal_id
+
+
+def test_admission_open_rehearsal_teardown_is_durable_idempotent_and_unblocks_generation(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    candidate_id, closure_id, cutover_id, fence_id = _prepare_approved_cutover(
+        factory, ids, context, task_id, rehearsal_kind="cutover"
+    )
+    _activate_authority(factory, ids, candidate_id, closure_id, cutover_id, fence_id)
+    _request_id, _run_id = _burn_and_open_admission(
+        factory, ids, context, task_id, candidate_id, cutover_id
+    )
+
+    torn_down_at = NOW + timedelta(minutes=8)
+    reason = "abandoned TEST cutover rehearsal before first request"
+    with session_scope(factory) as session:
+        service = ReleaseCandidateService(session, uuid_factory=lambda: _next(ids))
+        rehearsal_id = _cutover_rehearsal_id(session, candidate_id)
+        unrelated = session.scalar(
+            select(rel.RehearsalRun).where(
+                rel.RehearsalRun.candidate_id == candidate_id,
+                rel.RehearsalRun.rehearsal_kind == "activation",
+            )
+        )
+        assert unrelated is not None
+        with pytest.raises(ReleaseAuthorityError, match="identity conflict"):
+            service.teardown_rehearsal_cutover(
+                cutover_run_id=cutover_id,
+                rehearsal_id=unrelated.rehearsal_id,
+                reason=reason,
+                torn_down_at=torn_down_at,
+            )
+        with pytest.raises(ReleaseAuthorityError, match="ordinary rollback is prohibited"):
+            service.abort_cutover(
+                cutover_run_id=cutover_id,
+                reason="must not weaken ordinary abort",
+                aborted_at=torn_down_at,
+            )
+        torn_down = service.teardown_rehearsal_cutover(
+            cutover_run_id=cutover_id,
+            rehearsal_id=rehearsal_id,
+            reason=reason,
+            torn_down_at=torn_down_at,
+        )
+        assert torn_down.state == "rehearsal_torn_down"
+        reservation = session.scalar(
+            select(reservations.FirstRequestReservation).where(
+                reservations.FirstRequestReservation.cutover_run_id == cutover_id
+            )
+        )
+        assert reservation is not None and reservation.state == "cancelled"
+        control = session.get(rel.MutationAdmissionControl, context["generation_id"])
+        assert control is not None and control.state == "closed" and control.opened_at is None
+        activation = session.scalar(
+            select(models.AuthorityActivation).where(
+                models.AuthorityActivation.rehearsal_id == rehearsal_id
+            )
+        )
+        assert activation is not None and activation.outcome == "aborted"
+        assert activation.rollback_burned_at is None
+        assert session.scalar(
+            select(models.AuthorityActivation).where(
+                models.AuthorityActivation.generation_id == context["generation_id"],
+                models.AuthorityActivation.outcome == "activated",
+            )
+        ) is None
+        candidate = session.get(rel.ReleaseCandidate, candidate_id)
+        rehearsal = session.get(rel.RehearsalRun, rehearsal_id)
+        assert candidate is not None and candidate.status == "aborted"
+        assert rehearsal is not None and rehearsal.status == "failed"
+
+    # A new service/session must observe the same exact terminal proof and replay safely.
+    with session_scope(factory) as session:
+        service = ReleaseCandidateService(session, uuid_factory=lambda: _next(ids))
+        replay = service.teardown_rehearsal_cutover(
+            cutover_run_id=cutover_id,
+            rehearsal_id=rehearsal_id,
+            reason=reason,
+            torn_down_at=torn_down_at,
+        )
+        assert replay.state == "rehearsal_torn_down"
+        checkpoint = session.scalar(
+            select(rel.CutoverCheckpoint).where(
+                rel.CutoverCheckpoint.cutover_run_id == cutover_id,
+                rel.CutoverCheckpoint.checkpoint_kind == "rehearsal_cutover_torn_down",
+            )
+        )
+        assert checkpoint is not None
+        assert checkpoint.payload["reservation_state"] == "cancelled"
+        with pytest.raises(ReleaseAuthorityError, match="replay identity conflict"):
+            service.teardown_rehearsal_cutover(
+                cutover_run_id=cutover_id,
+                rehearsal_id=rehearsal_id,
+                reason="different reason",
+                torn_down_at=torn_down_at,
+            )
+
+
+def test_rehearsal_teardown_rejects_equivalent_real_cutover(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    candidate_id, closure_id, cutover_id, fence_id = _prepare_approved_cutover(
+        factory, ids, context, task_id
+    )
+    _activate_authority(factory, ids, candidate_id, closure_id, cutover_id, fence_id)
+    _burn_and_open_admission(factory, ids, context, task_id, candidate_id, cutover_id)
+    with session_scope(factory) as session:
+        rehearsal = session.scalar(
+            select(rel.RehearsalRun).where(rel.RehearsalRun.candidate_id == candidate_id)
+        )
+        assert rehearsal is not None
+        service = ReleaseCandidateService(session, uuid_factory=lambda: _next(ids))
+        with pytest.raises(ReleaseAuthorityError, match="real cutover"):
+            service.teardown_rehearsal_cutover(
+                cutover_run_id=cutover_id,
+                rehearsal_id=rehearsal.rehearsal_id,
+                reason="must fail",
+                torn_down_at=NOW + timedelta(minutes=8),
+            )
+        run = session.get(rel.CutoverRun, cutover_id)
+        activation = session.scalar(
+            select(models.AuthorityActivation).where(
+                models.AuthorityActivation.generation_id == context["generation_id"],
+                models.AuthorityActivation.outcome == "activated",
+            )
+        )
+        assert run is not None and run.state == "admission_open"
+        assert activation is not None and activation.rehearsal_id is None
 
 def test_cutover_is_resumable_admission_stays_closed_until_burn_and_first_outcome(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
@@ -200,6 +340,25 @@ def test_rollback_bundle_identity_migration_adds_nonblank_constraint(tmp_path: P
         assert "trim(legacy_bundle_id)" in checks[
             "ck_authority_activations_legacy_bundle_nonblank"
         ]
-        assert ALEMBIC_HEAD == "0037_release_identity_contract"
+        assert "rehearsal_id" in {
+            row["name"] for row in inspect(engine).get_columns("cutover_runs")
+        }
+        assert "rehearsal_id" in {
+            row["name"] for row in inspect(engine).get_columns("authority_activations")
+        }
+        indexes = {
+            row["name"]: row for row in inspect(engine).get_indexes("first_request_reservations")
+        }
+        assert indexes["uq_first_request_reservation_live_generation"]["unique"] == 1
+        with engine.connect() as connection:
+            index_sql = connection.scalar(
+                text(
+                    "SELECT sql FROM sqlite_master WHERE type='index' "
+                    "AND name='uq_first_request_reservation_live_generation'"
+                )
+            )
+        assert index_sql is not None
+        assert "WHERE state IN ('reserved','consumed')" in index_sql
+        assert ALEMBIC_HEAD == "0038_cutover_rehearsal_identity"
     finally:
         engine.dispose()

@@ -36,12 +36,14 @@ from .release_validation import (
     validate_typed_import_linkage,
 )
 from .release_evidence import (
+    CUTOVER_REHEARSAL_KIND,
     EVIDENCE_ARTIFACT_KINDS,
     REHEARSAL_CHECKPOINT_EVIDENCE_KINDS,
     RELEASE_IDENTITY_CONTRACT,
     REQUIRED_EVIDENCE,
     REQUIRED_REHEARSAL_CHECKPOINTS,
     REQUIRED_REHEARSALS,
+    SUPPORTED_REHEARSAL_KINDS,
     ReleaseAuthorityError,
     _is_sha256,
     _require_nonblank,
@@ -59,7 +61,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0037_release_identity_contract"
+ALEMBIC_HEAD = "0038_cutover_rehearsal_identity"
 
 
 class ReleaseCandidateService(
@@ -752,7 +754,7 @@ class ReleaseCandidateService(
                 or activation is not None
             ):
                 raise ReleaseAuthorityError(
-                    "generation admission control can be rebound only after an exact pre-burn abort"
+                    "generation admission control can be rebound only after an exact safely releasable abort"
                 )
             control.candidate_id = candidate_id
             control.control_revision += 1
@@ -842,7 +844,14 @@ class ReleaseCandidateService(
         started_at: datetime,
     ) -> rel.RehearsalRun:
         candidate = self._candidate(candidate_id)
-        if candidate.status != "assembling":
+        if rehearsal_kind not in SUPPORTED_REHEARSAL_KINDS:
+            raise ReleaseAuthorityError("unsupported rehearsal kind")
+        if rehearsal_kind == CUTOVER_REHEARSAL_KIND:
+            if candidate.status != "approved":
+                raise ReleaseAuthorityError(
+                    "cutover rehearsal requires an approved nonterminal candidate"
+                )
+        elif candidate.status != "assembling":
             raise ReleaseAuthorityError("rehearsal evidence is frozen after candidate validation")
         self._require_candidate_release_identity(candidate)
         _require_at_or_after(
@@ -850,8 +859,6 @@ class ReleaseCandidateService(
             field="started_at", floor_field="candidate created_at",
         )
         self._require_not_future(started_at, "started_at")
-        if rehearsal_kind not in REQUIRED_REHEARSALS:
-            raise ReleaseAuthorityError("unsupported rehearsal kind")
         environment_identity = _require_rehearsal_environment_identity(
             environment_identity, "environment_identity"
         )
@@ -1559,11 +1566,21 @@ class ReleaseCandidateService(
         approval = self.session.scalar(
             select(rel.CutoverApproval).where(rel.CutoverApproval.candidate_id == candidate_id)
         )
-        activation = self.session.scalar(
-            select(models.AuthorityActivation).where(
-                models.AuthorityActivation.generation_id == candidate.generation_id,
-                models.AuthorityActivation.outcome == "activated",
+        cutover = self.session.scalar(
+            select(rel.CutoverRun).where(rel.CutoverRun.candidate_id == candidate_id)
+        )
+        activation_conditions = [
+            models.AuthorityActivation.generation_id == candidate.generation_id,
+            models.AuthorityActivation.outcome == "activated",
+        ]
+        if cutover is None or cutover.rehearsal_id is None:
+            activation_conditions.append(models.AuthorityActivation.rehearsal_id.is_(None))
+        else:
+            activation_conditions.append(
+                models.AuthorityActivation.rehearsal_id == cutover.rehearsal_id
             )
+        activation = self.session.scalar(
+            select(models.AuthorityActivation).where(*activation_conditions)
         )
         manifest = {
             "format": "dish-stage6-evidence-bundle-v1",
@@ -1649,6 +1666,9 @@ class ReleaseCandidateService(
             if activation is None
             else {
                 "activation_id": str(activation.activation_id),
+                "rehearsal_id": (
+                    None if activation.rehearsal_id is None else str(activation.rehearsal_id)
+                ),
                 "registry_version_id": (
                     None if activation.registry_version_id is None else str(activation.registry_version_id)
                 ),

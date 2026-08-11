@@ -22,6 +22,8 @@ REQUIRED_EVIDENCE = (
     ("protocol_coherence", "service_openapi_routing"),
 )
 REQUIRED_REHEARSALS = ("full", "activation", "restore", "fault_injection")
+CUTOVER_REHEARSAL_KIND = "cutover"
+SUPPORTED_REHEARSAL_KINDS = (*REQUIRED_REHEARSALS, CUTOVER_REHEARSAL_KIND)
 RELEASE_IDENTITY_CONTRACT = "release-identity-v1"
 
 REQUIRED_REHEARSAL_CHECKPOINTS = {
@@ -49,6 +51,10 @@ REQUIRED_REHEARSAL_CHECKPOINTS = {
         "projection_retry",
         "restart_recovery",
     ),
+    # A cutover rehearsal is post-approval operational evidence. Its durable
+    # cutover checkpoints live on CutoverRun, so it has no release-gate
+    # RehearsalCheckpoint inventory of its own.
+    CUTOVER_REHEARSAL_KIND: (),
 }
 
 EVIDENCE_ARTIFACT_KINDS = {

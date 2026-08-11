@@ -184,7 +184,7 @@ class RehearsalRun(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "rehearsal_kind IN ('full','activation','restore','fault_injection')",
+            "rehearsal_kind IN ('full','activation','restore','fault_injection','cutover')",
             name="kind_allowed",
         ),
         CheckConstraint("status IN ('running','passed','failed')", name="status_allowed"),
@@ -212,6 +212,9 @@ class RehearsalRun(Base):
         UniqueConstraint(
             "candidate_id", "rehearsal_kind", "environment_identity", "source_manifest_sha256",
             name="uq_rehearsal_identity",
+        ),
+        UniqueConstraint(
+            "rehearsal_id", "candidate_id", name="uq_rehearsal_candidate_identity"
         ),
     )
 
@@ -345,6 +348,7 @@ class CutoverRun(Base):
     candidate_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("release_candidates.candidate_id", ondelete="RESTRICT"), nullable=False, unique=True
     )
+    rehearsal_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, unique=True)
     state: Mapped[str] = mapped_column(String(32), nullable=False, default="prepared")
     state_revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -354,16 +358,26 @@ class CutoverRun(Base):
         UniqueConstraint(
             "cutover_run_id", "candidate_id", name="uq_cutover_run_candidate_identity"
         ),
+        ForeignKeyConstraint(
+            ["rehearsal_id", "candidate_id"],
+            ["rehearsal_runs.rehearsal_id", "rehearsal_runs.candidate_id"],
+            name="fk_cutover_run_rehearsal_candidate",
+            ondelete="RESTRICT",
+        ),
         CheckConstraint(
             "state IN ('prepared','fenced','activated','rollback_burned','admission_open',"
-            "'first_admission_verified','completed','aborted')",
+            "'first_admission_verified','completed','aborted','rehearsal_torn_down')",
             name="state_allowed",
         ),
         CheckConstraint("state_revision > 0", name="positive_revision"),
         CheckConstraint(
-            "(state IN ('completed','aborted') AND terminal_at IS NOT NULL) OR "
-            "(state NOT IN ('completed','aborted') AND terminal_at IS NULL)",
+            "(state IN ('completed','aborted','rehearsal_torn_down') AND terminal_at IS NOT NULL) OR "
+            "(state NOT IN ('completed','aborted','rehearsal_torn_down') AND terminal_at IS NULL)",
             name="terminal_time_consistent",
+        ),
+        CheckConstraint(
+            "state <> 'rehearsal_torn_down' OR rehearsal_id IS NOT NULL",
+            name="teardown_requires_rehearsal",
         ),
     )
 

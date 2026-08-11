@@ -9,10 +9,12 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKeyConstraint,
+    Index,
     String,
     UniqueConstraint,
     Uuid,
     event,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.schema import DDL
@@ -27,7 +29,7 @@ class FirstRequestReservation(Base):
     plan_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
     cutover_run_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
     candidate_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
-    generation_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
+    generation_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     request_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False, unique=True)
     command_name: Mapped[str] = mapped_column(String(64), nullable=False)
     owner_id: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -90,6 +92,13 @@ class FirstRequestReservation(Base):
         ),
         UniqueConstraint(
             "generation_id", "candidate_id", name="uq_first_request_reservation_authority"
+        ),
+        Index(
+            "uq_first_request_reservation_live_generation",
+            "generation_id",
+            unique=True,
+            postgresql_where=text("state IN ('reserved','consumed')"),
+            sqlite_where=text("state IN ('reserved','consumed')"),
         ),
     )
 

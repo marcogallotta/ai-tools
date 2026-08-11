@@ -475,6 +475,7 @@ def _authorized_release_candidate(
         select(models.AuthorityActivation).where(
             models.AuthorityActivation.generation_id == active.generation_id,
             models.AuthorityActivation.outcome == "activated",
+            models.AuthorityActivation.rehearsal_id.is_(None),
         )
     ).all()
     if len(activations) != 1:

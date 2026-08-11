@@ -82,11 +82,22 @@ def test_stage6_activation_checkpoints_survive_process_death_and_stale_writer_is
             manifest={"path": str(fence_path.resolve())},
             prepared_at=NOW + timedelta(minutes=5),
         )
+        assert candidate.rehearsal_environment_identity is not None
+        assert candidate.source_manifest_sha256 is not None
+        rehearsal = service.start_rehearsal(
+            candidate_id=candidate_id,
+            rehearsal_kind="cutover",
+            environment_identity=candidate.rehearsal_environment_identity,
+            source_manifest_sha256=candidate.source_manifest_sha256,
+            started_at=NOW + timedelta(minutes=5),
+        )
         cutover = service.prepare_cutover(
             candidate_id=candidate_id,
             started_at=NOW + timedelta(minutes=5),
+            rehearsal_id=rehearsal.rehearsal_id,
         )
         cutover_id = cutover.cutover_run_id
+        rehearsal_id = rehearsal.rehearsal_id
         generation_id = candidate.generation_id
         source_release = candidate.source_release
         source_commit = candidate.source_commit
@@ -334,6 +345,9 @@ def test_stage6_activation_checkpoints_survive_process_death_and_stale_writer_is
         "first_admission_verified",
         "completed",
     ]
+    assert all(
+        item["snapshot"]["rehearsal_id"] == str(rehearsal_id) for item in checkpoint_evidence
+    )
     assert checkpoint_evidence[2]["snapshot"]["authority_activation_count"] == 0
     assert checkpoint_evidence[3]["snapshot"]["authority_activation_count"] == 1
     assert checkpoint_evidence[4]["snapshot"]["mutation_admission"]["state"] == "closed"
@@ -346,6 +360,7 @@ def test_stage6_activation_checkpoints_survive_process_death_and_stale_writer_is
             "candidate_id": str(candidate_id),
             "generation_id": str(generation_id),
             "cutover_run_id": str(cutover_id),
+            "rehearsal_id": str(rehearsal_id),
             "writer_fence": {
                 "path": str(fence_path.resolve()),
                 "manifest_sha256": fence.manifest_sha256,

@@ -57,6 +57,7 @@ EXPECTED_REHEARSAL_CHECKPOINTS = {
         "projection_retry",
         "restart_recovery",
     ),
+    "cutover": (),
 }
 
 EXPECTED_REHEARSAL_CHECKPOINT_EVIDENCE_KINDS = {

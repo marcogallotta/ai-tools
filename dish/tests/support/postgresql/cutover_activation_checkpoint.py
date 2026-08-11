@@ -44,6 +44,9 @@ def _snapshot(*, dsn: str, cutover_run_id: uuid.UUID, generation_id: uuid.UUID) 
             )
             return {
                 "cutover_run_id": str(run.cutover_run_id),
+                "rehearsal_id": (
+                    None if run.rehearsal_id is None else str(run.rehearsal_id)
+                ),
                 "state": run.state,
                 "state_revision": int(run.state_revision),
                 "terminal": run.terminal_at is not None,

@@ -35,6 +35,7 @@ from .release_validation import (
     worker_readiness_report_sha256,
 )
 from .release_evidence import (
+    CUTOVER_REHEARSAL_KIND,
     ReleaseAuthorityError,
     _is_sha256,
     _require_nonblank,
@@ -45,6 +46,40 @@ from .release_evidence import (
 
 
 class CutoverControlAuthority:
+    def _bound_cutover_rehearsal(
+        self, run: rel.CutoverRun, *, require_running: bool = True
+    ) -> rel.RehearsalRun | None:
+        if run.rehearsal_id is None:
+            return None
+        rehearsal = self.session.get(rel.RehearsalRun, run.rehearsal_id)
+        candidate = self._candidate(run.candidate_id)
+        if (
+            rehearsal is None
+            or rehearsal.candidate_id != run.candidate_id
+            or rehearsal.rehearsal_kind != CUTOVER_REHEARSAL_KIND
+            or rehearsal.environment_identity != candidate.rehearsal_environment_identity
+            or rehearsal.source_manifest_sha256 != candidate.source_manifest_sha256
+        ):
+            raise ReleaseAuthorityError(
+                "cutover rehearsal identity is missing, unrelated, or mismatched"
+            )
+        if require_running and rehearsal.status != "running":
+            raise ReleaseAuthorityError("cutover rehearsal is not running")
+        return rehearsal
+
+    def _activation_for_cutover(
+        self, run: rel.CutoverRun, candidate: rel.ReleaseCandidate
+    ) -> models.AuthorityActivation | None:
+        conditions = [
+            models.AuthorityActivation.generation_id == candidate.generation_id,
+            models.AuthorityActivation.outcome == "activated",
+        ]
+        if run.rehearsal_id is None:
+            conditions.append(models.AuthorityActivation.rehearsal_id.is_(None))
+        else:
+            conditions.append(models.AuthorityActivation.rehearsal_id == run.rehearsal_id)
+        return self.session.scalar(select(models.AuthorityActivation).where(*conditions))
+
     def prepare_writer_fence(
         self,
         *,
@@ -383,6 +418,7 @@ class CutoverControlAuthority:
         *,
         candidate_id: uuid.UUID,
         started_at: datetime,
+        rehearsal_id: uuid.UUID | None = None,
     ) -> rel.CutoverRun:
         candidate = self._candidate(candidate_id)
         if candidate.status != "approved":
@@ -407,10 +443,31 @@ class CutoverControlAuthority:
             select(rel.CutoverRun).where(rel.CutoverRun.candidate_id == candidate_id)
         )
         if existing is not None:
+            if existing.rehearsal_id != rehearsal_id:
+                raise ReleaseAuthorityError("cutover rehearsal identity conflict")
+            self._bound_cutover_rehearsal(existing)
             return existing
+        if rehearsal_id is not None:
+            rehearsal = self.session.get(rel.RehearsalRun, rehearsal_id)
+            if (
+                rehearsal is None
+                or rehearsal.candidate_id != candidate_id
+                or rehearsal.rehearsal_kind != CUTOVER_REHEARSAL_KIND
+                or rehearsal.status != "running"
+                or rehearsal.environment_identity != candidate.rehearsal_environment_identity
+                or rehearsal.source_manifest_sha256 != candidate.source_manifest_sha256
+            ):
+                raise ReleaseAuthorityError(
+                    "cutover rehearsal identity is missing, unrelated, terminal, or mismatched"
+                )
+            _require_at_or_after(
+                started_at, rehearsal.started_at,
+                field="started_at", floor_field="cutover rehearsal started_at",
+            )
         row = rel.CutoverRun(
             cutover_run_id=self.uuid_factory(),
             candidate_id=candidate_id,
+            rehearsal_id=rehearsal_id,
             state="prepared",
             state_revision=1,
             started_at=started_at,
@@ -423,6 +480,7 @@ class CutoverControlAuthority:
             "cutover_prepared",
             {
                 "candidate_id": str(candidate_id),
+                "rehearsal_id": None if rehearsal_id is None else str(rehearsal_id),
                 "final_asana_closure_id": str(approved_closure.closure_id),
                 "final_asana_closure_sha256": approved_closure.closure_sha256,
             },
@@ -437,6 +495,7 @@ class CutoverControlAuthority:
         required_writer_inventory: Collection[str] | None = None,
     ) -> rel.CutoverRun:
         run = self._cutover(cutover_run_id)
+        self._bound_cutover_rehearsal(run)
         if run.state == "fenced":
             return run
         if run.state != "prepared":
@@ -486,6 +545,7 @@ class CutoverControlAuthority:
         required_writer_inventory: Collection[str] | None = None,
     ) -> rel.CutoverRun:
         run = self._cutover(cutover_run_id)
+        self._bound_cutover_rehearsal(run)
         if run.state == "activated":
             return run
         if run.state != "fenced":
@@ -603,15 +663,11 @@ class CutoverControlAuthority:
     ) -> models.AuthorityActivation:
         _require_nonblank(legacy_bundle_id, "legacy_bundle_id")
         run = self._cutover(cutover_run_id)
+        self._bound_cutover_rehearsal(run)
         candidate = self._candidate(run.candidate_id)
         if run.state == "rollback_burned":
             self._require_candidate_release_identity(candidate)
-            existing = self.session.scalar(
-                select(models.AuthorityActivation).where(
-                    models.AuthorityActivation.generation_id == candidate.generation_id,
-                    models.AuthorityActivation.outcome == "activated",
-                )
-            )
+            existing = self._activation_for_cutover(run, candidate)
             if existing is None:
                 raise ReleaseAuthorityError("rollback-burn state lacks activation evidence")
             if (
@@ -648,6 +704,7 @@ class CutoverControlAuthority:
             self.rollback_burn_fence_hook()
         self.session.expire_all()
         run = self._cutover(cutover_run_id)
+        self._bound_cutover_rehearsal(run)
         candidate = self._candidate(run.candidate_id)
         if run.state != "activated" or candidate.status != "approved":
             raise ReleaseAuthorityError("rollback burn authority changed while acquiring the burn fence")
@@ -716,6 +773,7 @@ class CutoverControlAuthority:
             legacy_bundle_id=legacy_bundle_id,
             registry_version_id=contract.registry_version.registry_version_id,
             honest_binding_id=contract.honest_binding.binding_id,
+            rehearsal_id=run.rehearsal_id,
             schema_head=candidate.schema_head,
             dish_release=candidate.dish_release,
             honest_release=candidate.honest_release,
@@ -737,6 +795,7 @@ class CutoverControlAuthority:
             "rollback_burned",
             {
                 "activation_id": str(row.activation_id),
+                "rehearsal_id": None if run.rehearsal_id is None else str(run.rehearsal_id),
                 "legacy_bundle_id": legacy_bundle_id,
                 "registry_version_id": str(contract.registry_version.registry_version_id),
                 "honest_binding_id": str(contract.honest_binding.binding_id),
@@ -760,12 +819,18 @@ class CutoverControlAuthority:
     ) -> rel.RuntimeReleaseAttestation:
         candidate = self._candidate(candidate_id)
         contract = self._require_candidate_release_identity(candidate)
-        activation = self.session.scalar(
-            select(models.AuthorityActivation).where(
-                models.AuthorityActivation.generation_id == candidate.generation_id,
-                models.AuthorityActivation.outcome == "activated",
+        cutover = self.session.scalar(
+            select(rel.CutoverRun).where(
+                rel.CutoverRun.candidate_id == candidate_id,
+                rel.CutoverRun.state == "rollback_burned",
             )
         )
+        if cutover is None:
+            raise ReleaseAuthorityError(
+                "runtime attestation requires the exact candidate after durable rollback burn"
+            )
+        self._bound_cutover_rehearsal(cutover)
+        activation = self._activation_for_cutover(cutover, candidate)
         if (
             activation is None
             or activation.registry_version_id != contract.registry_version.registry_version_id
@@ -774,13 +839,7 @@ class CutoverControlAuthority:
             raise ReleaseAuthorityError(
                 "runtime attestation activation does not match exact candidate release identity"
             )
-        cutover = self.session.scalar(
-            select(rel.CutoverRun).where(
-                rel.CutoverRun.candidate_id == candidate_id,
-                rel.CutoverRun.state == "rollback_burned",
-            )
-        )
-        if candidate.status != "activated" or cutover is None:
+        if candidate.status != "activated":
             raise ReleaseAuthorityError(
                 "runtime attestation requires the exact candidate after durable rollback burn"
             )
@@ -879,12 +938,9 @@ class CutoverControlAuthority:
                 rel.CutoverRun.state == "rollback_burned",
             )
         )
-        activation = self.session.scalar(
-            select(models.AuthorityActivation).where(
-                models.AuthorityActivation.generation_id == candidate.generation_id,
-                models.AuthorityActivation.outcome == "activated",
-            )
-        )
+        if cutover is not None:
+            self._bound_cutover_rehearsal(cutover)
+        activation = None if cutover is None else self._activation_for_cutover(cutover, candidate)
         runtime = self.session.scalar(
             select(rel.RuntimeReleaseAttestation).where(
                 rel.RuntimeReleaseAttestation.candidate_id == candidate_id
@@ -1075,6 +1131,7 @@ class CutoverControlAuthority:
         recorded_at: datetime,
     ) -> rel.FirstAdmissionPlan:
         run = self._cutover(cutover_run_id)
+        self._bound_cutover_rehearsal(run)
         if run.state != "rollback_burned":
             raise ReleaseAuthorityError(
                 "first-admission plan must be recorded after rollback burn and before admission opens"
@@ -1150,6 +1207,27 @@ class CutoverControlAuthority:
         if existing is not None:
             if existing.plan_sha256 != digest:
                 raise ReleaseAuthorityError("first-admission plan identity conflict")
+            reservation = self.session.scalar(
+                select(reservations.FirstRequestReservation).where(
+                    reservations.FirstRequestReservation.plan_id == existing.plan_id,
+                    reservations.FirstRequestReservation.cutover_run_id == cutover_run_id,
+                    reservations.FirstRequestReservation.candidate_id == candidate.candidate_id,
+                    reservations.FirstRequestReservation.generation_id == candidate.generation_id,
+                    reservations.FirstRequestReservation.request_id == request_id,
+                )
+            )
+            if (
+                reservation is None
+                or reservation.state != "reserved"
+                or reservation.command_name != normalized_command
+                or reservation.owner_id != normalized_owner
+                or reservation.principal_class != principal_class
+                or reservation.run_id != run_id
+                or reservation.canonical_payload_sha256 != canonical_payload_sha256
+            ):
+                raise ReleaseAuthorityError(
+                    "first-admission plan replay lacks its exact active reservation"
+                )
             return existing
         row = rel.FirstAdmissionPlan(
             plan_id=self.uuid_factory(),
@@ -1191,6 +1269,7 @@ class CutoverControlAuthority:
         opened_at: datetime,
     ) -> rel.MutationAdmissionControl:
         run = self._cutover(cutover_run_id)
+        self._bound_cutover_rehearsal(run)
         candidate = self._candidate(run.candidate_id)
         control = self.session.get(rel.MutationAdmissionControl, candidate.generation_id)
         if run.state == "admission_open":
@@ -1282,6 +1361,7 @@ class CutoverControlAuthority:
         verified_at: datetime,
     ) -> rel.CutoverRun:
         run = self._cutover(cutover_run_id)
+        self._bound_cutover_rehearsal(run)
         if run.state == "first_admission_verified":
             candidate = self._candidate(run.candidate_id)
             control = self.session.get(rel.MutationAdmissionControl, candidate.generation_id)
@@ -1441,6 +1521,7 @@ class CutoverControlAuthority:
         return run
     def complete_cutover(self, *, cutover_run_id: uuid.UUID, completed_at: datetime) -> rel.CutoverRun:
         run = self._cutover(cutover_run_id)
+        self._bound_cutover_rehearsal(run)
         if run.state == "completed":
             return run
         if run.state != "first_admission_verified":
@@ -1488,6 +1569,165 @@ class CutoverControlAuthority:
             completed_at,
         )
         return run
+    def teardown_rehearsal_cutover(
+        self,
+        *,
+        cutover_run_id: uuid.UUID,
+        rehearsal_id: uuid.UUID,
+        reason: str,
+        torn_down_at: datetime,
+    ) -> rel.CutoverRun:
+        reason = _require_nonblank(reason, "reason")
+        run = self._cutover(cutover_run_id)
+        if run.rehearsal_id is None:
+            raise ReleaseAuthorityError("real cutover cannot use rehearsal teardown")
+        if run.rehearsal_id != rehearsal_id:
+            raise ReleaseAuthorityError("cutover rehearsal identity conflict")
+        candidate = self._candidate(run.candidate_id)
+
+        if run.state == "rehearsal_torn_down":
+            rehearsal = self._bound_cutover_rehearsal(run, require_running=False)
+            checkpoint = self.session.scalar(
+                select(rel.CutoverCheckpoint).where(
+                    rel.CutoverCheckpoint.cutover_run_id == cutover_run_id,
+                    rel.CutoverCheckpoint.checkpoint_kind == "rehearsal_cutover_torn_down",
+                )
+            )
+            activation = self.session.scalar(
+                select(models.AuthorityActivation).where(
+                    models.AuthorityActivation.generation_id == candidate.generation_id,
+                    models.AuthorityActivation.rehearsal_id == rehearsal_id,
+                    models.AuthorityActivation.outcome == "aborted",
+                )
+            )
+            reservation = self.session.scalar(
+                select(reservations.FirstRequestReservation).where(
+                    reservations.FirstRequestReservation.cutover_run_id == cutover_run_id
+                )
+            )
+            control = self.session.get(rel.MutationAdmissionControl, candidate.generation_id)
+            if (
+                rehearsal is None
+                or rehearsal.status != "failed"
+                or run.terminal_at is None
+                or _utc_comparable(run.terminal_at) != _utc_comparable(torn_down_at)
+                or checkpoint is None
+                or checkpoint.payload.get("rehearsal_id") != str(rehearsal_id)
+                or checkpoint.payload.get("reason") != reason
+                or activation is None
+                or candidate.status != "aborted"
+                or control is None
+                or control.state != "closed"
+                or control.opened_at is not None
+                or (reservation is not None and reservation.state != "cancelled")
+            ):
+                raise ReleaseAuthorityError("rehearsal teardown replay identity conflict")
+            return run
+
+        rehearsal = self._bound_cutover_rehearsal(run)
+        if rehearsal is None:
+            raise ReleaseAuthorityError("cutover lacks rehearsal identity")
+        if run.state not in {"rollback_burned", "admission_open"}:
+            raise ReleaseAuthorityError(
+                "rehearsal teardown is allowed only after rollback burn and before first admission"
+            )
+        activation = self._activation_for_cutover(run, candidate)
+        if activation is None or activation.rehearsal_id != rehearsal_id:
+            raise ReleaseAuthorityError("rehearsal teardown lacks exact rehearsal activation")
+        control = self.session.get(rel.MutationAdmissionControl, candidate.generation_id)
+        if (
+            candidate.status != "activated"
+            or control is None
+            or control.candidate_id != candidate.candidate_id
+            or control.state != "closed"
+            or control.opened_at is not None
+        ):
+            raise ReleaseAuthorityError(
+                "rehearsal teardown requires exact closed candidate admission state"
+            )
+        reservation = self.session.scalar(
+            select(reservations.FirstRequestReservation).where(
+                reservations.FirstRequestReservation.cutover_run_id == cutover_run_id,
+                reservations.FirstRequestReservation.candidate_id == candidate.candidate_id,
+                reservations.FirstRequestReservation.generation_id == candidate.generation_id,
+            )
+        )
+        if run.state == "admission_open" and reservation is None:
+            raise ReleaseAuthorityError("rehearsal admission-open state lacks reservation")
+        if reservation is not None:
+            if reservation.state != "reserved":
+                raise ReleaseAuthorityError(
+                    "rehearsal teardown requires an unconsumed first-request reservation"
+                )
+            request = self.session.get(wf.ServiceRequest, reservation.request_id)
+            if request is not None:
+                raise ReleaseAuthorityError(
+                    "rehearsal teardown is prohibited after first-request admission"
+                )
+
+        latest_checkpoint_at = self.session.scalar(
+            select(rel.CutoverCheckpoint.recorded_at)
+            .where(rel.CutoverCheckpoint.cutover_run_id == cutover_run_id)
+            .order_by(rel.CutoverCheckpoint.sequence.desc())
+            .limit(1)
+        )
+        _require_at_or_after(
+            torn_down_at,
+            latest_checkpoint_at or run.started_at,
+            field="torn_down_at",
+            floor_field="latest cutover checkpoint",
+        )
+        self._require_not_future(torn_down_at, "torn_down_at")
+        prior_state = run.state
+        if reservation is not None:
+            reservation.state = "cancelled"
+            reservation.reservation_revision += 1
+        self.session.flush()
+
+        self._advance_cutover(run, "rehearsal_torn_down", terminal_at=torn_down_at)
+        activation.outcome = "aborted"
+        activation.rollback_burned_at = None
+        self.session.flush()
+        candidate.status = "aborted"
+        candidate.candidate_revision += 1
+        candidate.terminal_at = torn_down_at
+        self.session.flush()
+        checkpoint = self._checkpoint(
+            run,
+            "rehearsal_cutover_torn_down",
+            {
+                "rehearsal_id": str(rehearsal_id),
+                "reason": reason,
+                "prior_state": prior_state,
+                "activation_id": str(activation.activation_id),
+                "activation_outcome": activation.outcome,
+                "mutation_admission_state": control.state,
+                "reservation_id": (
+                    None if reservation is None else str(reservation.reservation_id)
+                ),
+                "reservation_state": None if reservation is None else reservation.state,
+            },
+            torn_down_at,
+        )
+        rehearsal_report = {
+            "rehearsal_kind": CUTOVER_REHEARSAL_KIND,
+            "source_manifest_sha256": rehearsal.source_manifest_sha256,
+            "environment_identity": rehearsal.environment_identity,
+            "result": "failed",
+            "checkpoint_manifest_sha256": sha256_json([]),
+            "cutover_run_id": str(run.cutover_run_id),
+            "teardown_checkpoint_id": str(checkpoint.checkpoint_id),
+            "teardown_checkpoint_sha256": checkpoint.payload_sha256,
+            "teardown_reason": reason,
+        }
+        rehearsal.status = "failed"
+        rehearsal.run_revision += 1
+        rehearsal.report = rehearsal_report
+        rehearsal.report_sha256 = sha256_json(rehearsal_report)
+        rehearsal.completed_at = torn_down_at
+        self.session.flush()
+        return run
+
     def abort_cutover(
         self,
         *,
@@ -1496,13 +1736,9 @@ class CutoverControlAuthority:
         aborted_at: datetime,
     ) -> rel.CutoverRun:
         run = self._cutover(cutover_run_id)
+        self._bound_cutover_rehearsal(run)
         candidate = self._candidate(run.candidate_id)
-        activation = self.session.scalar(
-            select(models.AuthorityActivation).where(
-                models.AuthorityActivation.generation_id == candidate.generation_id,
-                models.AuthorityActivation.outcome == "activated",
-            )
-        )
+        activation = self._activation_for_cutover(run, candidate)
         if activation is not None or run.state in {
             "rollback_burned",
             "admission_open",
