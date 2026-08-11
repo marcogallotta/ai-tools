@@ -72,6 +72,8 @@ Finish the single production command catalogue and make transports consume it wi
 
 Perform one bounded CC1 tail pass over remaining command consumers/adapters: service/HTTP command routing, connected Action exposure, admin command metadata, request-ID classification, shadow/capture classification, generated clients where applicable. Remove duplicated command facts without moving workflow semantics into transport code.
 
+**Status: closed (2026-08-11).** The bounded consumer/adapter pass is complete. It found two remaining tails: `dish_pg.command_port.PORTED_MUTATION_COMMANDS`, a non-runtime duplicate kept only by a synchronization assertion, and five current Admin identities whose dark-launch treatment had not been registered after their surface introduction. The duplicate inventory and synchronization assertion are removed; the read-only Admin surfaces/aliases are explicitly excluded from shadow execution and the bulk-kill conveniences are capture-only like the exact-run `kill` path. Remaining command groupings in application, lease, and consequential-client code describe behavior-specific workflow or ambiguity semantics rather than transport-catalogue ownership, so moving them into command metadata would cross into later workstreams. Current command ownership remains as documented in `docs/architecture/commands-and-surfaces.md`.
+
 ### CC2. Workflow and authority consolidation
 
 #### Goal
@@ -229,7 +231,7 @@ Do not turn an unavailable package index or execution-wrapper cutoff into a pass
 
 Use vertical slices so each package ends in one coherent working path.
 
-Default order: finish CC1 consumer/adapter closure → legal actions plus one workflow-transition family → request/replay plus one consequential-command family → operation/lease/reclaim family → semantic proposal/Human Review family → projection/effect-settlement family → retained persistence model and any migration rebaseline → remaining surfaces and compatibility removal.
+CC1 consumer/adapter closure is complete. Default remaining order: legal actions plus one workflow-transition family → request/replay plus one consequential-command family → operation/lease/reclaim family → semantic proposal/Human Review family → projection/effect-settlement family → retained persistence model and any migration rebaseline → remaining surfaces and compatibility removal.
 
 The order may pause for dark-launch/product defects, but do not run several agents through shared core files simultaneously.
 
@@ -237,7 +239,7 @@ The order may pause for dark-launch/product defects, but do not run several agen
 
 Once in-flight recovery/authority integration and dark-launch/frontend activation work have settled enough to establish file ownership, a safe parallel wave looks like:
 
-- **CC1 tail** — command/transport consumer/adapter cleanup only, no workflow semantics;
+- **CC1 tail** — closed; do not dispatch more CC1 cleanup unless production command ownership materially changes;
 - **CC7 diagnosis** — long-process/resource diagnosis, separate from optional xdist benchmarking;
 - **CC5 dependency proof** — trace real writers/readers/lifecycle for a small named set of evidentiary/migration-state candidates, produce an implementation-ready disposition, no broad deletion;
 - **CC6 narrow slice** — fix one proven dependency-direction violation outside moving workflow/recovery/effect core.
