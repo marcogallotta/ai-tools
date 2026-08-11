@@ -4,7 +4,8 @@
 
 This document is the maintained plan for that consolidation work. It replaces ad hoc "Stage B" references — that name collides with other uses elsewhere in `dish/docs` and is not used here. Internal workstream codes below (CC1–CC7) may be used for cross-references within this document and `docs/code-cleanup-maintainability.md`; anywhere else, use the descriptive workstream name.
 
-See `docs/postgresql-cutover.md` §6.5 for the retention-class framework this plan's persistence work (CC5) uses, and §11 for how this program sequences relative to cutover.
+See `docs/postgresql-cutover.md`, "Evidence retention," for the persistence rules used by this
+plan and the cutover entry gates for sequencing.
 
 ## 1. Objective
 
@@ -150,11 +151,14 @@ The large table/migration count is evidence to investigate, not an instruction t
 
 #### Cutover-control-plane rule
 
-The existing heavy PostgreSQL migration/cutover control plane remains the implemented operational contract unless an approved CC5 or cutover Phase 0 simplification replaces part of it (`docs/postgresql-cutover.md` §6.2, §11).
+The existing PostgreSQL migration/cutover control plane remains the implemented operational contract
+unless an approved cleanup or cutover change replaces part of it (`docs/postgresql-cutover.md`).
 
 Do **not** freeze all evidentiary machinery until after cutover. CC5 may simplify it before cutover when dependency/lifecycle analysis proves that safe.
 
-Use the retention classes defined in `docs/postgresql-cutover.md` §6.5 (permanent live invariant / explicitly retained transition history / cutover-stabilization evidence / one-shot implementation-tooling). The procedure/tooling for an irreversible event may be temporary while the durable fact that the boundary was crossed remains permanent history.
+Use the rules in `docs/postgresql-cutover.md`, "Evidence retention." Procedure/tooling for an
+irreversible event may be temporary while the durable fact that the boundary was crossed remains
+permanent history.
 
 #### Dependency-proof package
 

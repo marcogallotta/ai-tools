@@ -2,7 +2,9 @@
 
 **Status:** planned. Begins in earnest once code-cleanup consolidation (`docs/code-cleanup-consolidation.md`) has established coherent ownership in an area and the system is stable enough that long-tail cleanup no longer risks obscuring architectural decisions. Individual packages may still start earlier where entry conditions (§2) are already met.
 
-**Relationship to cutover:** this program is part of the wider code-cleanup effort. It should substantially complete before PostgreSQL cutover Phase 0 is finalized (`docs/postgresql-cutover.md` §11), but it must not become an indefinite blocker to useful product/dark-launch work.
+**Relationship to cutover:** this program is part of the wider code-cleanup effort. It should
+substantially complete before PostgreSQL cutover readiness is finalized, but it must not become an
+indefinite blocker to useful product/dark-launch work.
 
 This document replaces ad hoc "Stage C" references — that name collides with other uses elsewhere in `dish/docs`. Internal workstream codes below (CM1–CM6) may be used for cross-references within this document and `docs/code-cleanup-consolidation.md`; anywhere else, use the descriptive workstream name.
 
@@ -74,7 +76,8 @@ Delete transitional code only when its actual producer/consumer lifecycle has en
 
 ### Transition-record rule
 
-Transition records are not deleted merely because code around them becomes obsolete. They remain until Marco explicitly decides their disposition (`docs/postgresql-cutover.md` Addendum B #11, §6.5 Class B).
+Transition records are not deleted merely because code around them becomes obsolete. They remain
+until Marco explicitly decides their disposition (`docs/postgresql-cutover.md`, "Evidence retention").
 
 A scheduled review may surface that decision (see `/home/marco/ai-tools/CLAUDE.md`, "Scheduled reviews"); a date must never cause automatic deletion.
 
@@ -97,7 +100,8 @@ Keep operational commands safe and repeatable while removing migration-era orche
 
 Do not simplify tooling merely because it looks heavy while a real cutover/rehearsal still depends on it.
 
-Conversely, do not freeze the entire current control plane until after cutover. CM3 and cutover Phase 0 may retire machinery before cutover when its lifecycle and consumers are proven ended.
+Conversely, do not freeze the entire current control plane until after cutover. CM3 and explicit
+pre-cutover cleanup may retire machinery when its lifecycle and consumers are proven ended.
 
 ## 6. CM4 — Consolidate documentation
 
@@ -117,7 +121,9 @@ One maintained source per subject, with status/history separated from design/ope
 
 ### PostgreSQL documentation
 
-The current implemented migration/control-plane design, candidate simplification targets, permanent live invariants and retained transition history, and post-cutover stabilization/retirement decisions are distinguished in `docs/postgresql-cutover.md` (§6.2, §6.5, §11) and `docs/database-backend-migration.md`. Do not rewrite historical recorded decisions merely to make documents agree; clarify scope/timing and identify the maintained authority for present behavior instead.
+Current PostgreSQL invariants live in the architecture knowledge base, cutover policy lives in
+`docs/postgresql-cutover.md`, and exact operations live in the two PostgreSQL runbooks. Do not add
+another planning document; record implementation work in the task tracker and preserve history in Git.
 
 ## 7. CM5 — Developer and agent ergonomics
 
@@ -203,6 +209,10 @@ This program is complete when:
 
 This program does not execute cutover.
 
-Its output should make cutover Phase 0 smaller and safer by leaving: a coherent authority/workflow/replay/effect architecture; a justified persistence model; a known deployment/runtime boundary; understandable operational tools; current documentation; repeatable evidence paths.
+Its output should make pre-cutover revalidation smaller and safer by leaving: a coherent
+authority/workflow/replay/effect architecture; a justified persistence model; a known
+deployment/runtime boundary; understandable operational tools; current documentation; repeatable
+evidence paths.
 
-Cutover Phase 0 must still revalidate the actual surviving architecture and operational evidence rather than assuming this program's plans describe deployed reality.
+Cutover preparation must still revalidate the actual surviving architecture and operational evidence
+rather than assuming this program's plans describe deployed reality.

@@ -8,16 +8,14 @@ normative. This document owns every implementation change required because of th
 regardless of whether that change lands in browser code, the private service, application/query
 services, PostgreSQL queries or storage, deployment, or tests.
 
-Read [architecture index](architecture/index.md), [`runtime-contract.md`](runtime-contract.md),
-[`database-backend.md`](database-backend.md),
-[`database-backend-imp.md`](database-backend-imp.md), and
-[`database-backend-migration.md`](database-backend-migration.md) as governing authority contracts.
+Read [architecture index](architecture/index.md), [`runtime-contract.md`](runtime-contract.md), and
+[`postgresql-cutover.md`](postgresql-cutover.md) as governing authority contracts.
 This implementation must preserve their shared authority, admission, shutdown, and database
 invariants. This document is the additive governing contract for the frontend-specific caller,
 session, routes, read models, and PostgreSQL support, including additions not present in the older
 pre-frontend runtime surface. It does not alter the contracts of existing CLI, admin, agent, or
 Action callers and does not require reopening or amending the database design, implementation, or
-migration documents.
+cutover policy.
 
 This contract is normative for authority, security, externally observable behavior, retry safety,
 consistency, and interoperability. Unless an exact format or mechanism is required so independent

@@ -1,4 +1,4 @@
-# PostgreSQL Stage 6 operator runbook
+# PostgreSQL cutover operator runbook
 
 Status: **Draft / pending production rehearsal and Marco approval**
 
@@ -7,13 +7,13 @@ PostgreSQL backend is ready for production and it does not authorize cutover. Ev
 observation, hash, measurement, fence proof, and approval must come from the environment in which it
 was actually obtained.
 
-Governing order remains `database-backend.md`, `database-backend-imp.md`, and
-`database-backend-migration.md`. Stop on any disagreement rather than adapting this procedure from
-memory.
+Cutover policy and authority ordering are governed by `postgresql-cutover.md`; current runtime
+invariants are governed by `architecture/postgresql-runtime.md`. Stop on any disagreement rather
+than adapting this procedure from memory.
 
 ## 1. What the repository can prove offline
 
-The repository can migrate an empty target through `0037_release_identity_contract`, execute the Stage 1–6
+The repository can migrate an empty target through the current `dish_pg.release.ALEMBIC_HEAD`, execute the Stage 1–6
 acceptance suites, hash the exact source tree, store immutable evidence revisions and rehearsal
 reports, recompute structural closure from PostgreSQL, build deterministic evidence bundles, fence
 the legacy HTTP writer mechanically, and resume an interrupted cutover from durable checkpoints.
@@ -34,6 +34,7 @@ export DISH_PG_REHEARSAL_URL='postgresql+psycopg://.../dish_rehearsal'
 export DISH_PG_REHEARSAL_LIBPQ_URL='postgresql://.../dish_rehearsal'
 export DISH_PG_RESTORE_URL='postgresql+psycopg://.../dish_restore_verify'
 export DISH_PG_RESTORE_LIBPQ_URL='postgresql://.../dish_restore_verify'
+export DISH_PG_SCHEMA_HEAD="$(.venv/bin/python -c 'from dish_pg.release import ALEMBIC_HEAD; print(ALEMBIC_HEAD)')"
 ```
 
 The legacy service process must resolve the same `DISH_LEGACY_WRITER_FENCE` path. The file and its
@@ -42,8 +43,7 @@ under operator control.
 
 Freeze and retain these exact identities before candidate creation:
 
-- final source Dish release and commit;
-- production-change-ledger high-water commit;
+- final source Dish release/commit and reviewed production change set;
 - transactionally complete SQLite database SHA-256;
 - every sidecar identity and SHA-256;
 - final Asana task/project/section/registry observation identity;
@@ -51,9 +51,9 @@ Freeze and retain these exact identities before candidate creation:
 - closed shadow baseline;
 - active projection epoch and completed reconciliation run;
 - Dish, Honest, protocol, OpenAPI, and routing releases;
-- PostgreSQL schema head `0037_release_identity_contract`.
+- PostgreSQL schema head `$DISH_PG_SCHEMA_HEAD`.
 
-A changed source commit, ledger high-water mark, production object, release, schema head, or proof gap
+A changed source commit, reviewed change set, production object, release, schema head, or proof gap
 requires a new or revised candidate. Do not relabel an old evidence bundle.
 
 ## 3. Migrate and produce the offline acceptance report
@@ -112,7 +112,7 @@ DISH_PG_URL="$DISH_PG_REHEARSAL_URL" \
   .venv/bin/python scripts/dish-pg-operations-evidence database-fingerprint \
   --database-url-env DISH_PG_URL \
   --expected-database-name dish_rehearsal \
-  --expected-schema-head 0037_release_identity_contract \
+  --expected-schema-head "$DISH_PG_SCHEMA_HEAD" \
   --output /secure/evidence/clean-migration-fingerprint.json
 ```
 
@@ -129,7 +129,7 @@ DISH_PG_URL="$DISH_PG_REHEARSAL_URL" \
   .venv/bin/python scripts/dish-pg-operations-evidence database-fingerprint \
   --database-url-env DISH_PG_URL \
   --expected-database-name dish_rehearsal \
-  --expected-schema-head 0037_release_identity_contract \
+  --expected-schema-head "$DISH_PG_SCHEMA_HEAD" \
   --output /secure/evidence/backup-source-fingerprint.json
 pg_dump "$DISH_PG_REHEARSAL_LIBPQ_URL" \
   --format=custom --no-owner --no-privileges \
@@ -144,7 +144,7 @@ DISH_PG_URL="$DISH_PG_RESTORE_URL" \
   .venv/bin/python scripts/dish-pg-operations-evidence database-fingerprint \
   --database-url-env DISH_PG_URL \
   --expected-database-name dish_restore_verify \
-  --expected-schema-head 0037_release_identity_contract \
+  --expected-schema-head "$DISH_PG_SCHEMA_HEAD" \
   --output /secure/evidence/backup-restored-fingerprint.json
 .venv/bin/python scripts/dish-pg-operations-evidence compare-database-fingerprints \
   --source /secure/evidence/backup-source-fingerprint.json \
@@ -314,7 +314,7 @@ Evaluation fails closed unless all of the following are true in authoritative Po
   unresolved;
 - no projection outbox item, attempt, create correlation, or drift item is unresolved;
 - the latest completed reconciliation accounts for every active projection mapping;
-- the database is at `0037_release_identity_contract`;
+- the database is at `$DISH_PG_SCHEMA_HEAD`;
 - every required evidence item and rehearsal class passes.
 
 Bundle identity is deterministic from authoritative contents; build time does not alter its SHA-256.
@@ -502,7 +502,7 @@ scripts/dish-pg-release cutover-activate CUTOVER_UUID \
 ```
 
 At this checkpoint the target generation is selected but mutation admission remains closed. A
-pre-burn abort is still possible only under the migration document's conditions.
+pre-burn abort remains possible only under the conditions below.
 
 ```sh
 scripts/dish-pg-release cutover-burn-rollback CUTOVER_UUID \
@@ -631,7 +631,10 @@ keeps admission closed.
 
 ## 10. Abort and fence release before rollback burn
 
-Before rollback burn, and only when every §14.1 condition in `database-backend-migration.md` is true:
+Before rollback burn, abort and fence release are allowed only when PostgreSQL has accepted no
+authoritative mutation, no production PostgreSQL projection effect was issued, the frozen legacy
+bundle remains valid, the writer fence can be reversed deterministically, and the cutover run will
+be recorded as aborted rather than erased:
 
 ```sh
 scripts/dish-pg-release cutover-abort CUTOVER_UUID \
@@ -681,9 +684,10 @@ State meanings:
 The repository package does not complete these actions:
 
 - capture the final production SQLite and sidecar bundle and hashes;
-- close the production-change ledger through the exact final commit;
+- review production changes through the exact final source commit;
 - observe and classify the complete live Asana task/project/section/registry corpus;
-- run production-shaped full, activation, fault, backup, restore, and PITR rehearsals;
+- run production-shaped full, activation, fault, backup, and restore rehearsals; run PITR only if
+  the selected RPO requires it;
 - establish PostgreSQL backup/WAL archival and independently verify restoration;
 - measure and obtain acceptance of actual RPO/RTO;
 - deploy coherent target service, protocol, OpenAPI, routing, credentials, and worker releases;

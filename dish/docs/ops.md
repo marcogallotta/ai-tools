@@ -1,8 +1,8 @@
 # Ops state
 
 Live local resources that exist right now — as opposed to `ops-issues.md`
-(the hardening/gap backlog) or `database-backend-postgresql-test-plan.md`
-(the runbook for exercising them). This file exists because agent sessions
+(the hardening/gap backlog) or `testing.md` and the PostgreSQL runbooks
+(the procedures for exercising them). This file exists because agent sessions
 lose track of what was already set up across context compaction; check here
 before assuming a resource doesn't exist or needs to be created again.
 
@@ -13,9 +13,8 @@ etc.) before trusting or removing it.
 
 ## Disposable local PostgreSQL (dark-launch runtime validation)
 
-- **What**: a disposable native PostgreSQL instance for exercising
-  `database-backend-postgresql-test-plan.md` §1-4 (process-failure,
-  backup/PITR, runtime wiring, production-shaped rehearsal) without
+- **What**: a disposable native PostgreSQL instance for process-failure,
+  backup/PITR, runtime-wiring, and production-shaped rehearsal without
   touching either `dish-service` profile or production PostgreSQL.
 - **Where**: `docker-compose`, project `postgresql`, config at
   `deploy/postgresql/compose.yaml`. Container `postgresql-postgres-1`,

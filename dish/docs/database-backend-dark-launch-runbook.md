@@ -517,4 +517,4 @@ A TEST acceptance result is not a production preflight result.
 Do not engage the legacy writer fence, open PostgreSQL mutation admission, enable projection external
 effects, burn rollback, or route callers to PostgreSQL. Backup/restore certification and production
 cutover acceptance remain later work under `docs/postgresql-cutover.md` and
-`docs/postgresql-cutover-imp.md`.
+`docs/database-backend-stage6-runbook.md`.

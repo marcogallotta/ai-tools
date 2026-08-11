@@ -66,7 +66,7 @@ fetches live Asana content, hashes title+notes into a content identity, and conf
 still matches what was inspected before touching anything — the drift-detection and
 placement-matching machinery exists because canonical content lives in an external,
 independently-editable system. Once storage is fully internal
-(see [`database-backend.md`](database-backend.md) and its companion documents), an inline
+(see [`postgresql-cutover.md`](postgresql-cutover.md) and the architecture knowledge base), an inline
 resolve-and-create-new-cycle operation becomes one local transaction — update a row, insert
 a new cycle row — instead of read-Asana, hash, compare, write-Asana, re-verify. This design
 should be sequenced after that migration rather than before it if there's a real choice in

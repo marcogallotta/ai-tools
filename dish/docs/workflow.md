@@ -12,8 +12,8 @@ silently treating whichever document was edited last as proof of intended behavi
 This document is deliberately storage-agnostic. Before PostgreSQL cutover, Asana remains authoritative
 for live task content/placement and SQLite remains authoritative for Dish workflow/control state. After
 cutover, PostgreSQL becomes authoritative and Asana is downstream. See
-[`database-backend.md`](database-backend.md), [`postgresql-cutover.md`](postgresql-cutover.md), and the
-[architecture index](architecture/index.md) for those authority boundaries.
+[`postgresql-cutover.md`](postgresql-cutover.md) and the [architecture index](architecture/index.md)
+for those authority boundaries.
 
 ## Decision provenance and change discipline
 
@@ -538,9 +538,9 @@ own explicit completion/lifecycle state. In particular, `Cooked` should be a gov
 completion/archive outcome (exact UI/state naming can be refined), and a separate Cooking History
 project should no longer be required as the source of truth.
 
-This is compatible with [`database-backend.md`](database-backend.md), which separates completion from
-workflow phase and requires governed completion transitions. That backend document does not itself
-settle the exact Cooked/archive UX or implementation timing; those are product direction recorded here.
+This is compatible with the architecture knowledge base, which separates completion from workflow
+phase and requires governed completion transitions. The architecture does not itself settle the exact
+Cooked/archive UX or implementation timing; those are product direction recorded here.
 Asana may remain a downstream UI/projection during transition, but its section/project placement must
 not become a peer lifecycle authority again.
 

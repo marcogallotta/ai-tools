@@ -1,8 +1,7 @@
 """Approved Stage A PostgreSQL command semantic contract.
 
-This is executable metadata for the isolated target. It mirrors §4 of
-``database-backend-imp.md`` and deliberately contains no transport-owned
-workflow rules.
+This is executable metadata for the isolated target. It follows the command/surface architecture
+and deliberately contains no transport-owned workflow rules.
 """
 from __future__ import annotations
 

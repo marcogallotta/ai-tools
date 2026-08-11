@@ -9,7 +9,7 @@ any two of them leaves recoverable, non-lost state:
 
 1. claim (own transaction) — mark the event claimed;
 2. begin_attempt (own transaction) — durably record intent *before* the
-   external call, per the checkpoint in database-backend-imp.md Section 2;
+   external call, per the external-effect architecture contract;
 3. for a first dispatch, the external mutation happens with no open
    transaction and the adapter independently rereads it; for a reclaimed
    active attempt, only the read-only recovery observation is permitted;

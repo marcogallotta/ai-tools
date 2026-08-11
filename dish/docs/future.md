@@ -45,7 +45,7 @@ for several of these mechanisms intentionally differs from the low-level impleme
 
 Most features that depend directly on Asana section GIDs, Asana content identity, or the split
 SQLite+Asana read model should not be built as temporary stopgaps if PostgreSQL cutover is near.
-[`database-backend.md`](database-backend.md) replaces those authorities with Dish-owned task identity,
+[`postgresql-cutover.md`](postgresql-cutover.md) replaces those authorities with Dish-owned task identity,
 logical placement, task versions, and transactionally consistent workflow state.
 
 New Dish-owned facts with no existing Asana-side representation — lightweight metadata, structured
@@ -65,12 +65,12 @@ The intended order across the PostgreSQL program remains:
 3. code-cleanup consolidation (`docs/code-cleanup-consolidation.md`);
 4. code-cleanup maintainability (`docs/code-cleanup-maintainability.md`) as ongoing scheduled
    maintenance rather than a hard blocking phase;
-5. cutover Phase 0 revalidation against whatever architecture survives code cleanup
-   ([`postgresql-cutover.md`](postgresql-cutover.md) §11);
+5. cutover revalidation against whatever architecture survives code cleanup
+   ([`postgresql-cutover.md`](postgresql-cutover.md));
 6. PostgreSQL cutover, only when Marco explicitly chooses.
 
 Code-cleanup work may simplify current cutover/evidence machinery when real invariants prove it safe,
-but must not silently change authority or deployment policy. Phase 0 exists to revalidate what is
+but must not silently change authority or deployment policy. Pre-cutover revalidation exists to confirm what is
 still load-bearing rather than preserving migration-era complexity merely because it exists.
 
 ## Near-term/non-workflow capability candidates
@@ -183,9 +183,8 @@ automatic backlog commitment.
 
 PostgreSQL is the target authoritative database for Dish task documents and workflow state; Stage A
 preserves the current title/body document representation before any separately authorized structured-
-dish redesign. See [`database-backend.md`](database-backend.md),
-[`database-backend-imp.md`](database-backend-imp.md), and
-[`database-backend-migration.md`](database-backend-migration.md).
+dish redesign. See [`postgresql-cutover.md`](postgresql-cutover.md) and the
+[architecture index](architecture/index.md).
 
 The separate frontend has its own draft staging design in [`frontend.md`](frontend.md) and is not a
 Stage A authority prerequisite.

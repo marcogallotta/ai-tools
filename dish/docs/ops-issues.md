@@ -2,9 +2,7 @@
 
 Tracks the status of hardening/gap items raised by ChatGPT during dark-launch
 cutover review, cross-checked against actual repo state. This is a snapshot,
-not a live source of truth — it will go stale the same way
-`database-backend-production-change-ledger.md` did, so check the "Last
-verified" column before trusting an "open" or "done" mark on anything more
+not a live source of truth, so check the "Last verified" column before trusting an "open" or "done" mark on anything more
 than a few weeks old.
 
 Snapshot date: 2026-08-04, refreshed 2026-08-05, 2026-08-07, 2026-08-08. Verified repair tree
@@ -121,8 +119,8 @@ still unchecked directly.
 | Offline Alembic support (version-width contract mismatch) | Later | ChatGPT | Medium | 2026-08-04 (ChatGPT claim only) |
 | External-effect ABA protection (no proof external version unchanged) | Later | Mixed | Hard | 2026-08-04 (ChatGPT claim only) |
 | PostgreSQL contention classification (`23505`/`40P01`/`40001` not mapped to retry) | Later | Mixed | Medium | 2026-08-04 (ChatGPT claim only) |
-| Backup ambiguity / reservation recovery on rename-fault | Skip | Mixed | Hard | 2026-08-04 (ChatGPT claim only) — see `database-backend-postgresql-test-plan.md` §2 |
-| General PostgreSQL commit-before-response / lost-response replay harness beyond consequential `inspect` and `apply-proposal` | Later | Mixed | Hard | 2026-08-06 — the source-service/client boundary for those two calls is now directly covered; broader PostgreSQL worker/process-loss coverage remains open — see `database-backend-postgresql-test-plan.md` §1 |
+| Backup ambiguity / reservation recovery on rename-fault | Skip | Mixed | Hard | 2026-08-04 (ChatGPT claim only) — verify against current backup/restore tests and cutover runbook |
+| General PostgreSQL commit-before-response / lost-response replay harness beyond consequential `inspect` and `apply-proposal` | Later | Mixed | Hard | 2026-08-06 — the source-service/client boundary for those two calls is now directly covered; broader PostgreSQL worker/process-loss coverage remains open |
 
 ## Cat-3 repo hygiene — claimed pure repo fixes, not independently verified
 
@@ -134,9 +132,3 @@ still unchecked directly.
 | Three missing ORM index declarations (present only in migrations) | Later | ChatGPT | Easy | 2026-08-04 (ChatGPT claim only) |
 | Nested continuation still exposes internal `verify` action | Later | ChatGPT | Easy | 2026-08-04 (ChatGPT claim only) |
 | `DishService` typed seams incomplete (coordinators still accept `service: Any`) | Skip | ChatGPT | Easy | 2026-08-04 (ChatGPT claim only) |
-
-## Docs needing refresh
-
-| Doc | Issue | Last verified |
-| --- | --- | --- |
-| `docs/database-backend-production-change-ledger.md` | Stale — last reviewed through `42619b9` (2026-08-01), well behind current HEAD as of this snapshot | 2026-08-04 (fork-verified) |

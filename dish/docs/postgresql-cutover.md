@@ -1,1112 +1,180 @@
-# Dish PostgreSQL Recovery and Simplification Design
-
-## Status
-
-**Approved product and recovery design baseline — 5 August 2026.**
-
-This document defines the agreed Stage A product and architecture contract. It does not, by itself, authorize an unreviewed repository change.
-
-## Source authority
-
-Marco’s explicit product decisions control this design. The synchronized implementation plan controls execution sequencing and gates but may not override this design.
-
-## Purpose
-
-Recover the Dish PostgreSQL migration from scope growth without weakening the safety properties that matter:
-
-- one explicit mutation authority;
-- durable authorization and attribution;
-- exact request replay;
-- safe parallel-agent operation;
-- no blind retry after uncertain external effects;
-- faithful Stage A dark-launch comparison;
-- controlled cutover;
-- recoverable PostgreSQL operation.
-
-The goal is not to redesign the permanent Stage B system yet. The goal is to produce the smallest coherent Stage A system that can reach dark launch and cutover safely.
-
----
-
-# 1. Current System Model
-
-## 1.1 Current authority
-
-- **Asana** is canonical for task content, placement, and completion.
-- **SQLite** is canonical for workflow intent, operations, leases, locks, requests, recovery state, verification evidence, authorization evidence, and audit.
-- **dish-service** is the live mutation authority.
-- CLI, admin CLI, GPT Actions, and agents are transports into that authority.
-
-## 1.2 Dark launch
-
-- Asana and SQLite remain authoritative.
-- PostgreSQL receives imported and mirrored state.
-- Shadow replay must not mutate Asana.
-- PostgreSQL results are compared with the live path.
-- Dark launch is evidence-gathering, not authority transfer.
-
-## 1.3 Cutover
-
-- PostgreSQL becomes canonical.
-- Legacy Asana/SQLite mutation paths are mechanically fenced.
-- Asana becomes a projection/interface, not an independent editing authority.
-- After the first accepted PostgreSQL mutation, rollback means PostgreSQL recovery or forward repair, not reverting authority to SQLite.
-
-## 1.4 Scale
-
-- One human operator: Marco.
-- Approximately 100 Dishes currently represented through Asana tasks.
-- Low throughput.
-- Multiple agents may operate concurrently.
-- Strong attribution, replay safety, and concurrency controls are required.
-- Enterprise-scale release governance is not automatically required.
-
----
-
-# 2. Findings That Drive This Design
-
-
-### Standing authorization verification requirement
-
-Before any admission-gate or schema-reduction work begins:
-
-- inspect planning challenge/override behavior across service, CLI, GPT Actions, agent instructions, and tests;
-- prove that it only permits planning to begin;
-- prove that it cannot satisfy, imply, or be reused as mutation authorization;
-- add regression tests binding mutation approval to Marco’s explicit words, exact proposal, and candidate version.
-
-This is a standing requirement, not a one-time phase gate. It applies to any future structural or schema-reduction work, whenever it is scheduled.
-
-## 2.1 Sound foundations to preserve
-
-The following are broadly sound and should not be rewritten as part of recovery:
-
-- explicit live mutation authority;
-- durable intent before Asana effects;
-- authoritative reread after effects;
-- applied / demonstrably-not-applied / uncertain settlement;
-- exact request replay;
-- run, lease, candidate, and authorization binding;
-- independent verification evidence;
-- separation of proposal approval from proposal application;
-- PostgreSQL transaction ownership for command mutation, audit, outcome, and projection intent;
-- ordered projection with generation and epoch fencing;
-- absolute separation between shadow and live projection;
-- shared legal-action policy rather than a second PostgreSQL state matrix.
-
-## 2.2 Confirmed live defects
-
-### Inspect classification
-
-`inspect` appends durable verification evidence and changes available legal actions, but the legacy service classifies it as read-only and does not give it request-replay protection.
-
-### Apply-proposal request identity
-
-`apply-proposal` is replay-required, but the bundled client does not generate the required request ID.
-
-These should be fixed before broader migration work.
-
-## 2.3 Confirmed Stage A gaps
-
-- PostgreSQL lacks semantic-proposal/review/application authority.
-- PostgreSQL's Action contract is not legacy-compatible.
-- PostgreSQL and existing clients do not yet implement the approved canonical Dish `create` response (`dish_id`, optional `url`, optional `asana_task_gid`).
-- Production baseline capture now has an explicit read-only manifest path; host execution and final import/reconciliation evidence remain outstanding.
-- No deployable production PostgreSQL authority service composition is present.
-- No concrete production Asana projection adapter is present.
-- No concrete production reconciliation fetcher/comparator is present.
-- The shipped reconciliation path cannot populate all fields required by release validation.
-- Some required final import evidence still lacks a production writer; CC5 worker-readiness revision 0031 closes the readiness producer gap.
-- Invocation-audit obligations required by cutover validation are not fulfilled by a production path.
-
-## 2.4 Confirmed structural excess
-
-- 102 application tables.
-- 29 Alembic revisions.
-- Large release/cutover/evidence subsystem.
-- Multiple evidence layers certifying other evidence.
-- Command identity and mutation classification repeated across several registries.
-- Stage A baseline hashes 189 test files, causing structural test changes to appear as product-baseline drift.
-- PostgreSQL-target SQLite compatibility duplicates PostgreSQL triggers, constraints, and migration behavior.
-- Test-governance metadata creates blocking failures for file movement and helper extraction.
-- Several schema concepts are inert, aspirational, or incomplete.
-
-## 2.5 No preservation constraint
-
-There is no PostgreSQL database or Stage A data outside the disposable local fixture instance that must survive. Therefore:
-
-- the PostgreSQL schema may be rebuilt;
-- migration history may be squashed;
-- disposable rehearsal rows may be discarded after reports are archived;
-- no production data migration compatibility must be preserved.
-
----
-
-# 3. Design Principles
-
-## 3.1 Fix current live defects first
-
-The current Asana/SQLite system remains production authority. Confirmed live defects must not wait behind architecture work.
-
-## 3.2 Freeze scope, not safety work
-
-Freeze:
-
-- new release/evidence concepts;
-- new Stage 6–8 tables;
-- new certification scripts;
-- new readiness taxonomies;
-- work whose only purpose is satisfying an existing validator.
-
-Continue:
-
-- live bug fixes;
-- factual investigation;
-- emergency production fixes;
-- work explicitly required by the agreed minimum Stage A contract.
-
-## 3.3 Preserve guarantees, not accidental implementations
-
-Stage A must preserve user-visible behavior and safety guarantees. It does not need to preserve every SQLite mechanism or every AI-authored internal distinction.
-
-## 3.4 Do not begin schema reduction against an undefined target
-
-No PostgreSQL schema squash or subsystem deletion begins until the minimum Stage A contract is written and approved.
-
-## 3.5 Build runtime before expanding certification
-
-The target service, adapters, reconciliation, and command parity must exist before more certification machinery is added.
-
-## 3.6 Every retained concept must have a production writer and consumer
-
-A required table or evidence type must be reachable through a production path. Test-only construction is not sufficient.
-
-## 3.7 Prefer one authoritative record over chains of attestations
-
-Where possible:
-
-- one canonical cutover snapshot;
-- one approval;
-- one admission state;
-- one immutable cutover record;
-- external reports referenced by digest.
-
-Avoid records whose primary purpose is certifying that another certification record was checked.
-
----
-
-# 4. Required Minimum Stage A Contract
-
-This contract must be approved before PostgreSQL structural changes.
-
-## 4.1 External command contract
-
-GPT Actions remain a supported surface at cutover.
-
-The approved contract treatment is:
-
-- preserve existing command names, input semantics, authorization behavior, and general result envelope unless this design explicitly changes them;
-- intentionally migrate the `create` result to the canonical Dish identity;
-- return required `dish_id` containing the canonical Dish UUID;
-- return optional `url` when a frontend base URL is configured;
-- return optional `asana_task_gid` only after Asana projection identity is known;
-- never place a Dish UUID into the legacy `task_gid` field;
-- update the deployed GPT Action schema, agent instructions, client code, and any scripts that consume `create` before general PostgreSQL admission opens;
-- treat Asana projection failure as a follow-up projection problem, not failure of canonical Dish creation.
-
-This is an approved, explicit `create` response-contract migration. It is not an accidental compatibility break.
-
-## 4.2 Authorization contract
-
-Stage A must preserve:
-
-- discussion is not authorization;
-- findings and proposals do not mutate canonical state;
-- proposal approval and application are separate;
-- Marco authorization is durable and scoped;
-- verification decisions are bound to exact reviewed content;
-- mutations remain attributable and reviewable.
-
-## 4.3 Request and retry contract
-
-Every consequential command must have:
-
-- explicit request identity;
-- binding to principal, run, command, and payload;
-- first-authoritative-outcome replay;
-- fail-closed handling of pending or uncertain execution;
-- request identity accessible through the CLI and agent surface.
-
-`inspect` must be classified as consequential.
-
-## 4.4 Concurrency contract
-
-Stage A must preserve:
-
-- one writer per governed authority boundary;
-- exact lease/claim ownership;
-- row-level serialization where required;
-- stale worker and stale lease rejection;
-- generation and epoch fencing;
-- no shadow-origin external effects.
-
-## 4.5 Projection contract
-
-PostgreSQL mutation must atomically create ordered projection intent.
-
-Projection must provide:
-
-- idempotent delivery;
-- durable attempt identity;
-- observation after external effect;
-- applied / not-applied / uncertain settlement;
-- drift detection;
-- reconciliation.
-
-## 4.6 Dark-launch contract
-
-Dark launch requires:
-
-- truthful production baseline capture;
-- exact source and target generation identity;
-- complete import;
-- fail-open live capture;
-- bounded local spool;
-- shadow worker without Asana credentials;
-- effect kill switch;
-- comparison status for gaps, mismatches, lag, and backlog;
-- explicit treatment for unsupported commands.
-
-Dark launch does not require cutover approval, rollback burn, writer fencing, first-request reservation, or production authority activation.
-
----
-
-# 5. Target Minimal Cutover Control Model
-
-Replace the current release platform with a smaller control plane.
-
-## 5.1 Durable admission gate
-
-One database-enforced gate with explicit modes:
-
-- `closed`
-- `exact_request`
-- `open`
-
-Properties:
-
-- defaults to `closed`;
-- shadow replay is a separate non-live path;
-- `exact_request` permits only one predefined request identity and payload digest;
-- `open` permits general live mutation;
-- changes are audited and generation-bound;
-- runtime request admission depends only on this gate, not on the full release-candidate subsystem.
-
-## 5.2 Immutable cutover record
-
-One append-only record, or one record with append-only revisions, containing:
-
-- target generation;
-- schema version;
-- application/protocol artifact digest;
-- final source bundle digest;
-- final Asana corpus identity;
-- import/reconciliation report digest;
-- writer-fence report digest;
-- backup/restore report digest;
-- approval identity and timestamp;
-- activation timestamp;
-- rollback-burn timestamp;
-- first-request identity and result;
-- general-admission-open timestamp.
-
-This record is the durable provenance summary. It should reference external reports rather than reproduce every checkpoint as separate tables.
-
-## 5.3 Exact final import and reconciliation
-
-A one-shot production command must:
-
-- fetch the complete final Asana corpus;
-- bind the exact SQLite/WAL/sidecar bundle;
-- import into a clean PostgreSQL generation;
-- independently compare expected and actual membership and content;
-- produce one immutable report;
-- fail closed on unknown, missing, duplicated, or mismatched entities.
-
-## 5.4 Mechanical writer fence
-
-All confirmed legacy writers must enforce the same fence:
-
-- dish-service;
-- `dish`;
-- `dish-admin`.
-
-The fence must be testable mechanically. Stopping services alone is insufficient.
-
-## 5.5 Verified backup and restore
-
-Before activation:
-
-- create a PostgreSQL backup;
-- restore it into a clean database;
-- verify corpus, workflow state, audit, requests, schema, and projection state;
-- retain an off-device copy;
-- record the result in a referenced report.
-
-Full PITR is optional unless Marco chooses an RPO that requires it.
-
-## 5.6 Controlled first live request
-
-While admission is `exact_request`:
-
-- submit one fixed idempotent request;
-- verify command outcome;
-- verify replay;
-- verify audit;
-- verify projection;
-- reread Asana;
-- then explicitly transition admission to `open`.
-
-## 5.7 Rollback boundary
-
-Before the first PostgreSQL mutation, aborting cutover remains possible.
-
-After the first accepted PostgreSQL mutation:
-
-- SQLite does not regain canonical authority;
-- recovery uses PostgreSQL restore, forward repair, or controlled projection repair;
-- the irreversible boundary is written to the cutover record.
-
----
-
-# 6. Current Stage 6–8 Disposition
-
-## 6.1 Keep as core safety
-
-Retain the underlying guarantees, though implementation may be simplified:
-
-- authority generation;
-- durable mutation admission;
-- mechanical writer fence;
-- final source capture;
-- exact import and reconciliation;
-- backup/restore;
-- rollback-burn boundary;
-- one controlled first request;
-- projection epoch and external-effect switch;
-- generation fencing.
-
-## 6.2 Candidate simplification targets (subject to dependency proof)
-
-These are candidates for later simplification, not a required-before-runtime or required-before-dark-launch collapse. The real runtime and dark launch were built and went live directly on the current, unreduced schema (see §11). Any collapse below happens only as code-cleanup consolidation (CC5, `docs/code-cleanup-consolidation.md`) or cutover Phase 0 revalidation, when writer/reader lifecycle proof shows it is safe.
-
-| Current concept | Proposed destination |
-|---|---|
-| Release candidates | Cutover-record draft/revision |
-| Release evidence items | External reports referenced by digest |
-| Rehearsal runs/checkpoints | External rehearsal reports |
-| Release evidence bundles | Cutover record attachment set |
-| Cutover approvals | Approval fields on cutover record |
-| Cutover runs/checkpoints | Cutover record state transitions |
-| Final Asana closures | Final import/reconciliation report |
-| Closure invalidations | New report revision invalidating prior revision |
-| Recertifications | New approval/revision |
-| Runtime release attestations | Artifact digest on cutover record |
-| Worker readiness evidence | One immutable post-burn runtime-readiness report |
-| Candidate manifests | One canonical cutover snapshot digest |
-| Approval-manifest bindings | Snapshot digest stored directly on approval |
-| Manifest revalidations | New snapshot revision |
-| First-admission plans | `exact_request` gate configuration |
-| First-request reservations | `exact_request` gate state |
-| Authority activation | Cutover record plus admission transition |
-| Backup evidence | Backup/restore report |
-| Writer-fence observations | Writer-fence report |
-| Import native links | Import evidence, only where needed for integrity |
-
-## 6.3 Delete unless a concrete requirement is established
-
-Same timing as §6.2: these are deletion candidates for code-cleanup consolidation/maintainability or cutover Phase 0, not a precondition already blocking live work.
-
-- evidence certifying other evidence;
-- typed worker-probe inventory / requirement / evidence / completion layers — **resolved by CC5 revision 0031**: removed from the forward schema after fail-closed live-row preflight;
-- database-backed rehearsal checkpoint bureaucracy;
-- separate recertification nouns where a new signed revision is sufficient;
-- separate manifest-of-manifest chains;
-- permanent first-admission planning subsystem;
-- production-change ledger machinery beyond exact final source identity;
-- source-import linkage duplicated by canonical import evidence;
-- cutover controls with no production writer or consumer.
-
-### CC5 worker-readiness disposition (revision 0031)
-
-The accepted typed-readiness dependency proof is implemented as a narrow forward transition after
-`0030_validation_failure_admission`:
-
-- `worker_probe_inventories`, `worker_probe_requirements`, `worker_probe_evidence`, and `worker_readiness_completions` leave the forward schema; historical migration `0026_typed_worker_readiness_evidence` is not rewritten;
-- `projection_worker_readiness` becomes the single immutable, server-owned post-burn report, with fixed validator-owned `claim`, `exact_write`, and `restart` probes; exact candidate/epoch/reconciliation; exact worker identity/release and deployed artifact SHA-256; per-probe execution/evidence identities; completion time; and report SHA-256;
-- candidate-authority manifest v3 binds the exact approval-time reconciliation run and excludes all worker-readiness state. Later post-burn reconciliation/readiness therefore cannot stale approval authority. Stored v2 manifests retain their original fingerprint semantics and are not reinterpreted; activation requires a forward v3 candidate/approval;
-- first admission re-observes deployed artifacts and revalidates the report against the exact candidate/epoch, runtime worker identity/release, fixed passing probes, fresh exact reconciliation, timing, generation, and authority fences;
-- revision 0031 fails closed before destructive reduction if any legacy typed/readiness row exists. Such rows must first be exported with `scripts/dish-pg-export-typed-readiness` as Class-C cutover/stabilization evidence, then the dark-launch target is rebuilt/reseeded at 0031 rather than silently discarding evidence.
-
-This disposition does not consolidate source import, workflow/Human Review/leases, first-admission design, dark-launch/shadow state, or unrelated schema.
-
-## 6.4 Inert or incomplete schema candidates
-
-Subject to final dependency confirmation:
-
-- `causality_edges`;
-- `request_uncertainty_resolutions`;
-- `applied_migration_events`;
-- `source_import_native_links`;
-- incomplete generation bootstrap authority;
-- unimplemented audit-fulfillment structures.
-
-A table should not remain solely because tests can construct it.
-
-## 6.5 Retention classes for current state and evidence
-
-Every piece of retained state and evidence falls into one of four classes:
-
-- **A. Permanent live invariants.** Request-ID tombstones, admission/authority/generation state, writer-fence state. Never deleted; not subject to any scheduled review.
-- **B. Explicitly retained transition history.** Kept until Marco decides otherwise (Addendum B decision 11). Subject to a scheduled human review, never automatic deletion (see `/home/marco/ai-tools/CLAUDE.md`, "Scheduled reviews").
-- **C. Cutover/stabilization evidence.** Retained through cutover and the agreed stabilization window; disposition reconsidered after that window closes.
-- **D. One-shot implementation/tooling.** Candidate-manifest generators, readiness orchestration, rehearsal scripts. Removable once their event is over and no consumer remains.
-
-A one-shot Class D *procedure* may disappear while the durable Class A *fact* that an irreversible boundary was crossed remains permanent — deleting the tool that ran a rehearsal does not delete the record that the rehearsal happened.
-
----
-
-# 7. Command and Contract Consolidation
-
-## 7.1 Canonical command definition
-
-Create one typed command-definition source containing:
-
-- command name;
-- principal;
-- query versus consequential;
-- request-replay requirement;
-- run requirement;
-- argument schema;
-- exposure surfaces;
-- Stage A disposition;
-- dark-launch treatment;
-- expected effects.
-
-Derived artifacts:
-
-- service validation;
-- client request-ID behavior;
-- CLI metadata;
-- OpenAPI;
-- target command membership;
-- dark-launch coverage checks;
-- test inventories.
-
-Not every policy value must be identical. Exposure, migration disposition, and dark-launch treatment remain separate fields in one canonical definition.
-
-## 7.2 Immediate bug fixes
-
-### Inspect
-
-- classify as consequential;
-- require request ID;
-- store/replay first authoritative outcome;
-- update client, OpenAPI, docs, and tests from canonical metadata.
-
-### Apply-proposal
-
-- generate request identity in ordinary client path;
-- expose request ID to CLI;
-- add end-to-end client/service test.
-
-## 7.3 CLI request identity
-
-For all replay-bound commands:
-
-- accept `--request-id`;
-- generate one when omitted;
-- display it before dispatch;
-- include it in result and failure output;
-- allow exact resubmission after transport loss.
-
----
-
-# 8. PostgreSQL Runtime Completion
-
-## 8.1 Service composition
-
-Use the existing transport where practical. Provide a PostgreSQL implementation of the application interface rather than a second unrelated server stack.
-
-Required:
-
-- HTTP/process entry point;
-- authentication and principal mapping;
-- configuration;
-- health and readiness;
-- request validation;
-- canonical external result envelope;
-- deployment unit or explicit supervised launch mechanism.
-
-## 8.2 GPT Actions contract migration and compatibility
-
-Use the existing transport where practical.
-
-At cutover:
-
-- GPT Actions remain supported;
-- non-`create` command names, inputs, authority semantics, and envelope behavior remain stable unless separately approved;
-- `create` adopts the explicit canonical response contract:
-  - `dish_id`: required canonical Dish UUID;
-  - `url`: optional configured frontend URL;
-  - `asana_task_gid`: optional Asana projection identity;
-- the legacy `task_gid` field must not be repurposed to contain a Dish UUID;
-- deployed GPT Action schema, custom instructions, service clients, and scripts must be updated together;
-- any temporary compatibility field may contain only its original semantic value.
-
-The shared backend authority/action contract remains the source of legal actions and effects.
-
-## 8.3 Asana projection adapter
-
-Implement a production adapter for:
-
-- task creation where retained;
-- content update;
-- placement;
-- completion;
-- authoritative reread;
-- external identity binding;
-- uncertain-result adjudication.
-
-## 8.4 Reconciliation adapter
-
-Implement a production fetcher/comparator that can:
-
-- read the complete Asana corpus;
-- identify the external snapshot/high-water boundary;
-- compare expected PostgreSQL projection;
-- detect missing, unknown, stale, or mismatched objects;
-- produce both dark-launch and final-cutover reports.
-
-## 8.5 Semantic proposals
-
-Retain the semantic-proposal workflow in the form required by the asynchronous Human Review contract.
-
-Required lifecycle:
-
-- create a finding and exact proposed correction;
-- queue it for Marco without blocking unrelated work;
-- preserve candidate identity, evidence, rationale, questions, answers, and authorization state;
-- allow Marco to approve, reject, or request revision later;
-- keep approval separate from application;
-- allow a later eligible agent to apply the exact approved proposal;
-- preserve audit lineage and rollback data.
-
-This is no longer an open product decision. Implementation may simplify names or table structure, but it must preserve these semantics.
-
-## 8.6 Create behavior
-
-PostgreSQL creates the canonical **Dish** first.
-
-The authoritative `create` result is:
-
-```json
-{
-  "dish_id": "<canonical Dish UUID>",
-  "url": "<configured frontend URL or null>",
-  "asana_task_gid": "<projected Asana task GID or null>"
-}
-```
-
-Rules:
-
-- `dish_id` is required and authoritative;
-- `url` is convenience metadata and must resolve to the same Dish UUID;
-- agents and clients should accept either a Dish UUID or configured Dish URL as an identifier;
-- Asana projection occurs independently;
-- `asana_task_gid` may be absent or null until projection succeeds;
-- Asana projection failure must not roll back or invalidate canonical Dish creation;
-- the request remains replay-safe and returns the same canonical Dish UUID;
-- no field named `task_gid` may contain the Dish UUID.
-
-The exact response schema, consumer inventory, and migration tests are a Phase 1 exit requirement. Runtime implementation is Phase 3 work.
-
-# 9. Schema and Migration Reset
-
-## 9.1 Preconditions
-
-Do not squash until:
-
-- live `inspect` and `apply-proposal` fixes are merged;
-- minimum Stage A contract is approved;
-- table disposition is approved;
-- disposable rehearsal artifacts are archived;
-- no PostgreSQL data requiring preservation is reconfirmed.
-
-## 9.2 Squash strategy
-
-- create one clean initial Stage A migration;
-- include only approved retained tables, constraints, triggers, and functions;
-- remove historical compatibility logic for revisions 0001–0029;
-- remove revision-specific upgrade fixtures that no longer represent a supported deployed database;
-- keep a static archive of the old migration history outside the active migration chain if useful for provenance;
-- rebuild the disposable database from scratch.
-
-## 9.3 SQLite-target compatibility
-
-Legacy SQLite remains fully supported.
-
-For `dish_pg` tests:
-
-- pure planner/service logic may use SQLite;
-- PostgreSQL DDL and migration semantics use PGlite;
-- locking, triggers, concurrency, and server behavior use native PostgreSQL;
-- stop adding SQLite emulation of PostgreSQL-specific behavior;
-- remove duplicated SQLite trigger/migration branches where native/PGlite coverage exists.
-
-## 9.4 Validation after squash
-
-Required:
-
-- ORM/schema agreement;
-- clean upgrade to head;
-- import from an actual legacy bundle;
-- dark-launch capture/replay tests;
-- PGlite migration suite;
-- native concurrency/trigger suite;
-- service and adapter integration;
-- full command contract tests;
-- complete test suite;
-- comparison of retained Stage A behavioral invariants.
-
----
-
-# 10. Test and Governance Simplification
-
-## 10.1 Preserve
-
-- authorization tests;
-- request replay/idempotency;
-- lease and concurrency;
-- migration integrity;
-- external-effect recovery;
-- dark-launch separation;
-- native PostgreSQL certification;
-- backup/restore;
-- writer fencing;
-- producer-equivalence checks for fabricated test states;
-- flake expiry and quarantine discipline.
-
-## 10.2 Simplify now
-
-- derive `PORTED_MUTATION_COMMANDS`;
-- derive migration head from Alembic;
-- derive command-name universes;
-- co-locate workflow-builder metadata with helpers;
-- make line-count ceilings advisory;
-- make exact duplicate-body checks advisory;
-- stop hashing every test file in the Stage A product baseline;
-- derive path-ownership defaults and self-ownership;
-- retain only manual exceptions and high-risk traits.
-
-## 10.3 Baseline redesign
-
-The Stage A baseline should record:
-
-- governing production artifact digests;
-- approved command disposition;
-- approved schema identity;
-- behavioral invariant categories;
-- executed test/report digests.
-
-It should not freeze:
-
-- test filenames;
-- comments;
-- helper layout;
-- arbitrary source organization.
-
----
-
-# 11. Live Plan and Historical Execution Note
-
-## Historical note
-
-An earlier version of this document sequenced work as Phase 0 through Phase 6, with Phase 2 ("reduce control plane and schema": squash the migration history and collapse the Stage 6–8 control plane) required to complete before Phase 3 (build the real runtime) and Phase 4 (dark launch).
-
-In practice, Phase 2 was never executed. Phase 3 and Phase 4 were built and dark launch went live directly on the full, unreduced schema, which has continued to grow since (migration revision 0030 as of this writing). Phase 0 and Phase 1 substance mostly happened, in decision form, as Addendum B. That phased plan was overtaken by the implementation strategy itself, not merely by wording drift, and is removed here rather than left alongside the live plan below. Git history preserves the original text if it is ever needed.
-
-## Current state
-
-- Live defect fixes (§2.2) and the minimum Stage A contract (§4) are complete.
-- The real PostgreSQL runtime, GPT Actions contract migration, Asana projection adapter, reconciliation adapter, and semantic-proposal/Human Review port (§8) are built and live.
-- Dark launch was last documented running on the full, unreduced schema at migration revision 0030. The checked-in forward head is whatever `dish_pg/release.py::ALEMBIC_HEAD` currently names; do not assume a live dark-launch database has been upgraded without direct evidence.
-- Cutover (§5, §9.4 validation, Addendum B) has not happened.
-
-## Before cutover
-
-- Code-cleanup consolidation (CC5, `docs/code-cleanup-consolidation.md`) may simplify the schema and evidence machinery described in §6.2 before cutover, when writer/reader lifecycle proof shows a concept is safe to collapse or remove.
-- No such simplification is a prerequisite for cutover. Cutover proceeds against whatever schema and control plane are live and validated at the time, per §9.4 and Addendum B.
-- Immediately before cutover, revalidate which §12 items are still open against then-current code, and which §6.2/§6.3 candidates still apply.
-
-## Cutover
-
-Execute per §5 (target minimal cutover control model, as implemented), §9.4 (validation), and Addendum B's approved decisions: verified backup/restore, mechanical writer fence, exact final import and reconciliation, approved cutover record, controlled first request, then general admission.
-
-## After cutover and stabilization
-
-- Retire one-shot cutover/dark-launch tooling per the Class D disposition in §6.5, once each tool's event has closed with no remaining consumer.
-- Reassess Class B (explicitly retained transition history) and Class C (cutover/stabilization evidence) per §6.5 and Addendum B decision 11, at the scheduled review (see `/home/marco/ai-tools/CLAUDE.md`, "Scheduled reviews").
-- Continue code-cleanup maintainability work (`docs/code-cleanup-maintainability.md`) as ongoing scheduled maintenance, not a cutover blocker.
-
----
-
-# 12. Existing Ops and Handoff Issue Disposition
-
-Every item from the original handoff and `ops-issues.md` must be entered into a disposition matrix with:
-
-- exact claim;
-- current evidence;
-- status:
-  - confirmed blocker;
-  - confirmed but later;
-  - stale/fixed;
-  - valid concern, excessive implementation;
-  - unsupported;
-- destination in this design;
-- owner;
-- validation test or report.
-
-No issue is silently dropped.
-
-Disposition, reconciled against current code (confirmed rows verified by direct code inspection; remaining rows carried forward, reworded to remove the abandoned squash-gating from §11's historical note):
-
-| Issue | Disposition |
-|---|---|
-| Correct migration-head helper | Confirm and derive from one source — still open |
-| Clean migration rehearsal | **Confirmed resolved.** Standing rehearsal/certification lanes exist (`scripts/dish-pg-native-certification`, `native-concurrency` test lane per `docs/testing.md`); not squash-gated |
-| Native PostgreSQL certification | **Confirmed resolved.** Same standing lanes as above; not squash-gated |
-| Backup/restore rehearsal | Required before cutover — still open |
-| Full PITR matrix | Product decision based on RPO — still open |
-| First-live-request rehearsal | Retain concept; repoint to the implemented admission gate (§5.1) — still open |
-| Post-request reconciliation | Reconciliation adapter is implemented (§8.4); confirm production coverage is complete — still open |
-| Production-shaped rehearsal | Runtime exists (§8); rehearsal itself still outstanding — see `docs/database-backend-imp.md` outstanding-work list |
-| Stage A baseline evidence | **Confirmed resolved.** Redesigned to `dish-stage-a-baseline-v2`; hashes only production source files, excludes test files (`docs/database-backend-stage-a-baseline.json`) |
-| Legacy-writer inventory | Retain as part of fence report — still open |
-| Stage 6 runbook command checks | Reconcile against the live control plane (§5–§6.1); not squash-gated — still open |
-| Typed readiness writers missing | **Resolved by CC5 revision 0031.** The producer-orphaned typed inventory/requirement/evidence/completion chain is removed from the forward schema and `projection_worker_readiness` is the one production post-burn report; populated legacy rows force Class-C export plus rebuild/reseed rather than deletion. |
-| Import evidence not produced | **Confirmed resolved.** Produced via `dish_pg/candidate_manifest.py`'s `_import_completion_digest()`, wired into production candidate-manifest generation. Caveat: confirmed only via the SQLite/PGlite test lane (`tests/postgresql/test_0022_candidate_state_manifest_import_linkage.py`); native-PostgreSQL execution of this path is not separately confirmed |
-| Invocation audit not fulfilled | **Confirmed resolved.** `dish_tool/invocation_audit.py` is wired into `dish_service/application.py` and live in the production application service |
-| Stale lock/kill-switch/final-gate claims | **Confirmed not stale.** Already accurately tracked with dates and code verification in `docs/ops-issues.md`; this row is superseded by that file's own maintained tracking, not by the underlying claims being false |
-
----
-
-# 13. Expected Reduction (historical)
-
-This section described a reduction target tied to the abandoned Phase 2 squash-and-collapse plan (see §11's historical note). That plan was not executed; dark launch and the real runtime were built directly on the full schema instead, so the target below never applied to a live decision.
-
-It is not an active goal. Any future schema/evidence reduction is tracked as code-cleanup consolidation/maintainability work (`docs/code-cleanup-consolidation.md`, `docs/code-cleanup-maintainability.md`) or as cutover Phase 0 revalidation (§11), not as a fixed line-count target.
-
----
-
-# 14. Risks and Controls
-
-## Risk: removing a real safety guarantee
-
-Control:
-
-- every deletion maps to a retained invariant;
-- native tests remain for concurrency and database semantics;
-- no removal based only on line count.
-
-## Risk: future schema/migration simplification hides behavior regressions
-
-Applies if code-cleanup consolidation (CC5) or cutover Phase 0 later squashes migration history or collapses schema (§6.2, §11). Control:
-
-- no data to preserve;
-- archive old history;
-- rebuild clean;
-- rerun import, PGlite, native, contract, and full suites;
-- compare behavioral invariants.
-
-## Risk: command consolidation becomes another giant abstraction
-
-Control:
-
-- canonicalize metadata only;
-- keep command handlers explicit;
-- derive artifacts mechanically;
-- do not create a generic workflow DSL.
-
-## Risk: cutover model becomes too manual
-
-Control:
-
-- database-enforced admission and writer fence remain;
-- external reports are immutable and digest-bound;
-- manual approval is explicit;
-- first request remains mechanically bounded.
-
-## Risk: unfinished old ops work is wasted
-
-Control:
-
-- preserve reports and useful scripts;
-- reuse low-level checks;
-- repoint them at whichever §6.2/§6.5 candidates are actually adopted;
-- rerun only evidence invalidated by structural changes.
-
----
-
-# 15. Decisions Required From Marco
-
-The product decisions formerly listed here are resolved in Addendum B.
-
-Semantic proposals, asynchronous Human Review, durable review state, and safe reclaim are required at initial cutover. Remaining items in this document are implementation verification tasks, not open product decisions.
-
-# 16. Acceptance Criteria
-
-This recovery plan is successful when:
-
-- the two live bugs are fixed;
-- one canonical command contract prevents registry drift;
-- the Stage A contract is explicit and approved;
-- the schema contains no required evidence without a production writer;
-- the migration history and schema are validated against §12's disposition, whether or not it has since been simplified;
-- the PostgreSQL authority service is deployable;
-- real Asana projection and reconciliation work;
-- retained commands have approved parity or retirement treatment;
-- production dark launch runs cleanly, on the schema live at the time, with dark-launch exit criteria met (Addendum B decision 13);
-- cutover can be completed through a bounded, comprehensible procedure;
-- transition machinery has a documented deletion point;
-- future changes no longer require 1,500–2,000-line diffs to add one safety rule.
-
----
-
-# 17. Review Questions for Claude
-
-Claude should challenge this proposal on:
-
-1. Which retained safety guarantees are missing?
-2. Which proposed deletions have hidden production consumers?
-3. Whether the minimal admission gate preserves all irreversible-boundary protections.
-4. Whether one cutover record can replace the current evidence graph without weakening auditability.
-5. Whether migration squashing invalidates any required deployed-state rehearsal.
-6. Whether the approved GPT Actions `create` migration identifies and updates every existing consumer.
-7. Whether canonical Dish creation remains independent from asynchronous Asana projection.
-8. Whether semantic proposals and asynchronous Human Review are fully ported without hidden SQLite authority.
-9. Which original handoff or `ops-issues.md` item has no disposition here.
-10. Which proposed sequence would cause avoidable rework.
-
-
----
-
-# Addendum A — Required Contract Additions
-
-## Committed success remains success
-
-Once a mutation commits successfully, later refresh, audit, projection-status, presentation, or secondary-observation failures must not turn that committed success into retry advice. Follow-up failures must be reported separately, and retries must remain bound to the original request identity.
-
-## Recovery remains specific
-
-There is no generic “unblock.” Lease recovery, safe reclaim, ambiguous-effect resolution, destination repair, discard, Evidence or Human Review resolution, abandonment/succession, and backup/restore each require narrow preconditions.
-
-A changed chat session alone is not evidence of recovery risk.
-
-## Human administration remains a product boundary
-
-`dish-admin` remains Marco’s distinct operator interface. It must present human-readable actions and consequences, preserve explicit operator authority, and consume the same backend authority/action contract without becoming merely another generic API client.
-
-## Asynchronous review and cross-run continuation
-
-Initial cutover must support:
-
-- queueing items that require Marco’s decision;
-- agents continuing to other work;
-- durable findings, evidence, questions, answers, proposals, authorization state, unresolved items, and candidate identity;
-- later approval or rejection by Marco;
-- later application by any eligible agent;
-- no dependency on the original agent run;
-- safe reclaim where no unresolved effect exists;
-- formal abandonment/succession only where recovery risk exists.
-
-## Findings, proposals, authorization, and mutation remain distinct
-
-The system must represent separately:
-
-1. finding;
-2. evidence and confidence;
-3. proposed correction;
-4. authorization state;
-5. applied mutation.
-
-Clarification, urgency, silence, disagreement, or continued discussion are not authorization.
-
-## Advisory concerns and execution blocks remain distinct
-
-Agents may classify a concern as severe and warn clearly, but only database mechanical-integrity conditions may block execution. Substantive product or safety concerns remain warnings under Marco’s authority.
-
-## Mutations remain reviewable and reversible
-
-Before mutation, retain the prior canonical version, exact approved diff, approving authority, and applied result. Provide a bounded rollback path with audit.
-
-## Safe reclaim and abandonment
-
-Safe reclaim is allowed only when:
-
-- the prior owner is objectively inactive;
-- no execution is pending;
-- no external effect is unresolved;
-- no outcome is uncertain;
-- no partially executed action exists;
-- replay safety is established.
-
-Reclaim must atomically fence the old owner, reject late writes, and record old owner, new owner, reason, and timestamp.
-
-Formal abandonment and succession remain for genuine recovery risk.
-
-## Cutover ordering
-
-The database must mechanically prevent:
-
-- approval before a complete cutover snapshot exists;
-- activation before final source closure, writer fence, reconciliation, and backup verification;
-- first-request admission before activation;
-- general admission before first-request verification;
-- rollback to legacy authority after the irreversible PostgreSQL mutation boundary.
-
-Immediately before the controlled first PostgreSQL write, revalidate the final source closure, writer fence, target generation, reconciliation result, backup state, and approved cutover snapshot.
-
-If that first write fails after authority switches, remain in maintenance mode, determine whether it committed, repair PostgreSQL, and retry the same request ID.
-
----
-
-# Addendum B — Final Marco Product Decisions
-
-1. **Asynchronous human review is required at initial cutover.**
-   Agents must be able to queue work needing Marco’s decision, continue elsewhere, and allow a later eligible agent to resume and apply the exact approved change.
-
-2. **GPT Actions remain supported through initial cutover.**
-   Existing non-`create` command semantics and general envelope remain stable unless separately approved. The deployed contract must be updated atomically for the approved `create` response migration.
-
-3. **`create` returns the canonical Dish identity.**
-   It must return required `dish_id`, optional configured `url`, and optional `asana_task_gid`. Asana projection is secondary. The legacy `task_gid` field must never be repurposed to contain a Dish UUID.
-
-4. **Verified backup and restore are required before cutover.**
-   A PostgreSQL backup must be restored into a clean database and verified. An off-device copy is required. Full PITR is not required initially.
-
-5. **Cutover may use a planned write-free maintenance window.**
-
-6. **One controlled first PostgreSQL write is required inside the maintenance window.**
-   Normal writes remain blocked until the request, replay, audit, projection, and reread all succeed.
-
-7. **Keep one concise immutable cutover record, normal Git history, and backup artifacts.**
-   Do not build a permanent evidence bureaucracy.
-
-8. **Asana remains a read-only projection/interface after cutover until Marco decides PostgreSQL is sufficiently trusted.**
-
-9. **Full cross-run redesign is not a cutover blocker.**
-   The asynchronous review path, durable review state, and safe reclaim are required.
-
-10. **Request IDs remain reserved permanently.**
-    Detailed payloads or bulky diagnostic data may be archived separately, but a used request ID must never become reusable.
-
-11. **Transition records have no fixed deletion date.**
-    Keep them until Marco decides they are no longer needed and track post-cutover cleanup in a dedicated document.
-
-12. **If the controlled first PostgreSQL write fails after authority switches, remain in maintenance mode.**
-    Determine whether it committed, repair PostgreSQL, and retry the same request ID. Do not casually restore legacy authority.
-
-13. **Dark launch ends based on successful evidence, not elapsed time.**
-    Known errors must be resolved; retained workflows must pass scripted manual battle-testing against a test PostgreSQL database and test Asana project; reconciliation must succeed; no unexplained gaps or mismatches may remain; Marco must be satisfied.
-
-14. **Safe reclaim is the normal path after lease expiry or explicit lease termination.**
-    A second abandonment action is not required unless the database shows real recovery risk.
-
-15. **Safe reclaim requires objective inactivity plus safe recorded state.**
-    Reclaim is allowed when the lease has expired or was explicitly released/terminated and there is no pending execution, unresolved external effect, uncertain outcome, incomplete settlement, or partially applied mutation.
-
-16. **Formal abandonment and succession are reserved for genuine recovery risk.**
-
-17. **Late writes from the previous owner must fail after reclaim.**
-    Reclaim atomically fences the old owner and records old owner, new owner, reason, and time.
-
-18. **Discussion is not authorization.**
-    Clarification, urgency, silence, disagreement, continued conversation, and acceptance of a finding are not approval of a proposed correction.
-
-19. **Findings, proposed corrections, approval, and applied mutation remain distinct.**
-
-20. **A brief free-text rationale is required for an approved agent-made change at cutover.**
-    The format remains intentionally experimental and should be refined through real use.
-
-21. **Whole-version rollback is required before initial cutover.**
-    PostgreSQL must retain the prior canonical version, exact applied diff, approving authority, brief rationale, and resulting version.
-
-22. **Rollback is admin-only and requires Marco’s explicit confirmation.**
-    `dish-admin` must show the exact version being restored and what current changes will be undone. The rollback itself creates a new audit entry.
-
-23. **“Proceed now, reconcile later” is not an initial-cutover requirement.**
-    Record it as a post-cutover workflow requirement.
-
-24. **Light verification is a post-cutover requirement, not a cutover blocker.**
-    It should catch obvious safety issues, major contradictions, missing critical information, and execution blockers without exhaustive challenge, repeated source hunting, minor formatting disputes, or optional optimization.
-
-25. **Dish has no hard blocks controlled by agents.**
-    Agents may warn, explain, and record concerns, but they may not prevent Marco from proceeding.
-
-26. **One explicit Marco override ends further challenge on that specific concern.**
-    The concern remains recorded. Agents may reopen it only when materially new evidence appears or Marco explicitly requests renewed verification.
-
-27. **Marco may move a Dish out of `needs verification`.**
-    This must be easy in `dish-admin`.
-
-28. **Marco may also override through an agent.**
-    When Marco says he wants to cook with the current version now, the agent gives one concise warning, records the override, and proceeds.
-
-29. **Generic safety guidance does not outweigh Marco’s explicit judgment about his own equipment, environment, or process.**
-
-30. **Marco is the final authority by default.**
-    Because he is the sole user, administrator, and developer, agents must treat his explicit override as authoritative, record it, and continue. They must not repeatedly argue, refuse, or abandon the workflow over generic guidance.
-
-31. **One shared backend authority/action contract is required before cutover.**
-    CLI, agents, GPT Actions, and `dish-admin` must consume the same source for legal actions, required authority, rationale, exact effect, warnings, continuation behavior, and next action.
-
-32. **A frontend redesign is not required before cutover.**
-    The shared backend contract is required; presentation improvements may continue separately.
-
-## Deferred post-cutover requirements
-
-- “Proceed now, reconcile later.”
-- Light verification mode.
-- More structured rationale capture after observing real use.
-- Broader workflow simplification beyond the required asynchronous review and reclaim behavior.
-- Field-level rollback.
-- Full cross-surface presentation redesign.
-- Planning challenge/override redesign unless verification shows it can grant mutation authority.
-
-## Final verification status
-
-The planning challenge/override verification (§2, "Standing authorization verification requirement") is a mandatory standing requirement. No admission-gate or schema-reduction work may begin until it passes.
-
-For the CC5 worker-readiness reduction on the 0030 predecessor snapshot, this standing check was run before implementation. `tests/authority/test_planning_override_service.py`, `tests/postgresql/test_planning_override_command_authority.py`, and `tests/test_planning_intent_confirmation.py` passed together (21 tests). They preserve the boundary that Planning challenge/override can authorize Planning start only: it creates no Marco mutation authorization or Human Review decision, cannot satisfy a lease/authority fence, and does not expand GPT Action mutation scope. Existing exact-proposal/candidate-version approval contracts remain independently required.
-
-## Implementation clarifications
-
-- Safe reclaim creates a new mechanically linked operation. The inactive operation remains immutable; the new agent restarts the step; unapproved partial agent work may be discarded; applicable Marco discussion and still-valid approvals remain available; fencing and audit lineage must be unambiguous.
-- “No pending execution” must be defined by mechanically checkable database state, not by an agent assertion.
-- A durable Marco approval record must distinguish Marco’s exact words from an agent’s interpretation and bind the approval to an exact proposal and candidate version.
-- An agent may record an override only after an explicit instruction from Marco. Urgency, clarification, silence, or continued discussion are insufficient.
-- Restoring an older version must create a new canonical version. History must never be deleted or rewritten.
-- The shared authority/action contract centralizes legal actions, required authority, effects, warnings, and next actions. It must not become a generic workflow DSL or move mutation logic into metadata.
-- Planning-start permission must never be accepted as mutation authorization.
-
-**Agents cannot impose substantive product or safety blocks on Marco. The database may and must still impose mechanical integrity and recovery fences for stale ownership, duplicate request identities, uncertain execution, incomplete settlement, unresolved external effects, replay safety, and concurrency control.**
-
-
-## Execution-time verification still outstanding
-
-The following are not assumed complete by this proposal:
-
-- discovery of hidden consumers of tables proposed for deletion;
-- the full disposition matrix for every `ops-issues.md` and handoff item.
-
-These must be completed before destructive schema work or migration squashing proceeds, regardless of when that work is scheduled.
+# PostgreSQL cutover
+
+Status: approved cutover policy; production authority has not moved to PostgreSQL.
+
+This document is the sole product and sequencing authority for transferring Dish from the current
+SQLite/Asana authority to PostgreSQL. It defines decisions, gates, and ordering. It does not contain
+shell commands, implementation backlogs, schema history, or test inventories.
+
+Marco's explicit decisions control this document. Nothing here authorizes a production mutation,
+writer fence, route change, reset, rollback burn, or cutover. Exact operator commands live in the
+runbooks listed under [Document routing](#document-routing).
+
+## Current authority
+
+- Asana owns live task content, placement, and completion.
+- Service-owned SQLite owns workflow, requests, leases, recovery, authorization, and audit.
+- `dish-service` is the live mutation authority; CLI, admin, frontend, and GPT Actions are transports.
+- PostgreSQL is a non-authoritative import, dark-launch, and cutover target until explicit activation.
+- Dark-launch execution never authorizes external effects or transfers authority.
+
+Current ownership and transaction details live in the architecture knowledge base. This document
+does not duplicate them.
+
+## Settled cutover decisions
+
+- Cutover is an explicit Marco decision bound to one exact candidate and evidence set.
+- Cutover uses a planned write-free maintenance window.
+- Legacy writers are mechanically fenced; stopping services or changing routing is insufficient.
+- PostgreSQL receives one exact final import into a clean generation and an independent complete
+  reconciliation before activation.
+- A PostgreSQL backup must be restored into a clean database and verified before activation. An
+  off-device copy is required; full PITR is not an initial requirement.
+- Mutation admission is database-enforced and remains closed through activation and rollback burn.
+- One exact, replay-safe PostgreSQL request is admitted and verified before general admission opens.
+- After the irreversible boundary, recovery uses PostgreSQL restore or forward repair. SQLite/Asana
+  cannot silently become authority again.
+- Request identities remain permanently reserved.
+- GPT Actions remain supported. A PostgreSQL-authoritative `create` returns canonical `dish_id`, an
+  optional configured `url`, and an optional projected `asana_task_gid`; it never puts a Dish UUID
+  in the legacy `task_gid` field.
+- PostgreSQL commits canonical state before downstream projection. Projection failure cannot turn a
+  committed command into retry advice.
+- The current approved post-cutover baseline keeps Asana as a read-only projection/interface until
+  Marco changes that decision. Retiring Asana completely is under consideration but is not approved.
+- Transition history remains until Marco explicitly chooses its disposition after stabilization.
+
+Workflow, Human Review, authorization, safe reclaim, abandonment, replay, and projection semantics
+are owned by their architecture/runtime documents. They are cutover prerequisites, not a second
+contract maintained here.
+
+## Dark-launch baseline lifecycle
+
+A PostgreSQL bootstrap is a point-in-time snapshot. SQLite and Asana continue changing until capture
+starts, so a bootstrap performed early becomes stale even when its import was correct.
+
+The required sequence is:
+
+1. Rehearse preparation and reset against disposable PostgreSQL whenever useful.
+2. Preserve and classify any material evidence from the current production dark-launch generation.
+3. During the maintenance window immediately before enabling or resuming capture on the replacement
+   baseline, run the reviewed production reset/reimport procedure.
+4. Install the returned baseline identity, then enable or resume capture as a separate authorized
+   operation.
+
+Do not reset production PostgreSQL merely because a correlation fix landed when no affected evidence
+exists. Do not reset early and then allow another long uncaptured interval. The reset is valuable as
+the final resynchronization boundary immediately before capture, not as ritual cleanup.
+
+The current production PostgreSQL generation is rehearsal/dark-launch evidence. It is not clean
+cutover-acceptance evidence and must not be promoted as such.
+
+## Cutover entry gates
+
+Cutover may begin only when all applicable gates below are proven against the exact candidate.
+
+### Runtime and contract
+
+- The deployable PostgreSQL service, authentication, routes, clients, frontend, GPT Action schema,
+  and worker release are coherent.
+- Every retained command has an approved treatment and consumes shared legal-action authority.
+- PostgreSQL-native `create` and its response migration are proven, unless Marco explicitly retires
+  that command.
+- No planning permission, discussion, finding, or proposal can satisfy mutation authorization.
+
+### Final source and import
+
+- Ordinary legacy mutation admission is stopped and in-flight work/effects are settled.
+- Every legacy writer process, endpoint, credential, and scheduler is inventoried and fenceable.
+- The exact Asana corpus and complete SQLite/WAL/sidecar authority bundle are captured.
+- PostgreSQL is rebuilt as a clean generation from that source.
+- Import validation finds no unknown, missing, duplicated, or mismatched entity that the accepted
+  policy treats as blocking.
+- Reconciliation covers the complete active corpus and exact source boundary.
+
+### Recovery and evidence
+
+- Backup creation, clean restore, integrity verification, and off-device retention pass.
+- The writer fence is proven with an authenticated mutation rejected before body processing.
+- Admission is closed and bound to the candidate generation.
+- Required dark-launch/manual workflow evidence is complete, with material command-logic gaps fixed.
+- Marco approves the exact candidate, source/import identities, reconciliation, fence proof,
+  backup/restore result, deployed releases, and accepted discrepancies.
+
+## Fixed authority-transfer order
+
+The operator runbook may add checks but must not reorder these authority boundaries:
+
+1. Enter the exclusive maintenance window and close ordinary legacy mutation admission.
+2. Drain or settle in-flight requests, operations, leases, and external effects.
+3. Capture the exact final Asana and SQLite authority bundle.
+4. Reset/rebuild the target PostgreSQL generation and complete final reconciliation.
+5. Create and verify the PostgreSQL backup/restore artifact.
+6. Record candidate-bound approval and prepare the cutover run.
+7. Engage and independently verify the mechanical legacy-writer fence.
+8. Deploy the coherent PostgreSQL runtime while mutation admission remains closed.
+9. Activate the exact PostgreSQL generation.
+10. Revalidate the candidate, source closure, fence, backup, deployment, and admission state.
+11. Commit rollback burn. Return to legacy authority is prohibited after this point.
+12. Record post-burn runtime/worker readiness and fresh reconciliation.
+13. Open admission only for the exact planned first request.
+14. Issue that request once; if delivery is unknown, reconcile its exact request identity.
+15. Verify its committed outcome, exact replay, audit, projection, and full reconciliation.
+16. Open general admission and record cutover completion.
+
+Routing changes alone never transfer authority.
+
+## Abort and recovery boundaries
+
+Before rollback burn, abort is allowed only when:
+
+- PostgreSQL has accepted no authoritative mutation;
+- no production PostgreSQL projection effect was issued;
+- the legacy bundle and frozen authority remain valid;
+- the writer fence can be reversed deterministically; and
+- the cutover run is recorded as aborted rather than erased.
+
+After rollback burn, do not release the legacy fence or reverse-import Asana. If the first request
+fails or its delivery is uncertain, remain in maintenance, determine its commit state, repair
+PostgreSQL, and replay only the same request identity when legal.
+
+A destructive PostgreSQL restore creates a new authority generation, invalidates old capabilities
+and claims, requires reconciliation and fresh registered runs, and keeps admission closed until
+readiness passes. Asana observations cannot recreate erased PostgreSQL commands.
+
+## Evidence retention
+
+- Permanent authority facts—request-ID tombstones, generations, admission state, writer fences, and
+  irreversible boundaries—are never deleted.
+- Transition history remains until Marco explicitly decides otherwise.
+- Cutover and stabilization reports remain through the stabilization period and a later explicit
+  disposition decision.
+- One-shot tools may be removed after their event closes when no runtime or recovery consumer remains;
+  removing a tool never removes the durable fact it produced.
+
+## After cutover
+
+- PostgreSQL owns authoritative reads and mutations.
+- Projection freshness is reported separately from command success and legal workflow state.
+- Legacy evidence remains read-only; legacy mutation paths remain fenced.
+- Monitor replay errors, stale writers, serialization/fence failures, unresolved projections,
+  reconciliation drift, schema/release disagreement, and backup health.
+- Remove one-shot transition tooling only after its event has closed and no consumer remains.
+- Review transition-history and stabilization-evidence retention only through an explicit Marco
+  decision; never through automatic expiry.
+
+## Document routing
+
+- Current PostgreSQL architecture: `architecture/postgresql-runtime.md`
+- Dark-launch architecture: `architecture/dark-launch.md`
+- Authority and durable ownership: `architecture/authority-and-data-ownership.md`
+- Commands and public/private surfaces: `architecture/commands-and-surfaces.md`
+- Requests and replay: `architecture/request-replay-and-idempotency.md`
+- Operations, leases, and fencing: `architecture/operations-leases-and-fencing.md`
+- External effects and projection: `architecture/external-effects-and-asana.md`
+- Dark-launch preparation/reset/capture operations: `database-backend-dark-launch-runbook.md`
+- Exact cutover, abort, and crash-recovery commands: `database-backend-stage6-runbook.md`
+- Testing commands and certification policy: `testing.md`
+- Settled rationale: `architecture/decisions/`
+
+Implementation status belongs in the task tracker and Git history, not in another planning document.

@@ -218,13 +218,13 @@ def test_current_postgresql_validation_and_reconciliation_ownership_is_documente
         "start_reconciliation",
         "record_reconciliation_item",
         "complete_reconciliation",
-        "database-backend-postgresql-test-plan.md",
+        "docs/testing.md",
         "ops-issues.md",
     ):
         assert required in runtime
     assert "validation-only" in replay
     assert "reconciliation" in replay.lower()
-    assert "not evidence that the current §3 or §4 rehearsal has passed" in runtime
+    assert "current rehearsal still passes" in runtime
 
 
 def test_architecture_redirect_happens_after_surviving_fact_owners_exist() -> None:

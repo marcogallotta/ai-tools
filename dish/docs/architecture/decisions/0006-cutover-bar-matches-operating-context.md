@@ -26,7 +26,10 @@ This ADR does not change authority. Dark launch still does not transfer authorit
 
 - Dark launch's original purpose was to learn whether leaning on AI agents to operate a complex rollout like this is viable at all. That question is answered (yes) and is closed; it is not an ongoing reason to keep extending dark launch.
 - The cost of an undiscovered gap surfacing after cutover is bounded: the operator notices and fixes it. This is not a heavily-used live product where a missed edge case affects other people. A program that becomes multi-operator or externally relied-upon must revisit this ADR before continuing to apply it.
-- As of 2026-08-10, Marco is actively reconsidering `postgresql-cutover.md` §1.3 ("Asana becomes a projection/interface, not an independent editing authority") toward a full clean break — Asana retired entirely at cutover, not kept as a demoted interface layer. Rationale given: enough cutover infrastructure already exists that a full break looks cleaner and lower-risk than maintaining any ongoing Asana role, given the frontend is now good enough to be the actual interface. This is a live reconsideration, not yet a ratified change to the baseline design — §1.3 still says "projection/interface" until Marco explicitly updates it. If and when it is finalized as a full break, gaps that are purely about correlating PostgreSQL to Asana (identity mapping, historical parity, content-staleness relative to the legacy source) stop needing exhaustive resolution before cutover, because the system they bridge to is being removed rather than kept running alongside PostgreSQL.
+- As of 2026-08-10, Marco is actively reconsidering the cutover policy's approved
+  "Asana as read-only projection/interface" baseline toward a full clean break. This is not yet a
+  ratified change. If finalized, bridge-only Asana correlation gaps stop needing exhaustive
+  resolution before cutover because the bridged system is being retired.
 - Marco was explicit that this reasoning is context-specific, not a general stance: in a genuinely high-stakes, multi-user product, the right approach would instead be a long dark-launch period with gradual, piecemeal authority migration onto PostgreSQL and Asana retained until each piece is separately proven — the opposite of a fast clean break. The calibration in this ADR applies because this is a single-operator system where a missed gap is cheap to fix, not because fast clean breaks are generally correct.
 - Gaps in PostgreSQL's own command/workflow logic — correctness independent of any Asana comparison — are a different category and remain a real precondition for trusting PostgreSQL as sole authority. This ADR narrows the *comparison-completeness* bar; it does not narrow the *does the target's own logic work* bar.
 - "We did the work, don't jump early" still holds: this ADR is not license to cut over on a hunch. It changes what counts as sufficient evidence, not whether evidence is required.
@@ -55,7 +58,9 @@ Not applicable in the usual sense — this ADR does not itself require new tests
 
 As of 2026-08-10, every dark-launch gap found and reviewed to date (identifier-binding resolver gaps on old-format captures, the `create`-command correlation gap, task-content staleness relative to the one-shot importer) has been correlation/bridge-only, not a `command_port.py` logic defect. This should be re-confirmed, not assumed, the next time a new gap class surfaces.
 
-`postgresql-cutover.md` §1.3 still states the pre-existing approved baseline ("Asana becomes a projection/interface, not an independent editing authority"), which has not yet been updated to match the full-clean-break reconsideration described above. Until Marco explicitly updates §1.3, treat it as the authoritative statement of the cutover plan and this ADR's clean-break framing as the leading candidate reconsideration, not settled fact.
+`postgresql-cutover.md`, "Settled cutover decisions," retains the approved projection/interface
+baseline. Until Marco explicitly updates it, this ADR's clean-break framing is a candidate
+reconsideration, not settled policy.
 
 ## Related documents
 

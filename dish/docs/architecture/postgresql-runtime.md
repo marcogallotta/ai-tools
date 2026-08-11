@@ -51,7 +51,9 @@ Keep canonical mutation authority, projection/effect settlement, and operational
 
 ## Proving tests
 
-Current PostgreSQL test plans and runtime evidence include `docs/database-backend-postgresql-test-plan.md` and issue tracking in `docs/ops-issues.md`. Historical passing reports are not evidence that the current §3 or §4 rehearsal has passed after relevant code changes.
+PostgreSQL test commands and certification policy live in `docs/testing.md`; unresolved operational
+findings live in the task tracker or `docs/ops-issues.md`. Historical passing reports are not
+evidence that a current rehearsal still passes after relevant code changes.
 
 ## Current debt and temporary compatibility
 

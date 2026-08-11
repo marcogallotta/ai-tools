@@ -47,6 +47,9 @@ flowchart LR
 | External effects/Asana | [External effects and Asana](external-effects-and-asana.md) |
 | PostgreSQL target/runtime | [PostgreSQL runtime](postgresql-runtime.md) |
 | Dark launch | [Dark launch](dark-launch.md) |
+| PostgreSQL cutover policy and ordering | [`../postgresql-cutover.md`](../postgresql-cutover.md) |
+| Dark-launch/reset operations | [`../database-backend-dark-launch-runbook.md`](../database-backend-dark-launch-runbook.md) |
+| Exact cutover operations | [`../database-backend-stage6-runbook.md`](../database-backend-stage6-runbook.md) |
 | Evidence boundaries | [Testing boundaries](testing-boundaries.md) |
 | How to evolve architecture safely | [Extension rules](extension-rules.md) |
 | Settled high-risk choices | [Architecture decisions](decisions/index.md) |
@@ -63,6 +66,7 @@ Read only what is relevant to the boundary being changed. Small local changes do
 | Replay/lease/recovery | [Request replay](request-replay-and-idempotency.md), [Operations/leases/fencing](operations-leases-and-fencing.md) |
 | External effects | [External effects and Asana](external-effects-and-asana.md) |
 | PostgreSQL/dark launch | [PostgreSQL runtime](postgresql-runtime.md), [Dark launch](dark-launch.md) |
+| Cutover policy or sequencing | [`../postgresql-cutover.md`](../postgresql-cutover.md) and the owning runbook |
 
 ## Subsystem-to-authoritative-code map
 

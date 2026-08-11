@@ -8,10 +8,8 @@ outcomes. Every requirement introduced because this frontend needs it belongs to
 even when the implementation lands in the service, backend, PostgreSQL layer, deployment, or tests.
 The corresponding mechanics belong in [`frontend-imp.md`](frontend-imp.md).
 
-Read [architecture index](architecture/index.md), [`runtime-contract.md`](runtime-contract.md),
-[`database-backend.md`](database-backend.md),
-[`database-backend-imp.md`](database-backend-imp.md), and
-[`database-backend-migration.md`](database-backend-migration.md) as governing authority contracts.
+Read [architecture index](architecture/index.md), [`runtime-contract.md`](runtime-contract.md), and
+[`postgresql-cutover.md`](postgresql-cutover.md) as governing authority contracts.
 The frontend must preserve their shared authority invariants. These frontend documents are the
 additive governing contract for every frontend-specific product, access, service, and PostgreSQL
 requirement, including requirements not present in the older pre-frontend runtime surface. They do
