@@ -24,7 +24,7 @@ class OperationExecutionClaim:
     resuming_uncertain: bool = False
 
 
-def _recover_command_guidance(operation_id: str) -> dict[str, object]:
+def recover_command_guidance(operation_id: str) -> dict[str, object]:
     spec = exact_action(
         kind="reconcile-uncertain-effect",
         command="recover",
@@ -586,7 +586,7 @@ def _stale_claim_recovery(
                     "command": existing["command"],
                     "execution_id": execution_id,
                     "required_admin_action": "recover",
-                    **_recover_command_guidance(operation_id),
+                    **recover_command_guidance(operation_id),
                 }
             )
             raise DishRuleError(
@@ -660,7 +660,7 @@ def _claim_unresolved_execution(
                 "operation_id": operation_id,
                 "execution_ids": [row["execution_id"] for row in unresolved],
                 "required_admin_action": "recover",
-                **_recover_command_guidance(operation_id),
+                **recover_command_guidance(operation_id),
             },
         )
 
@@ -678,7 +678,7 @@ def _claim_unresolved_execution(
                 "execution_id": prior["execution_id"],
                 "request_id": prior["request_id"],
                 "required_admin_action": "recover",
-                **_recover_command_guidance(operation_id),
+                **recover_command_guidance(operation_id),
             }
         )
         raise DishRuleError(
@@ -1256,7 +1256,7 @@ def _build_execution_recovery_state(
     if failure_rule:
         state["original_failure_rule"] = failure_rule
     if recovery_required:
-        state.update(_recover_command_guidance(row["operation_id"]))
+        state.update(recover_command_guidance(row["operation_id"]))
     return state
 
 

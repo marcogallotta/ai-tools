@@ -23,7 +23,7 @@ from dish_tool.admin_command_spec import (
 from dish_tool.backend import AsanaBackend
 from dish_tool.commands import DishApplication, expose_authoritative_view
 from dish_tool.constants import COOKING_PROJECT_GID, SCHEMA_VERSION
-from dish_tool.operation_execution import _recover_command_guidance
+from dish_tool.operation_execution import recover_command_guidance
 from dish_tool.database import (
     kill_request_binding,
     operation_run_revocation,
@@ -1585,7 +1585,7 @@ class DishService:
                 after_recovery_actions=after_recovery_actions,
             )
         if access.get("rule") == "operation_uncertain" and not data.get("admin_command"):
-            data.update(_recover_command_guidance(operation_id))
+            data.update(recover_command_guidance(operation_id))
         return result
 
     def _assert_mutation_ready(self, backend: Any) -> None:

@@ -390,6 +390,7 @@ def test_unsettled_execution_blocks_reclaim_and_admin_points_to_recovery(tmp_pat
     human_actions = inspected["data"]["human_actions"]
     commands = {item.get("command") for item in human_actions}
     assert "recover" in commands
+    assert "kill" not in commands
     assert "abandon-operation" not in commands
 
 

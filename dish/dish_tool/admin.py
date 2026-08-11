@@ -28,6 +28,7 @@ from .database import (
     utc_now,
 )
 from .invocation_audit import record_invocation_audit
+from .operation_execution import recover_command_guidance
 from .transactions import immediate_transaction, savepoint_transaction
 from .errors import DishRuleError
 from .admin_command_spec import RESOLVED_OPERATION_TARGET_COMMANDS
@@ -348,6 +349,15 @@ def _replace_run_action(*, dish_reference: str, summary: str, effect: str) -> di
         after_success={"instruction": "Follow the safe continuation returned by Dish."},
     )
     return spec.payload()["human_action"] | {"shell_command": spec.shell_command()}
+
+
+def _recover_interrupted_execution_action(operation_id: str) -> dict[str, Any]:
+    """Return the canonical admin recovery action before any run replacement."""
+    guidance = recover_command_guidance(operation_id)
+    action = guidance.get("human_action")
+    if not isinstance(action, Mapping):
+        raise RuntimeError("operation recovery guidance lacks a human action")
+    return dict(action)
 
 
 
@@ -928,14 +938,7 @@ def _command_inspect(
         )
         if failed_rules & recovery_rules:
             actions.append(
-                _replace_run_action(
-                    dish_reference=str(target["dish_id"] or target["task_gid"]),
-                    summary="Replace the interrupted verifier run.",
-                    effect=(
-                        "Dish will reconcile the interrupted execution first, then preserve the "
-                        "candidate and prepare a fresh Verification continuation."
-                    ),
-                )
+                _recover_interrupted_execution_action(operation_id)
             )
             problem = "The prior verifier is inactive, but its interrupted execution must be reconciled before another run can take over."
         elif lease is not None:
@@ -971,14 +974,7 @@ def _command_inspect(
         )
         if failed_rules & recovery_rules:
             actions.append(
-                _replace_run_action(
-                    dish_reference=str(target["dish_id"] or target["task_gid"]),
-                    summary="Replace the interrupted run.",
-                    effect=(
-                        "Dish will reconcile the interrupted execution first, then preserve "
-                        "confirmed work and prepare the safe continuation."
-                    ),
-                )
+                _recover_interrupted_execution_action(operation_id)
             )
             problem = (
                 "The prior run is inactive, but its interrupted execution must be reconciled "
