@@ -14,7 +14,7 @@ from . import models
 from . import stage3_models as wf
 from . import stage5_models as tx
 from . import stage6_models as rel
-from .release_evidence import ReleaseAuthorityError, sha256_json
+from .release_evidence import RELEASE_IDENTITY_CONTRACT, ReleaseAuthorityError, sha256_json
 from .release_history import (
     EXACT_REVOCATION_HISTORY_PROVENANCE_KEY,
     EXACT_REVOCATION_RECONCILED_OPERATIONS_KEY,
@@ -23,8 +23,8 @@ from .release_history import (
     exact_revocation_reconciliation_matches,
 )
 
-MANIFEST_VERSION = 3
-BUILDER_CONTRACT_VERSION = "candidate-authority-v3"
+MANIFEST_VERSION = 4
+BUILDER_CONTRACT_VERSION = "candidate-authority-v4"
 
 COMPONENT_FIELDS = (
     "mapping_membership_sha256",
@@ -34,6 +34,10 @@ COMPONENT_FIELDS = (
 )
 
 _UUID_HEX_RE = re.compile(r"[0-9a-fA-F]{32}\Z")
+
+
+class _CandidateManifestReleaseIdentityMismatch(ReleaseAuthorityError):
+    """Current release authority no longer matches the candidate-owned identity."""
 
 
 def _canonical_value(value: Any, *, column_name: str | None = None) -> Any:
@@ -702,24 +706,84 @@ def _identity(
     approval_reconciliation_run_id: uuid.UUID | None = None,
 ) -> dict[str, object]:
     batch = session.get(tx.SourceImportBatch, candidate.source_import_batch_id)
-    active = session.get(models.ActiveSectionRegistry, candidate.generation_id)
     epoch = session.get(tx.ProjectionEpoch, candidate.projection_epoch_id)
     baseline = session.get(tx.ShadowBaseline, candidate.shadow_baseline_id)
-    if batch is None or active is None or epoch is None or baseline is None:
+    if batch is None or epoch is None or baseline is None:
         raise ReleaseAuthorityError("candidate manifest authority identity is incomplete")
-    registry = session.get(models.SectionRegistryVersion, active.registry_version_id)
-    if registry is None:
-        raise ReleaseAuthorityError("candidate manifest active registry version is missing")
+    if (
+        candidate.identity_contract_version != RELEASE_IDENTITY_CONTRACT
+        or candidate.source_manifest_sha256 is None
+        or candidate.rehearsal_environment_identity is None
+        or candidate.registry_version_id is None
+        or candidate.honest_binding_id is None
+    ):
+        raise ReleaseAuthorityError(
+            "candidate predates the exact release identity contract; create a forward candidate"
+        )
+    generation = session.scalar(
+        select(models.AuthorityGeneration)
+        .where(models.AuthorityGeneration.generation_id == candidate.generation_id)
+        .execution_options(populate_existing=True)
+    )
+    active = session.scalar(
+        select(models.ActiveSectionRegistry)
+        .where(models.ActiveSectionRegistry.generation_id == candidate.generation_id)
+        .execution_options(populate_existing=True)
+    )
+    registry = session.scalar(
+        select(models.SectionRegistryVersion)
+        .where(
+            models.SectionRegistryVersion.registry_version_id
+            == candidate.registry_version_id
+        )
+        .execution_options(populate_existing=True)
+    )
+    binding = session.scalar(
+        select(models.HonestContractBinding)
+        .where(models.HonestContractBinding.binding_id == candidate.honest_binding_id)
+        .execution_options(populate_existing=True)
+    )
+    if generation is None or generation.status != "active":
+        raise _CandidateManifestReleaseIdentityMismatch(
+            "candidate manifest requires the active authority generation"
+        )
+    if (
+        active is None
+        or active.generation_id != candidate.generation_id
+        or active.registry_version_id != candidate.registry_version_id
+    ):
+        raise _CandidateManifestReleaseIdentityMismatch(
+            "candidate manifest active registry does not match candidate release identity"
+        )
+    if (
+        registry is None
+        or registry.registry_version_id != candidate.registry_version_id
+        or registry.generation_id != candidate.generation_id
+        or registry.contract_binding_id != candidate.honest_binding_id
+    ):
+        raise _CandidateManifestReleaseIdentityMismatch(
+            "candidate manifest registry does not match candidate Honest binding"
+        )
+    if (
+        binding is None
+        or binding.binding_id != candidate.honest_binding_id
+        or binding.binding_kind != "release"
+        or binding.dish_release != generation.dish_release
+        or candidate.schema_head != generation.schema_head
+        or candidate.dish_release != generation.dish_release
+        or candidate.honest_release != binding.honest_release
+        or candidate.protocol_release != binding.protocol_release
+    ):
+        raise _CandidateManifestReleaseIdentityMismatch(
+            "candidate manifest Honest release identity does not match candidate authority"
+        )
     if (
         batch.generation_id != candidate.generation_id
         or epoch.generation_id != candidate.generation_id
         or baseline.generation_id != candidate.generation_id
     ):
         raise ReleaseAuthorityError("candidate manifest authority generation mismatch")
-    if (
-        registry.generation_id != candidate.generation_id
-        or registry.import_run_id != batch.import_run_id
-    ):
+    if registry.import_run_id != batch.import_run_id:
         raise ReleaseAuthorityError("candidate manifest registry lineage mismatch")
     if approval_reconciliation_run_id is None:
         approval_reconciliation_run_id = _latest_reconciliation_run_id(
@@ -738,8 +802,15 @@ def _identity(
         "source_import_run_id": str(batch.import_run_id),
         "shadow_baseline_id": str(baseline.shadow_baseline_id),
         "projection_epoch_id": str(epoch.projection_epoch_id),
+        "identity_contract_version": candidate.identity_contract_version,
+        "source_manifest_sha256": candidate.source_manifest_sha256,
+        "rehearsal_environment_identity": candidate.rehearsal_environment_identity,
         "registry_version_id": str(registry.registry_version_id),
-        "honest_binding_id": str(registry.contract_binding_id),
+        "honest_binding_id": str(binding.binding_id),
+        "schema_head": generation.schema_head,
+        "dish_release": generation.dish_release,
+        "honest_release": binding.honest_release,
+        "protocol_release": binding.protocol_release,
         "approval_reconciliation_run_id": str(approval_reconciliation_run_id),
         "builder_contract_version": builder_contract_version,
         "mapping_membership_sha256": _mapping_membership_digest(
@@ -876,13 +947,31 @@ def revalidate_candidate_manifest(
         raise ReleaseAuthorityError(
             "forward candidate manifest lacks exact approval-time reconciliation identity"
         )
-    identity = _identity(
-        session,
-        candidate,
-        approval_reconciliation_run_id=manifest.approval_reconciliation_run_id,
-    )
-    observed = sha256_json(identity)
-    result = "matched" if observed == manifest.canonical_fingerprint else "stale"
+    try:
+        identity = _identity(
+            session,
+            candidate,
+            approval_reconciliation_run_id=manifest.approval_reconciliation_run_id,
+        )
+    except _CandidateManifestReleaseIdentityMismatch as exc:
+        # Revalidation must preserve the historical R1/H1 manifest rather than
+        # reinterpret it through a now-active R2/H2 chain. Record a deterministic
+        # stale observation while retaining the approved component digests.
+        identity = {field: getattr(manifest, field) for field in COMPONENT_FIELDS}
+        observed = sha256_json(
+            {
+                "candidate_id": str(candidate.candidate_id),
+                "manifest_id": str(manifest.manifest_id),
+                "approved_fingerprint": manifest.canonical_fingerprint,
+                "release_authority_error": str(exc),
+            }
+        )
+        if observed == manifest.canonical_fingerprint:
+            observed = sha256_json({"stale_release_authority_observation": observed})
+        result = "stale"
+    else:
+        observed = sha256_json(identity)
+        result = "matched" if observed == manifest.canonical_fingerprint else "stale"
     existing = session.scalar(
         select(manifest_models.CandidateManifestRevalidation).where(
             manifest_models.CandidateManifestRevalidation.candidate_id

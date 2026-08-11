@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from dish_pg import import_link_models as links
 from dish_pg import stage5_models as tx
+from dish_pg.release import ALEMBIC_HEAD
 from tests.support.postgresql.core import ROOT, _bootstrap_registry, _import_one, _uuid_stream
 from tests.support.postgresql.release import _prepare_candidate
 from tests.support.postgresql.workflow import NOW, _next
@@ -29,7 +30,7 @@ def test_0024_exact_typed_link_succeeds_and_contradictory_binding_fails(pglite) 
             ids=_uuid_stream()
             with Session(bind=connection,autoflush=False,expire_on_commit=False) as session:
                 with session.begin():
-                    context=_bootstrap_registry(session,ids,generation_status="active")
+                    context=_bootstrap_registry(session,ids,generation_status="active",schema_head=ALEMBIC_HEAD)
                     task=_import_one(session,ids,context)
                     _service,_candidate_id=_prepare_candidate(session,ids,context,task.task_id)
                     evidence=session.scalar(select(tx.SourceImportEntityEvidence).where(tx.SourceImportEntityEvidence.entity_kind=="task"))

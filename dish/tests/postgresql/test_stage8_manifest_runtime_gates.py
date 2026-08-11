@@ -14,9 +14,11 @@ from dish_pg.database import session_scope
 from dish_pg.release import ReleaseAuthorityError
 from dish_pg.release_validation import worker_readiness_report_sha256
 from tests.support.postgresql.release import (
+    _artifact_file,
     _complete_active_mapping_reconciliation,
     _prepare_candidate,
     _record_runtime_and_worker_readiness_report,
+    _worker_readiness_probes,
     _writer_fence_proof,
 )
 from tests.support.postgresql.stage8_cutover_evidence_gates import _burn_rollback
@@ -83,7 +85,7 @@ def test_post_burn_readiness_does_not_stale_approved_manifest(workflow_db) -> No
         manifest = session.scalar(
             select(manifest_models.ReleaseCandidateManifest).where(
                 manifest_models.ReleaseCandidateManifest.candidate_id == candidate_id,
-                manifest_models.ReleaseCandidateManifest.manifest_version == 3,
+                manifest_models.ReleaseCandidateManifest.manifest_version == 4,
             )
         )
         assert manifest is not None
@@ -143,7 +145,10 @@ def test_worker_readiness_requires_bound_reconciliation_to_be_completed_first(wo
             route_probe_sha256=route_sha,
             payload={
                 "dish_release": candidate.dish_release,
+                "honest_release": candidate.honest_release,
                 "protocol_release": candidate.protocol_release,
+                "registry_version_id": str(candidate.registry_version_id),
+                "honest_binding_id": str(candidate.honest_binding_id),
                 "openapi_release": candidate.openapi_release,
                 "routing_release": candidate.routing_release,
                 "route_target": "postgresql",

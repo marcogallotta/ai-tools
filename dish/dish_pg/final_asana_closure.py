@@ -10,6 +10,10 @@ from sqlalchemy import func, select
 from . import stage6_models as rel
 from .candidate_manifest import bind_approval_manifest, build_candidate_manifest
 from .cutover_chronology import _require_at_or_after, _require_aware
+from .release_history import (
+    acquire_active_registry_release_gate,
+    acquire_generation_release_gate,
+)
 from .release_evidence import (
     ReleaseAuthorityError,
     _require_nonblank,
@@ -240,6 +244,35 @@ class FinalAsanaClosureAuthority:
         approved_at: datetime,
     ) -> rel.CutoverApproval:
         candidate = self._candidate(candidate_id)
+        generation = acquire_generation_release_gate(
+            self.session, generation_id=candidate.generation_id
+        )
+        if generation is None or generation.status != "active":
+            raise ReleaseAuthorityError(
+                "candidate approval requires the active target generation"
+            )
+        active_registry = acquire_active_registry_release_gate(
+            self.session, generation_id=candidate.generation_id
+        )
+        if active_registry is None:
+            raise ReleaseAuthorityError(
+                "candidate approval requires the active section registry"
+            )
+        candidate = self.session.scalar(
+            select(rel.ReleaseCandidate)
+            .where(rel.ReleaseCandidate.candidate_id == candidate_id)
+            .execution_options(populate_existing=True)
+        )
+        if candidate is None:
+            raise ReleaseAuthorityError("unknown release candidate")
+        if (
+            active_registry.generation_id != candidate.generation_id
+            or active_registry.registry_version_id != candidate.registry_version_id
+        ):
+            raise ReleaseAuthorityError(
+                "release candidate identity does not match active generation → registry → Honest binding"
+            )
+        self._require_candidate_release_identity(candidate)
         bundle = self.session.get(rel.EvidenceBundle, evidence_bundle_id)
         if candidate.status not in {"validated", "approved"}:
             raise ReleaseAuthorityError("candidate must be validated before approval")

@@ -80,7 +80,7 @@ class ReleaseCandidateManifest(Base):
     built_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
-        CheckConstraint("manifest_version IN (2, 3)", name="manifest_version_supported"),
+        CheckConstraint("manifest_version IN (2, 3, 4)", name="manifest_version_supported"),
         CheckConstraint(
             "length(canonical_fingerprint) = 64", name="fingerprint_hash_length"
         ),
@@ -94,7 +94,7 @@ class ReleaseCandidateManifest(Base):
             "AND length(readiness_inventory_sha256) = 64 "
             "AND readiness_completion_sha256 IS NOT NULL "
             "AND length(readiness_completion_sha256) = 64) OR "
-            "(manifest_version = 3 AND approval_reconciliation_run_id IS NOT NULL "
+            "(manifest_version IN (3, 4) AND approval_reconciliation_run_id IS NOT NULL "
             "AND readiness_inventory_sha256 IS NULL "
             "AND readiness_completion_sha256 IS NULL))",
             name="component_hash_lengths",
@@ -150,7 +150,7 @@ class CutoverApprovalManifestBinding(Base):
             name="fk_approval_manifest_binding_exact_manifest",
             ondelete="RESTRICT",
         ),
-        CheckConstraint("manifest_version IN (2, 3)", name="manifest_version_supported"),
+        CheckConstraint("manifest_version IN (2, 3, 4)", name="manifest_version_supported"),
         CheckConstraint(
             "length(canonical_fingerprint) = 64", name="fingerprint_hash_length"
         ),
@@ -195,7 +195,7 @@ class CandidateManifestRevalidation(Base):
             name="fk_candidate_manifest_revalidation_exact_manifest",
             ondelete="RESTRICT",
         ),
-        CheckConstraint("manifest_version IN (2, 3)", name="manifest_version_supported"),
+        CheckConstraint("manifest_version IN (2, 3, 4)", name="manifest_version_supported"),
         CheckConstraint(
             "length(approved_fingerprint) = 64 AND "
             "length(observed_fingerprint) = 64",
@@ -210,7 +210,7 @@ class CandidateManifestRevalidation(Base):
             "AND length(observed_readiness_inventory_sha256) = 64 "
             "AND observed_readiness_completion_sha256 IS NOT NULL "
             "AND length(observed_readiness_completion_sha256) = 64) OR "
-            "(manifest_version = 3 AND observed_readiness_inventory_sha256 IS NULL "
+            "(manifest_version IN (3, 4) AND observed_readiness_inventory_sha256 IS NULL "
             "AND observed_readiness_completion_sha256 IS NULL))",
             name="observed_component_hash_lengths",
         ),

@@ -6,6 +6,7 @@ constraint failures but never commit, rollback, or open nested transactions.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Iterable
 
@@ -87,6 +88,16 @@ class ContractBindingRepository:
         if row is None:
             raise CoreAuthorityError(f"unknown Honest contract binding: {binding_id}")
         return row
+
+
+
+
+@dataclass(frozen=True)
+class ActiveReleaseContract:
+    generation: models.AuthorityGeneration
+    active_registry: models.ActiveSectionRegistry
+    registry_version: models.SectionRegistryVersion
+    honest_binding: models.HonestContractBinding
 
 
 class RegistryRepository:
@@ -185,6 +196,28 @@ class RegistryRepository:
         if row is None:
             raise CoreAuthorityError("generation has no active section registry")
         return row
+
+    def active_release_contract(self, generation_id: uuid.UUID) -> ActiveReleaseContract:
+        generation = self.session.get(models.AuthorityGeneration, generation_id)
+        if generation is None or generation.status != "active":
+            raise CoreAuthorityError("release contract requires the active authority generation")
+        active = self.active_registry(generation_id)
+        registry = self.session.get(models.SectionRegistryVersion, active.registry_version_id)
+        if registry is None or registry.generation_id != generation_id:
+            raise CoreAuthorityError("active registry version does not belong to the active generation")
+        binding = self.session.get(models.HonestContractBinding, registry.contract_binding_id)
+        if (
+            binding is None
+            or binding.binding_kind != "release"
+            or binding.dish_release != generation.dish_release
+        ):
+            raise CoreAuthorityError("active registry does not resolve its exact Honest release binding")
+        return ActiveReleaseContract(
+            generation=generation,
+            active_registry=active,
+            registry_version=registry,
+            honest_binding=binding,
+        )
 
     def require_registered_section(
         self,

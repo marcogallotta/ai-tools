@@ -31,6 +31,7 @@ from dish_service.legacy_writer_fence import (
 )
 from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
 from tests.support.postgresql.release import (
+    DEFAULT_REHEARSAL_ENVIRONMENT,
     HASH_A,
     ROOT,
     _complete_active_mapping_reconciliation,
@@ -79,12 +80,14 @@ def test_stage8_schema_migration_adds_cutover_evidence_tables(tmp_path: Path) ->
 def test_passed_rehearsal_requires_kind_specific_checkpoints(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
     with session_scope(factory) as session:
-        service, candidate_id = _prepare_candidate(session, ids, context, task_id)
+        service, candidate_id = _prepare_candidate(
+            session, ids, context, task_id, rehearsal_kinds=()
+        )
         rehearsal = service.start_rehearsal(
             candidate_id=candidate_id,
             rehearsal_kind="activation",
-            environment_identity="stage8-missing-checkpoint",
-            source_manifest_sha256="b" * 64,
+            environment_identity=DEFAULT_REHEARSAL_ENVIRONMENT,
+            source_manifest_sha256=HASH_A,
             started_at=NOW + timedelta(minutes=1),
         )
         checkpoint_path, checkpoint_sha = _artifact_file("activation-writer-fence")
@@ -98,7 +101,8 @@ def test_passed_rehearsal_requires_kind_specific_checkpoints(workflow_db) -> Non
                 "artifact_identity": "fixture:activation:writer-fence",
                 "artifact_path": checkpoint_path,
                 "artifact_sha256": checkpoint_sha,
-                "source_manifest_sha256": "b" * 64,
+                "source_manifest_sha256": HASH_A,
+                "environment_identity": DEFAULT_REHEARSAL_ENVIRONMENT,
                 "gate_result": "pass",
             },
             recorded_at=NOW + timedelta(minutes=1),
@@ -109,7 +113,8 @@ def test_passed_rehearsal_requires_kind_specific_checkpoints(workflow_db) -> Non
                 passed=True,
                 report={
                     "rehearsal_kind": "activation",
-                    "source_manifest_sha256": "b" * 64,
+                    "source_manifest_sha256": HASH_A,
+                    "environment_identity": DEFAULT_REHEARSAL_ENVIRONMENT,
                     "result": "passed",
                     "checkpoint_manifest_sha256": sha256_json(
                         [

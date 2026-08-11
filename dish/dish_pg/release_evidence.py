@@ -22,6 +22,7 @@ REQUIRED_EVIDENCE = (
     ("protocol_coherence", "service_openapi_routing"),
 )
 REQUIRED_REHEARSALS = ("full", "activation", "restore", "fault_injection")
+RELEASE_IDENTITY_CONTRACT = "release-identity-v1"
 
 REQUIRED_REHEARSAL_CHECKPOINTS = {
     "full": (
@@ -68,6 +69,7 @@ REHEARSAL_CHECKPOINT_EVIDENCE_KINDS = {
 }
 
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+_REHEARSAL_ENVIRONMENT_RE = re.compile(r"(?:production-shaped|native-postgresql)@[0-9a-f]{64}\Z")
 
 
 class ReleaseAuthorityError(ValueError):
@@ -89,6 +91,14 @@ def _require_sha256(value: object, field: str) -> str:
 def _require_nonblank(value: object, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ReleaseAuthorityError(f"{field} must be a nonblank string")
+    return value
+
+
+def _require_rehearsal_environment_identity(value: object, field: str = "environment_identity") -> str:
+    if not isinstance(value, str) or _REHEARSAL_ENVIRONMENT_RE.fullmatch(value) is None:
+        raise ReleaseAuthorityError(
+            f"{field} must be production-shaped@<sha256> or native-postgresql@<sha256>"
+        )
     return value
 
 
@@ -130,6 +140,8 @@ def _validate_checkpoint_payload(
     body = dict(payload)
     if body.get("rehearsal_kind") != rehearsal.rehearsal_kind:
         raise ReleaseAuthorityError("checkpoint rehearsal kind does not match run")
+    if body.get("environment_identity") != rehearsal.environment_identity:
+        raise ReleaseAuthorityError("checkpoint environment identity does not match run")
     if body.get("checkpoint_kind") != checkpoint_kind:
         raise ReleaseAuthorityError("checkpoint kind does not match payload")
     if body.get("evidence_kind") != expected:

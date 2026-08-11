@@ -23,7 +23,11 @@ from .cutover_chronology import _require_at_or_after, _require_aware, _utc_compa
 from .cutover_control import CutoverControlAuthority
 from .final_asana_closure import FinalAsanaClosureAuthority
 from .release_artifacts import observe_release_artifact
-from .release_history import acquire_generation_release_gate
+from .release_history import (
+    acquire_active_registry_release_gate,
+    acquire_generation_release_gate,
+)
+from .repositories import CoreAuthorityError, RegistryRepository
 from .release_validation import (
     SUPPORTED_RECONCILIATION_ADAPTERS,
     active_mapping_membership,
@@ -34,12 +38,14 @@ from .release_validation import (
 from .release_evidence import (
     EVIDENCE_ARTIFACT_KINDS,
     REHEARSAL_CHECKPOINT_EVIDENCE_KINDS,
+    RELEASE_IDENTITY_CONTRACT,
     REQUIRED_EVIDENCE,
     REQUIRED_REHEARSAL_CHECKPOINTS,
     REQUIRED_REHEARSALS,
     ReleaseAuthorityError,
     _is_sha256,
     _require_nonblank,
+    _require_rehearsal_environment_identity,
     _require_sha256,
     _validate_checkpoint_payload,
     _validate_evidence_payload,
@@ -53,7 +59,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0036_exact_operation_run_revocations"
+ALEMBIC_HEAD = "0037_release_identity_contract"
 
 
 class ReleaseCandidateService(
@@ -86,6 +92,43 @@ class ReleaseCandidateService(
         _require_aware(value, field)
         if _utc_comparable(value) > _utc_comparable(self._trusted_now()):
             raise ReleaseAuthorityError(f"{field} cannot be later than the trusted database clock")
+
+    def _active_release_contract(self, generation_id: uuid.UUID):
+        try:
+            return RegistryRepository(self.session).active_release_contract(generation_id)
+        except CoreAuthorityError as exc:
+            raise ReleaseAuthorityError(str(exc)) from exc
+
+    def _require_candidate_release_identity(self, candidate: rel.ReleaseCandidate):
+        if (
+            candidate.identity_contract_version != RELEASE_IDENTITY_CONTRACT
+            or candidate.source_manifest_sha256 is None
+            or candidate.rehearsal_environment_identity is None
+            or candidate.registry_version_id is None
+            or candidate.honest_binding_id is None
+        ):
+            raise ReleaseAuthorityError(
+                "release candidate predates the exact identity contract; create a forward candidate"
+            )
+        _require_sha256(candidate.source_manifest_sha256, "candidate source_manifest_sha256")
+        _require_rehearsal_environment_identity(
+            candidate.rehearsal_environment_identity,
+            "candidate rehearsal_environment_identity",
+        )
+        contract = self._active_release_contract(candidate.generation_id)
+        binding = contract.honest_binding
+        if (
+            candidate.registry_version_id != contract.registry_version.registry_version_id
+            or candidate.honest_binding_id != binding.binding_id
+            or candidate.schema_head != contract.generation.schema_head
+            or candidate.dish_release != contract.generation.dish_release
+            or candidate.honest_release != binding.honest_release
+            or candidate.protocol_release != binding.protocol_release
+        ):
+            raise ReleaseAuthorityError(
+                "release candidate identity does not match active generation → registry → Honest binding"
+            )
+        return contract
 
     def _cutover_checkpoint_time(
         self, cutover_run_id: uuid.UUID, checkpoint_kind: str
@@ -565,20 +608,42 @@ class ReleaseCandidateService(
         source_release: str,
         source_commit: str,
         ledger_through_commit: str,
-        schema_head: str,
-        dish_release: str,
-        honest_release: str,
-        protocol_release: str,
+        source_manifest_sha256: str,
+        rehearsal_environment_identity: str,
         openapi_release: str,
         routing_release: str,
         created_at: datetime,
     ) -> rel.ReleaseCandidate:
+        contract = self._active_release_contract(generation_id)
+        generation = contract.generation
+        binding = contract.honest_binding
+        source_manifest_sha256 = _require_sha256(
+            source_manifest_sha256, "source_manifest_sha256"
+        )
+        rehearsal_environment_identity = _require_rehearsal_environment_identity(
+            rehearsal_environment_identity, "rehearsal_environment_identity"
+        )
+        if generation.schema_head != ALEMBIC_HEAD:
+            raise ReleaseAuthorityError(
+                f"active generation schema head must be {ALEMBIC_HEAD}"
+            )
+        schema_head = generation.schema_head
+        dish_release = generation.dish_release
+        honest_release = binding.honest_release
+        protocol_release = binding.protocol_release
+        registry_version_id = contract.registry_version.registry_version_id
+        honest_binding_id = binding.binding_id
         existing = self.session.get(rel.ReleaseCandidate, candidate_id)
         identity = {
             "generation_id": generation_id,
             "source_import_batch_id": source_import_batch_id,
             "shadow_baseline_id": shadow_baseline_id,
             "projection_epoch_id": projection_epoch_id,
+            "identity_contract_version": RELEASE_IDENTITY_CONTRACT,
+            "source_manifest_sha256": source_manifest_sha256,
+            "rehearsal_environment_identity": rehearsal_environment_identity,
+            "registry_version_id": registry_version_id,
+            "honest_binding_id": honest_binding_id,
             "source_release": source_release,
             "source_commit": source_commit,
             "ledger_through_commit": ledger_through_commit,
@@ -598,12 +663,9 @@ class ReleaseCandidateService(
                 raise ReleaseAuthorityError("release candidate identity conflict")
             return existing
 
-        generation = self.session.get(models.AuthorityGeneration, generation_id)
         batch = self.session.get(tx.SourceImportBatch, source_import_batch_id)
         baseline = self.session.get(tx.ShadowBaseline, shadow_baseline_id)
         epoch = self.session.get(tx.ProjectionEpoch, projection_epoch_id)
-        if generation is None or generation.status != "active":
-            raise ReleaseAuthorityError("release candidate requires the active target generation")
         if batch is None or batch.generation_id != generation_id:
             raise ReleaseAuthorityError("source import batch does not belong to candidate generation")
         if baseline is None or baseline.generation_id != generation_id:
@@ -616,8 +678,6 @@ class ReleaseCandidateService(
             raise ReleaseAuthorityError("candidate ledger closure does not match import batch")
         if source_commit != baseline.source_commit:
             raise ReleaseAuthorityError("candidate source commit does not match shadow baseline")
-        if schema_head != ALEMBIC_HEAD:
-            raise ReleaseAuthorityError(f"candidate schema head must be {ALEMBIC_HEAD}")
         chronology_floors = {
             "active generation creation": generation.created_at,
             "source import completion": batch.completed_at,
@@ -639,6 +699,11 @@ class ReleaseCandidateService(
             source_import_batch_id=source_import_batch_id,
             shadow_baseline_id=shadow_baseline_id,
             projection_epoch_id=projection_epoch_id,
+            identity_contract_version=RELEASE_IDENTITY_CONTRACT,
+            source_manifest_sha256=source_manifest_sha256,
+            rehearsal_environment_identity=rehearsal_environment_identity,
+            registry_version_id=registry_version_id,
+            honest_binding_id=honest_binding_id,
             source_release=source_release,
             source_commit=source_commit,
             ledger_through_commit=ledger_through_commit,
@@ -657,8 +722,6 @@ class ReleaseCandidateService(
             terminal_at=None,
         )
         self.session.add(row)
-        # Flush the candidate before inserting the FK-dependent admission row;
-        # no ORM relationship exists to order these otherwise on SQLite.
         self.session.flush()
         control = self.session.get(
             rel.MutationAdmissionControl, generation_id, with_for_update=True
@@ -711,6 +774,7 @@ class ReleaseCandidateService(
         candidate = self._candidate(candidate_id)
         if candidate.status != "assembling":
             raise ReleaseAuthorityError("release evidence is frozen after candidate validation")
+        self._require_candidate_release_identity(candidate)
         _require_at_or_after(
             recorded_at, candidate.created_at,
             field="recorded_at", floor_field="candidate created_at",
@@ -722,6 +786,10 @@ class ReleaseCandidateService(
             outcome=outcome,
             payload=payload,
         )
+        if body["source_manifest_sha256"] != candidate.source_manifest_sha256:
+            raise ReleaseAuthorityError(
+                "release evidence source manifest does not match candidate"
+            )
         observation = observe_release_artifact(
             artifact_path=body["artifact_path"],
             expected_sha256=body["artifact_sha256"],
@@ -776,6 +844,7 @@ class ReleaseCandidateService(
         candidate = self._candidate(candidate_id)
         if candidate.status != "assembling":
             raise ReleaseAuthorityError("rehearsal evidence is frozen after candidate validation")
+        self._require_candidate_release_identity(candidate)
         _require_at_or_after(
             started_at, candidate.created_at,
             field="started_at", floor_field="candidate created_at",
@@ -783,10 +852,20 @@ class ReleaseCandidateService(
         self._require_not_future(started_at, "started_at")
         if rehearsal_kind not in REQUIRED_REHEARSALS:
             raise ReleaseAuthorityError("unsupported rehearsal kind")
-        _require_nonblank(environment_identity, "environment_identity")
+        environment_identity = _require_rehearsal_environment_identity(
+            environment_identity, "environment_identity"
+        )
         source_manifest_sha256 = _require_sha256(
             source_manifest_sha256, "source_manifest_sha256"
         )
+        if environment_identity != candidate.rehearsal_environment_identity:
+            raise ReleaseAuthorityError(
+                "rehearsal environment identity does not match candidate"
+            )
+        if source_manifest_sha256 != candidate.source_manifest_sha256:
+            raise ReleaseAuthorityError(
+                "rehearsal source manifest does not match candidate"
+            )
         existing = self.session.scalar(
             select(rel.RehearsalRun).where(
                 rel.RehearsalRun.candidate_id == candidate_id,
@@ -829,6 +908,13 @@ class ReleaseCandidateService(
         rehearsal = self.session.get(rel.RehearsalRun, rehearsal_id)
         if rehearsal is None or rehearsal.status != "running":
             raise ReleaseAuthorityError("rehearsal is not running")
+        candidate = self._candidate(rehearsal.candidate_id)
+        self._require_candidate_release_identity(candidate)
+        if (
+            rehearsal.source_manifest_sha256 != candidate.source_manifest_sha256
+            or rehearsal.environment_identity != candidate.rehearsal_environment_identity
+        ):
+            raise ReleaseAuthorityError("rehearsal identity does not match candidate")
         _require_at_or_after(
             recorded_at, rehearsal.started_at,
             field="recorded_at", floor_field="rehearsal started_at",
@@ -904,6 +990,13 @@ class ReleaseCandidateService(
         row = self.session.get(rel.RehearsalRun, rehearsal_id)
         if row is None:
             raise ReleaseAuthorityError("unknown rehearsal")
+        candidate = self._candidate(row.candidate_id)
+        self._require_candidate_release_identity(candidate)
+        if (
+            row.source_manifest_sha256 != candidate.source_manifest_sha256
+            or row.environment_identity != candidate.rehearsal_environment_identity
+        ):
+            raise ReleaseAuthorityError("rehearsal identity does not match candidate")
         checkpoints = self.session.scalars(
             select(rel.RehearsalCheckpoint)
             .where(rel.RehearsalCheckpoint.rehearsal_id == rehearsal_id)
@@ -945,6 +1038,8 @@ class ReleaseCandidateService(
             raise ReleaseAuthorityError("rehearsal report kind does not match run")
         if body.get("source_manifest_sha256") != row.source_manifest_sha256:
             raise ReleaseAuthorityError("rehearsal report source manifest does not match run")
+        if body.get("environment_identity") != row.environment_identity:
+            raise ReleaseAuthorityError("rehearsal report environment identity does not match run")
         if body.get("result") != terminal:
             raise ReleaseAuthorityError("rehearsal report result does not match terminal state")
         _require_sha256(
@@ -997,6 +1092,30 @@ class ReleaseCandidateService(
             "generation_active",
             generation is not None and generation.status == "active",
             status=None if generation is None else generation.status,
+        )
+
+        release_identity_error: str | None = None
+        try:
+            contract = self._require_candidate_release_identity(candidate)
+        except ReleaseAuthorityError as exc:
+            contract = None
+            release_identity_error = str(exc)
+        add(
+            "candidate_release_identity_exact",
+            contract is not None,
+            error=release_identity_error,
+            candidate_registry_version_id=(
+                None if candidate.registry_version_id is None else str(candidate.registry_version_id)
+            ),
+            candidate_honest_binding_id=(
+                None if candidate.honest_binding_id is None else str(candidate.honest_binding_id)
+            ),
+            active_registry_version_id=(
+                None if contract is None else str(contract.registry_version.registry_version_id)
+            ),
+            active_honest_binding_id=(
+                None if contract is None else str(contract.honest_binding.binding_id)
+            ),
         )
 
         batch = self.session.get(tx.SourceImportBatch, candidate.source_import_batch_id)
@@ -1289,11 +1408,16 @@ class ReleaseCandidateService(
             latest_evidence[(item.category, item.evidence_key)] = item
         evidence_status: dict[str, str | None] = {}
         artifact_errors: dict[str, str] = {}
+        evidence_identity_errors: dict[str, str] = {}
         for category, key in REQUIRED_EVIDENCE:
             item = latest_evidence.get((category, key))
             identity = f"{category}:{key}"
             evidence_status[identity] = None if item is None else item.outcome
             if item is not None:
+                if item.payload.get("source_manifest_sha256") != candidate.source_manifest_sha256:
+                    evidence_identity_errors[identity] = (
+                        "release evidence source manifest does not match candidate"
+                    )
                 try:
                     observe_release_artifact(
                         artifact_path=item.payload.get("artifact_path"),
@@ -1304,12 +1428,15 @@ class ReleaseCandidateService(
         add(
             "required_acceptance_evidence",
             all(value == "pass" for value in evidence_status.values())
-            and not artifact_errors,
+            and not artifact_errors
+            and not evidence_identity_errors,
             evidence=evidence_status,
             artifact_errors=artifact_errors,
+            identity_errors=evidence_identity_errors,
         )
 
         rehearsal_status: dict[str, str | None] = {}
+        rehearsal_identity_errors: dict[str, str] = {}
         for kind in REQUIRED_REHEARSALS:
             latest = self.session.scalar(
                 select(rel.RehearsalRun)
@@ -1321,25 +1448,52 @@ class ReleaseCandidateService(
                 .limit(1)
             )
             rehearsal_status[kind] = None if latest is None else latest.status
+            if latest is not None and (
+                latest.source_manifest_sha256 != candidate.source_manifest_sha256
+                or latest.environment_identity != candidate.rehearsal_environment_identity
+            ):
+                rehearsal_identity_errors[kind] = (
+                    "rehearsal source/environment identity does not match candidate"
+                )
+            if latest is not None and latest.report is not None and (
+                latest.report.get("source_manifest_sha256") != candidate.source_manifest_sha256
+                or latest.report.get("environment_identity")
+                != candidate.rehearsal_environment_identity
+            ):
+                rehearsal_identity_errors[f"{kind}:report"] = (
+                    "rehearsal report source/environment identity does not match candidate"
+                )
         rehearsal_artifact_errors: dict[str, str] = {}
         for checkpoint in self.session.scalars(
             select(rel.RehearsalCheckpoint)
             .join(rel.RehearsalRun, rel.RehearsalRun.rehearsal_id == rel.RehearsalCheckpoint.rehearsal_id)
             .where(rel.RehearsalRun.candidate_id == candidate_id)
         ):
+            checkpoint_identity = f"{checkpoint.rehearsal_id}:{checkpoint.checkpoint_kind}"
+            if (
+                checkpoint.payload.get("source_manifest_sha256")
+                != candidate.source_manifest_sha256
+                or checkpoint.payload.get("environment_identity")
+                != candidate.rehearsal_environment_identity
+            ):
+                rehearsal_identity_errors[checkpoint_identity] = (
+                    "rehearsal checkpoint source/environment identity does not match candidate"
+                )
             try:
                 observe_release_artifact(
                     artifact_path=checkpoint.payload.get("artifact_path"),
                     expected_sha256=checkpoint.payload.get("artifact_sha256"),
                 )
             except ReleaseAuthorityError as exc:
-                rehearsal_artifact_errors[f"{checkpoint.rehearsal_id}:{checkpoint.checkpoint_kind}"] = str(exc)
+                rehearsal_artifact_errors[checkpoint_identity] = str(exc)
         add(
             "required_rehearsals",
             all(value == "passed" for value in rehearsal_status.values())
-            and not rehearsal_artifact_errors,
+            and not rehearsal_artifact_errors
+            and not rehearsal_identity_errors,
             rehearsals=rehearsal_status,
             artifact_errors=rehearsal_artifact_errors,
+            identity_errors=rehearsal_identity_errors,
         )
 
         return CandidateEvaluation(candidate_id, tuple(checks))
@@ -1420,6 +1574,15 @@ class ReleaseCandidateService(
                 "source_import_batch_id": str(candidate.source_import_batch_id),
                 "shadow_baseline_id": str(candidate.shadow_baseline_id),
                 "projection_epoch_id": str(candidate.projection_epoch_id),
+                "identity_contract_version": candidate.identity_contract_version,
+                "source_manifest_sha256": candidate.source_manifest_sha256,
+                "rehearsal_environment_identity": candidate.rehearsal_environment_identity,
+                "registry_version_id": (
+                    None if candidate.registry_version_id is None else str(candidate.registry_version_id)
+                ),
+                "honest_binding_id": (
+                    None if candidate.honest_binding_id is None else str(candidate.honest_binding_id)
+                ),
                 "source_release": candidate.source_release,
                 "source_commit": candidate.source_commit,
                 "ledger_through_commit": candidate.ledger_through_commit,
@@ -1486,6 +1649,12 @@ class ReleaseCandidateService(
             if activation is None
             else {
                 "activation_id": str(activation.activation_id),
+                "registry_version_id": (
+                    None if activation.registry_version_id is None else str(activation.registry_version_id)
+                ),
+                "honest_binding_id": (
+                    None if activation.honest_binding_id is None else str(activation.honest_binding_id)
+                ),
                 "rollback_burned_at": activation.rollback_burned_at.isoformat()
                 if activation.rollback_burned_at
                 else None,
@@ -1597,6 +1766,13 @@ class ReleaseCandidateService(
             raise ReleaseAuthorityError(
                 "release candidate validation requires the active target generation"
             )
+        active_registry = acquire_active_registry_release_gate(
+            self.session, generation_id=candidate.generation_id
+        )
+        if active_registry is None:
+            raise ReleaseAuthorityError(
+                "release candidate validation requires the active section registry"
+            )
         candidate = self.session.scalar(
             select(rel.ReleaseCandidate)
             .where(rel.ReleaseCandidate.candidate_id == candidate_id)
@@ -1604,6 +1780,14 @@ class ReleaseCandidateService(
         )
         if candidate is None:
             raise ReleaseAuthorityError("unknown release candidate")
+        if (
+            active_registry.generation_id != candidate.generation_id
+            or active_registry.registry_version_id != candidate.registry_version_id
+        ):
+            raise ReleaseAuthorityError(
+                "release candidate identity does not match active generation → registry → Honest binding"
+            )
+        self._require_candidate_release_identity(candidate)
         bundle = self.session.get(rel.EvidenceBundle, evidence_bundle_id)
         if bundle is None or bundle.candidate_id != candidate_id or bundle.bundle_kind != "release_candidate":
             raise ReleaseAuthorityError("validation bundle does not belong to release candidate")
@@ -1687,9 +1871,16 @@ class ReleaseCandidateService(
             candidate_id=row.candidate_id,
             generation_id=row.generation_id,
             projection_epoch_id=row.projection_epoch_id,
+            identity_contract_version=row.identity_contract_version,
+            source_manifest_sha256=row.source_manifest_sha256,
+            rehearsal_environment_identity=row.rehearsal_environment_identity,
+            registry_version_id=row.registry_version_id,
+            honest_binding_id=row.honest_binding_id,
             source_release=row.source_release,
             source_commit=row.source_commit,
+            schema_head=row.schema_head,
             dish_release=row.dish_release,
+            honest_release=row.honest_release,
             protocol_release=row.protocol_release,
             openapi_release=row.openapi_release,
             routing_release=row.routing_release,

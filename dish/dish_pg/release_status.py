@@ -11,9 +11,16 @@ class ReleaseCandidateStatus:
     candidate_id: uuid.UUID
     generation_id: uuid.UUID
     projection_epoch_id: uuid.UUID
+    identity_contract_version: str | None
+    source_manifest_sha256: str | None
+    rehearsal_environment_identity: str | None
+    registry_version_id: uuid.UUID | None
+    honest_binding_id: uuid.UUID | None
     source_release: str
     source_commit: str
+    schema_head: str
     dish_release: str
+    honest_release: str
     protocol_release: str
     openapi_release: str
     routing_release: str

@@ -167,6 +167,12 @@ class AuthorityActivation(Base):
     )
     cutover_approval_id: Mapped[str] = mapped_column(String(256), nullable=False)
     legacy_bundle_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    registry_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("section_registry_versions.registry_version_id", ondelete="RESTRICT", name="fk_authact_registry")
+    )
+    honest_binding_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("honest_contract_bindings.binding_id", ondelete="RESTRICT", name="fk_authact_honest")
+    )
     schema_head: Mapped[str] = mapped_column(String(64), nullable=False)
     dish_release: Mapped[str] = mapped_column(String(128), nullable=False)
     honest_release: Mapped[str] = mapped_column(String(128), nullable=False)
@@ -181,6 +187,11 @@ class AuthorityActivation(Base):
     __table_args__ = (
         CheckConstraint(
             "length(trim(legacy_bundle_id)) > 0", name="legacy_bundle_nonblank"
+        ),
+        CheckConstraint(
+            "(registry_version_id IS NULL AND honest_binding_id IS NULL) OR "
+            "(registry_version_id IS NOT NULL AND honest_binding_id IS NOT NULL)",
+            name="release_contract_identity_pair",
         ),
         CheckConstraint("outcome IN ('activated','aborted')", name="outcome_allowed"),
         CheckConstraint(

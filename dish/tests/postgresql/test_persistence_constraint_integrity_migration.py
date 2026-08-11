@@ -1,6 +1,7 @@
 """SQLite database-boundary evidence for the 0035 CHECK-integrity repair."""
 from __future__ import annotations
 
+import importlib
 import re
 
 import pytest
@@ -289,28 +290,44 @@ def test_0035_repaired_check_constraints_match_sqlalchemy_metadata(
 ) -> None:
     database = sqlite_migration_database
     database.initialize(TARGET_REVISION)
+    migration_0035 = importlib.import_module(
+        "dish_pg.migrations.versions.0035_persistence_constraint_integrity"
+    )
     expected = {
-        "release_candidate_manifests": "ck_release_candidate_manifests_component_hash_lengths",
-        "candidate_manifest_revalidations": "ck_candidate_manifest_revalidations_observed_component_hash_lengths",
-        "honest_contract_bindings": "ck_honest_contract_bindings_migration_fields_match_kind",
-        "service_leases": "ck_service_leases_provenance_exact",
+        "release_candidate_manifests": (
+            "ck_release_candidate_manifests_component_hash_lengths",
+            migration_0035._MANIFEST_COMPONENTS_REPAIRED,
+        ),
+        "candidate_manifest_revalidations": (
+            "ck_candidate_manifest_revalidations_observed_component_hash_lengths",
+            migration_0035._REVALIDATION_COMPONENTS_REPAIRED,
+        ),
+        "honest_contract_bindings": (
+            "ck_honest_contract_bindings_migration_fields_match_kind",
+            None,
+        ),
+        "service_leases": ("ck_service_leases_provenance_exact", None),
     }
 
     def read(connection: sa.Connection) -> None:
         inspector = sa.inspect(connection)
-        for table_name, constraint_name in expected.items():
+        for table_name, (constraint_name, historical_sql) in expected.items():
             database_checks = {
                 row["name"]: row["sqltext"]
                 for row in inspector.get_check_constraints(table_name)
             }
-            orm_constraint = next(
-                constraint
-                for constraint in models.Base.metadata.tables[table_name].constraints
-                if isinstance(constraint, CheckConstraint)
-                and constraint.name == constraint_name
-            )
+            if historical_sql is None:
+                orm_constraint = next(
+                    constraint
+                    for constraint in models.Base.metadata.tables[table_name].constraints
+                    if isinstance(constraint, CheckConstraint)
+                    and constraint.name == constraint_name
+                )
+                expected_sql = str(orm_constraint.sqltext)
+            else:
+                expected_sql = historical_sql
             assert _normalized_check(database_checks[constraint_name]) == _normalized_check(
-                str(orm_constraint.sqltext)
+                expected_sql
             )
 
     database.read(read)

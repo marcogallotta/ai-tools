@@ -7,6 +7,7 @@ from alembic.config import Config
 from sqlalchemy.orm import Session
 from dish_pg import reservation_models as reservations
 from dish_pg import stage6_models as rel
+from dish_pg.release import ALEMBIC_HEAD
 from tests.support.postgresql.core import ROOT, _bootstrap_registry, _import_one, _uuid_stream
 from tests.support.postgresql.release import HASH_A, _prepare_candidate
 from tests.support.postgresql.workflow import NOW, _next, _register_run
@@ -27,7 +28,7 @@ def insert_request(connection, *, generation_id: uuid.UUID, request_id: uuid.UUI
     connection.execute("""INSERT INTO service_requests (request_id,generation_id,run_id,owner_id,principal_class,command_name,canonical_payload_sha256,canonical_payload,protocol_release,dish_release,admitted_at) VALUES (%s,%s,%s,%s,'service','inspect',%s,'{}'::json,'protocol-test','dish-test',%s)""", (request_id,generation_id,run_id,owner_id,"a"*64,datetime.now(timezone.utc)))
 
 def seed_open_reservation(session: Session):
-    ids=_uuid_stream(); context=_bootstrap_registry(session,ids,generation_status="active"); task=_import_one(session,ids,context)
+    ids=_uuid_stream(); context=_bootstrap_registry(session,ids,generation_status="active",schema_head=ALEMBIC_HEAD); task=_import_one(session,ids,context)
     _service,candidate_id=_prepare_candidate(session,ids,context,task.task_id)
     cutover_id=_next(ids); request_id=_next(ids); run_id=_next(ids); plan_id=_next(ids)
     _register_run(session,generation_id=context["generation_id"],run_id=run_id,owner="owner-1",agent="service")

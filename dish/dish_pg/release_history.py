@@ -207,3 +207,25 @@ def acquire_generation_release_gate(
         statement = statement.with_for_update()
     statement = statement.execution_options(populate_existing=True)
     return session.scalar(statement)
+
+
+def acquire_active_registry_release_gate(
+    session: Session, *, generation_id: uuid.UUID
+) -> models.ActiveSectionRegistry | None:
+    """Serialize release acceptance with the mutable active-registry pointer.
+
+    PostgreSQL holds the ActiveSectionRegistry row lock until the caller-owned
+    transaction ends. Other dialects still perform a fresh identity-map refresh
+    so focused tests exercise the reread semantics without claiming PostgreSQL
+    lock certification. Callers that also need the generation release gate must
+    acquire that gate first.
+    """
+
+    statement = select(models.ActiveSectionRegistry).where(
+        models.ActiveSectionRegistry.generation_id == generation_id
+    )
+    if session.get_bind().dialect.name == "postgresql":
+        statement = statement.with_for_update()
+    statement = statement.execution_options(populate_existing=True)
+    return session.scalar(statement)
+

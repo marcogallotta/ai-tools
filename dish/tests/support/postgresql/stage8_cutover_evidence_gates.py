@@ -42,7 +42,7 @@ from tests.support.postgresql.release import (
     _writer_fence_proof,
 )
 
-def _burn_rollback(session, ids, context, task_id, *, dish_release="dish-pg-stage6"):
+def _burn_rollback(session, ids, context, task_id, *, dish_release=None):
     service, candidate_id = _prepare_candidate(
         session, ids, context, task_id, dish_release=dish_release
     )
@@ -143,7 +143,7 @@ def _record_runtime_and_worker_readiness(session, ids, service, candidate_id, co
     )
 
 def _prepare_fenced_recertified_cutover(
-    session, ids, context, task_id, *, dish_release="dish-pg-stage6"
+    session, ids, context, task_id, *, dish_release=None
 ):
     service, candidate_id = _prepare_candidate(
         session, ids, context, task_id, dish_release=dish_release

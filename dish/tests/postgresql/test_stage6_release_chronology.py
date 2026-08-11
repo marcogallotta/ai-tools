@@ -20,7 +20,12 @@ from dish_pg.release import (
     ReleaseCandidateService,
     sha256_json,
 )
-from tests.support.postgresql.release import HASH_A, ROOT, _prepare_candidate
+from tests.support.postgresql.release import (
+    DEFAULT_REHEARSAL_ENVIRONMENT,
+    HASH_A,
+    ROOT,
+    _prepare_candidate,
+)
 from tests.support.postgresql.workflow import NOW, _next, workflow_db
 
 
@@ -35,6 +40,7 @@ def _checkpoint_payload(kind: str, checkpoint_kind: str) -> dict[str, str]:
         "artifact_path": str(path),
         "artifact_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
         "source_manifest_sha256": HASH_A,
+        "environment_identity": DEFAULT_REHEARSAL_ENVIRONMENT,
         "gate_result": "pass",
     }
 
@@ -42,7 +48,9 @@ def _checkpoint_payload(kind: str, checkpoint_kind: str) -> dict[str, str]:
 def test_rehearsal_chronology_rejects_naive_future_and_backward_times(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
     with session_scope(factory) as session:
-        _service, candidate_id = _prepare_candidate(session, ids, context, task_id)
+        _service, candidate_id = _prepare_candidate(
+            session, ids, context, task_id, rehearsal_kinds=()
+        )
         service = ReleaseCandidateService(
             session,
             uuid_factory=lambda: _next(ids),
@@ -68,7 +76,7 @@ def test_rehearsal_chronology_rejects_naive_future_and_backward_times(workflow_d
         rehearsal = service.start_rehearsal(
             candidate_id=candidate_id,
             rehearsal_kind="activation",
-            environment_identity="ordered-time",
+            environment_identity=DEFAULT_REHEARSAL_ENVIRONMENT,
             source_manifest_sha256=HASH_A,
             started_at=NOW + timedelta(minutes=10),
         )
@@ -117,6 +125,7 @@ def test_rehearsal_chronology_rejects_naive_future_and_backward_times(workflow_d
         report = {
             "rehearsal_kind": "activation",
             "source_manifest_sha256": HASH_A,
+            "environment_identity": DEFAULT_REHEARSAL_ENVIRONMENT,
             "result": "passed",
             "checkpoint_manifest_sha256": sha256_json(checkpoints),
         }

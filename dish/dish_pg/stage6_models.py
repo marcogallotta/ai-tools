@@ -43,6 +43,15 @@ class ReleaseCandidate(Base):
     projection_epoch_id: Mapped[uuid.UUID] = mapped_column(
         Uuid, ForeignKey("projection_epochs.projection_epoch_id", ondelete="RESTRICT"), nullable=False
     )
+    identity_contract_version: Mapped[str | None] = mapped_column(String(32))
+    source_manifest_sha256: Mapped[str | None] = mapped_column(String(64))
+    rehearsal_environment_identity: Mapped[str | None] = mapped_column(String(128))
+    registry_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("section_registry_versions.registry_version_id", ondelete="RESTRICT", name="fk_relcand_registry")
+    )
+    honest_binding_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("honest_contract_bindings.binding_id", ondelete="RESTRICT", name="fk_relcand_honest")
+    )
     source_release: Mapped[str] = mapped_column(String(128), nullable=False)
     source_commit: Mapped[str] = mapped_column(String(64), nullable=False)
     ledger_through_commit: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -69,6 +78,16 @@ class ReleaseCandidate(Base):
         CheckConstraint(
             "validation_bundle_sha256 IS NULL OR length(validation_bundle_sha256) = 64",
             name="validation_hash_length",
+        ),
+        CheckConstraint(
+            "(identity_contract_version IS NULL AND source_manifest_sha256 IS NULL "
+            "AND rehearsal_environment_identity IS NULL AND registry_version_id IS NULL "
+            "AND honest_binding_id IS NULL) OR "
+            "(identity_contract_version = 'release-identity-v1' "
+            "AND source_manifest_sha256 IS NOT NULL AND length(source_manifest_sha256) = 64 "
+            "AND rehearsal_environment_identity IS NOT NULL "
+            "AND registry_version_id IS NOT NULL AND honest_binding_id IS NOT NULL)",
+            name="identity_contract_complete",
         ),
         CheckConstraint(
             "(status = 'assembling' AND validated_at IS NULL AND approved_at IS NULL "

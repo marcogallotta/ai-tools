@@ -13,6 +13,7 @@ from alembic.operations import Operations
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
+from dish_pg.release import ALEMBIC_HEAD
 from tests.support.postgresql.core import ROOT, _bootstrap_registry, _import_one, _uuid_stream
 from dish_pg import candidate_manifest_models as manifest_models
 from dish_pg import stage5_models as tx
@@ -31,7 +32,7 @@ pytestmark = pytest.mark.pglite
 
 def _validated_candidate(session: Session):
     ids = _uuid_stream()
-    context = _bootstrap_registry(session, ids, generation_status="active")
+    context = _bootstrap_registry(session, ids, generation_status="active", schema_head=ALEMBIC_HEAD)
     task = _import_one(session, ids, context)
     service, candidate_id = _prepare_candidate(session, ids, context, task.task_id)
     bundle = service.build_evidence_bundle(candidate_id=candidate_id, bundle_kind="release_candidate", built_at=NOW)
@@ -123,7 +124,7 @@ def test_0022_database_rejects_false_matched_component_attestation(pglite) -> No
             with Session(bind=connection, autoflush=False, expire_on_commit=False) as session:
                 with session.begin():
                     ids = _uuid_stream()
-                    context = _bootstrap_registry(session, ids, generation_status="active")
+                    context = _bootstrap_registry(session, ids, generation_status="active", schema_head=ALEMBIC_HEAD)
                     task = _import_one(session, ids, context)
                     service, candidate_id = _prepare_candidate(
                         session, ids, context, task.task_id
@@ -221,7 +222,7 @@ def test_0022_database_activation_rejects_latest_stale_component_revalidation(pg
             with Session(bind=connection, autoflush=False, expire_on_commit=False) as session:
                 with session.begin():
                     ids = _uuid_stream()
-                    context = _bootstrap_registry(session, ids, generation_status="active")
+                    context = _bootstrap_registry(session, ids, generation_status="active", schema_head=ALEMBIC_HEAD)
                     task = _import_one(session, ids, context)
                     service, candidate_id = _prepare_candidate(session, ids, context, task.task_id)
                     bundle = service.build_evidence_bundle(

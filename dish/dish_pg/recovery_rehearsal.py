@@ -74,6 +74,11 @@ ROOT = Path(__file__).resolve().parents[1]
 REPORT_SCHEMA = "dish-postgresql-recovery-rehearsal-v1"
 RESOURCE_PREFIX = "dish-section2-"
 REPRESENTATIVE_CONTENT_IDENTITY = hashlib.sha256(b"section2-content").hexdigest()
+RELEASE_SOURCE_MANIFEST_SHA256 = "a" * 64
+RELEASE_REHEARSAL_ENVIRONMENT_IDENTITY = (
+    "native-postgresql@"
+    + hashlib.sha256(b"section2-native-recovery-rehearsal").hexdigest()
+)
 DEFAULT_PORT_BASE = 56520
 PG_REQUIRED = (
     "initdb",
@@ -602,7 +607,7 @@ def _record_candidate_acceptance_evidence(
                 "artifact_identity": f"section2:{category}:{key}",
                 "artifact_path": path,
                 "artifact_sha256": digest,
-                "source_manifest_sha256": "a" * 64,
+                "source_manifest_sha256": RELEASE_SOURCE_MANIFEST_SHA256,
                 "gate_name": f"{category}:{key}",
                 "gate_result": "pass",
             },
@@ -613,8 +618,8 @@ def _record_candidate_acceptance_evidence(
         rehearsal = service.start_rehearsal(
             candidate_id=candidate.candidate_id,
             rehearsal_kind=kind,
-            environment_identity="section2-native-recovery-rehearsal",
-            source_manifest_sha256="a" * 64,
+            environment_identity=RELEASE_REHEARSAL_ENVIRONMENT_IDENTITY,
+            source_manifest_sha256=RELEASE_SOURCE_MANIFEST_SHA256,
             started_at=recorded_at,
         )
         checkpoints: list[dict[str, str]] = []
@@ -632,7 +637,8 @@ def _record_candidate_acceptance_evidence(
                     "artifact_identity": f"section2:{kind}:{checkpoint_kind}",
                     "artifact_path": path,
                     "artifact_sha256": digest,
-                    "source_manifest_sha256": "a" * 64,
+                    "source_manifest_sha256": RELEASE_SOURCE_MANIFEST_SHA256,
+                    "environment_identity": RELEASE_REHEARSAL_ENVIRONMENT_IDENTITY,
                     "gate_result": "pass",
                 },
                 recorded_at=recorded_at,
@@ -648,7 +654,8 @@ def _record_candidate_acceptance_evidence(
             passed=True,
             report={
                 "rehearsal_kind": kind,
-                "source_manifest_sha256": "a" * 64,
+                "source_manifest_sha256": RELEASE_SOURCE_MANIFEST_SHA256,
+                "environment_identity": RELEASE_REHEARSAL_ENVIRONMENT_IDENTITY,
                 "result": "passed",
                 "checkpoint_manifest_sha256": release_sha256_json(checkpoints),
             },
@@ -1128,10 +1135,8 @@ def _seed_baseline(engine: Engine, evidence_dir: Path, *, dish_commit: str) -> S
             source_release="section2-source",
             source_commit="3" * 40,
             ledger_through_commit="5" * 40,
-            schema_head=ALEMBIC_HEAD,
-            dish_release=result.dish_release,
-            honest_release=result.honest_release,
-            protocol_release=result.protocol_release,
+            source_manifest_sha256=RELEASE_SOURCE_MANIFEST_SHA256,
+            rehearsal_environment_identity=RELEASE_REHEARSAL_ENVIRONMENT_IDENTITY,
             openapi_release="section2-openapi",
             routing_release="section2-routing",
             created_at=utc_now(),

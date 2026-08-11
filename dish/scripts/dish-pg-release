@@ -398,14 +398,18 @@ def _service_call(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                     source_release=data["source_release"],
                     source_commit=data["source_commit"],
                     ledger_through_commit=data["ledger_through_commit"],
-                    schema_head=data.get("schema_head", ALEMBIC_HEAD),
-                    dish_release=data["dish_release"],
-                    honest_release=data["honest_release"],
-                    protocol_release=data["protocol_release"],
+                    source_manifest_sha256=data["source_manifest_sha256"],
+                    rehearsal_environment_identity=data["rehearsal_environment_identity"],
                     openapi_release=data["openapi_release"],
                     routing_release=data["routing_release"],
                     created_at=_time(data["created_at"]),
                 )
+                for field in ("schema_head", "dish_release", "honest_release", "protocol_release"):
+                    supplied = data.get(field)
+                    if supplied is not None and supplied != getattr(row, field):
+                        raise ValueError(
+                            f"candidate-create {field} must match the active generation → registry → Honest binding"
+                        )
                 return {"ok": True, **_row_id(row), "status": row.status}, 0
             if cmd == "evidence-record":
                 data = _load(args.file)

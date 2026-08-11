@@ -25,6 +25,8 @@ from tests.support.postgresql.workflow import NOW, _next
 
 ROOT = Path(__file__).resolve().parents[3]
 HASH_A = "a" * 64
+HASH_B = "b" * 64
+DEFAULT_REHEARSAL_ENVIRONMENT = f"production-shaped@{HASH_A}"
 
 
 def _independent_active_mapping_membership(session, *, candidate):
@@ -54,7 +56,9 @@ def _prepare_candidate(
     evidence_contracts=EXPECTED_RELEASE_EVIDENCE,
     rehearsal_kinds=EXPECTED_REHEARSALS,
     rehearsal_checkpoints=EXPECTED_REHEARSAL_CHECKPOINTS,
-    dish_release="dish-pg-stage6",
+    dish_release=None,
+    source_manifest_sha256=HASH_A,
+    rehearsal_environment_identity=None,
 ):
     # Base.metadata fixtures do not normally carry Alembic's version table.
     session.execute(text("CREATE TABLE IF NOT EXISTS alembic_version (version_num VARCHAR(64) NOT NULL)"))
@@ -160,6 +164,14 @@ def _prepare_candidate(
 
     candidate_id = _next(ids)
     service = ReleaseCandidateService(session, uuid_factory=lambda: _next(ids))
+    generation = session.get(models.AuthorityGeneration, context["generation_id"])
+    assert generation is not None
+    generation.schema_head = ALEMBIC_HEAD
+    session.flush()
+    if dish_release is not None:
+        assert dish_release == generation.dish_release
+    if rehearsal_environment_identity is None:
+        rehearsal_environment_identity = DEFAULT_REHEARSAL_ENVIRONMENT
     service.create_candidate(
         candidate_id=candidate_id,
         generation_id=context["generation_id"],
@@ -169,10 +181,8 @@ def _prepare_candidate(
         source_release="dish-42619b9",
         source_commit="42619b9",
         ledger_through_commit="42619b9",
-        schema_head=ALEMBIC_HEAD,
-        dish_release=dish_release,
-        honest_release="honest-1",
-        protocol_release="protocol-1",
+        source_manifest_sha256=source_manifest_sha256,
+        rehearsal_environment_identity=rehearsal_environment_identity,
         openapi_release="openapi-stage4",
         routing_release="routing-stage6",
         created_at=NOW,
@@ -222,7 +232,7 @@ def _prepare_candidate(
                 "artifact_identity": f"fixture:{category}:{key}",
                 "artifact_path": artifact(f"evidence-{category}-{key}")[0],
                 "artifact_sha256": artifact(f"evidence-{category}-{key}")[1],
-                "source_manifest_sha256": HASH_A,
+                "source_manifest_sha256": source_manifest_sha256,
                 "gate_name": f"{category}:{key}",
                 "gate_result": "pass",
             },
@@ -232,8 +242,8 @@ def _prepare_candidate(
         rehearsal = service.start_rehearsal(
             candidate_id=candidate_id,
             rehearsal_kind=kind,
-            environment_identity="production-shaped-fixture",
-            source_manifest_sha256=HASH_A,
+            environment_identity=rehearsal_environment_identity,
+            source_manifest_sha256=source_manifest_sha256,
             started_at=NOW,
         )
         checkpoints = []
@@ -248,7 +258,8 @@ def _prepare_candidate(
                     "artifact_identity": f"fixture:{kind}:{checkpoint_kind}",
                     "artifact_path": artifact(f"checkpoint-{kind}-{checkpoint_kind}")[0],
                     "artifact_sha256": artifact(f"checkpoint-{kind}-{checkpoint_kind}")[1],
-                    "source_manifest_sha256": HASH_A,
+                    "source_manifest_sha256": source_manifest_sha256,
+                    "environment_identity": rehearsal_environment_identity,
                     "gate_result": "pass",
                 },
                 recorded_at=NOW,
@@ -264,7 +275,8 @@ def _prepare_candidate(
             passed=True,
             report={
                 "rehearsal_kind": kind,
-                "source_manifest_sha256": HASH_A,
+                "source_manifest_sha256": source_manifest_sha256,
+                "environment_identity": rehearsal_environment_identity,
                 "result": "passed",
                 "checkpoint_manifest_sha256": independent_sha256_json(checkpoints),
             },
@@ -417,7 +429,10 @@ def _record_runtime_and_worker_readiness_report(
         route_probe_sha256=route_sha,
         payload={
             "dish_release": candidate.dish_release,
+            "honest_release": candidate.honest_release,
             "protocol_release": candidate.protocol_release,
+            "registry_version_id": str(candidate.registry_version_id),
+            "honest_binding_id": str(candidate.honest_binding_id),
             "openapi_release": candidate.openapi_release,
             "routing_release": candidate.routing_release,
             "route_target": "postgresql",

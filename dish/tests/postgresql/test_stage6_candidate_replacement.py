@@ -7,7 +7,7 @@ from sqlalchemy import select, text
 from dish_pg import models
 from dish_pg import stage6_models as rel
 from dish_pg.database import session_scope
-from dish_pg.release import ALEMBIC_HEAD, ReleaseCandidateService
+from dish_pg.release import ReleaseCandidateService
 from dish_pg.transition import ProjectionService, ShadowService, SourceImportService
 from tests.support.postgresql.release import _prepare_candidate, _record_final_closure
 from tests.support.postgresql.workflow import NOW, _next, workflow_db
@@ -143,10 +143,8 @@ def test_pre_burn_abort_rebinds_closed_generation_control_to_replacement(workflo
             source_release="dish-replacement",
             source_commit=source_commit,
             ledger_through_commit=source_commit,
-            schema_head=ALEMBIC_HEAD,
-            dish_release="dish-pg-replacement",
-            honest_release="honest-1",
-            protocol_release="protocol-1",
+            source_manifest_sha256="d" * 64,
+            rehearsal_environment_identity="production-shaped@" + "d" * 64,
             openapi_release="openapi-stage4",
             routing_release="routing-stage6",
             created_at=NOW + timedelta(minutes=10),

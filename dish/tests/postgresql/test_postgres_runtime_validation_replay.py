@@ -12,6 +12,7 @@ from dish_pg import reservation_models as reservations
 from dish_pg import stage3_models as wf
 from dish_pg import stage6_models as rel
 from dish_pg.database import session_scope
+from dish_pg.recovery_control import _clone_registry
 from dish_pg.workflow import (
     MutationAdmissionClosed,
     RequestSpec,
@@ -307,6 +308,16 @@ def test_destructive_restore_gate_does_not_replace_validation_error(
             )
         )
         session.flush()
+        # A destructive-restore generation owns an exact governed registry.  Do not
+        # let this fixture depend on the retired same-release binding fallback that
+        # runtime identity resolution deliberately no longer permits.
+        _clone_registry(
+            session,
+            predecessor_generation_id=predecessor.generation_id,
+            generation_id=generation_id,
+            at=NOW,
+            uuid_factory=lambda: _next(ids),
+        )
         WorkflowAuthorityService(session).register_run(
             run_id=run_id,
             generation_id=generation_id,

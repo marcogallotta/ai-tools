@@ -13,7 +13,7 @@ memory.
 
 ## 1. What the repository can prove offline
 
-The repository can migrate an empty target through `0035_persistence_constraint_integrity`, execute the Stage 1–6
+The repository can migrate an empty target through `0037_release_identity_contract`, execute the Stage 1–6
 acceptance suites, hash the exact source tree, store immutable evidence revisions and rehearsal
 reports, recompute structural closure from PostgreSQL, build deterministic evidence bundles, fence
 the legacy HTTP writer mechanically, and resume an interrupted cutover from durable checkpoints.
@@ -51,7 +51,7 @@ Freeze and retain these exact identities before candidate creation:
 - closed shadow baseline;
 - active projection epoch and completed reconciliation run;
 - Dish, Honest, protocol, OpenAPI, and routing releases;
-- PostgreSQL schema head `0035_persistence_constraint_integrity`.
+- PostgreSQL schema head `0037_release_identity_contract`.
 
 A changed source commit, ledger high-water mark, production object, release, schema head, or proof gap
 requires a new or revised candidate. Do not relabel an old evidence bundle.
@@ -112,7 +112,7 @@ DISH_PG_URL="$DISH_PG_REHEARSAL_URL" \
   .venv/bin/python scripts/dish-pg-operations-evidence database-fingerprint \
   --database-url-env DISH_PG_URL \
   --expected-database-name dish_rehearsal \
-  --expected-schema-head 0035_persistence_constraint_integrity \
+  --expected-schema-head 0037_release_identity_contract \
   --output /secure/evidence/clean-migration-fingerprint.json
 ```
 
@@ -129,7 +129,7 @@ DISH_PG_URL="$DISH_PG_REHEARSAL_URL" \
   .venv/bin/python scripts/dish-pg-operations-evidence database-fingerprint \
   --database-url-env DISH_PG_URL \
   --expected-database-name dish_rehearsal \
-  --expected-schema-head 0035_persistence_constraint_integrity \
+  --expected-schema-head 0037_release_identity_contract \
   --output /secure/evidence/backup-source-fingerprint.json
 pg_dump "$DISH_PG_REHEARSAL_LIBPQ_URL" \
   --format=custom --no-owner --no-privileges \
@@ -144,7 +144,7 @@ DISH_PG_URL="$DISH_PG_RESTORE_URL" \
   .venv/bin/python scripts/dish-pg-operations-evidence database-fingerprint \
   --database-url-env DISH_PG_URL \
   --expected-database-name dish_restore_verify \
-  --expected-schema-head 0035_persistence_constraint_integrity \
+  --expected-schema-head 0037_release_identity_contract \
   --output /secure/evidence/backup-restored-fingerprint.json
 .venv/bin/python scripts/dish-pg-operations-evidence compare-database-fingerprints \
   --source /secure/evidence/backup-source-fingerprint.json \
@@ -157,7 +157,7 @@ both fingerprint reports, and the comparison report together.
 
 ## 4. Create the release candidate
 
-Prepare a mode-0600 JSON file containing exact UUIDs and release identities:
+Prepare a mode-0600 JSON file containing exact UUIDs plus the canonical source and governed rehearsal-environment identities:
 
 ```json
 {
@@ -166,18 +166,23 @@ Prepare a mode-0600 JSON file containing exact UUIDs and release identities:
   "source_import_batch_id": "UUID",
   "shadow_baseline_id": "UUID",
   "projection_epoch_id": "UUID",
-  "source_release": "EXACT_RELEASE",
-  "source_commit": "EXACT_COMMIT",
-  "ledger_through_commit": "EXACT_COMMIT",
-  "schema_head": "0035_persistence_constraint_integrity",
-  "dish_release": "EXACT_RELEASE",
-  "honest_release": "EXACT_RELEASE",
-  "protocol_release": "EXACT_RELEASE",
+  "source_release": "EXACT_SOURCE_RELEASE",
+  "source_commit": "EXACT_SOURCE_COMMIT",
+  "ledger_through_commit": "EXACT_SOURCE_COMMIT",
+  "source_manifest_sha256": "64_LOWERCASE_HEX",
+  "rehearsal_environment_identity": "production-shaped@64_LOWERCASE_HEX",
   "openapi_release": "EXACT_RELEASE",
   "routing_release": "EXACT_RELEASE",
   "created_at": "RFC3339_WITH_OFFSET"
 }
 ```
+
+`schema_head` and `dish_release` are derived from the active authority generation. `honest_release`
+and `protocol_release` are derived from the exact Honest release binding referenced by that
+generation's active section-registry version. If those four fields are supplied in the JSON for an
+operator-side assertion, `candidate-create` requires exact equality and never treats them as the
+source of truth. The rehearsal environment identity must use a governed typed form, currently
+`production-shaped@<sha256>` or `native-postgresql@<sha256>`.
 
 ```sh
 scripts/dish-pg-release candidate-create --file /secure/input/candidate.json
@@ -309,7 +314,7 @@ Evaluation fails closed unless all of the following are true in authoritative Po
   unresolved;
 - no projection outbox item, attempt, create correlation, or drift item is unresolved;
 - the latest completed reconciliation accounts for every active projection mapping;
-- the database is at `0035_persistence_constraint_integrity`;
+- the database is at `0037_release_identity_contract`;
 - every required evidence item and rehearsal class passes.
 
 Bundle identity is deterministic from authoritative contents; build time does not alter its SHA-256.

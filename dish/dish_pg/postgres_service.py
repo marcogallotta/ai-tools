@@ -28,6 +28,7 @@ from .command_contract import ACTION_COMMANDS
 from .command_port import CommandCall, CommandPortError, PostgresCommandPort
 from .database import DatabaseSettings, create_database_engine, session_factory, session_scope
 from .openapi import postgres_action_openapi
+from .repositories import CoreAuthorityError, RegistryRepository
 from .workflow import (
     VALIDATION_FAILURE_REQUEST_KIND,
     RequestIdentityConflict,
@@ -268,19 +269,12 @@ class PostgresRuntimeService:
                 )
                 if generation is None:
                     raise WorkflowAuthorityError("no active authority generation")
-                binding = session.scalar(
-                    select(models.HonestContractBinding)
-                    .where(
-                        models.HonestContractBinding.dish_release
-                        == generation.dish_release
-                    )
-                    .order_by(models.HonestContractBinding.resolved_at.desc())
-                    .limit(1)
-                )
-                if binding is None:
-                    raise WorkflowAuthorityError(
-                        "active release has no Honest contract binding"
-                    )
+                try:
+                    binding = RegistryRepository(session).active_release_contract(
+                        generation.generation_id
+                    ).honest_binding
+                except CoreAuthorityError as exc:
+                    raise WorkflowAuthorityError(str(exc)) from exc
                 admission = WorkflowAuthorityService(session).record_validation_failure(
                     spec=RequestSpec(
                         request_id=parsed_request_id,

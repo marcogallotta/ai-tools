@@ -491,6 +491,7 @@ class CutoverControlAuthority:
         if run.state != "fenced":
             raise ReleaseAuthorityError("authority activation requires verified writer fencing")
         candidate = self._candidate(run.candidate_id)
+        self._require_candidate_release_identity(candidate)
         evaluation = self.evaluate_candidate(
             candidate_id=candidate.candidate_id, as_of=activated_at
         )
@@ -604,6 +605,7 @@ class CutoverControlAuthority:
         run = self._cutover(cutover_run_id)
         candidate = self._candidate(run.candidate_id)
         if run.state == "rollback_burned":
+            self._require_candidate_release_identity(candidate)
             existing = self.session.scalar(
                 select(models.AuthorityActivation).where(
                     models.AuthorityActivation.generation_id == candidate.generation_id,
@@ -614,6 +616,8 @@ class CutoverControlAuthority:
                 raise ReleaseAuthorityError("rollback-burn state lacks activation evidence")
             if (
                 existing.legacy_bundle_id != legacy_bundle_id
+                or existing.registry_version_id != candidate.registry_version_id
+                or existing.honest_binding_id != candidate.honest_binding_id
                 or existing.rollback_burned_at is None
                 or _utc_comparable(existing.rollback_burned_at)
                 != _utc_comparable(burned_at)
@@ -647,6 +651,7 @@ class CutoverControlAuthority:
         candidate = self._candidate(run.candidate_id)
         if run.state != "activated" or candidate.status != "approved":
             raise ReleaseAuthorityError("rollback burn authority changed while acquiring the burn fence")
+        contract = self._require_candidate_release_identity(candidate)
         approval = self.session.scalar(
             select(rel.CutoverApproval).where(
                 rel.CutoverApproval.candidate_id == candidate.candidate_id
@@ -709,6 +714,8 @@ class CutoverControlAuthority:
             import_run_id=batch.import_run_id,
             cutover_approval_id=str(approval.approval_id),
             legacy_bundle_id=legacy_bundle_id,
+            registry_version_id=contract.registry_version.registry_version_id,
+            honest_binding_id=contract.honest_binding.binding_id,
             schema_head=candidate.schema_head,
             dish_release=candidate.dish_release,
             honest_release=candidate.honest_release,
@@ -731,6 +738,8 @@ class CutoverControlAuthority:
             {
                 "activation_id": str(row.activation_id),
                 "legacy_bundle_id": legacy_bundle_id,
+                "registry_version_id": str(contract.registry_version.registry_version_id),
+                "honest_binding_id": str(contract.honest_binding.binding_id),
                 "fresh_candidate_checks": evaluation.as_dict(),
                 "fresh_manifest_revalidation_id": str(revalidation.revalidation_id),
                 "writer_fence_ids": [str(fence.fence_id) for fence in fences],
@@ -750,6 +759,21 @@ class CutoverControlAuthority:
         recorded_at: datetime,
     ) -> rel.RuntimeReleaseAttestation:
         candidate = self._candidate(candidate_id)
+        contract = self._require_candidate_release_identity(candidate)
+        activation = self.session.scalar(
+            select(models.AuthorityActivation).where(
+                models.AuthorityActivation.generation_id == candidate.generation_id,
+                models.AuthorityActivation.outcome == "activated",
+            )
+        )
+        if (
+            activation is None
+            or activation.registry_version_id != contract.registry_version.registry_version_id
+            or activation.honest_binding_id != contract.honest_binding.binding_id
+        ):
+            raise ReleaseAuthorityError(
+                "runtime attestation activation does not match exact candidate release identity"
+            )
         cutover = self.session.scalar(
             select(rel.CutoverRun).where(
                 rel.CutoverRun.candidate_id == candidate_id,
@@ -784,7 +808,10 @@ class CutoverControlAuthority:
         )
         expected = {
             "dish_release": candidate.dish_release,
+            "honest_release": candidate.honest_release,
             "protocol_release": candidate.protocol_release,
+            "registry_version_id": str(candidate.registry_version_id),
+            "honest_binding_id": str(candidate.honest_binding_id),
             "openapi_release": candidate.openapi_release,
             "routing_release": candidate.routing_release,
             "route_target": "postgresql",

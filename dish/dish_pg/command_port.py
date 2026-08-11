@@ -40,6 +40,7 @@ from .planner import (
     plan_command,
 )
 from .read_model import PostgresReadModel, ReadModelError
+from .repositories import CoreAuthorityError, RegistryRepository
 from .transition import ProjectionService
 from .workflow import (
     ContentionLost,
@@ -654,15 +655,20 @@ class PostgresCommandPort:
         return {"holds": rows, "count": len(rows)}
 
     def _binding_for(self, generation: models.AuthorityGeneration) -> models.HonestContractBinding:
-        binding = self.session.scalar(
-            select(models.HonestContractBinding)
-            .where(models.HonestContractBinding.dish_release == generation.dish_release)
-            .order_by(models.HonestContractBinding.resolved_at.desc())
-            .limit(1)
-        )
-        if binding is None:
-            raise CommandRuleError("CONTRACT_BINDING_MISSING", "active release has no Honest binding")
-        return binding
+        try:
+            contract = RegistryRepository(self.session).active_release_contract(
+                generation.generation_id
+            )
+        except CoreAuthorityError as exc:
+            raise CommandRuleError(
+                "CONTRACT_BINDING_MISSING", str(exc)
+            ) from exc
+        if contract.generation.generation_id != generation.generation_id:
+            raise CommandRuleError(
+                "CONTRACT_BINDING_MISSING",
+                "active registry contract does not belong to runtime generation",
+            )
+        return contract.honest_binding
 
     def _resolve_targets(
         self, call: CommandCall

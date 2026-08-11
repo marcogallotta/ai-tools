@@ -85,6 +85,7 @@ def test_rehearsal_report_binds_exact_checkpoint_manifest(workflow_db) -> None:
                 report={
                     "rehearsal_kind": "full",
                     "source_manifest_sha256": HASH_A,
+                    "environment_identity": rehearsal.environment_identity,
                     "result": "passed",
                     "checkpoint_manifest_sha256": "f" * 64,
                 },
