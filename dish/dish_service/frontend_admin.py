@@ -71,13 +71,14 @@ class FrontendAdminService:
         verification_count = 0
         for card in facts.cards:
             codes = self._attention_codes(card)
+            has_active_operation = card.operation_kind is not None or card.operation_phase is not None
             workflow_code = self._workflow_queue_code(card, section_roles.get(card.section_id))
             if workflow_code is not None:
                 codes.append(workflow_code)
-            if not codes:
+            if not codes and not has_active_operation:
                 continue
             needs_you = any(code in NEEDS_YOU_CODES for code in codes)
-            has_system_activity = any(code in SYSTEM_CODES for code in codes)
+            has_system_activity = has_active_operation or any(code in SYSTEM_CODES for code in codes)
             if needs_you:
                 bucket = "needs_you"
                 needs_you_count += 1

@@ -204,6 +204,73 @@ def test_admin_reads_real_open_human_review_expired_lease_and_uncertainty(workfl
     ]
 
 
+def test_admin_reads_real_open_operation_as_system_activity(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        run_id = _workflow_next(ids)
+        request_id = _workflow_next(ids)
+        execution_id = _workflow_next(ids)
+        operation_id = _workflow_next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        workflow = WorkflowAuthorityService(session, uuid_factory=lambda: _workflow_next(ids))
+        _admit(
+            workflow,
+            request_id=request_id,
+            generation_id=context["generation_id"],
+            run_id=run_id,
+        )
+        _execution(
+            workflow,
+            execution_id=execution_id,
+            request_id=request_id,
+            generation_id=context["generation_id"],
+            task_id=task_id,
+            binding_id=context["binding_id"],
+        )
+        workflow.repo.capture_task_fence(
+            execution_id=execution_id,
+            generation_id=context["generation_id"],
+            task_id=task_id,
+            at=NOW,
+        )
+        workflow.create_operation(
+            operation_id=operation_id,
+            execution_id=execution_id,
+            task_id=task_id,
+            kind="initial",
+            phase="prepare_required",
+            persisted_actions=["prepare"],
+            created_at=NOW,
+        )
+
+    with session_scope(factory) as session:
+        facts = FrontendAdminQuery(session).capture(
+            projection_delay=timedelta(minutes=15),
+            max_cards=10,
+            max_events=10,
+        )
+
+    assert len(facts.cards) == 1
+    assert facts.cards[0].operation_kind == "initial"
+    assert facts.cards[0].operation_phase == "prepare_required"
+
+    with session_scope(factory) as session:
+        payload = _service(session).read()
+
+    assert payload["summary"]["needs_you"] == 0
+    assert payload["summary"]["workflow_queue"] == 0
+    assert payload["summary"]["system_activity"] == 1
+    assert payload["summary"]["affected_dishes"] == 1
+    assert payload["dishes"][0]["bucket"] == "system_activity"
+    assert payload["dishes"][0]["workflow_status"] == {
+        "state": "active_operation",
+        "operation": "Initial",
+        "phase": "Prepare required",
+    }
+    assert payload["dishes"][0]["attention"] == []
+    assert payload["dishes"][0]["diagnostics"]["attention_codes"] == []
+
+
 def test_admin_reads_real_persisted_system_activity(core_db) -> None:
     factory, ids = core_db
     with session_scope(factory) as session:

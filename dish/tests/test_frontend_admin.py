@@ -136,7 +136,7 @@ def test_admin_queue_roles_are_visible_without_inflating_needs_you() -> None:
     }
 
 
-def test_open_operation_takes_precedence_over_queue_fallback() -> None:
+def test_open_operation_takes_precedence_over_queue_fallback_as_system_activity() -> None:
     facts = FrontendAdminFacts(
         sections=(SectionFact(SECTION_ID, 1, "Research Queue", "research_queue", PROJECT_ID, "Cooking", "active", "active"),),
         cards=(card(verification_attention=False, operation_kind="initial", operation_phase="prepare_required"),),
@@ -150,4 +150,13 @@ def test_open_operation_takes_precedence_over_queue_fallback() -> None:
     payload = service.present(facts)
 
     assert payload["summary"]["workflow_queue"] == 0
-    assert payload["summary"]["affected_dishes"] == 0
+    assert payload["summary"]["system_activity"] == 1
+    assert payload["summary"]["affected_dishes"] == 1
+    assert payload["dishes"][0]["bucket"] == "system_activity"
+    assert payload["dishes"][0]["workflow_status"] == {
+        "state": "active_operation",
+        "operation": "Initial",
+        "phase": "Prepare required",
+    }
+    assert payload["dishes"][0]["attention"] == []
+    assert payload["dishes"][0]["diagnostics"]["attention_codes"] == []

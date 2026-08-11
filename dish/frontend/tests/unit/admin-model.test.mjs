@@ -58,3 +58,24 @@ test("admin contract maps ordinary workflow queue work without needs-you inflati
   assert.equal(mapped.summary.verification, 1);
   assert.equal(mapped.dishes[0].bucket, "workflow_queue");
 });
+
+test("admin contract maps an ordinary active operation without synthetic attention", () => {
+  const value = payload();
+  value.summary = { needs_you: 0, human_review: 0, recovery: 0, workflow_queue: 0, research: 0, verification: 0, system_activity: 1, affected_dishes: 1 };
+  value.dishes[0].workflow_status = { state: "active_operation", operation: "Initial", phase: "Prepare required" };
+  value.dishes[0].bucket = "system_activity";
+  value.dishes[0].attention = [];
+  value.dishes[0].diagnostics.attention_codes = [];
+  const mapped = mapAdminResponse(value);
+  assert.equal(mapped.summary.systemActivity, 1);
+  assert.equal(mapped.dishes[0].bucket, "system_activity");
+  assert.equal(mapped.dishes[0].attention.length, 0);
+  assert.equal(workflowText(mapped.dishes[0].status), "Initial · Prepare required");
+});
+
+test("admin contract still rejects empty attention outside active system work", () => {
+  const value = payload();
+  value.dishes[0].attention = [];
+  value.dishes[0].diagnostics.attention_codes = [];
+  assert.throws(() => mapAdminResponse(value), AdminContractMismatch);
+});

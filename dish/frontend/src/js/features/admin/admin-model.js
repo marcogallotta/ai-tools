@@ -49,14 +49,16 @@ function attention(value) {
 }
 function dish(value) {
   exactKeys(value, ["task_id", "title", "section_label", "workflow_status", "bucket", "attention", "last_activity_at", "diagnostics"]);
-  if (!buckets.has(value.bucket) || !Array.isArray(value.attention) || value.attention.length < 1 || value.attention.length > 9) mismatch();
+  if (!buckets.has(value.bucket) || !Array.isArray(value.attention) || value.attention.length > 9) mismatch();
+  const mappedStatus = workflow(value.workflow_status);
+  if (value.attention.length === 0 && !(value.bucket === "system_activity" && mappedStatus.state === "active_operation")) mismatch();
   const mappedAttention = value.attention.map(attention);
   if (new Set(mappedAttention.map((item) => item.code)).size !== mappedAttention.length) mismatch();
   const mappedDiagnostics = diagnostics(value.diagnostics);
   if (mappedDiagnostics.attentionCodes.length !== mappedAttention.length || mappedAttention.some((item) => !mappedDiagnostics.attentionCodes.includes(item.code))) mismatch();
   return {
     id: uuid(value.task_id, true), title: string(value.title, 500), sectionLabel: string(value.section_label, 160),
-    status: workflow(value.workflow_status), bucket: value.bucket, attention: mappedAttention,
+    status: mappedStatus, bucket: value.bucket, attention: mappedAttention,
     lastActivityAt: date(value.last_activity_at, true), diagnostics: mappedDiagnostics,
   };
 }

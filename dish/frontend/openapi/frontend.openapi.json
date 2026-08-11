@@ -1722,6 +1722,39 @@
       "AdminDish": {
         "type": "object",
         "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "workflow_status": {
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "const": "active_operation"
+                    }
+                  },
+                  "required": [
+                    "state"
+                  ]
+                },
+                "bucket": {
+                  "const": "system_activity"
+                }
+              },
+              "required": [
+                "workflow_status",
+                "bucket"
+              ]
+            },
+            "else": {
+              "properties": {
+                "attention": {
+                  "minItems": 1
+                }
+              }
+            }
+          }
+        ],
         "required": [
           "task_id",
           "title",
@@ -1759,7 +1792,6 @@
           },
           "attention": {
             "type": "array",
-            "minItems": 1,
             "maxItems": 9,
             "items": {
               "$ref": "#/components/schemas/AdminAttention"
