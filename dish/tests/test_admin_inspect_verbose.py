@@ -10,7 +10,7 @@ from dish_tool.database import confirm_task_content
 from dish_tool.database_initialization import initialize_database
 from dish_tool.identifiers import stable_dish_uuid_for_asana_identity
 from tests.support.abandonment import Backend
-from tests.test_admin_task_target_resolution import _NUMERIC_TASK_GID, _numeric_task_source
+from tests.support.abandonment import _NUMERIC_TASK_GID, _numeric_task_source
 
 
 def _dish_id() -> str:

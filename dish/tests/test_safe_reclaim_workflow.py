@@ -29,10 +29,7 @@ from tests.support.abandonment import Backend as AbandonmentBackend
 from tests.support.lease_authority import _principal, _service, _start
 from tests.support.service_leases import Clock
 from tests.support.verification import TASK
-from tests.test_admin_task_target_resolution import (
-    _NUMERIC_TASK_GID,
-    _numeric_task_source,
-)
+from tests.support.abandonment import _NUMERIC_TASK_GID, _numeric_task_source
 
 
 def _verification_with_expired_lease(tmp_path):

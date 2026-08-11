@@ -49,6 +49,27 @@ from dish_tool.task_store import LiveTask
 from tests.support.planning_intent import confirmed_planning_start
 from tests.support.asana_backend import StatefulAsanaBackend
 
+_NUMERIC_TASK_GID = "1234567890123456"
+
+
+def _numeric_task_source(
+    conn: sqlite3.Connection,
+    backend: "Backend",
+    *,
+    task_gid: str = _NUMERIC_TASK_GID,
+):
+    baseline = confirm_task_content(
+        conn, task_gid=task_gid, title=backend.title, notes=backend.notes,
+        schema_version="2", boundary="test-baseline",
+    )
+    actors = OperationActors(editor_agent="gpt", researcher_agent=None, run_id="dead-run")
+    return create_operation(
+        conn, task_gid=task_gid, operation_kind="planning",
+        expected_identity=baseline.digest, schema_version="2",
+        expected_section_gid=backend.section, actors=actors,
+    )
+
+
 class Backend(StatefulAsanaBackend):
     def __init__(
         self,

@@ -14,7 +14,7 @@ from dish_pg.history_backfill import (
     apply_terminal_history_snapshot,
     capture_terminal_history_snapshot,
 )
-from tests.postgresql.test_terminal_history_backfill import (
+from tests.support.postgresql.terminal_history_backfill import (
     SOURCE_COMMIT,
     TASK_GID,
     _insert_terminal_history,

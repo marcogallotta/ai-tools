@@ -22,25 +22,13 @@ from dish_tool.database_initialization import initialize_database
 from dish_tool.errors import DishRuleError
 from dish_tool.models import OperationActors
 from tests.support.thread_teardown import join_thread, start_server_thread, stop_server
-from tests.support.abandonment import Backend, _source
+from tests.support.abandonment import Backend, _NUMERIC_TASK_GID, _numeric_task_source, _source
 from tests.support.abandonment_admin import _released_actor_lease
 from tests.support.service_foundation import _release_loader
 
-_NUMERIC_TASK_GID = "1234567890123456"
 _TASK_URL = f"https://app.asana.com/0/999888777666555/{_NUMERIC_TASK_GID}"
 
 
-def _numeric_task_source(conn, backend: Backend, *, task_gid: str = _NUMERIC_TASK_GID):
-    baseline = confirm_task_content(
-        conn, task_gid=task_gid, title=backend.title, notes=backend.notes,
-        schema_version="2", boundary="test-baseline",
-    )
-    actors = OperationActors(editor_agent="gpt", researcher_agent=None, run_id="dead-run")
-    return create_operation(
-        conn, task_gid=task_gid, operation_kind="planning",
-        expected_identity=baseline.digest, schema_version="2",
-        expected_section_gid=backend.section, actors=actors,
-    )
 
 
 

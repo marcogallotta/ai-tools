@@ -18,10 +18,7 @@ from tests.support.abandonment import Backend
 from tests.support.semantic_proposal_bundle_workflow import _approved_service_proposal_runtime
 from tests.support.abandonment_admin import _released_actor_lease
 from tests.support.verification import TASK, make_app, review_and_inspect
-from tests.test_admin_task_target_resolution import (
-    _NUMERIC_TASK_GID,
-    _numeric_task_source,
-)
+from tests.support.abandonment import _NUMERIC_TASK_GID, _numeric_task_source
 
 
 def _dish_id() -> str:
@@ -996,10 +993,7 @@ def test_claimed_proposal_same_run_uuid_different_owner_has_no_claim_or_lease_au
         request_id=str(uuid.uuid4()),
     )
     assert not blocked["ok"]
-    assert blocked["errors"][0]["rule"] in {
-        "service_lease_claim_forbidden",
-        "semantic_proposal_claimed",
-    }
+    assert blocked["errors"][0]["rule"] == "service_lease_claim_forbidden"
 
     conn = initialize_database(service.config.db_path)
     try:

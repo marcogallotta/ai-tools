@@ -3887,6 +3887,27 @@ def _semantic_relationship(
             }],
             "required_predicate": "a claimed safe-reclaim successor has consumed its prepared claim mode",
         },
+        "operation_run_revocation_binding": {
+            "source_fields": [
+                "operation_id", "owner_id", "run_id", "source_lease_id",
+            ],
+            "targets": [
+                {
+                    "record_type": "operations",
+                    "selector": _semantic_selector(row, "operation_id"),
+                    "fields": ["operation_id"],
+                },
+                {
+                    "record_type": "service_leases",
+                    "selector": _semantic_selector(row, "source_lease_id"),
+                    "fields": ["operation_id", "owner_id", "run_id"],
+                },
+            ],
+            "required_predicate": (
+                "operation exists and source_lease_id, when present, selects a lease for "
+                "the same operation, owner, and run"
+            ),
+        },
         "safe_reclaim_cycle_binding": {
             "source_fields": [
                 "stage", "source_operation_id", "successor_operation_id",

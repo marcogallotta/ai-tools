@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import threading
 from datetime import datetime, timedelta, timezone
 from http.client import HTTPConnection
 from pathlib import Path
@@ -18,6 +17,7 @@ from dish_service.frontend_auth import (
 )
 from dish_service.frontend_http import dispatch_get
 from dish_service.http import DishHTTPServer
+from tests.support.thread_teardown import start_server_thread, stop_server
 
 pytestmark = pytest.mark.smoke
 
@@ -105,14 +105,11 @@ class FakeRuntime:
 def private_server(tmp_path: Path):
     runtime = FakeRuntime(tmp_path)
     server = DishHTTPServer(("127.0.0.1", 0), FakeService(tmp_path), surface_mode="private", frontend_runtime=runtime)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    thread = start_server_thread(server)
     try:
         yield server, runtime
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=3)
+        stop_server(server, thread, timeout=3)
 
 
 def request(
@@ -267,16 +264,13 @@ def test_request_header_bound_fails_before_login_dispatch(private_server) -> Non
 def test_action_listener_returns_404_for_frontend_routes(tmp_path: Path) -> None:
     runtime = FakeRuntime(tmp_path)
     server = DishHTTPServer(("127.0.0.1", 0), FakeService(tmp_path), surface_mode="action", frontend_runtime=runtime)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    thread = start_server_thread(server)
     try:
         status, _, body = request(server, "GET", "/login", contract=None)
         assert status == 404
         assert api(body)["error"] == "not_found"
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=3)
+        stop_server(server, thread, timeout=3)
 
 
 def test_prototype_fixture_paths_are_not_part_of_private_frontend_surface(private_server, tmp_path: Path) -> None:
@@ -295,16 +289,13 @@ def test_prototype_fixture_paths_are_not_part_of_private_frontend_surface(privat
 
     runtime = FakeRuntime(tmp_path / "postgresql", mode="private-postgresql")
     pg_server = DishHTTPServer(("127.0.0.1", 0), FakeService(tmp_path), surface_mode="private", frontend_runtime=runtime)
-    thread = threading.Thread(target=pg_server.serve_forever, daemon=True)
-    thread.start()
+    thread = start_server_thread(pg_server)
     try:
         status, _, body = request(pg_server, "GET", "/fixtures/board.json", cookie=TOKEN, contract=None)
         assert status == 404
         assert api(body)["error"] == "not_found"
     finally:
-        pg_server.shutdown()
-        pg_server.server_close()
-        thread.join(timeout=3)
+        stop_server(pg_server, thread, timeout=3)
 
 
 def test_ambiguous_security_headers_fail_closed_before_dispatch(private_server) -> None:

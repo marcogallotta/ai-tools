@@ -199,7 +199,8 @@ def test_current_dispatch_contract_is_explicit_and_complete():
         "prepare", "approve", "reject", "submit", "proposals", "apply-proposal",
     }
     assert set(CURRENT_ADMIN_COMMAND_HANDLERS) == {
-        "attention",
+        "active-leases", "attention", "audit", "issues",
+        "kill", "kill-all", "kill-all-expired",
         "migrate", "reopen-planning", "reopen", "recover", "repair-destination", "supply-evidence",
         "record-human-decision", "resolved", "authorize-governed-change", "discard",
         "abandon-operation", "reconcile-abandonment", "holds", "inspect",

@@ -69,6 +69,18 @@ REVIEWED_PRIVATE_FAULT_SEAMS = {
     ("postgresql/test_runtime_wiring_review_corrections.py", "_probe_native"): (
         "Native PostgreSQL connectivity probe boundary."
     ),
+    ("postgresql/test_runtime_wiring_rehearsal.py", "_run_postgresql_test_runtime"): (
+        "PostgreSQL service-runtime dispatch boundary for wiring selection tests."
+    ),
+    ("postgresql/test_runtime_wiring_rehearsal.py", "_run_configured_service"): (
+        "Legacy configured-service dispatch boundary for wiring selection tests."
+    ),
+    ("test_admin_round1b.py", "_command_abandon_operation"): (
+        "Post-revocation abandonment failure boundary for durable kill fencing."
+    ),
+    ("test_admin_round1b.py", "_commit_kill_revocation"): (
+        "Durable kill-revocation commit boundary for crash/replay tests."
+    ),
 }
 
 
