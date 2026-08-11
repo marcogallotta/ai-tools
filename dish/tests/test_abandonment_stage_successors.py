@@ -18,7 +18,11 @@ from dish_tool.database import (
     confirm_task_content,
     create_abandonment_attempt_in_transaction,
     create_operation,
+    create_verification_cycle,
     declare_operation_step,
+    resolve_signoff_cycle_for_identity,
+    transition_operation,
+    utc_now,
 )
 from dish_tool.database_initialization import initialize_database
 from dish_tool.errors import DishRuleError
@@ -130,21 +134,105 @@ def test_prepared_planning_claim_rejects_abandoned_run_then_binds_fresh_run():
     ).fetchone()[:] == ("completed", "restarted")
 
 
+def _seed_signed_baseline(conn, backend: Backend) -> str:
+    baseline = confirm_task_content(
+        conn,
+        task_gid="task",
+        title=backend.title,
+        notes=backend.notes,
+        schema_version="2",
+        boundary="test-change-baseline",
+    )
+    source = create_operation(
+        conn,
+        task_gid="task",
+        operation_kind="initial",
+        expected_identity=baseline.digest,
+        schema_version="2",
+        expected_section_gid=backend.section,
+    )
+    baseline = confirm_task_content(
+        conn,
+        task_gid="task",
+        title=backend.title,
+        notes=backend.notes,
+        schema_version="2",
+        operation_id=source["operation_id"],
+        boundary="test-signed-change-baseline",
+    )
+    content_version_id = conn.execute(
+        "SELECT last_confirmed_content_version_id FROM task_content_state WHERE task_gid='task'"
+    ).fetchone()[0]
+    cycle = create_verification_cycle(
+        conn,
+        operation_id=source["operation_id"],
+        task_gid="task",
+        cycle_number=1,
+        protocol_release="test-verification",
+        protocol_text="test verification protocol",
+        verifier_agent="codex",
+        run_id="signed-change-baseline-verifier",
+        independence_attestation="independent",
+    )
+    completed_at = utc_now()
+    conn.execute(
+        """UPDATE verification_cycles
+              SET reviewed_content_version_id=?, reviewed_identity=?,
+                  outcome='approved', completed_at=?,
+                  signed_content_version_id=?, signed_identity=?
+            WHERE cycle_id=?""",
+        (
+            content_version_id,
+            baseline.digest,
+            completed_at,
+            content_version_id,
+            baseline.digest,
+            cycle["cycle_id"],
+        ),
+    )
+    transition_operation(
+        conn,
+        source["operation_id"],
+        phase="terminal",
+        status="completed",
+        terminal_outcome="submitted",
+    )
+    return cycle["cycle_id"]
+
+
 def test_clean_change_successor_preserves_exact_completed_change_intent():
     conn = initialize_database(":memory:")
     backend = Backend(section="rq")
     intent = {"level": "small", "reason": "Correct salt"}
+    signed_cycle_id = _seed_signed_baseline(conn, backend)
     source = _source(
         conn,
         backend,
         kind="change",
         initial_steps={"change_intent": intent},
     )
+    source_signoff = resolve_signoff_cycle_for_identity(
+        conn,
+        task_gid=source["task_gid"],
+        identity=source["expected_identity"],
+    )
+    assert source_signoff is not None
+    assert source_signoff["cycle_id"] == signed_cycle_id
     _abandon(conn, source)
     result = settle_abandonment_frontier(
         conn, backend, abandonment_id="abandonment", reason="gone"
     )
     successor_id = result["successor_operation_id"]
+    successor = conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (successor_id,)
+    ).fetchone()
+    successor_signoff = resolve_signoff_cycle_for_identity(
+        conn,
+        task_gid=successor["task_gid"],
+        identity=successor["expected_identity"],
+    )
+    assert successor_signoff is not None
+    assert successor_signoff["cycle_id"] == source_signoff["cycle_id"]
     step = conn.execute(
         "SELECT intended_json,completed_at FROM operation_steps WHERE operation_id=? AND step_name='change_intent'",
         (successor_id,),
