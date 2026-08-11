@@ -34,52 +34,125 @@ This environment layers flake diagnostics on the normal test requirements, addin
 commands below. `pytest-randomly` changes normal pytest behavior when installed, which is why the
 flake-only stack stays out of `requirements-test.txt`.
 
-### Archive/offline bootstrap and environment portability
+### Canonical offline dependency bundle and environment portability
 
-Never execute a `.venv` copied from another checkout, archive, host, Python minor version, or absolute
-path. Virtual environments are not portable artifacts. Treat an archived venv as a package source:
-preserve its `site-packages`, recreate `.venv` with the target host's current interpreter, install from
-the configured index, then seed only compatible packages that the index cannot provide from the
-preserved archive. Pure-Python packages may cross Python minors; CPython-minor-specific compiled
-extensions may not. Verify the rebuilt environment's imports and pinned versions before using it as
-evidence. `--clear` is appropriate only after the archived package source has been preserved. Test
-runners reuse the interpreter that launched them rather than probing for an arbitrary repository
-`.venv`.
+Never execute a `.venv` copied from another checkout, archive, host, Python patch version, or
+absolute path. Virtual environments are not portable artifacts. The supported handoff and CI path is
+the canonical offline dependency bundle described here; it recreates the repository-required
+`dish/.venv` and `tools/.venv` paths instead of transporting either environment.
 
-For a handoff that must bootstrap without an index, prepare a platform/interpreter-matched wheelhouse
-on a connected machine and ship that dependency bundle with the source archive. The serial/default
-wheelhouse includes xdist because it is part of `requirements-test.txt`; flake-only tooling remains
-independently satisfiable:
+There is one wheelhouse convention. Keep the existing `wheelhouse-serial/` name as the **canonical
+staging wheelhouse** and put every Python dependency needed by the normal Dish environment, the
+Tools environment, and optional flake diagnostics into it. Do not create a second `wheelhouse-flake`
+or CI-specific wheelhouse. The published bundle contains a `wheelhouse/` directory only as the
+immutable packaged form of that same staging source.
+
+The compatibility target is committed in `../../ci/dependency-bundle-target.json`. It binds the bundle
+to an exact CPython version, OS, architecture, `sysconfig` platform, libc ABI version, GitHub
+hosted-runner image, and the SHA-256 of every repository dependency manifest used to recreate the
+environments. `../../scripts/dependency_bundle.py` adds the builder's runtime/pip provenance, resolved
+lock hashes, and every wheel SHA-256 to the bundle manifest. The bundle ID is derived from the committed compatibility inputs;
+the release assets additionally carry the archive's complete SHA-256. Any checkout-manifest,
+Python, platform, runner, libc, lock, wheel, asset-manifest, or archive-checksum mismatch is a hard
+failure. There is no online dependency fallback in CI.
+
+Run the bundle lifecycle commands below from the repository root. Prepare the existing staging
+wheelhouse on a trusted connected machine using the exact Python named by the target file. The
+commands below are additive because `tools/requirements.txt` and the flake
+stack have dependencies that are not necessarily introduced by the normal Dish requirements:
 
 ```sh
-# Connected preparation for the authoritative serial environment.
-python3 -m pip download --only-binary=:all: -r requirements-test.txt -d wheelhouse-serial
+BUNDLE_PYTHON=/path/to/python3.13.5
+rm -rf wheelhouse-serial
+mkdir -p wheelhouse-serial
 
-# Offline target.
-python3 -m venv --clear .venv
-.venv/bin/python -m pip install --no-index --find-links wheelhouse-serial -r requirements-test.txt
-
-# Optional flake diagnostics can be bundled independently as well.
-python3 -m pip download --only-binary=:all: -r requirements-flake.txt -d wheelhouse-flake
-python3 -m venv --clear .venv-flake
-.venv-flake/bin/python -m pip install --no-index --find-links wheelhouse-flake -r requirements-flake.txt
+"$BUNDLE_PYTHON" -m pip download --only-binary=:all: \
+  -r dish/requirements-test.txt -d wheelhouse-serial
+"$BUNDLE_PYTHON" -m pip download --only-binary=:all: \
+  -r tools/requirements.txt -d wheelhouse-serial
+"$BUNDLE_PYTHON" -m pip download --only-binary=:all: \
+  -r dish/requirements-flake.txt -d wheelhouse-serial
 ```
 
-Record the source archive SHA-256 plus the builder/target Python version and platform alongside an
-offline wheelhouse. A missing wheel is a bootstrap evidence gap to fix on the connected builder; do
-not execute a relocated virtual environment.
+An otherwise inaccessible/private dependency belongs in this same staging wheelhouse as a wheel.
+Copy an already-built compatible wheel there, or build it on the trusted source machine before
+bundling. The bundle preserves the complete staging wheelhouse, including wheels not obtainable from
+a public index. If such a dependency is required by Dish or Tools, it must also be named by the
+appropriate committed requirements manifest so the offline resolver installs it. Source distributions
+and archived `site-packages` trees are not canonical bundle inputs. If a required compatible wheel
+cannot be put in `wheelhouse-serial/`, bundle preparation is blocked; do not substitute a relocated
+virtualenv or let CI fetch around the gap.
 
-When an uploaded source archive already contains a populated `.venv` but no wheelhouse, that archived
-environment may still be used as a **package source** for sandbox testing. Preserve its `site-packages`
-before clearing/rebuilding `.venv`, create the new environment with the current interpreter, and try
-the normal requirements install first. If the sandbox index cannot supply a pinned package, seed only
-the missing package from the archived `site-packages` when its contents are pure Python or otherwise
-ABI-compatible with the current interpreter/platform. Never copy a CPython-minor-specific compiled
-extension (for example `*.cpython-312-*.so`) into a different Python minor. If a compiled dependency is
-missing, use a requirement-matching package/wheel already built for the current interpreter when
-available; otherwise report that dependency as unavailable. Verify the required top-level versions
-and imports before using the rebuilt environment as test evidence. This fallback recovers dependencies
-from the archive; it does not make the archived venv itself portable or executable.
+Build the immutable assets from the checkout whose dependency manifests are being bundled:
+
+```sh
+BUNDLE_ID=$("$BUNDLE_PYTHON" scripts/dependency_bundle.py expected)
+SOURCE_COMMIT=$(git rev-parse HEAD)
+OUT=.test-artifacts/dependency-bundle-publication
+
+"$BUNDLE_PYTHON" scripts/dependency_bundle.py build \
+  --wheelhouse wheelhouse-serial \
+  --output-dir "$OUT" \
+  --source-commit "$SOURCE_COMMIT"
+```
+
+The builder resolves Dish, Tools, and flake environments **offline** against the staging wheelhouse,
+runs `pip check`, rejects non-wheel or out-of-wheelhouse resolution, writes fully resolved
+`--require-hashes` lock files, preserves the complete staging wheelhouse with SHA-256 entries for
+every wheel, and emits these three matching assets:
+
+```text
+$OUT/$BUNDLE_ID.tar.gz
+$OUT/$BUNDLE_ID.tar.gz.sha256
+$OUT/$BUNDLE_ID.manifest.json
+```
+
+The authoritative publication is the GitHub Release tagged
+`dependency-bundle-$BUNDLE_ID`. Publication originates on the trusted machine holding the canonical
+wheelhouse; GitHub Actions is deliberately not asked to reconstruct private/inaccessible inputs.
+Verify and publish with the same checkout and source commit:
+
+```sh
+"$BUNDLE_PYTHON" scripts/dependency_bundle.py publish \
+  --archive "$OUT/$BUNDLE_ID.tar.gz" \
+  --checksum "$OUT/$BUNDLE_ID.tar.gz.sha256" \
+  --manifest "$OUT/$BUNDLE_ID.manifest.json" \
+  --source-commit "$SOURCE_COMMIT"
+```
+
+`publish` verifies the complete bundle first and refuses to replace an existing bundle Release. The
+`dependency-bundle-mirror` workflow runs automatically on every matching Release publication,
+downloads those exact three Release assets, verifies their identity/checksum agreement, and uploads
+them unchanged as an Actions artifact named `$BUNDLE_ID`. The Release remains authoritative; the
+Actions artifact is a retrieval mirror, not another dependency source. A manual mirror dispatch may
+recreate an expired artifact from an existing immutable Release without changing bundle authority.
+
+For the first adoption, merge/push the mirror workflow before publishing the first authoritative
+bundle so the publication event can create its matching Actions artifact. A push whose dependency
+bundle has not been published is expected to fail closed at bundle download; after publication,
+manual-dispatch the CI workflow for the same commit rather than changing the dependency source.
+Subsequent manifest/target changes compute a new bundle ID and therefore require a new Release before
+CI can pass.
+
+A local/offline consumer recreates the repository paths from the Release assets with:
+
+```sh
+"$BUNDLE_PYTHON" scripts/dependency_bundle.py install \
+  --archive "$BUNDLE_ID.tar.gz" \
+  --checksum "$BUNDLE_ID.tar.gz.sha256" \
+  --manifest "$BUNDLE_ID.manifest.json" \
+  --evidence-dir .test-artifacts/dependency-bundle
+```
+
+Add `--include-flake` only when recreating `dish/.venv-flake`. Installation verifies compatibility
+against the current checkout before deleting/recreating any environment and then installs strictly
+with `--no-index --require-hashes`. A changed dependency manifest or target does not trigger a hidden
+rebuild or index access; it requires a newly published bundle.
+
+GitHub CI is the integrated backstop, not a replacement for the governed local selection rules below.
+Implementation agents continue to use changed-path focused tests and semantic lane escalation during
+iteration. The CI jobs recreate the expected `.venv` paths and then run broad Python, frontend/tooling,
+isolated native-PostgreSQL, and browser-acceptance coverage independently.
 
 ## Autonomous changed-path selection
 

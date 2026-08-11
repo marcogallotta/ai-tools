@@ -1,0 +1,224 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bundle-metadata:
+    name: Dependency bundle metadata
+    runs-on: ubuntu-24.04
+    outputs:
+      python_version: ${{ steps.bundle.outputs.python_version }}
+      bundle_id: ${{ steps.bundle.outputs.bundle_id }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Compute fail-closed bundle identity
+        id: bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/dependency_bundle.py expected \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --github-output "$GITHUB_OUTPUT"
+          python scripts/dependency_bundle.py expected \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --json
+
+  python-tests:
+    name: Broad Python tests
+    needs: bundle-metadata
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ needs.bundle-metadata.outputs.python_version }}
+      - uses: ./.github/actions/setup-python-bundle
+        with:
+          github-token: ${{ github.token }}
+      - name: Validate dependency-bundle contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .test-artifacts/python
+          dish/.venv/bin/python -m pytest -q ci/tests/test_dependency_bundle.py \
+            --junitxml=.test-artifacts/python/dependency-bundle.xml \
+            2>&1 | tee .test-artifacts/python/dependency-bundle.log
+      - name: Validate governed Dish test-selection map
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .test-artifacts/python
+          (
+            cd dish
+            .venv/bin/python scripts/dish-test-plan --validate
+          ) 2>&1 | tee .test-artifacts/python/test-selection-validation.log
+      - name: Dish Python suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .test-artifacts/python
+          (
+            cd dish
+            .venv/bin/python -m pytest -q tests \
+              --junitxml=../.test-artifacts/python/dish.xml
+          ) 2>&1 | tee .test-artifacts/python/dish.log
+      - name: Tools Python suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          tools/.venv/bin/python -m pytest -q tools/tests \
+            --junitxml=.test-artifacts/python/tools.xml \
+            2>&1 | tee .test-artifacts/python/tools.log
+      - name: Upload Python test evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-tests-${{ github.sha }}
+          path: .test-artifacts
+          if-no-files-found: warn
+
+  frontend-tooling:
+    name: Frontend and tooling
+    needs: bundle-metadata
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ needs.bundle-metadata.outputs.python_version }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - uses: ./.github/actions/setup-python-bundle
+        with:
+          github-token: ${{ github.token }}
+      - name: Static, schema, unit, and build checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .test-artifacts/frontend-tooling
+          npm --prefix dish/frontend run check:static \
+            2>&1 | tee .test-artifacts/frontend-tooling/check-static.log
+      - name: Upload frontend/tooling evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: frontend-tooling-${{ github.sha }}
+          path: |
+            .test-artifacts
+            dish/frontend/dist
+          if-no-files-found: warn
+
+  native-postgresql:
+    name: Native PostgreSQL
+    needs: bundle-metadata
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17.10
+        env:
+          POSTGRES_DB: ai_tools_ci
+          POSTGRES_USER: ai_tools_ci
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ai_tools_ci -d ai_tools_ci"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DISH_TEST_POSTGRESQL_DSN: postgresql+psycopg://ai_tools_ci:ci-only-password@127.0.0.1:5432/ai_tools_ci
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ needs.bundle-metadata.outputs.python_version }}
+      - uses: ./.github/actions/setup-python-bundle
+        with:
+          github-token: ${{ github.token }}
+      - name: Prove database target is CI-owned and isolated
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .test-artifacts/native-postgresql
+          dish/.venv/bin/python - <<'PY' | tee .test-artifacts/native-postgresql/target-guard.log
+          import os
+          from urllib.parse import urlparse
+
+          assert os.environ.get("GITHUB_ACTIONS") == "true", "native PostgreSQL lane is CI-only here"
+          parsed = urlparse(os.environ["DISH_TEST_POSTGRESQL_DSN"])
+          assert parsed.hostname in {"127.0.0.1", "localhost"}, parsed.hostname
+          assert parsed.username == "ai_tools_ci", parsed.username
+          assert parsed.path == "/ai_tools_ci", parsed.path
+          print("CI PostgreSQL target guard passed")
+          PY
+      - name: Run governed native PostgreSQL certification
+        shell: bash
+        run: |
+          set -euo pipefail
+          dish/.venv/bin/python dish/scripts/dish-pg-native-certification \
+            --output .test-artifacts/native-postgresql/report.json \
+            --waive-skip "tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_database_disconnect_rolls_back_then_recovers_once=no runner wires DISH_SECTION1_COMPOSE_JSON to the shared TEST PostgreSQL target; revisit before setting external_effects_enabled=true" \
+            --waive-skip "tests/postgresql/native/test_process_failure_command.py::test_command_process_disconnect_before_commit_fails_closed_and_recovers=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure" \
+            --waive-skip "tests/postgresql/native/test_process_failure_disconnect.py::test_projection_worker_fails_clearly_across_postgresql_disconnect=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure" \
+            --waive-skip "tests/postgresql/native/test_process_failure_disconnect.py::test_reconciliation_worker_writes_nothing_while_postgresql_is_down=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure" \
+            2>&1 | tee .test-artifacts/native-postgresql/native-certification.log
+      - name: Upload native PostgreSQL evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-postgresql-${{ github.sha }}
+          path: .test-artifacts
+          if-no-files-found: warn
+
+  browser-acceptance:
+    name: Browser acceptance
+    needs: bundle-metadata
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ needs.bundle-metadata.outputs.python_version }}
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+      - uses: ./.github/actions/setup-python-bundle
+        with:
+          github-token: ${{ github.token }}
+      - name: Install maintained Chromium runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .test-artifacts/browser
+          dish/.venv/bin/python -m playwright install --with-deps chromium \
+            2>&1 | tee .test-artifacts/browser/playwright-install.log
+      - name: Run browser harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix dish/frontend run test:browser \
+            2>&1 | tee .test-artifacts/browser/browser-harness.log
+      - name: Run Stage 7 browser acceptance
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm --prefix dish/frontend run test:acceptance \
+            2>&1 | tee .test-artifacts/browser/stage7-acceptance.log
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: browser-acceptance-${{ github.sha }}
+          path: |
+            .test-artifacts
+            dish/.test-artifacts
+            dish/frontend/screenshots
+          if-no-files-found: warn

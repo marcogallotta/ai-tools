@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "python_implementation": "CPython",
+  "python_version": "3.13.5",
+  "platform_system": "Linux",
+  "platform_architecture": "x86_64",
+  "sysconfig_platform": "linux-x86_64",
+  "libc_name": "glibc",
+  "libc_version": "2.39",
+  "github_runner": "ubuntu-24.04",
+  "compatibility_manifests": [
+    "dish/requirements.txt",
+    "dish/requirements-test.txt",
+    "dish/requirements-flake.txt",
+    "tools/requirements.txt"
+  ],
+  "environments": {
+    "dish": {
+      "requirements": "dish/requirements-test.txt",
+      "venv": "dish/.venv",
+      "install_by_default": true
+    },
+    "tools": {
+      "requirements": "tools/requirements.txt",
+      "venv": "tools/.venv",
+      "install_by_default": true
+    },
+    "flake": {
+      "requirements": "dish/requirements-flake.txt",
+      "venv": "dish/.venv-flake",
+      "install_by_default": false
+    }
+  }
+}

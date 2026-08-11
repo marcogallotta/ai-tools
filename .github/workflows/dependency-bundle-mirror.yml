@@ -1,0 +1,90 @@
+name: Dependency bundle artifact mirror
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing dependency-bundle Release tag to mirror
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  mirror:
+    name: Mirror authoritative dependency bundle
+    if: >-
+      (github.event_name == 'release' && startsWith(github.event.release.tag_name, 'dependency-bundle-')) ||
+      (github.event_name == 'workflow_dispatch' && startsWith(inputs.tag, 'dependency-bundle-'))
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Resolve immutable asset names
+        id: meta
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.tag }}
+        run: |
+          set -euo pipefail
+          bundle_id="${RELEASE_TAG#dependency-bundle-}"
+          test -n "$bundle_id"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "bundle_id=$bundle_id" >> "$GITHUB_OUTPUT"
+          echo "archive_name=$bundle_id.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "checksum_name=$bundle_id.tar.gz.sha256" >> "$GITHUB_OUTPUT"
+          echo "manifest_name=$bundle_id.manifest.json" >> "$GITHUB_OUTPUT"
+
+      - name: Download Release authority
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.meta.outputs.release_tag }}
+          ARCHIVE_NAME: ${{ steps.meta.outputs.archive_name }}
+          CHECKSUM_NAME: ${{ steps.meta.outputs.checksum_name }}
+          MANIFEST_NAME: ${{ steps.meta.outputs.manifest_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dependency-bundle-mirror
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir dependency-bundle-mirror \
+            --pattern "$ARCHIVE_NAME" \
+            --pattern "$CHECKSUM_NAME" \
+            --pattern "$MANIFEST_NAME"
+          test -f "dependency-bundle-mirror/$ARCHIVE_NAME"
+          test -f "dependency-bundle-mirror/$CHECKSUM_NAME"
+          test -f "dependency-bundle-mirror/$MANIFEST_NAME"
+
+      - name: Verify Release checksum and manifest identity
+        shell: bash
+        env:
+          BUNDLE_ID: ${{ steps.meta.outputs.bundle_id }}
+          ARCHIVE_NAME: ${{ steps.meta.outputs.archive_name }}
+          CHECKSUM_NAME: ${{ steps.meta.outputs.checksum_name }}
+          MANIFEST_NAME: ${{ steps.meta.outputs.manifest_name }}
+        run: |
+          set -euo pipefail
+          cd dependency-bundle-mirror
+          sha256sum --check "$CHECKSUM_NAME"
+          tar -xOzf "$ARCHIVE_NAME" bundle-manifest.json > archive-manifest.json
+          cmp "$MANIFEST_NAME" archive-manifest.json
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          manifest = json.loads(Path(os.environ["MANIFEST_NAME"]).read_text(encoding="utf-8"))
+          assert manifest["bundle_id"] == os.environ["BUNDLE_ID"], manifest["bundle_id"]
+          print(manifest["bundle_id"])
+          PY
+          rm archive-manifest.json
+
+      - name: Upload matching Actions artifact mirror
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.meta.outputs.bundle_id }}
+          path: dependency-bundle-mirror
+          if-no-files-found: error
+          retention-days: 90

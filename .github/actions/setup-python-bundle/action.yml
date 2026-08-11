@@ -1,0 +1,59 @@
+name: Setup canonical Python dependency bundle
+description: Verify the checkout's expected Release bundle and recreate dish/.venv and tools/.venv offline.
+inputs:
+  github-token:
+    description: Token with read access to this repository's Releases.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Compute expected dependency bundle
+      id: expected
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p .test-artifacts/dependency-bundle .ci/dependency-bundle
+        python scripts/dependency_bundle.py expected \
+          --repo-root "$GITHUB_WORKSPACE" \
+          --json > .test-artifacts/dependency-bundle/expected.json
+        python scripts/dependency_bundle.py expected \
+          --repo-root "$GITHUB_WORKSPACE" \
+          --github-output "$GITHUB_OUTPUT"
+
+    - name: Download authoritative Release assets
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        RELEASE_TAG: ${{ steps.expected.outputs.release_tag }}
+        ARCHIVE_NAME: ${{ steps.expected.outputs.archive_name }}
+        CHECKSUM_NAME: ${{ steps.expected.outputs.checksum_name }}
+        MANIFEST_NAME: ${{ steps.expected.outputs.manifest_name }}
+      run: |
+        set -euo pipefail
+        {
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir .ci/dependency-bundle \
+            --pattern "$ARCHIVE_NAME" \
+            --pattern "$CHECKSUM_NAME" \
+            --pattern "$MANIFEST_NAME"
+        } 2>&1 | tee .test-artifacts/dependency-bundle/release-download.log
+        test -f ".ci/dependency-bundle/$ARCHIVE_NAME"
+        test -f ".ci/dependency-bundle/$CHECKSUM_NAME"
+        test -f ".ci/dependency-bundle/$MANIFEST_NAME"
+
+    - name: Verify and recreate repository virtualenvs
+      shell: bash
+      env:
+        ARCHIVE_NAME: ${{ steps.expected.outputs.archive_name }}
+        CHECKSUM_NAME: ${{ steps.expected.outputs.checksum_name }}
+        MANIFEST_NAME: ${{ steps.expected.outputs.manifest_name }}
+        AI_TOOLS_GITHUB_RUNNER: ubuntu-24.04
+      run: |
+        set -euo pipefail
+        python scripts/dependency_bundle.py install \
+          --repo-root "$GITHUB_WORKSPACE" \
+          --archive ".ci/dependency-bundle/$ARCHIVE_NAME" \
+          --checksum ".ci/dependency-bundle/$CHECKSUM_NAME" \
+          --manifest ".ci/dependency-bundle/$MANIFEST_NAME" \
+          --evidence-dir .test-artifacts/dependency-bundle
