@@ -18,6 +18,7 @@ if str(DISH_ROOT) not in sys.path:
 from frontend.tests.browser.support import AcceptancePage, ORIGIN, ProductionBridge  # noqa: E402
 
 ARTIFACT_ROOT = DISH_ROOT / ".test-artifacts" / "frontend-stage7"
+BROWSER_TEST_ROOT = Path(__file__).resolve().parent
 _RESULTS: list[dict[str, str]] = []
 _OBSERVATIONS: list[dict] = []
 _CHROMIUM_EXECUTABLE: str | None = None
@@ -102,7 +103,10 @@ def pytest_runtest_logreport(report):
 
 
 def pytest_sessionfinish(session, exitstatus):
-    del session
+    if session.config.option.collectonly or not any(
+        item.path.is_relative_to(BROWSER_TEST_ROOT) for item in session.items
+    ):
+        return
     ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
     build = DISH_ROOT / "frontend" / "dist" / "build.json"
     payload = {
