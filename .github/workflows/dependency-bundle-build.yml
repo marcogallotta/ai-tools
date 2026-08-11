@@ -68,3 +68,18 @@ jobs:
             --checksum ".ci/dependency-bundle-publication/$CHECKSUM_NAME" \
             --manifest ".ci/dependency-bundle-publication/$MANIFEST_NAME" \
             --source-commit "$GITHUB_SHA"
+
+      - name: Dispatch Actions artifact mirror
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.expected.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          # A Release created with the default GITHUB_TOKEN does not trigger the
+          # mirror workflow's `release: published` event (anti-recursion), so
+          # dispatch it explicitly here.
+          gh workflow run dependency-bundle-mirror.yml \
+            --repo "$GITHUB_REPOSITORY" \
+            --ref "$GITHUB_REF_NAME" \
+            -f "tag=$RELEASE_TAG"
