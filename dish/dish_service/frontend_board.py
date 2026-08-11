@@ -54,9 +54,7 @@ class FrontendBoardConfig:
         if not timedelta(0) < self.cursor_ttl <= timedelta(days=7):
             raise ValueError("cursor_ttl must be positive and no longer than seven days")
         if self.projection_delay is None or self.projection_delay <= timedelta(0):
-            raise ValueError(
-                "projection_delay must be explicitly configured until Gate B accepts a threshold"
-            )
+            raise ValueError("projection_delay must be explicitly configured")
 
 
 class FrontendBoardService:

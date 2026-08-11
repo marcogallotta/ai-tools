@@ -106,7 +106,7 @@ class FrontendDetailService:
             "title": facts.title,
             "project_label": facts.project_label,
             "section_label": facts.section_label,
-            # Gate B destination authority remains unresolved. Do not derive it from body text.
+            # Destination authority remains unresolved. Do not derive it from body text.
             "destination_label": None,
             "workflow_status": operation_status(facts.operation_kind, facts.operation_phase),
             "attention_codes": attention_codes,

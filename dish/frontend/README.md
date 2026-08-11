@@ -49,18 +49,6 @@ are implemented. Production activation remains disabled pending the exact-candid
 `../docs/frontend-activation.md`. PostgreSQL remains non-authoritative until the separate cutover
 process explicitly transfers authority.
 
-## Acceptance contracts
-
-`contracts/` contains machine-checked security, read, and acceptance boundaries. They are not runtime
-configuration or authority:
-
-- `stage2-security-contract.json` records implementation-local authentication/runtime decisions;
-- `stage3-read-contract.json` reconciles the board source map to the checked-in PostgreSQL head;
-- `stage2-acceptance-cases.json` and `stage3-acceptance-cases.json` reserve stable acceptance IDs.
-
-The unit suite checks these files against the frontend OpenAPI and checked-in model/migration source so
-schema or contract drift must be reconciled explicitly.
-
 ## Local PostgreSQL observation frontend
 
 The Stage 3 board and Stage 4 read-only task detail can be served locally from PostgreSQL without
