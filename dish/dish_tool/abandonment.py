@@ -752,14 +752,27 @@ def _prepare_stage_successor(
     successor_content_version_id = str(uuid.uuid4())
     succession_id = str(uuid.uuid4())
     start_kind = source["operation_kind"]
+    completed_steps = (
+        _completed_change_intent(conn, source["operation_id"])
+        if source["operation_kind"] == "change"
+        else {}
+    )
+    action_arguments: dict[str, Any] = {
+        "task_gid": source["task_gid"],
+        "kind": start_kind,
+        "prepared_operation_id": successor_operation_id,
+    }
+    if start_kind == "change":
+        change_intent = completed_steps.get("change_intent")
+        if isinstance(change_intent, Mapping):
+            if change_intent.get("level") is not None:
+                action_arguments["change_level"] = change_intent.get("level")
+            if change_intent.get("reason") is not None:
+                action_arguments["change_reason"] = change_intent.get("reason")
     action = {
         "surface": "connected-agent",
         "command": "start",
-        "arguments": {
-            "task_gid": source["task_gid"],
-            "kind": start_kind,
-            "prepared_operation_id": successor_operation_id,
-        },
+        "arguments": action_arguments,
     }
     result = {
         "abandonment_id": abandonment_id,
@@ -769,11 +782,6 @@ def _prepare_stage_successor(
         "successor_cycle_id": None,
         "required_action": action,
     }
-    completed_steps = (
-        _completed_change_intent(conn, source["operation_id"])
-        if source["operation_kind"] == "change"
-        else {}
-    )
     with immediate_transaction(conn, "_prepare_stage_successor"):
         abandonment, successor, succession = (
             apply_operation_abandonment_succession_in_transaction(
@@ -930,16 +938,37 @@ def _prepare_verification_successor(
 
 
 
-def _prepared_stage_start_action(successor: sqlite3.Row) -> dict[str, Any]:
+def _prepared_stage_start_action(
+    conn: sqlite3.Connection, successor: sqlite3.Row
+) -> dict[str, Any]:
     kind = successor["operation_kind"]
+    arguments: dict[str, Any] = {
+        "task_gid": successor["task_gid"],
+        "kind": kind,
+        "prepared_operation_id": successor["operation_id"],
+    }
+    if kind == "change":
+        intent = conn.execute(
+            """SELECT intended_json,completed_at FROM operation_steps
+                 WHERE operation_id=? AND step_name='change_intent'""",
+            (successor["operation_id"],),
+        ).fetchone()
+        if intent is not None and intent["completed_at"] is not None:
+            try:
+                recorded = json.loads(intent["intended_json"])
+            except (TypeError, ValueError):
+                recorded = None
+            if isinstance(recorded, Mapping):
+                level = recorded.get("level")
+                reason = recorded.get("reason")
+                if level is not None:
+                    arguments["change_level"] = level
+                if reason is not None:
+                    arguments["change_reason"] = reason
     return {
         "surface": "connected-agent",
         "command": "start",
-        "arguments": {
-            "task_gid": successor["task_gid"],
-            "kind": kind,
-            "prepared_operation_id": successor["operation_id"],
-        },
+        "arguments": arguments,
     }
 
 
@@ -1253,7 +1282,7 @@ def _reconcile_prepared_stage_successor(
             },
         )
 
-    action = _prepared_stage_start_action(successor)
+    action = _prepared_stage_start_action(conn, successor)
     result = {
         "abandonment_id": abandonment_id,
         "classification": {

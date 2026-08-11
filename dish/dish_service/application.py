@@ -2389,6 +2389,31 @@ class DishService:
             self._synchronize_exposed_actions(
                 result, list(view.get("legal_actions") or [])
             )
+        if (
+            not result.get("ok")
+            and result_operation_id
+            and any(
+                isinstance(error, dict)
+                and error.get("rule") == "prepared_successor_change_intent_mismatch"
+                for error in result.get("errors", ())
+            )
+        ):
+            # The attempted Change carried different intent, but the prepared
+            # successor remains valid and claimable. Re-project its exact durable
+            # continuation so principal-access adaptation cannot misdescribe the
+            # missing lease as an admin recovery requirement.
+            view = expose_authoritative_view(
+                state.app.operation_service.authoritative_view(
+                    str(result_operation_id), schema=self._release(None).schema
+                )
+            )
+            data = result.setdefault("data", {})
+            data["authoritative_view"] = view
+            if isinstance(view.get("required_action"), Mapping):
+                data["required_action"] = dict(view["required_action"])
+            self._synchronize_exposed_actions(
+                result, list(view.get("legal_actions") or [])
+            )
         if result.get("ok") and result_operation_id and command in _MUTATING_AGENT_COMMANDS:
             result = self._finalize_successful_lease(
                 result=result,

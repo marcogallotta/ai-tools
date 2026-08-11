@@ -581,6 +581,10 @@ def _command_inspect(
     operation_id = target.get("operation_id")
     if operation_id is None:
         task_title = _admin_inspect_task_title(self.backend, str(target["task_gid"]))
+        confirmed_status = _confirmed_resting_status(
+            self.conn, str(target["task_gid"])
+        )
+        ready_to_cook = confirmed_status == "ready"
         trace.submission_id = None
         trace.state = "resting"
         data = {
@@ -592,8 +596,14 @@ def _command_inspect(
             "operation_kind": None,
             "status": "resting",
             "phase": None,
-            "waiting_for": "the next requested Dish workflow",
-            "problem": "This Dish has no open workflow operation.",
+            "confirmed_task_status": confirmed_status,
+            "ready_to_cook": ready_to_cook,
+            "waiting_for": "cooking" if ready_to_cook else "the next requested Dish workflow",
+            "problem": (
+                "This Dish is ready to cook."
+                if ready_to_cook
+                else "This Dish has no open workflow operation."
+            ),
             "operator_instruction": None,
             "administrative_blocker": False,
             "human_actions": [],
@@ -708,6 +718,7 @@ def _command_inspect(
     agent_actions_override: list[dict[str, Any] | str] | None = None
     administrative_blocker = False
     operator_instruction: str | None = None
+    hold_question: str | None = None
     problem = "No administrative blocker is currently recorded."
     waiting_for = str(view.get("phase") or operation["phase"])
 
@@ -903,6 +914,7 @@ def _command_inspect(
                     or continuation.get("admin_command_template")
                 })
         problem = "The operation is waiting for Marco-supplied evidence or a binding decision."
+        hold_question = _durable_hold_question(self.conn, operation_id)
     elif view.get("destination_repair_required"):
         administrative_blocker = True
         continuation = _repair_destination_continuation(operation_id, view)
@@ -1067,6 +1079,7 @@ def _command_inspect(
         "waiting_for": waiting_for,
         "problem": problem,
         "operator_instruction": operator_instruction,
+        "hold_question": hold_question,
         "administrative_blocker": administrative_blocker,
         "human_actions": actions,
         "agent_actions_now": (
@@ -1937,6 +1950,69 @@ def _attention_signal(
     return signal
 
 
+def _durable_hold_question(
+    conn: sqlite3.Connection, operation_id: str
+) -> str | None:
+    """Return the exact persisted question/reason for an active hold when available."""
+
+    preconstruction = conn.execute(
+        """SELECT intended_json FROM operation_steps
+             WHERE operation_id=? AND step_name='research_preconstruction_hold'
+               AND completed_at IS NOT NULL""",
+        (operation_id,),
+    ).fetchone()
+    if preconstruction is not None:
+        try:
+            payload = json.loads(preconstruction["intended_json"])
+        except (TypeError, ValueError):
+            payload = {}
+        question = str(payload.get("reason") or "").strip()
+        if question:
+            return question
+
+    cycle = conn.execute(
+        """SELECT cycle_id FROM verification_cycles
+             WHERE operation_id=? ORDER BY cycle_number DESC LIMIT 1""",
+        (operation_id,),
+    ).fetchone()
+    if cycle is None:
+        return None
+    route = conn.execute(
+        """SELECT intended_json FROM operation_steps
+             WHERE operation_id=? AND step_name=? AND completed_at IS NOT NULL""",
+        (operation_id, f"route_cycle_finalize:{cycle['cycle_id']}"),
+    ).fetchone()
+    if route is None:
+        return None
+    try:
+        payload = json.loads(route["intended_json"])
+    except (TypeError, ValueError):
+        return None
+    question = str(payload.get("decision_reason") or "").strip()
+    return question or None
+
+
+def _confirmed_resting_status(
+    conn: sqlite3.Connection, task_gid: str
+) -> str | None:
+    row = conn.execute(
+        """SELECT last_confirmed_title,last_confirmed_notes
+             FROM task_content_state WHERE task_gid=?""",
+        (task_gid,),
+    ).fetchone()
+    if row is None:
+        return None
+    try:
+        from .task_document import parse_task_document
+
+        document = parse_task_document(
+            f"{row['last_confirmed_title']}\n{row['last_confirmed_notes']}"
+        )
+    except Exception:
+        return None
+    return str(document.state.values.get("Status") or "").strip() or None
+
+
 
 _AUDIT_CATEGORY_ORDER = {
     "real_inconsistency": 0,
@@ -2539,6 +2615,7 @@ def _durable_attention_items(conn: sqlite3.Connection) -> list[dict[str, Any]]:
                     kind="evidence_hold",
                     category="needs_marco",
                     summary="Dish is waiting for Marco-supplied evidence.",
+                    detail=_durable_hold_question(conn, operation_id),
                     shell_command=f"dish-admin inspect {target}",
                 ),
             )
@@ -2551,6 +2628,7 @@ def _durable_attention_items(conn: sqlite3.Connection) -> list[dict[str, Any]]:
                     kind="human_hold",
                     category="needs_marco",
                     summary="Dish is waiting for a Marco decision.",
+                    detail=_durable_hold_question(conn, operation_id),
                     shell_command=f"dish-admin inspect {target}",
                 ),
             )
@@ -2797,12 +2875,12 @@ def _command_holds(self, *, trace: AdminTrace) -> dict[str, Any]:
                 if route == "evidence"
                 else "research_preconstruction_human"
             )
-            question = payload.get("reason")
+            question = _durable_hold_question(self.conn, op["operation_id"])
             cycle_id = None
             hold_identity = op["expected_identity"]
         elif cycle is not None and cycle["outcome"] == "verification-hold":
             hold_class = "verification_two_pass"
-            question = None
+            question = _durable_hold_question(self.conn, op["operation_id"])
             cycle_id = cycle["cycle_id"]
             hold_identity = cycle["hold_identity"]
         else:
@@ -2814,7 +2892,7 @@ def _command_holds(self, *, trace: AdminTrace) -> dict[str, Any]:
             )
             cycle_id = None if cycle is None else cycle["cycle_id"]
             hold_identity = None if cycle is None else cycle["hold_identity"]
-            question = None
+            question = _durable_hold_question(self.conn, op["operation_id"])
         live = read_complete_task(
             self.backend,
             task_gid=op["task_gid"],

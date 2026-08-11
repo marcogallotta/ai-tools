@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 from pathlib import Path
@@ -32,6 +33,8 @@ from dish_tool.step8 import resolve_hold
 from dish_tool.task_store import LiveTask
 
 from tests.support.planning_intent import confirmed_planning_start
+from tests.support.readiness import _approve_and_submit
+from tests.support.service_foundation import _release_loader
 from tests.support.abandonment import (
     Backend,
     _abandon,
@@ -40,17 +43,31 @@ from tests.support.abandonment import (
     _source,
 
 )
-from tests.support.verification import TASK
+from tests.support.verification import TASK, make_app
 
 
 
 
 
-
-
-
-
-
+def _signed_change_source(tmp_path, *, intent):
+    app, backend, original_operation_id, _ = make_app(tmp_path)
+    _approve_and_submit(app, original_operation_id)
+    identity = app.conn.execute(
+        "SELECT last_confirmed_identity FROM task_content_state WHERE task_gid='t'"
+    ).fetchone()[0]
+    operation = create_operation(
+        app.conn,
+        task_gid="t",
+        operation_kind="change",
+        expected_identity=identity,
+        schema_version="2",
+        expected_section_gid=backend.section,
+        actors=OperationActors(editor_agent="gpt", run_id="dead-run"),
+        initial_steps={"change_intent": intent},
+    )
+    return app, backend, app.conn.execute(
+        "SELECT * FROM operations WHERE operation_id=?", (operation["operation_id"],)
+    ).fetchone()
 
 
 def test_clean_planning_abandonment_creates_exact_unowned_successor():
@@ -223,6 +240,13 @@ def test_clean_change_successor_preserves_exact_completed_change_intent():
         conn, backend, abandonment_id="abandonment", reason="gone"
     )
     successor_id = result["successor_operation_id"]
+    assert result["required_action"]["arguments"] == {
+        "task_gid": "task",
+        "kind": "change",
+        "prepared_operation_id": successor_id,
+        "change_level": "small",
+        "change_reason": "Correct salt",
+    }
     successor = conn.execute(
         "SELECT * FROM operations WHERE operation_id=?", (successor_id,)
     ).fetchone()
@@ -547,3 +571,100 @@ def test_start_schema_accepts_prepared_stage_target_but_not_verification():
             },
         )
     assert rejected_prepared_target.value.rule == "argument_unexpected"
+
+
+def test_existing_change_successor_view_rehydrates_exact_intent_into_action(tmp_path):
+    intent = {"level": "small", "reason": "Use the confirmed boneless quantity"}
+    app, backend, source = _signed_change_source(tmp_path, intent=intent)
+    conn = app.conn
+    _abandon(conn, source)
+    result = settle_abandonment_frontier(
+        conn, backend, abandonment_id="abandonment", reason="gone"
+    )
+    successor_id = result["successor_operation_id"]
+
+    # Simulate an abandonment row created by the older code, whose stored action
+    # named the prepared operation but omitted the exact Change intent.
+    stored = dict(result)
+    stored["required_action"] = {
+        "surface": "connected-agent",
+        "command": "start",
+        "arguments": {
+            "task_gid": "t",
+            "kind": "change",
+            "prepared_operation_id": successor_id,
+        },
+    }
+    conn.execute(
+        "UPDATE abandonment_attempts SET latest_result_json=? WHERE abandonment_id='abandonment'",
+        (json.dumps(stored, sort_keys=True, separators=(",", ":")),),
+    )
+
+    view = CurrentWorkflowService(conn, backend).authoritative_view(successor_id)
+
+    assert view["legal_actions"] == ["start"]
+    assert view["required_action"]["arguments"] == {
+        "task_gid": "t",
+        "kind": "change",
+        "prepared_operation_id": successor_id,
+        "change_level": "small",
+        "change_reason": "Use the confirmed boneless quantity",
+    }
+
+
+def test_service_change_intent_mismatch_keeps_prepared_successor_claimable(tmp_path):
+    db_path = tmp_path / "dish.db"
+    intent = {"level": "small", "reason": "Use the confirmed boneless quantity"}
+    app, backend, source = _signed_change_source(tmp_path, intent=intent)
+    _abandon(app.conn, source)
+    prepared = settle_abandonment_frontier(
+        app.conn, backend, abandonment_id="abandonment", reason="gone"
+    )
+    successor_id = prepared["successor_operation_id"]
+    app.conn.close()
+
+    honest = tmp_path / "service-honest"
+    honest.mkdir()
+    service = DishService(
+        ServiceConfig(db_path=db_path, honest_root=honest),
+        backend_factory=lambda: backend,
+        release_loader=_release_loader(honest),
+    )
+    result = service.execute_agent(
+        "start",
+        {
+            "task_gid": "t",
+            "agent": "gpt",
+            "kind": "change",
+            "prepared_operation_id": successor_id,
+            "change_level": "large",
+            "change_reason": "A different new request",
+        },
+        principal=ServicePrincipal("owner", "fresh-run"),
+        request_id=str(uuid.uuid4()),
+    )
+
+    assert result["ok"] is False
+    assert result["errors"][0]["rule"] == "prepared_successor_change_intent_mismatch"
+    assert result["allowed_actions"] == ["start"]
+    assert result["data"]["service_access"]["state"] == "claimable_by_run"
+    assert not result["data"].get("recovery_required")
+    assert result["data"]["required_action"]["arguments"] == {
+        "task_gid": "t",
+        "kind": "change",
+        "prepared_operation_id": successor_id,
+        "change_level": "small",
+        "change_reason": "Use the confirmed boneless quantity",
+    }
+
+    continuation = dict(result["data"]["required_action"]["arguments"])
+    continuation["agent"] = "gpt"
+    resumed = service.execute_agent(
+        "start",
+        continuation,
+        principal=ServicePrincipal("owner", "fresh-run"),
+        request_id=str(uuid.uuid4()),
+    )
+    assert resumed["ok"] is True
+    assert resumed["submission_id"] == successor_id
+    assert resumed["data"]["service_access"]["state"] == "owned"

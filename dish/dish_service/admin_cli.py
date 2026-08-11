@@ -726,6 +726,7 @@ def _interactive_supply_evidence(
     target: str,
     arguments: Sequence[str],
     input_fn,
+    question: str | None = None,
 ) -> bool:
     """Resolve one evidence queue item directly. Return True when the user chose Quit."""
 
@@ -740,7 +741,13 @@ def _interactive_supply_evidence(
         _emit_interactive_admin_result(inspected, arguments=arguments)
         return False
     summary = str(action.get("summary") or "Provide the missing evidence.").strip()
+    inspect_data = inspected.get("data") if isinstance(inspected.get("data"), dict) else {}
+    resolved_question = str(
+        question or inspect_data.get("hold_question") or ""
+    ).strip()
     print(f"\n{summary}")
+    if resolved_question:
+        print(f"Question: {resolved_question}")
     detail = _prompt_review(input_fn, "Evidence / answer: ")
     if detail.lower() in {"q", "quit", "exit"}:
         return True
@@ -827,8 +834,22 @@ def _interactive_issues(
                 return 0
             continue
         if str(selected.get("queue_group") or "") == "evidence" and target:
+            evidence_question = next(
+                (
+                    str(signal.get("detail") or "").strip()
+                    for signal in signals
+                    if isinstance(signal, dict)
+                    and str(signal.get("kind") or "") == "evidence_hold"
+                    and str(signal.get("detail") or "").strip()
+                ),
+                "",
+            )
             if _interactive_supply_evidence(
-                app, target=target, arguments=arguments, input_fn=input_fn
+                app,
+                target=target,
+                arguments=arguments,
+                input_fn=input_fn,
+                question=evidence_question or None,
             ):
                 return 0
             continue

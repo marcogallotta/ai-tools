@@ -108,6 +108,18 @@ def apply_abandonment_view(
         stored = {}
     required_action = stored.get("required_action") if isinstance(stored, dict) else None
     if abandonment["status"] == "awaiting_successor_claim":
+        successor = conn.execute(
+            "SELECT * FROM operations WHERE operation_id=?",
+            (abandonment["successor_operation_id"],),
+        ).fetchone()
+        if successor is not None and successor["successor_claim_mode"] == "stage_actor":
+            # Old abandonment rows may predate exact Change intent fields in the
+            # stored required_action. Rebuild the continuation from durable successor
+            # state so existing prepared successors become self-describing without
+            # mutating their historical abandonment result.
+            from .abandonment import _prepared_stage_start_action
+
+            required_action = _prepared_stage_start_action(conn, successor)
         required_command = (
             str(required_action.get("command"))
             if isinstance(required_action, dict) and required_action.get("command")

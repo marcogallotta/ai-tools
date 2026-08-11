@@ -443,3 +443,52 @@ def test_issues_renderer_hides_system_items_until_verbose():
     assert "Auto-recoverable" in verbose
     assert "Quiet dish" in verbose
     assert "live task inspections: 0" in verbose
+
+
+def test_human_renderer_calls_out_ready_to_cook_resting_state():
+    from dish_tool.admin_human import render_admin_result
+
+    result = {
+        "ok": True,
+        "command": "inspect",
+        "code": "OK",
+        "state": "resting",
+        "retryable": False,
+        "allowed_actions": [],
+        "data": {
+            "status": "resting",
+            "ready_to_cook": True,
+            "problem": "This Dish is ready to cook.",
+        },
+        "errors": [],
+    }
+
+    rendered = render_admin_result(result, profile="prod")
+
+    assert "Ready to cook." in rendered
+    assert "No workflow action or recovery is required." in rendered
+    assert "No workflow is currently running" not in rendered
+
+
+def test_human_renderer_shows_hold_question_before_evidence_action():
+    from dish_tool.admin_human import render_admin_result
+
+    result = {
+        "ok": True,
+        "command": "inspect",
+        "code": "OK",
+        "state": "open",
+        "retryable": False,
+        "allowed_actions": [],
+        "data": {
+            "status": "open",
+            "problem": "The operation is waiting for Marco-supplied evidence.",
+            "hold_question": "Which doubanjiang brand is actually on hand?",
+            "human_actions": [],
+        },
+        "errors": [],
+    }
+
+    rendered = render_admin_result(result, profile="prod")
+
+    assert "Question: Which doubanjiang brand is actually on hand?" in rendered

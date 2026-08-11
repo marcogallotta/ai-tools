@@ -112,6 +112,11 @@ def _copy_recovery_guidance(
 ) -> None:
     if "required_admin_action" in view:
         data["required_admin_action"] = view["required_admin_action"]
+    if (
+        view.get("connected_action_available")
+        and isinstance(view.get("required_action"), Mapping)
+    ):
+        data["required_action"] = dict(view["required_action"])
     if view.get("recovery_required"):
         for key in (
             "recovery_required",

@@ -369,3 +369,62 @@ def test_issues_cli_non_interactive_flag_preserves_one_shot_summary(monkeypatch,
     output = capsys.readouterr().out
     assert "dish-admin review-inspect review-1" in output
     assert "Select a Dish number" not in output
+
+
+class EvidenceIssuesApp:
+    def __init__(self):
+        self.calls = []
+
+    def execute(self, command, **arguments):
+        self.calls.append((command, arguments))
+        if command == "queue":
+            return _envelope(
+                command,
+                data={
+                    "needs_you_count": 1,
+                    "system_count": 0,
+                    "issue_items": [{
+                        "queue_group": "evidence",
+                        "needs_you": True,
+                        "dish_id": "11111111-1111-4111-8111-111111111111",
+                        "task_title": "Green beans",
+                        "signals": [{
+                            "kind": "evidence_hold",
+                            "category": "needs_marco",
+                            "summary": "Dish is waiting for Marco-supplied evidence.",
+                            "detail": "Which preserved vegetable is actually available?",
+                        }],
+                    }],
+                },
+            )
+        if command == "inspect":
+            return _envelope(
+                command,
+                data={
+                    "status": "open",
+                    "problem": "Waiting for evidence.",
+                    "hold_question": "Which preserved vegetable is actually available?",
+                    "human_actions": [{
+                        "kind": "supply-evidence",
+                        "summary": "Record Marco-supplied evidence and release the hold.",
+                        "arguments": {
+                            "positional": ["operation-1"],
+                            "options": [],
+                        },
+                    }],
+                },
+            )
+        raise AssertionError(command)
+
+
+def test_interactive_queue_prints_evidence_question_before_prompt(capsys):
+    app = EvidenceIssuesApp()
+    input_fn, prompts = _answers("1", "q")
+
+    status = admin_cli._interactive_issues(app, arguments=(), input_fn=input_fn)
+
+    assert status == 0
+    output = capsys.readouterr().out
+    assert "Which preserved vegetable is actually available?" in output
+    assert output.index("Question: Which preserved vegetable") < len(output)
+    assert any("Evidence / answer" in prompt for prompt in prompts)

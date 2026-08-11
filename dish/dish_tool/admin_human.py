@@ -659,10 +659,17 @@ def render_admin_result(
         inspect_actions = _actions(data, (row for row in errors if isinstance(row, Mapping)))
         lines.append("Status")
         if _clean(data.get("status")) == "resting":
-            lines.append("No workflow is currently running for this Dish.")
-            lines.append("Nothing needs recovery or replacement.")
+            if bool(data.get("ready_to_cook")):
+                lines.append("Ready to cook.")
+                lines.append("No workflow action or recovery is required.")
+            else:
+                lines.append("No workflow is currently running for this Dish.")
+                lines.append("No recovery is required.")
         else:
             lines.append(_clean(data.get("problem")) or "No administrative blocker is recorded.")
+            hold_question = _clean(data.get("hold_question"))
+            if hold_question:
+                lines.append(f"Question: {hold_question}")
             invocation = data.get("outstanding_invocation")
             replace_action = next(
                 (
