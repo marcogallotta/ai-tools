@@ -27,7 +27,11 @@ For patch application or commit/integration work, follow the patch-application v
 
 ## Development and evidence
 
-Create a repository-local environment with the current interpreter; do not assume an uploaded virtual environment is executable:
+Execution environment and repository transport are **agent-host-specific**. A Dish role does not imply a particular host or bootstrap path.
+
+### Claude Code and Codex
+
+Claude Code and Codex use their live checkout plus their host-native Git/tooling and environment. Create or use the repository-local environment with the current interpreter as needed:
 
 ```sh
 cd dish
@@ -36,14 +40,22 @@ python3 -m venv .venv
 .venv/bin/python scripts/dish-test-plan --base <revision>
 ```
 
-If you are ChatGPT working from an uploaded or archived copy of this repo rather than the live filesystem, treat the populated archived `.venv` as a **package source, never as an executable environment**. Its interpreter symlinks and compiled extensions may belong to a different host or Python minor. Before clearing it, read `pyvenv.cfg` and preserve its `site-packages` somewhere outside `.venv`. Then:
+The ChatGPT GitHub connector and ChatGPT dependency-bundle retrieval path below are **not** standing instructions for Claude Code or Codex. Do not put connector setup, Actions-artifact bundle retrieval, or a user-supplied bundle into their handoffs unless Marco explicitly makes that a task-specific requirement.
 
-1. rebuild `.venv` with the current interpreter and attempt the normal requirements install;
-2. **do not stop at the first sandbox index miss** — seed each missing package from the preserved archived `site-packages` when it is pure Python or otherwise ABI-compatible;
-3. never load a CPython-minor-specific compiled extension (for example `*.cpython-312-*.so`) under a different Python minor; for a compiled dependency, use a requirement-matching package/wheel already built for the current interpreter if available, otherwise report that dependency as the remaining sandbox limitation;
-4. verify the required top-level versions and imports before treating the rebuilt environment as test evidence.
+### ChatGPT agents
 
-A relocated archived `.venv` can therefore recover dependencies even when its interpreter is unusable. Never execute that relocated interpreter, and never describe an index miss as the repository lacking the dependency.
+For ChatGPT agents, use the connected GitHub integration as source/history authority for this private repository. Fetch current authoritative source from GitHub; never let a source snapshot inside a dependency artifact override GitHub source/history.
+
+Bootstrap Python runtime dependencies from the authoritative GitHub-built dependency bundle rather than asking Marco to upload a virtual environment or bundle manually:
+
+- the versioned GitHub Release is publication authority for the bundle;
+- the matching GitHub Actions artifact is the ChatGPT retrieval/evidence mirror and must carry the same bundle identity;
+- resolve the current expected bundle identity from authoritative repository metadata/tooling rather than hard-coding a historical bundle ID;
+- download through the GitHub connector, verify the manifest and checksum, and use `scripts/dependency_bundle.py install` to recreate the repository environments;
+- preserve the bundle's fail-closed Python/platform/architecture/libc checks. For glibc, a runtime newer than the declared minimum is compatible; an older runtime is not;
+- if connector access, the matching artifact, or runtime compatibility is unavailable, report that exact missing capability rather than falling back to an uploaded archived `.venv`.
+
+This connector-and-bundle bootstrap is **ChatGPT-only policy**. It must not be copied into Claude Code or Codex handoffs.
 
 On Marco's local development machine, the preferred reviewed fast path is `.venv/bin/python scripts/dish-test-lane parallel-safe --workers 4`, or the planner's equivalent `--parallel-workers 4` focused command. Four workers is a locally benchmarked recommendation, not a repository-wide hardware constant. Keep serial execution available for diagnosis and for every selection outside the currently qualified parallel-safe inventory.
 

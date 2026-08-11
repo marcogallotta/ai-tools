@@ -9,6 +9,14 @@ This is the canonical router for standing Dish agent roles. Root `CLAUDE.md` poi
 | Patch reviewer, review specialist | [`review.md`](review.md) |
 | Workflow specialist, workflow agent | [`workflow.md`](workflow.md) |
 
+## Execution-host boundary
+
+Role and execution host are separate concerns. The same Dish role may run under ChatGPT, Claude Code, or Codex, but host-specific transport/bootstrap policy does not transfer with the role.
+
+- ChatGPT agents may use the connected GitHub integration and the GitHub Actions dependency-bundle retrieval path defined in root `CLAUDE.md`.
+- Claude Code and Codex do **not** inherit those ChatGPT-only connector/bundle instructions. They use their live checkout and host-native Git/tooling/environment unless Marco gives an explicit task-specific override.
+- Do not copy ChatGPT connector setup or dependency-bundle bootstrap into a Claude Code/Codex handoff merely because the same standing Dish role is being delegated.
+
 Rules:
 
 - when a handoff says to assume or act as a named role, read this index and then the mapped contract before acting;
