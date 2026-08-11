@@ -6,6 +6,7 @@ all workflow legality is delegated to the shared planner/current policy.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import uuid
 from dataclasses import asdict, dataclass
@@ -47,6 +48,7 @@ from .workflow import (
     ExecutionSpec,
     RequestSpec,
     StoredOutcome,
+    VALIDATION_FAILURE_REQUEST_KIND,
     WorkflowAuthorityError,
     WorkflowAuthorityService,
 )
@@ -130,6 +132,89 @@ class PostgresCommandPort:
             session, uuid_factory=uuid_factory
         )
         self.lease_duration = lease_duration
+
+    def record_validation_failure(
+        self,
+        call: CommandCall,
+        *,
+        result_payload: Mapping[str, Any],
+        invocation_surface: str,
+    ) -> tuple[dict[str, Any], bool]:
+        """Record a pre-execution rule failure through canonical replay authority."""
+
+        if call.request_id is None:
+            raise CommandRuleError(
+                "REQUEST_ID_REQUIRED",
+                "validation failure requires request_id",
+                http_status=400,
+            )
+        generation = self.session.scalar(
+            select(models.AuthorityGeneration).where(
+                models.AuthorityGeneration.status == "active"
+            )
+        )
+        if generation is None:
+            raise WorkflowAuthorityError("no active authority generation")
+        try:
+            binding = RegistryRepository(self.session).active_release_contract(
+                generation.generation_id
+            ).honest_binding
+        except CoreAuthorityError as exc:
+            raise WorkflowAuthorityError(str(exc)) from exc
+        validation_error = {
+            "code": result_payload["code"],
+            "retryable": result_payload["retryable"],
+            "message": result_payload["data"]["message"],
+            "errors": [dict(item) for item in result_payload["errors"]],
+        }
+        admission = self.workflow.record_validation_failure(
+            spec=RequestSpec(
+                request_id=call.request_id,
+                generation_id=generation.generation_id,
+                run_id=call.run_id,
+                owner_id=call.owner_id,
+                principal_class=call.principal_class,
+                command_name=call.command_name,
+                canonical_payload={
+                    "request_kind": VALIDATION_FAILURE_REQUEST_KIND,
+                    "command": call.command_name,
+                    "arguments": dict(call.arguments),
+                    "owner_id": call.owner_id,
+                    "run_id": str(call.run_id),
+                    "validation_error": validation_error,
+                },
+                protocol_release=binding.protocol_release,
+                dish_release=generation.dish_release,
+                admitted_at=call.now,
+            ),
+            outcome=StoredOutcome(
+                outcome_id=self.uuid_factory(),
+                outcome_class="rule_error",
+                result_code=validation_error["code"],
+                http_status=400,
+                result_payload=dict(result_payload),
+                immutable_success=False,
+                recorded_at=call.now,
+            ),
+            audit_event_id=self.uuid_factory(),
+            audit_event_type=f"{call.command_name}_validation_rejected",
+            actor=f"{call.owner_id}:{call.run_id}",
+            audit_payload={
+                "code": validation_error["code"],
+                "data": dict(result_payload["data"]),
+                "errors": validation_error["errors"],
+            },
+            obligation_id=self.uuid_factory(),
+            invocation_metadata={
+                "surface": invocation_surface,
+                "protocol_release": binding.protocol_release,
+            },
+        )
+        if admission.outcome is None:
+            raise WorkflowAuthorityError(
+                "validation request has no authoritative outcome"
+            )
+        return copy.deepcopy(admission.outcome.result_payload), admission.replayed
 
     def execute(self, call: CommandCall) -> CommandResult:
         definition = definition_for(call.command_name)

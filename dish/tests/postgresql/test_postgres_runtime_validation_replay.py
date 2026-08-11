@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import inspect
 import uuid
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from dish_pg import reservation_models as reservations
 from dish_pg import stage3_models as wf
 from dish_pg import stage6_models as rel
 from dish_pg.database import session_scope
+from dish_pg.postgres_service import PostgresRuntimeService
 from dish_pg.recovery_control import _clone_registry
 from dish_pg.workflow import (
     MutationAdmissionClosed,
@@ -29,6 +31,18 @@ from tests.support.postgresql.runtime_validation import (
     without_replay_metadata,
 )
 from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
+
+def test_runtime_validation_adapter_delegates_replay_lifecycle_to_command_port() -> None:
+    source = inspect.getsource(PostgresRuntimeService.record_replay_validation_failure)
+    assert ".record_validation_failure(" in source
+    for duplicated_owner in (
+        "WorkflowAuthorityService(",
+        "RequestSpec(",
+        "StoredOutcome(",
+        "RegistryRepository(",
+    ):
+        assert duplicated_owner not in source
+
 
 def _validation_error(field: str = "operation_id") -> DishRuleError:
     return DishRuleError(

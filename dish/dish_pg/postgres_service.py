@@ -7,7 +7,6 @@ this service composition; environment/startup policy decides where it may run.
 """
 from __future__ import annotations
 
-import copy
 import json
 import os
 import socket
@@ -28,15 +27,7 @@ from .command_contract import ACTION_COMMANDS
 from .command_port import CommandCall, CommandPortError, PostgresCommandPort
 from .database import DatabaseSettings, create_database_engine, session_factory, session_scope
 from .openapi import postgres_action_openapi
-from .repositories import CoreAuthorityError, RegistryRepository
-from .workflow import (
-    VALIDATION_FAILURE_REQUEST_KIND,
-    RequestIdentityConflict,
-    RequestSpec,
-    StoredOutcome,
-    WorkflowAuthorityError,
-    WorkflowAuthorityService,
-)
+from .workflow import RequestIdentityConflict, WorkflowAuthorityError
 
 
 _SECTION4_CONTROL_POINTS_FIRED: set[tuple[str, str]] = set()
@@ -239,7 +230,7 @@ class PostgresRuntimeService:
         request_id: str,
         error: DishRuleError,
     ) -> dict[str, Any]:
-        """Persist a pre-execution failure without opening mutation admission."""
+        """Persist a pre-execution failure through canonical PostgreSQL command authority."""
 
         try:
             run_id = uuid.UUID(principal.run_id)
@@ -253,78 +244,27 @@ class PostgresRuntimeService:
 
         envelope = error_envelope(command, error)
         envelope["data"]["request_id"] = request_id
-        validation_error = {
-            "code": envelope["code"],
-            "retryable": envelope["retryable"],
-            "message": envelope["data"]["message"],
-            "errors": [dict(item) for item in envelope["errors"]],
-        }
         recorded_at = datetime.now(timezone.utc)
         try:
             with session_scope(self._session_maker) as session:
-                generation = session.scalar(
-                    select(models.AuthorityGeneration).where(
-                        models.AuthorityGeneration.status == "active"
-                    )
-                )
-                if generation is None:
-                    raise WorkflowAuthorityError("no active authority generation")
-                try:
-                    binding = RegistryRepository(session).active_release_contract(
-                        generation.generation_id
-                    ).honest_binding
-                except CoreAuthorityError as exc:
-                    raise WorkflowAuthorityError(str(exc)) from exc
-                admission = WorkflowAuthorityService(session).record_validation_failure(
-                    spec=RequestSpec(
-                        request_id=parsed_request_id,
-                        generation_id=generation.generation_id,
-                        run_id=run_id,
+                authoritative, replayed = PostgresCommandPort(
+                    session,
+                    cursor_secret=self._cursor_secret,
+                ).record_validation_failure(
+                    CommandCall(
+                        command_name=command,
+                        arguments=dict(arguments),
                         owner_id=principal.owner_id,
                         principal_class="agent",
-                        command_name=command,
-                        canonical_payload={
-                            "request_kind": VALIDATION_FAILURE_REQUEST_KIND,
-                            "command": command,
-                            "arguments": dict(arguments),
-                            "owner_id": principal.owner_id,
-                            "run_id": str(run_id),
-                            "validation_error": validation_error,
-                        },
-                        protocol_release=binding.protocol_release,
-                        dish_release=generation.dish_release,
-                        admitted_at=recorded_at,
+                        run_id=run_id,
+                        request_id=parsed_request_id,
+                        now=recorded_at,
                     ),
-                    outcome=StoredOutcome(
-                        outcome_id=uuid.uuid4(),
-                        outcome_class="rule_error",
-                        result_code=error.code,
-                        http_status=400,
-                        result_payload=envelope,
-                        immutable_success=False,
-                        recorded_at=recorded_at,
-                    ),
-                    audit_event_id=uuid.uuid4(),
-                    audit_event_type=f"{command}_validation_rejected",
-                    actor=f"{principal.owner_id}:{run_id}",
-                    audit_payload={
-                        "code": error.code,
-                        "data": dict(envelope["data"]),
-                        "errors": validation_error["errors"],
-                    },
-                    obligation_id=uuid.uuid4(),
-                    invocation_metadata={
-                        "surface": "postgresql-http-validation",
-                        "protocol_release": binding.protocol_release,
-                    },
+                    result_payload=envelope,
+                    invocation_surface="postgresql-http-validation",
                 )
                 session.flush()
-                if admission.outcome is None:
-                    raise WorkflowAuthorityError(
-                        "validation request has no authoritative outcome"
-                    )
-                authoritative = copy.deepcopy(admission.outcome.result_payload)
-            if admission.replayed:
+            if replayed:
                 authoritative.setdefault("data", {})["request_replayed"] = True
                 authoritative["data"]["request_id"] = request_id
             return authoritative
@@ -335,7 +275,7 @@ class PostgresRuntimeService:
                 rule="service_request_identity_conflict",
                 details={"request_id": request_id},
             ) from exc
-        except WorkflowAuthorityError as exc:
+        except (CommandPortError, WorkflowAuthorityError) as exc:
             raise DishRuleError(
                 "CONFLICT",
                 str(exc),
