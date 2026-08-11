@@ -85,6 +85,38 @@ def test_holds_lists_verification_evidence_with_exact_resolution_binding(tmp_pat
     assert hold["asana_url"].endswith("/t")
 
 
+def test_current_verification_question_wins_over_historical_preconstruction_hold(tmp_path):
+    from dish_tool.admin import _durable_hold_question
+    from dish_tool.database import complete_operation_step, declare_operation_step
+    from tests.support.verification import make_app, review_and_inspect
+
+    app, _, operation_id, _ = make_app(tmp_path)
+    review_and_inspect(app)
+    declare_operation_step(
+        app.conn,
+        operation_id,
+        "research_preconstruction_hold",
+        {
+            "route": "evidence",
+            "reason": "Historical preconstruction question",
+            "resume_status": "pending-research",
+        },
+    )
+    complete_operation_step(app.conn, operation_id, "research_preconstruction_hold")
+    held = app.execute(
+        "reject",
+        agent="codex",
+        submission_id=operation_id,
+        route="evidence",
+        reason="Current verification question",
+        resume_status="pending-verification",
+        run_id="review",
+    )
+    assert held["ok"]
+
+    assert _durable_hold_question(app.conn, operation_id) == "Current verification question"
+
+
 def test_resolution_rejects_mismatched_stable_hold_binding(tmp_path):
     from dish_tool.admin import DishAdminApplication
     from tests.support.verification import make_app, review_and_inspect

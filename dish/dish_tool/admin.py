@@ -1953,26 +1953,50 @@ def _attention_signal(
 def _durable_hold_question(
     conn: sqlite3.Connection, operation_id: str
 ) -> str | None:
-    """Return the exact persisted question/reason for an active hold when available."""
+    """Return the exact persisted question/reason for the currently active hold."""
 
-    preconstruction = conn.execute(
-        """SELECT intended_json FROM operation_steps
-             WHERE operation_id=? AND step_name='research_preconstruction_hold'
-               AND completed_at IS NOT NULL""",
+    operation = conn.execute(
+        """SELECT phase,operation_kind,content_write_completed_at
+             FROM operations WHERE operation_id=?""",
         (operation_id,),
     ).fetchone()
-    if preconstruction is not None:
+    if operation is None or operation["phase"] not in {"held_evidence", "held_human"}:
+        return None
+
+    if (
+        operation["operation_kind"] == "initial"
+        and operation["content_write_completed_at"] is None
+    ):
+        preconstruction = conn.execute(
+            """SELECT intended_json FROM operation_steps
+                 WHERE operation_id=? AND step_name='research_preconstruction_hold'
+                   AND completed_at IS NOT NULL""",
+            (operation_id,),
+        ).fetchone()
+        if preconstruction is None:
+            return None
         try:
             payload = json.loads(preconstruction["intended_json"])
         except (TypeError, ValueError):
-            payload = {}
+            return None
+        expected_route = (
+            "evidence" if operation["phase"] == "held_evidence" else "human-review"
+        )
+        if payload.get("route") != expected_route:
+            return None
         question = str(payload.get("reason") or "").strip()
-        if question:
-            return question
+        return question or None
 
+    hold_filter = (
+        "route='evidence'"
+        if operation["phase"] == "held_evidence"
+        else "(route='human_review' OR outcome='verification-hold')"
+    )
     cycle = conn.execute(
-        """SELECT cycle_id FROM verification_cycles
-             WHERE operation_id=? ORDER BY cycle_number DESC LIMIT 1""",
+        f"""SELECT cycle_id FROM verification_cycles
+             WHERE operation_id=? AND completed_at IS NOT NULL
+               AND {hold_filter}
+             ORDER BY cycle_number DESC LIMIT 1""",
         (operation_id,),
     ).fetchone()
     if cycle is None:
