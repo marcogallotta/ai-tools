@@ -8,6 +8,7 @@ from dish_pg.transition import ProjectionService
 from dish_pg.workflow import sha256_json
 from dish_pg.database import session_scope
 from tests.support.postgresql.core import _bootstrap_registry, _import_one
+from tests.support.postgresql.release import ALEMBIC_HEAD
 from tests.support.postgresql.workflow import NOW, _claimed_execution, _next
 
 
@@ -15,7 +16,9 @@ from tests.support.postgresql.workflow import NOW, _claimed_execution, _next
 def native_workflow_db(core_db):
     factory, ids = core_db
     with session_scope(factory) as session:
-        context = _bootstrap_registry(session, ids, generation_status="active")
+        context = _bootstrap_registry(
+            session, ids, generation_status="active", schema_head=ALEMBIC_HEAD
+        )
         task = _import_one(session, ids, context)
     return factory, ids, context, task.task_id
 

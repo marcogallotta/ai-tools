@@ -269,7 +269,9 @@ def _seed_target(core_db, *, history: ImportedOperationHistorySpec | None = None
     factory, ids = core_db
     task_id = _next(ids)
     with session_scope(factory) as session:
-        context = _bootstrap_registry(session, ids, generation_status="active")
+        context = _bootstrap_registry(
+            session, ids, generation_status="active", schema_head=ALEMBIC_HEAD
+        )
         _import_task(session, ids, context, task_id=task_id, history=history)
     with session_scope(factory) as session:
         target = resolve_backfill_target(session, task_gid=TASK_GID)

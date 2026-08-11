@@ -16,7 +16,7 @@ from dish_pg.workflow import (
     sha256_json,
 )
 from tests.support.postgresql.core import _bootstrap_registry, _import_one, _next, core_db
-from tests.support.postgresql.release import HASH_A, _prepare_candidate
+from tests.support.postgresql.release import ALEMBIC_HEAD, HASH_A, _prepare_candidate
 from tests.support.postgresql.workflow import NOW, _register_run
 
 def _seed(
@@ -24,7 +24,9 @@ def _seed(
 ):
     payload = {"command": "start", "arguments": {"task_id": "fixture"}}
     with session_scope(factory) as session:
-        context = _bootstrap_registry(session, ids, generation_status="active")
+        context = _bootstrap_registry(
+            session, ids, generation_status="active", schema_head=ALEMBIC_HEAD
+        )
         task = _import_one(session, ids, context)
         _service, candidate_id = _prepare_candidate(session, ids, context, task.task_id)
         cutover_id = _next(ids)
