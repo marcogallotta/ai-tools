@@ -29,6 +29,10 @@ flowchart LR
 
 The important boundary is the Dish service authority, not a particular client. CLI, GPT Action, admin tools, and frontend may have different presentation, capability, and authentication logic while sharing the same mutation authority.
 
+The current frontend is a private, read-only human surface. The browser talks only to the
+existing private service listener through a dedicated HTTPS origin; frontend paths remain absent
+from the public Action listener. The browser never connects to PostgreSQL or Asana directly.
+
 ## Authority and data ownership
 
 Clients do not own durable workflow truth. The service coordinates current workflow authority and current Asana effects. PostgreSQL is the intended replacement canonical backend after cutover. Asana is transitional and is intended to disappear once frontend functionality and backend reliability make that safe.
@@ -37,6 +41,8 @@ Clients do not own durable workflow truth. The service coordinates current workf
 
 - All live mutations, including frontend mutations, go through the shared Dish service authority rather than a second writable backend path.
 - Authentication/authorization are explicit per caller/surface; capability overlap between surfaces is allowed.
+- Frontend browser sessions authorize only frontend reads and their own lifecycle. They are not
+  agent, admin, or Action credentials and confer no mutation capability.
 - Clients do not receive database paths or backend credentials.
 - Dark launch does not transfer authority.
 - Shadow-origin work cannot cause live external effects.

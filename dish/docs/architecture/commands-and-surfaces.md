@@ -29,6 +29,12 @@ Connected-agent command identity/exposure membership is shared lower-level metad
 - The public GPT Action transport may add `data.agent_guidance` derived from the canonical result. Guidance is contextual caller help, not workflow authority: it must not add or authorize legal actions, invent authoritative identifiers or state, or contradict `allowed_actions`.
 - Command identity and replay classification should not be independently redefined in every surface.
 - Overlapping capabilities across agent/admin/frontend surfaces are allowed when exposure and authorization are explicit.
+- The private frontend has a separate, closed OpenAPI contract. Its shared-password exchange
+  creates a server-managed session scoped only to frontend reads and session bootstrap/logout;
+  frontend cookies are not accepted on agent, admin, or Action routes, and those bearer
+  credentials are not accepted as frontend sessions.
+- Browser DTOs contain registered presentation facts and non-authorizing guidance, not canonical
+  `allowed_actions`, raw workflow identifiers, or a browser-side legality model.
 - Do not claim that the deployed connected GPT can call a command solely because CLI/application code or source Action metadata supports it. Source exposure and deployed capability are distinct facts; deployed capability must be verified separately when making claims about the live surface.
 - Normal human-facing recovery and hold handoffs present the meaningful blocker or decision first and keep lease/execution/hold identifiers, protocol plumbing, and exact admin mechanics in inspect/admin detail unless the human asks how to execute them. Commands presented as directly runnable must be runnable as shown; templates must be labeled as templates.
 

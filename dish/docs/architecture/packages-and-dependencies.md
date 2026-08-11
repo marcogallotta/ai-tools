@@ -10,12 +10,20 @@ This is a descriptive package map and dependency-direction guide. It does not fr
 
 ## Authoritative implementation
 
-Current packages are `dish_tool/`, `dish_service/`, `dish_shadow/`, `dish_pg/`, `test_selection/`, plus entry points and scripts. Agent/admin CLI presentation implementations live in `dish_service/cli.py` and `dish_service/admin_cli.py`; `dish_tool` retains the lower application/domain components they consume.
+Current packages are `dish_tool/`, `dish_service/`, `dish_shadow/`, `dish_pg/`, `frontend/`,
+`test_selection/`, plus entry points and scripts. Agent/admin CLI presentation implementations
+live in `dish_service/cli.py` and `dish_service/admin_cli.py`; `dish_tool` retains the lower
+application/domain components they consume.
 Reusable identifier grammar, narrow Asana task-URL parsing, and connected-agent command identities are lower-layer primitives owned by `dish_tool/identifiers.py`, `dish_tool/task_urls.py`, and `dish_tool/command_identity.py`; service transports and clients consume those primitives rather than owning them. Action-specific principal, replay, route, validation, and schema metadata remains service-owned.
 
 ## Actors, processes, and stores
 
-`dish_tool` contains much of the current legacy/application/domain behavior; `dish_service` composes service/transport concerns; `dish_pg` implements the PostgreSQL target; `dish_shadow` contains dark-launch treatment policy; `test_selection` owns test-routing metadata.
+`dish_tool` contains much of the current legacy/application/domain behavior; `dish_service`
+composes service/transport concerns and frontend authentication/DTO adaptation; `dish_pg`
+implements the PostgreSQL target and frontend read queries; `frontend/` owns browser presentation
+and its generated client; `dish_shadow` contains dark-launch treatment policy; `test_selection`
+owns test-routing metadata. Frontend layers consume workflow facts but do not reproduce workflow
+policy.
 
 ## Authority and data ownership
 

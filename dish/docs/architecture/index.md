@@ -41,6 +41,7 @@ flowchart LR
 | Durable facts and writers | [Authority and data ownership](authority-and-data-ownership.md) |
 | Package responsibilities | [Packages and dependencies](packages-and-dependencies.md) |
 | CLI/HTTP/GPT Action/OpenAPI | [Commands and surfaces](commands-and-surfaces.md) |
+| Frontend product and access boundary | [`../frontend.md`](../frontend.md), [System context](system-context.md), [Commands and surfaces](commands-and-surfaces.md) |
 | Workflow/Human Review/proposals | [Workflow and human review](workflow-and-human-review.md) |
 | Request IDs/replay/idempotency | [Request replay and idempotency](request-replay-and-idempotency.md) |
 | Operations/leases/fencing | [Operations, leases, and fencing](operations-leases-and-fencing.md) |
@@ -61,6 +62,8 @@ Read only what is relevant to the boundary being changed. Small local changes do
 | Change | Usually relevant |
 |---|---|
 | Command or transport behavior | [Commands and surfaces](commands-and-surfaces.md) |
+| Frontend product behavior | [`../frontend.md`](../frontend.md) |
+| Frontend trust, session, or read authority | [System context](system-context.md), [Commands and surfaces](commands-and-surfaces.md), [Authority and data ownership](authority-and-data-ownership.md) |
 | Workflow legality/Human Review | [Workflow and human review](workflow-and-human-review.md) |
 | Durable state/authority | [Authority and data ownership](authority-and-data-ownership.md) |
 | Replay/lease/recovery | [Request replay](request-replay-and-idempotency.md), [Operations/leases/fencing](operations-leases-and-fencing.md) |

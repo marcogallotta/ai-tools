@@ -1,18 +1,16 @@
 # Frontend deployment runbook
 
-Status: the authenticated frontend is implemented but disabled by default.
-Gate A and the applicable Gate B scope must pass before exposure.
+Status: the authenticated frontend is implemented but disabled by default. The
+exact candidate must be approved in `frontend-activation.md` before exposure.
 
 This runbook owns deployment and rollback. Product behavior remains in
-`frontend.md`, the access contract remains in `frontend-imp.md`, and acceptance
-decisions remain in the Gate A/B records.
+`frontend.md`, durable boundaries remain in `architecture/`, and the pending
+activation decision remains in `frontend-activation.md`.
 
 ## Entry conditions
 
-- Gate A records PASS for the exact build and schema revision.
-- Gate B records PASS for every PostgreSQL-backed board/detail field being activated.
-- Native PostgreSQL, destructive restore/PITR, browser lifecycle, and query-plan
-  evidence is accepted.
+- `frontend-activation.md` records APPROVE for the exact commit, build,
+  contract, schema, target, and configuration being deployed.
 - The target is explicit. Test is for rehearsal; production is the default for
   genuine Dish work and requires Marco's explicit authorization for production
   administration.
@@ -56,8 +54,8 @@ decisions remain in the Gate A/B records.
    ```
 
 6. Configure the dedicated HTTPS mapping, then enable authentication. Enable
-   PostgreSQL reads only when the separately reviewed Gate B scope and
-   projection-delay setting are accepted.
+   PostgreSQL reads only for the exact approved candidate and projection-delay
+   setting.
 
 Never place plaintext passwords, session or cursor tokens, CSRF proofs, task
 data, or database credentials in command arguments, logs, screenshots,
@@ -76,22 +74,23 @@ contract version, target, and configuration identity. Verify:
    work;
 4. cookie, cache, CSP, CORP, COOP, referrer, permissions, redirect, and
    no-service-worker behavior from the real HTTPS origin;
-5. ordinary restart preserves valid sessions and destructive restore/PITR
-   cannot revive them;
+5. ordinary restart preserves valid sessions and destructive restore/PITR cannot
+   revive them;
 6. graceful drain stops admission and safely completes or withholds protected
    responses;
 7. logs, journals, metrics, and failures contain none of the sensitive values
    listed above;
-8. the complete frontend unit and Stage 7 browser-acceptance gates pass for the
+8. the complete frontend unit and browser-acceptance suites pass for the
    deployed build.
 
 ## Rollback
 
 - Remove the dedicated HTTPS mapping without changing the public Action route.
-- Disable frontend route dispatch while preserving private diagnosis/admin behavior.
-- Revoke every frontend session by advancing the accepted security fence/generation.
+- Disable frontend route dispatch while preserving private diagnosis/admin
+  behavior.
+- Revoke every frontend session by advancing the accepted security
+  fence/generation.
 - Preserve bounded security audit evidence without retaining plaintext
   credentials or task data.
-- Leave migrations in a known forward-compatible state; downgrade only when
-  the migration contract explicitly permits it and the downgrade has been
-  rehearsed.
+- Leave migrations in a known forward-compatible state; downgrade only when the
+  migration contract explicitly permits it and the downgrade has been rehearsed.

@@ -1,7 +1,7 @@
 # Dish private frontend
 
-This directory contains the private, read-only Dish frontend delivery work governed by
-`docs/frontend.md` and `docs/frontend-imp.md`.
+This directory contains the private, read-only Dish frontend. Product behavior is governed by
+`docs/frontend.md`; durable system boundaries are routed through `docs/architecture/index.md`.
 
 ## Local commands
 
@@ -36,33 +36,18 @@ Playwright browser harness that drives the installed Chromium executable.
 - `fixtures/` contains visibly non-canonical prototype data and is not an authority source.
 - `tests/` contains unit and browser-level behavior checks.
 - `openapi/` contains the frontend-only OpenAPI contract; it is separate from Action schemas.
-- `stage-notes/` and `screenshots/` contain delivery evidence.
+- `screenshots/` contains fixture-review images, not current contracts.
 
 No Stage 0 or Stage 1 fixture is canonical task data. No frontend route or component is a workflow,
 placement, completion, projection, or content-mutation authority.
 
-## Current delivery status
+## Current status
 
-Implementation candidates through Delivery Stage 7 are checked in behind the existing private/local
-observation boundaries. They include authenticated private-shell wiring, PostgreSQL board/detail
-reads, canonical Dish-UUID deep links, refresh/reconciliation, accessibility hardening, the
-production/review build split, and the committed browser-acceptance suite.
-
-This does not claim Gate A, Gate B, an exact deployed Stage 7 run, or production activation has
-passed. PostgreSQL remains non-authoritative until the separate authority/cutover process explicitly
-says otherwise.
-
-## Integration readiness
-
-- Gate A authoring review: `../docs/frontend-gate-a-readiness.md`
-- Independent Gate A record: `../docs/frontend-gate-a-review.md`
-- Gate B canonical-data source map: `../docs/frontend-gate-b-source-map.md`
-- Independent Gate B record: `../docs/frontend-gate-b-review.md`
-
-Gate A is not passed until an independent reviewer accepts the packet and its material findings are
-resolved. Gate B is not passed until its source predicates are reconciled against the final migrated
-schema and independently accepted. The local Stage 3/4 PostgreSQL observation path does not pass or
-bypass either gate and is not production activation.
+The authenticated shell, PostgreSQL board/detail reads, canonical Dish-UUID deep links,
+refresh/reconciliation, accessibility behavior, production/review build split, and browser suite
+are implemented. Production activation remains disabled pending the exact-candidate decision in
+`../docs/frontend-activation.md`. PostgreSQL remains non-authoritative until the separate cutover
+process explicitly transfers authority.
 
 ## Acceptance contracts
 
@@ -108,8 +93,8 @@ only through the separate `npm run review` build. In PostgreSQL mode, selecting 
 read-only detail and normalizes the URL to
 `/dishes/<stored-dish-uuid>/<decorative-title-slug>?source=postgresql`; the stored Dish UUID is
 authoritative and the slug is decorative. Direct load/reload and Back/Forward restore that local
-detail state. The UUID is an identifier, not an authorization credential. Destination remains omitted until Gate B names an
-accepted canonical source.
+detail state. The UUID is an identifier, not an authorization credential. Destination remains
+omitted until an accepted canonical source is recorded.
 
 The local server defaults to `postgresql+psycopg://dish:dish@127.0.0.1:55432/dish_stage_a_test`.
 Override it only for another intentional local target with `DISH_FRONTEND_LOCAL_DATABASE_URL` or

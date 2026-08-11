@@ -28,6 +28,8 @@ Current production combines Honest assets, service-owned SQLite, and Asana. Post
 | Kill request-to-revocation binding | SQLite replay/kill authority | Exact immutable request, operation, owner, run, source authority, and revocation identity; written atomically with revocation |
 | PostgreSQL canonical state | PostgreSQL only after explicit cutover | Before cutover it is target/shadow evidence |
 | Dark-launch artifacts | No live authority | Evidence only |
+| Frontend password/session/limiter/audit state | Frontend security store | Access support only; never task or workflow authority |
+| Frontend board/detail DTOs | Derived from the active canonical read source | Presentation snapshots; never writer or legality authority |
 
 ## Invariants
 
@@ -36,6 +38,13 @@ Current production combines Honest assets, service-owned SQLite, and Asana. Post
 - Missing or contradictory evidence is handled explicitly rather than treated as permission.
 - Dark-launch evidence cannot silently become current authority.
 - After PostgreSQL authority activation, Asana observations do not promote themselves back into canonical backend state.
+- Frontend read projections, caches, presentation registries, and browser state cannot become
+  task, placement, completion, workflow, or projection authority.
+
+During pre-cutover observation, the writable frontend security database is physically distinct
+from the PostgreSQL task-observation database. Observation credentials are read-only. Restoring
+security storage cannot by itself revive an expired, revoked, or superseded browser session; a
+deployment-owned fence outside the restored database participates in current session validity.
 
 ## Process and transaction boundaries
 

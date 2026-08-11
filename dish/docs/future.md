@@ -186,8 +186,8 @@ preserves the current title/body document representation before any separately a
 dish redesign. See [`postgresql-cutover.md`](postgresql-cutover.md) and the
 [architecture index](architecture/index.md).
 
-The separate frontend has its own draft staging design in [`frontend.md`](frontend.md) and is not a
-Stage A authority prerequisite.
+The separate frontend product contract is [`frontend.md`](frontend.md); its activation is not a
+PostgreSQL authority prerequisite.
 
 After cutover, Asana may remain a downstream read-only/human-facing projection during transition, but
 it is never a peer write authority. Product lifecycle semantics such as Cooked/archive are defined in
