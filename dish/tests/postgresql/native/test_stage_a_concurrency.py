@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import timedelta
-from threading import Barrier
+from threading import Barrier, Event
 
 import pytest
 from sqlalchemy import func, select
@@ -11,8 +12,21 @@ from sqlalchemy.orm import Session
 
 from dish_pg import stage3_models as wf
 from dish_pg.database import session_scope
-from dish_pg.workflow import ContentionLost, RequestSpec, WorkflowAuthorityService
-from tests.support.postgresql.concurrency import run_concurrent_workers, wait_at_barrier
+from dish_pg.workflow import (
+    ContentionLost,
+    OperationRunRevoked,
+    RequestSpec,
+    WorkflowAuthorityRepository,
+    WorkflowAuthorityService,
+)
+from tests.support.postgresql.concurrency import (
+    TransactionGate,
+    assert_transaction_blocked,
+    independent_connections,
+    managed_session,
+    run_concurrent_workers,
+    wait_at_barrier,
+)
 from tests.support.postgresql.core import _bootstrap_registry, _import_one, core_db
 from tests.support.postgresql.workflow import NOW, _admit, _execution, _next, _register_run
 
@@ -146,14 +160,17 @@ def _create_operation_authority(
     context: dict[str, uuid.UUID],
     task_id: uuid.UUID,
     owner_id: str,
+    run_id: uuid.UUID | None = None,
 ) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID]:
-    run_id, request_id, execution_id = _next(ids), _next(ids), _next(ids)
-    _register_run(
-        session,
-        generation_id=context["generation_id"],
-        run_id=run_id,
-        owner=owner_id,
-    )
+    if run_id is None:
+        run_id = _next(ids)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=run_id,
+            owner=owner_id,
+        )
+    request_id, execution_id = _next(ids), _next(ids)
     service = WorkflowAuthorityService(session, uuid_factory=lambda: _next(ids))
     _admit(
         service,
@@ -186,6 +203,32 @@ def _create_operation_authority(
         created_at=NOW,
     )
     return run_id, execution_id, operation.operation_id
+
+
+class _OperationLockNotifyingRepository(WorkflowAuthorityRepository):
+    """Signal immediately before attempting the authoritative operation-row lock."""
+
+    def __init__(self, session: Session, *, before_operation_lock: Event) -> None:
+        super().__init__(session)
+        self._before_operation_lock = before_operation_lock
+
+    def _locked_operation(
+        self, *, generation_id: uuid.UUID, operation_id: uuid.UUID
+    ) -> wf.WorkflowOperation:
+        self._before_operation_lock.set()
+        return super()._locked_operation(
+            generation_id=generation_id, operation_id=operation_id
+        )
+
+
+def _service_signaling_operation_lock(
+    session: Session, *, before_operation_lock: Event
+) -> WorkflowAuthorityService:
+    service = WorkflowAuthorityService(session)
+    service.repo = _OperationLockNotifyingRepository(
+        session, before_operation_lock=before_operation_lock
+    )
+    return service
 
 
 @pytest.mark.flake_stress
@@ -374,3 +417,327 @@ def test_ten_simultaneous_duplicate_request_admissions_perform_one_logical_execu
                 wf.ServiceRequestOutcome.request_id == spec.request_id
             )
         ) == 0
+
+
+@pytest.mark.flake_stress
+def test_native_revocation_commits_before_claim_rechecks_after_operation_lock_and_is_operation_scoped(
+    core_db,
+) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(session, ids, generation_status="active")
+        first_task = _import_one(session, ids, context)
+        second_task = _import_one(
+            session,
+            ids,
+            context,
+            task_id=_next(ids),
+            asana_gid="987654322",
+        )
+        run_id, execution_id, operation_id = _create_operation_authority(
+            session,
+            ids,
+            context=context,
+            task_id=first_task.task_id,
+            owner_id="owner-1",
+        )
+        _, unrelated_execution_id, unrelated_operation_id = _create_operation_authority(
+            session,
+            ids,
+            context=context,
+            task_id=second_task.task_id,
+            owner_id="owner-1",
+            run_id=run_id,
+        )
+    revocation_id, claim_token = _next(ids), _next(ids)
+    revocation_holds_lock = TransactionGate(label="exact revocation owns operation-row lock")
+    claim_attempted_operation_lock = Event()
+    engine = factory.kw["bind"]
+
+    def revoke_first() -> str:
+        with managed_session(revocation_connection) as session:
+            WorkflowAuthorityService(session).repo.revoke_operation_run(
+                revocation_id=revocation_id,
+                generation_id=context["generation_id"],
+                operation_id=operation_id,
+                owner_id="owner-1",
+                run_id=run_id,
+                reason="native exact-revocation wins before claim",
+                revoked_at=NOW,
+            )
+            revocation_holds_lock.block()
+        return "revocation_committed"
+
+    def claim_after_lock() -> str:
+        try:
+            with managed_session(claim_connection) as session:
+                service = _service_signaling_operation_lock(
+                    session,
+                    before_operation_lock=claim_attempted_operation_lock,
+                )
+                service.repo.claim_execution(
+                    execution_id=execution_id,
+                    claimant=f"owner-1:{run_id}",
+                    claim_token=claim_token,
+                    now=NOW,
+                    ttl=timedelta(minutes=2),
+                )
+            return "claim_committed"
+        except OperationRunRevoked:
+            return "claim_rejected_revoked"
+
+    with independent_connections(engine) as (revocation_connection, claim_connection):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            revocation_future = pool.submit(revoke_first)
+            revocation_holds_lock.wait_until_blocked()
+            claim_future = pool.submit(claim_after_lock)
+            assert claim_attempted_operation_lock.wait(timeout=20)
+            assert_transaction_blocked(claim_future)
+            revocation_holds_lock.release()
+            assert revocation_future.result(timeout=20) == "revocation_committed"
+            assert claim_future.result(timeout=20) == "claim_rejected_revoked"
+
+    with session_scope(factory) as session:
+        execution = session.get(wf.CommandExecution, execution_id)
+        revocation = session.get(wf.OperationRunRevocation, revocation_id)
+        assert execution is not None and execution.status == "pending"
+        assert revocation is not None
+        assert revocation.operation_id == operation_id
+        assert revocation.owner_id == "owner-1"
+        assert revocation.run_id == run_id
+
+        unrelated = WorkflowAuthorityService(session).repo.claim_execution(
+            execution_id=unrelated_execution_id,
+            claimant=f"owner-1:{run_id}",
+            claim_token=_next(ids),
+            now=NOW,
+            ttl=timedelta(minutes=2),
+        )
+        assert unrelated.operation_id == unrelated_operation_id
+        assert unrelated.status == "claimed"
+
+
+@pytest.mark.flake_stress
+def test_native_revocation_commits_before_acquire_and_renew_recheck_after_operation_lock(
+    core_db,
+) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(session, ids, generation_status="active")
+        acquire_task = _import_one(session, ids, context)
+        renew_task = _import_one(
+            session,
+            ids,
+            context,
+            task_id=_next(ids),
+            asana_gid="987654323",
+        )
+        acquire_run_id, acquire_execution_id, acquire_operation_id = _create_operation_authority(
+            session,
+            ids,
+            context=context,
+            task_id=acquire_task.task_id,
+            owner_id="owner-acquire",
+        )
+        renew_run_id, renew_execution_id, renew_operation_id = _create_operation_authority(
+            session,
+            ids,
+            context=context,
+            task_id=renew_task.task_id,
+            owner_id="owner-renew",
+        )
+        renewal_lease_id = _next(ids)
+        WorkflowAuthorityService(session).acquire_actor_lease(
+            lease_id=renewal_lease_id,
+            execution_id=renew_execution_id,
+            operation_id=renew_operation_id,
+            run_id=renew_run_id,
+            owner_id="owner-renew",
+            actor_role="constructor",
+            actor_attempt_sequence=1,
+            issued_at=NOW,
+            expires_at=NOW + timedelta(minutes=10),
+        )
+
+    engine = factory.kw["bind"]
+    acquire_revocation_id = _next(ids)
+    acquire_revocation_holds_lock = TransactionGate(
+        label="exact revocation owns operation row before actor lease acquisition"
+    )
+    acquire_attempted_operation_lock = Event()
+    acquire_lease_id = _next(ids)
+
+    def revoke_before_acquire() -> str:
+        with managed_session(revocation_connection) as session:
+            WorkflowAuthorityService(session).repo.revoke_operation_run(
+                revocation_id=acquire_revocation_id,
+                generation_id=context["generation_id"],
+                operation_id=acquire_operation_id,
+                owner_id="owner-acquire",
+                run_id=acquire_run_id,
+                reason="native exact-revocation wins before actor lease acquisition",
+                revoked_at=NOW,
+            )
+            acquire_revocation_holds_lock.block()
+        return "revocation_committed"
+
+    def acquire_after_lock() -> str:
+        try:
+            with managed_session(acquire_connection) as session:
+                service = _service_signaling_operation_lock(
+                    session,
+                    before_operation_lock=acquire_attempted_operation_lock,
+                )
+                service.acquire_actor_lease(
+                    lease_id=acquire_lease_id,
+                    execution_id=acquire_execution_id,
+                    operation_id=acquire_operation_id,
+                    run_id=acquire_run_id,
+                    owner_id="owner-acquire",
+                    actor_role="constructor",
+                    actor_attempt_sequence=1,
+                    issued_at=NOW,
+                    expires_at=NOW + timedelta(minutes=10),
+                )
+            return "lease_acquired"
+        except OperationRunRevoked:
+            return "lease_rejected_revoked"
+
+    with independent_connections(engine) as (revocation_connection, acquire_connection):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            revocation_future = pool.submit(revoke_before_acquire)
+            acquire_revocation_holds_lock.wait_until_blocked()
+            acquire_future = pool.submit(acquire_after_lock)
+            assert acquire_attempted_operation_lock.wait(timeout=20)
+            assert_transaction_blocked(acquire_future)
+            acquire_revocation_holds_lock.release()
+            assert revocation_future.result(timeout=20) == "revocation_committed"
+            assert acquire_future.result(timeout=20) == "lease_rejected_revoked"
+
+    renew_revocation_id = _next(ids)
+    renew_revocation_holds_lock = TransactionGate(
+        label="exact revocation owns operation row before lease renewal"
+    )
+    renew_attempted_operation_lock = Event()
+
+    def revoke_before_renew() -> str:
+        with managed_session(revocation_connection) as session:
+            WorkflowAuthorityService(session).repo.revoke_operation_run(
+                revocation_id=renew_revocation_id,
+                generation_id=context["generation_id"],
+                operation_id=renew_operation_id,
+                owner_id="owner-renew",
+                run_id=renew_run_id,
+                reason="native exact-revocation wins before lease renewal",
+                revoked_at=NOW,
+            )
+            renew_revocation_holds_lock.block()
+        return "revocation_committed"
+
+    def renew_after_lock() -> str:
+        try:
+            with managed_session(renew_connection) as session:
+                service = _service_signaling_operation_lock(
+                    session,
+                    before_operation_lock=renew_attempted_operation_lock,
+                )
+                service.renew_lease(
+                    lease_id=renewal_lease_id,
+                    execution_id=renew_execution_id,
+                    run_id=renew_run_id,
+                    owner_id="owner-renew",
+                    now=NOW + timedelta(minutes=1),
+                    new_expiry=NOW + timedelta(minutes=20),
+                )
+            return "lease_renewed"
+        except OperationRunRevoked:
+            return "renew_rejected_revoked"
+
+    with independent_connections(engine) as (revocation_connection, renew_connection):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            revocation_future = pool.submit(revoke_before_renew)
+            renew_revocation_holds_lock.wait_until_blocked()
+            renew_future = pool.submit(renew_after_lock)
+            assert renew_attempted_operation_lock.wait(timeout=20)
+            assert_transaction_blocked(renew_future)
+            renew_revocation_holds_lock.release()
+            assert revocation_future.result(timeout=20) == "revocation_committed"
+            assert renew_future.result(timeout=20) == "renew_rejected_revoked"
+
+    with session_scope(factory) as session:
+        assert session.get(wf.ServiceLease, acquire_lease_id) is None
+        renewal_lease = session.get(wf.ServiceLease, renewal_lease_id)
+        assert renewal_lease is not None
+        assert renewal_lease.state == "active"
+        assert renewal_lease.lease_revision == 1
+        assert renewal_lease.expires_at == NOW + timedelta(minutes=10)
+        assert session.get(wf.OperationRunRevocation, acquire_revocation_id) is not None
+        assert session.get(wf.OperationRunRevocation, renew_revocation_id) is not None
+
+
+@pytest.mark.flake_stress
+def test_native_claim_commits_before_revocation_rechecks_after_operation_lock(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(session, ids, generation_status="active")
+        task = _import_one(session, ids, context)
+        run_id, execution_id, operation_id = _create_operation_authority(
+            session,
+            ids,
+            context=context,
+            task_id=task.task_id,
+            owner_id="owner-1",
+        )
+    revocation_id, claim_token = _next(ids), _next(ids)
+    claim_holds_lock = TransactionGate(label="execution claim owns operation-row lock")
+    revocation_attempted_operation_lock = Event()
+    engine = factory.kw["bind"]
+
+    def claim_first() -> str:
+        with managed_session(claim_connection) as session:
+            WorkflowAuthorityService(session).repo.claim_execution(
+                execution_id=execution_id,
+                claimant=f"owner-1:{run_id}",
+                claim_token=claim_token,
+                now=NOW,
+                ttl=timedelta(minutes=2),
+            )
+            claim_holds_lock.block()
+        return "claim_committed"
+
+    def revoke_after_lock() -> str:
+        try:
+            with managed_session(revocation_connection) as session:
+                service = _service_signaling_operation_lock(
+                    session,
+                    before_operation_lock=revocation_attempted_operation_lock,
+                )
+                service.repo.revoke_operation_run(
+                    revocation_id=revocation_id,
+                    generation_id=context["generation_id"],
+                    operation_id=operation_id,
+                    owner_id="owner-1",
+                    run_id=run_id,
+                    reason="native execution claim wins before exact revocation",
+                    revoked_at=NOW,
+                )
+            return "revocation_committed"
+        except ContentionLost as exc:
+            assert "active claimed execution" in str(exc)
+            return "revocation_rejected_claimed"
+
+    with independent_connections(engine) as (claim_connection, revocation_connection):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            claim_future = pool.submit(claim_first)
+            claim_holds_lock.wait_until_blocked()
+            revocation_future = pool.submit(revoke_after_lock)
+            assert revocation_attempted_operation_lock.wait(timeout=20)
+            assert_transaction_blocked(revocation_future)
+            claim_holds_lock.release()
+            assert claim_future.result(timeout=20) == "claim_committed"
+            assert revocation_future.result(timeout=20) == "revocation_rejected_claimed"
+
+    with session_scope(factory) as session:
+        execution = session.get(wf.CommandExecution, execution_id)
+        assert execution is not None and execution.status == "claimed"
+        assert session.get(wf.OperationRunRevocation, revocation_id) is None

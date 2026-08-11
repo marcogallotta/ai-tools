@@ -14,6 +14,10 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from dish_pg import models
 from dish_pg.database import session_scope
+from dish_pg.release_history import (
+    EXACT_REVOCATION_HISTORY_PROVENANCE_KEY,
+    EXACT_REVOCATION_SOURCE_CONTRACT,
+)
 from dish_pg.repositories import AuthorityRepository, ContractBindingRepository, RegistryRepository
 from dish_pg.services import CoreAuthorityService, ImportedTaskSpec
 from tests.support.postgresql.certification import postgresql_dsn
@@ -90,6 +94,7 @@ def _bootstrap_registry(
     schema_head: str = "0002_core_authority_model",
     section_display_name: str = "Research Queue",
     section_workflow_role: str = "research_queue",
+    exact_revocation_source: bool = True,
 ) -> dict[str, uuid.UUID]:
     authority = AuthorityRepository(session)
     contracts = ContractBindingRepository(session)
@@ -107,7 +112,14 @@ def _bootstrap_registry(
             status="complete",
             started_at=NOW,
             completed_at=NOW,
-            provenance={"capture": "fixture"},
+            provenance=(
+                {
+                    "capture": "fixture",
+                    EXACT_REVOCATION_HISTORY_PROVENANCE_KEY: EXACT_REVOCATION_SOURCE_CONTRACT,
+                }
+                if exact_revocation_source
+                else {"capture": "fixture"}
+            ),
         )
     )
     generation_id = _next(ids)

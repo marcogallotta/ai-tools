@@ -53,7 +53,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0035_persistence_constraint_integrity"
+ALEMBIC_HEAD = "0036_exact_operation_run_revocations"
 
 
 class ReleaseCandidateService(

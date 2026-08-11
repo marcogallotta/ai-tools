@@ -10,12 +10,25 @@ from dish_pg import candidate_manifest_models as manifest_models
 from dish_pg import models
 from dish_pg import stage3_models as wf
 from dish_pg import stage5_models as tx
-from dish_pg.candidate_manifest import build_candidate_manifest, revalidate_candidate_manifest
+from dish_pg.candidate_manifest import (
+    BUILDER_CONTRACT_VERSION,
+    _effective_import_completion_digest,
+    build_candidate_manifest,
+    revalidate_candidate_manifest,
+)
 from dish_pg.database import session_scope
-from dish_pg.release_history import SUPPLEMENTAL_HISTORY_ATTESTATION_CONTRACT
+from dish_pg.release_evidence import ReleaseAuthorityError
+from dish_pg.release_history import (
+    EXACT_REVOCATION_HISTORY_PROVENANCE_KEY,
+    EXACT_REVOCATION_RECONCILIATION_CONTRACT,
+    EXACT_REVOCATION_RECONCILED_OPERATIONS_KEY,
+    EXACT_REVOCATION_SNAPSHOT_FORMAT,
+    SUPPLEMENTAL_HISTORY_ATTESTATION_CONTRACT,
+)
 from dish_pg.services import (
     CoreAuthorityService,
     ImportedOperationHistorySpec,
+    ImportedOperationRunRevocationSpec,
     ImportedServiceLeaseSpec,
     ImportedVerificationCycleSpec,
     ImportedWorkflowOperationSpec,
@@ -105,6 +118,114 @@ def _add_supplemental_history(session, ids, context, task_id, *, minute: int = 3
     return run
 
 
+def _seed_primary_imported_operation(session, ids, context, task_id):
+    operation_id = _next(ids)
+    created_at = NOW + timedelta(minutes=8)
+    completed_at = created_at + timedelta(seconds=30)
+    session.add(
+        wf.WorkflowOperation(
+            operation_id=operation_id,
+            generation_id=context["generation_id"],
+            task_id=task_id,
+            kind="planning",
+            lifecycle="completed",
+            phase="terminal",
+            persisted_actions=[],
+            import_run_id=context["import_run_id"],
+            creation_request_id=None,
+            creation_execution_id=None,
+            contract_binding_id=context["binding_id"],
+            predecessor_operation_id=None,
+            terminal_outcome="planning_handoff_confirmed",
+            operation_revision=1,
+            created_at=created_at,
+            terminal_at=completed_at,
+        )
+    )
+    session.flush()
+    return operation_id, created_at, completed_at
+
+
+def _add_revocation_only_supplemental(
+    session, ids, context, task_id, *, operation_id, created_at, completed_at
+):
+    primary = session.get(models.ImportRun, context["import_run_id"])
+    assert primary is not None
+    supplemental_id = _next(ids)
+    supplemental = models.ImportRun(
+        import_run_id=supplemental_id,
+        source_commit="8" * 40,
+        source_release=f"dish@{'8' * 40}",
+        legacy_generation_id=primary.legacy_generation_id,
+        baseline_high_water_mark=f"terminal-history:revocations:{supplemental_id}",
+        source_bundle_sha256="c" * 64,
+        status="complete",
+        started_at=created_at,
+        completed_at=created_at,
+        provenance={
+            "resolved_by": "candidate-manifest-revocation-test",
+            "import_kind": "terminal-history-backfill-v1",
+            "task_id": str(task_id),
+            "legacy_task_gid": "123456789",
+            "generation_id": str(context["generation_id"]),
+            "primary_import_run_id": str(context["import_run_id"]),
+            "source_path": "/tmp/candidate-manifest-revocations.ndjson",
+            "source_format": EXACT_REVOCATION_SNAPSHOT_FORMAT,
+            "source_record_count": 1,
+            "source_bundle_hash_method": "sha256-file-bytes",
+            EXACT_REVOCATION_HISTORY_PROVENANCE_KEY: (
+                EXACT_REVOCATION_RECONCILIATION_CONTRACT
+            ),
+            EXACT_REVOCATION_RECONCILED_OPERATIONS_KEY: [str(operation_id)],
+            "candidate_attestation": SUPPLEMENTAL_HISTORY_ATTESTATION_CONTRACT,
+        },
+    )
+    session.add(supplemental)
+    session.flush()
+    revocation_id = _next(ids)
+    result = CoreAuthorityService(session).backfill_imported_operation_history(
+        generation_id=context["generation_id"],
+        task_id=task_id,
+        import_run_id=supplemental_id,
+        contract_binding_id=context["binding_id"],
+        history=ImportedOperationHistorySpec(
+            operations=(
+                ImportedWorkflowOperationSpec(
+                    operation_id=operation_id,
+                    kind="planning",
+                    status="completed",
+                    phase="terminal",
+                    terminal_outcome="planning_handoff_confirmed",
+                    created_at=created_at,
+                    completed_at=completed_at,
+                ),
+            ),
+            revocations=(
+                ImportedOperationRunRevocationSpec(
+                    revocation_id=revocation_id,
+                    operation_id=operation_id,
+                    owner_id="owner-1",
+                    source_run_id="00000000-0000-0000-0000-000000000123",
+                    source_lease_id=None,
+                    reason="explicit legacy kill",
+                    revoked_at=completed_at,
+                ),
+            ),
+        ),
+    )
+    assert result.matched_operations == 1
+    assert result.inserted_operations == 0
+    assert result.inserted_revocations == 1
+    assert session.scalar(
+        select(wf.WorkflowOperation).where(
+            wf.WorkflowOperation.import_run_id == supplemental_id
+        )
+    ) is None
+    revocation = session.get(wf.OperationRunRevocation, revocation_id)
+    assert revocation is not None and revocation.import_run_id == supplemental_id
+    return supplemental, revocation
+
+
 def _approve_candidate(session, ids, context, task_id, *, supplemental: bool = False):
     service, candidate_id = _prepare_candidate(session, ids, context, task_id)
     if supplemental:
@@ -163,6 +284,87 @@ def _revalidate(session, ids, service, candidate_id, *, minute: int):
         candidate=service._candidate(candidate_id),
         revalidated_at=NOW + timedelta(minutes=minute),
     )
+
+
+def test_0022_revocation_only_supplemental_is_attested_and_changes_import_digest(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        operation_id, created_at, completed_at = _seed_primary_imported_operation(
+            session, ids, context, task_id
+        )
+        service, candidate_id = _prepare_candidate(session, ids, context, task_id)
+        candidate = service._candidate(candidate_id)
+        primary_digest, primary_contract = _effective_import_completion_digest(
+            session,
+            candidate=candidate,
+            source_import_run_id=context["import_run_id"],
+        )
+        assert primary_contract == BUILDER_CONTRACT_VERSION
+
+        supplemental, revocation = _add_revocation_only_supplemental(
+            session,
+            ids,
+            context,
+            task_id,
+            operation_id=operation_id,
+            created_at=created_at,
+            completed_at=completed_at,
+        )
+        effective_digest, effective_contract = _effective_import_completion_digest(
+            session,
+            candidate=candidate,
+            source_import_run_id=context["import_run_id"],
+        )
+        assert effective_digest != primary_digest
+        assert effective_contract == SUPPLEMENTAL_HISTORY_ATTESTATION_CONTRACT
+        assert supplemental.provenance[EXACT_REVOCATION_HISTORY_PROVENANCE_KEY] == (
+            EXACT_REVOCATION_RECONCILIATION_CONTRACT
+        )
+        assert revocation.operation_id is not None
+
+        manifest = build_candidate_manifest(
+            session,
+            uuid_factory=lambda: _next(ids),
+            candidate=candidate,
+            built_at=NOW + timedelta(minutes=9),
+        )
+        assert manifest.import_completion_sha256 == effective_digest
+        assert manifest.builder_contract_version == SUPPLEMENTAL_HISTORY_ATTESTATION_CONTRACT
+
+
+def test_0022_revocation_supplemental_requires_exact_reconciliation_provenance(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        operation_id, created_at, completed_at = _seed_primary_imported_operation(
+            session, ids, context, task_id
+        )
+        service, candidate_id = _prepare_candidate(session, ids, context, task_id)
+        candidate = service._candidate(candidate_id)
+        supplemental, _revocation = _add_revocation_only_supplemental(
+            session,
+            ids,
+            context,
+            task_id,
+            operation_id=operation_id,
+            created_at=created_at,
+            completed_at=completed_at,
+        )
+        provenance = dict(supplemental.provenance)
+        provenance.pop(EXACT_REVOCATION_HISTORY_PROVENANCE_KEY)
+        supplemental.provenance = provenance
+        session.flush()
+        with pytest.raises(
+            ReleaseAuthorityError, match="exact revocations lack reconciliation provenance"
+        ):
+            _effective_import_completion_digest(
+                session,
+                candidate=candidate,
+                source_import_run_id=context["import_run_id"],
+            )
 
 
 def test_0022_approval_binds_manifest_and_registry_change_revalidates_stale(

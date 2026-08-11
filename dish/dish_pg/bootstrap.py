@@ -35,11 +35,16 @@ from dish_tool.schema_validation import validate_task_schema_shape
 
 from . import models
 from .database import DatabaseSettings, create_database_engine, session_factory, session_scope
+from .importer import operation_history_from_mapping
+from .release_history import (
+    EXACT_REVOCATION_HISTORY_PROVENANCE_KEY,
+    EXACT_REVOCATION_SOURCE_CONTRACT,
+)
 from .repositories import AuthorityRepository, ContractBindingRepository, RegistryRepository
 
 DEFAULT_DISH_COMMIT = "9926e511297af94e3897eb65f02c902cadcc016f"
 DEFAULT_HONEST_COMMIT = "f4e16e369c4ea90fe287c13975a35ab0afd985d5"
-DEFAULT_SCHEMA_HEAD = "0035_persistence_constraint_integrity"
+DEFAULT_SCHEMA_HEAD = "0036_exact_operation_run_revocations"
 DEFAULT_DATABASE_NAME = "dish_stage_a_dark_test"
 DEFAULT_PROJECT_GID = "1216693403164366"
 DEFAULT_PROJECT_ID = uuid.UUID("1ae6e7ba-31e3-5dc5-9565-4ea37b49ac97")
@@ -57,6 +62,7 @@ class SourceBundle:
     max_observed_at: datetime
     sections: Mapping[uuid.UUID, str]
     section_names: Mapping[uuid.UUID, str] = field(default_factory=dict)
+    explicit_operation_revocations: bool = False
 
     @property
     def high_water_mark(self) -> str:
@@ -329,6 +335,12 @@ def inspect_source_bundle(
         _required_string(record, "body", line_number=line_number)
         _required_string(record, "identity_scheme", line_number=line_number)
         _required_string(record, "content_identity", line_number=line_number)
+        try:
+            operation_history_from_mapping(record)
+        except ValueError as exc:
+            raise InitialBootstrapError(
+                f"source line {line_number}: invalid operation history: {exc}"
+            ) from exc
         if not isinstance(record.get("completed"), bool):
             raise InitialBootstrapError(f"source line {line_number}: completed must be a boolean")
         observed_values.append(_parse_observed_at(record.get("observed_at"), line_number=line_number))
@@ -341,6 +353,7 @@ def inspect_source_bundle(
         max_observed_at=max(observed_values),
         sections=sections,
         section_names=section_names,
+        explicit_operation_revocations=True,
     )
 
 
@@ -539,6 +552,11 @@ def bootstrap_initial_generation(
                 "source_path": str(spec.source_bundle.path),
                 "source_record_count": spec.source_bundle.record_count,
                 "source_bundle_hash_method": "sha256-file-bytes",
+                **(
+                    {EXACT_REVOCATION_HISTORY_PROVENANCE_KEY: EXACT_REVOCATION_SOURCE_CONTRACT}
+                    if spec.source_bundle.explicit_operation_revocations
+                    else {}
+                ),
                 "project_id": str(spec.project_id),
                 "section_ids": [str(section.section_id) for section in spec.sections],
             },

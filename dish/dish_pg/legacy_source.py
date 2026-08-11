@@ -45,7 +45,7 @@ def _atomic_lines(path: Path, lines: list[str]) -> None:
         if os.path.exists(temp): os.unlink(temp)
 
 
-_OPERATION_HISTORY_TABLES = {"operations", "service_leases", "verification_cycles"}
+_OPERATION_HISTORY_TABLES = {"operations", "service_leases", "verification_cycles", "operation_run_revocations"}
 
 
 def _canonical_uuid(value: object, *, field: str) -> str:
@@ -144,7 +144,9 @@ def _terminal_operation_history(
              FROM service_leases WHERE task_gid=? ORDER BY acquired_at,lease_id""",
         (task_gid,),
     ).fetchall()
+    lease_by_id = {str(row["lease_id"]): row for row in leases}
     lease_records: list[dict[str, object]] = []
+    included_lease_ids: set[str] = set()
     for row in leases:
         lease_kind = str(row["lease_kind"] or "")
         if lease_kind not in {"actor", "admin_request"}:
@@ -185,6 +187,7 @@ def _terminal_operation_history(
         source_run_id = str(row["run_id"] or "").strip()
         if not source_run_id:
             raise LegacySourceError(f"legacy lease lacks run_id: lease_id={row['lease_id']}")
+        included_lease_ids.add(str(row["lease_id"]))
         lease_records.append({
             "lease_id": _canonical_uuid(row["lease_id"], field="lease_id"),
             "operation_id": _canonical_uuid(row["operation_id"], field="lease.operation_id"),
@@ -201,10 +204,62 @@ def _terminal_operation_history(
             "released_at": str(row["released_at"]),
         })
 
+    revocations = conn.execute(
+        """SELECT revocation.revocation_id,revocation.operation_id,revocation.owner_id,
+                  revocation.run_id,revocation.source_lease_id,revocation.reason,revocation.revoked_at
+             FROM operation_run_revocations AS revocation
+             JOIN operations AS operation ON operation.operation_id=revocation.operation_id
+            WHERE operation.task_gid=?
+            ORDER BY revocation.revoked_at,revocation.revocation_id""",
+        (task_gid,),
+    ).fetchall()
+    revocation_records: list[dict[str, object]] = []
+    for row in revocations:
+        if str(row["operation_id"]) not in operation_ids:
+            if allow_open_operations:
+                continue
+            raise LegacySourceError(
+                f"legacy revocation references operation outside task history: revocation_id={row['revocation_id']}"
+            )
+        owner_id = str(row["owner_id"] or "").strip()
+        source_run_id = str(row["run_id"] or "").strip()
+        reason = str(row["reason"] or "").strip()
+        if not owner_id or not source_run_id or not reason:
+            raise LegacySourceError(
+                f"legacy revocation lacks exact owner/run/reason: revocation_id={row['revocation_id']}"
+            )
+        source_lease_id = row["source_lease_id"]
+        if source_lease_id is not None:
+            lease = lease_by_id.get(str(source_lease_id))
+            if (
+                lease is None
+                or str(source_lease_id) not in included_lease_ids
+                or str(lease["operation_id"]) != str(row["operation_id"])
+                or str(lease["owner_id"]) != owner_id
+                or str(lease["run_id"]) != source_run_id
+            ):
+                raise LegacySourceError(
+                    "legacy revocation source lease does not prove the exact exported "
+                    f"operation owner/run: revocation_id={row['revocation_id']}"
+                )
+        revocation_records.append({
+            "revocation_id": _canonical_uuid(row["revocation_id"], field="revocation_id"),
+            "operation_id": _canonical_uuid(row["operation_id"], field="revocation.operation_id"),
+            "owner_id": owner_id,
+            "source_run_id": source_run_id,
+            "source_lease_id": (
+                _canonical_uuid(source_lease_id, field="revocation.source_lease_id")
+                if source_lease_id is not None else None
+            ),
+            "reason": reason,
+            "revoked_at": str(row["revoked_at"]),
+        })
+
     return {
         "operations": operation_records,
         "leases": lease_records,
         "verification_cycles": cycle_records,
+        "revocations": revocation_records,
     }
 
 

@@ -324,6 +324,9 @@ class WorkflowOperation(Base):
             "(lifecycle <> 'open' AND terminal_outcome IS NOT NULL AND terminal_at IS NOT NULL)",
             name="terminal_state_consistent",
         ),
+        UniqueConstraint(
+            "generation_id", "operation_id", name="uq_workflow_operations_generation_operation"
+        ),
         Index(
             "uq_workflow_operations_one_open_per_task",
             "generation_id",
@@ -475,6 +478,62 @@ class ServiceLease(Base):
             sqlite_where=text("state = 'active' AND lease_kind = 'actor'"),
         ),
         UniqueConstraint("task_id", "actor_attempt_sequence", name="uq_lease_task_attempt_sequence"),
+    )
+
+
+class OperationRunRevocation(Base):
+    __tablename__ = "operation_run_revocations"
+
+    revocation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    generation_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    operation_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    owner_id: Mapped[str] = mapped_column(String(256), nullable=False)
+    run_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("service_runs.run_id", ondelete="RESTRICT")
+    )
+    import_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("stage_a_import_runs.import_run_id", ondelete="RESTRICT")
+    )
+    source_run_id: Mapped[str | None] = mapped_column(String(256))
+    source_lease_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid, ForeignKey("service_leases.lease_id", ondelete="RESTRICT")
+    )
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    revoked_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["generation_id", "operation_id"],
+            ["workflow_operations.generation_id", "workflow_operations.operation_id"],
+            ondelete="RESTRICT",
+            name="fk_operation_run_revocations_generation_operation",
+        ),
+        CheckConstraint("length(trim(owner_id)) > 0", name="owner_nonblank"),
+        CheckConstraint("length(trim(reason)) > 0", name="reason_nonblank"),
+        CheckConstraint(
+            "(import_run_id IS NULL AND run_id IS NOT NULL AND source_run_id IS NULL) OR "
+            "(import_run_id IS NOT NULL AND run_id IS NULL AND source_run_id IS NOT NULL "
+            "AND length(trim(source_run_id)) > 0)",
+            name="provenance_exact",
+        ),
+        Index(
+            "uq_operation_run_revocations_live_exact",
+            "generation_id", "operation_id", "owner_id", "run_id",
+            unique=True,
+            postgresql_where=text("import_run_id IS NULL"),
+            sqlite_where=text("import_run_id IS NULL"),
+        ),
+        Index(
+            "uq_operation_run_revocations_imported_exact",
+            "generation_id", "operation_id", "owner_id", "source_run_id",
+            unique=True,
+            postgresql_where=text("import_run_id IS NOT NULL"),
+            sqlite_where=text("import_run_id IS NOT NULL"),
+        ),
+        Index(
+            "ix_operation_run_revocations_operation_time",
+            "generation_id", "operation_id", "revoked_at",
+        ),
     )
 
 
@@ -1272,7 +1331,7 @@ STAGE3_TABLE_NAMES = (
 
 
 def _install_sqlite_stage3_immutability_triggers() -> None:
-    for table_name in STAGE3_IMMUTABLE_TABLE_NAMES:
+    for table_name in STAGE3_IMMUTABLE_TABLE_NAMES + ("operation_run_revocations",):
         table = Base.metadata.tables[table_name]
         event.listen(
             table,

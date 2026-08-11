@@ -37,6 +37,45 @@ def test_pglite_upgrades_empty_database_through_head(pglite) -> None:
     assert trigger_count > 0
 
 
+def test_pglite_exact_operation_run_revocation_schema_is_immutable_and_exact(pglite) -> None:
+    command.upgrade(alembic_config(pglite.sqlalchemy_url), "head")
+    with psycopg.connect(pglite.libpq_dsn) as connection:
+        table = connection.execute(
+            "SELECT to_regclass('public.operation_run_revocations')"
+        ).fetchone()[0]
+        triggers = {
+            row[0]
+            for row in connection.execute(
+                """
+                SELECT tgname
+                FROM pg_trigger
+                WHERE tgrelid = 'operation_run_revocations'::regclass
+                  AND NOT tgisinternal
+                """
+            ).fetchall()
+        }
+        indexes = {
+            row[0]: row[1]
+            for row in connection.execute(
+                """
+                SELECT indexname, indexdef
+                FROM pg_indexes
+                WHERE schemaname = 'public'
+                  AND tablename = 'operation_run_revocations'
+                """
+            ).fetchall()
+        }
+    assert table == "operation_run_revocations"
+    assert {
+        "operation_run_revocations_immutable_update",
+        "operation_run_revocations_immutable_delete",
+    }.issubset(triggers)
+    assert "uq_operation_run_revocations_live_exact" in indexes
+    assert "uq_operation_run_revocations_imported_exact" in indexes
+    assert "WHERE (import_run_id IS NULL)" in indexes["uq_operation_run_revocations_live_exact"]
+    assert "WHERE (import_run_id IS NOT NULL)" in indexes["uq_operation_run_revocations_imported_exact"]
+
+
 def test_pglite_persists_migrated_schema_across_connections(pglite) -> None:
     command.upgrade(alembic_config(pglite.sqlalchemy_url), "head")
     with psycopg.connect(pglite.libpq_dsn) as first:

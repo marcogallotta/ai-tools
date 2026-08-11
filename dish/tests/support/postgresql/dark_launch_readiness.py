@@ -127,7 +127,7 @@ def record(
         "completed": False,
         "observed_at": "2025-01-15T12:00:00+00:00",
         "existence_state": "ordinary",
-        "operation_history": {"operations": [], "leases": [], "verification_cycles": []},
+        "operation_history": {"operations": [], "leases": [], "verification_cycles": [], "revocations": []},
     }
 
 

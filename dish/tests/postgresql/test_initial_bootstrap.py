@@ -28,6 +28,10 @@ from dish_pg.bootstrap import (
 from dish_pg.database import session_scope
 from dish_pg.import_runtime import already_imported, prepare_import_run, verify_imported_records
 from dish_pg.importer import iter_source, run_import
+from dish_pg.release_history import (
+    EXACT_REVOCATION_HISTORY_PROVENANCE_KEY,
+    EXACT_REVOCATION_SOURCE_CONTRACT,
+)
 from dish_pg.transition import ShadowService
 
 NOW = datetime(2026, 8, 3, 20, 0, tzinfo=timezone.utc)
@@ -61,7 +65,7 @@ def _record(
         "section_name": section_name,
         "completed": False,
         "observed_at": NOW.isoformat(),
-        "operation_history": {"operations": [], "leases": [], "verification_cycles": []},
+        "operation_history": {"operations": [], "leases": [], "verification_cycles": [], "revocations": []},
     }
 
 
@@ -134,6 +138,7 @@ def test_bootstrap_baseline_and_import_run_end_to_end(tmp_path: Path) -> None:
             "verification_cycle_id": str(cycle_id), "issued_at": NOW.isoformat(),
             "expires_at": "2026-08-03T20:05:00+00:00", "released_at": NOW.isoformat(),
         }],
+        "revocations": [],
     }
     source = _source(tmp_path, first, _record(second_task, "1002"))
     spec = _spec(source)
@@ -153,6 +158,9 @@ def test_bootstrap_baseline_and_import_run_end_to_end(tmp_path: Path) -> None:
             assert import_run is not None
             assert import_run.source_bundle_sha256 == spec.source_bundle.sha256
             assert import_run.baseline_high_water_mark == spec.source_bundle.high_water_mark
+            assert import_run.provenance[EXACT_REVOCATION_HISTORY_PROVENANCE_KEY] == (
+                EXACT_REVOCATION_SOURCE_CONTRACT
+            )
             assert binding is not None
             assert binding.protocol_release == "1.0.10"
             assert binding.schema_release == "2"
@@ -239,10 +247,21 @@ def test_source_bundle_registers_every_distinct_section(tmp_path: Path) -> None:
         DEFAULT_SECTION_ID: "Research Queue",
         OTHER_SECTION_ID: "Verification Queue",
     }
+    assert bundle.explicit_operation_revocations is True
     sections = section_specs_from_bundle(bundle)
     assert [section.section_id for section in sections] == [DEFAULT_SECTION_ID, OTHER_SECTION_ID]
     assert [section.section_name for section in sections] == ["Research Queue", "Verification Queue"]
     assert len({section.workflow_role for section in sections}) == len(sections)
+
+
+def test_source_bundle_requires_explicit_revocation_history_field(tmp_path: Path) -> None:
+    record = _record(uuid.uuid4(), "3002")
+    history = dict(record["operation_history"])
+    history.pop("revocations")
+    record["operation_history"] = history
+    source = _source(tmp_path, record)
+    with pytest.raises(InitialBootstrapError, match="operation_history.revocations is required"):
+        inspect_source_bundle(source, project_id=DEFAULT_PROJECT_ID)
 
 
 def test_source_bundle_rejects_section_id_reused_for_a_different_gid(tmp_path: Path) -> None:

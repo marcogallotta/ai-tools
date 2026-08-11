@@ -23,9 +23,11 @@ from dish_pg.repositories import (
     CoreAuthorityError,
     RegistryRepository,
 )
+from dish_pg.workflow import OperationRunRevoked, WorkflowAuthorityRepository
 from dish_pg.services import (
     CoreAuthorityService,
     ImportedOperationHistorySpec,
+    ImportedOperationRunRevocationSpec,
     ImportedServiceLeaseSpec,
     ImportedTaskSpec,
     ImportedWorkflowOperationSpec,
@@ -188,7 +190,10 @@ def test_import_backfills_terminal_operation_attempt_history_without_fake_author
     factory, ids = core_db
     with session_scope(factory) as session:
         context = _bootstrap_registry(session, ids)
-        task_id, operation_id, lease_id = _next(ids), _next(ids), _next(ids)
+        task_id, operation_id, lease_id, revocation_id, source_run_id = (
+            _next(ids), _next(ids), _next(ids), _next(ids), _next(ids)
+        )
+        legacy_run_text = str(source_run_id).upper()
         CoreAuthorityService(session, uuid_factory=lambda: _next(ids)).import_task_document(
             generation_id=context["generation_id"],
             import_run_id=context["import_run_id"],
@@ -211,10 +216,19 @@ def test_import_backfills_terminal_operation_attempt_history_without_fake_author
                         created_at=NOW, completed_at=NOW,
                     ),),
                     leases=(ImportedServiceLeaseSpec(
-                        lease_id=lease_id, operation_id=operation_id, source_run_id="legacy-run-1",
+                        lease_id=lease_id, operation_id=operation_id, source_run_id=legacy_run_text,
                         owner_id="legacy-owner", lease_kind="actor", actor_attempt_sequence=1,
                         verification_cycle_id=None, issued_at=NOW,
                         expires_at=NOW + timedelta(minutes=1), released_at=NOW,
+                    ),),
+                    revocations=(ImportedOperationRunRevocationSpec(
+                        revocation_id=revocation_id,
+                        operation_id=operation_id,
+                        owner_id="legacy-owner",
+                        source_run_id=legacy_run_text,
+                        source_lease_id=lease_id,
+                        reason="operator killed exact legacy run",
+                        revoked_at=NOW,
                     ),),
                 ),
             ),
@@ -226,7 +240,17 @@ def test_import_backfills_terminal_operation_attempt_history_without_fake_author
         assert operation is not None and operation.import_run_id == context["import_run_id"]
         assert operation.creation_request_id is None and operation.creation_execution_id is None
         assert lease is not None and lease.import_run_id == context["import_run_id"]
-        assert lease.run_id is None and lease.source_run_id == "legacy-run-1"
+        assert lease.run_id is None and lease.source_run_id == legacy_run_text
+        revocation = session.get(wf.OperationRunRevocation, revocation_id)
+        assert revocation is not None and revocation.import_run_id == context["import_run_id"]
+        assert revocation.run_id is None and revocation.source_run_id == legacy_run_text
+        with pytest.raises(OperationRunRevoked):
+            WorkflowAuthorityRepository(session).assert_operation_run_not_revoked(
+                generation_id=context["generation_id"],
+                operation_id=operation_id,
+                owner_id="legacy-owner",
+                run_id=source_run_id,
+            )
         assert PostgresCommandPort(session, cursor_secret=b"t" * 32)._next_actor_attempt_sequence(task_id) == 2
 
 

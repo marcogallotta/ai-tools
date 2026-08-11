@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Callable, Mapping
 
-from sqlalchemy import and_, func, select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
@@ -23,6 +23,7 @@ from . import models
 from . import reservation_models as reservations
 from . import stage3_models as wf
 from . import stage6_models as rel
+from .release_history import operation_revocation_history_reconciled
 
 
 VALIDATION_FAILURE_REQUEST_KIND = "pre_execution_validation_failure"
@@ -42,6 +43,14 @@ class StaleAuthorityError(WorkflowAuthorityError):
 
 class ContentionLost(WorkflowAuthorityError):
     """Another compatible transaction won the exclusive authority race."""
+
+
+class OperationRunRevoked(StaleAuthorityError):
+    """The exact operation/owner/run tuple has been permanently revoked."""
+
+
+class ImportedRevocationHistoryUnreconciled(StaleAuthorityError):
+    """Legacy imported operation lacks explicit exact-revocation reconciliation."""
 
 
 class MutationAdmissionClosed(StaleAuthorityError):
@@ -132,6 +141,158 @@ class WorkflowAuthorityRepository:
         ):
             raise StaleAuthorityError("run is stale, retired, or belongs to another generation")
         return run
+
+    def _locked_operation(
+        self, *, generation_id: uuid.UUID, operation_id: uuid.UUID
+    ) -> wf.WorkflowOperation:
+        statement = select(wf.WorkflowOperation).where(
+            wf.WorkflowOperation.operation_id == operation_id
+        )
+        if self.session.get_bind().dialect.name == "postgresql":
+            statement = statement.with_for_update().execution_options(populate_existing=True)
+        operation = self.session.scalar(statement)
+        if operation is None or operation.generation_id != generation_id:
+            raise StaleAuthorityError("operation belongs to another authority generation")
+        return operation
+
+    def operation_run_revocation(
+        self,
+        *,
+        generation_id: uuid.UUID,
+        operation_id: uuid.UUID,
+        owner_id: str,
+        run_id: uuid.UUID,
+        lock_operation: bool = False,
+    ) -> wf.OperationRunRevocation | None:
+        if lock_operation:
+            self._locked_operation(generation_id=generation_id, operation_id=operation_id)
+        live = self.session.scalar(
+            select(wf.OperationRunRevocation).where(
+                wf.OperationRunRevocation.generation_id == generation_id,
+                wf.OperationRunRevocation.operation_id == operation_id,
+                wf.OperationRunRevocation.owner_id == owner_id,
+                wf.OperationRunRevocation.run_id == run_id,
+            )
+        )
+        if live is not None:
+            return live
+        imported = self.session.scalars(
+            select(wf.OperationRunRevocation).where(
+                wf.OperationRunRevocation.generation_id == generation_id,
+                wf.OperationRunRevocation.operation_id == operation_id,
+                wf.OperationRunRevocation.owner_id == owner_id,
+                wf.OperationRunRevocation.import_run_id.is_not(None),
+            )
+        )
+        for row in imported:
+            try:
+                if uuid.UUID(row.source_run_id or "") == run_id:
+                    return row
+            except ValueError:
+                continue
+        return None
+
+    def assert_operation_run_not_revoked(
+        self,
+        *,
+        generation_id: uuid.UUID,
+        operation_id: uuid.UUID,
+        owner_id: str,
+        run_id: uuid.UUID,
+        lock_operation: bool = True,
+    ) -> None:
+        operation = (
+            self._locked_operation(
+                generation_id=generation_id, operation_id=operation_id
+            )
+            if lock_operation
+            else self.session.get(wf.WorkflowOperation, operation_id)
+        )
+        if operation is None or operation.generation_id != generation_id:
+            raise StaleAuthorityError("operation belongs to another authority generation")
+        if not operation_revocation_history_reconciled(
+            self.session, operation=operation
+        ):
+            raise ImportedRevocationHistoryUnreconciled(
+                "legacy imported operation exact-run revocation history is unreconciled"
+            )
+        row = self.operation_run_revocation(
+            generation_id=generation_id,
+            operation_id=operation_id,
+            owner_id=owner_id,
+            run_id=run_id,
+            lock_operation=False,
+        )
+        if row is not None:
+            raise OperationRunRevoked(
+                "exact operation owner/run authority has been permanently revoked"
+            )
+
+    def revoke_operation_run(
+        self,
+        *,
+        revocation_id: uuid.UUID,
+        generation_id: uuid.UUID,
+        operation_id: uuid.UUID,
+        owner_id: str,
+        run_id: uuid.UUID,
+        reason: str,
+        revoked_at: datetime,
+        source_lease_id: uuid.UUID | None = None,
+    ) -> wf.OperationRunRevocation:
+        if not owner_id.strip() or not reason.strip():
+            raise WorkflowAuthorityError("revocation owner and reason are required")
+        self._locked_operation(generation_id=generation_id, operation_id=operation_id)
+        run = self.session.get(wf.ServiceRun, run_id)
+        if run is None or run.generation_id != generation_id or run.owner_id != owner_id:
+            raise StaleAuthorityError("revocation target run/owner does not match the operation generation")
+        existing = self.operation_run_revocation(
+            generation_id=generation_id,
+            operation_id=operation_id,
+            owner_id=owner_id,
+            run_id=run_id,
+            lock_operation=False,
+        )
+        if existing is not None:
+            return existing
+        active_execution = self.session.scalar(
+            select(wf.CommandExecution.execution_id).where(
+                wf.CommandExecution.generation_id == generation_id,
+                wf.CommandExecution.operation_id == operation_id,
+                wf.CommandExecution.status == "claimed",
+            ).limit(1)
+        )
+        if active_execution is not None:
+            raise ContentionLost(
+                "operation has an active claimed execution; exact revocation lost the writer race"
+            )
+        if source_lease_id is not None:
+            lease = self.session.get(wf.ServiceLease, source_lease_id)
+            if (
+                lease is None
+                or lease.generation_id != generation_id
+                or lease.operation_id != operation_id
+                or lease.owner_id != owner_id
+                or lease.run_id != run_id
+            ):
+                raise WorkflowAuthorityError(
+                    "source lease does not prove the exact operation owner/run identity"
+                )
+        row = wf.OperationRunRevocation(
+            revocation_id=revocation_id,
+            generation_id=generation_id,
+            operation_id=operation_id,
+            owner_id=owner_id,
+            run_id=run_id,
+            import_run_id=None,
+            source_run_id=None,
+            source_lease_id=source_lease_id,
+            reason=reason.strip(),
+            revoked_at=revoked_at,
+        )
+        self.session.add(row)
+        self.session.flush()
+        return row
 
     def register_run(self, row: wf.ServiceRun) -> None:
         generation = self.require_active_generation(row.generation_id)
@@ -478,6 +639,17 @@ class WorkflowAuthorityRepository:
         if execution is None:
             raise WorkflowAuthorityError("unknown command execution")
         self.require_active_generation(execution.generation_id)
+        if execution.operation_id is not None:
+            request = self.session.get(wf.ServiceRequest, execution.request_id)
+            if request is None:
+                raise WorkflowAuthorityError("command execution has no admitted request")
+            self.assert_operation_run_not_revoked(
+                generation_id=execution.generation_id,
+                operation_id=execution.operation_id,
+                owner_id=request.owner_id,
+                run_id=request.run_id,
+                lock_operation=True,
+            )
         previous_revision = execution.execution_revision
         allowed = execution.status == "pending" or (
             execution.status == "claimed"
@@ -925,6 +1097,13 @@ class WorkflowAuthorityService:
         self.repo.require_active_run(
             generation_id=execution.generation_id, run_id=run_id, owner_id=owner_id
         )
+        self.repo.assert_operation_run_not_revoked(
+            generation_id=execution.generation_id,
+            operation_id=operation_id,
+            owner_id=owner_id,
+            run_id=run_id,
+            lock_operation=True,
+        )
         row = wf.ServiceLease(
             lease_id=lease_id,
             generation_id=execution.generation_id,
@@ -984,6 +1163,14 @@ class WorkflowAuthorityService:
         self.repo.require_active_run(
             generation_id=lease.generation_id, run_id=run_id, owner_id=owner_id
         )
+        if lease.operation_id is not None:
+            self.repo.assert_operation_run_not_revoked(
+                generation_id=lease.generation_id,
+                operation_id=lease.operation_id,
+                owner_id=owner_id,
+                run_id=run_id,
+                lock_operation=True,
+            )
         if (
             lease.state != "active"
             or lease.run_id != run_id
@@ -1078,6 +1265,13 @@ class WorkflowAuthorityService:
             raise WorkflowAuthorityError("actor fact requires matching execution and operation")
         self.repo.require_active_run(
             generation_id=execution.generation_id, run_id=run_id, owner_id=owner_id
+        )
+        self.repo.assert_operation_run_not_revoked(
+            generation_id=execution.generation_id,
+            operation_id=operation_id,
+            owner_id=owner_id,
+            run_id=run_id,
+            lock_operation=True,
         )
         row = wf.OperationActorFact(
             actor_fact_id=actor_fact_id,

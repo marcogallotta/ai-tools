@@ -283,3 +283,185 @@ def test_stale_generation_run_cannot_admit_new_request(workflow_db) -> None:
                 generation_id=context["generation_id"],
                 run_id=run_id,
             )
+
+
+def _create_revocation_test_operation(
+    service: WorkflowAuthorityService,
+    ids,
+    *,
+    context: dict[str, uuid.UUID],
+    task_id: uuid.UUID,
+    run_id: uuid.UUID,
+    owner: str = "owner-1",
+) -> tuple[uuid.UUID, uuid.UUID]:
+    request_id, execution_id, operation_id = _next(ids), _next(ids), _next(ids)
+    _admit(
+        service,
+        request_id=request_id,
+        generation_id=context["generation_id"],
+        run_id=run_id,
+        owner=owner,
+        command="prepare",
+    )
+    _execution(
+        service,
+        execution_id=execution_id,
+        request_id=request_id,
+        generation_id=context["generation_id"],
+        task_id=task_id,
+        binding_id=context["binding_id"],
+        command="prepare",
+    )
+    service.repo.capture_task_fence(
+        execution_id=execution_id,
+        generation_id=context["generation_id"],
+        task_id=task_id,
+        at=NOW,
+    )
+    service.create_operation(
+        operation_id=operation_id,
+        execution_id=execution_id,
+        task_id=task_id,
+        kind="initial",
+        phase="prepare_required",
+        persisted_actions=["prepare"],
+        created_at=NOW,
+    )
+    return execution_id, operation_id
+
+
+def test_exact_operation_run_revocation_blocks_grants_without_global_over_revocation(workflow_db) -> None:
+    from dish_pg.workflow import OperationRunRevoked
+    from tests.support.postgresql.core import _import_one
+
+    factory, ids, context, task_id = workflow_db
+    killed_run = _next(ids)
+    successor_run = _next(ids)
+    revocation_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(session, generation_id=context["generation_id"], run_id=killed_run)
+        _register_run(session, generation_id=context["generation_id"], run_id=successor_run)
+        service = WorkflowAuthorityService(session, uuid_factory=lambda: _next(ids))
+        execution_id, operation_id = _create_revocation_test_operation(
+            service, ids, context=context, task_id=task_id, run_id=killed_run
+        )
+        lease_id = _next(ids)
+        lease = service.acquire_actor_lease(
+            lease_id=lease_id,
+            execution_id=execution_id,
+            operation_id=operation_id,
+            run_id=killed_run,
+            owner_id="owner-1",
+            actor_role="constructor",
+            actor_attempt_sequence=1,
+            issued_at=NOW,
+            expires_at=NOW + timedelta(minutes=10),
+        )
+        revocation = service.repo.revoke_operation_run(
+            revocation_id=revocation_id,
+            generation_id=context["generation_id"],
+            operation_id=operation_id,
+            owner_id="owner-1",
+            run_id=killed_run,
+            source_lease_id=lease_id,
+            reason="operator killed exact operation run",
+            revoked_at=NOW + timedelta(seconds=1),
+        )
+        assert revocation.run_id == killed_run
+        assert session.get(wf.ServiceRun, killed_run).status == "active"
+        assert lease.state == "active"
+
+        with pytest.raises(OperationRunRevoked):
+            service.renew_lease(
+                lease_id=lease_id,
+                execution_id=execution_id,
+                run_id=killed_run,
+                owner_id="owner-1",
+                now=NOW + timedelta(minutes=1),
+                new_expiry=NOW + timedelta(minutes=20),
+            )
+        with pytest.raises(OperationRunRevoked):
+            service.acquire_actor_lease(
+                lease_id=_next(ids),
+                execution_id=execution_id,
+                operation_id=operation_id,
+                run_id=killed_run,
+                owner_id="owner-1",
+                actor_role="constructor",
+                actor_attempt_sequence=2,
+                issued_at=NOW + timedelta(minutes=1),
+                expires_at=NOW + timedelta(minutes=11),
+            )
+
+        claim_request, claim_execution = _next(ids), _next(ids)
+        _admit(
+            service,
+            request_id=claim_request,
+            generation_id=context["generation_id"],
+            run_id=killed_run,
+            command="prepare",
+        )
+        service.begin_execution(
+            ExecutionSpec(
+                execution_id=claim_execution,
+                request_id=claim_request,
+                generation_id=context["generation_id"],
+                task_id=task_id,
+                operation_id=operation_id,
+                command_name="prepare",
+                transaction_profile="L",
+                canonical_intent={"command": "prepare"},
+                pinned_inputs={"now": NOW.isoformat()},
+                contract_binding_id=context["binding_id"],
+                admitted_at=NOW,
+            )
+        )
+        with pytest.raises(OperationRunRevoked):
+            service.repo.claim_execution(
+                execution_id=claim_execution,
+                claimant=f"owner-1:{killed_run}",
+                claim_token=_next(ids),
+                now=NOW + timedelta(seconds=2),
+                ttl=timedelta(minutes=2),
+            )
+
+        service.repo.assert_operation_run_not_revoked(
+            generation_id=context["generation_id"],
+            operation_id=operation_id,
+            owner_id="owner-1",
+            run_id=successor_run,
+        )
+
+        unrelated = _import_one(
+            session,
+            ids,
+            context,
+            task_id=_next(ids),
+            asana_gid="987654322",
+        )
+        _, unrelated_operation = _create_revocation_test_operation(
+            service,
+            ids,
+            context=context,
+            task_id=unrelated.task_id,
+            run_id=killed_run,
+        )
+        service.repo.assert_operation_run_not_revoked(
+            generation_id=context["generation_id"],
+            operation_id=unrelated_operation,
+            owner_id="owner-1",
+            run_id=killed_run,
+        )
+
+    with factory() as session:
+        revocation = session.get(wf.OperationRunRevocation, revocation_id)
+        assert revocation is not None
+        revocation.reason = "attempted mutation"
+        with pytest.raises(IntegrityError, match="immutable authority row"):
+            session.flush()
+        session.rollback()
+        revocation = session.get(wf.OperationRunRevocation, revocation_id)
+        assert revocation is not None
+        session.delete(revocation)
+        with pytest.raises(IntegrityError, match="immutable authority row"):
+            session.flush()

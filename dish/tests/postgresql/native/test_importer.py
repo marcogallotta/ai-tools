@@ -36,7 +36,7 @@ def _record(context: dict[str, UUID], task_id: UUID, asana_gid: str) -> dict[str
         "section_id": str(context["section_id"]),
         "completed": False,
         "observed_at": NOW.isoformat(),
-        "operation_history": {"operations": [], "leases": [], "verification_cycles": []},
+        "operation_history": {"operations": [], "leases": [], "verification_cycles": [], "revocations": []},
     }
 
 
@@ -65,6 +65,7 @@ def test_importer_persists_real_records_against_real_postgresql(core_db, tmp_pat
             "released_at": NOW.isoformat(),
         }],
         "verification_cycles": [],
+        "revocations": [],
     }
     source = tmp_path / "tasks.ndjson"
     source.write_text(

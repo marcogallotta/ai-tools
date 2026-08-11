@@ -24,6 +24,7 @@ from dish_pg.repositories import CoreAuthorityError
 from dish_pg.services import (
     CoreAuthorityService,
     ImportedOperationHistorySpec,
+    ImportedOperationRunRevocationSpec,
     ImportedServiceLeaseSpec,
     ImportedTaskResult,
     ImportedTaskSpec,
@@ -170,10 +171,25 @@ def operation_history_from_mapping(record: Mapping[str, object]) -> ImportedOper
         )
         for item in _history_items(value, "verification_cycles")
     )
+    revocations = tuple(
+        ImportedOperationRunRevocationSpec(
+            revocation_id=UUID(_required_string(item, "revocation_id")),
+            operation_id=UUID(_required_string(item, "operation_id")),
+            owner_id=_required_string(item, "owner_id"),
+            source_run_id=_required_string(item, "source_run_id"),
+            source_lease_id=_optional_uuid(item, "source_lease_id"),
+            reason=_required_string(item, "reason"),
+            revoked_at=_parse_datetime(
+                item.get("revoked_at"), field="operation_history.revocations.revoked_at"
+            ),
+        )
+        for item in _history_items(value, "revocations")
+    )
     return ImportedOperationHistorySpec(
         operations=operations,
         leases=leases,
         verification_cycles=cycles,
+        revocations=revocations,
     )
 
 

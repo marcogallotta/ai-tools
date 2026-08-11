@@ -14,6 +14,10 @@ from . import models
 from . import stage3_models as wf
 from .database import DatabaseSettings, create_database_engine, session_factory, session_scope
 from .importer import SourceRecord, iter_source, run_import
+from .release_history import (
+    EXACT_REVOCATION_HISTORY_PROVENANCE_KEY,
+    EXACT_REVOCATION_SOURCE_CONTRACT,
+)
 from .repositories import CoreAuthorityError
 
 
@@ -34,6 +38,14 @@ def prepare_import_run(
     import_run = session.get(models.ImportRun, import_run_id)
     if import_run is None or import_run.status != "complete":
         raise CoreAuthorityError("import requires the bootstrapped complete import run")
+    provenance = import_run.provenance if isinstance(import_run.provenance, dict) else {}
+    if (
+        provenance.get(EXACT_REVOCATION_HISTORY_PROVENANCE_KEY)
+        != EXACT_REVOCATION_SOURCE_CONTRACT
+    ):
+        raise CoreAuthorityError(
+            "import run does not attest an explicit exact-operation revocation source"
+        )
     binding = session.get(models.HonestContractBinding, contract_binding_id)
     if binding is None or binding.dish_release != generation.dish_release:
         raise CoreAuthorityError("import requires the bootstrapped matching contract binding")
@@ -215,6 +227,36 @@ def verify_imported_records(
                 or target.state != "released"
             ):
                 errors.append(f"{prefix}: imported ServiceLease mismatch {source.lease_id}")
+
+        imported_revocations = tuple(
+            session.scalars(
+                select(wf.OperationRunRevocation).where(
+                    wf.OperationRunRevocation.generation_id == generation_id,
+                    wf.OperationRunRevocation.operation_id.in_(
+                        [item.operation_id for item in history.operations]
+                    ),
+                    wf.OperationRunRevocation.import_run_id == import_run_id,
+                )
+            )
+        )
+        if {row.revocation_id for row in imported_revocations} != {
+            item.revocation_id for item in history.revocations
+        }:
+            errors.append(f"{prefix}: imported exact operation/run revocation identity set mismatch")
+        for source in history.revocations:
+            target = session.get(wf.OperationRunRevocation, source.revocation_id)
+            if target is None or (
+                target.import_run_id != import_run_id
+                or target.run_id is not None
+                or target.source_run_id != source.source_run_id
+                or target.operation_id != source.operation_id
+                or target.owner_id != source.owner_id
+                or target.source_lease_id != source.source_lease_id
+                or target.reason != source.reason
+            ):
+                errors.append(
+                    f"{prefix}: imported OperationRunRevocation mismatch {source.revocation_id}"
+                )
     return errors
 
 

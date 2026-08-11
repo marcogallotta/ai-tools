@@ -127,3 +127,48 @@ def test_frozen_history_downgrades_to_stage2_and_reupgrades(tmp_path: Path) -> N
             assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == ALEMBIC_HEAD
     finally:
         engine.dispose()
+
+
+@pytest.mark.database_boundary
+def test_exact_revocation_migration_upgrades_populated_workflow_operations(tmp_path: Path) -> None:
+    path = tmp_path / "exact-revocation-populated.sqlite3"
+    config = _config(path)
+    command.upgrade(config, "0035_persistence_constraint_integrity")
+    engine = create_engine(f"sqlite+pysqlite:///{path}", future=True)
+    operation_id = "1" * 32
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """INSERT INTO workflow_operations(
+                       operation_id,generation_id,task_id,kind,lifecycle,phase,persisted_actions,
+                       import_run_id,creation_request_id,creation_execution_id,contract_binding_id,
+                       predecessor_operation_id,terminal_outcome,operation_revision,created_at,terminal_at
+                   ) VALUES (
+                       :operation_id,:generation_id,:task_id,'initial','completed','terminal','[]',
+                       NULL,:request_id,:execution_id,:binding_id,NULL,'completed',1,:created_at,:terminal_at
+                   )"""
+            ),
+            {
+                "operation_id": operation_id,
+                "generation_id": "2" * 32,
+                "task_id": "3" * 32,
+                "request_id": "4" * 32,
+                "execution_id": "5" * 32,
+                "binding_id": "6" * 32,
+                "created_at": "2026-08-01 20:00:00",
+                "terminal_at": "2026-08-01 20:01:00",
+            },
+        )
+    engine.dispose()
+
+    command.upgrade(config, "head")
+    engine = create_engine(f"sqlite+pysqlite:///{path}", future=True)
+    try:
+        with engine.connect() as connection:
+            assert connection.execute(
+                text("SELECT operation_id FROM workflow_operations")
+            ).scalar_one() == operation_id
+            assert "operation_run_revocations" in inspect(engine).get_table_names()
+            assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == ALEMBIC_HEAD
+    finally:
+        engine.dispose()

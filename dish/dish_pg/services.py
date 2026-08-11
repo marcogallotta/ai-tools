@@ -45,6 +45,17 @@ class ImportedServiceLeaseSpec:
 
 
 @dataclass(frozen=True)
+class ImportedOperationRunRevocationSpec:
+    revocation_id: uuid.UUID
+    operation_id: uuid.UUID
+    owner_id: str
+    source_run_id: str
+    source_lease_id: uuid.UUID | None
+    reason: str
+    revoked_at: datetime
+
+
+@dataclass(frozen=True)
 class ImportedVerificationCycleSpec:
     cycle_id: uuid.UUID
     operation_id: uuid.UUID
@@ -59,6 +70,7 @@ class ImportedOperationHistorySpec:
     operations: tuple[ImportedWorkflowOperationSpec, ...] = ()
     leases: tuple[ImportedServiceLeaseSpec, ...] = ()
     verification_cycles: tuple[ImportedVerificationCycleSpec, ...] = ()
+    revocations: tuple[ImportedOperationRunRevocationSpec, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -96,6 +108,8 @@ class OperationHistoryBackfillResult:
     inserted_verification_cycles: int = 0
     matched_leases: int = 0
     inserted_leases: int = 0
+    matched_revocations: int = 0
+    inserted_revocations: int = 0
 
     @property
     def inserted_total(self) -> int:
@@ -103,6 +117,7 @@ class OperationHistoryBackfillResult:
             self.inserted_operations
             + self.inserted_verification_cycles
             + self.inserted_leases
+            + self.inserted_revocations
         )
 
 
@@ -367,6 +382,7 @@ class CoreAuthorityService:
         operation_ids = {item.operation_id for item in history.operations}
         lease_ids = {item.lease_id for item in history.leases}
         cycle_ids = {item.cycle_id for item in history.verification_cycles}
+        revocation_ids = {item.revocation_id for item in history.revocations}
         if len(operation_ids) != len(history.operations):
             raise CoreAuthorityError("imported operation history contains duplicate operation IDs")
         if len(lease_ids) != len(history.leases):
@@ -374,6 +390,17 @@ class CoreAuthorityService:
         if len(cycle_ids) != len(history.verification_cycles):
             raise CoreAuthorityError(
                 "imported operation history contains duplicate verification cycle IDs"
+            )
+        if len(revocation_ids) != len(history.revocations):
+            raise CoreAuthorityError(
+                "imported operation history contains duplicate revocation IDs"
+            )
+        exact_revocations = {
+            (item.operation_id, item.owner_id, item.source_run_id) for item in history.revocations
+        }
+        if len(exact_revocations) != len(history.revocations):
+            raise CoreAuthorityError(
+                "imported operation history contains duplicate exact operation/run revocations"
             )
 
         for item in history.operations:
@@ -432,6 +459,26 @@ class CoreAuthorityService:
                 raise CoreAuthorityError(
                     f"unsupported imported lease kind: {item.lease_kind!r}"
                 )
+
+        lease_by_id = {item.lease_id: item for item in history.leases}
+        for item in history.revocations:
+            if item.operation_id not in operation_ids:
+                raise CoreAuthorityError("imported revocation references another task/history")
+            if not item.owner_id.strip() or not item.source_run_id.strip() or not item.reason.strip():
+                raise CoreAuthorityError(
+                    "imported revocation owner, source run, and reason must be nonblank"
+                )
+            if item.source_lease_id is not None:
+                lease = lease_by_id.get(item.source_lease_id)
+                if (
+                    lease is None
+                    or lease.operation_id != item.operation_id
+                    or lease.owner_id != item.owner_id
+                    or lease.source_run_id != item.source_run_id
+                ):
+                    raise CoreAuthorityError(
+                        "imported revocation source lease does not prove its exact operation owner/run"
+                    )
         return cycle_by_id
 
     def _new_imported_operation(
@@ -515,6 +562,26 @@ class CoreAuthorityService:
             terminal_at=item.released_at,
         )
 
+    @staticmethod
+    def _new_imported_revocation(
+        *,
+        generation_id: uuid.UUID,
+        import_run_id: uuid.UUID,
+        item: ImportedOperationRunRevocationSpec,
+    ) -> wf.OperationRunRevocation:
+        return wf.OperationRunRevocation(
+            revocation_id=item.revocation_id,
+            generation_id=generation_id,
+            operation_id=item.operation_id,
+            owner_id=item.owner_id,
+            run_id=None,
+            import_run_id=import_run_id,
+            source_run_id=item.source_run_id,
+            source_lease_id=item.source_lease_id,
+            reason=item.reason,
+            revoked_at=item.revoked_at,
+        )
+
     def _import_operation_history(
         self,
         *,
@@ -524,7 +591,9 @@ class CoreAuthorityService:
         spec: ImportedTaskSpec,
     ) -> None:
         history = spec.operation_history
-        if not (history.operations or history.leases or history.verification_cycles):
+        if not (
+            history.operations or history.leases or history.verification_cycles or history.revocations
+        ):
             return
         self._validate_operation_history(history)
         for item in history.operations:
@@ -554,6 +623,15 @@ class CoreAuthorityService:
                 self._new_imported_lease(
                     generation_id=generation_id,
                     task_id=spec.task_id,
+                    import_run_id=import_run_id,
+                    item=item,
+                )
+            )
+        self.session.flush()
+        for item in history.revocations:
+            self.session.add(
+                self._new_imported_revocation(
+                    generation_id=generation_id,
                     import_run_id=import_run_id,
                     item=item,
                 )
@@ -645,6 +723,24 @@ class CoreAuthorityService:
             and self._same_datetime(row.terminal_at, item.released_at)
         )
 
+    def _revocation_matches(
+        self,
+        row: wf.OperationRunRevocation,
+        *,
+        generation_id: uuid.UUID,
+        item: ImportedOperationRunRevocationSpec,
+    ) -> bool:
+        return (
+            row.generation_id == generation_id
+            and row.operation_id == item.operation_id
+            and row.owner_id == item.owner_id
+            and row.run_id is None
+            and row.source_run_id == item.source_run_id
+            and row.source_lease_id == item.source_lease_id
+            and row.reason == item.reason
+            and self._same_datetime(row.revoked_at, item.revoked_at)
+        )
+
     def plan_operation_history_backfill(
         self,
         *,
@@ -729,6 +825,25 @@ class CoreAuthorityService:
                 )
             matched_leases += 1
 
+        matched_revocations = inserted_revocations = 0
+        for item in history.revocations:
+            row = self.session.get(wf.OperationRunRevocation, item.revocation_id)
+            if row is None:
+                inserted_revocations += 1
+                continue
+            self._require_complete_import_provenance(
+                import_run_id=row.import_run_id,
+                label=f"OperationRunRevocation {item.revocation_id}",
+            )
+            if not self._revocation_matches(
+                row, generation_id=generation_id, item=item
+            ):
+                raise CoreAuthorityError(
+                    "OperationRunRevocation stable identity conflicts with legacy history: "
+                    f"{item.revocation_id}"
+                )
+            matched_revocations += 1
+
         return OperationHistoryBackfillResult(
             matched_operations=matched_operations,
             inserted_operations=inserted_operations,
@@ -736,6 +851,8 @@ class CoreAuthorityService:
             inserted_verification_cycles=inserted_cycles,
             matched_leases=matched_leases,
             inserted_leases=inserted_leases,
+            matched_revocations=matched_revocations,
+            inserted_revocations=inserted_revocations,
         )
 
     def backfill_imported_operation_history(
@@ -796,6 +913,16 @@ class CoreAuthorityService:
                     self._new_imported_lease(
                         generation_id=generation_id,
                         task_id=task_id,
+                        import_run_id=import_run_id,
+                        item=item,
+                    )
+                )
+        self.session.flush()
+        for item in history.revocations:
+            if self.session.get(wf.OperationRunRevocation, item.revocation_id) is None:
+                self.session.add(
+                    self._new_imported_revocation(
+                        generation_id=generation_id,
                         import_run_id=import_run_id,
                         item=item,
                     )

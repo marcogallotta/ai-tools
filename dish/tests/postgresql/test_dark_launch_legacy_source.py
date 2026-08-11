@@ -27,6 +27,9 @@ def _db(path):
             lease_id TEXT PRIMARY KEY,operation_id TEXT,task_gid TEXT,owner_id TEXT,run_id TEXT,
             acquired_at TEXT,expires_at TEXT,released_at TEXT,lease_kind TEXT,
             actor_attempt_seq INTEGER,context_cycle_id TEXT);
+        CREATE TABLE operation_run_revocations(
+            revocation_id TEXT PRIMARY KEY,operation_id TEXT,owner_id TEXT,run_id TEXT,
+            source_lease_id TEXT,reason TEXT,revoked_at TEXT);
         """
     )
     conn.execute(
@@ -75,7 +78,7 @@ def test_legacy_source_is_deterministic_and_importer_compatible(tmp_path):
 def test_legacy_source_exports_completed_operation_and_attempt_history(tmp_path):
     db = tmp_path / "live.sqlite3"
     _db(db)
-    operation_id, lease_id = uuid.uuid4(), uuid.uuid4()
+    operation_id, lease_id, revocation_id = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
     conn = sqlite3.connect(db)
     conn.execute(
         "INSERT INTO operations VALUES (?,?,?,?,?,?,?,?)",
@@ -89,6 +92,11 @@ def test_legacy_source_exports_completed_operation_and_attempt_history(tmp_path)
          "2026-08-03T08:55:00+00:00", "2026-08-03T09:05:00+00:00",
          "2026-08-03T08:56:00+00:00", "actor", 1, None),
     )
+    conn.execute(
+        "INSERT INTO operation_run_revocations VALUES (?,?,?,?,?,?,?)",
+        (str(revocation_id), str(operation_id), "owner-1", "legacy-run-1",
+         str(lease_id), "killed exact run", "2026-08-03T08:56:00+00:00"),
+    )
     conn.commit(); conn.close()
     manifest = tmp_path / "locations.json"
     _manifest(manifest, task_id=uuid.uuid4(), project_id=uuid.uuid4(), section_id=uuid.uuid4())
@@ -99,6 +107,9 @@ def test_legacy_source_exports_completed_operation_and_attempt_history(tmp_path)
     history = parsed.spec.operation_history
     assert [item.operation_id for item in history.operations] == [operation_id]
     assert [(item.lease_id, item.actor_attempt_sequence) for item in history.leases] == [(lease_id, 1)]
+    assert [(item.revocation_id, item.source_run_id) for item in history.revocations] == [
+        (revocation_id, "legacy-run-1")
+    ]
 
 
 def test_legacy_source_rejects_uncertain_operation_even_with_terminal_evidence(tmp_path):
@@ -123,3 +134,30 @@ def test_legacy_source_rejects_incomplete_location_corpus(tmp_path):
     manifest=tmp_path/"locations.json"; manifest.write_text('{"tasks":{}}')
     with pytest.raises(LegacySourceError, match="corpus mismatch"):
         export_legacy_source(database=db, location_manifest=manifest, output=tmp_path/"out")
+
+
+def test_legacy_source_does_not_infer_revocation_from_released_lease(tmp_path):
+    db = tmp_path / "live.sqlite3"
+    _db(db)
+    operation_id, lease_id = uuid.uuid4(), uuid.uuid4()
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "INSERT INTO operations VALUES (?,?,?,?,?,?,?,?)",
+        (str(operation_id), "123", "planning", "completed",
+         "2026-08-03T08:55:00+00:00", "2026-08-03T08:56:00+00:00",
+         "terminal", "planning_handoff_confirmed"),
+    )
+    conn.execute(
+        "INSERT INTO service_leases VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        (str(lease_id), str(operation_id), "123", "owner-1", "legacy-run-1",
+         "2026-08-03T08:55:00+00:00", "2026-08-03T09:05:00+00:00",
+         "2026-08-03T08:56:00+00:00", "actor", 1, None),
+    )
+    conn.commit(); conn.close()
+    manifest = tmp_path / "locations.json"
+    _manifest(manifest, task_id=uuid.uuid4(), project_id=uuid.uuid4(), section_id=uuid.uuid4())
+    source = tmp_path / "out.ndjson"
+    export_legacy_source(database=db, location_manifest=manifest, output=source)
+    parsed = next(iter_source(source))
+    assert parsed.error is None and parsed.spec is not None
+    assert parsed.spec.operation_history.revocations == ()

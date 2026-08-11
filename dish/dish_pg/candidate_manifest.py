@@ -11,12 +11,16 @@ from sqlalchemy.orm import Session
 
 from . import candidate_manifest_models as manifest_models
 from . import models
+from . import stage3_models as wf
 from . import stage5_models as tx
 from . import stage6_models as rel
 from .release_evidence import ReleaseAuthorityError, sha256_json
 from .release_history import (
+    EXACT_REVOCATION_HISTORY_PROVENANCE_KEY,
+    EXACT_REVOCATION_RECONCILED_OPERATIONS_KEY,
     SUPPLEMENTAL_HISTORY_ATTESTATION_CONTRACT,
     TERMINAL_HISTORY_IMPORT_KIND,
+    exact_revocation_reconciliation_matches,
 )
 
 MANIFEST_VERSION = 3
@@ -261,6 +265,9 @@ _SUPPLEMENTAL_PROVENANCE_FIELDS = (
     "source_format",
     "source_record_count",
     "source_bundle_hash_method",
+    EXACT_REVOCATION_HISTORY_PROVENANCE_KEY,
+    EXACT_REVOCATION_RECONCILED_OPERATIONS_KEY,
+    "candidate_attestation",
 )
 
 _SUPPLEMENTAL_HISTORY_TABLES = (
@@ -325,7 +332,83 @@ _SUPPLEMENTAL_HISTORY_TABLES = (
             "terminal_at",
         ),
     ),
+    (
+        "operation_run_revocations",
+        (
+            "revocation_id",
+            "generation_id",
+            "operation_id",
+            "owner_id",
+            "run_id",
+            "import_run_id",
+            "source_run_id",
+            "source_lease_id",
+            "reason",
+            "revoked_at",
+        ),
+    ),
 )
+
+
+def _validate_supplemental_revocation_scope(
+    session: Session,
+    *,
+    generation_id: uuid.UUID,
+    task_id: uuid.UUID,
+    reconciled_operation_ids: object,
+    history_tables: Sequence[Mapping[str, Any]],
+) -> None:
+    if reconciled_operation_ids is not None:
+        if not isinstance(reconciled_operation_ids, list):
+            raise ReleaseAuthorityError(
+                "candidate supplemental exact-revocation operation coverage is malformed"
+            )
+        seen: set[uuid.UUID] = set()
+        for value in reconciled_operation_ids:
+            try:
+                operation_uuid = uuid.UUID(str(value))
+            except (TypeError, ValueError) as exc:
+                raise ReleaseAuthorityError(
+                    "candidate supplemental exact-revocation operation coverage is malformed"
+                ) from exc
+            if operation_uuid in seen:
+                raise ReleaseAuthorityError(
+                    "candidate supplemental exact-revocation operation coverage is duplicated"
+                )
+            seen.add(operation_uuid)
+            operation = session.get(wf.WorkflowOperation, operation_uuid)
+            if (
+                operation is None
+                or operation.generation_id != generation_id
+                or operation.task_id != task_id
+            ):
+                raise ReleaseAuthorityError(
+                    "candidate supplemental exact-revocation operation coverage is outside its task/generation provenance"
+                )
+
+    revocations = next(
+        (table for table in history_tables if table["table"] == "operation_run_revocations"),
+        None,
+    )
+    if revocations is None:
+        return
+    for row in revocations["rows"]:
+        operation_id = row.get("operation_id")
+        try:
+            operation_uuid = uuid.UUID(str(operation_id))
+        except (TypeError, ValueError) as exc:
+            raise ReleaseAuthorityError(
+                "candidate supplemental exact revocation has invalid operation identity"
+            ) from exc
+        operation = session.get(wf.WorkflowOperation, operation_uuid)
+        if (
+            operation is None
+            or operation.generation_id != generation_id
+            or operation.task_id != task_id
+        ):
+            raise ReleaseAuthorityError(
+                "candidate supplemental exact revocation is outside its task/generation provenance"
+            )
 
 
 def _supplemental_terminal_history_digest(
@@ -367,7 +450,37 @@ def _supplemental_terminal_history_digest(
             )
             for table_name, columns in _SUPPLEMENTAL_HISTORY_TABLES
         ]
-        if not any(table["rows"] for table in history_tables):
+        try:
+            provenance_task_id = uuid.UUID(str(provenance.get("task_id")))
+        except (TypeError, ValueError) as exc:
+            raise ReleaseAuthorityError(
+                "candidate supplemental terminal-history import has invalid task provenance"
+            ) from exc
+        _validate_supplemental_revocation_scope(
+            session,
+            generation_id=candidate.generation_id,
+            task_id=provenance_task_id,
+            reconciled_operation_ids=provenance.get(
+                EXACT_REVOCATION_RECONCILED_OPERATIONS_KEY
+            ),
+            history_tables=history_tables,
+        )
+        exact_reconciliation = exact_revocation_reconciliation_matches(
+            run,
+            generation_id=candidate.generation_id,
+            task_id=provenance_task_id,
+            primary_import_run_id=source_import_run_id,
+        )
+        revocation_rows = next(
+            table["rows"]
+            for table in history_tables
+            if table["table"] == "operation_run_revocations"
+        )
+        if revocation_rows and not exact_reconciliation:
+            raise ReleaseAuthorityError(
+                "candidate supplemental exact revocations lack reconciliation provenance"
+            )
+        if not any(table["rows"] for table in history_tables) and not exact_reconciliation:
             raise ReleaseAuthorityError(
                 "candidate supplemental terminal-history import has no imported history"
             )

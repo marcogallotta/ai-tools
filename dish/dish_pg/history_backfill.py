@@ -30,15 +30,21 @@ from .legacy_source import (
 )
 from .release import ALEMBIC_HEAD
 from .release_history import (
+    EXACT_REVOCATION_HISTORY_PROVENANCE_KEY,
+    EXACT_REVOCATION_RECONCILIATION_CONTRACT,
+    EXACT_REVOCATION_RECONCILED_OPERATIONS_KEY,
+    EXACT_REVOCATION_SNAPSHOT_FORMAT,
     SUPPLEMENTAL_HISTORY_ATTESTATION_CONTRACT,
     TERMINAL_HISTORY_IMPORT_KIND,
     acquire_generation_release_gate,
+    legacy_imported_operation_ids,
+    task_revocation_history_reconciled,
 )
 from .repositories import AuthorityRepository, CoreAuthorityError
 from .services import CoreAuthorityService, ImportedOperationHistorySpec
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SNAPSHOT_FORMAT = "dish-terminal-history-backfill-source-v1"
+SNAPSHOT_FORMAT = EXACT_REVOCATION_SNAPSHOT_FORMAT
 IMPORT_KIND = TERMINAL_HISTORY_IMPORT_KIND
 _COMMIT_RE = re.compile(r"[0-9a-f]{40,64}\Z")
 
@@ -83,6 +89,8 @@ class TerminalHistoryBackfillResult:
     inserted_verification_cycles: int
     matched_leases: int
     inserted_leases: int
+    matched_revocations: int
+    inserted_revocations: int
     candidate_attestation: str = SUPPLEMENTAL_HISTORY_ATTESTATION_CONTRACT
 
     def as_json(self) -> dict[str, object]:
@@ -195,6 +203,7 @@ def _history_high_water_mark(
         if item.completed_at is not None
     )
     terminal_times.extend(item.released_at for item in history.leases if item.released_at is not None)
+    terminal_times.extend(item.revoked_at for item in history.revocations)
     if terminal_times:
         latest = max(
             value.astimezone(timezone.utc)
@@ -393,6 +402,12 @@ def _find_supplemental_run(
         or provenance.get("primary_import_run_id") != str(target.primary_import_run_id)
         or provenance.get("source_format") != SNAPSHOT_FORMAT
         or provenance.get("source_record_count") != snapshot.record_count
+        or provenance.get(EXACT_REVOCATION_HISTORY_PROVENANCE_KEY)
+        != EXACT_REVOCATION_RECONCILIATION_CONTRACT
+        or provenance.get(EXACT_REVOCATION_RECONCILED_OPERATIONS_KEY)
+        != sorted(str(item.operation_id) for item in snapshot.history.operations)
+        or provenance.get("candidate_attestation")
+        != SUPPLEMENTAL_HISTORY_ATTESTATION_CONTRACT
     ):
         raise TerminalHistoryBackfillError(
             "existing ImportRun collides with this supplemental high-water mark but has different provenance"
@@ -438,6 +453,12 @@ def _new_supplemental_run(
             "source_format": SNAPSHOT_FORMAT,
             "source_record_count": snapshot.record_count,
             "source_bundle_hash_method": "sha256-file-bytes",
+            EXACT_REVOCATION_HISTORY_PROVENANCE_KEY: (
+                EXACT_REVOCATION_RECONCILIATION_CONTRACT
+            ),
+            EXACT_REVOCATION_RECONCILED_OPERATIONS_KEY: sorted(
+                str(item.operation_id) for item in snapshot.history.operations
+            ),
             "candidate_attestation": SUPPLEMENTAL_HISTORY_ATTESTATION_CONTRACT,
         },
     )
@@ -479,7 +500,29 @@ def apply_terminal_history_snapshot(
         raise TerminalHistoryBackfillError(str(exc)) from exc
 
     supplemental = _find_supplemental_run(session, target=target, snapshot=snapshot)
-    if plan.inserted_total:
+    needs_revocation_reconciliation = not task_revocation_history_reconciled(
+        session,
+        generation_id=target.generation_id,
+        task_id=target.task_id,
+        primary_import_run_id=target.primary_import_run_id,
+    )
+    if needs_revocation_reconciliation:
+        imported_operation_ids = legacy_imported_operation_ids(
+            session,
+            generation_id=target.generation_id,
+            task_id=target.task_id,
+            primary_import_run_id=target.primary_import_run_id,
+        )
+        snapshot_operation_ids = frozenset(
+            item.operation_id for item in snapshot.history.operations
+        )
+        missing_from_snapshot = sorted(imported_operation_ids - snapshot_operation_ids, key=str)
+        if missing_from_snapshot:
+            raise TerminalHistoryBackfillError(
+                "exact-revocation reconciliation snapshot does not cover existing imported "
+                "operations: " + ",".join(str(value) for value in missing_from_snapshot)
+            )
+    if plan.inserted_total or needs_revocation_reconciliation:
         if supplemental is None:
             supplemental = _new_supplemental_run(
                 session,
@@ -517,6 +560,8 @@ def apply_terminal_history_snapshot(
         inserted_verification_cycles=plan.inserted_verification_cycles,
         matched_leases=plan.matched_leases,
         inserted_leases=plan.inserted_leases,
+        matched_revocations=plan.matched_revocations,
+        inserted_revocations=plan.inserted_revocations,
     )
 
 

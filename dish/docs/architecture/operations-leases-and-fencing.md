@@ -65,6 +65,22 @@ principal-aware views suppress mutation continuations for a revoked run rather t
 action that the authority boundary will reject. Safe reclaim records the source lease/owner/run and
 successor lineage durably and forbids the replaced run from claiming that successor.
 
+PostgreSQL represents the same durable semantic as an immutable `operation_run_revocations` fact bound
+to the operation's authority generation plus exact owner/run identity. Live facts reference the
+`ServiceRun`; imported SQLite facts retain the source run identity and import provenance without
+fabricating a live run. Consequential PostgreSQL grant/claim writers lock the operation row and check
+that fact inside the same transaction, which also serializes execution-claim versus exact-revocation
+races. Lease release/expiry and global `ServiceRun` state remain independent facts.
+
+Legacy PostgreSQL imports created before this fact existed are fail-closed rather than guessed from
+lease history. A revocation-aware primary import explicitly attests that its SQLite source represented
+`operation_run_revocations`. Older imports must receive a task-scoped supplemental v2 legacy-history
+snapshot whose provenance attests that explicit revocations were reconciled; an empty explicit set is
+a valid positive attestation. Until that provenance exists, the same operation-row-locked writer
+boundaries reject consequential authority for the imported operation. Supplemental candidate evidence
+hashes the exact revocation rows and the reconciliation provenance, so a revocation-only reconciliation
+package is valid while remaining scoped to its exact operation/task/generation.
+
 For `safe-reclaim`, the first eligibility result is advisory. The writer transaction reruns the complete
 predicate while holding the SQLite writer lock, including stage/frontier, Verification-cycle, lease
 context, unresolved-work, confirmed-baseline, and live task identity/placement checks. Any mismatch

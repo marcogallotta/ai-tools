@@ -7,7 +7,10 @@ from datetime import timedelta
 from pathlib import Path
 
 import pytest
-from sqlalchemy import func, select
+from alembic import command
+from alembic.config import Config
+from sqlalchemy import create_engine, func, select
+from sqlalchemy.orm import Session, sessionmaker
 
 from dish_pg import models
 from dish_pg import stage3_models as wf
@@ -19,6 +22,13 @@ from dish_pg.history_backfill import (
     resolve_backfill_target,
 )
 from dish_pg.legacy_source import export_legacy_source
+from dish_pg.release import ALEMBIC_HEAD
+from dish_pg.release_history import (
+    EXACT_REVOCATION_HISTORY_PROVENANCE_KEY,
+    EXACT_REVOCATION_RECONCILIATION_CONTRACT,
+    EXACT_REVOCATION_SNAPSHOT_FORMAT,
+    task_revocation_history_reconciled,
+)
 from dish_pg.services import (
     CoreAuthorityService,
     ImportedOperationHistorySpec,
@@ -27,10 +37,25 @@ from dish_pg.services import (
     ImportedVerificationCycleSpec,
     ImportedWorkflowOperationSpec,
 )
-from tests.support.postgresql.core import HASH_A, NOW, _bootstrap_registry, _next, core_db
+from dish_pg.workflow import (
+    ExecutionSpec,
+    ImportedRevocationHistoryUnreconciled,
+    OperationRunRevoked,
+    WorkflowAuthorityService,
+)
+from tests.support.postgresql.core import (
+    HASH_A,
+    NOW,
+    _bootstrap_registry,
+    _next,
+    _uuid_stream,
+    core_db,
+)
+from tests.support.postgresql.workflow import _admit, _register_run
 
 SOURCE_COMMIT = "9" * 40
 TASK_GID = "1217304073198491"
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _row_state(row) -> tuple[tuple[str, object], ...]:
@@ -54,6 +79,9 @@ def _legacy_db(path: Path) -> None:
             lease_id TEXT PRIMARY KEY,operation_id TEXT,task_gid TEXT,owner_id TEXT,run_id TEXT,
             acquired_at TEXT,expires_at TEXT,released_at TEXT,lease_kind TEXT,
             actor_attempt_seq INTEGER,context_cycle_id TEXT);
+        CREATE TABLE operation_run_revocations(
+            revocation_id TEXT PRIMARY KEY,operation_id TEXT,owner_id TEXT,run_id TEXT,
+            source_lease_id TEXT,reason TEXT,revoked_at TEXT);
         """
     )
     conn.execute(
@@ -72,6 +100,8 @@ def _insert_terminal_history(
     lease_id: uuid.UUID,
     kind: str = "planning",
     minute: int = 0,
+    owner_id: str = "owner-1",
+    source_run_id: str | None = None,
 ) -> None:
     created = NOW + timedelta(minutes=minute)
     completed = created + timedelta(seconds=30)
@@ -107,8 +137,8 @@ def _insert_terminal_history(
             str(lease_id),
             str(operation_id),
             TASK_GID,
-            "owner-1",
-            f"legacy-run-{minute}",
+            owner_id,
+            source_run_id or f"legacy-run-{minute}",
             created.isoformat(),
             (created + timedelta(minutes=5)).isoformat(),
             completed.isoformat(),
@@ -121,10 +151,53 @@ def _insert_terminal_history(
     conn.close()
 
 
+def _insert_exact_revocation(
+    path: Path,
+    *,
+    revocation_id: uuid.UUID,
+    operation_id: uuid.UUID,
+    owner_id: str,
+    source_run_id: str,
+    source_lease_id: uuid.UUID | None,
+    reason: str = "killed by Marco",
+    minute: int = 1,
+) -> None:
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "INSERT INTO operation_run_revocations VALUES (?,?,?,?,?,?,?)",
+        (
+            str(revocation_id),
+            str(operation_id),
+            owner_id,
+            source_run_id,
+            None if source_lease_id is None else str(source_lease_id),
+            reason,
+            (NOW + timedelta(minutes=minute)).isoformat(),
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _migration_config(path: Path) -> Config:
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{path}")
+    return config
+
+
 def _history_spec(
-    *, operation_id: uuid.UUID, cycle_id: uuid.UUID, lease_id: uuid.UUID, kind: str = "planning"
+    *,
+    operation_id: uuid.UUID,
+    cycle_id: uuid.UUID,
+    lease_id: uuid.UUID,
+    kind: str = "planning",
+    owner_id: str = "owner-1",
+    source_run_id: str = "legacy-run-0",
+    actor_attempt_sequence: int = 1,
+    minute: int = 0,
 ) -> ImportedOperationHistorySpec:
-    completed = NOW + timedelta(seconds=30)
+    created = NOW + timedelta(minutes=minute)
+    completed = created + timedelta(seconds=30)
     return ImportedOperationHistorySpec(
         operations=(
             ImportedWorkflowOperationSpec(
@@ -133,7 +206,7 @@ def _history_spec(
                 status="completed",
                 phase="terminal",
                 terminal_outcome="planning_handoff_confirmed",
-                created_at=NOW,
+                created_at=created,
                 completed_at=completed,
             ),
         ),
@@ -143,7 +216,7 @@ def _history_spec(
                 operation_id=operation_id,
                 cycle_sequence=1,
                 outcome="approved",
-                created_at=NOW,
+                created_at=created,
                 completed_at=completed,
             ),
         ),
@@ -151,13 +224,13 @@ def _history_spec(
             ImportedServiceLeaseSpec(
                 lease_id=lease_id,
                 operation_id=operation_id,
-                source_run_id="legacy-run-0",
-                owner_id="owner-1",
+                source_run_id=source_run_id,
+                owner_id=owner_id,
                 lease_kind="actor",
-                actor_attempt_sequence=1,
+                actor_attempt_sequence=actor_attempt_sequence,
                 verification_cycle_id=cycle_id,
-                issued_at=NOW,
-                expires_at=NOW + timedelta(minutes=5),
+                issued_at=created,
+                expires_at=created + timedelta(minutes=5),
                 released_at=completed,
             ),
         ),
@@ -312,7 +385,7 @@ def test_terminal_backfill_is_provenance_safe_idempotent_and_preserves_task_auth
         task_id=task_id,
         output=tmp_path / "terminal-history.ndjson",
     )
-    assert json.loads(snapshot.path.read_text())["format"] == "dish-terminal-history-backfill-source-v1"
+    assert json.loads(snapshot.path.read_text())["format"] == EXACT_REVOCATION_SNAPSHOT_FORMAT
     repeated_snapshot = capture_terminal_history_snapshot(
         legacy_database=legacy,
         task_gid=TASK_GID,
@@ -395,7 +468,7 @@ def test_terminal_backfill_is_provenance_safe_idempotent_and_preserves_task_auth
         assert supplemental.source_bundle_sha256 == snapshot.sha256
         assert supplemental.provenance["import_kind"] == "terminal-history-backfill-v1"
         assert supplemental.provenance["primary_import_run_id"] == str(original_import_run)
-        assert supplemental.provenance["source_format"] == "dish-terminal-history-backfill-source-v1"
+        assert supplemental.provenance["source_format"] == EXACT_REVOCATION_SNAPSHOT_FORMAT
         assert supplemental.provenance["source_record_count"] == 1
         assert supplemental.provenance["candidate_attestation"] == (
             "candidate-authority-v3+supplemental-terminal-history-v1"
@@ -505,6 +578,353 @@ def test_conflicting_stable_identity_rolls_back_supplemental_run(core_db, tmp_pa
             )
     with session_scope(factory) as session:
         assert int(session.scalar(select(func.count()).select_from(models.ImportRun)) or 0) == 1
+
+
+def test_pre0036_reconciliation_rejects_snapshot_missing_an_imported_operation(
+    core_db, tmp_path: Path
+) -> None:
+    factory, ids = core_db
+    task_id = _next(ids)
+    first_operation = uuid.uuid4()
+    second_operation = uuid.uuid4()
+    first_cycle = uuid.uuid4()
+    second_cycle = uuid.uuid4()
+    first_lease = uuid.uuid4()
+    second_lease = uuid.uuid4()
+    first = _history_spec(
+        operation_id=first_operation, cycle_id=first_cycle, lease_id=first_lease
+    )
+    second = _history_spec(
+        operation_id=second_operation,
+        cycle_id=second_cycle,
+        lease_id=second_lease,
+        actor_attempt_sequence=11,
+        minute=10,
+    )
+    history = ImportedOperationHistorySpec(
+        operations=first.operations + second.operations,
+        verification_cycles=first.verification_cycles + second.verification_cycles,
+        leases=first.leases + second.leases,
+    )
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(
+            session, ids, generation_status="active", exact_revocation_source=False
+        )
+        _import_task(session, ids, context, task_id=task_id, history=history)
+    legacy = tmp_path / "legacy-partial-reconciliation.sqlite3"
+    _legacy_db(legacy)
+    _insert_terminal_history(
+        legacy, operation_id=first_operation, cycle_id=first_cycle, lease_id=first_lease
+    )
+    snapshot = capture_terminal_history_snapshot(
+        legacy_database=legacy,
+        task_gid=TASK_GID,
+        task_id=task_id,
+        output=tmp_path / "partial-reconciliation.ndjson",
+    )
+    with session_scope(factory) as session:
+        target = resolve_backfill_target(session, task_gid=TASK_GID)
+        with pytest.raises(
+            TerminalHistoryBackfillError, match="does not cover existing imported operations"
+        ):
+            apply_terminal_history_snapshot(
+                session,
+                target=target,
+                snapshot=snapshot,
+                source_commit=SOURCE_COMMIT,
+                clock=lambda: NOW + timedelta(hours=1),
+            )
+
+
+def test_pre0036_import_can_attest_an_explicit_empty_revocation_set(
+    core_db, tmp_path: Path
+) -> None:
+    factory, ids = core_db
+    task_id = _next(ids)
+    operation_id = uuid.uuid4()
+    cycle_id = uuid.uuid4()
+    lease_id = uuid.uuid4()
+    history = _history_spec(
+        operation_id=operation_id, cycle_id=cycle_id, lease_id=lease_id
+    )
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(
+            session, ids, generation_status="active", exact_revocation_source=False
+        )
+        _import_task(session, ids, context, task_id=task_id, history=history)
+    legacy = tmp_path / "legacy-no-revocations.sqlite3"
+    _legacy_db(legacy)
+    _insert_terminal_history(
+        legacy, operation_id=operation_id, cycle_id=cycle_id, lease_id=lease_id
+    )
+    snapshot = capture_terminal_history_snapshot(
+        legacy_database=legacy,
+        task_gid=TASK_GID,
+        task_id=task_id,
+        output=tmp_path / "empty-revocation-reconciliation.ndjson",
+    )
+    with session_scope(factory) as session:
+        target = resolve_backfill_target(session, task_gid=TASK_GID)
+        result = apply_terminal_history_snapshot(
+            session,
+            target=target,
+            snapshot=snapshot,
+            source_commit=SOURCE_COMMIT,
+            clock=lambda: NOW + timedelta(hours=1),
+        )
+        assert result.inserted_operations == 0
+        assert result.inserted_verification_cycles == 0
+        assert result.inserted_leases == 0
+        assert result.inserted_revocations == 0
+        assert result.supplemental_import_run_id is not None
+        assert session.scalar(select(func.count()).select_from(wf.OperationRunRevocation)) == 0
+        assert task_revocation_history_reconciled(
+            session,
+            generation_id=context["generation_id"],
+            task_id=task_id,
+            primary_import_run_id=context["import_run_id"],
+        )
+
+
+@pytest.mark.database_boundary
+def test_0036_preexisting_import_fails_closed_until_exact_revocations_reconciled(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "pre-0036-import.sqlite3"
+    config = _migration_config(database)
+    command.upgrade(config, "0035_persistence_constraint_integrity")
+
+    run_id = uuid.uuid4()
+    owner_id = "owner-1"
+    operation_id = uuid.uuid4()
+    other_operation_id = uuid.uuid4()
+    cycle_id = uuid.uuid4()
+    other_cycle_id = uuid.uuid4()
+    lease_id = uuid.uuid4()
+    other_lease_id = uuid.uuid4()
+    revocation_id = uuid.uuid4()
+
+    first = _history_spec(
+        operation_id=operation_id,
+        cycle_id=cycle_id,
+        lease_id=lease_id,
+        owner_id=owner_id,
+        source_run_id=str(run_id),
+    )
+    second = _history_spec(
+        operation_id=other_operation_id,
+        cycle_id=other_cycle_id,
+        lease_id=other_lease_id,
+        owner_id=owner_id,
+        source_run_id=str(run_id),
+        actor_attempt_sequence=11,
+        minute=10,
+    )
+    imported_history = ImportedOperationHistorySpec(
+        operations=first.operations + second.operations,
+        verification_cycles=first.verification_cycles + second.verification_cycles,
+        leases=first.leases + second.leases,
+    )
+
+    engine = create_engine(f"sqlite+pysqlite:///{database}", future=True)
+    factory = sessionmaker(
+        bind=engine, class_=Session, autoflush=False, expire_on_commit=False, future=True
+    )
+    ids = _uuid_stream()
+    task_id = _next(ids)
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(
+            session,
+            ids,
+            generation_status="active",
+            schema_head="0035_persistence_constraint_integrity",
+            exact_revocation_source=False,
+        )
+        _import_task(
+            session, ids, context, task_id=task_id, history=imported_history
+        )
+    engine.dispose()
+
+    command.upgrade(config, "head")
+    assert ALEMBIC_HEAD == "0036_exact_operation_run_revocations"
+
+    engine = create_engine(f"sqlite+pysqlite:///{database}", future=True)
+    factory = sessionmaker(
+        bind=engine, class_=Session, autoflush=False, expire_on_commit=False, future=True
+    )
+    pre_reconcile_execution = uuid.uuid4()
+    with session_scope(factory) as session:
+        target = resolve_backfill_target(session, task_gid=TASK_GID)
+        _register_run(
+            session, generation_id=context["generation_id"], run_id=run_id, owner=owner_id
+        )
+        workflow = WorkflowAuthorityService(session)
+        request_id = uuid.uuid4()
+        _admit(
+            workflow,
+            request_id=request_id,
+            generation_id=context["generation_id"],
+            run_id=run_id,
+            owner=owner_id,
+            command="prepare",
+            payload={"task_id": str(task_id)},
+        )
+        workflow.begin_execution(
+            ExecutionSpec(
+                execution_id=pre_reconcile_execution,
+                request_id=request_id,
+                generation_id=context["generation_id"],
+                task_id=task_id,
+                operation_id=operation_id,
+                command_name="prepare",
+                transaction_profile="L",
+                canonical_intent={"command": "prepare"},
+                pinned_inputs={"now": NOW.isoformat()},
+                contract_binding_id=context["binding_id"],
+                admitted_at=NOW,
+            )
+        )
+        with pytest.raises(
+            ImportedRevocationHistoryUnreconciled, match="revocation history is unreconciled"
+        ):
+            workflow.create_actor_fact(
+                actor_fact_id=uuid.uuid4(),
+                execution_id=pre_reconcile_execution,
+                operation_id=operation_id,
+                run_id=run_id,
+                owner_id=owner_id,
+                actor_role="actor",
+                agent="claude",
+                actor_attempt_sequence=1,
+                recorded_at=NOW,
+            )
+
+    legacy = tmp_path / "legacy-pre-0036.sqlite3"
+    _legacy_db(legacy)
+    _insert_terminal_history(
+        legacy,
+        operation_id=operation_id,
+        cycle_id=cycle_id,
+        lease_id=lease_id,
+        owner_id=owner_id,
+        source_run_id=str(run_id),
+    )
+    _insert_terminal_history(
+        legacy,
+        operation_id=other_operation_id,
+        cycle_id=other_cycle_id,
+        lease_id=other_lease_id,
+        owner_id=owner_id,
+        source_run_id=str(run_id),
+        minute=10,
+    )
+    _insert_exact_revocation(
+        legacy,
+        revocation_id=revocation_id,
+        operation_id=operation_id,
+        owner_id=owner_id,
+        source_run_id=str(run_id),
+        source_lease_id=lease_id,
+    )
+    snapshot = capture_terminal_history_snapshot(
+        legacy_database=legacy,
+        task_gid=TASK_GID,
+        task_id=task_id,
+        output=tmp_path / "pre-0036-reconciliation.ndjson",
+    )
+    assert json.loads(snapshot.path.read_text())["format"] == EXACT_REVOCATION_SNAPSHOT_FORMAT
+
+    with session_scope(factory) as session:
+        result = apply_terminal_history_snapshot(
+            session,
+            target=target,
+            snapshot=snapshot,
+            source_commit=SOURCE_COMMIT,
+            clock=lambda: NOW + timedelta(hours=1),
+        )
+        assert result.inserted_operations == 0
+        assert result.inserted_verification_cycles == 0
+        assert result.inserted_leases == 0
+        assert result.inserted_revocations == 1
+        assert result.supplemental_import_run_id is not None
+
+    with session_scope(factory) as session:
+        supplemental = session.get(models.ImportRun, result.supplemental_import_run_id)
+        assert supplemental is not None
+        assert supplemental.provenance[EXACT_REVOCATION_HISTORY_PROVENANCE_KEY] == (
+            EXACT_REVOCATION_RECONCILIATION_CONTRACT
+        )
+        assert supplemental.provenance["source_format"] == EXACT_REVOCATION_SNAPSHOT_FORMAT
+        revocations = tuple(
+            session.scalars(
+                select(wf.OperationRunRevocation).where(
+                    wf.OperationRunRevocation.generation_id == context["generation_id"]
+                )
+            )
+        )
+        assert [(row.operation_id, row.owner_id, row.source_run_id) for row in revocations] == [
+            (operation_id, owner_id, str(run_id))
+        ]
+        assert session.scalar(
+            select(wf.OperationRunRevocation).where(
+                wf.OperationRunRevocation.operation_id == other_operation_id
+            )
+        ) is None
+
+        workflow = WorkflowAuthorityService(session)
+        with pytest.raises(OperationRunRevoked):
+            workflow.create_actor_fact(
+                actor_fact_id=uuid.uuid4(),
+                execution_id=pre_reconcile_execution,
+                operation_id=operation_id,
+                run_id=run_id,
+                owner_id=owner_id,
+                actor_role="actor",
+                agent="claude",
+                actor_attempt_sequence=1,
+                recorded_at=NOW + timedelta(hours=1),
+            )
+
+        other_request_id = uuid.uuid4()
+        other_execution_id = uuid.uuid4()
+        _admit(
+            workflow,
+            request_id=other_request_id,
+            generation_id=context["generation_id"],
+            run_id=run_id,
+            owner=owner_id,
+            command="prepare",
+            payload={"task_id": str(task_id), "operation_id": str(other_operation_id)},
+        )
+        workflow.begin_execution(
+            ExecutionSpec(
+                execution_id=other_execution_id,
+                request_id=other_request_id,
+                generation_id=context["generation_id"],
+                task_id=task_id,
+                operation_id=other_operation_id,
+                command_name="prepare",
+                transaction_profile="L",
+                canonical_intent={"command": "prepare"},
+                pinned_inputs={"now": NOW.isoformat()},
+                contract_binding_id=context["binding_id"],
+                admitted_at=NOW,
+            )
+        )
+        actor = workflow.create_actor_fact(
+            actor_fact_id=uuid.uuid4(),
+            execution_id=other_execution_id,
+            operation_id=other_operation_id,
+            run_id=run_id,
+            owner_id=owner_id,
+            actor_role="actor",
+            agent="claude",
+            actor_attempt_sequence=2,
+            recorded_at=NOW + timedelta(hours=1),
+        )
+        assert actor.operation_id == other_operation_id
+        assert actor.run_id == run_id
+    engine.dispose()
 
 
 def test_allow_departed_tasks_export_behavior_is_unchanged(tmp_path: Path) -> None:
