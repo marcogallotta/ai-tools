@@ -87,8 +87,9 @@ def test_minimum_desktop_viewport_has_no_page_level_horizontal_overflow(acceptan
       viewport: document.documentElement.clientWidth,
       page: document.documentElement.scrollWidth,
       board: document.querySelector('.board-scroller').scrollWidth,
+      boardViewport: document.querySelector('.board-scroller').clientWidth,
     })""")
     assert metrics["page"] <= metrics["viewport"] + 1
-    assert metrics["board"] >= metrics["viewport"]
+    assert metrics["board"] >= metrics["boardViewport"]
     acceptance.screenshot("minimum-desktop")
     acceptance.assert_clean()

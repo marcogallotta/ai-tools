@@ -46,6 +46,7 @@ def test_background_service_failure_keeps_last_safe_board(acceptance):
 def test_contract_mismatch_keeps_last_safe_board_and_requires_reload(acceptance):
     _cards(acceptance)
     acceptance.login()
+    acceptance.wait_board()
     acceptance.runtime.malformed_board = True
     acceptance.page.wait_for_timeout(1150)
 

@@ -28,10 +28,10 @@ STYLE_FILES = (
 IMPORT_RE = re.compile(r'^import\s+.*?\s+from\s+["\'](.+?)["\'];?\s*$', re.MULTILINE)
 
 
-def browser_executable() -> str:
+def browser_executable(managed_executable: str | None = None) -> str:
     configured = os.environ.get("CHROMIUM_BIN")
-    executable = configured or shutil.which("chromium")
-    if not executable:
+    executable = configured or shutil.which("chromium") or managed_executable
+    if not executable or not Path(executable).is_file():
         raise RuntimeError("Chromium executable is required")
     return executable
 
@@ -253,7 +253,7 @@ def main() -> None:
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
             headless=True,
-            executable_path=browser_executable(),
+            executable_path=browser_executable(playwright.chromium.executable_path),
             args=["--no-sandbox", "--disable-dev-shm-usage"],
         )
         try:

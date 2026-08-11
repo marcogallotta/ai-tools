@@ -28,7 +28,9 @@ def test_login_reload_session_metadata_and_logout(acceptance):
     acceptance.wait_board()
     acceptance.screenshot("board-authenticated")
 
-    session = acceptance.page.evaluate("async () => (await fetch('/frontend/session')).json()")
+    session = acceptance.page.evaluate("""async () => (await fetch('/frontend/session', {
+      headers: {'X-Dish-Frontend-Contract': 'dish-frontend-v1'},
+    })).json()""")
     assert 604790 <= session["remaining_seconds"] <= 604800
     expires = datetime.fromisoformat(session["expires_at"])
     assert 604780 <= (expires - datetime.now(timezone.utc)).total_seconds() <= 604810

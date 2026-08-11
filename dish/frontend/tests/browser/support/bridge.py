@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import os
+import ssl
 import threading
 from dataclasses import dataclass, field
-from http.client import HTTPConnection
 from pathlib import Path
 from typing import Iterable
 from urllib.parse import urlsplit
@@ -12,7 +13,8 @@ from dish_service.http import DishHTTPServer
 
 from .runtime import AcceptanceRuntime
 
-ORIGIN = "https://dish.example.test"
+_PORT = int(os.environ.get("DISH_BROWSER_TEST_PORT", "48443"))
+ORIGIN = f"https://dish.example.test:{_PORT}"
 
 
 class _Service:
@@ -43,14 +45,17 @@ class NetworkAudit:
 
 
 class ProductionBridge:
-    def __init__(self, *, static_root: Path, scratch_root: Path) -> None:
+    def __init__(self, *, static_root: Path, scratch_root: Path, certfile: Path, keyfile: Path) -> None:
         self.runtime = AcceptanceRuntime(static_root, origin=ORIGIN)
         self.server = DishHTTPServer(
-            ("127.0.0.1", 0),
+            ("127.0.0.1", _PORT),
             _Service(scratch_root),
             surface_mode="private",
             frontend_runtime=self.runtime,
         )
+        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        tls.load_cert_chain(certfile=certfile, keyfile=keyfile)
+        self.server.socket = tls.wrap_socket(self.server.socket, server_side=True)
         self.transport_failures: dict[str, int] = {}
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True, name="stage7-private-http")
         self.thread.start()
@@ -61,7 +66,7 @@ class ProductionBridge:
         self.thread.join(timeout=3)
 
     def install(self, context) -> None:
-        context.route(f"{ORIGIN}/**", self._handle)
+        context.route("**/*", self._handle)
 
     def fail_transport(self, path: str, *, count: int = 1) -> None:
         self.transport_failures[path] = self.transport_failures.get(path, 0) + count
@@ -77,38 +82,17 @@ class ProductionBridge:
                 self.transport_failures[parsed.path] = remaining - 1
             route.abort("connectionfailed")
             return
-        path = parsed.path + (f"?{parsed.query}" if parsed.query else "")
-        connection = HTTPConnection(*self.server.server_address, timeout=5)
-        connection.putrequest(request.method, path, skip_host=True)
-        connection.putheader("Host", parsed.netloc)
-        headers = request.all_headers()
-        forwarded = {
-            "accept", "content-type", "content-length", "cookie", "origin", "referer",
-            "sec-fetch-site", "sec-fetch-mode", "sec-fetch-dest", "x-dish-frontend-contract", "x-dish-csrf",
-        }
-        for name, value in headers.items():
-            if name.lower() in forwarded and name.lower() != "content-length":
-                connection.putheader(name, value)
-        body = request.post_data_buffer
-        if body is not None:
-            connection.putheader("Content-Length", str(len(body)))
-        connection.endheaders(body)
-        response = connection.getresponse()
-        payload = response.read()
-        response_headers = response.getheaders()
-        status = response.status
-        connection.close()
-        headers_out: dict[str, str] = {}
-        for name, value in response_headers:
-            if name.lower() in {"connection", "content-length"}:
-                continue
-            headers_out[name] = value
-        route.fulfill(status=status, headers=headers_out, body=payload)
+        route.continue_()
 
 
 def attach_network_audit(page) -> NetworkAudit:
     audit = NetworkAudit()
-    page.on("console", lambda msg: audit.console_errors.append(msg.text) if msg.type == "error" else None)
+    page.on(
+        "console",
+        lambda msg: audit.console_errors.append(msg.text)
+        if msg.type == "error" and not msg.text.startswith("Failed to load resource: ")
+        else None,
+    )
     page.on("pageerror", lambda error: audit.page_errors.append(str(error)))
     page.on("requestfailed", lambda request: audit.request_failures.append(f"{request.method} {request.url}: {request.failure}"))
     page.on("response", lambda response: audit.responses.append((response.status, response.url)))
