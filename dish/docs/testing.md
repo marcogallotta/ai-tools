@@ -772,6 +772,25 @@ A checked-in generated artifact needs two different tests:
 The recovery fixture database and its JSON sidecars are checked both ways. Updating the generator and
 checked-in artifacts together is insufficient unless the independent literal contract is also reviewed.
 
+SQLite schema or migration changes do not automatically update the checked-in recovery fixture.
+The reproducibility test generates into a temporary directory and only compares the result. For every
+change to `dish_tool/database_schema.py` or `dish_tool/database_migrations.py`, run:
+
+```sh
+.venv/bin/python -m pytest -q \
+  tests/test_recovery_fixtures.py::test_recovery_fixture_generator_is_reproducible
+```
+
+If it reports fixture drift, regenerate deliberately from the repository root:
+
+```sh
+.venv/bin/python tests/fixtures/upgrade/generate_recovery_fixtures.py
+.venv/bin/python -m pytest -q tests/test_recovery_fixtures.py
+```
+
+Review and commit the generated SQLite database and both JSON sidecars explicitly. A passing schema
+test or an ordinary local test run is not evidence that these checked-in artifacts were regenerated.
+
 ## Curated mutation sample
 
 Run the launch-critical mutation sample with:
