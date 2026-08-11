@@ -47,6 +47,11 @@ def _database(
         actor_attempt_seq INTEGER, context_cycle_id TEXT)"""
     )
     connection.execute(
+        """CREATE TABLE operation_run_revocations(
+        revocation_id TEXT PRIMARY KEY, operation_id TEXT NOT NULL, owner_id TEXT NOT NULL,
+        run_id TEXT NOT NULL, source_lease_id TEXT, reason TEXT NOT NULL, revoked_at TEXT NOT NULL)"""
+    )
+    connection.execute(
         """CREATE TABLE movement_attempts(
         attempt_id TEXT PRIMARY KEY, operation_id TEXT NOT NULL,
         outcome TEXT NOT NULL, confirmed_section_gid TEXT, finished_at TEXT)"""
