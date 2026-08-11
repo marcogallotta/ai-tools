@@ -449,6 +449,16 @@ Configuration rollback is separate:
 
 ## TEST dark-launch acceptance sequence
 
+**Retired for TEST's current generation (2026-08-11):** TEST's active
+generation now has PostgreSQL authority wired in (`#67`) and its only
+projection epoch has `external_effects_enabled=true`, so dark-launch shadow
+comparison against it is no longer valid — `dish-shadow-worker-test.service`
+should stay stopped/disabled rather than crash-looping. See `ops.md`'s "TEST
+dark-launch state" entry for the current status and open follow-ups. This
+procedure is kept below for reference in case a future non-authoritative
+generation needs the same acceptance sequence again; it does not describe
+TEST's present state.
+
 ### Maintained TEST deployment
 
 TEST has repository-owned wiring parallel to production:

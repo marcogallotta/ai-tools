@@ -53,22 +53,41 @@ etc.) before trusting or removing it.
   2026-08-06 reproduced a real `record_replay_validation_failure` gap
   (see `ops-issues.md`); §4 still not run, blocked on the same gap.
 
-### TEST dark-launch state (2026-08-10)
+### TEST dark-launch state (2026-08-11) — shadow worker retired
 
-- `dish-service-test.service` is running with `DISH_DARK_LAUNCH_MODE=execute`;
-  `dish-shadow-worker-test.service` is running but remains disabled across host
-  reboot. The TEST PostgreSQL target is bootstrapped, its projection epoch has
-  external effects disabled, and SQLite/Asana remain authoritative.
-- Capture and shadow delivery are operational: the staged activation probes
-  drained to zero backlog with no delivery failure. The baseline is not
-  parity-clean. It has one expected `uncomparable` gap from the capture-only
-  probe and one mismatch from executing `inspect` against the synthetic seed;
-  the imported PostgreSQL seed lacks some legacy request/effect history.
-- This is acceptable for ongoing dark-launch testing and evidence collection:
-  the mismatch is evidence produced by the system, not a live-service failure.
-  Do **not** use the current baseline as clean cutover-acceptance evidence. Before
-  testing cutover, reset and re-bootstrap from representative, internally
-  consistent history, then require zero unexplained mismatches or open gaps.
+TEST's active generation's only projection epoch (`00000000-...-1d`, created
+2026-08-01 for a "stage6 rehearsal") has `external_effects_enabled=true` and
+was never retired; `bbc8501` ("Adopt existing TEST PostgreSQL volume") kept
+that epoch alive by reusing the persistent `postgresql_pgdata` volume instead
+of a fresh one. The 2026-08-10 entry previously here claimed this epoch had
+"external effects disabled" — that was already wrong at the time it was
+written and should not be trusted for anything else it asserted.
+
+This epoch's `external_effects_enabled=true` predates `#67` (it was created
+2026-08-01, before `#67` landed 2026-08-10) — it is not itself evidence that
+`#67`'s PostgreSQL-authority wiring is what's live in the running service.
+Checked separately: `/home/marco/.config/dish-service/test.env` has no
+`DISH_AUTHORITY_BACKEND` set (defaults to `legacy`) and the systemd unit
+passes no `--postgresql-test-runtime` flag, so `dish-service-test.service`
+was still running the legacy/dark-launch capture code path, unrelated to
+whatever generation-level authority state `#67`'s wiring targets. Regardless
+of which code path is live, the epoch's effects-enabled flag is what the
+shadow worker checks, and it correctly refuses to run against it — so the
+TEST dark-launch shadow worker is retired for this generation:
+`dish-shadow-worker-test.service` should be `disable --now`d rather than kept
+running/crash-looping (not yet done — needs sudo with a TTY). Do not flip the
+epoch back to effects-disabled or spin up a replacement shadow generation to
+resurrect shadow comparison here unless there's an explicit new requirement.
+
+Resolved 2026-08-11: `dish-service-test.service`'s `DISH_DARK_LAUNCH_MODE` was
+flipped from `execute` to `off` (`test.env`) and the service restarted, so it
+no longer spools captured commands with nothing to consume them. Before this
+change, the spool held only 30 records (`shadow_capture_registrations`),
+far below the configured 100k-record/512MB caps — even left unaddressed,
+capture would have self-disabled via the shared kill switch
+(`_engage_capacity_kill_switch`) well before causing any live-request impact;
+it was corrected anyway to keep runtime state coherent with the worker
+retirement rather than leave a live no-op producer running.
 
 ## Production and test `dish-service`
 
