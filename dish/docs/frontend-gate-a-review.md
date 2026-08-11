@@ -38,7 +38,8 @@ did not author the implementation or the readiness packet.
 
 Choose exactly one after review:
 
-- [ ] **PASS:** every material finding is resolved and Delivery Stage 2 is authorized separately.
+- [ ] **PASS:** every material finding is resolved; Stage 2 acceptance/environment exposure may be
+  authorized separately.
 - [ ] **FAIL:** Gate A remains closed; findings above must be resolved and reviewed again.
 
 Reviewer statement:

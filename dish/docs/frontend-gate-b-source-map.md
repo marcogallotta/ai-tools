@@ -6,7 +6,7 @@
 
 This packet maps the approved frontend fields against the current PostgreSQL models, read surfaces,
 and frontend contracts. It is reconciled to checked-in Alembic head
-`0033_frontend_security`. PostgreSQL remains a non-authoritative dark-launch target: the
+`0037_release_identity_contract`. PostgreSQL remains a non-authoritative dark-launch target: the
 frontend read core may be implemented and exercised locally against it without transferring authority.
 Gate B still must pass before the Stage 3 production/private HTTP/browser surface is activated. A
 read-only Stage 4 detail/deep-link candidate may be exercised only through the same explicit
@@ -27,13 +27,16 @@ than inferred.
   `dish_pg/frontend_board_query.py`, and the Stage 4 local candidates
   `dish_pg/frontend_detail_query.py` / `dish_pg/frontend_projection_query.py`.
 - PostgreSQL transition and projection code under `dish_pg/`.
+- Migration revisions `0033_frontend_security` through `0037_release_identity_contract`; revisions
+  after `0033` add repair, persistence-integrity, exact-run-revocation, and release-identity rules but
+  no new frontend-owned support tables.
 - Architecture entrypoint `docs/architecture/index.md` and the routed PostgreSQL, authority, package, and testing-boundary documents under `docs/architecture/`, plus operational migration/testing documents in `docs/`.
 - Workflow-policy and recovery implementation under `dish_tool/`, used only to identify current
   authority concepts; those Python paths are not approved as per-card query loops.
-- Fixture frontend DTO shapes, notice registry, detail fixtures, and frontend OpenAPI document.
+- Current frontend DTO shapes, presentation registries, fixtures, OpenAPI document, and browser suite.
 
 The current checked-in models are treated as design evidence, not proof that the same schema is live in
-production. This map is reconciled to checked-in head `0033_frontend_security`; final
+production. This map is reconciled to checked-in head `0037_release_identity_contract`; final
 production rollout reconciliation and independent Gate B review remain mandatory before production/private
 HTTP/browser activation.
 
@@ -41,8 +44,8 @@ HTTP/browser activation.
 
 | ID | Finding | Required resolution |
 |---|---|---|
-| B-01 | The map is reconciled to checked-in Alembic head `0033_frontend_security`, whose added tables are frontend-only security support, while PostgreSQL remains a non-authoritative dark-launch target rather than production authority. | Reconcile again to the exact deployed dark-launch schema/runtime evidence before production/private HTTP/browser activation; authority transfer is not required for read-only use. |
-| B-02 | A frontend-owned set-oriented board query candidate now exists in `dish_pg/frontend_board_query.py`; it is exposed only through the separately scoped loopback local observation harness, not the production/private frontend service, and it lacks native PostgreSQL plan/isolation evidence. | Review the query against native PostgreSQL, record bounded plans/isolation, and keep it read-only/no-network. |
+| B-01 | The map is reconciled to checked-in Alembic head `0037_release_identity_contract`; frontend support remains limited to the tables introduced by `0033_frontend_security`, while PostgreSQL is a non-authoritative dark-launch target rather than production authority. | Reconcile again to the exact deployed schema/runtime evidence before production/private HTTP/browser activation; authority transfer is not required for read-only use. |
+| B-02 | The set-oriented board query in `dish_pg/frontend_board_query.py` is integrated behind disabled private PostgreSQL-read activation and the loopback observation harness; it lacks accepted native PostgreSQL plan/isolation evidence. | Review the query against native PostgreSQL, record bounded plans/isolation, and keep it read-only/no-network. |
 | B-03 | Stateless typed/environment-scoped route identities now exist in `dish_service/frontend_tokens.py`; secret lifetime/rotation is not yet accepted. | Review secret lifecycle, collision/bounds evidence, and deployment ownership before HTTP activation. |
 | B-04 | The English terms **invalid lease** and **contested lease** still have no exact named PostgreSQL predicate. The candidate query emits only durable expired-lease attention for the latest actor attempt on the current open operation. | Name durable predicates or amend the approved meaning; do not broaden non-active lease states heuristically. |
 | B-05 | Verification **failed** and **disputed** remain unresolved. The candidate query emits only durable open human-review attention. | Name exact failed/disputed/current-cycle predicates and add policy-equivalence tests. |
@@ -50,7 +53,7 @@ HTTP/browser activation.
 | B-07 | The candidate query can flag open drift, live-origin blocked/uncertain outbox work, and explicitly configured delayed live-origin work, but the full projection presentation reducer and precedence remain unaccepted. | Accept the reducer, delay threshold source, readiness input, and precedence before exposing final projection presentation. |
 | B-08 | The current `task_view()` remains unsuitable for Stage 4 browser detail. A dedicated local candidate now captures a bounded immutable detail fact bundle in `dish_pg/frontend_detail_query.py` and derives the browser DTO in `dish_service/frontend_detail.py`; this has not been accepted for production/private activation. | Review the candidate against native PostgreSQL, current eligibility/workflow policy, and response bounds; do not serialize `TaskCurrentView`. |
 | B-09 | Versioned board/detail presentation registries and local candidate disclosure/advisory/projection/rendering services now exist. Their policy equivalence, destination source, projection reducer acceptance, and normalization/collation equivalence remain unresolved. | Review and accept the detail registries/services against the governing policy and native runtime before production/private activation. |
-| B-10 | Focused tests prove a fixed three-statement bootstrap in the SQLite-rendered test fixture, but native PostgreSQL `EXPLAIN`, transaction-isolation/coherence, response-size, and execution-time evidence remain outstanding. | Record native PostgreSQL bounded-work evidence and enforce the chosen short coherent read transaction before HTTP activation. |
+| B-10 | Focused tests prove a fixed three-statement bootstrap and native PostgreSQL smoke tests prove board/detail reads, but representative `EXPLAIN`, transaction-isolation/coherence, response-size, and execution-time evidence remain outstanding. | Record native PostgreSQL bounded-work evidence and enforce the chosen short coherent read transaction before HTTP activation. |
 | B-11 | Stateless retry-safe cursor, section continuity, and board snapshot candidates now exist in `dish_service/frontend_tokens.py` and `dish_service/frontend_board.py`; they deliberately do not promise a frozen task snapshot. | Review token secret lifecycle, expiry, compatibility semantics, and keyset boundary behavior before HTTP activation. |
 | B-12 | Independent Gate B review has not occurred. | A reviewer must validate this map against the deployed dark-launch schema/runtime and governing policy, then record scope-specific acceptance. |
 
@@ -372,9 +375,9 @@ The Stage 3 portion may pass only when:
 The Stage 4 portion may pass only after the same reviewer process covers the detail map, including the
 previously unresolved destination, disclosure, advisory, rendering, and projection facts.
 
-## Prepared implementation and test handoff
+## Acceptance handoff
 
-The Stage 3 read-core sequence is recorded in `frontend-stage3-implementation-checklist.md`; production/private HTTP/browser activation remains blocked on Gate B. The
-acceptance families are instantiated as stable case identifiers in
-`../frontend/contracts/stage3-acceptance-cases.json`. They are scaffolding only; no case is counted as
-passed until it runs against the accepted production-candidate schema and implementation.
+Production/private HTTP/browser activation remains blocked on Gate B. Stable acceptance identifiers
+are maintained in `../frontend/contracts/stage3-acceptance-cases.json`; implementation and unit
+evidence does not count as acceptance until it runs against the exact reviewed schema/runtime and the
+independent decision is recorded in `frontend-gate-b-review.md`.

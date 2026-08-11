@@ -1,6 +1,6 @@
 # Dish private frontend implementation contract
 
-**Status: staged implementation contract. Delivery Stages 0 and 1 are available after explicit authorization. Delivery Stage 3 read-core/local observation and Delivery Stage 4 read-only detail/deep-link candidate implementation are explicitly authorized behind the loopback-only non-production PostgreSQL observation boundary; Delivery Stage 2 and production/private Stage 3/4 HTTP/browser activation remain readiness-gated, and later stages remain conditionally specified.**
+**Status: normative frontend access contract. Implementation candidates through Delivery Stage 7 are checked in, but authenticated environment exposure and PostgreSQL-backed private HTTP/browser activation remain gated by the independent Gate A/B records.**
 
 This document defines how to realize the approved product in
 [`frontend.md`](frontend.md). The product behavior and authority outcomes in `frontend.md` are
@@ -1109,7 +1109,8 @@ authorize an integration stage.
 
 Delivery Stages 0 and 1 may proceed after explicit authorization because they create the modular shell,
 test infrastructure, and fixture-backed design prototype without claiming real authentication or
-canonical task data. Delivery Stage 2 remains blocked until Gate A passes. By explicit project
+canonical task data. A Stage 2 implementation candidate may be checked in disabled, but its acceptance
+and environment exposure remain blocked until Gate A passes. By explicit project
 authorization, Delivery Stage 3's read-only PostgreSQL query, DTO, route-identity, cursor core, and explicit
 loopback-only local observation harness may proceed behind a non-production boundary while Gate B is
 refreshed, including reading the non-authoritative dark-launch database as an operational observation
@@ -1117,13 +1118,13 @@ surface. The local harness is development evidence, not Stage 3D activation. By 
 project authorization, Delivery Stage 4's read-only detail, rendering/disclosure/advisory candidate,
 and deep-link behavior may also be implemented and exercised only through that same loopback local
 observation boundary while its Gate B map is refined. Gate B must still pass before either real-data
-stage is exposed through production/private frontend HTTP/browser routes. Stage 5 and later remain
-gated by the applicable accepted source map. A prior stage review cannot waive an activation gate or
-authorize guessed semantics.
+stage is exposed through production/private frontend HTTP/browser routes. The checked-in Stage 5–7
+implementation and browser suite do not waive an activation gate or authorize guessed semantics.
 
 #### Gate A — complete contract and runtime readiness review
 
-Before Delivery Stage 2 begins, the implementation owner produces a checked-in readiness packet and an
+Before Delivery Stage 2 is accepted or exposed in an environment, the implementation owner maintains a
+checked-in readiness packet and an
 independent reviewer who did not author the implementation reviews it against the complete current
 `frontend.md` and `frontend-imp.md`, not excerpts or selected sections. The packet must contain:
 
@@ -1221,7 +1222,9 @@ completed. The stage ships component and accessibility tests for the fixture-bac
 
 ### 11.5 Delivery Stage 2 — authentication and protected application shell
 
-**Entry condition:** Gate A in Section 11.2 is accepted and has no unresolved authentication, listener, session, OpenAPI, or deployment blocker assigned to this stage.
+**Activation condition:** Gate A in Section 11.2 is accepted and has no unresolved authentication,
+listener, session, OpenAPI, or deployment blocker. A disabled implementation candidate may exist before
+that acceptance, but it is not a deployed or accepted security boundary.
 
 Integrate the real private login/session lifecycle and protected shell while keeping task-data scope
 bounded. Deliver:
@@ -1520,6 +1523,15 @@ implementation contract, including:
 - bounded board/detail performance, cursor retry safety, stable route identities, and explicit
   capacity and availability behavior;
 - frontend-specific monitoring using non-sensitive aggregate metrics only.
+
+While PostgreSQL is an observation surface, frontend security and task observation use physically
+distinct databases. `DISH_FRONTEND_DATABASE_URL` names the writable password/session/throttle/audit
+database. `DISH_FRONTEND_OBSERVATION_DATABASE_URL` names the task observation database and uses
+SELECT-only credentials. Startup compares server-reported database identity and fails closed if the
+two connections resolve to the same database, even through different roles or aliases. This split
+does not transfer task authority to PostgreSQL.
+
+Operational sequencing and rollback are maintained in `frontend-deployment-runbook.md`.
 
 The exact framework, query organization, session store, cursor representation, route-identity
 encoding, cryptographic packaging, cache structure, polling interval within tested limits, and

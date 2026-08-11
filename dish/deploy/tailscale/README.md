@@ -56,5 +56,5 @@ Before Stage 2 deployment, provision and document a tailnet-only hostname/certif
 to the existing environment's private listener without creating a third service listener. The initial
 frontend implementation ignores forwarded authority and client-address headers, so do not depend on
 `Forwarded` or `X-Forwarded-*` values for Host, scheme, origin, or throttling authority. Follow
-`docs/frontend-test-deployment-readiness.md` and do not expose the fixture-only build as an
+`docs/frontend-deployment-runbook.md` and do not expose the fixture-only build as an
 authenticated application.

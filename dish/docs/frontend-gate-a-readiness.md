@@ -5,17 +5,18 @@
 **Authoring review complete; Gate A is not passed.**
 
 This packet was prepared against the current `frontend.md`, `frontend-imp.md`, service runtime,
-PostgreSQL model set, deployment examples, frontend OpenAPI document, and fixture frontend. Gate A
-still requires an independent reviewer who did not author the implementation. It also has the
+PostgreSQL model set, deployment examples, frontend OpenAPI document, and current production/review
+frontend builds. Gate A still requires an independent reviewer who did not author the implementation.
+It also has the
 material acceptance/deployment findings listed below. A Stage 2 implementation candidate is now checked in,
 but it is not accepted for production exposure until those findings are resolved and the reviewer records
 acceptance in `frontend-gate-a-review.md`.
 
-Prepared against the repository state containing Delivery Stages 0 and 1A–1F. The pre-database
-implementation-local runtime decisions are recorded in `frontend-stage2-runtime-decisions.md` and
-`../frontend/contracts/stage2-security-contract.json`. Revision `0033_frontend_security` is now the checked-in
-frontend support migration candidate. This packet does not assume that the migration has native/deployed
-acceptance or that currently checked-in PostgreSQL models are the production task/workflow authority.
+Refreshed against the repository state containing implementation candidates through Delivery Stage 7
+and checked-in Alembic head `0037_release_identity_contract`. The frontend-specific support tables were
+introduced by revision `0033_frontend_security`; the machine-readable security decisions remain in
+`../frontend/contracts/stage2-security-contract.json`. This packet does not assume that the current
+head has deployed acceptance or that PostgreSQL is production task/workflow authority.
 
 ## Evidence inspected
 
@@ -30,21 +31,23 @@ acceptance or that currently checked-in PostgreSQL models are the production tas
   `dish_pg/stage3_models.py`, `dish_pg/stage5_models.py`, `dish_pg/read_model.py`.
 - Deployment configuration: `deploy/systemd/service.env.example` and service unit examples.
 - Frontend contract/build: `frontend/openapi/frontend.openapi.json`, `frontend/src/`,
-  `frontend/tools/`, and `frontend/tests/`.
+  `frontend/tools/`, `frontend/tests/`, and the Stage 7 acceptance command in `testing.md`.
+- Current private frontend deployment units and Caddy configuration under `deploy/systemd/` and
+  `deploy/caddy/`.
 - Python dependency pins: `requirements.txt`, `requirements-test.txt`.
 
 ## Material findings blocking Gate A
 
-| ID | Finding | Required resolution before Stage 2 |
+| ID | Finding | Required resolution before Stage 2 acceptance/exposure |
 |---|---|---|
 | A-01 | Validated canonical-origin configuration, no-forwarded-trust admission, bounded singleton/header/body parsing, and request ordering now have an implementation candidate. | Complete independent review and production-shaped admission evidence. |
 | A-02 | Private-listener frontend routing/static delivery/response security headers now have an implementation candidate; Action-listener isolation has focused HTTP coverage. | Complete regression/production-shaped isolation and response-header evidence. |
 | A-03 | The Argon2id shared-password/session/CSRF application boundary now exists as an implementation candidate and remains separate from bearer-token auth. | Complete native PostgreSQL, concurrency, restart, and independent security review evidence. |
-| A-04 | `0033_frontend_security` adds frontend-only security state, sessions, durable login events, and security audit persistence. | Certify the migration and lifecycle against native PostgreSQL and accept the support-state shape. |
+| A-04 | `0033_frontend_security` adds frontend-only security state, sessions, durable login events, and security audit persistence within the current `0037_release_identity_contract` chain. | Certify the current migration chain and lifecycle against native PostgreSQL and accept the support-state shape. |
 | A-05 | An owner-only external restore-fence file is now bound by hash into PostgreSQL security state and session validation fails closed on mismatch. | Prove destructive restore/PITR cannot revive session authority; independently review permissions/update/failure behavior. |
 | A-06 | A dedicated frontend parser/response writer now implements the closed request/error/cookie/header contract. | Complete ambiguity, malformed-input, cache, and production-shaped transport review. |
 | A-07 | The private authenticated runtime now serves the bounded frontend OpenAPI document and the generated client remains independently synchronized; Action OpenAPI remains unchanged. | Complete served-schema/runtime synchronization and isolation review. |
-| A-08 | Browser bootstrap, fixed-expiry concealment, logout retry, page-restore/suspension revalidation, opaque returns, and ephemeral cross-tab signalling now have an implementation candidate. | Complete the real HTTPS/Playwright multi-tab and lifecycle acceptance matrix. |
+| A-08 | Browser bootstrap, fixed-expiry concealment, logout retry, page-restore/suspension revalidation, opaque returns, ephemeral cross-tab signalling, and a committed Stage 7 browser suite now exist. | Run and accept the complete suite against the exact deployed HTTPS build, including multi-tab and lifecycle evidence. |
 | A-09 | `argon2-cffi` is pinned and startup validates an explicitly configured Argon2id policy without inventing production values. | Independently review/approve production time, memory, parallelism, hash, and salt parameters and operational cost. |
 | A-10 | Runtime configuration is fail-closed and environment examples keep frontend auth disabled by default. | Provision and verify the dedicated HTTPS hostname, HSTS termination, canonical origin, owner-only secrets/fence, and production deployment wiring. |
 | A-11 | `scripts/dish-frontend-security` now provides guarded fence initialization, password provisioning/rotation, and restore-fence rotation using the shared password bounds and global session invalidation. | Complete native/operator review and recovery/runbook evidence. |
@@ -126,9 +129,9 @@ failure behavior.
 | Artifact | Current state | Required owner/action |
 |---|---|---|
 | Action schema | Generated by `dish_service/openapi.py` and exposed at `/openapi/action.json`. | Unchanged; existing synchronization tests remain authoritative. |
-| Frontend schema source | `frontend/openapi/frontend.openapi.json` exists and defines six bounded operations. | Frontend owns it; Stage 2 must reconcile it with the full normative auth/error contract before serving it. |
-| Frontend generated client | `frontend/src/js/api/generated/frontend-client.js`, generated by `frontend/tools/generate-client.mjs`. | Continue deterministic generation; add service/schema synchronization tests. |
-| Private schema route | Absent. | Serve only on private listener and only after live frontend-session validation. |
+| Frontend schema source | `frontend/openapi/frontend.openapi.json` defines seven bounded operations. | Keep the served runtime and generated client synchronized with the normative auth/error contract. |
+| Frontend generated client | `frontend/src/js/api/generated/frontend-client.js`, generated by `frontend/tools/generate-client.mjs`. | Deterministic generation and synchronization checks are present; retain them as acceptance evidence. |
+| Private schema route | The candidate serves `/openapi/frontend.json` only through protected private dispatch. | Independently verify listener and live-session isolation against the exact build. |
 | Default docs/schema | No framework route exists today. | Keep disabled if a framework is introduced. |
 | Contract version | Browser constant and schema use `dish-frontend-v1`. | Server selects exactly one supported value and emits it on every frontend API response. |
 
@@ -147,57 +150,57 @@ failure behavior.
 
 ## Requirement traceability
 
-“Planned” means there is a named implementation/test owner but no integrated code yet. “Fixture” is
-implemented only for design review. “Future product” is intentionally outside product Stage 1.
+“Candidate” means integrated code exists but the applicable independent or deployed evidence remains
+pending. “Fixture” is design-review-only. “Future product” is outside product Stage 1.
 
 | Contract section | Delivery owner | Implementation boundary | Required evidence | Readiness |
 |---|---|---|---|---|
-| `frontend.md` 1 Purpose | Stages 0–7 | Whole frontend slice | Final Stage 1 acceptance | Planned |
-| 2.1 Private read-only board | Stages 2–7 | Auth, board, detail, refresh | Service and browser acceptance | Fixture only |
+| `frontend.md` 1 Purpose | Stages 0–7 | Whole frontend slice | Final Stage 1 acceptance | Candidate implemented; acceptance pending |
+| 2.1 Private read-only board | Stages 2–7 | Auth, board, detail, refresh | Service and browser acceptance | Candidate implemented behind private/local boundaries |
 | 2.2 Structured editing | Future product | None in Stage 1 | Scope exclusion tests | Ready/excluded |
 | 2.3 Cooking planner | Future product | None in Stage 1 | Scope exclusion tests | Ready/excluded |
-| 3.1 Board | Stages 1, 3, 5 | Board feature and query service | Visual, query, refresh, browser tests | Fixture only |
-| 3.2 Task cards | Stages 1, 3, 5 | Card DTO/presentation | DTO and browser tests | Fixture only |
-| 3.3 Task side panel | Stages 1, 4, 5 | Detail query, renderer, panel | Rendering/service/browser tests | Fixture only |
-| 3.4 Refresh and continuity | Stage 5 | Reconciliation feature/service | Race and continuity browser tests | Planned |
-| 3.5 Warnings and errors | Stages 1, 5 | Notice registry and response validator | Registry, lifecycle, browser tests | Fixture only |
+| 3.1 Board | Stages 1, 3, 5 | Board feature and query service | Visual, query, refresh, browser tests | Candidate implemented |
+| 3.2 Task cards | Stages 1, 3, 5 | Card DTO/presentation | DTO and browser tests | Candidate implemented |
+| 3.3 Task side panel | Stages 1, 4, 5 | Detail query, renderer, panel | Rendering/service/browser tests | Candidate implemented |
+| 3.4 Refresh and continuity | Stage 5 | Reconciliation feature/service | Race and continuity browser tests | Candidate implemented |
+| 3.5 Warnings and errors | Stages 1, 5 | Notice registry and response validator | Registry, lifecycle, browser tests | Candidate implemented |
 | 3.6 Login and session | Stage 2 | Frontend auth boundaries above | Security/integration/browser suite | Blocked A-01–A-11 |
-| 3.7 Device profile | Stages 1, 6, 7 | CSS/layout/accessibility | 1024+ browser matrix | Fixture passed |
+| 3.7 Device profile | Stages 1, 6, 7 | CSS/layout/accessibility | 1024+ browser matrix | Automated candidate evidence present |
 | 4.1 Canonical authority | Stages 3–5 | PostgreSQL query services | Gate B and equivalence tests | Gate B pending |
 | 4.2 Factual summaries | Stages 3–4 | Backend DTO builders | Predicate and schema tests | Gate B pending |
 | 4.3 Next-step guidance | Stage 4 | Backend factual advisory service | Workflow-fact equivalence | Gate B pending |
 | 4.4 Aliases/projection | Stages 3–5 | Projection read projection | Query/integration tests | Gate B pending |
 | 4.5 Disclosure | Stage 4 | Versioned disclosure registry | Registry and detail contract tests | Gate B pending |
-| 5 Scope exclusions | All stages | Route/schema negative surface | HTTP and browser negative tests | Planned |
-| 6 Stage 1 acceptance | Stage 7 | Production-shaped full slice | Full acceptance record | Planned |
-| 6.1 Staged delivery | Every stage | Stage notes, screenshots, Gate C | Human review record | Stages 0–1 complete |
-| 7 Cross-stage invariants | Every stage | Authority and lifecycle boundaries | Architecture/service/browser tests | Planned |
+| 5 Scope exclusions | All stages | Route/schema negative surface | HTTP and browser negative tests | Candidate tests present |
+| 6 Stage 1 acceptance | Stage 7 | Production-shaped full slice | Full acceptance record | Suite committed; exact deployment acceptance pending |
+| 6.1 Staged delivery | Every stage | Stage notes, screenshots, Gate C | Human review record | Implementation through Stage 7 present; sign-offs pending |
+| 7 Cross-stage invariants | Every stage | Authority and lifecycle boundaries | Architecture/service/browser tests | Candidate evidence present |
 | 8 Backend authority | Stages 3–5 | Read-only services over PostgreSQL | Gate B and no-policy-duplication review | Pending |
 | 9 Provenance | Documentation | Current contracts | Review | Ready |
-| `frontend-imp.md` 1 Ownership | All integrated stages | Frontend-owned vertical slice | Architecture review | Planned |
+| `frontend-imp.md` 1 Ownership | All integrated stages | Frontend-owned vertical slice | Architecture review | Implemented candidate |
 | 2 Listener/admission/trust | Stage 2 | Existing `DishHTTPServer` plus frontend admission | Isolation, drain, origin tests | Blocked A-01/A-02 |
-| 3 OpenAPI/routes | Stages 0, 2–4 | Separate frontend schema/client/routes | Sync and HTTP contract tests | Partial; A-07 |
+| 3 OpenAPI/routes | Stages 0, 2–4 | Separate frontend schema/client/routes | Sync and HTTP contract tests | Candidate present; A-07 review pending |
 | 4 Authentication/session | Stage 2 | Auth/security/persistence/browser modules | Full security matrix | Blocked A-03–A-11 |
 | 5.1 Board/pagination | Stage 3 | Board query service/read model | Gate B, plans, performance | Pending Gate B |
 | 5.2 Task detail | Stage 4 | Detail query/DTO service | Gate B, coherence tests | Pending Gate B |
-| 5.3 Rendering | Stage 4 | Pinned backend renderer/sanitizer | Security corpus/browser tests | Planned |
+| 5.3 Rendering | Stage 4 | Pinned backend renderer/sanitizer | Security corpus/browser tests | Candidate implemented |
 | 5.4 History exclusion | All | No history route/DTO | Negative route/schema tests | Ready/excluded |
-| 6 Refresh/reconciliation | Stage 5 | Refresh coordinator/browser fencing | Race, movement, stale response tests | Planned |
+| 6 Refresh/reconciliation | Stage 5 | Refresh coordinator/browser fencing | Race, movement, stale response tests | Candidate implemented |
 | 7 Aliases/projection | Stages 3–5 | PostgreSQL projection reader | Gate B and abnormal-state tests | Pending Gate B |
-| 8 Errors/banners | Stages 2–5 | Error and notice registries | Registry/HTTP/browser tests | Partial fixture |
-| 9 Deep links/state | Stages 4–5 | Router and protected restoration | Browser navigation/session tests | Fixture only |
-| 10 Accessibility | Stages 1, 2, 6, 7 | Feature modules and semantic DOM | Keyboard/focus/live region suite | Partial fixture |
+| 8 Errors/banners | Stages 2–5 | Error and notice registries | Registry/HTTP/browser tests | Candidate implemented |
+| 9 Deep links/state | Stages 4–5 | Router and protected restoration | Browser navigation/session tests | Candidate implemented |
+| 10 Accessibility | Stages 1, 2, 6, 7 | Feature modules and semantic DOM | Keyboard/focus/live region suite | Candidate implemented |
 | 11 Staging/modularity | Every stage | Existing module/file-size checks | Normal repository gates | Ready for current frontend |
-| 11.1 Organization | Every stage | Existing frontend structure | Lint/source-size tests | Passed for Stages 0–1 |
+| 11.1 Organization | Every stage | Existing frontend structure | Lint/source-size tests | Current checks present |
 | 11.2 Gates | Gates A/B | This packet and Gate B map | Independent reviews | Pending |
 | 11.3–11.4 Stages 0–1 | Complete | Fixture frontend | Check/browser/screenshots | Complete |
-| 11.5 Stage 2 | Stage 2 | Auth/protected shell | Gate A plus stage evidence | Blocked |
-| 11.6 Stage 3 | Stage 3 | Real board | Gate B plus stage evidence | Blocked |
-| 11.7 Stage 4 | Stage 4 | Real detail | Extended Gate B | Blocked |
-| 11.8 Stage 5 | Stage 5 | Refresh/continuity | Integrated race evidence | Planned |
-| 11.9 Stage 6 | Stage 6 | Hardening/deployment | Production-shaped checks | Planned |
-| 11.10 Stage 7 | Stage 7 | Committed Playwright suite | Full green run | Planned |
-| 12 Acceptance families | Stages 2–7 | Named owners above | Acceptance checklist | Planned |
+| 11.5 Stage 2 | Stage 2 | Auth/protected shell | Gate A plus stage evidence | Candidate implemented; activation blocked |
+| 11.6 Stage 3 | Stage 3 | Real board | Gate B plus stage evidence | Candidate implemented; activation blocked |
+| 11.7 Stage 4 | Stage 4 | Real detail | Extended Gate B | Candidate implemented; activation blocked |
+| 11.8 Stage 5 | Stage 5 | Refresh/continuity | Integrated race evidence | Candidate implemented |
+| 11.9 Stage 6 | Stage 6 | Hardening/deployment | Production-shaped checks | Candidate implemented |
+| 11.10 Stage 7 | Stage 7 | Committed Playwright suite | Full green run | Suite committed; deployment run pending |
+| 12 Acceptance families | Stages 2–7 | Named owners above | Acceptance checklist | Candidate evidence present; final acceptance pending |
 | 13 Deployment/operations | Stages 2, 6 | Config/systemd/private HTTPS origin | Startup/deployment/header tests | Blocked A-10 |
 
 ## Gate A completion checklist
@@ -215,10 +218,9 @@ Gate A may be marked passed only when all of the following are true:
   response headers, and cache behavior have tests.
 - The reviewer records an exact commit/build and a clear pass decision in the review record.
 
-## Prepared implementation and test handoff
+## Acceptance and deployment handoff
 
-The blocked implementation sequence is recorded in `frontend-stage2-implementation-checklist.md`.
-Executable acceptance ownership is predeclared in
-`../frontend/contracts/stage2-acceptance-cases.json`; test deployment entry and rollback are recorded
-in `frontend-test-deployment-readiness.md`. These artifacts reduce Stage 2 startup work but
-are not implementation evidence and do not alter the Gate A pass conditions.
+Executable acceptance ownership is declared in
+`../frontend/contracts/stage2-acceptance-cases.json`. Stage 7 browser execution is maintained in
+`testing.md`, and environment provisioning, probes, and rollback are maintained in
+`frontend-deployment-runbook.md`. None of those artifacts alters the Gate A pass conditions.

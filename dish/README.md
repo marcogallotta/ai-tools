@@ -143,7 +143,7 @@ PostgreSQL database whose fence binding is stale therefore fails frontend startu
 Do not enable `DISH_FRONTEND_ENABLED=1` until the dedicated HTTPS hostname/HSTS termination, production Argon2
 parameters, native PostgreSQL evidence, destructive restore/PITR evidence, browser lifecycle matrix, and
 independent Gate A review are accepted. See `docs/frontend-gate-a-readiness.md` and
-`docs/frontend-test-deployment-readiness.md`.
+`docs/frontend-deployment-runbook.md`.
 
 ## Service-host configuration
 

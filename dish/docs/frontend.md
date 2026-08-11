@@ -1,6 +1,6 @@
 # Dish private frontend design
 
-**Status: Stage 1 product design approved. Implementation is authorized only stage by stage; real authentication and canonical-data integration remain blocked until the evidence gates in [`frontend-imp.md`](frontend-imp.md) pass.**
+**Status: Stage 1 product design approved. Implementation candidates through Delivery Stage 7 are checked in; authenticated environment exposure and PostgreSQL-backed private HTTP/browser activation remain blocked until the evidence gates in [`frontend-imp.md`](frontend-imp.md) pass.**
 
 This document defines the approved private frontend product over Dish's PostgreSQL-backed service.
 It describes product behavior, user-visible information, authority boundaries, and acceptance
@@ -361,7 +361,14 @@ continues. Approval of an intermediate deliverable does not waive the remaining 
 or authorize unreviewed product behavior. Fixture-backed prototypes are review tools only and never
 become canonical authority.
 
-The staged plan does not make a document-wide claim that every integration dependency is already verified. Delivery Stages 0 and 1 may begin because they establish structure and obtain visual feedback without claiming real task authority. Before Delivery Stage 2, the complete contract and authentication/runtime dependencies must pass the independent readiness review in `frontend-imp.md`. Stage 3 read-only query, DTO, identity, cursor implementation, and an explicit loopback-only local observation harness may proceed behind a non-production boundary when explicitly authorized, including against non-authoritative dark-launch PostgreSQL as an observation surface. That local harness is development evidence, not Stage 3D activation. Gate B still must pass before the real board is exposed through the production/private frontend HTTP/browser surface. An implementation agent may not infer missing semantics from field names or treat dark-launch reads as an authority transfer.
+The staged plan does not claim that every integration dependency is verified. Disabled implementation
+candidates may be checked in without claiming real authentication or task authority. Gate A must pass
+before authenticated environment exposure. Read-only query, DTO, identity, cursor, detail, and browser
+candidates may be exercised behind the explicitly authorized loopback-only observation boundary,
+including against non-authoritative dark-launch PostgreSQL. That harness is development evidence, not
+private HTTP/browser activation. Gate B still must pass before PostgreSQL-backed board/detail data is
+exposed through that surface. Missing semantics may not be inferred from field names, and observation
+reads do not transfer authority.
 
 Stage 1 is not complete until the final integrated product passes its automated acceptance suite and a
 committed, repeatable Playwright browser-acceptance suite (authored by a capable local agent, such as

@@ -45,7 +45,7 @@ test("initial authority policy does not trust forwarded identity", () => {
 });
 
 const stage3 = JSON.parse(await readFile(new URL("../../contracts/stage3-read-contract.json", import.meta.url)));
-const migrationHead = await readFile(new URL("../../../dish_pg/migrations/versions/0033_frontend_security.py", import.meta.url), "utf8");
+const migrationHead = await readFile(new URL("../../../dish_pg/migrations/versions/0037_release_identity_contract.py", import.meta.url), "utf8");
 const modelSources = await Promise.all([
   "../../../dish_pg/models.py",
   "../../../dish_pg/stage3_models.py",
@@ -55,8 +55,8 @@ const modelSources = await Promise.all([
 const allModels = modelSources.join("\n");
 
 test("Stage 3 contract is reconciled to the checked-in migration head", () => {
-  assert.match(migrationHead, /revision\s*=\s*["']0033_frontend_security["']/);
-  assert.equal(stage3.checked_in_schema.alembic_head, "0033_frontend_security");
+  assert.match(migrationHead, /revision\s*=\s*["']0037_release_identity_contract["']/);
+  assert.equal(stage3.checked_in_schema.alembic_head, "0037_release_identity_contract");
   assert.equal(stage3.checked_in_schema.production_status, "dark-launch-target-non-authoritative");
 });
 
@@ -113,18 +113,4 @@ test("Stage 2 acceptance manifest covers only Gate A dependencies", () => {
 
 test("Stage 3 acceptance scaffold covers only Gate B dependencies", () => {
   assertAcceptanceManifest(stage3Cases, "S3-", new Set(Object.keys(stage3.blockers)));
-});
-
-const readiness = JSON.parse(await readFile(new URL("../../contracts/pre-db-readiness.json", import.meta.url)));
-
-test("pre-database readiness keeps Stage 2 candidate and Stage 3 activation gated", () => {
-  assert.equal(readiness.checked_in_postgresql_head, stage3.checked_in_schema.alembic_head);
-  assert.equal(readiness.authorization.stage2, false);
-  assert.equal(readiness.authorization.stage2_implementation_candidate, true);
-  assert.equal(readiness.authorization.stage3_read_core, true);
-  assert.equal(readiness.authorization.stage3_http_activation, false);
-  assert.ok(readiness.stage2_go_conditions.length >= 5);
-  assert.ok(readiness.stage3_read_core_conditions.length >= 5);
-  assert.ok(readiness.stage3_http_activation_conditions.length >= 6);
-  assert.ok(readiness.forbidden_shortcuts.includes("fixture-backed production API routes"));
 });

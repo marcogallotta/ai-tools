@@ -1,10 +1,10 @@
 {
   "contract_version": "dish-frontend-v1",
   "gate": "B",
-  "status": "implementation-in-progress-gate-b-pending",
+  "status": "implementation-candidate-gate-b-pending",
   "checked_in_schema": {
-    "alembic_head": "0033_frontend_security",
-    "migration_file": "dish_pg/migrations/versions/0033_frontend_security.py",
+    "alembic_head": "0037_release_identity_contract",
+    "migration_file": "dish_pg/migrations/versions/0037_release_identity_contract.py",
     "production_status": "dark-launch-target-non-authoritative"
   },
   "eligibility_inputs_present": {
@@ -164,15 +164,15 @@
     "normalization-and-database-collation-contract"
   ],
   "blockers": {
-    "B-01": "checked-in-0033-reconciled-frontend-security-only-production-remains-non-authoritative-dark-launch-target",
+    "B-01": "checked-in-0037-reconciled-frontend-security-only-production-remains-non-authoritative-dark-launch-target",
     "B-02": "frontend-board-query-candidate-implemented-review-pending",
     "B-03": "stateless-route-identity-candidate-implemented-review-pending",
     "B-04": "invalid-and-contested-lease-predicates-pending",
     "B-05": "verification-failed-and-disputed-predicates-pending",
     "B-06": "uncertain-execution-recovery-equivalence-review-pending",
     "B-07": "projection-reducer-and-threshold-decision-pending",
-    "B-08": "frontend-detail-query-service-pending-stage4",
-    "B-09": "board-presentation-registries-candidate-implemented-detail-registries-pending",
+    "B-08": "frontend-detail-query-service-candidate-implemented-review-pending",
+    "B-09": "board-and-detail-presentation-registries-candidate-implemented-review-pending",
     "B-10": "native-query-plan-transaction-isolation-and-capacity-evidence-pending",
     "B-11": "stateless-board-continuity-and-cursor-candidate-implemented-review-pending",
     "B-12": "independent-review-pending"

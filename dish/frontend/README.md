@@ -43,18 +43,15 @@ placement, completion, projection, or content-mutation authority.
 
 ## Current delivery status
 
-Delivery Stage 0 and fixture-backed Delivery Stage 1A–1F are implemented. Integration candidates
-through Delivery Stage 5 are present behind the existing private/local observation boundaries,
-including authenticated private-shell wiring, PostgreSQL board/detail reads, canonical Dish-UUID
-deep links, and refresh/reconciliation behavior. The current Delivery Stage 6 pass hardens that
-integrated surface for focus restoration, busy/live-region semantics, reduced motion, contrast,
-collapsed supporting process detail, real imported section names, idempotent board keyboard
-handling, complete shell landmarks, and a production/review build split that keeps
-fixture/prototype code off production paths.
+Implementation candidates through Delivery Stage 7 are checked in behind the existing private/local
+observation boundaries. They include authenticated private-shell wiring, PostgreSQL board/detail
+reads, canonical Dish-UUID deep links, refresh/reconciliation, accessibility hardening, the
+production/review build split, and the committed browser-acceptance suite.
 
-This does not claim the human Delivery Stage 6 walkthrough, Gate A, Gate B, production activation,
-or Delivery Stage 7 browser-acceptance gate has passed. PostgreSQL remains non-authoritative until
-the separate authority/cutover process explicitly says otherwise.
+This does not claim Gate A, Gate B, an exact deployed Stage 7 run, or production activation has
+passed. PostgreSQL remains non-authoritative until the separate authority/cutover process explicitly
+says otherwise.
+
 ## Integration readiness
 
 - Gate A authoring review: `../docs/frontend-gate-a-readiness.md`
@@ -67,16 +64,14 @@ resolved. Gate B is not passed until its source predicates are reconciled agains
 schema and independently accepted. The local Stage 3/4 PostgreSQL observation path does not pass or
 bypass either gate and is not production activation.
 
+## Acceptance contracts
 
-## Pre-integration contracts
-
-`contracts/` contains machine-checked plans for blocked future integration. They are not runtime
+`contracts/` contains machine-checked security, read, and acceptance boundaries. They are not runtime
 configuration or authority:
 
 - `stage2-security-contract.json` records implementation-local authentication/runtime decisions;
 - `stage3-read-contract.json` reconciles the board source map to the checked-in PostgreSQL head;
-- `stage2-acceptance-cases.json` and `stage3-acceptance-cases.json` reserve stable acceptance IDs;
-- `pre-db-readiness.json` records the current go/no-go boundary.
+- `stage2-acceptance-cases.json` and `stage3-acceptance-cases.json` reserve stable acceptance IDs.
 
 The unit suite checks these files against the frontend OpenAPI and checked-in model/migration source so
 schema or contract drift must be reconciled explicitly.
