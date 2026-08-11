@@ -191,7 +191,12 @@ def test_admin_inspect_is_a_first_class_human_command():
     assert parsed.dish == dish_id
     assert not hasattr(parsed, "submission_id")
 
-def test_admin_issues_is_the_first_class_read_only_command():
+def test_admin_queue_is_the_first_class_marco_work_command():
+    parsed = build_parser().parse_args(["queue"])
+    assert parsed.command == "queue"
+
+
+def test_admin_issues_remains_a_hidden_compatibility_alias():
     parsed = build_parser().parse_args(["issues"])
     assert parsed.command == "issues"
 
@@ -201,7 +206,12 @@ def test_admin_attention_remains_a_hidden_compatibility_alias():
     assert parsed.command == "attention"
 
 
-def test_admin_active_leases_is_a_first_class_read_only_command():
+def test_admin_active_is_the_first_class_read_only_command():
+    parsed = build_parser().parse_args(["active"])
+    assert parsed.command == "active"
+
+
+def test_admin_active_leases_remains_a_hidden_compatibility_alias():
     parsed = build_parser().parse_args(["active-leases"])
     assert parsed.command == "active-leases"
 
@@ -211,10 +221,15 @@ def test_admin_help_distinguishes_lease_recovery_expiry_and_abandonment(capsys):
         parser.parse_args(["--help"])
     root_help = " ".join(capsys.readouterr().out.split())
     assert "Start with `dish-admin inspect <dish>`" in root_help
-    assert "Normal use: issues, audit, review-queue, inspect, active-leases, and kill" in root_help
-    assert "Advanced recovery, migration, backup" in root_help
+    assert "Normal use: inspect one Dish; queue processes work waiting for Marco; audit checks fleet integrity; active shows current run ownership" in root_help
+    assert "Advanced recovery, review-detail, migration, backup" in root_help
     assert "recover-lease" not in root_help.split("options:")[0]
     assert "attention" not in root_help.split("options:")[0]
+    assert "issues" not in root_help.split("options:")[0]
+    assert "review-queue" not in root_help.split("options:")[0]
+    assert "active-leases" not in root_help.split("options:")[0]
+    command_help = root_help.split("positional arguments:", 1)[1].split("options:", 1)[0]
+    assert command_help.index("inspect") < command_help.index("queue") < command_help.index("audit") < command_help.index("active") < command_help.index("kill") < command_help.index("kill-all-expired") < command_help.rindex("kill-all")
 
     with pytest.raises(SystemExit):
         parser.parse_args(["authorize-governed-change", "--help"])

@@ -160,9 +160,10 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
         },
     },
     READ_COMMAND.name: {
-        "required": ["task_gid", "agent"],
+        "required": ["agent"],
         "properties": {
-            "task_gid": dict(ASANA_GID_SCHEMA),
+            "task_gid": {**dict(ASANA_GID_SCHEMA), "description": "Exact task GID. Use this only when already returned by Dish."},
+            "dish_id": {**dict(DISH_UUID_SCHEMA), "description": "Canonical Dish UUID. Use this to resolve a Marco-supplied `dish <uuid>` handoff deterministically; never rediscover that Dish by browsing sections or matching titles."},
             "agent": {"type": "string", "enum": ["claude", "gpt", "codex"]},
         },
     },
@@ -335,7 +336,10 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
                 "description": (
                     "Concrete human choices for this Human Review, ordered best-first. The first "
                     "item is always the agent's recommended route. Include plausible alternatives; "
-                    "Dish always gives Marco a free-text Other choice in the admin UI."
+                    "Dish always gives Marco a free-text Other choice in the admin UI. If an option "
+                    "authorizes an Exemptions change, before/after must be the complete exact field "
+                    "values. Nutrition waivers use the canonical tags [nutrition-kcal], "
+                    "[nutrition-protein], or [nutrition-fat] in the after value, not prose substitutes."
                 ),
                 "items": {
                     "type": "object",
@@ -397,6 +401,21 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
 
 def action_openapi_argument_schema(command: str) -> dict[str, Any]:
     """Return the public Action schema, including route-specific shapes."""
+    if command == "read":
+        base = ARGUMENT_SCHEMAS["read"]["properties"]
+
+        def read_variant(identity_field: str) -> dict[str, Any]:
+            return {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [identity_field, "agent"],
+                "properties": {
+                    identity_field: deepcopy(base[identity_field]),
+                    "agent": deepcopy(base["agent"]),
+                },
+            }
+
+        return {"oneOf": [read_variant("dish_id"), read_variant("task_gid")]}
     if command == "start":
         base = ARGUMENT_SCHEMAS["start"]["properties"]
         common = {name: deepcopy(base[name]) for name in ("task_gid", "agent")}
@@ -724,6 +743,15 @@ def validate_action_request(command: str, request: Mapping[str, Any]) -> tuple[d
         )
     for field, value in arguments.items():
         _validate_scalar(field, value, properties[field])
+    if command == "read":
+        has_task = bool(str(arguments.get("task_gid") or "").strip())
+        has_dish = bool(str(arguments.get("dish_id") or "").strip())
+        if has_task == has_dish:
+            raise _argument_error(
+                "read requires exactly one of task_gid or dish_id",
+                "read_identity_required",
+                field="dish_id",
+            )
     if command == "start" and arguments.get("kind") != "planning":
         for field in ("intent_challenge_id", "intent_basis", "override_reason"):
             if field in arguments:

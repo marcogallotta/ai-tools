@@ -472,7 +472,8 @@ def render_admin_result(
         )
         visible = items if verbose else [
             item for item in items
-            if isinstance(item, Mapping) and item.get("category") != "healthy_current"
+            if isinstance(item, Mapping)
+            and item.get("category") not in {"healthy_current", "expected_external_lifecycle"}
         ]
         labels = {
             "healthy_current": "HEALTHY",
@@ -509,10 +510,13 @@ def render_admin_result(
                     lines.append(f"   Rule: {reason}")
                 if operation:
                     lines.append(f"   Operation: {operation}")
-        if not verbose and int(counts.get("healthy_current") or 0):
+        if not verbose and (
+            int(counts.get("healthy_current") or 0)
+            or int(counts.get("expected_external_lifecycle") or 0)
+        ):
             lines.append("")
-            lines.append("Healthy/current rows are hidden; use --verbose to list the complete population.")
-    elif command == "active-leases" and ok:
+            lines.append("Healthy/current rows are hidden; expected/manual rows are also hidden; use --verbose to list the complete population.")
+    elif command in {"active", "active-leases"} and ok:
         leases = data.get("leases") if isinstance(data.get("leases"), list) else []
         counts = data.get("state_counts") if isinstance(data.get("state_counts"), Mapping) else {}
         lines.append(f"Unreleased actor leases: {len(leases)}")
@@ -533,11 +537,11 @@ def render_admin_result(
             stage = _clean(lease.get("stage")) or "unknown stage"
             lines.append("")
             lines.append(f"{index}. [{state}] {title}")
-            lines.append(f"   Stage: {stage}")
             dish_id = _clean(lease.get("dish_id"))
             if dish_id:
                 lines.append(f"   Dish UUID: {dish_id}")
             if verbose:
+                lines.append(f"   Stage: {stage}")
                 lines.append(f"   Operation: {_clean(lease.get('operation_id')) or 'unknown'}")
                 lines.append(f"   Owner: {_clean(lease.get('owner_id')) or 'unknown'}")
                 lines.append(f"   Run: {_clean(lease.get('run_id')) or 'unknown'}")
@@ -546,37 +550,62 @@ def render_admin_result(
                 lines.append(f"   Renewed: {_clean(lease.get('renewed_at')) or 'unknown'}")
                 lines.append(f"   Expires: {_clean(lease.get('expires_at')) or 'unknown'}")
 
-    elif command in {"issues", "attention"} and ok:
+    elif command in {"queue", "issues", "attention"} and ok:
         items = data.get("issue_items") if isinstance(data.get("issue_items"), list) else data.get("attention_items") if isinstance(data.get("attention_items"), list) else []
-        counts = data.get("category_counts") if isinstance(data.get("category_counts"), Mapping) else {}
         needs_you = int(data.get("needs_you_count") or 0)
         system_count = int(data.get("system_count") or 0)
-        lines.append("Dish issues")
-        lines.append(f"Needs you: {needs_you} dish{'es' if needs_you != 1 else ''}")
-        lines.append(
-            "Needs Marco: {marco}; Unsafe/reconcile: {unsafe}; System/recoverable: {system}".format(
-                marco=int(counts.get("needs_marco") or 0),
-                unsafe=int(counts.get("unsafe") or 0),
-                system=system_count,
+        noun = "dish" if needs_you == 1 else "dishes"
+        lines.append("Marco queue")
+        if needs_you:
+            lines.append(f"{needs_you} {noun} below require you to resolve.")
+        else:
+            lines.append("Nothing currently requires you to resolve.")
+        if system_count:
+            lines.append(
+                f"Use --verbose to list {system_count} auto-recoverable "
+                f"dish{'es' if system_count != 1 else ''}."
             )
-        )
-        if not items:
-            lines.append("")
-            lines.append("No current Dish issue needs review.")
         visible_items = items if verbose else [
             item for item in items
             if isinstance(item, Mapping) and bool(item.get("needs_you"))
         ]
-        if system_count and not verbose:
-            lines.append("System/recoverable items are hidden here; use --verbose to list them.")
-        labels = {"needs_marco": "NEEDS YOU", "unsafe": "UNSAFE", "system": "SYSTEM"}
+        group_labels = {
+            "human_review": "Human review",
+            "evidence": "Evidence needed",
+            "change_review": "Change approval",
+            "recovery": "Recovery / reconciliation",
+            "system": "Auto-recoverable",
+        }
+        current_group = None
         for index, item in enumerate(visible_items, start=1):
             if not isinstance(item, Mapping):
                 continue
+            group = _clean(item.get("queue_group"))
+            if group is None:
+                kinds = {
+                    _clean(signal.get("kind"))
+                    for signal in (item.get("signals") if isinstance(item.get("signals"), list) else [])
+                    if isinstance(signal, Mapping)
+                }
+                if {"human_decision", "human_hold"} & kinds:
+                    group = "human_review"
+                elif "evidence_hold" in kinds:
+                    group = "evidence"
+                elif "proposal_review" in kinds:
+                    group = "change_review"
+                elif _clean(item.get("category")) == "unsafe":
+                    group = "recovery"
+                elif bool(item.get("needs_you")):
+                    group = "recovery"
+                else:
+                    group = "system"
+            if group != current_group:
+                lines.append("")
+                lines.append(group_labels.get(group, "Other"))
+                current_group = group
             title = _clean(item.get("task_title")) or _clean(item.get("dish_id")) or _clean(item.get("task_gid")) or "Dish"
-            category = _clean(item.get("category")) or "system"
             lines.append("")
-            lines.append(f"{index}. [{labels.get(category, 'ISSUE')}] {title}")
+            lines.append(f"{index}. {title}")
             dish_id = _clean(item.get("dish_id"))
             if dish_id:
                 lines.append(f"   Dish UUID: {dish_id}")
@@ -584,18 +613,21 @@ def render_admin_result(
             for signal in signals:
                 if not isinstance(signal, Mapping):
                     continue
+                signal_category = _clean(signal.get("category"))
+                if not verbose and signal_category == "system":
+                    continue
                 summary = _clean(signal.get("summary"))
                 detail = _clean(signal.get("detail"))
                 command_text = _clean(signal.get("shell_command"))
                 if summary:
-                    lines.append(f"   - {summary}")
+                    lines.append(f"   {summary}")
                 if detail and detail != summary:
-                    lines.append(f"     {detail}")
+                    lines.append(f"   {detail}")
                 if command_text and not interactive:
-                    lines.append(f"     Inspect: {command_text}")
+                    lines.append(f"   Inspect: {command_text}")
         if visible_items and interactive:
             lines.append("")
-            lines.append("Select a Dish number to inspect its exact current state.")
+            lines.append("Select a number to resolve or inspect it.")
         if verbose:
             lines.append("")
             lines.append(

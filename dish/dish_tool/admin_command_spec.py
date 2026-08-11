@@ -33,11 +33,13 @@ def _spec(
 ADMIN_COMMAND_SPECS = {
     spec.name: spec
     for spec in (
-        _spec("issues", lease_free=True),
+        _spec("queue", lease_free=True),
+        _spec("issues", lease_free=True),  # hidden compatibility alias
         _spec("attention", lease_free=True),  # hidden compatibility alias
         _spec("audit", lease_free=True),
-        _spec("active-leases", lease_free=True),
-        _spec("review-queue", lease_free=True),
+        _spec("active", lease_free=True),
+        _spec("active-leases", lease_free=True),  # hidden compatibility alias
+        _spec("review-queue", lease_free=True),  # hidden compatibility/detail view
         _spec("review-inspect", lease_free=True),
         _spec("review-approve", operation_scoped=True),
         _spec("review-reject", operation_scoped=True),

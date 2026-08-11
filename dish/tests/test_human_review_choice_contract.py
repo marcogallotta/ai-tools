@@ -81,6 +81,8 @@ def test_public_reject_schema_requires_options_for_human_review_and_accepts_nest
     assert options["items"]["properties"]["authorization"]["required"] == [
         "field", "before", "after"
     ]
+    assert "[nutrition-protein]" in options["description"]
+    assert "complete exact field values" in options["description"]
 
     # The server-side scalar validator must understand the same nested shape.
     client, arguments = validate_action_request(
@@ -106,7 +108,7 @@ def test_public_reject_schema_requires_options_for_human_review_and_accepts_nest
                         "authorization": {
                             "field": "Exemptions",
                             "before": "None",
-                            "after": "Protein target exemption approved by Marco",
+                            "after": "[nutrition-protein] — Marco approved for this dish",
                         },
                     }
                 ],
@@ -177,7 +179,7 @@ def test_selecting_A_records_exact_agent_decision(tmp_path):
 
 def test_structured_choice_records_exact_unused_authorization_for_continuation(tmp_path):
     app, backend, _operation_id, _ = make_app(tmp_path)
-    after = "Protein target exemption approved by Marco"
+    after = "[nutrition-protein] — Marco approved for this dish"
     operation_id = _verification_review(
         app,
         options=[
@@ -320,3 +322,58 @@ def test_preconstruction_human_review_uses_review_queue_and_rejects_unbound_auth
     )
     assert invalid["code"] == "INVALID_ARGUMENT"
     assert invalid["errors"][0]["rule"] == "preconstruction_human_review_authorization_unavailable"
+
+
+def test_protein_exemption_choice_matches_and_consumes_exact_canonical_tag_authorization(tmp_path):
+    from dish_tool.database import (
+        consume_reserved_marco_authorizations,
+        reserve_marco_authorizations,
+    )
+
+    app, backend, _operation_id, _ = make_app(tmp_path)
+    after_exemptions = "[nutrition-protein] — Marco approved for this dish"
+    operation_id = _verification_review(
+        app,
+        options=[
+            {
+                "label": "Approve a protein exemption",
+                "decision": "Keep the dish as-is and approve a protein exemption.",
+                "authorization": {
+                    "field": "Exemptions",
+                    "before": "None",
+                    "after": after_exemptions,
+                },
+            }
+        ],
+    )
+    admin = _admin(app, backend)
+    item = admin.execute("review-queue", status="pending")["data"]["review_items"][0]
+    resolved = admin.execute("review-approve", proposal_id=item["review_id"], choice="A")
+    assert resolved["ok"], resolved
+
+    reserved = reserve_marco_authorizations(
+        app.conn,
+        task_gid="t",
+        operation_id=operation_id,
+        changes=(
+            {
+                "field": "Exemptions",
+                "before": "None",
+                "after": after_exemptions,
+            },
+        ),
+    )
+    assert len(reserved) == 1
+    authorization_ids = (reserved[0]["authorization_id"],)
+    consume_reserved_marco_authorizations(
+        app.conn,
+        operation_id=operation_id,
+        authorization_ids=authorization_ids,
+        candidate_identity="candidate-with-protein-exemption",
+    )
+    row = app.conn.execute(
+        "SELECT consumed_at,consumed_identity FROM marco_authorizations WHERE authorization_id=?",
+        (authorization_ids[0],),
+    ).fetchone()
+    assert row["consumed_at"]
+    assert row["consumed_identity"] == "candidate-with-protein-exemption"

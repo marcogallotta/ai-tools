@@ -230,6 +230,34 @@ def test_inspect_openapi_requires_request_id_in_generated_and_checked_in_schema(
 
 
 @pytest.mark.smoke
+def test_read_openapi_accepts_exactly_one_canonical_identity_in_generated_and_checked_schema():
+    checked = json.loads(
+        (Path(__file__).parent.parent / "openapi" / "dish-action.openapi.json").read_text()
+    )
+    for document in (action_openapi(), checked):
+        arguments = document["paths"]["/v1/action/read"]["post"]["requestBody"][
+            "content"
+        ]["application/json"]["schema"]["properties"]["arguments"]
+        variants = arguments["oneOf"]
+        assert len(variants) == 2
+        required_sets = {frozenset(variant["required"]) for variant in variants}
+        assert required_sets == {
+            frozenset({"agent", "dish_id"}),
+            frozenset({"agent", "task_gid"}),
+        }
+        for variant in variants:
+            assert variant["additionalProperties"] is False
+            properties = variant["properties"]
+            if "dish_id" in properties:
+                for key, expected in EXPECTED_DISH_UUID_SCHEMA.items():
+                    assert properties["dish_id"].get(key) == expected
+                assert "Marco-supplied" in properties["dish_id"]["description"]
+            else:
+                assert properties["task_gid"]["pattern"] == "^[1-9][0-9]*$"
+                assert "already returned by Dish" in properties["task_gid"]["description"]
+
+
+@pytest.mark.smoke
 def test_verification_targets_explain_ordinary_start_and_abandonment_scope():
     schema = action_openapi()["paths"]["/v1/action/start"]["post"]["requestBody"][
         "content"

@@ -362,6 +362,40 @@ def test_action_guidance_fails_closed_on_backend_uncertainty():
     assert any("Stop." in item and "new request ID" in item for item in guidance["instructions"])
 
 
+def test_action_guidance_treats_read_identity_binding_as_canonical():
+    guidance = action_agent_guidance({
+        "ok": True,
+        "command": "read",
+        "code": "OK",
+        "allowed_actions": [],
+        "data": {
+            "identity_binding": {
+                "dish_id": "91b697f6-8799-5c4d-b8ee-890b1386a644",
+                "task_gid": "123456789",
+            }
+        },
+    })
+    text = " ".join(guidance["instructions"])
+    assert "exact canonical Dish-to-task binding" in text
+    assert "do not rediscover the Dish through sections or title matching" in text
+    assert "never use dish_id as submission_id" in text
+
+
+def test_action_guidance_redirects_dish_uuid_misuse_to_canonical_read():
+    guidance = action_agent_guidance({
+        "ok": False,
+        "command": "inspect",
+        "code": "NOT_FOUND",
+        "allowed_actions": [],
+        "data": {},
+        "errors": [{"rule": "operation_not_found"}],
+    })
+    text = " ".join(guidance["instructions"])
+    assert "submission_id is an operation/submission UUID, not a Dish UUID" in text
+    assert "read(dish_id=<uuid>)" in text
+    assert "rather than browsing sections or guessing" in text
+
+
 def test_action_guidance_points_to_exact_returned_agent_action():
     guidance = action_agent_guidance({
         "ok": True,
@@ -504,6 +538,8 @@ def test_action_guidance_routes_exact_human_review_repairs_to_semantic_proposals
     assert "reasonable defensible estimate" in text
     assert "Large correction" in text
     assert "Marco-only choice remains" in text
+    assert "[nutrition-protein]" in text
+    assert "rather than prose" in text
 
 
 def test_action_guidance_spells_out_verification_correction_and_route_vocabularies() -> None:

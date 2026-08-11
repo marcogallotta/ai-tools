@@ -59,11 +59,11 @@ def build_parser() -> JsonArgumentParser:
             "the test profile; production administration remains Marco-only."
         ),
         epilog=(
-            "Normal use: issues, audit, review-queue, inspect, active-leases, and kill. "
-            "Advanced recovery, migration, backup, and governance commands remain callable "
-            "when Dish returns one as an exact next action, but are intentionally omitted from "
-            "this top-level help. review-queue may record Marco's reviewed decision or exact bundle "
-            "approval; no admin command submits a dish."
+            "Normal use: inspect one Dish; queue processes work waiting for Marco; audit checks "
+            "fleet integrity; active shows current run ownership; kill safely replaces one run. "
+            "Advanced recovery, review-detail, migration, backup, and governance commands remain "
+            "callable when Dish returns one as an exact next action, but are intentionally omitted "
+            "from this top-level help. No admin command submits a dish."
         ),
     )
     add_profile_argument(parser)
@@ -77,96 +77,6 @@ def build_parser() -> JsonArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
-    issues = subparsers.add_parser(
-        _admin_name("issues"),
-        help="show Dish issues that need Marco, reconciliation, or later system recovery",
-        description=(
-            "Show a fast durable-state summary of current Dish issues. In a terminal you can "
-            "select a Dish to inspect its exact current state."
-        ),
-    )
-    issues.add_argument(
-        "--non-interactive",
-        action="store_true",
-        help="print the issue summary and exit even in an interactive terminal",
-    )
-
-    attention = subparsers.add_parser(
-        _admin_name("attention"),
-        help=argparse.SUPPRESS,
-        description="Deprecated compatibility alias for `dish-admin issues`.",
-    )
-    attention.add_argument(
-        "--non-interactive",
-        action="store_true",
-        help=argparse.SUPPRESS,
-    )
-
-    subparsers.add_parser(
-        _admin_name("audit"),
-        help="audit the configured Cooking population against durable Dish records",
-        description=(
-            "Read-only population audit of configured Asana Cooking tasks versus Dish-known "
-            "records. Manual lifecycle placement after a completed workflow is reported as "
-            "expected, not corruption."
-        ),
-    )
-
-    subparsers.add_parser(
-        _admin_name("active-leases"),
-        help="list unreleased Dish actor leases and show whether each is active or expired",
-    )
-
-    review_queue = subparsers.add_parser(
-        _admin_name("review-queue"),
-        help="review the durable decisions and change bundles currently waiting for Marco",
-        description=(
-            "Review items waiting for Marco. In an interactive terminal the default flow lets "
-            "you select an item, inspect the exact decision or bundle, and act without copying "
-            "UUIDs between commands."
-        ),
-    )
-    review_queue.add_argument(
-        "--status", choices=("active", "pending", "approved", "all"), default="active"
-    )
-    review_queue.add_argument(
-        "--non-interactive",
-        action="store_true",
-        help="print the queue and exit even when running in an interactive terminal",
-    )
-
-    review_inspect = subparsers.add_parser(
-        _admin_name("review-inspect"),
-        help=argparse.SUPPRESS,
-    )
-    review_inspect.add_argument("proposal_id")
-
-    review_approve = subparsers.add_parser(
-        _admin_name("review-approve"),
-        help=argparse.SUPPRESS,
-    )
-    review_approve.add_argument("proposal_id")
-    review_approve.add_argument("--reason")
-    review_approve.add_argument(
-        "--choice",
-        help="for Human Review, choose A-F or 'other'; A is the agent's recommended route",
-    )
-    review_approve.add_argument(
-        "--detail",
-        help="for Human Review items, Marco's complete decision and reasoning",
-    )
-
-    review_reject = subparsers.add_parser(
-        _admin_name("review-reject"),
-        help=argparse.SUPPRESS,
-    )
-    review_reject.add_argument("proposal_id")
-    review_reject.add_argument("--reason", required=True)
-
-    subparsers.add_parser(
-        _admin_name("holds"), help=argparse.SUPPRESS
-    )
-
     _submission_target_help = (
         "exact operation ID, Dish/task GID, supported Asana task URL, Dish UUID, or "
         "frontend /dishes/<uuid>/<decorative-title-slug> URL"
@@ -179,15 +89,72 @@ def build_parser() -> JsonArgumentParser:
 
     inspect_admin = subparsers.add_parser(
         _admin_name("inspect"),
-        help="explain what a Dish is waiting on and show Marco's safe next actions",
+        help="inspect one Dish and show its exact current state and safe next action",
+        description=(
+            "Inspect one Dish using its canonical identity. This is the exact drill-down for "
+            "workflow state, recovery legality, and safe continuation guidance."
+        ),
     )
     inspect_admin.add_argument("dish", metavar="DISH", help=_dish_target_help)
 
+    queue = subparsers.add_parser(
+        _admin_name("queue"),
+        help="work through everything currently waiting for Marco",
+        description=(
+            "Show the dishes that currently require Marco and, in an interactive terminal, "
+            "process Human Review, evidence, proposal, or recovery work directly."
+        ),
+    )
+    queue.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="print the queue and exit even in an interactive terminal",
+    )
+
+    issues = subparsers.add_parser(
+        _admin_name("issues"),
+        help=argparse.SUPPRESS,
+        description="Deprecated compatibility alias for `dish-admin queue`.",
+    )
+    issues.add_argument("--non-interactive", action="store_true", help=argparse.SUPPRESS)
+
+    attention = subparsers.add_parser(
+        _admin_name("attention"),
+        help=argparse.SUPPRESS,
+        description="Deprecated compatibility alias for `dish-admin queue`.",
+    )
+    attention.add_argument("--non-interactive", action="store_true", help=argparse.SUPPRESS)
+
+    subparsers.add_parser(
+        _admin_name("audit"),
+        help="audit Dish population integrity without treating Marco-managed Asana organization as drift",
+        description=(
+            "Read-only confidence audit of configured Asana Cooking tasks versus Dish-known "
+            "records. Healthy and expected/manual rows are hidden unless --verbose is used."
+        ),
+    )
+
+    subparsers.add_parser(
+        _admin_name("active"),
+        help="show current Dish run ownership and whether each lease is active or expired",
+        description=(
+            "Read-only authority diagnostic. Internal workflow stage and exact lease/run identifiers "
+            "are shown only with --verbose."
+        ),
+    )
+    subparsers.add_parser(
+        _admin_name("active-leases"),
+        help=argparse.SUPPRESS,
+        description="Deprecated compatibility alias for `dish-admin active`.",
+    )
+
     kill = subparsers.add_parser(
         _admin_name("kill"),
-        help=(
-            "revoke the outstanding Dish run's authority and mechanically prepare the "
-            "safe continuation; this does not terminate an external ChatGPT process"
+        help="safely revoke one agent run and prepare its continuation",
+        description=(
+            "Revoke the exact outstanding run. Dish preserves confirmed work/checkpoints, "
+            "reconciles uncertain effects where possible, and refuses rather than interrupt an "
+            "in-progress committed mutation. This does not terminate an external ChatGPT process."
         ),
     )
     kill.add_argument("dish", metavar="DISH", help=_dish_target_help)
@@ -197,26 +164,9 @@ def build_parser() -> JsonArgumentParser:
         help="durable reason recorded for the fencing/replacement decision",
     )
 
-    kill_all = subparsers.add_parser(
-        _admin_name("kill-all"),
-        help="revoke every run that currently holds an unreleased actor lease",
-        description=(
-            "Bulk form of dish-admin kill for development/dark-launch cleanup. Each exact "
-            "run is fenced independently; this command is not all-or-nothing."
-        ),
-    )
-    kill_all.add_argument(
-        "--reason",
-        default="Marco confirmed that no currently leased Dish run should remain authorized.",
-    )
-    kill_all.add_argument(
-        "--yes", dest="confirmed", action="store_true",
-        help="confirm the bulk kill without an interactive prompt",
-    )
-
     kill_all_expired = subparsers.add_parser(
         _admin_name("kill-all-expired"),
-        help="revoke every run whose unreleased actor lease is expired",
+        help="safely replace every run whose actor lease has expired",
         description=(
             "Cautious bulk form of dish-admin kill. Only exact runs with expired unreleased "
             "actor leases are selected; each kill remains independently fenced."
@@ -230,6 +180,55 @@ def build_parser() -> JsonArgumentParser:
         "--yes", dest="confirmed", action="store_true",
         help="confirm the bulk kill without an interactive prompt",
     )
+
+    kill_all = subparsers.add_parser(
+        _admin_name("kill-all"),
+        help="safely replace every run that currently holds an actor lease",
+        description=(
+            "Blunt development/dark-launch bulk form of dish-admin kill. Each exact run is "
+            "fenced independently; this command is not all-or-nothing."
+        ),
+    )
+    kill_all.add_argument(
+        "--reason",
+        default="Marco confirmed that no currently leased Dish run should remain authorized.",
+    )
+    kill_all.add_argument(
+        "--yes", dest="confirmed", action="store_true",
+        help="confirm the bulk kill without an interactive prompt",
+    )
+
+    # Compatibility/detail review commands remain callable but are not normal navigation.
+    review_queue = subparsers.add_parser(
+        _admin_name("review-queue"),
+        help=argparse.SUPPRESS,
+        description="Compatibility/detail view for durable Human Review and semantic proposals.",
+    )
+    review_queue.add_argument(
+        "--status", choices=("active", "pending", "approved", "all"), default="active"
+    )
+    review_queue.add_argument("--non-interactive", action="store_true", help=argparse.SUPPRESS)
+
+    review_inspect = subparsers.add_parser(_admin_name("review-inspect"), help=argparse.SUPPRESS)
+    review_inspect.add_argument("proposal_id")
+
+    review_approve = subparsers.add_parser(_admin_name("review-approve"), help=argparse.SUPPRESS)
+    review_approve.add_argument("proposal_id")
+    review_approve.add_argument("--reason")
+    review_approve.add_argument(
+        "--choice",
+        help="for Human Review, choose A-F or 'other'; A is the agent's recommended route",
+    )
+    review_approve.add_argument(
+        "--detail",
+        help="for Human Review items, Marco's complete decision and reasoning",
+    )
+
+    review_reject = subparsers.add_parser(_admin_name("review-reject"), help=argparse.SUPPRESS)
+    review_reject.add_argument("proposal_id")
+    review_reject.add_argument("--reason", required=True)
+
+    subparsers.add_parser(_admin_name("holds"), help=argparse.SUPPRESS)
 
     recover = subparsers.add_parser(
         _admin_name("recover"),
@@ -706,19 +705,88 @@ def _prompt_review(input_fn, prompt: str) -> str:
         return "q"
 
 
+def _human_action_of_kind(result: dict[str, object], kind: str) -> dict[str, object] | None:
+    data = result.get("data") if isinstance(result.get("data"), dict) else {}
+    candidates: list[object] = []
+    action = data.get("human_action")
+    if isinstance(action, dict):
+        candidates.append(action)
+    actions = data.get("human_actions")
+    if isinstance(actions, list):
+        candidates.extend(actions)
+    for candidate in candidates:
+        if isinstance(candidate, dict) and str(candidate.get("kind") or "") == kind:
+            return candidate
+    return None
+
+
+def _interactive_supply_evidence(
+    app,
+    *,
+    target: str,
+    arguments: Sequence[str],
+    input_fn,
+) -> bool:
+    """Resolve one evidence queue item directly. Return True when the user chose Quit."""
+
+    inspected = app.execute("inspect", dish=target, verbose="--verbose" in arguments)
+    if not inspected.get("ok"):
+        print()
+        _emit_interactive_admin_result(inspected, arguments=arguments)
+        return False
+    action = _human_action_of_kind(inspected, "supply-evidence")
+    if action is None:
+        print()
+        _emit_interactive_admin_result(inspected, arguments=arguments)
+        return False
+    summary = str(action.get("summary") or "Provide the missing evidence.").strip()
+    print(f"\n{summary}")
+    detail = _prompt_review(input_fn, "Evidence / answer: ")
+    if detail.lower() in {"q", "quit", "exit"}:
+        return True
+    if not detail:
+        print("No evidence recorded.\n")
+        return False
+    structured = action.get("arguments") if isinstance(action.get("arguments"), dict) else {}
+    positional = structured.get("positional") if isinstance(structured.get("positional"), list) else []
+    options = structured.get("options") if isinstance(structured.get("options"), list) else []
+    if not positional:
+        print("Dish did not provide a complete evidence action; inspect the Dish for details.\n")
+        return False
+    kwargs: dict[str, object] = {
+        "submission_id": str(positional[0]),
+        "detail": detail,
+    }
+    for option in options:
+        if not isinstance(option, dict):
+            continue
+        flag = str(option.get("flag") or "").strip()
+        value = option.get("value")
+        if not flag.startswith("--") or value is None:
+            continue
+        if isinstance(value, str) and value.startswith("<") and value.endswith(">"):
+            continue
+        kwargs[flag[2:].replace("-", "_")] = value
+    result = app.execute("supply-evidence", **kwargs)
+    print()
+    _emit_interactive_admin_result(result, arguments=arguments)
+    print()
+    return False
+
+
 def _interactive_issues(
     app,
     *,
     arguments: Sequence[str],
     input_fn=None,
 ) -> int:
-    """Drill from the fleet issue summary into exact per-Dish inspect state."""
+    """Primary Marco queue; compatibility name retained for internal callers/tests."""
 
     if input_fn is None:
         input_fn = input
 
     while True:
-        result = app.execute("issues")
+        result = app.execute("queue")
         _emit_interactive_admin_result(result, arguments=arguments)
         if not result.get("ok"):
             return exit_status(str(result.get("code") or "INTERNAL_ERROR"))
@@ -732,7 +800,7 @@ def _interactive_issues(
         if not visible:
             return 0
 
-        choice = _prompt_review(input_fn, "\nDish number (q to quit): ").lower()
+        choice = _prompt_review(input_fn, "\nQueue number (q to quit): ").lower()
         if choice in {"q", "quit", "exit"}:
             return 0
         if not choice.isdecimal() or not (1 <= int(choice) <= len(visible)):
@@ -740,21 +808,39 @@ def _interactive_issues(
             continue
         selected = visible[int(choice) - 1]
         if not isinstance(selected, dict):
-            print("That issue row is not inspectable.\n")
+            print("That queue row is not actionable.\n")
             continue
         target = str(selected.get("dish_id") or selected.get("task_gid") or "").strip()
-        if not target:
-            print("That issue row has no canonical Dish identity.\n")
-            continue
-
-        inspected = app.execute(
-            "inspect", dish=target, verbose="--verbose" in arguments
+        signals = selected.get("signals") if isinstance(selected.get("signals"), list) else []
+        review_id = next(
+            (
+                str(signal.get("review_id") or "").strip()
+                for signal in signals
+                if isinstance(signal, dict) and str(signal.get("review_id") or "").strip()
+            ),
+            "",
         )
+        if review_id:
+            if _interactive_review_item(
+                app, review_id=review_id, arguments=arguments, input_fn=input_fn
+            ):
+                return 0
+            continue
+        if str(selected.get("queue_group") or "") == "evidence" and target:
+            if _interactive_supply_evidence(
+                app, target=target, arguments=arguments, input_fn=input_fn
+            ):
+                return 0
+            continue
+        if not target:
+            print("That queue row has no canonical Dish identity.\n")
+            continue
+        inspected = app.execute("inspect", dish=target, verbose="--verbose" in arguments)
         print()
         _emit_interactive_admin_result(inspected, arguments=arguments)
         if not inspected.get("ok"):
             return exit_status(str(inspected.get("code") or "INTERNAL_ERROR"))
-        answer = _prompt_review(input_fn, "\n[b] Back to issues  [q] Quit: ").lower()
+        answer = _prompt_review(input_fn, "\n[0] Back to queue  [Q] Quit: ").lower()
         if answer in {"q", "quit", "exit"}:
             return 0
         print()
@@ -765,6 +851,112 @@ def _interactive_attention(app, *, arguments: Sequence[str], input_fn=None) -> i
     """Compatibility wrapper for the renamed interactive issues flow."""
     return _interactive_issues(app, arguments=arguments, input_fn=input_fn)
 
+def _interactive_review_item(
+    app,
+    *,
+    review_id: str,
+    arguments: Sequence[str],
+    input_fn,
+) -> bool:
+    """Process one durable review item. Return True when the user chose Quit."""
+
+    while True:
+        inspected = app.execute("review-inspect", proposal_id=review_id)
+        print()
+        _emit_interactive_admin_result(inspected, arguments=arguments)
+        if not inspected.get("ok"):
+            return False
+        inspect_data = inspected.get("data") if isinstance(inspected.get("data"), dict) else {}
+        item = inspect_data.get("review_item") if isinstance(inspect_data.get("review_item"), dict) else {}
+        item_type = str(item.get("item_type") or "semantic_proposal")
+        item_status = str(item.get("status") or "")
+
+        if item_status != "pending":
+            answer = _prompt_review(input_fn, "\n[0] Back  [Q] Quit: ").lower()
+            return answer in {"q", "quit", "exit"}
+
+        if item_type == "human_review":
+            options = item.get("human_review_options") if isinstance(item.get("human_review_options"), list) else []
+            option_ids = [
+                str(option.get("option_id") or "").lower()
+                for option in options if isinstance(option, dict)
+            ]
+            option_prompt = "/".join(option_id.upper() for option_id in option_ids)
+            prefix = f"Choose {option_prompt}, " if option_prompt else ""
+            action = _prompt_review(
+                input_fn,
+                f"\n{prefix}[O] Other (type an instruction)  [0] Back  [Q] Quit: ",
+            ).lower()
+            if action in {"q", "quit", "exit"}:
+                return True
+            if action in {"0", "back", ""}:
+                return False
+            if action in option_ids:
+                result = app.execute(
+                    "review-approve", proposal_id=review_id, choice=action.upper()
+                )
+            elif action in {"o", "other"}:
+                decision = _prompt_review(input_fn, "Instruction for the next agent: ")
+                if decision.lower() in {"q", "quit", "exit"}:
+                    return True
+                if not decision:
+                    print("No decision recorded.\n")
+                    continue
+                result = app.execute(
+                    "review-approve", proposal_id=review_id, choice="other", reason=decision
+                )
+            else:
+                allowed = ", ".join(option_id.upper() for option_id in option_ids)
+                prefix = f"Choose {allowed}, O, 0, or Q." if allowed else "Choose O, 0, or Q."
+                print(prefix + "\n")
+                continue
+        elif item_type == "verification_hold":
+            action = _prompt_review(
+                input_fn, "\n[R] Release hold to fresh Verification  [0] Back  [Q] Quit: "
+            ).lower()
+            if action in {"q", "quit", "exit"}:
+                return True
+            if action in {"0", "back", ""}:
+                return False
+            if action != "r":
+                print("Choose R, 0, or Q.\n")
+                continue
+            result = app.execute("review-approve", proposal_id=review_id)
+        else:
+            action = _prompt_review(
+                input_fn,
+                "\n[A] Approve exact shown bundle  [R] Reject proposal  [0] Back  [Q] Quit: ",
+            ).lower()
+            if action in {"q", "quit", "exit"}:
+                return True
+            if action in {"0", "back", ""}:
+                return False
+            if action == "a":
+                result = app.execute(
+                    "review-approve",
+                    proposal_id=review_id,
+                    reason="Approved interactively after reviewing the exact linked change bundle.",
+                )
+            elif action == "r":
+                reason = _prompt_review(input_fn, "Reason for rejection: ")
+                if reason.lower() in {"q", "quit", "exit"}:
+                    return True
+                if not reason:
+                    print("No rejection recorded.\n")
+                    continue
+                result = app.execute("review-reject", proposal_id=review_id, reason=reason)
+            else:
+                print("Choose A, R, 0, or Q.\n")
+                continue
+
+        print()
+        _emit_interactive_admin_result(result, arguments=arguments)
+        if not result.get("ok"):
+            return False
+        print()
+        return False
+
+
 def _interactive_review_queue(
     app,
     *,
@@ -772,11 +964,7 @@ def _interactive_review_queue(
     arguments: Sequence[str],
     input_fn=None,
 ) -> int:
-    """Run the human review queue as a decision workflow in a real terminal.
-
-    Queue numbers are used only to select from the just-rendered snapshot. All
-    subsequent commands target the durable review UUID returned in that row.
-    """
+    """Compatibility/detail review queue; the primary operator flow is ``queue``."""
 
     if input_fn is None:
         input_fn = input
@@ -797,7 +985,6 @@ def _interactive_review_queue(
         if not choice.isdecimal() or not (1 <= int(choice) <= len(items)):
             print(f"Choose a number from 1 to {len(items)}, or q to quit.\n")
             continue
-
         selected = items[int(choice) - 1]
         if not isinstance(selected, dict):
             print("That queue row is not reviewable.\n")
@@ -806,111 +993,10 @@ def _interactive_review_queue(
         if not review_id:
             print("That queue row has no durable review ID.\n")
             continue
-
-        inspected = app.execute("review-inspect", proposal_id=review_id)
-        print()
-        _emit_interactive_admin_result(inspected, arguments=arguments)
-        if not inspected.get("ok"):
-            return exit_status(str(inspected.get("code") or "INTERNAL_ERROR"))
-        inspect_data = inspected.get("data") if isinstance(inspected.get("data"), dict) else {}
-        item = inspect_data.get("review_item") if isinstance(inspect_data.get("review_item"), dict) else {}
-        item_type = str(item.get("item_type") or "semantic_proposal")
-        item_status = str(item.get("status") or "")
-
-        if item_status != "pending":
-            answer = _prompt_review(input_fn, "\n[b] Back to queue  [q] Quit: ").lower()
-            if answer in {"q", "quit", "exit"}:
-                return 0
-            print()
-            continue
-
-        if item_type == "human_review":
-            options = item.get("human_review_options") if isinstance(item.get("human_review_options"), list) else []
-            option_ids = [
-                str(option.get("option_id") or "").lower()
-                for option in options if isinstance(option, dict)
-            ]
-            if not options:
-                print("\nThis older review has no stored agent-authored options.")
-            option_prompt = "/".join(option_id.upper() for option_id in option_ids)
-            prefix = f"Choose {option_prompt}, " if option_prompt else ""
-            action = _prompt_review(
-                input_fn,
-                f"\n{prefix}[O] Other (type an instruction)  [0] Back  [Q] Quit: ",
-            ).lower()
-            if action in {"q", "quit", "exit"}:
-                return 0
-            if action in {"0", "back", ""}:
-                print()
-                continue
-            if action in option_ids:
-                result = app.execute(
-                    "review-approve", proposal_id=review_id, choice=action.upper()
-                )
-            elif action in {"o", "other"}:
-                decision = _prompt_review(input_fn, "Instruction for the next agent: ")
-                if decision.lower() in {"q", "quit", "exit"}:
-                    return 0
-                if not decision:
-                    print("No decision recorded.\n")
-                    continue
-                result = app.execute(
-                    "review-approve", proposal_id=review_id, choice="other", reason=decision
-                )
-            else:
-                allowed = ", ".join(option_id.upper() for option_id in option_ids)
-                prefix = f"Choose {allowed}, O, 0, or Q." if allowed else "Choose O, 0, or Q."
-                print(prefix + "\n")
-                continue
-        elif item_type == "verification_hold":
-            action = _prompt_review(
-                input_fn, "\n[r] Release hold to fresh Verification  [b] Back  [q] Quit: "
-            ).lower()
-            if action in {"q", "quit", "exit"}:
-                return 0
-            if action in {"b", "back", ""}:
-                print()
-                continue
-            if action != "r":
-                print("Choose r, b, or q.\n")
-                continue
-            result = app.execute("review-approve", proposal_id=review_id)
-        else:
-            action = _prompt_review(
-                input_fn,
-                "\n[a] Approve exact shown bundle  [r] Reject proposal  [b] Back  [q] Quit: ",
-            ).lower()
-            if action in {"q", "quit", "exit"}:
-                return 0
-            if action in {"b", "back", ""}:
-                print()
-                continue
-            if action == "a":
-                result = app.execute(
-                    "review-approve",
-                    proposal_id=review_id,
-                    reason="Approved interactively after reviewing the exact linked change bundle.",
-                )
-            elif action == "r":
-                reason = _prompt_review(input_fn, "Reason for rejection: ")
-                if reason.lower() in {"q", "quit", "exit"}:
-                    return 0
-                if not reason:
-                    print("No rejection recorded.\n")
-                    continue
-                result = app.execute(
-                    "review-reject", proposal_id=review_id, reason=reason
-                )
-            else:
-                print("Choose a, r, b, or q.\n")
-                continue
-
-        print()
-        _emit_interactive_admin_result(result, arguments=arguments)
-        if not result.get("ok"):
-            return exit_status(str(result.get("code") or "INTERNAL_ERROR"))
-        print()
-
+        if _interactive_review_item(
+            app, review_id=review_id, arguments=arguments, input_fn=input_fn
+        ):
+            return 0
 
 def _attach_recovery_continuation(
     app, result: dict, *, submission_id: str
@@ -1018,7 +1104,7 @@ def main(
                     print("No Dish runs were killed.")
                     return 0
                 parsed["confirmed"] = True
-            if command in {"issues", "attention"} and interactive_terminal:
+            if command in {"queue", "issues", "attention"} and interactive_terminal:
                 interactive_exit = _interactive_issues(app, arguments=arguments)
                 result = None
             elif command == "review-queue" and interactive_terminal:

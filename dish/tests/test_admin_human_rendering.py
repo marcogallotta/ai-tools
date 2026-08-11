@@ -177,9 +177,10 @@ def test_human_renderer_summarizes_global_issue_items():
 
     rendered = render_admin_result(result, profile="prod")
 
-    assert "Dish issues" in rendered
-    assert "Needs you: 1 dish" in rendered
-    assert "[NEEDS YOU] Laap gai" in rendered
+    assert "Marco queue" in rendered
+    assert "1 dish below require you to resolve." in rendered
+    assert "Laap gai" in rendered
+    assert "NEEDS YOU" not in rendered
     assert "dish-admin inspect 11111111-1111-4111-8111-111111111111" in rendered
     assert "Workflow records checked" not in rendered
 
@@ -438,6 +439,7 @@ def test_issues_renderer_hides_system_items_until_verbose():
     normal = render_admin_result(result, profile="prod")
     verbose = render_admin_result(result, profile="prod", verbose=True)
     assert "Quiet dish" not in normal
-    assert "System/recoverable items are hidden" in normal
-    assert "[SYSTEM] Quiet dish" in verbose
+    assert "Use --verbose to list 1 auto-recoverable dish." in normal
+    assert "Auto-recoverable" in verbose
+    assert "Quiet dish" in verbose
     assert "live task inspections: 0" in verbose

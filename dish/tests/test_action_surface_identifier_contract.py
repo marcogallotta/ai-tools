@@ -10,7 +10,7 @@ from dish_service.application import DishService
 from dish_service.client import DishActionClient, DishAdminServiceClient, DishServiceClient
 from dish_service.config import ServiceConfig
 from dish_service.http import build_server
-from dish_tool.identifiers import validate_identifier_fields
+from dish_tool.identifiers import validate_identifier_fields, stable_dish_uuid_for_asana_identity
 from dish_tool.backend import map_backend_exception
 from dish_tool.errors import BackendFailure, DishRuleError
 from dish_tool.models import RequestPhase
@@ -253,3 +253,47 @@ def test_action_lease_renewal_rejects_legacy_path_and_top_level_operation_id(tmp
     assert top_level[3]["errors"] == [
         {"field": "operation_id", "rule": "request_field_unexpected"}
     ]
+
+
+@pytest.mark.smoke
+def test_action_read_resolves_canonical_dish_uuid_without_section_discovery(running_server):
+    backend, _server, _thread, url = running_server()
+    run_id = "f946b9ec-2b97-5b20-9831-e749d02e9883"
+    action = DishActionClient(url, token="action-secret", run_id=run_id)
+    task_gid = "123456789"
+
+    # Establish that exact task as a Dish-known identity through a normal workflow call.
+    started = action.execute("start", agent="gpt", task_gid=task_gid, kind="initial")
+    assert started["ok"], started
+    dish_id = str(stable_dish_uuid_for_asana_identity("task", task_gid))
+
+    discovery_calls_before = len(backend.calls("list_tasks_for_section"))
+    resolved = action.execute("read", agent="gpt", dish_id=dish_id)
+
+    assert resolved["ok"], resolved
+    assert resolved["task_gid"] == task_gid
+    assert resolved["data"]["dish_id"] == dish_id
+    assert resolved["data"]["identity_binding"] == {
+        "dish_id": dish_id,
+        "task_gid": task_gid,
+    }
+    assert len(backend.calls("list_tasks_for_section")) == discovery_calls_before
+
+
+@pytest.mark.smoke
+def test_action_read_requires_exactly_one_identity(running_server):
+    _backend, _server, _thread, url = running_server()
+    action = DishActionClient(
+        url, token="action-secret", run_id="f946b9ec-2b97-5b20-9831-e749d02e9883"
+    )
+    dish_id = str(stable_dish_uuid_for_asana_identity("task", "123456789"))
+
+    neither = action.execute("read", agent="gpt")
+    both = action.execute(
+        "read", agent="gpt", task_gid="123456789", dish_id=dish_id
+    )
+
+    assert neither["code"] == "INVALID_ARGUMENT"
+    assert neither["errors"][0]["rule"] == "read_identity_required"
+    assert both["code"] == "INVALID_ARGUMENT"
+    assert both["errors"][0]["rule"] == "read_identity_required"

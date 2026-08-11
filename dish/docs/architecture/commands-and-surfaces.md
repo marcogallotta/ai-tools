@@ -54,19 +54,54 @@ For the connected GPT specifically, checked-in source capability and the deploye
 
 ### Current human admin presentation
 
-`dish-admin` intentionally has a small normal operator surface even though older recovery and maintenance commands remain callable for exact handoffs and scripting. Root help presents the normal entry points (`issues`, `review-queue`, `inspect`, `active-leases`, `kill`, `kill-all`, and `kill-all-expired`); `attention` remains a hidden compatibility alias for `issues`. Low-level recovery, migration, backup, governance, and direct review mutation commands are compatibility/escape-hatch surfaces rather than the normal navigation model. Hiding a command from root help does not remove or weaken its backend authority checks.
+`dish-admin` intentionally has a small normal operator surface even though older recovery and
+maintenance commands remain callable for exact handoffs and scripting. Root help presents the normal
+entry points in operator order: `inspect`, `queue`, `audit`, `active`, `kill`, `kill-all-expired`,
+then `kill-all`. `issues`, `attention`, `review-queue`, and `active-leases` remain hidden
+compatibility/detail aliases; low-level recovery, migration, backup, governance, and direct review
+mutation commands remain callable escape hatches. Hiding a command from root help does not remove or
+weaken its backend authority checks.
 
-`issues` is a read-only fleet summary over durable Dish state. It groups signals by Dish, distinguishes Marco-required/unsafe items from system/recoverable items, and deliberately performs no per-Dish live Asana inspection. An expired lease on an otherwise open/recoverable operation is a system/recoverable signal, not by itself a Marco-required issue. `issues` is therefore a fast triage surface, not an authority oracle: `inspect <dish>` remains the exact source for legal recovery actions. In a real terminal, issue rows can be selected to drill into that exact per-Dish inspect state without copying an identifier; durable Dish identity remains inspectable even when Marco has manually moved the Asana task outside the Cooking project. `--non-interactive`, `--json`, and non-TTY use remain one-shot. `active-leases` is likewise a durable read-only diagnostic; raw lease/run identifiers belong in verbose output.
+`queue` is the primary "what Marco needs to do now" surface over durable Dish state. It groups
+Marco-required work by human consequence (Human Review, Evidence, change approval, then recovery),
+hides system/auto-recoverable rows by default, and enters Human Review or Evidence interaction
+directly from the rendered snapshot. Queue numbering is presentation only: any mutation targets the
+selected durable review or Dish identity. `--non-interactive`, `--json`, and non-TTY use remain
+one-shot. An expired lease on an otherwise open/recoverable operation is system/recoverable and does
+not by itself re-enter Marco's queue. `inspect <dish>` remains the exact drill-down for recovery and
+reconciliation cases without a dedicated interaction.
 
-`kill-all-expired` and `kill-all` are temporary dark-launch/operator conveniences built from the same exact-run revocation semantics as single-run `kill`; they are not lease-clearing shortcuts. They snapshot exact outstanding principals and apply the ordinary kill path per item, with confirmation and per-target outcomes. Snapshot preconditions prevent a renewed lease or a successor run from being killed accidentally. These bulk commands intentionally make no all-or-nothing claim and may be retired when routine stale ownership no longer needs manual intervention.
+`active` is the normal read-only run-ownership diagnostic; `active-leases` remains its hidden
+compatibility alias. Normal output keeps raw stage, lease, owner, and run identifiers out of the
+operator path; verbose output exposes them for exact diagnostics. `kill-all-expired` and `kill-all`
+remain temporary dark-launch/operator conveniences built from exact-run revocation semantics rather
+than lease-clearing shortcuts. They snapshot exact outstanding principals and apply the ordinary kill
+path per item, with preconditions preventing a renewed lease or successor run from being killed.
 
-`audit` is a separate read-only confidence surface. It compares the configured Cooking-project population with durable Dish-known identities and classifies each Dish/task. Section, due date, and project membership are Marco-managed Asana organization fields during pre-cutover operation: audit may show them as context, but they must not by themselves produce `INCONSISTENT`. Audit is intended for durable population confidence work, not for deciding a legal workflow transition. `inspect --verbose <dish>` is the bounded per-Dish diagnostic drill-down: normal inspect remains consequence-first, while verbose mode exposes durable operation/cycle/request/effect/lease/revocation/proposal/history evidence needed to explain the compact result.
+`audit` is a separate read-only population-confidence surface. It compares the configured
+Cooking-project population with durable Dish-known identities. Section, due date, and project
+membership are Marco-managed Asana organization fields during pre-cutover operation: audit may show
+them as context, but they must not by themselves produce `INCONSISTENT`. Healthy/current and
+expected/manual lifecycle rows are hidden by default and available with `--verbose`. Audit does not
+decide workflow legality; `inspect --verbose <dish>` remains the bounded per-Dish diagnostic view.
 
-The default `review-queue` means items actually waiting for Marco (`pending`). Approved/claimed proposal states remain available through explicit status filters but do not inflate the normal decision inbox. Human Review items present the agent-written issue in ordinary language, then 1..N concrete choices with A as the durable recommended choice plus an always-available free-text Other path. The normal surface does not ask Marco to approve or dismiss an abstract "escalation". In a real terminal, selection first renders the exact durable review item and then offers its actual choices; semantic proposals still show the exact governed before/after bundle. Non-TTY output, `--json`, and `--non-interactive` preserve one-shot/scriptable behavior. Interactive selection uses the queue number only to select from the rendered snapshot; mutations target the selected durable review identity. Low-level review dismissal remains an exceptional compatibility/admin operation and is not advertised as a normal decision.
+Human Review items retain durable ranked choices with A as the recommended route plus free-text
+Other. Semantic proposals retain exact governed before/after bundles. The queue may enter these
+interactions directly, but approval/application authority remains in the existing review commands and
+workflow policy.
 
 ## Failure, replay, recovery, and concurrency
 
-Mutation request identity/replay is handled by the shared replay mechanism. Surfaces may communicate recovery guidance but should not invent a second idempotency/retry identity model.
+Mutation request identity/replay is handled by the shared replay mechanism. A connected client may
+repeat the same logical request after a transport failure only when no Dish envelope was received; it
+must preserve the same run/request identity and stop blind retries as soon as Dish returns an
+authoritative envelope. Surface guidance must not turn transport recovery into a second idempotency
+model or encourage fresh IDs to bypass pending/uncertain work.
+
+For canonical connected-agent handoffs, `read` accepts exactly one identity: a known `task_gid` or a
+canonical `dish_id`. `read(dish_id=...)` resolves only against durable known task identities, returns
+`data.identity_binding`, and has no title/section discovery fallback. This binding resolves identity
+only; it does not select an operation or authorize a workflow transition.
 
 ## Change routing
 

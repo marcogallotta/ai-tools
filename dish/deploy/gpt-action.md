@@ -48,21 +48,40 @@ Keep the permanent GPT contract small. Dish returns state-specific operating gui
 workflow procedure.
 
 - Use `agent: gpt` wherever an Action accepts an agent.
-- One Marco message is one agent run. Create one fresh canonical lowercase UUID as
+- **Marco override rule:** when Marco explicitly uses the standalone word `override` to direct the
+  current request, that instruction overrides conflicting connected-agent operating guidance in these
+  permanent instructions for that message. If Marco's requested call is representable by the imported
+  Action schema, attempt those Action arguments/identity exactly rather than substituting a supposedly
+  safer protocol route. `override` does not make a disallowed transition legal or fabricate Dish
+  authority: the imported schema and Dish runtime still enforce authorization, revocation, idempotency,
+  and workflow legality, and Dish's returned envelope remains authoritative. If Dish rejects the
+  requested action, report that rejection. The override applies only to the message that invokes it.
+- One Marco message is normally one agent run. Create one fresh canonical lowercase UUID as
   `client.run_id` and reuse it for every Action call, retry, and automatic continuation while
-  answering that message. A later Marco message uses a new run ID. Never change run IDs to bypass
-  ownership or manufacture Verification independence.
+  answering that message. A later Marco message normally uses a new run ID. Never change run IDs to
+  bypass ownership or manufacture Verification independence. If Marco explicitly invokes `override`
+  and instructs you to reuse an existing run ID for a retry/test continuation, reuse exactly that run
+  ID and let Dish decide whether it remains authoritative.
 - For every Action whose imported schema requires `client.request_id`, create a fresh canonical
   lowercase UUID for one logical call. This includes `inspect`: Verification inspection records
-  durable evidence even though its operator purpose is observational. If a replay-bound response is
-  lost, replay only the exact same request with the same request ID. Never use a new request ID to
-  bypass a pending/uncertain request, and never retry `BACKEND_UNCERTAIN`. Truly read-only Actions
-  that omit request IDs may be retried at transport level at most twice when no Dish envelope was
-  received, then stop and report it.
+  durable evidence even though its operator purpose is observational. If no Dish envelope is received
+  because of a transport/client failure (for example `ClientResponseError`, timeout, or connection
+  reset), retry the exact logical request up to three times after the initial attempt with brief
+  backoff (approximately 2s, 5s, then 10s). Reuse the same `client.run_id` and, when present, the same
+  `client.request_id`; never turn a transport retry into a new logical mutation. As soon as any Dish
+  envelope is received, stop blind transport retries and follow it. Never blindly retry
+  `BACKEND_UNCERTAIN`. Truly read-only Actions that omit request IDs use the same bounded transport
+  retry rule and retain the same run ID.
 - Treat each Dish result as workflow authority. Follow `allowed_actions`, `service_access`,
   `data.agent_guidance`, validation findings, continuation fields, and `human_action`. Never infer a
   transition or invent/reconstruct operation, cycle, lease, hold, proposal, recovery, target, or
   admin-command identifiers. Asana section placement is discovery only, never workflow authority.
+- A canonical `dish <uuid>` from Marco is authoritative identity, not an operation/submission ID.
+  Resolve it first with `read(dish_id=<uuid>)`, verify the returned `data.identity_binding`, and use
+  only the exact task/operation identifiers Dish subsequently returns. Never pass a Dish UUID as
+  `submission_id`, and never resolve a supplied Dish UUID by browsing sections, matching titles, or
+  choosing a semantically similar task. If `read(dish_id=...)` cannot resolve it, stop rather than
+  guessing.
 - Planning authorization must be real. The first Planning `start` deliberately returns a challenge.
   Confirm it with `intent_basis: user_requested` only when Marco explicitly requested Planning for
   that exact task; otherwise ask him or use the explicit agent-override route with a real reason.
@@ -102,6 +121,9 @@ Before any task mutation:
 9. Inspect every imported operation and visibly confirm `client.run_id` is constrained as a
    non-nil canonical lowercase UUID; for `create`, `start`, `inspect`, `prepare`, `approve`, `reject`, `submit`,
    and `renew-lease`, also confirm `client.request_id` is required and has the same UUID constraints.
+10. Confirm imported `dish_read` accepts exactly one identity: either canonical `dish_id` or exact
+    `task_gid`. A Marco-supplied Dish UUID must be representable directly; section/task browsing is
+    not an acceptable substitute.
 
 Automated generator and checked-in-schema tests establish local acceptance only. Connected acceptance
 is not established until this exact schema is re-imported and the UUID constraints above are visibly
@@ -110,18 +132,21 @@ or re-import the TEST GPT Action before interpreting connected-GPT failures as b
 
 After every Action-schema refresh, run this minimal TEST contract check before broader rehearsal:
 
-1. Start a fresh Verification run through the connected TEST Action with a fresh `client.run_id` and
+1. Choose a TEST Dish already known to Dish. Call connected `dish_read` with its canonical `dish_id`
+   and confirm `data.identity_binding` returns that same Dish UUID plus the exact task GID, without
+   discovering the task through section/title matching.
+2. Start a fresh Verification run through the connected TEST Action for that exact returned task GID
+   with a fresh `client.run_id` and `client.request_id`.
+3. Confirm the result succeeds and `allowed_actions` contains `inspect`.
+4. Confirm the imported `dish_inspect` operation visibly accepts and requires both `client.run_id` and
    `client.request_id`.
-2. Confirm the result succeeds and `allowed_actions` contains `inspect`.
-3. Confirm the imported `dish_inspect` operation visibly accepts and requires both `client.run_id` and
-   `client.request_id`.
-4. Call public `dish_inspect` with the same run ID and a new unique request ID; it must succeed rather
+5. Call public `dish_inspect` with the same run ID and a new unique request ID; it must succeed rather
    than fail because the public schema cannot represent the runtime request.
-5. If desired, replay that exact inspect with the same request ID to confirm idempotent recovery. If
+6. If desired, replay that exact inspect with the same request ID to confirm idempotent recovery. If
    the imported schema makes request ID required, schema-level rejection of an omitted request ID is
    sufficient; do not fabricate a lower-level bypass merely to exercise runtime rejection.
 
-Classify inability to represent step 4 as a stale/incomplete connected Action schema and re-import it;
+Classify inability to represent step 5 as a stale/incomplete connected Action schema and re-import it;
 do not route around the public contract. Then run the complete disposable-task procedure in
 `live-test-project-rehearsal.md`. Preview success for `sections` is connectivity proof, not authorization
 for production Cooking.

@@ -107,6 +107,14 @@ def test_kill_frontend_url_fences_run_and_prepares_safe_successor() -> None:
     assert successor
     assert successor != operation["operation_id"]
 
+    continuation = app.execute("inspect", dish=_dish_id())
+    assert continuation["ok"], continuation
+    assert continuation["data"]["waiting_for"] != "terminal"
+    assert any(
+        isinstance(action, dict) and action.get("command") == "start"
+        for action in continuation["data"]["agent_actions_now"]
+    )
+
 
 
 

@@ -109,8 +109,13 @@ def test_action_and_runtime_docs_preserve_replay_inventory_and_decision_rules():
     assert "data.agent_guidance" in action_guide
     assert "For every Action whose imported schema requires `client.request_id`" in action_guide
     assert "This includes `inspect`" in action_guide
-    assert "replay only the exact same request with the same request ID" in action_guide
-    assert "Never use a new request ID to bypass a pending/uncertain request" in action_guide
+    assert "transport/client failure" in action_guide
+    assert "up to three times after the initial attempt" in action_guide
+    assert "approximately 2s, 5s, then 10s" in action_guide
+    assert "Reuse the same `client.run_id`" in action_guide
+    assert "the same `client.request_id`" in action_guide
+    assert "As soon as any Dish envelope is received, stop blind transport retries" in action_guide
+    assert "Never blindly retry `BACKEND_UNCERTAIN`" in action_guide
     assert "Truly read-only Actions" in action_guide
     assert "State-specific procedures" in action_guide
 
@@ -120,6 +125,22 @@ def test_action_and_runtime_docs_preserve_replay_inventory_and_decision_rules():
     assert "matching pending or uncertain request is never blindly executed again" in runtime
     assert "fresh UUID represents new work" in runtime
 
+
+
+def test_connected_override_and_canonical_dish_identity_contract_are_explicit():
+    action_guide = " ".join(
+        (ROOT / "deploy" / "gpt-action.md").read_text(encoding="utf-8").split()
+    )
+
+    assert "standalone word `override`" in action_guide
+    assert "applies only to the message that invokes it" in action_guide
+    assert "does not make a disallowed transition legal" in action_guide
+    assert "Dish's returned envelope remains authoritative" in action_guide
+    assert "read(dish_id=<uuid>)" in action_guide
+    assert "data.identity_binding" in action_guide
+    assert "Never pass a Dish UUID as `submission_id`" in action_guide
+    assert "section/task browsing" in action_guide
+    assert "stop rather than guessing" in action_guide
 
 def test_typed_action_policy_derives_command_and_request_id_inventory():
     assert set(CONNECTED_AGENT_COMMANDS) == set(EXPECTED_ACTION_COMMANDS)

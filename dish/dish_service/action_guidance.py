@@ -78,8 +78,10 @@ def action_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
             instructions.append(
                 "Do the Human Review preflight yourself rather than dumping protocol questions on Marco. Explain the real issue "
                 "in ordinary language. Supply one to six concrete plausible choices ordered best-first: choice A is always your "
-                "recommended route, and the later admin UI also gives Marco a free-text Other choice. Use a reasonable defensible "
-                "estimate, with assumptions stated, where exact values are unknowable; uncertainty alone is not a blocker. If you can "
+                "recommended route, and the later admin UI also gives Marco a free-text Other choice. When a choice is an exact "
+                "Exemptions authorization, send the complete before/after field values and use the canonical nutrition tag "
+                "([nutrition-kcal], [nutrition-protein], or [nutrition-fat]) rather than prose such as 'protein exemption'. "
+                "Use a reasonable defensible estimate, with assumptions stated, where exact values are unknowable; uncertainty alone is not a blocker. If you can "
                 "already construct the exact governed fix, use a Large correction so Dish queues that exact proposal for review. "
                 "Use Human Review only when a material Marco-only choice remains before an exact candidate can exist."
             )
@@ -126,11 +128,28 @@ def action_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
             if retry_instruction:
                 instructions.append(retry_instruction)
 
+        if command == "read":
+            binding = data.get("identity_binding")
+            if isinstance(binding, Mapping) and _text(binding.get("dish_id")):
+                instructions.append(
+                    "This data.identity_binding is Dish's exact canonical Dish-to-task binding. "
+                    "Use only the returned task_gid for task-scoped continuation; do not rediscover "
+                    "the Dish through sections or title matching, and never use dish_id as submission_id."
+                )
+
+        if command == "inspect" and error_rule == "operation_not_found":
+            instructions.append(
+                "submission_id is an operation/submission UUID, not a Dish UUID. If Marco supplied "
+                "`dish <uuid>`, resolve that identity with read(dish_id=<uuid>) rather than browsing "
+                "sections or guessing an operation."
+            )
+
         if command == "section-tasks":
             instructions.append(
-                "Section placement is discovery only, not workflow eligibility. Confirm the task "
-                "through Dish read/start. If data.next_cursor is non-null, use that exact cursor "
-                "for the next page; never invent or cross-reuse a cursor."
+                "Section placement is discovery only, not workflow eligibility. Never use section/task "
+                "browsing to resolve a canonical Dish UUID supplied by Marco; use read(dish_id=...) for "
+                "that exact identity. If data.next_cursor is non-null, use that exact cursor for the "
+                "next page; never invent or cross-reuse a cursor."
             )
 
         if command == "start" and "inspect" in actions:

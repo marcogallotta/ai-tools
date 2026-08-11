@@ -2421,6 +2421,26 @@ def _active_operation_for_admin_dish(
     return None if not rows else rows[0]
 
 
+def resolve_known_dish_task_gid(conn: sqlite3.Connection, raw: Any) -> str:
+    """Resolve one canonical Dish UUID to its exact known Asana task GID.
+
+    This is identity resolution only: it does not choose or authorize a workflow operation,
+    and it deliberately accepts no task-GID, URL, title, or section-discovery fallback.
+    """
+    from dish_tool.identifiers import require_dish_uuid
+
+    dish_id = require_dish_uuid(raw, field="dish_id")
+    task_gid = _known_task_gid_for_dish_uuid(conn, dish_id)
+    if task_gid is None:
+        raise DishRuleError(
+            "NOT_FOUND",
+            "Dish UUID is not known",
+            rule="dish_identity_not_found",
+            details={"dish_id": dish_id},
+        )
+    return task_gid
+
+
 def resolve_admin_dish_target(conn: sqlite3.Connection, raw: Any) -> dict[str, Any]:
     """Resolve a high-level ``<dish>`` reference without requiring an open operation.
 

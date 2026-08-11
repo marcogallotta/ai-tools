@@ -859,6 +859,7 @@ def _human_review_preflight(*, route: str, reason: str, confirmed=False, basis=N
                 "What other plausible routes should Marco be able to choose?",
                 "Can you construct the exact governed fix now and send it through the semantic-proposal review flow?",
                 "Can any option carry one exact governed-field authorization rather than another round of clarification?",
+                "For a nutrition Exemptions choice, does the exact after value contain the canonical [nutrition-kcal], [nutrition-protein], or [nutrition-fat] tag?",
             ],
             "retry": {
                 "fresh_request_id": True,

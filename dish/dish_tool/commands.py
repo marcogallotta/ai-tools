@@ -814,11 +814,44 @@ def _step5_create(self, *, trace: CommandTrace, agent: str, title: str) -> dict[
     return result_envelope(command="create", task_gid=task_gid, allowed_actions=["start"], data={"task_gid": task_gid, "schema_version": release.schema_version, "bare_task": True, "required_start_kind": "planning"})
 
 
-def _step5_read(self, *, trace: CommandTrace, agent: str, task_gid: str) -> dict[str, Any]:
+def _step5_read(
+    self,
+    *,
+    trace: CommandTrace,
+    agent: str,
+    task_gid: str | None = None,
+    dish_id: str | None = None,
+) -> dict[str, Any]:
+    from .database import resolve_known_dish_task_gid
+    from .identifiers import stable_dish_uuid_for_asana_identity
     from .step5 import diagnostics_for
     from .task_store import read_complete_task
     agent_family(agent)
-    task_gid = _clean_required(task_gid, rule="task_gid_required", label="task GID")
+    clean_task = str(task_gid or "").strip()
+    clean_dish = str(dish_id or "").strip()
+    if bool(clean_task) == bool(clean_dish):
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "read requires exactly one of task_gid or dish_id",
+            rule="read_identity_required",
+        )
+    if clean_dish:
+        task_gid = resolve_known_dish_task_gid(self.conn, clean_dish)
+    else:
+        task_gid = _clean_required(clean_task, rule="task_gid_required", label="task GID")
+    try:
+        resolved_dish_id = str(stable_dish_uuid_for_asana_identity("task", task_gid))
+    except ValueError:
+        # Legacy/synthetic test identities are not canonical imported Asana Dishes.
+        # Preserve task-GID reads for those fixtures without inventing a Dish UUID.
+        resolved_dish_id = None
+    if clean_dish and resolved_dish_id != clean_dish:
+        raise DishRuleError(
+            "CONFLICT",
+            "Dish identity resolved to an unexpected task binding",
+            rule="dish_identity_binding_mismatch",
+            details={"requested_dish_id": clean_dish, "resolved_dish_id": resolved_dish_id, "task_gid": task_gid},
+        )
     trace.task_gid = task_gid
     release = self._load_release(None)
     _require_cooking_task(self._read_live_task(task_gid), task_gid)
@@ -827,6 +860,12 @@ def _step5_read(self, *, trace: CommandTrace, agent: str, task_gid: str) -> dict
     stored = self.conn.execute("SELECT * FROM task_content_state WHERE task_gid = ?", (task_gid,)).fetchone()
     drift = None if stored is None else stored["last_confirmed_identity"] != live.identity
     data = {
+        "dish_id": resolved_dish_id,
+        "identity_binding": (
+            {"dish_id": resolved_dish_id, "task_gid": task_gid}
+            if resolved_dish_id is not None
+            else {"task_gid": task_gid}
+        ),
         "task": {"gid": live.gid, "title": live.title, "notes": live.notes, "section_gid": live.section_gid, "completed": live.completed, "modified_at": live.modified_at},
         "parsed": diag["parsed"], "task_schema_version": diag["schema_version"],
         "content_identity": live.identity, "stored_identity": None if stored is None else stored["last_confirmed_identity"],

@@ -723,6 +723,25 @@ def _command_inspect(
                 actions.append(dict(human_action))
         if abandonment["status"] == "awaiting_successor_claim":
             problem = "The prior run is retired; confirmed work is preserved and a fresh agent can continue safely."
+            administrative_blocker = False
+            required_action = view.get("required_action")
+            if isinstance(required_action, Mapping) and required_action.get("surface") == "connected-agent":
+                command_name = str(required_action.get("command") or "").strip()
+                required_arguments = (
+                    required_action.get("arguments")
+                    if isinstance(required_action.get("arguments"), Mapping)
+                    else {}
+                )
+                if command_name:
+                    agent_actions_override = [
+                        {"command": command_name, "arguments": dict(required_arguments)}
+                    ]
+                kind = str(required_arguments.get("kind") or "").strip()
+                waiting_for = (
+                    f"a fresh agent to start {kind.capitalize()} on the prepared successor"
+                    if kind
+                    else "a fresh agent to claim the prepared successor"
+                )
         elif abandonment["status"] == "awaiting_hold_resolution":
             problem = "The prior run is retired; the real Evidence/Human Review checkpoint is preserved and still needs Marco."
         else:
@@ -2571,13 +2590,33 @@ def _durable_attention_items(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         item["category"] = category
         item["needs_you"] = category in {"needs_marco", "unsafe"}
         item["operation_id"] = item["operation_ids"][-1]
+        kinds = {str(signal.get("kind") or "") for signal in signals}
+        if {"human_decision", "human_hold"} & kinds:
+            queue_group = "human_review"
+        elif "evidence_hold" in kinds:
+            queue_group = "evidence"
+        elif "proposal_review" in kinds:
+            queue_group = "change_review"
+        elif category == "unsafe":
+            queue_group = "recovery"
+        else:
+            queue_group = "system"
+        item["queue_group"] = queue_group
         result.append(item)
+    group_order = {"human_review": 0, "evidence": 1, "change_review": 2, "recovery": 3, "system": 4}
     result.sort(
         key=lambda item: (
-            -precedence[str(item["category"])],
+            group_order.get(str(item.get("queue_group") or "system"), 9),
             str(item.get("task_title") or item.get("task_gid") or ""),
         )
     )
+    return result
+
+
+def _command_queue(self, *, trace: AdminTrace) -> dict[str, Any]:
+    """Primary Marco work queue over the existing durable issue model."""
+    result = _command_issues(self, trace=trace)
+    result["command"] = "queue"
     return result
 
 
@@ -2642,6 +2681,13 @@ def _command_attention(self, *, trace: AdminTrace) -> dict[str, Any]:
     result = _command_issues(self, trace=trace)
     result["command"] = "attention"
     return result
+
+def _command_active(self, *, trace: AdminTrace) -> dict[str, Any]:
+    """Primary operator alias for the active lease/run diagnostic."""
+    result = _command_active_leases(self, trace=trace)
+    result["command"] = "active"
+    return result
+
 
 def _command_active_leases(self, *, trace: AdminTrace) -> dict[str, Any]:
     """List unreleased actor leases from durable Dish state without live task reads."""
@@ -4308,9 +4354,11 @@ _OPERATION_TARGET_COMMANDS = set(RESOLVED_OPERATION_TARGET_COMMANDS)
 
 
 CURRENT_ADMIN_COMMAND_HANDLERS = {
+    "queue": _command_queue,
     "issues": _command_issues,
     "attention": _command_attention,
     "audit": _command_audit,
+    "active": _command_active,
     "active-leases": _command_active_leases,
     "kill": _command_kill,
     "kill-all": _command_kill_all,

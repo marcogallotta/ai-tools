@@ -284,7 +284,7 @@ class IssuesApp:
 
     def execute(self, command: str, **arguments):
         self.calls.append((command, dict(arguments)))
-        if command in {"issues", "attention"}:
+        if command in {"queue", "issues", "attention"}:
             return _envelope(
                 command,
                 data={
@@ -303,11 +303,29 @@ class IssuesApp:
                                     "kind": "human_decision",
                                     "category": "needs_marco",
                                     "summary": "Make the Human Review decision.",
+                                    "review_id": "review-1",
                                     "shell_command": "dish-admin review-inspect review-1",
                                 }
                             ],
                         }
                     ],
+                },
+            )
+        if command == "review-inspect":
+            assert arguments["proposal_id"] == "review-1"
+            return _envelope(
+                command,
+                state="pending",
+                data={
+                    "review_item": {
+                        "item_type": "human_review",
+                        "review_id": "review-1",
+                        "proposal_id": "review-1",
+                        "status": "pending",
+                        "candidate_title": "Mapo tofu",
+                        "proposal_reason": "Choose how to resolve the issue.",
+                        "human_review_options": [],
+                    }
                 },
             )
         if command == "inspect":
@@ -323,7 +341,7 @@ class IssuesApp:
         raise AssertionError(command)
 
 
-def test_interactive_issues_drills_into_canonical_dish_without_command_hopping(capsys):
+def test_interactive_queue_enters_human_review_directly_without_generic_inspect(capsys):
     app = IssuesApp()
     input_fn, prompts = _answers("1", "q")
 
@@ -331,14 +349,13 @@ def test_interactive_issues_drills_into_canonical_dish_without_command_hopping(c
 
     assert status == 0
     assert app.calls == [
-        ("issues", {}),
-        ("inspect", {"dish": "11111111-1111-5111-8111-111111111111", "verbose": False}),
+        ("queue", {}),
+        ("review-inspect", {"proposal_id": "review-1"}),
     ]
     output = capsys.readouterr().out
-    assert "Select a Dish number to inspect its exact current state." in output
+    assert "Select a number to resolve or inspect it." in output
     assert "dish-admin review-inspect" not in output
-    assert "Dish is waiting for Marco's decision." in output
-    assert any("Dish number" in prompt for prompt in prompts)
+    assert any("Queue number" in prompt for prompt in prompts)
 
 
 def test_issues_cli_non_interactive_flag_preserves_one_shot_summary(monkeypatch, capsys):
@@ -346,9 +363,9 @@ def test_issues_cli_non_interactive_flag_preserves_one_shot_summary(monkeypatch,
     monkeypatch.setattr(admin_cli.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(admin_cli.sys.stdout, "isatty", lambda: True)
 
-    assert admin_cli.main(["issues", "--non-interactive"], application=app) == 0
+    assert admin_cli.main(["queue", "--non-interactive"], application=app) == 0
 
-    assert app.calls == [("issues", {})]
+    assert app.calls == [("queue", {})]
     output = capsys.readouterr().out
     assert "dish-admin review-inspect review-1" in output
     assert "Select a Dish number" not in output

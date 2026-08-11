@@ -49,6 +49,8 @@ _SHADOW_ONLY_OVERRIDES: dict[str, tuple[Treatment, str]] = {
     "review-inspect": ("excluded", "read-only source semantic-proposal detail"),
     "review-approve": ("capture_only", "target semantic-proposal authority is not implemented"),
     "review-reject": ("capture_only", "target semantic-proposal authority is not implemented"),
+    "active": ("excluded", "read-only operator active-work query"),
+    "queue": ("excluded", "read-only operator queue"),
     "kill": ("capture_only", "target high-level replacement orchestration is not implemented"),
 }
 

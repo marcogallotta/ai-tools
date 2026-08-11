@@ -302,27 +302,58 @@
                     }
                   },
                   "arguments": {
-                    "required": [
-                      "task_gid",
-                      "agent"
-                    ],
-                    "properties": {
-                      "task_gid": {
-                        "type": "string",
-                        "pattern": "^[1-9][0-9]*$",
-                        "maxLength": 19
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "dish_id",
+                          "agent"
+                        ],
+                        "properties": {
+                          "dish_id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "minLength": 36,
+                            "maxLength": 36,
+                            "description": "Canonical Dish UUID. Use this to resolve a Marco-supplied `dish <uuid>` handoff deterministically; never rediscover that Dish by browsing sections or matching titles."
+                          },
+                          "agent": {
+                            "type": "string",
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ]
+                          }
+                        }
                       },
-                      "agent": {
-                        "type": "string",
-                        "enum": [
-                          "claude",
-                          "gpt",
-                          "codex"
-                        ]
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "task_gid",
+                          "agent"
+                        ],
+                        "properties": {
+                          "task_gid": {
+                            "type": "string",
+                            "pattern": "^[1-9][0-9]*$",
+                            "maxLength": 19,
+                            "description": "Exact task GID. Use this only when already returned by Dish."
+                          },
+                          "agent": {
+                            "type": "string",
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ]
+                          }
+                        }
                       }
-                    },
-                    "type": "object",
-                    "additionalProperties": false
+                    ]
                   }
                 }
               }
@@ -1533,7 +1564,7 @@
                             "type": "array",
                             "minItems": 1,
                             "maxItems": 6,
-                            "description": "Concrete human choices for this Human Review, ordered best-first. The first item is always the agent's recommended route. Include plausible alternatives; Dish always gives Marco a free-text Other choice in the admin UI.",
+                            "description": "Concrete human choices for this Human Review, ordered best-first. The first item is always the agent's recommended route. Include plausible alternatives; Dish always gives Marco a free-text Other choice in the admin UI. If an option authorizes an Exemptions change, before/after must be the complete exact field values. Nutrition waivers use the canonical tags [nutrition-kcal], [nutrition-protein], or [nutrition-fat] in the after value, not prose substitutes.",
                             "items": {
                               "type": "object",
                               "additionalProperties": false,
