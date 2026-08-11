@@ -772,6 +772,23 @@ A checked-in generated artifact needs two different tests:
 The recovery fixture database and its JSON sidecars are checked both ways. Updating the generator and
 checked-in artifacts together is insufficient unless the independent literal contract is also reviewed.
 
+The governed Stage A baseline does not update during ordinary tests or source changes. When a reviewed
+change intentionally alters its command inventory, SQLite authority inventory, or governed source
+hashes, first inspect the failing contract diff. If the new state is intended, regenerate the canonical
+checked-in baseline from the repository root with an audit reason:
+
+```sh
+.venv/bin/python scripts/dish-pg-stage-a-baseline \
+  --write \
+  --reason "Describe the reviewed change requiring this rebaseline"
+.venv/bin/python -m pytest -q tests/postgresql/test_stage1_baseline_contract.py
+```
+
+Do not use `--output` to update the checked-in baseline: it writes only the explicitly supplied path.
+Do not rebaseline merely to silence an unexplained contract failure; review the changed inventory or
+source hashes first. Commit `docs/database-backend-stage-a-baseline.json` explicitly when the review
+confirms the new baseline.
+
 SQLite schema or migration changes do not automatically update the checked-in recovery fixture.
 The reproducibility test generates into a temporary directory and only compares the result. For every
 change to `dish_tool/database_schema.py` or `dish_tool/database_migrations.py`, run:
