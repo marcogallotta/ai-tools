@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""git-commit — atomic stage-and-commit.
+"""git-commit — atomic stage, commit, and main-branch push.
 
 Refuses carpet-bomb patterns ('.', '-A', '-u', '--all') to prevent index
 collisions between concurrent Claude sessions.
 
-Usage: git-commit <file> [file...] -m "message" [-C <repo>] [--amend]
+Usage: git-commit <file> [file...] -m "message" [-C <repo>]
 """
 import os
 import subprocess
@@ -14,17 +14,14 @@ from pathlib import Path
 CARPET_BOMB_PATTERNS = {".", "-A", "-u", "--all"}
 
 HELP_TEXT = """\
-Usage: git-commit <file> [file...] -m "message" [-C <repo>] [--amend]
+Usage: git-commit <file> [file...] -m "message" [-C <repo>]
 
 Atomic stage-and-commit. Refuses carpet-bomb patterns ('.', '-A', '-u', '--all')
 to prevent index collisions between concurrent Claude sessions.
 
 Options:
-  -m <message>                    Commit message (required, unless --amend is
-                                   used without one, which keeps the prior message)
+  -m <message>                    Commit message (required)
   -C <repo>                       Run git in <repo> instead of $PWD
-  --amend                         Amend the previous commit instead of creating
-                                   a new one
   -h, --help                      Show this help and exit
 
 Paths are resolved relative to $PWD (or -C <repo> if given), NOT the repo root.
@@ -45,7 +42,6 @@ def fail(message):
 def parse_args(argv):
     msg = None
     repo = None
-    amend = False
     files = []
 
     i = 0
@@ -65,8 +61,6 @@ def parse_args(argv):
             if i >= n:
                 fail("Error: -C requires a value")
             repo = argv[i]
-        elif arg == "--amend":
-            amend = True
         elif arg == "--":
             files.extend(argv[i + 1 :])
             break
@@ -76,7 +70,7 @@ def parse_args(argv):
             files.append(arg)
         i += 1
 
-    return msg, repo, amend, files
+    return msg, repo, files
 
 
 def run_git(cwd, *args, check=True):
@@ -181,10 +175,81 @@ def check_dish_version_guard(repo_root):
         )
 
 
-def main(argv):
-    msg, repo, amend, files = parse_args(argv)
+def push_main(git_cwd, sha):
+    last_push = None
+    for _ in range(3):
+        last_push = run_git(git_cwd, "push", "origin", "main", check=False)
+        if last_push.returncode == 0:
+            print(f"Commit succeeded and pushed: {sha}")
+            return 0
 
-    if not msg and not amend:
+    fetched = run_git(
+        git_cwd,
+        "fetch",
+        "origin",
+        "+refs/heads/main:refs/remotes/origin/main",
+        check=False,
+    )
+    push_error = last_push.stderr.rstrip()
+    if fetched.returncode != 0:
+        print(f"Commit succeeded locally ({sha}).", file=sys.stderr)
+        print("Push to origin/main failed after retries:", file=sys.stderr)
+        print(push_error, file=sys.stderr)
+        print("Could not verify remote state (fetch also failed):", file=sys.stderr)
+        print(fetched.stderr.rstrip(), file=sys.stderr)
+        print("Push status is UNKNOWN — do not assume success or failure.", file=sys.stderr)
+        print(
+            "Verify manually (e.g. check origin/main on GitHub) before taking any "
+            "further action.",
+            file=sys.stderr,
+        )
+        return 1
+
+    present = run_git(
+        git_cwd,
+        "merge-base",
+        "--is-ancestor",
+        sha,
+        "refs/remotes/origin/main",
+        check=False,
+    )
+    if present.returncode == 0:
+        print(f"Commit succeeded and pushed: {sha}")
+        print(
+            "(Push initially reported an error, but origin/main was verified to "
+            "already have this commit — no action needed.)"
+        )
+        return 0
+
+    ahead = run_git(
+        git_cwd,
+        "rev-list",
+        "--count",
+        f"refs/remotes/origin/main..{sha}",
+    ).stdout.strip()
+    print(f"Commit succeeded locally ({sha}).", file=sys.stderr)
+    print("Push to origin/main failed after retries:", file=sys.stderr)
+    print(push_error, file=sys.stderr)
+    print(
+        f"Confirmed: origin/main does NOT have {sha} "
+        f"(local is ahead by {ahead} commit(s)).",
+        file=sys.stderr,
+    )
+    print(
+        "Do not force-push, rebase, or modify credentials to resolve this.",
+        file=sys.stderr,
+    )
+    print(
+        "Retry the push manually, or escalate the error above if it recurs.",
+        file=sys.stderr,
+    )
+    return 1
+
+
+def main(argv):
+    msg, repo, files = parse_args(argv)
+
+    if not msg:
         fail("Error: -m <message> is required")
 
     if not files:
@@ -241,19 +306,18 @@ def main(argv):
 
     check_dish_version_guard(repo_root)
 
-    commit_args = []
-    if amend:
-        commit_args.append("--amend")
-        if msg:
-            commit_args.extend(["-m", msg])
-        else:
-            commit_args.append("--no-edit")
-    else:
-        commit_args.extend(["-m", msg])
+    result = subprocess.run(["git", "-C", str(git_cwd), "commit", "-m", msg])
+    if result.returncode != 0:
+        return result.returncode
 
-    result = subprocess.run(["git", "-C", str(git_cwd), "commit", *commit_args])
-    sys.exit(result.returncode)
+    branch = run_git(git_cwd, "branch", "--show-current").stdout.strip()
+    remotes = run_git(git_cwd, "remote").stdout.splitlines()
+    if branch != "main" or "origin" not in remotes:
+        return 0
+
+    sha = run_git(git_cwd, "rev-parse", "HEAD").stdout.strip()
+    return push_main(git_cwd, sha)
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    sys.exit(main(sys.argv[1:]))

@@ -38,8 +38,8 @@ Sourcing sections remain available. Governed mutations must go through `dish` or
   controlled low-level transport.
 - `test_git_commit.py` covers `tools/git-commit` as a black box: it runs the real script as a
   subprocess against throwaway git repos in `tmp_path` and asserts on exit codes, stderr, and
-  the resulting commits/index — staging, `--amend`, carpet-bomb refusal, the staged-deletion
-  path, and the `DISH_VERSION` guard.
+  the resulting commits/index/remotes — staging, main-branch auto-push and failure verification,
+  carpet-bomb refusal, the staged-deletion path, and the `DISH_VERSION` guard.
 
 Both run in `tools/.venv` (it has `pytest` installed alongside the SDK, per
 `requirements.txt`), so no separate test venv is needed:

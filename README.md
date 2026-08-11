@@ -13,9 +13,10 @@ hook scripts and instruction files that make agents use them.
 git-commit <file> [file...] -m "message"      # --help for flags
 ```
 
-Stages and commits only the files you name, as one operation. Refuses `.`, `-A`, `-u` — carpet
-staging collides with the index of whatever other session is running. Also enforces the size
-limit on `dish-protocol.md`.
+Stages and commits only the files you name, as one operation. A successful commit on `main` is
+also pushed explicitly to `origin/main`; other branches and repositories without `origin` remain
+commit-only. Refuses `.`, `-A`, `-u` — carpet staging collides with the index of whatever other
+session is running. Also enforces the size limit on `dish-protocol.md`.
 
 **`tools/asana`** — reads and writes Asana tasks and projects.
 

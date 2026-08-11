@@ -2,35 +2,43 @@
 
 Runs the real script as a subprocess against throwaway git repos in tmp_path,
 rather than importing it, since its behavior is defined by what it does to a
-real git index/working tree -- staging, amending, the DISH_VERSION guard --
+real git index/working tree -- staging, pushing, the DISH_VERSION guard --
 not by any internal function contract.
 """
+import os
+import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
 SCRIPT = Path(__file__).resolve().parent.parent / "git-commit"
+REAL_GIT = shutil.which("git")
 
 
-def run(repo, *args):
+def run(repo, *args, env=None):
     return subprocess.run(
         [str(SCRIPT), *args],
         cwd=repo,
         text=True,
         capture_output=True,
+        env=env,
     )
 
 
 def init_repo(repo):
-    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "user.email", "a@b.c"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "user.name", "test"], cwd=repo, check=True)
+    subprocess.run([REAL_GIT, "init", "-q"], cwd=repo, check=True)
+    subprocess.run([REAL_GIT, "config", "user.email", "a@b.c"], cwd=repo, check=True)
+    subprocess.run([REAL_GIT, "config", "user.name", "test"], cwd=repo, check=True)
 
 
 def log_subjects(repo):
     result = subprocess.run(
-        ["git", "log", "--format=%s"], cwd=repo, check=True, text=True, capture_output=True
+        [REAL_GIT, "log", "--format=%s"],
+        cwd=repo,
+        check=True,
+        text=True,
+        capture_output=True,
     )
     return result.stdout.splitlines()
 
@@ -39,6 +47,68 @@ def log_subjects(repo):
 def repo(tmp_path):
     init_repo(tmp_path)
     return tmp_path
+
+
+def seed_origin(repo, tmp_path):
+    remote = tmp_path / "remote.git"
+    subprocess.run([REAL_GIT, "init", "--bare", "-q", str(remote)], check=True)
+    subprocess.run([REAL_GIT, "checkout", "-q", "-b", "main"], cwd=repo, check=True)
+    subprocess.run([REAL_GIT, "remote", "add", "origin", str(remote)], cwd=repo, check=True)
+    (repo / "seed.txt").write_text("seed\n")
+    subprocess.run([REAL_GIT, "add", "seed.txt"], cwd=repo, check=True)
+    subprocess.run([REAL_GIT, "commit", "-q", "-m", "seed"], cwd=repo, check=True)
+    subprocess.run([REAL_GIT, "push", "-q", "origin", "main"], cwd=repo, check=True)
+    return remote
+
+
+@pytest.fixture
+def push_shim(tmp_path):
+    shim_dir = tmp_path / "shim"
+    shim_dir.mkdir()
+    shim = shim_dir / "git"
+    shim.write_text(
+        """#!/usr/bin/env python3
+import os
+import subprocess
+import sys
+
+mode = os.environ["PUSH_SHIM_MODE"]
+state = os.environ["PUSH_SHIM_STATE"]
+real_git = os.environ["REAL_GIT"]
+command = sys.argv[3] if len(sys.argv) > 3 and sys.argv[1] == "-C" else sys.argv[1]
+
+if command == "push":
+    try:
+        count = int(open(state).read()) + 1
+    except FileNotFoundError:
+        count = 1
+    with open(state, "w") as handle:
+        handle.write(str(count))
+    if mode == "retry" and count >= 3:
+        os.execv(real_git, [real_git, *sys.argv[1:]])
+    if mode == "present" and count == 1:
+        subprocess.run([real_git, *sys.argv[1:]], check=True, capture_output=True)
+    print(f"simulated push failure {count}", file=sys.stderr)
+    sys.exit(1)
+
+if command == "fetch" and mode == "unknown":
+    print("simulated fetch failure", file=sys.stderr)
+    sys.exit(1)
+
+os.execv(real_git, [real_git, *sys.argv[1:]])
+"""
+    )
+    shim.chmod(0o755)
+
+    def environment(mode):
+        env = os.environ.copy()
+        env["PATH"] = f"{shim_dir}:{env['PATH']}"
+        env["PUSH_SHIM_MODE"] = mode
+        env["PUSH_SHIM_STATE"] = str(tmp_path / f"{mode}.count")
+        env["REAL_GIT"] = REAL_GIT
+        return env
+
+    return environment
 
 
 def test_commits_named_file(repo):
@@ -88,7 +158,7 @@ def test_dash_prefixed_carpet_bomb_flags_after_separator_hit_the_real_guard(repo
     assert "not allowed" in result.stderr
 
 
-def test_requires_message_unless_amending(repo):
+def test_requires_message(repo):
     (repo / "foo.txt").write_text("hi\n")
     result = run(repo, "foo.txt")
     assert result.returncode == 1
@@ -115,22 +185,11 @@ def test_missing_file_reports_diagnostic(repo):
     assert "nope.txt" in result.stderr
 
 
-def test_amend_with_new_message(repo):
+def test_rejects_amend(repo):
     (repo / "foo.txt").write_text("hi\n")
-    run(repo, "foo.txt", "-m", "first")
-    (repo / "foo.txt").write_text("hi again\n")
-    result = run(repo, "foo.txt", "--amend", "-m", "amended")
-    assert result.returncode == 0, result.stderr
-    assert log_subjects(repo) == ["amended"]
-
-
-def test_amend_without_message_keeps_prior_message(repo):
-    (repo / "foo.txt").write_text("hi\n")
-    run(repo, "foo.txt", "-m", "keep me")
-    (repo / "foo.txt").write_text("hi again\n")
-    result = run(repo, "foo.txt", "--amend")
-    assert result.returncode == 0, result.stderr
-    assert log_subjects(repo) == ["keep me"]
+    result = run(repo, "foo.txt", "--amend", "-m", "no")
+    assert result.returncode == 1
+    assert "Unknown flag: --amend" in result.stderr
 
 
 def test_stages_and_commits_a_plain_deletion(repo):
@@ -171,7 +230,149 @@ def test_help_exits_zero_and_does_not_touch_repo(repo):
     result = run(repo, "--help")
     assert result.returncode == 0
     assert "Usage: git-commit" in result.stdout
+    assert "--amend" not in result.stdout
     assert log_subjects(repo) == ["seed commit"]
+
+
+def test_successful_commit_on_main_pushes_to_origin(tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    init_repo(work)
+    remote = seed_origin(work, tmp_path)
+    (work / "foo.txt").write_text("hi\n")
+
+    result = run(work, "foo.txt", "-m", "push me")
+
+    assert result.returncode == 0, result.stderr
+    local_sha = subprocess.run(
+        [REAL_GIT, "rev-parse", "HEAD"],
+        cwd=work,
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+    remote_sha = subprocess.run(
+        [REAL_GIT, "rev-parse", "main"],
+        cwd=remote,
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+    assert remote_sha == local_sha
+    assert f"Commit succeeded and pushed: {local_sha}" in result.stdout
+
+
+def test_failed_push_retries_and_can_succeed(tmp_path, push_shim):
+    work = tmp_path / "work"
+    work.mkdir()
+    init_repo(work)
+    remote = seed_origin(work, tmp_path)
+    (work / "foo.txt").write_text("hi\n")
+
+    result = run(work, "foo.txt", "-m", "retry me", env=push_shim("retry"))
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "retry.count").read_text() == "3"
+    local_sha = subprocess.run(
+        [REAL_GIT, "rev-parse", "HEAD"],
+        cwd=work,
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+    remote_sha = subprocess.run(
+        [REAL_GIT, "rev-parse", "main"],
+        cwd=remote,
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+    assert remote_sha == local_sha
+
+
+def test_apparent_push_failure_verified_present_is_success(tmp_path, push_shim):
+    work = tmp_path / "work"
+    work.mkdir()
+    init_repo(work)
+    seed_origin(work, tmp_path)
+    (work / "foo.txt").write_text("hi\n")
+
+    result = run(work, "foo.txt", "-m", "land ambiguously", env=push_shim("present"))
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / "present.count").read_text() == "3"
+    assert "verified to already have this commit" in result.stdout
+
+
+def test_failed_push_verified_absent_is_incomplete(tmp_path, push_shim):
+    work = tmp_path / "work"
+    work.mkdir()
+    init_repo(work)
+    seed_origin(work, tmp_path)
+    (work / "foo.txt").write_text("hi\n")
+
+    result = run(work, "foo.txt", "-m", "stay local", env=push_shim("absent"))
+
+    assert result.returncode == 1
+    assert (tmp_path / "absent.count").read_text() == "3"
+    assert "simulated push failure 3" in result.stderr
+    assert "simulated push failure 2" not in result.stderr
+    assert "Confirmed: origin/main does NOT have" in result.stderr
+    assert "local is ahead by 1 commit(s)" in result.stderr
+
+
+def test_failed_push_and_fetch_reports_unknown(tmp_path, push_shim):
+    work = tmp_path / "work"
+    work.mkdir()
+    init_repo(work)
+    seed_origin(work, tmp_path)
+    (work / "foo.txt").write_text("hi\n")
+
+    result = run(work, "foo.txt", "-m", "cannot verify", env=push_shim("unknown"))
+
+    assert result.returncode == 1
+    assert (tmp_path / "unknown.count").read_text() == "3"
+    assert "simulated push failure 3" in result.stderr
+    assert "simulated fetch failure" in result.stderr
+    assert "Push status is UNKNOWN" in result.stderr
+
+
+def test_non_main_branch_does_not_push(tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    init_repo(work)
+    remote = seed_origin(work, tmp_path)
+    remote_before = subprocess.run(
+        [REAL_GIT, "rev-parse", "main"],
+        cwd=remote,
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+    subprocess.run([REAL_GIT, "checkout", "-q", "-b", "feature"], cwd=work, check=True)
+    (work / "foo.txt").write_text("hi\n")
+
+    result = run(work, "foo.txt", "-m", "feature only")
+
+    assert result.returncode == 0, result.stderr
+    remote_after = subprocess.run(
+        [REAL_GIT, "rev-parse", "main"],
+        cwd=remote,
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout.strip()
+    assert remote_after == remote_before
+
+
+def test_main_without_origin_remains_commit_only(repo):
+    subprocess.run([REAL_GIT, "checkout", "-q", "-b", "main"], cwd=repo, check=True)
+    (repo / "foo.txt").write_text("hi\n")
+
+    result = run(repo, "foo.txt", "-m", "local only")
+
+    assert result.returncode == 0, result.stderr
+    assert "pushed" not in result.stdout
 
 
 class TestDishVersionGuard:

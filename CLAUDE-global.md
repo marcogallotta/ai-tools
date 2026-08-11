@@ -78,6 +78,11 @@ Use plain `git` for every non-commit Git operation, including status, log, and d
 agent-specific Git integration for commits. Run `~/.local/bin/git-commit --help` when its flags are
 needed. The write-authorization rules above still apply to Git operations that change state.
 
+A commit made by `git-commit` on `main` is incomplete until it reaches `origin`. The wrapper retries
+a failed push, then fetches to verify whether the commit landed. If it remains unresolved, treat the
+local commit as an open task and escalate the exact error. Do not rebase, merge, amend, force-push,
+bypass hooks, or modify credentials or Git configuration to resolve the failure unilaterally.
+
 ## Documentation complexity budgets
 
 Protocol usability is itself a protection. Judge these docs by conceptual complexity — branches,
