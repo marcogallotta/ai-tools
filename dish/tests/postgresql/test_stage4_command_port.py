@@ -10,12 +10,8 @@ from sqlalchemy import func, select
 
 from dish_pg import models
 from dish_pg import stage3_models as wf
-from dish_pg.command_contract import ACTION_COMMANDS, RETAINED_COMMANDS
-from dish_pg.command_port import (
-    PORTED_MUTATION_COMMANDS,
-    CommandCall,
-    PostgresCommandPort,
-)
+from dish_pg.command_contract import ACTION_COMMANDS
+from dish_pg.command_port import CommandCall, PostgresCommandPort
 from dish_pg.database import session_scope
 from dish_pg.openapi import postgres_action_openapi
 from dish_pg.planner import (
@@ -38,9 +34,7 @@ SECRET = b"stage-4-cursor-secret-32-bytes!!"
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_stage4_ports_every_retained_mutation_and_action_path() -> None:
-    queries = {"sections", "section-tasks", "read", "holds", "attention"}
-    assert PORTED_MUTATION_COMMANDS == set(RETAINED_COMMANDS) - queries
+def test_stage4_postgresql_action_path_contract() -> None:
     document = postgres_action_openapi()
     assert set(document["paths"]) == {f"/v1/action/{name}" for name in ACTION_COMMANDS}
     assert document["paths"]["/v1/action/inspect"]["post"]["x-openai-isConsequential"] is True

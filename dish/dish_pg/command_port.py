@@ -54,16 +54,6 @@ from .workflow import (
 )
 
 
-PORTED_MUTATION_COMMANDS = frozenset({
-    "create", "inspect", "start", "prepare", "approve", "reject", "submit",
-    "renew-lease", "recover", "repair-destination", "discard",
-    "abandon-operation", "reconcile-abandonment", "reopen-planning", "reopen",
-    "supply-evidence", "record-human-decision", "authorize-governed-change",
-    "recover-lease", "expire-lease", "migrate", "planning-intent-settlement",
-    "resolved",
-})
-
-
 class CommandPortError(ValueError):
     """Base error for canonical command admission or execution."""
 
