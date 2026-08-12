@@ -388,13 +388,19 @@ class LegacyShadowCapture:
                 LOGGER.exception("dark-launch spool initialization failed; capture remains fail-open")
 
     @staticmethod
-    def _principal(principal: Any) -> dict[str, Any]:
+    def _principal(
+        principal: Any, *, principal_class: str | None = None
+    ) -> dict[str, Any]:
         if principal is None:
             return {}
         return {
             "owner_id": getattr(principal, "owner_id", None),
             "run_id": getattr(principal, "run_id", None),
-            "principal_class": getattr(principal, "principal_class", None),
+            "principal_class": (
+                principal_class
+                if principal_class is not None
+                else getattr(principal, "principal_class", None)
+            ),
         }
 
     def _engage_capacity_kill_switch(self, error: ShadowSpoolCapacityError) -> None:
@@ -433,6 +439,7 @@ class LegacyShadowCapture:
         command: str,
         arguments: Mapping[str, Any],
         principal: Any,
+        principal_class: str | None = None,
         request_id: str | None,
         call: Callable[[], dict[str, Any]],
     ) -> dict[str, Any]:
@@ -447,7 +454,9 @@ class LegacyShadowCapture:
             return call()
         identity = str(request_id or f"unreplayed:{uuid.uuid4()}")
         canonical_input = {"command": command, "arguments": _jsonable(arguments)}
-        principal_payload = self._principal(principal)
+        principal_payload = self._principal(
+            principal, principal_class=principal_class
+        )
         try:
             existing = self.spool.get_by_source_identity(identity)
             if existing is not None and existing.state in {"complete", "gap", "delivered"}:

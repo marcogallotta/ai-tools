@@ -1,12 +1,15 @@
 from __future__ import annotations
 import uuid
 from datetime import timedelta
+from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
 from dish_pg import stage3_models as wf
 from dish_pg import stage5_models as tx
 from dish_pg.database import session_scope
+from dish_pg.planner import AuthoritativeSnapshot, CanonicalCommandIntent, plan_command
 from dish_pg.shadow_worker import (
+    CommandPortShadowEvaluator,
     ShadowIdentityMappingError,
     ShadowWorker,
     _translate_workflow_identifiers,
@@ -28,6 +31,109 @@ from tests.support.postgresql.dark_launch_shadow_worker import (
     _spool,
     _real_verification_target,
 )
+
+
+def test_supply_evidence_shadow_replay_preserves_captured_principal_scope(monkeypatch):
+    import dish_pg.shadow_worker as shadow_worker
+
+    calls = []
+    generation_id = uuid.uuid4()
+
+    class Reads:
+        def active_generation(self):
+            return SimpleNamespace(generation_id=generation_id)
+
+    class Port:
+        def __init__(self, *_args, **_kwargs):
+            self.reads = Reads()
+
+        def execute(self, call):
+            calls.append(call)
+            return SimpleNamespace(
+                ok=True,
+                command=call.command_name,
+                code="OK",
+                http_status=200,
+                data={},
+                retryable=False,
+            )
+
+    class Session:
+        def get(self, model, _identity):
+            assert model is tx.ShadowBaseline
+            return SimpleNamespace(status="open", generation_id=generation_id)
+
+        def flush(self):
+            return None
+
+    monkeypatch.setattr(shadow_worker, "PostgresCommandPort", Port)
+    monkeypatch.setattr(
+        shadow_worker,
+        "_translate_workflow_identifiers",
+        lambda _session, _envelope, arguments: dict(arguments),
+    )
+    monkeypatch.setattr(shadow_worker, "_ensure_shadow_run", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        shadow_worker, "_target_authority_state", lambda *_args, **_kwargs: {}
+    )
+    monkeypatch.setattr(
+        shadow_worker, "_target_response_payload", lambda *_args, **_kwargs: {}
+    )
+    monkeypatch.setattr(shadow_worker, "canonical_transition", lambda *_args: {})
+
+    evaluator = CommandPortShadowEvaluator(cursor_secret=b"test")
+    for principal_class in ("admin", "agent"):
+        evaluator.evaluate(
+            Session(),
+            SimpleNamespace(
+                canonical_input={"command": "supply-evidence", "arguments": {}},
+                shadow_baseline_id=uuid.uuid4(),
+                principal={
+                    "owner_id": "owner",
+                    "run_id": "source-run",
+                    "principal_class": principal_class,
+                },
+                source_request_identity=f"{principal_class}-supply-evidence",
+                source_authority_generation="legacy-1",
+                command_name="supply-evidence",
+                captured_at=NOW,
+            ),
+        )
+
+    assert [call.command_name for call in calls] == ["supply-evidence", "supply-evidence"]
+    assert [call.principal_class for call in calls] == ["admin", "agent"]
+
+    snapshot = AuthoritativeSnapshot(
+        generation_id=str(generation_id),
+        task_id=None,
+        fence=None,
+        workflow=None,
+        task_exists=False,
+    )
+    admin_plan = plan_command(
+        snapshot=snapshot,
+        intent=CanonicalCommandIntent(
+            command_name="supply-evidence",
+            arguments={},
+            principal_class=calls[0].principal_class,
+            owner_id=calls[0].owner_id,
+            run_id=str(calls[0].run_id),
+        ),
+        pinned_now=NOW,
+    )
+    agent_plan = plan_command(
+        snapshot=snapshot,
+        intent=CanonicalCommandIntent(
+            command_name="supply-evidence",
+            arguments={},
+            principal_class=calls[1].principal_class,
+            owner_id=calls[1].owner_id,
+            run_id=str(calls[1].run_id),
+        ),
+        pinned_now=NOW,
+    )
+    assert admin_plan.result_code == "TASK_NOT_FOUND"
+    assert agent_plan.result_code == "PRINCIPAL_SCOPE_MISMATCH"
 
 
 def test_shadow_worker_delivers_executes_and_compares(workflow_db, tmp_path):

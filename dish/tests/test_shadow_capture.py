@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 import sqlite3
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
+from dish_service.leases import ServicePrincipal
+from dish_service.request_coordinators import AdminRequestCoordinator, AgentRequestCoordinator
 from dish_service.shadow_capture import LegacyShadowCapture, ShadowCaptureSettings
 from dish_service.path_safety import clear_kill_switch, engage_kill_switch
 from dish_service.shadow_spool import ShadowSpool
@@ -13,6 +17,81 @@ def _db(path: Path) -> None:
     conn = sqlite3.connect(path)
     conn.executescript("CREATE TABLE task_content_state(task_gid TEXT PRIMARY KEY, value TEXT); INSERT INTO task_content_state VALUES ('t1','before');")
     conn.commit(); conn.close()
+
+
+def test_request_surfaces_label_shadow_capture_principal_scope(monkeypatch):
+    class CaptureProbe:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def execute(self, **kwargs):
+            self.calls.append(kwargs)
+            return kwargs["call"]()
+
+    shadow = CaptureProbe()
+    gate = SimpleNamespace(request=lambda: nullcontext())
+    principal = ServicePrincipal(owner_id="owner", run_id="run")
+
+    agent = AgentRequestCoordinator(
+        SimpleNamespace(
+            _maintenance_gate=gate,
+            _planning_intent_execution_lock=lambda *_args: nullcontext(),
+            _shadow_capture=shadow,
+        ),
+        initialization_error=lambda exc: exc,
+    )
+    monkeypatch.setattr(
+        agent, "_execute_locked", lambda *_args, **_kwargs: {"ok": True}
+    )
+    assert agent.execute("start", {}, principal=principal, request_id="agent-request") == {
+        "ok": True
+    }
+    assert shadow.calls[-1]["principal_class"] == "agent"
+
+    admin = AdminRequestCoordinator(
+        SimpleNamespace(_maintenance_gate=gate, _shadow_capture=shadow),
+        initialization_error=lambda exc: exc,
+    )
+    monkeypatch.setattr(
+        admin, "_execute_locked", lambda *_args, **_kwargs: {"ok": True}
+    )
+    assert admin.execute(
+        "supply-evidence", {}, principal=principal, request_id="admin-request"
+    ) == {"ok": True}
+    assert shadow.calls[-1]["principal_class"] == "admin"
+
+
+def test_capture_persists_explicit_principal_class_without_changing_live_result(tmp_path):
+    db = tmp_path / "live.sqlite3"
+    _db(db)
+    capture = LegacyShadowCapture(
+        ShadowCaptureSettings(
+            "capture", tmp_path / "spool.sqlite3", tmp_path / "emergency", "legacy-1"
+        ),
+        db_path=db,
+    )
+    principal = ServicePrincipal(owner_id="owner", run_id="run")
+    for request_id, principal_class in (
+        ("agent-capture", "agent"),
+        ("admin-capture", "admin"),
+    ):
+        expected = {"ok": True, "data": {"surface": principal_class}}
+        result = capture.execute(
+            command="start",
+            arguments={"task_gid": "t1"},
+            principal=principal,
+            principal_class=principal_class,
+            request_id=request_id,
+            call=lambda expected=expected: expected,
+        )
+        assert result is expected
+        item = capture.spool.get_by_source_identity(request_id)
+        assert item is not None
+        assert item.principal == {
+            "owner_id": "owner",
+            "run_id": "run",
+            "principal_class": principal_class,
+        }
 
 
 def test_capture_mirrors_completion_without_changing_result(tmp_path):

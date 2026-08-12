@@ -147,6 +147,7 @@ class AgentRequestCoordinator:
                 command=command,
                 arguments=arguments,
                 principal=effective_principal,
+                principal_class="agent",
                 request_id=request_id,
                 call=lambda: self._execute_locked(
                     command,
@@ -283,6 +284,7 @@ class AdminRequestCoordinator:
                 command=command,
                 arguments=arguments,
                 principal=effective_principal,
+                principal_class="admin",
                 request_id=request_id,
                 call=lambda: self._execute_locked(
                     command,
