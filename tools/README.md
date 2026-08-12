@@ -5,6 +5,10 @@
 A stdlib-only Python script (no venv needed to run it directly). It shells out to `git` via
 `subprocess` and does not import `dish_tool` or the Asana SDK.
 
+`--staged-only` is the guarded already-staged mode used by mailbox integration. It does not run
+`git add`; instead it requires the complete staged path set to match the explicit named paths
+exactly before committing. Normal callers continue to use the ordinary explicit-path staging mode.
+
 ## `tools/git-mailbox-integrate.py`
 
 `git-mailbox-integrate.py` is the fail-closed mutation boundary for legacy mailbox work that must
@@ -33,24 +37,36 @@ worktree. Mailbox paths are resolved from the caller's real `$PWD`, so keep the 
 the clean integration worktree.
 
 Before any mutation, the tool binds and verifies the resolved repository/common gitdir, exact
-worktree root and worktree registry entry, intended non-`main` branch, candidate `HEAD`, and the
-captured `refs/heads/main`. Repository-resolution environment overrides such as `GIT_DIR`,
-`GIT_WORK_TREE`, `GIT_COMMON_DIR`, alternate index/ref namespace variables, and discovery
-overrides are refused rather than silently ignored. The worktree/index must start clean.
+worktree root and worktree registry entry, intended non-`main` branch, candidate `HEAD`, captured
+`refs/heads/main`, and the resolved Git executable. Repository-resolution/configuration environment
+overrides such as `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR`, alternate index/ref namespace
+variables, `GIT_EXEC_PATH`, external diff injection, and `GIT_CONFIG_*` injection are refused rather
+than silently inherited. The worktree/index must start clean.
+
+The approved `tools/git-commit` bytes are verified against candidate `HEAD` and copied into a
+private temporary directory **before any mailbox patch is applied**. A mailbox patch may therefore
+modify `tools/git-commit` as candidate content, but that uncommitted/candidate version is never
+executed while applying the series. The trusted copy invokes the new `--staged-only` mode with
+options before `--` and explicit paths after it, so leading-dash filenames remain data and the
+commit mechanism does not re-stage candidate content.
 
 Each mailbox message is split and parsed with Git's `mailsplit`/`mailinfo`, applied to the index
-without creating a commit, then committed through the worktree's own `tools/git-commit` with
-explicit changed paths. Author name/email/date and the mailbox commit message are preserved.
-This is why the supported path does not invoke raw `git am`: `git am` creates commits itself and
-would bypass the project commit mechanism. This is a targeted integration rule, not a blanket ban
-on `git am` for unrelated Git use.
+without creating a commit, then committed through that trusted pre-mutation copy of
+`tools/git-commit`. Author name/email/date and the mailbox commit message are preserved. During the
+commit subprocess, Git is pinned to the already-resolved executable; system/global config is
+excluded; hooks are redirected to a private empty directory; fsmonitor commands and commit signing
+are disabled. This prevents the executor's own commit path from running repository/candidate hooks
+or executable configuration that could mutate shared refs. This is why the supported path does not
+invoke raw `git am`: `git am` creates commits itself and would bypass the project commit mechanism.
+This is a targeted integration rule, not a blanket ban on `git am` for unrelated Git use.
 
 The boundary re-verifies candidate identity and the captured main ref immediately before mutation
 and after each apply/commit. If a patch cannot apply cleanly, the already-committed prefix remains
 on the integration branch, the failed patch is not committed, and the tool stops. If `main` moves
-unexpectedly during the operation, the tool fails as soon as that movement is observed and does
-not continue the series. It intentionally does not reset or rewrite `main`, because an unexpected
-movement may belong to another actor and must be investigated rather than overwritten.
+unexpectedly because of an unrelated concurrent actor, the tool fails as soon as that movement is
+observed and does not continue the series. It intentionally does not reset or rewrite `main`,
+because an unexpected movement may belong to another actor and must be investigated rather than
+overwritten.
 
 ## `tools/asana` setup
 
@@ -89,8 +105,9 @@ Sourcing sections remain available. Governed mutations must go through `dish` or
   carpet-bomb refusal, the staged-deletion path, and the `DISH_VERSION` guard.
 - `test_git_mailbox_integrate.py` covers the linked-worktree mailbox boundary against throwaway
   repositories: clean application, committed-prefix behavior on a later patch failure, wrong
-  `-C`, `GIT_DIR`, `GIT_WORK_TREE`, wrong branch/worktree identity, explicit main refusal/main
-  immutability, and detection of an unexpected main movement during the commit window.
+  `-C`, `GIT_DIR`, `GIT_WORK_TREE`/`GIT_CONFIG_*` overrides, wrong branch/worktree identity,
+  explicit main refusal/main immutability, candidate replacement of `tools/git-commit`, active
+  post-commit hooks, leading-dash paths, and type-change-only patches.
 
 The suite runs in `tools/.venv` (it has `pytest` installed alongside the SDK, per
 `requirements.txt`), so no separate test venv is needed:
