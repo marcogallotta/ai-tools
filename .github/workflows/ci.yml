@@ -19,7 +19,31 @@ env:
   EXACT_HEAD_STATUS_CONTEXT: Dish / required ordinary CI
 
 jobs:
+  exact-head-ordinary-ci-start:
+    name: Begin exact-head ordinary CI gate
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Invalidate any prior exact-head ordinary CI success
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          short_sha="${CI_CANDIDATE_SHA:0:12}"
+          gh api --method POST \
+            "/repos/$GITHUB_REPOSITORY/statuses/$CI_CANDIDATE_SHA" \
+            -f state=pending \
+            -f context="$EXACT_HEAD_STATUS_CONTEXT" \
+            -f target_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            -f description="ordinary CI running for exact head $short_sha"
+
   bundle-metadata:
+    needs: exact-head-ordinary-ci-start
     name: Dependency bundle metadata
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-24.04
@@ -249,14 +273,44 @@ jobs:
 
   exact-head-ordinary-ci:
     name: Exact-head ordinary CI gate
+    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
     needs: [python-tests, frontend-tooling, native-postgresql, browser-acceptance]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
       statuses: write
     steps:
-      - name: Write exact candidate evidence metadata
+      - name: Determine terminal ordinary CI state
+        id: outcome
         shell: bash
+        env:
+          PYTHON_RESULT: ${{ needs.python-tests.result }}
+          FRONTEND_RESULT: ${{ needs.frontend-tooling.result }}
+          POSTGRESQL_RESULT: ${{ needs.native-postgresql.result }}
+          BROWSER_RESULT: ${{ needs.browser-acceptance.result }}
+        run: |
+          set -euo pipefail
+          state=success
+          for result in "$PYTHON_RESULT" "$FRONTEND_RESULT" "$POSTGRESQL_RESULT" "$BROWSER_RESULT"; do
+            if [[ "$result" != "success" ]]; then
+              state=failure
+            fi
+          done
+          printf 'status_state=%s\n' "$state" >> "$GITHUB_OUTPUT"
+          printf 'python_result=%s\n' "$PYTHON_RESULT" >> "$GITHUB_OUTPUT"
+          printf 'frontend_result=%s\n' "$FRONTEND_RESULT" >> "$GITHUB_OUTPUT"
+          printf 'postgresql_result=%s\n' "$POSTGRESQL_RESULT" >> "$GITHUB_OUTPUT"
+          printf 'browser_result=%s\n' "$BROWSER_RESULT" >> "$GITHUB_OUTPUT"
+
+      - name: Write exact candidate evidence metadata
+        if: always()
+        shell: bash
+        env:
+          STATUS_STATE: ${{ steps.outcome.outputs.status_state }}
+          PYTHON_RESULT: ${{ steps.outcome.outputs.python_result }}
+          FRONTEND_RESULT: ${{ steps.outcome.outputs.frontend_result }}
+          POSTGRESQL_RESULT: ${{ steps.outcome.outputs.postgresql_result }}
+          BROWSER_RESULT: ${{ steps.outcome.outputs.browser_result }}
         run: |
           set -euo pipefail
           mkdir -p .test-artifacts/ci-candidate
@@ -278,6 +332,13 @@ jobs:
               "run_id": os.environ["GITHUB_RUN_ID"],
               "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
               "required_status_context": os.environ["EXACT_HEAD_STATUS_CONTEXT"],
+              "required_status_state": os.environ["STATUS_STATE"] or "failure",
+              "required_lane_results": {
+                  "python-tests": os.environ["PYTHON_RESULT"],
+                  "frontend-tooling": os.environ["FRONTEND_RESULT"],
+                  "native-postgresql": os.environ["POSTGRESQL_RESULT"],
+                  "browser-acceptance": os.environ["BROWSER_RESULT"],
+              },
           }
           Path(".test-artifacts/ci-candidate/identity.json").write_text(
               json.dumps(payload, indent=2, sort_keys=True) + "\n",
@@ -286,22 +347,31 @@ jobs:
           print(json.dumps(payload, sort_keys=True))
           PY
       - name: Upload required ordinary CI evidence
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: required-ordinary-ci-${{ env.CI_CANDIDATE_SHA }}
           path: .test-artifacts/ci-candidate/identity.json
-          if-no-files-found: error
-      - name: Publish exact-head ordinary CI status
-        if: github.event_name == 'pull_request'
+          if-no-files-found: warn
+      - name: Publish terminal exact-head ordinary CI status
+        if: always() && github.event_name == 'pull_request'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          STATUS_STATE: ${{ steps.outcome.outputs.status_state }}
         run: |
           set -euo pipefail
           short_sha="${CI_CANDIDATE_SHA:0:12}"
+          status_state="$STATUS_STATE"
+          description="ordinary CI failed for exact head $short_sha"
+          if [[ "$status_state" == "success" ]]; then
+            description="ordinary CI passed for exact head $short_sha"
+          else
+            status_state=failure
+          fi
           gh api --method POST \
             "/repos/$GITHUB_REPOSITORY/statuses/$CI_CANDIDATE_SHA" \
-            -f state=success \
+            -f state="$status_state" \
             -f context="$EXACT_HEAD_STATUS_CONTEXT" \
             -f target_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            -f description="ordinary CI passed for exact head $short_sha"
+            -f description="$description"
