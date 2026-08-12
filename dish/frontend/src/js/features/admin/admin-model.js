@@ -7,6 +7,7 @@ const operationLabels = new Set(WORKFLOW_OPERATION_LABELS);
 const phaseLabels = new Set(WORKFLOW_PHASE_LABELS);
 const attentionCodes = new Set([...TASK_ATTENTION_NOTICE_CODES, "research_required", "verification_required"]);
 const buckets = new Set(["needs_you", "workflow_queue", "system_activity"]);
+const attentionMessageMaxLength = 4096;
 
 export class AdminContractMismatch extends Error {
   constructor() {
@@ -45,7 +46,7 @@ function diagnostics(value) {
 function attention(value) {
   exactKeys(value, ["code", "label", "message"]);
   if (!attentionCodes.has(value.code)) mismatch();
-  return { code: value.code, label: string(value.label, 120), message: string(value.message, 300) };
+  return { code: value.code, label: string(value.label, 120), message: string(value.message, attentionMessageMaxLength) };
 }
 function dish(value) {
   exactKeys(value, ["task_id", "title", "section_label", "workflow_status", "bucket", "attention", "last_activity_at", "diagnostics"]);
