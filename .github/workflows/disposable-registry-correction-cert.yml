@@ -71,4 +71,5 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          sed -i "s/'cert-r'/'930000000000001'/; s/'cert-v'/'930000000000002'/" cert-harness/ci/disposable_registry_correction_cert.py
           PYTHONPATH=dish dish/.venv/bin/python cert-harness/ci/disposable_registry_correction_cert.py
