@@ -5,7 +5,8 @@ This is the canonical router for standing Dish agent roles. Root `CLAUDE.md` poi
 | Role / common names | Standing contract |
 |---|---|
 | Coordinator, master, orchestration coordinator | [`coordinator.md`](coordinator.md) |
-| Implementation agent, fix agent, integrator | [`implementation.md`](implementation.md) |
+| Implementation agent, fix agent | [`implementation.md`](implementation.md) |
+| Integration agent, local integrator, patch applier | [`integration.md`](integration.md) |
 | Patch reviewer, review specialist | [`review.md`](review.md) |
 | Workflow specialist, workflow agent | [`workflow.md`](workflow.md) |
 | PostgreSQL specialist, dark-launch specialist, dark-launch agent, PostgreSQL agent | [`postgresql-dark-launch.md`](postgresql-dark-launch.md) |
@@ -16,6 +17,7 @@ Role and execution host are separate concerns. The same Dish role may run under 
 
 - ChatGPT agents may use the connected GitHub integration and the GitHub Actions dependency-bundle retrieval path defined in root `CLAUDE.md`.
 - Claude Code and Codex do **not** inherit those ChatGPT-only connector/bundle instructions. They use their live checkout and host-native Git/tooling/environment unless Marco gives an explicit task-specific override.
+- The Integration agent is currently a local-checkout role because it owns local worktrees, local/environment-specific certification, final `main` promotion, and push verification. Do not reinterpret connector write capability as equivalent integration authority unless the standing contract is deliberately changed.
 - Do not copy ChatGPT connector setup or dependency-bundle bootstrap into a Claude Code/Codex handoff merely because the same standing Dish role is being delegated.
 
 Rules:
