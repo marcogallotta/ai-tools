@@ -1,0 +1,111 @@
+name: Registry correction certification 1217410611963029
+
+on:
+  push:
+    branches:
+      - agent/registry-correction-cert-1217410611963029
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    name: Native PostgreSQL production-shaped registry correction
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17.10
+        env:
+          POSTGRES_DB: ai_tools_registry_cert
+          POSTGRES_USER: ai_tools_registry_cert
+          POSTGRES_PASSWORD: cert-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ai_tools_registry_cert -d ai_tools_registry_cert"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DISH_TEST_POSTGRESQL_DSN: postgresql+psycopg://ai_tools_registry_cert:cert-only-password@127.0.0.1:5432/ai_tools_registry_cert
+      REGISTRY_CORRECTION_CERT_EVIDENCE: ${{ github.workspace }}/cert-artifacts/registry-correction/evidence.json
+      CERTIFIED_IMPLEMENTATION_SHA: 7e65e1796fb5db6f5545b3acd52a2d60c18d8050
+    steps:
+      - name: Checkout verification overlay
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13.5'
+
+      - name: Restore repository dependency bundle
+        uses: ./.github/actions/setup-python-bundle
+        with:
+          github-token: ${{ github.token }}
+
+      - name: Prove verification-only overlay and isolated target
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p cert-artifacts/registry-correction
+          git cat-file -e "${CERTIFIED_IMPLEMENTATION_SHA}^{commit}"
+          mapfile -t changed < <(git diff --name-only "${CERTIFIED_IMPLEMENTATION_SHA}" HEAD | sort)
+          printf '%s\n' "${changed[@]}" | tee cert-artifacts/registry-correction/overlay-files.txt
+          expected=(
+            ".github/workflows/registry-correction-cert-1217410611963029.yml"
+            "dish/tests/postgresql/native/test_registry_correction_handoff_cert.py"
+          )
+          if [[ "${changed[*]}" != "${expected[*]}" ]]; then
+            echo "unexpected verification overlay" >&2
+            exit 1
+          fi
+          git diff --exit-code "${CERTIFIED_IMPLEMENTATION_SHA}" HEAD -- dish/dish_pg dish/dish_tool dish/alembic.ini dish/migrations dish/pyproject.toml
+          dish/.venv/bin/python - <<'PY' | tee cert-artifacts/registry-correction/target-guard.json
+          import json
+          import os
+          from urllib.parse import urlparse
+          from tests.support.postgresql.certification import probe_native_postgresql
+
+          parsed = urlparse(os.environ["DISH_TEST_POSTGRESQL_DSN"])
+          assert parsed.hostname in {"127.0.0.1", "localhost"}, parsed.hostname
+          assert parsed.username == "ai_tools_registry_cert", parsed.username
+          assert parsed.path == "/ai_tools_registry_cert", parsed.path
+          identity = probe_native_postgresql().as_dict()
+          assert identity["dialect"] == "postgresql"
+          assert identity["database"] == "ai_tools_registry_cert"
+          assert str(identity["server_version"]).startswith("17.10")
+          print(json.dumps(identity, sort_keys=True))
+          PY
+
+      - name: Run handoff-specific native PostgreSQL certification
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dish
+          .venv/bin/python -m pytest --postgresql -q -s \
+            tests/postgresql/native/test_registry_correction_handoff_cert.py \
+            2>&1 | tee ../cert-artifacts/registry-correction/pytest.log
+
+      - name: Record source and runtime identities
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "certified_implementation_sha=${CERTIFIED_IMPLEMENTATION_SHA}"
+            echo "verification_overlay_sha=$(git rev-parse HEAD)"
+            echo "postgres_image=postgres:17.10"
+            echo "runner=${RUNNER_OS}/${RUNNER_ARCH}"
+            echo "python=$(python --version 2>&1)"
+          } | tee cert-artifacts/registry-correction/runtime.txt
+
+      - name: Upload certification evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: registry-correction-cert-${{ github.sha }}
+          path: cert-artifacts/registry-correction
+          if-no-files-found: error
