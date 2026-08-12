@@ -4,12 +4,16 @@ rsync --delete, and ssh with a remote command.
 """
 import io
 import json
+import subprocess
+
+import pytest
 
 
-def run_hook(module, command, monkeypatch, capsys):
-    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({
-        "tool_input": {"command": command}
-    })))
+def run_hook(module, command, monkeypatch, capsys, cwd=None):
+    payload = {"tool_input": {"command": command}}
+    if cwd is not None:
+        payload["cwd"] = cwd
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps(payload)))
     exit_code = module.main()
     out = capsys.readouterr().out
     assert exit_code == 0
@@ -224,7 +228,10 @@ class TestGitSubcommands:
         assert_asked(decision, "Destructive git operation")
 
     def test_git_checkout_asked(self, destructive_op_guard, monkeypatch, capsys):
-        decision = run_hook(destructive_op_guard, "git checkout main", monkeypatch, capsys)
+        # cwd is outside any git repo, so the new protected-checkout branch
+        # isolation check (which needs to resolve a real repo identity) finds
+        # nothing to act on and this exercises check_git's own generic ask.
+        decision = run_hook(destructive_op_guard, "git checkout main", monkeypatch, capsys, cwd="/tmp")
         assert_asked(decision, "Destructive git operation")
 
     def test_git_clean_asked(self, destructive_op_guard, monkeypatch, capsys):
@@ -319,3 +326,152 @@ class TestMissingCommand:
         out = capsys.readouterr().out
         assert exit_code == 0
         assert out.strip() == ""
+
+
+def _git(cwd, *args):
+    subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True)
+
+
+@pytest.fixture
+def protected_repo(tmp_path, destructive_op_guard, monkeypatch):
+    """A real primary checkout plus a registered linked worktree, standing
+    in for ~/ai-tools and an owned agent worktree. destructive_op_guard's
+    PROTECTED_CHECKOUT_ROOT is repointed at the primary so the check exercises
+    real git-dir/common-dir/worktree-registry resolution end to end."""
+    primary = tmp_path / "primary"
+    primary.mkdir()
+    _git(primary, "init", "-q", "-b", "main")
+    _git(primary, "config", "user.email", "test@example.com")
+    _git(primary, "config", "user.name", "Test")
+    (primary / "README.md").write_text("x\n")
+    _git(primary, "add", "README.md")
+    _git(primary, "commit", "-q", "-m", "initial")
+
+    linked = tmp_path / "linked"
+    _git(primary, "worktree", "add", "-q", "-b", "agent/existing", str(linked), "main")
+
+    unrelated = tmp_path / "unrelated"
+    unrelated.mkdir()
+    _git(unrelated, "init", "-q", "-b", "main")
+    _git(unrelated, "config", "user.email", "test@example.com")
+    _git(unrelated, "config", "user.name", "Test")
+    (unrelated / "README.md").write_text("x\n")
+    _git(unrelated, "add", "README.md")
+    _git(unrelated, "commit", "-q", "-m", "initial")
+
+    monkeypatch.setattr(destructive_op_guard, "PROTECTED_CHECKOUT_ROOT", str(primary.resolve()))
+    return {"primary": primary, "linked": linked, "unrelated": unrelated}
+
+
+class TestProtectedCheckoutBranchIsolation:
+    def test_checkout_dash_b_in_primary_denied(self, destructive_op_guard, protected_repo, monkeypatch, capsys):
+        decision = run_hook(
+            destructive_op_guard, "git checkout -b agent/foo", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_denied(decision, "Refusing 'checkout' branch change")
+
+    def test_switch_dash_c_in_primary_denied(self, destructive_op_guard, protected_repo, monkeypatch, capsys):
+        decision = run_hook(
+            destructive_op_guard, "git switch -c agent/foo", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_denied(decision, "Refusing 'switch' branch change")
+
+    def test_bare_checkout_branch_in_primary_denied(self, destructive_op_guard, protected_repo, monkeypatch, capsys):
+        decision = run_hook(
+            destructive_op_guard, "git checkout main", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_denied(decision, "Refusing 'checkout' branch change")
+
+    def test_switch_plain_branch_in_primary_denied(self, destructive_op_guard, protected_repo, monkeypatch, capsys):
+        decision = run_hook(
+            destructive_op_guard, "git switch main", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_denied(decision, "Refusing 'switch' branch change")
+
+    def test_dash_c_primary_from_elsewhere_denied(self, destructive_op_guard, protected_repo, monkeypatch, capsys):
+        decision = run_hook(
+            destructive_op_guard,
+            f"git -C {protected_repo['primary']} checkout -b agent/foo",
+            monkeypatch,
+            capsys,
+            cwd=str(protected_repo["unrelated"]),
+        )
+        assert_denied(decision, "Refusing 'checkout' branch change")
+
+    def test_no_approval_path_offered_on_denial(self, destructive_op_guard, protected_repo, monkeypatch, capsys):
+        decision = run_hook(
+            destructive_op_guard, "git checkout -b agent/foo", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert decision["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_checkout_in_linked_worktree_falls_through_to_ordinary_ask(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        decision = run_hook(
+            destructive_op_guard, "git checkout -b agent/bar", monkeypatch, capsys,
+            cwd=str(protected_repo["linked"]),
+        )
+        assert_asked(decision, "Destructive git operation")
+
+    def test_checkout_in_unrelated_repo_unaffected(self, destructive_op_guard, protected_repo, monkeypatch, capsys):
+        decision = run_hook(
+            destructive_op_guard, "git checkout -b agent/baz", monkeypatch, capsys,
+            cwd=str(protected_repo["unrelated"]),
+        )
+        assert_asked(decision, "Destructive git operation")
+
+    def test_file_only_checkout_with_double_dash_not_hard_denied(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        decision = run_hook(
+            destructive_op_guard, "git checkout -- README.md", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_asked(decision, "Destructive git operation")
+
+    def test_read_only_status_in_primary_allowed(self, destructive_op_guard, protected_repo, monkeypatch, capsys):
+        decision = run_hook(
+            destructive_op_guard, "git status", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_allowed(decision)
+
+    def test_env_override_prefix_in_primary_denied_ambiguous(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        decision = run_hook(
+            destructive_op_guard, "GIT_DIR=/tmp/x git checkout -b agent/foo", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_denied(decision, "ambiguous repository resolution")
+
+    def test_unresolvable_dash_c_in_primary_denied_ambiguous(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        decision = run_hook(
+            destructive_op_guard, "git -C $SOME_VAR checkout -b agent/foo", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_denied(decision, "ambiguous repository resolution")
+
+    def test_env_override_outside_primary_not_hard_denied(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        decision = run_hook(
+            destructive_op_guard, "GIT_DIR=/tmp/x git checkout -b agent/foo", monkeypatch, capsys,
+            cwd=str(protected_repo["unrelated"]),
+        )
+        assert_asked(decision, "Destructive git operation")
+
+    def test_missing_cwd_fails_closed_to_denied(self, destructive_op_guard, protected_repo, monkeypatch, capsys):
+        # No cwd in the hook payload at all: can't rule out the protected
+        # checkout, so an ambiguous resolution still denies rather than asks.
+        decision = run_hook(
+            destructive_op_guard, "GIT_DIR=/tmp/x git checkout -b agent/foo", monkeypatch, capsys,
+        )
+        assert_denied(decision, "ambiguous repository resolution")

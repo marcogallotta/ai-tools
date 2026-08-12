@@ -25,9 +25,21 @@ import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 
 SSH_VALUE_FLAGS = set("bicloDEeFIiJLmopQRSWw")
+
+# The shared operator checkout for this repo. `git checkout -b`/`git switch -c`
+# run here directly reattach the branch under whoever else is looking at this
+# directory (P0 incident 2026-08-12: an agent branched here mid-session and
+# silently repointed the operator's own terminal). Agent branch work belongs
+# in an isolated worktree instead.
+PROTECTED_CHECKOUT_ROOT = os.path.realpath(os.path.expanduser("~/ai-tools"))
+
+GIT_ENV_OVERRIDE_RE = re.compile(
+    r"^(GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR|GIT_CONFIG_[A-Za-z0-9_]*)="
+)
 
 
 def ask(reason):
@@ -179,6 +191,186 @@ def check_docker(segments):
     return None
 
 
+# --- protected-checkout branch isolation -----------------------------------
+#
+# git checkout/switch are already in check_git's generic ASK set below, which
+# is the right outcome for file-only checkout/restore and for branch changes
+# anywhere else. This check runs first and hard-denies (no approval path)
+# specifically when a branch-changing checkout/switch resolves to THIS repo's
+# primary worktree, since a mid-session approval prompt doesn't convey that
+# implication: by the time you'd notice, the operator's checkout has already
+# moved.
+
+
+def _has_env_override(tokens):
+    return any(GIT_ENV_OVERRIDE_RE.match(t) for t in tokens)
+
+
+def _cwd_in_protected_checkout(cwd):
+    # Unknown cwd can't be ruled out as the protected checkout - fail closed.
+    if not cwd:
+        return True
+    resolved = os.path.realpath(cwd)
+    return resolved == PROTECTED_CHECKOUT_ROOT or resolved.startswith(
+        PROTECTED_CHECKOUT_ROOT + os.sep
+    )
+
+
+def _resolve_git_invocation(tokens, git_idx, base_dir):
+    """Walk global options after 'git' up to the subcommand, applying each
+    -C the way git itself does (relative to the previous -C). Returns
+    (resolved_dir, subcommand_index, ambiguous). ``ambiguous`` covers
+    constructs this static, no-shell-expansion check cannot safely resolve:
+    a -C value containing shell expansion, or another repository-identity
+    global option (--git-dir/--work-tree)."""
+    current = base_dir
+    ambiguous = False
+    i = git_idx + 1
+    while i < len(tokens):
+        t = tokens[i]
+        if t == "-C":
+            if i + 1 >= len(tokens):
+                ambiguous = True
+                i += 1
+                continue
+            path = tokens[i + 1]
+            if "$" in path or "`" in path:
+                ambiguous = True
+            else:
+                path = os.path.expanduser(path)
+                current = path if os.path.isabs(path) else os.path.normpath(os.path.join(current, path))
+            i += 2
+            continue
+        if (
+            t in ("--git-dir", "--work-tree")
+            or t.startswith("--git-dir=")
+            or t.startswith("--work-tree=")
+        ):
+            ambiguous = True
+            i += 1
+            continue
+        if t.startswith("-"):
+            i += 1
+            continue
+        # Reached the subcommand: keep scanning past it is unnecessary, this
+        # is the token the caller classifies. ``ambiguous`` reflects whatever
+        # was found on the way here, even if resolution kept going.
+        return current, i, ambiguous
+    return current, None, ambiguous
+
+
+def _branch_change_kind(tokens, sub_idx, subcommand):
+    args = tokens[sub_idx + 1:]
+    if "--" in args:
+        # Explicit pathspec separator: this is a file checkout/restore, not
+        # a branch change. Leave it to check_git's existing ASK handling.
+        return None
+    if subcommand == "checkout":
+        if any(a in ("-b", "-B") for a in args):
+            return "checkout -b/-B (create + switch branch)"
+        if any(a in ("-h", "--help") for a in args):
+            return None
+        non_flags = [a for a in args if not a.startswith("-")]
+        # A bare non-flag argument attaches the checkout to that ref (branch
+        # or otherwise) - the same ambiguity git itself resolves at runtime.
+        # Static text can't tell "branch" from "file" here either, so this
+        # deliberately fails closed the same direction git checks first.
+        if non_flags:
+            return "checkout <ref> (branch attach/detach)"
+        return None
+    # switch: every non-help invocation changes/creates the current branch.
+    if any(a in ("-h", "--help") for a in args):
+        return None
+    return "switch"
+
+
+def _git_rev_parse(directory, arg):
+    try:
+        result = subprocess.run(
+            ["git", "-C", directory, "rev-parse", "--path-format=absolute", arg],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def _resolve_repo_identity(directory):
+    """Return (toplevel, git_dir, common_dir) for the repo containing
+    ``directory``, or None if it's not inside a git repository (or git
+    itself couldn't be run) - in which case this check doesn't apply."""
+    toplevel = _git_rev_parse(directory, "--show-toplevel")
+    if toplevel is None:
+        return None
+    git_dir = _git_rev_parse(directory, "--git-dir")
+    common_dir = _git_rev_parse(directory, "--git-common-dir")
+    if git_dir is None or common_dir is None:
+        return None
+    return toplevel, git_dir, common_dir
+
+
+def _is_protected_primary_checkout(git_dir, common_dir):
+    # The primary/main worktree is the one where git-dir IS the repository's
+    # common-dir (a linked worktree's git-dir is nested under
+    # <common-dir>/worktrees/<name> instead) - same identity technique
+    # tools/git-mailbox-integrate.py uses to bind its own mutation boundary.
+    protected_git_dir = os.path.realpath(os.path.join(PROTECTED_CHECKOUT_ROOT, ".git"))
+    return (
+        os.path.realpath(common_dir) == protected_git_dir
+        and os.path.realpath(git_dir) == os.path.realpath(common_dir)
+    )
+
+
+def check_protected_checkout(segments, cwd):
+    base_dir = cwd or PROTECTED_CHECKOUT_ROOT
+    for seg in segments:
+        tokens = tokenize(seg)
+        env_override = _has_env_override(tokens)
+        for gi, t in enumerate(tokens):
+            if not is_word(t, "git"):
+                continue
+            resolved, sub_idx, ambiguous = _resolve_git_invocation(tokens, gi, base_dir)
+            if sub_idx is None:
+                continue
+            subcommand = basename_token(tokens[sub_idx])
+            if subcommand not in ("checkout", "switch"):
+                continue
+            kind = _branch_change_kind(tokens, sub_idx, subcommand)
+            if kind is None:
+                continue
+            if env_override or ambiguous:
+                if _cwd_in_protected_checkout(cwd):
+                    return deny(
+                        "[destructive-op-guard] This git "
+                        f"{subcommand} branch change has ambiguous repository "
+                        "resolution (env override or an unresolvable -C) while "
+                        f"running from inside {PROTECTED_CHECKOUT_ROOT}. Refusing "
+                        "to guess whether it targets the protected shared "
+                        "checkout. Create/enter an owned worktree "
+                        "(git worktree add <path> <branch>) and retry there."
+                    )
+                continue
+            identity = _resolve_repo_identity(resolved)
+            if identity is None:
+                continue
+            _toplevel, git_dir, common_dir = identity
+            if _is_protected_primary_checkout(git_dir, common_dir):
+                return deny(
+                    f"[destructive-op-guard] Refusing '{subcommand}' branch change "
+                    f"({kind}) in the primary {PROTECTED_CHECKOUT_ROOT} checkout - "
+                    "this is the shared operator checkout, not an isolated agent "
+                    "worktree, and changing its branch attachment repoints "
+                    "whoever else is looking at this directory. Create/enter an "
+                    "owned worktree (git worktree add <path> <branch>) and retry "
+                    "the branch change there."
+                )
+    return None
+
+
 def check_git(segments):
     # git-commit wrapper (atomic stage+commit) - but not --help/-h, which is
     # read-only. A bare "git-commit" with no following token is left alone,
@@ -292,11 +484,12 @@ def check_ssh(segments):
     return None
 
 
-def evaluate(cmd):
+def evaluate(cmd, cwd=None):
     segments = segments_of(cmd)
     return (
         check_rm(segments)
         or check_docker(segments)
+        or check_protected_checkout(segments, cwd)
         or check_git(segments)
         #or check_psql(segments)
         or check_rsync(segments)
@@ -307,8 +500,9 @@ def evaluate(cmd):
 def main() -> int:
     data = json.load(sys.stdin)
     cmd = data.get("tool_input", {}).get("command") or ""
+    cwd = data.get("cwd") or None
     if cmd:
-        decision = evaluate(cmd)
+        decision = evaluate(cmd, cwd)
         if decision is not None:
             print(json.dumps(decision))
     return 0
