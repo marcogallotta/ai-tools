@@ -5,6 +5,8 @@ constraint failures but never commit, rollback, or open nested transactions.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -14,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import models
+from . import stage3_models as wf
 
 
 class CoreAuthorityError(ValueError):
@@ -22,6 +25,17 @@ class CoreAuthorityError(ValueError):
 
 REGISTRY_ROLE_CORRECTION_SOURCE_RELEASE = "registry-role-correction-v1"
 REGISTRY_ROLE_CORRECTION_KIND = "registry_role_assignment"
+REGISTRY_ROLE_CORRECTION_COMMAND = "revise-section-registry"
+_REGISTRY_ROLE_CORRECTION_PROVENANCE_KEYS = {
+    "correction_kind",
+    "correction_bundle_sha256",
+    "source_import_run_id",
+    "predecessor_registry_version_id",
+    "command_execution_id",
+    "requested_roles",
+    "result_registry_sha256",
+    "source_record_count",
+}
 
 
 def _provenance_uuid(provenance: dict[str, object], key: str) -> uuid.UUID:
@@ -31,6 +45,130 @@ def _provenance_uuid(provenance: dict[str, object], key: str) -> uuid.UUID:
         raise CoreAuthorityError(
             f"registry correction provenance has invalid {key}"
         ) from exc
+
+
+def _registry_role_correction_provenance(
+    session: Session,
+    version: models.SectionRegistryVersion,
+    import_run: models.ImportRun,
+) -> tuple[dict[str, object], uuid.UUID, uuid.UUID]:
+    provenance = (
+        import_run.provenance if isinstance(import_run.provenance, dict) else {}
+    )
+    if set(provenance) != _REGISTRY_ROLE_CORRECTION_PROVENANCE_KEYS:
+        raise CoreAuthorityError(
+            "registry correction ImportRun provenance is not exact"
+        )
+    if provenance.get("correction_kind") != REGISTRY_ROLE_CORRECTION_KIND:
+        raise CoreAuthorityError("registry correction ImportRun is not honestly labeled")
+    if type(provenance.get("source_record_count")) is not int or provenance.get(
+        "source_record_count"
+    ) != 0:
+        raise CoreAuthorityError("registry correction cannot claim imported source records")
+
+    predecessor_id = _provenance_uuid(
+        provenance, "predecessor_registry_version_id"
+    )
+    source_import_run_id = _provenance_uuid(provenance, "source_import_run_id")
+    command_execution_id = _provenance_uuid(provenance, "command_execution_id")
+    requested = provenance.get("requested_roles")
+    if not isinstance(requested, dict) or set(requested) != {
+        "research_queue",
+        "verification_queue",
+    }:
+        raise CoreAuthorityError(
+            "registry role correction requires exact special-role targets"
+        )
+    targets = {
+        role: _provenance_uuid(requested, role)
+        for role in ("research_queue", "verification_queue")
+    }
+    if targets["research_queue"] == targets["verification_queue"]:
+        raise CoreAuthorityError("registry role correction targets must be distinct")
+
+    result_registry_sha256 = provenance.get("result_registry_sha256")
+    if result_registry_sha256 != version.registry_sha256:
+        raise CoreAuthorityError("registry correction result identity is inconsistent")
+    expected_high_water_mark = (
+        "registry-role-correction:"
+        f"{predecessor_id}:{version.registry_sha256}"
+    )
+    if import_run.baseline_high_water_mark != expected_high_water_mark:
+        raise CoreAuthorityError(
+            "registry correction high-water identity is inconsistent"
+        )
+
+    correction_payload = {
+        "format": "dish-registry-role-correction-v1",
+        "generation_id": str(version.generation_id),
+        "predecessor_registry_version_id": str(predecessor_id),
+        "source_import_run_id": str(source_import_run_id),
+        "command_execution_id": str(command_execution_id),
+        "requested_roles": {
+            role: str(section_id) for role, section_id in targets.items()
+        },
+        "result_registry_sha256": version.registry_sha256,
+    }
+    expected_bundle_sha256 = hashlib.sha256(
+        json.dumps(
+            correction_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+    ).hexdigest()
+    if (
+        provenance.get("correction_bundle_sha256") != expected_bundle_sha256
+        or import_run.source_bundle_sha256 != expected_bundle_sha256
+    ):
+        raise CoreAuthorityError("registry correction bundle identity is inconsistent")
+
+    execution = session.get(wf.CommandExecution, command_execution_id)
+    if (
+        execution is None
+        or execution.generation_id != version.generation_id
+        or execution.contract_binding_id != version.contract_binding_id
+        or execution.command_name != REGISTRY_ROLE_CORRECTION_COMMAND
+        or execution.status not in {"claimed", "committed"}
+    ):
+        raise CoreAuthorityError(
+            "registry correction command execution provenance is inconsistent"
+        )
+    request = session.get(wf.ServiceRequest, execution.request_id)
+    request_payload = (
+        request.canonical_payload
+        if request is not None and isinstance(request.canonical_payload, dict)
+        else {}
+    )
+    request_arguments = request_payload.get("arguments")
+    if (
+        request is None
+        or request.generation_id != version.generation_id
+        or request.principal_class != "admin"
+        or request.command_name != REGISTRY_ROLE_CORRECTION_COMMAND
+        or request_payload.get("command") != REGISTRY_ROLE_CORRECTION_COMMAND
+        or not isinstance(request_arguments, dict)
+    ):
+        raise CoreAuthorityError(
+            "registry correction admin request provenance is inconsistent"
+        )
+    requested_argument_names = {
+        "research_queue": "research_queue_section_id",
+        "verification_queue": "verification_queue_section_id",
+    }
+    for role, argument_name in requested_argument_names.items():
+        try:
+            request_target = uuid.UUID(str(request_arguments[argument_name]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise CoreAuthorityError(
+                "registry correction admin request provenance is inconsistent"
+            ) from exc
+        if request_target != targets[role]:
+            raise CoreAuthorityError(
+                "registry correction admin request provenance is inconsistent"
+            )
+
+    return provenance, predecessor_id, source_import_run_id
 
 
 def registry_source_import_run(
@@ -61,19 +199,9 @@ def registry_source_import_run(
                     )
             return import_run
 
-        provenance = (
-            import_run.provenance if isinstance(import_run.provenance, dict) else {}
+        provenance, predecessor_id, source_import_run_id = (
+            _registry_role_correction_provenance(session, current, import_run)
         )
-        if provenance.get("correction_kind") != REGISTRY_ROLE_CORRECTION_KIND:
-            raise CoreAuthorityError("registry correction ImportRun is not honestly labeled")
-        predecessor_id = _provenance_uuid(
-            provenance, "predecessor_registry_version_id"
-        )
-        source_import_run_id = _provenance_uuid(provenance, "source_import_run_id")
-        if provenance.get("correction_bundle_sha256") != import_run.source_bundle_sha256:
-            raise CoreAuthorityError("registry correction bundle identity is inconsistent")
-        if provenance.get("result_registry_sha256") != current.registry_sha256:
-            raise CoreAuthorityError("registry correction result identity is inconsistent")
         predecessor = session.get(models.SectionRegistryVersion, predecessor_id)
         if (
             predecessor is None
@@ -93,26 +221,18 @@ def _assert_registry_role_correction_entries(
 ) -> None:
     import_run = session.get(models.ImportRun, row.import_run_id)
     assert import_run is not None
-    provenance = (
-        import_run.provenance if isinstance(import_run.provenance, dict) else {}
+    provenance, predecessor_id, _source_import_run_id = (
+        _registry_role_correction_provenance(session, row, import_run)
     )
-    requested = provenance.get("requested_roles")
-    if not isinstance(requested, dict) or set(requested) != {
-        "research_queue",
-        "verification_queue",
-    }:
-        raise CoreAuthorityError(
-            "registry role correction requires exact special-role targets"
-        )
+    requested = provenance["requested_roles"]
+    assert isinstance(requested, dict)
     targets = {
         role: _provenance_uuid(requested, role)
         for role in ("research_queue", "verification_queue")
     }
-    if targets["research_queue"] == targets["verification_queue"]:
-        raise CoreAuthorityError("registry role correction targets must be distinct")
     predecessor = session.get(
         models.SectionRegistryVersion,
-        _provenance_uuid(provenance, "predecessor_registry_version_id"),
+        predecessor_id,
     )
     if predecessor is None:
         raise CoreAuthorityError("registry role correction predecessor is missing")
