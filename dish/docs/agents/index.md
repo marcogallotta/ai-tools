@@ -8,19 +8,36 @@ All repository-modifying roles inherit [`contributor-base.md`](contributor-base.
 |---|---|
 | Coordinator, master, orchestration coordinator | [`coordinator.md`](coordinator.md) |
 | Implementation agent, fix agent | [`implementation.md`](implementation.md) |
-| Integration agent, local integrator, patch applier | [`integration.md`](integration.md) |
-| Patch reviewer, review specialist | [`review.md`](review.md) |
+| Integration agent, integrator | [`integration.md`](integration.md) |
+| PR reviewer, review specialist | [`review.md`](review.md) |
 | Workflow specialist, workflow agent | [`workflow.md`](workflow.md) |
 | PostgreSQL specialist, dark-launch specialist, dark-launch agent, PostgreSQL agent | [`postgresql-dark-launch.md`](postgresql-dark-launch.md) |
+
+## Shared repository lifecycle
+
+For new repository work, all roles use the same Git-native lifecycle:
+
+> implementation branch + commit -> GitHub pull request -> review of the exact PR head SHA -> integration of that reviewed head
+
+GitHub branch/commit/PR identity is the authoritative code artifact and GitHub PR is the review surface. Asana remains an orchestration/status surface. Do not create new patch-only handoffs.
+
+Existing patch-based work already in flight may finish under the legacy flow or be converted to a PR. Once converted, the PR head SHA is the active review/integration identity and the patch identity is provenance only.
 
 ## Execution-host boundary
 
 Role and execution host are separate concerns. The same Dish role may run under ChatGPT, Claude Code, or Codex, but host-specific transport/bootstrap policy does not transfer with the role.
 
-- ChatGPT agents may use the connected GitHub integration and the GitHub Actions dependency-bundle retrieval path defined in root `CLAUDE.md`.
-- Claude Code and Codex do **not** inherit those ChatGPT-only connector/bundle instructions. They use their live checkout and host-native Git/tooling/environment unless Marco gives an explicit task-specific override.
-- The Integration agent is currently a local-checkout role because it owns local worktrees, local/environment-specific certification, final `main` promotion, and push verification. Do not reinterpret connector write capability as equivalent integration authority unless the standing contract is deliberately changed.
+- **ChatGPT agents** use the connected GitHub integration as source/history authority and may perform branch, commit, PR, review, and integration operations through connector-native GitHub actions when the standing role authorizes them.
+- **Claude Code and Codex** do **not** inherit ChatGPT-only connector/bundle instructions. They use their live checkout and host-native `git`/worktree tooling/environment unless Marco gives an explicit task-specific override.
+- Local worktrees are an execution-isolation mechanism, not a different artifact contract. The branch, commit SHA, PR URL, and exact PR head SHA are the shared identities across hosts.
 - Do not copy ChatGPT connector setup or dependency-bundle bootstrap into a Claude Code/Codex handoff merely because the same standing Dish role is being delegated.
+
+## Branch and direct-commit baseline
+
+- New agent-owned implementation branches normally use `agent/<short-task-slug>` unless the handoff establishes another repository convention.
+- One implementation agent owns semantic branch changes at a time; stale/merged/abandoned branches are not reused for unrelated work.
+- Cleanup automation is future work. Manual cleanup occurs only when recoverability/provenance no longer requires the branch/worktree.
+- Direct-to-`main` commits are not the default. Marco may explicitly authorize a specific emergency override; roles must state which normal gate is being waived.
 
 Rules:
 
