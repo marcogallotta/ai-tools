@@ -123,6 +123,7 @@ jobs:
         with:
           name: python-tests-${{ env.CI_CANDIDATE_SHA }}
           path: .test-artifacts
+          include-hidden-files: true
           if-no-files-found: warn
 
   frontend-tooling:
@@ -157,6 +158,7 @@ jobs:
           path: |
             .test-artifacts
             dish/frontend/dist
+          include-hidden-files: true
           if-no-files-found: warn
 
   native-postgresql:
@@ -222,6 +224,7 @@ jobs:
         with:
           name: native-postgresql-${{ env.CI_CANDIDATE_SHA }}
           path: .test-artifacts
+          include-hidden-files: true
           if-no-files-found: warn
 
   browser-acceptance:
@@ -269,6 +272,7 @@ jobs:
             .test-artifacts
             dish/.test-artifacts
             dish/frontend/screenshots
+          include-hidden-files: true
           if-no-files-found: warn
 
   exact-head-ordinary-ci:
@@ -352,6 +356,7 @@ jobs:
         with:
           name: required-ordinary-ci-${{ env.CI_CANDIDATE_SHA }}
           path: .test-artifacts/ci-candidate/identity.json
+          include-hidden-files: true
           if-no-files-found: warn
       - name: Publish terminal exact-head ordinary CI status
         if: always() && github.event_name == 'pull_request'
