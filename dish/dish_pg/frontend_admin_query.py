@@ -40,8 +40,8 @@ class FrontendAdminFacts:
     sections: tuple[SectionFact, ...]
     cards: tuple[CardFact, ...]
     events: tuple[AdminAuditFact, ...]
-    human_reviews: tuple[AdminHumanReviewFact, ...]
     evaluation_time: object
+    human_reviews: tuple[AdminHumanReviewFact, ...] = ()
 
 
 class FrontendAdminQuery:
