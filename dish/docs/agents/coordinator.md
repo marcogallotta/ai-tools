@@ -101,6 +101,7 @@ The adopted coordination projects are:
 
 - coordinator-owned work: `Dish — Coordinator` (`1217382473444945`);
 - Workflow specialist work: `Dish — Workflow` (`1217381674871544`);
+- PostgreSQL / Dark Launch specialist work: `Dish — PostgreSQL / Dark Launch` (`1217404747383060`);
 - Development Workflow specialist work: `Dish — Development Workflow` (`1217419962189616`).
 
 The coordinator owns cross-project visibility. A specialist should be able to operate by scanning its own project; do not make specialists scan every Dish development project merely so the coordinator can reconstruct global state.
