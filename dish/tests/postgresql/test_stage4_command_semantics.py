@@ -610,3 +610,114 @@ def test_discard_requires_unchanged_creation_baseline_and_no_effect_or_step(work
         lease = session.get(wf.ServiceLease, uuid.UUID(started.data["lease_id"]))
         assert operation.lifecycle == "cancelled_by_marco"
         assert lease.state == "released"
+
+
+def test_hold_reject_supply_evidence_resumes_preconstruction_baseline(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    author_run, admin_run = _next(ids), _next(ids)
+    with session_scope(factory) as session:
+        _register_run(
+            session, generation_id=context["generation_id"], run_id=author_run
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=admin_run,
+            owner="Marco",
+            agent="claude",
+        )
+        port = _port(session, ids)
+        started = _start_initial(port, ids, task_id=task_id, run_id=author_run)
+        operation_id = uuid.UUID(started.data["operation_id"])
+        head = session.get(
+            models.TaskAuthorityHead, (context["generation_id"], task_id)
+        )
+        baseline_activation_id = head.current_content_activation_id
+        baseline_activation = session.get(
+            models.ContentActivation, baseline_activation_id
+        )
+        baseline_content_version_id = baseline_activation.content_version_id
+        activation_count = session.scalar(
+            select(func.count())
+            .select_from(models.ContentActivation)
+            .where(models.ContentActivation.task_id == task_id)
+        )
+        projection_count = session.scalar(
+            select(func.count()).select_from(tx.ProjectionOutboxEvent)
+        )
+
+        held = port.execute(
+            _call(
+                "hold-reject",
+                run_id=author_run,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": str(operation_id),
+                    "route": "evidence",
+                    "reason": "source evidence is required before construction",
+                    "resume_status": "pending-research",
+                },
+            )
+        )
+        assert held.ok is True
+        hold_id = uuid.UUID(held.data["hold_id"])
+
+        request_id = _next(ids)
+        call = _call(
+            "supply-evidence",
+            run_id=admin_run,
+            request_id=request_id,
+            owner="Marco",
+            principal="admin",
+            arguments={
+                "task_id": str(task_id),
+                "operation_id": str(operation_id),
+                "hold_id": str(hold_id),
+                "detail": "the missing source evidence is now available",
+                "resume_status": "pending-research",
+            },
+        )
+        supplied = port.execute(call)
+        replay = port.execute(call)
+
+        operation = session.get(wf.WorkflowOperation, operation_id)
+        hold = session.get(wf.EvidenceHold, hold_id)
+        head_after = session.get(
+            models.TaskAuthorityHead, (context["generation_id"], task_id)
+        )
+        assert supplied.ok is True
+        assert supplied.data["resume_status"] == "pending-research"
+        assert supplied.data["baseline_content_version_id"] == str(
+            baseline_content_version_id
+        )
+        assert supplied.data["cycle_id"] is None
+        assert supplied.data["projection_event_id"] is None
+        assert supplied.data["phase"] == "prepare_required"
+        assert replay.ok is True and replay.request_replayed is True
+        assert hold is not None and hold.state == "supplied" and hold.cycle_id is None
+        assert operation.lifecycle == "open"
+        assert operation.phase == "prepare_required"
+        assert operation.persisted_actions == ["prepare"]
+        assert head_after.current_content_activation_id == baseline_activation_id
+        assert session.scalar(
+            select(func.count())
+            .select_from(models.ContentActivation)
+            .where(models.ContentActivation.task_id == task_id)
+        ) == activation_count
+        assert session.scalar(
+            select(func.count())
+            .select_from(wf.VerificationCycle)
+            .where(wf.VerificationCycle.operation_id == operation_id)
+        ) == 0
+        assert session.scalar(
+            select(func.count()).select_from(tx.ProjectionOutboxEvent)
+        ) == projection_count
+        assert session.scalar(
+            select(func.count())
+            .select_from(wf.EvidenceHoldEvent)
+            .where(
+                wf.EvidenceHoldEvent.hold_id == hold_id,
+                wf.EvidenceHoldEvent.event_kind == "supplied",
+            )
+        ) == 1

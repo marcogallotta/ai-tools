@@ -246,7 +246,15 @@ def plan_command(
             fence=snapshot.fence,
             audit_event_type="projection_target_missing",
         )
-    effects = effect_spec_for(command, args)
+    effects = effect_spec_for(
+        command,
+        args,
+        preconstruction_hold=(
+            command == "supply-evidence"
+            and snapshot.hold_reject_evidence_hold_exists
+            and not snapshot.hold_reject_cycle_exists
+        ),
+    )
     mutations = tuple(
         PlannedMutation(
             kind,

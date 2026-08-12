@@ -427,6 +427,7 @@ class PostgresCommandPort:
                     task=task,
                     operation=operation,
                 )
+                preconstruction_hold = bool(data.pop("_preconstruction_hold", False))
                 self.session.flush()
                 assert_committed_command_effects(
                     self.session,
@@ -440,6 +441,7 @@ class PostgresCommandPort:
                         call.command_name,
                         call.arguments,
                         verification_hold=bool(data.get("verification_hold")),
+                        preconstruction_hold=preconstruction_hold,
                     ),
                     result_data=data,
                 )
@@ -2771,22 +2773,44 @@ class PostgresCommandPort:
                 http_status=400,
             )
         candidate_file_text = call.arguments.get("file_text")
-        if call.arguments.get("file_path") and candidate_file_text is None:
-            raise CommandRuleError(
-                "MATERIAL_CONTENT_REQUIRED",
-                "shadow-safe hold resolution requires complete canonical file_text, not a filesystem path",
-                http_status=400,
-            )
         editor = call.arguments.get("editor")
         model = call.arguments.get("model")
-        if candidate_file_text is not None and (
-            editor not in {"claude", "gpt", "codex"} or not str(model or "").strip()
-        ):
-            raise CommandRuleError(
-                "MATERIAL_EDITOR_REQUIRED",
-                "material hold resolution requires editor and model",
-                http_status=400,
+        preconstruction_hold = hold.cycle_id is None
+        if preconstruction_hold:
+            if resume_status != "pending-research":
+                raise CommandRuleError(
+                    "INVALID_RESUME_STATUS",
+                    "pre-construction Evidence holds must resume to pending-research",
+                    http_status=400,
+                )
+            forbidden = sorted(
+                key
+                for key in ("file_text", "file_path", "editor", "model")
+                if call.arguments.get(key) not in {None, ""}
             )
+            if forbidden:
+                raise CommandRuleError(
+                    "PRECONSTRUCTION_CANDIDATE_UNEXPECTED",
+                    "pre-construction Evidence hold resolution cannot install candidate content",
+                    http_status=400,
+                    data={"unexpected": forbidden},
+                )
+        else:
+            if call.arguments.get("file_path") and candidate_file_text is None:
+                raise CommandRuleError(
+                    "MATERIAL_CONTENT_REQUIRED",
+                    "shadow-safe hold resolution requires complete canonical file_text, not a filesystem path",
+                    http_status=400,
+                )
+            if candidate_file_text is not None and (
+                editor not in {"claude", "gpt", "codex"}
+                or not str(model or "").strip()
+            ):
+                raise CommandRuleError(
+                    "MATERIAL_EDITOR_REQUIRED",
+                    "material hold resolution requires editor and model",
+                    http_status=400,
+                )
         self._assert_hold_resolution_target(
             call=call,
             generation_id=generation.generation_id,
@@ -2801,9 +2825,44 @@ class PostgresCommandPort:
             {
                 "detail": detail,
                 "resume_status": resume_status,
-                "material": candidate_file_text is not None,
+                "material": candidate_file_text is not None and not preconstruction_hold,
             }
         )
+        if preconstruction_hold:
+            baseline = self.session.get(
+                models.ContentVersion, hold.baseline_content_version_id
+            )
+            if baseline is None:
+                raise CommandRuleError(
+                    "HOLD_BASELINE_MISSING",
+                    "pre-construction Evidence hold baseline is missing",
+                )
+            parse_canonical_document(
+                title=baseline.title,
+                body=baseline.body,
+                expected_status="pending-research",
+            )
+            self.workflow.repo.assert_task_fence(execution.execution_id)
+            self.workflow.repo.assert_operation_fence(execution.execution_id)
+            self.workflow.supply_evidence(
+                hold_id=hold.hold_id,
+                execution_id=execution.execution_id,
+                evidence_payload=evidence_payload,
+                supplied_at=call.now,
+            )
+            operation.phase = "prepare_required"
+            operation.persisted_actions = ["prepare"]
+            operation.operation_revision += 1
+            return {
+                "hold_id": str(hold.hold_id),
+                "state": hold.state,
+                "resume_status": "pending-research",
+                "baseline_content_version_id": str(hold.baseline_content_version_id),
+                "cycle_id": None,
+                "projection_event_id": None,
+                "phase": "prepare_required",
+                "_preconstruction_hold": True,
+            }
         self.workflow.supply_evidence(
             hold_id=hold.hold_id,
             execution_id=execution.execution_id,
