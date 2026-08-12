@@ -10,6 +10,8 @@ import json
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from .dark_launch_parity import legacy_compatible_shadow_response
+
 EVIDENCE_SCHEMA_VERSION = 2
 
 _IDENTIFIER_FAMILIES = {
@@ -53,10 +55,11 @@ class ShadowEvaluation:
     effects: Mapping[str, Any]
 
     def as_payload(self) -> dict[str, Any]:
-        payload = dict(self.response)
+        response = legacy_compatible_shadow_response(self.response)
+        payload = dict(response)
         payload.update({
             "evidence_schema_version": EVIDENCE_SCHEMA_VERSION,
-            "response": dict(self.response),
+            "response": response,
             "pre_state": dict(self.pre_state),
             "post_state": dict(self.post_state),
             "effects": dict(self.effects),
