@@ -51,6 +51,8 @@ def _registry_role_correction_provenance(
     session: Session,
     version: models.SectionRegistryVersion,
     import_run: models.ImportRun,
+    *,
+    allow_claimed_execution: bool = False,
 ) -> tuple[dict[str, object], uuid.UUID, uuid.UUID]:
     provenance = (
         import_run.provenance if isinstance(import_run.provenance, dict) else {}
@@ -124,12 +126,16 @@ def _registry_role_correction_provenance(
         raise CoreAuthorityError("registry correction bundle identity is inconsistent")
 
     execution = session.get(wf.CommandExecution, command_execution_id)
+    execution_status_ok = execution is not None and (
+        execution.status == "committed"
+        or (allow_claimed_execution and execution.status == "claimed")
+    )
     if (
-        execution is None
+        not execution_status_ok
+        or execution is None
         or execution.generation_id != version.generation_id
         or execution.contract_binding_id != version.contract_binding_id
         or execution.command_name != REGISTRY_ROLE_CORRECTION_COMMAND
-        or execution.status not in {"claimed", "committed"}
     ):
         raise CoreAuthorityError(
             "registry correction command execution provenance is inconsistent"
@@ -171,15 +177,16 @@ def _registry_role_correction_provenance(
     return provenance, predecessor_id, source_import_run_id
 
 
-def registry_source_import_run(
+def _registry_source_import_run(
     session: Session,
     version: models.SectionRegistryVersion,
+    *,
+    allow_current_claimed_execution: bool,
 ) -> models.ImportRun:
-    """Resolve the original source import behind registry-only correction runs."""
-
     seen: set[uuid.UUID] = set()
     corrections: list[tuple[models.ImportRun, uuid.UUID]] = []
     current = version
+    first_version = True
     while True:
         if current.registry_version_id in seen:
             raise CoreAuthorityError("registry correction provenance contains a cycle")
@@ -200,7 +207,14 @@ def registry_source_import_run(
             return import_run
 
         provenance, predecessor_id, source_import_run_id = (
-            _registry_role_correction_provenance(session, current, import_run)
+            _registry_role_correction_provenance(
+                session,
+                current,
+                import_run,
+                allow_claimed_execution=(
+                    allow_current_claimed_execution and first_version
+                ),
+            )
         )
         predecessor = session.get(models.SectionRegistryVersion, predecessor_id)
         if (
@@ -212,17 +226,38 @@ def registry_source_import_run(
             raise CoreAuthorityError("registry correction predecessor is inconsistent")
         corrections.append((import_run, source_import_run_id))
         current = predecessor
+        first_version = False
+
+
+def registry_source_import_run(
+    session: Session,
+    version: models.SectionRegistryVersion,
+) -> models.ImportRun:
+    """Resolve the original source import behind durable registry corrections."""
+
+    return _registry_source_import_run(
+        session,
+        version,
+        allow_current_claimed_execution=False,
+    )
 
 
 def _assert_registry_role_correction_entries(
     session: Session,
     row: models.SectionRegistryVersion,
     entries: tuple[models.SectionRegistryEntry, ...],
+    *,
+    allow_claimed_execution: bool = False,
 ) -> None:
     import_run = session.get(models.ImportRun, row.import_run_id)
     assert import_run is not None
     provenance, predecessor_id, _source_import_run_id = (
-        _registry_role_correction_provenance(session, row, import_run)
+        _registry_role_correction_provenance(
+            session,
+            row,
+            import_run,
+            allow_claimed_execution=allow_claimed_execution,
+        )
     )
     requested = provenance["requested_roles"]
     assert isinstance(requested, dict)
@@ -394,8 +429,17 @@ class RegistryRepository:
         if import_run is None or import_run.status != "complete":
             raise CoreAuthorityError("registry version requires a complete import run")
         if import_run.source_release == REGISTRY_ROLE_CORRECTION_SOURCE_RELEASE:
-            registry_source_import_run(self.session, row)
-            _assert_registry_role_correction_entries(self.session, row, entries)
+            _registry_source_import_run(
+                self.session,
+                row,
+                allow_current_claimed_execution=True,
+            )
+            _assert_registry_role_correction_entries(
+                self.session,
+                row,
+                entries,
+                allow_claimed_execution=True,
+            )
         self.session.add(row)
         self.session.flush()
         seen_roles: set[str] = set()
