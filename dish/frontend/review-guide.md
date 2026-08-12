@@ -22,14 +22,24 @@ Open the printed local URL. The command creates a fresh static build before serv
 | Rendered task detail | `/task/task-biryani?review=1&scenario=detail` |
 | Safe-rendering fallback | `/task/task-aubergine?review=1&scenario=fallback` |
 | Extreme content | `/task/task-extreme?review=1&scenario=extreme` |
+| Admin overview: Needs you / Workflow queue / System handling it, Human Review, recovery | `/admin?review=1&scenario=admin` |
+| Admin long operator-facing content | `/admin?review=1&scenario=admin-extreme` |
+| Admin empty state | `/admin?review=1&scenario=admin-empty` |
 | Zero active sections | `/?review=1&scenario=zero` |
 | Loading | `/?review=1&scenario=loading` |
 | Initial load failure | `/?review=1&scenario=initial-error` |
 | Last-safe-view refresh failure | `/?review=1&scenario=last-safe` |
 | Login shell | `/?review=1&view=login` |
 
+The admin fixtures exercise the same `mapAdminResponse` contract and `renderAdmin` presentation as
+the read-only admin route, but they never call the backend. The representative admin scenario keeps
+operator consequence and decision context visible while technical identifiers remain collapsed in
+diagnostics. The extreme and empty scenarios are stable review targets for wrapping, hierarchy, and
+zero-state regressions.
+
 ## Useful feedback
 
-Focus on information hierarchy, board density, card scanability, notice prominence, panel width,
-long-content wrapping, viewport behavior, and whether factual state is easy to distinguish from an
-action. Authentication behavior and real data semantics are intentionally not represented yet.
+Focus on information hierarchy, board/admin density, card scanability, notice prominence, panel
+width, long-content wrapping, viewport behavior, and whether factual state is easy to distinguish
+from an action. Authentication behavior and real data semantics are intentionally not represented
+yet.

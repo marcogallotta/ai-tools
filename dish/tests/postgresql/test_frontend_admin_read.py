@@ -71,6 +71,7 @@ def test_admin_query_reuses_active_board_scope_and_bounds_events(core_db) -> Non
     assert facts.sections[0].section_label == "Research Queue"
     assert facts.sections[0].workflow_role == "research_queue"
     assert facts.events == ()
+    assert facts.human_reviews == ()
 
 
 def test_admin_queue_work_is_derived_from_real_registry_role(core_db) -> None:
@@ -122,6 +123,8 @@ def test_admin_queue_work_is_derived_from_real_registry_role(core_db) -> None:
 def test_admin_reads_real_open_human_review_expired_lease_and_uncertainty(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
     wall_now = datetime.now(timezone.utc)
+    question = "Marco must decide: " + ("material evidence and consequence; " * 160)
+    assert len(question) > 4096
     with session_scope(factory) as session:
         run_id = _workflow_next(ids)
         request_id = _workflow_next(ids)
@@ -178,9 +181,25 @@ def test_admin_reads_real_open_human_review_expired_lease_and_uncertainty(workfl
             execution_id=execution_id,
             operation_id=operation_id,
             route="human_review",
-            question="Marco must decide",
+            question=question,
             baseline_content_version_id=activation.content_version_id,
             opened_at=NOW,
+        )
+        session.add(
+            wf.HumanReviewRequirement(
+                requirement_id=_workflow_next(ids),
+                generation_id=context["generation_id"],
+                task_id=task_id,
+                operation_id=operation_id,
+                cycle_id=None,
+                route="human_review",
+                question="Old resolved question",
+                baseline_content_version_id=activation.content_version_id,
+                state="decided",
+                opened_by_execution_id=execution_id,
+                opened_at=NOW - timedelta(hours=2),
+                terminal_at=NOW - timedelta(hours=1),
+            )
         )
         execution = session.get(wf.CommandExecution, execution_id)
         assert execution is not None
@@ -189,8 +208,17 @@ def test_admin_reads_real_open_human_review_expired_lease_and_uncertainty(workfl
         execution.execution_revision += 1
 
     with session_scope(factory) as session:
+        facts = FrontendAdminQuery(session).capture(
+            projection_delay=timedelta(minutes=15),
+            max_cards=10,
+            max_events=10,
+        )
         payload = _service(session).read()
 
+    assert len(facts.human_reviews) == 1
+    assert facts.human_reviews[0].task_id == task_id
+    assert facts.human_reviews[0].operation_id == operation_id
+    assert facts.human_reviews[0].question == question
     assert payload["summary"]["needs_you"] == 1
     assert payload["summary"]["human_review"] == 1
     assert payload["summary"]["recovery"] == 1
@@ -202,6 +230,10 @@ def test_admin_reads_real_open_human_review_expired_lease_and_uncertainty(workfl
         "verification_attention",
         "recovery_required",
     ]
+    review_attention = next(
+        item for item in payload["dishes"][0]["attention"] if item["code"] == "verification_attention"
+    )
+    assert review_attention["message"] == question
 
 
 def test_admin_reads_real_open_operation_as_system_activity(workflow_db) -> None:

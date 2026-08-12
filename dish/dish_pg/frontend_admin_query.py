@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from dish_pg import stage3_models as workflow
@@ -25,11 +25,23 @@ class AdminAuditFact:
 
 
 @dataclass(frozen=True, slots=True)
+class AdminHumanReviewFact:
+    requirement_id: UUID
+    task_id: UUID
+    operation_id: UUID
+    cycle_id: UUID | None
+    route: str
+    question: str
+    opened_at: object
+
+
+@dataclass(frozen=True, slots=True)
 class FrontendAdminFacts:
     sections: tuple[SectionFact, ...]
     cards: tuple[CardFact, ...]
     events: tuple[AdminAuditFact, ...]
     evaluation_time: object
+    human_reviews: tuple[AdminHumanReviewFact, ...] = ()
 
 
 class FrontendAdminQuery:
@@ -57,6 +69,7 @@ class FrontendAdminQuery:
         )
         task_ids = [card.task_id for card in cards]
         events: tuple[AdminAuditFact, ...] = ()
+        human_reviews: tuple[AdminHumanReviewFact, ...] = ()
         if task_ids:
             event_rows = self.session.execute(
                 select(
@@ -80,9 +93,41 @@ class FrontendAdminQuery:
                 .limit(max_events)
             ).mappings()
             events = tuple(AdminAuditFact(**dict(row)) for row in event_rows if row["task_id"] is not None)
+            human_review_rows = self.session.execute(
+                select(
+                    workflow.HumanReviewRequirement.requirement_id,
+                    workflow.HumanReviewRequirement.task_id,
+                    workflow.HumanReviewRequirement.operation_id,
+                    workflow.HumanReviewRequirement.cycle_id,
+                    workflow.HumanReviewRequirement.route,
+                    workflow.HumanReviewRequirement.question,
+                    workflow.HumanReviewRequirement.opened_at,
+                )
+                .join(
+                    workflow.WorkflowOperation,
+                    and_(
+                        workflow.WorkflowOperation.operation_id == workflow.HumanReviewRequirement.operation_id,
+                        workflow.WorkflowOperation.generation_id == workflow.HumanReviewRequirement.generation_id,
+                        workflow.WorkflowOperation.task_id == workflow.HumanReviewRequirement.task_id,
+                    ),
+                )
+                .where(
+                    workflow.HumanReviewRequirement.generation_id == context.generation_id,
+                    workflow.HumanReviewRequirement.task_id.in_(task_ids),
+                    workflow.HumanReviewRequirement.route == "human_review",
+                    workflow.HumanReviewRequirement.state == "open",
+                    workflow.WorkflowOperation.lifecycle == "open",
+                )
+                .order_by(
+                    workflow.HumanReviewRequirement.opened_at.desc(),
+                    workflow.HumanReviewRequirement.requirement_id.desc(),
+                )
+            ).mappings()
+            human_reviews = tuple(AdminHumanReviewFact(**dict(row)) for row in human_review_rows)
         return FrontendAdminFacts(
             sections=registry.sections,
             cards=cards,
             events=events,
+            human_reviews=human_reviews,
             evaluation_time=context.evaluation_time,
         )

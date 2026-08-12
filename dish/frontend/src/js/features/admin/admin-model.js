@@ -22,7 +22,8 @@ function exactKeys(value, required) {
   const keys = Object.keys(object(value));
   if (keys.length !== required.length || required.some((key) => !keys.includes(key))) mismatch();
 }
-function string(value, max) { if (typeof value !== "string" || value.length < 1 || value.length > max) mismatch(); return value; }
+function nonEmptyString(value) { if (typeof value !== "string" || value.length < 1) mismatch(); return value; }
+function string(value, max) { const text = nonEmptyString(value); if (text.length > max) mismatch(); return text; }
 function uuid(value, task = false) { const text = string(value, 64); if (!(task ? taskPattern : uuidPattern).test(text)) mismatch(); return text; }
 function date(value, nullable = false) {
   if (nullable && value === null) return null;
@@ -45,7 +46,8 @@ function diagnostics(value) {
 function attention(value) {
   exactKeys(value, ["code", "label", "message"]);
   if (!attentionCodes.has(value.code)) mismatch();
-  return { code: value.code, label: string(value.label, 120), message: string(value.message, 300) };
+  const message = value.code === "verification_attention" ? nonEmptyString(value.message) : string(value.message, 300);
+  return { code: value.code, label: string(value.label, 120), message };
 }
 function dish(value) {
   exactKeys(value, ["task_id", "title", "section_label", "workflow_status", "bucket", "attention", "last_activity_at", "diagnostics"]);

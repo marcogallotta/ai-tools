@@ -57,6 +57,9 @@ class FrontendAdminService:
         section_labels = {section.section_id: section.section_label for section in facts.sections}
         section_roles = {section.section_id: section.workflow_role for section in facts.sections}
         cards_by_id = {card.task_id: card for card in facts.cards}
+        current_human_review_by_task = {}
+        for human_review in facts.human_reviews:
+            current_human_review_by_task.setdefault(human_review.task_id, human_review)
         latest_by_task: dict[object, datetime] = {}
         for event in facts.events:
             latest_by_task.setdefault(event.task_id, event.occurred_at)
@@ -102,7 +105,10 @@ class FrontendAdminService:
                 "section_label": section_labels.get(card.section_id, "Unknown section"),
                 "workflow_status": operation_status(card.operation_kind, card.operation_phase),
                 "bucket": bucket,
-                "attention": [self._attention_item(code) for code in codes],
+                "attention": [
+                    self._attention_item(code, current_human_review_by_task.get(card.task_id))
+                    for code in codes
+                ],
                 "last_activity_at": self._iso(latest_by_task.get(card.task_id)),
                 "diagnostics": {"attention_codes": codes},
             })
@@ -172,8 +178,10 @@ class FrontendAdminService:
         return None
 
     @staticmethod
-    def _attention_item(code: str) -> dict[str, str]:
+    def _attention_item(code: str, human_review=None) -> dict[str, str]:
         label, message = _ADMIN_ATTENTION[code]
+        if code == "verification_attention" and human_review is not None:
+            message = human_review.question
         return {"code": code, "label": label, "message": message}
 
     @staticmethod

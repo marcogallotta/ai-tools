@@ -65,6 +65,37 @@ def _active_operation_admin_payload() -> dict:
     }
 
 
+def _human_review_admin_payload() -> dict:
+    return {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "summary": {
+            "needs_you": 1,
+            "human_review": 1,
+            "recovery": 0,
+            "workflow_queue": 0,
+            "research": 0,
+            "verification": 0,
+            "system_activity": 0,
+            "affected_dishes": 1,
+        },
+        "dishes": [{
+            "task_id": TASK_ALPHA,
+            "title": "Alpha soup",
+            "section_label": "Verification Queue",
+            "workflow_status": {"state": "active_operation", "operation": "Verification", "phase": "Human review"},
+            "bucket": "needs_you",
+            "attention": [{
+                "code": "verification_attention",
+                "label": "Waiting for your decision",
+                "message": "Accept the softer texture for tonight's service, or require another verification pass?",
+            }],
+            "last_activity_at": None,
+            "diagnostics": {"attention_codes": ["verification_attention"]},
+        }],
+        "journal": [],
+    }
+
+
 def test_admin_shows_queue_work_without_inflating_needs_you(acceptance):
     acceptance.runtime.board_state.cards = [CardSpec(TASK_ALPHA, "Alpha soup", section_id=SECTION_VERIFY)]
     acceptance.runtime.admin_payload = _verification_admin_payload()
@@ -93,4 +124,19 @@ def test_admin_shows_active_operation_as_system_activity(acceptance):
     expect(admin.get_by_role("link", name="Alpha soup")).to_be_visible()
     expect(admin.locator(".admin-dish__state")).to_have_text("Initial · Prepare required")
     expect(group).to_be_visible()
+    acceptance.assert_clean()
+
+
+def test_admin_shows_exact_human_review_decision_context(acceptance):
+    acceptance.runtime.board_state.cards = [CardSpec(TASK_ALPHA, "Alpha soup", section_id=SECTION_VERIFY)]
+    acceptance.runtime.admin_payload = _human_review_admin_payload()
+    acceptance.login(return_path="/admin")
+    admin = acceptance.page.locator('[aria-label="Dish administration"]')
+    expect(admin).to_be_visible()
+    expect(admin.get_by_role("heading", name="1 dish needs you")).to_be_visible()
+    review = admin.locator(".admin-attention--verification_attention")
+    expect(review).to_contain_text("Waiting for your decision")
+    expect(review).to_contain_text("Accept the softer texture for tonight's service, or require another verification pass?")
+    expect(admin.locator(".admin-diagnostics[open]")).to_have_count(0)
+    acceptance.screenshot("admin-human-review-context")
     acceptance.assert_clean()
