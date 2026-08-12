@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
-from dish_pg.frontend_admin_query import AdminAuditFact, FrontendAdminFacts
+from dish_pg.frontend_admin_query import AdminAuditFact, AdminHumanReviewFact, FrontendAdminFacts
 from dish_pg.frontend_board_query import CardFact, SectionFact
 from dish_service.frontend_admin import FrontendAdminConfig, FrontendAdminService
 
@@ -13,6 +13,8 @@ PROJECT_ID = UUID("20000000-0000-0000-0000-000000000001")
 TASK_ID = UUID("30000000-0000-0000-0000-000000000001")
 REQUEST_ID = UUID("40000000-0000-0000-0000-000000000001")
 EVENT_ID = UUID("50000000-0000-0000-0000-000000000001")
+REQUIREMENT_ID = UUID("60000000-0000-0000-0000-000000000001")
+OPERATION_ID = UUID("70000000-0000-0000-0000-000000000001")
 
 
 class FakeQuery:
@@ -44,10 +46,12 @@ def card(**overrides):
 
 
 def test_admin_present_is_dish_first_and_human_review_counts_as_needs_you() -> None:
+    question = "Choose whether to accept the material texture risk for service."
     facts = FrontendAdminFacts(
         sections=(SectionFact(SECTION_ID, 1, "Verification Queue", "verification_queue", PROJECT_ID, "Cooking", "active", "active"),),
         cards=(card(operation_kind="initial", operation_phase="held_human"),),
         events=(AdminAuditFact(EVENT_ID, REQUEST_ID, None, TASK_ID, None, "workflow_action_rejected", "agent", NOW),),
+        human_reviews=(AdminHumanReviewFact(REQUIREMENT_ID, TASK_ID, OPERATION_ID, None, "human_review", question, NOW),),
         evaluation_time=NOW,
     )
     service = FrontendAdminService(
@@ -72,6 +76,7 @@ def test_admin_present_is_dish_first_and_human_review_counts_as_needs_you() -> N
     assert dish["task_id"] == str(TASK_ID)
     assert dish["bucket"] == "needs_you"
     assert dish["attention"][0]["label"] == "Waiting for your decision"
+    assert dish["attention"][0]["message"] == question
     assert payload["journal"][0]["summary"] == "Workflow action was rejected"
 
 
