@@ -33,7 +33,7 @@ Development Workflow normally owns:
 - implementation/review/Integration PR lifecycle mechanics;
 - branch/worktree ownership and repository-freshness/bootstrap tooling;
 - PR review forking, takeover, claim, and queue mechanics;
-- CI/check identity, PR check triggering, and merge-gate mechanics;
+- CI/check identity, PR check triggering, exact-candidate evidence, proactive CI health triage, and merge-gate mechanics;
 - agent session lifecycle, compaction recovery, and role re-grounding;
 - Asana engineering-coordination mechanics and agent write ergonomics;
 - agent identity/provenance mechanics where they serve development workflow;
@@ -131,7 +131,7 @@ The claim is inactive when:
 - Coordinator explicitly reassigns or takes over;
 - intentional parallel/deep/specialist review is requested.
 
-Visible activity includes a submitted review, review-thread/comment activity, or an explicit claim-renewal/progress comment. Do not keep the claim alive merely because the agent process might still exist somewhere.
+Visible activity includes a submitted GitHub review, review-thread/comment activity, or an explicit claim-renewal/progress comment. Do not keep the claim alive merely because the agent process might still exist somewhere.
 
 A submitted GitHub review on the exact head supersedes the claim. Independent specialist reviews may intentionally coexist; the claim prevents accidental duplication, not deliberate multi-review.
 
@@ -175,6 +175,17 @@ The development workflow should make evidence bind to the exact candidate being 
 Maintain the repository-owned test-selection/planning authority rather than inventing disconnected GitHub-only path rules.
 
 Where PR-triggered checks exist, they must identify the exact candidate/head they certify. Until automation covers a guarantee, governed manual/native evidence remains valid when its exact candidate identity is recorded.
+
+Development Workflow owns proactive CI health triage for current `main`, active work whose CI state is material to progress, and review-ready/review-critical PR candidates. This is part of the existing Development Workflow lifecycle, not a second CI lifecycle. Use event-driven discovery where available or a short-interval polling/check trigger suitable for this project's fast PR rate; day/week-scale polling is not sufficient. Persistent unexplained red CI must not sit unowned.
+
+For every material failing GitHub Actions run:
+
+- open the run and failing jobs far enough to read the relevant logs and available artifacts and identify the actual failing test/check or best exact failure evidence; reporting only `CI red` is not triage;
+- record the exact run ID, candidate/head SHA, failing workflow/job and test/check when available, classification, and next owner/action in the relevant existing Asana task or current coordination record; keep that task current while the failure remains material;
+- reconcile the failure against existing Asana ownership before creating new work; update/route the existing defect when it already covers the failure rather than creating a duplicate CI task or lifecycle;
+- route semantic product/Workflow defects to the appropriate implementation/Workflow owner and PostgreSQL/dark-launch semantic defects to that specialist; Development Workflow directly owns CI/test-harness, test-selection/planning, runner, workflow/check-mechanics, and evidence-upload mechanics defects;
+- treat missing or failed evidence upload as a Development Workflow defect, but continue inspecting the underlying run/log failure independently so an evidence-path failure cannot hide the actual defect indefinitely;
+- if the exact cause cannot yet be resolved, preserve the best available evidence, state what remains unknown, and assign the next diagnostic owner/action rather than leaving the red run unexplained and ownerless.
 
 Optimization work must not weaken native PostgreSQL, browser, process/restart, migration, or other real-boundary evidence merely to reduce latency.
 
