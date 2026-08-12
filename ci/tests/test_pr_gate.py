@@ -70,6 +70,42 @@ def test_evidence_and_required_status_bind_to_candidate_sha_not_github_sha():
     assert "${{ github.sha }}" not in workflow
 
 
+def test_each_review_ready_attempt_invalidates_prior_success_and_always_finalizes():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    assert "exact-head-ordinary-ci-start:" in workflow
+    assert "needs: exact-head-ordinary-ci-start" in workflow
+    assert "-f state=pending" in workflow
+    assert "if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)" in workflow
+    assert "Publish terminal exact-head ordinary CI status" in workflow
+    assert '-f state="$status_state"' in workflow
+    assert "status_state=failure" in workflow
+
+
+@pytest.mark.parametrize("new_state", ["pending", "failure", "error"])
+def test_same_sha_new_attempt_supersedes_previous_success_and_refuses_integration(new_state):
+    combined = {
+        "sha": HEAD,
+        "statuses": [
+            {
+                "context": pr_gate.REQUIRED_ORDINARY_CI_CONTEXT,
+                "state": "success",
+                "updated_at": "2026-08-12T19:00:00Z",
+                "target_url": "https://github.com/marcogallotta/ai-tools/actions/runs/123",
+            },
+            {
+                "context": pr_gate.REQUIRED_ORDINARY_CI_CONTEXT,
+                "state": new_state,
+                "updated_at": "2026-08-12T19:05:00Z",
+                "target_url": "https://github.com/marcogallotta/ai-tools/actions/runs/124",
+            },
+        ],
+    }
+    with pytest.raises(pr_gate.GateError, match=f"required ordinary CI status is {new_state}"):
+        pr_gate.evaluate_integration_gate(
+            pr(draft=False), reviewed_head=HEAD, combined_status=combined
+        )
+
+
 def test_mismatched_or_stale_check_sha_refuses_integration():
     with pytest.raises(pr_gate.GateError, match="not reviewed head"):
         pr_gate.evaluate_integration_gate(
