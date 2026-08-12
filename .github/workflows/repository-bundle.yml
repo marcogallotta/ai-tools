@@ -19,13 +19,13 @@ jobs:
     name: Build and verify exact-main repository bundle
     runs-on: ubuntu-24.04
     outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
       artifact_name: ${{ steps.bundle.outputs.artifact_name }}
       release_tag: ${{ steps.bundle.outputs.release_tag }}
       bundle_name: ${{ steps.bundle.outputs.bundle_name }}
       manifest_name: ${{ steps.bundle.outputs.manifest_name }}
       checksum_name: ${{ steps.bundle.outputs.checksum_name }}
     env:
-      SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
       SOURCE_REF: refs/heads/main
       REPOSITORY_ID: ${{ github.repository_id }}
     steps:
@@ -34,14 +34,18 @@ jobs:
           fetch-depth: 0
 
       - name: Materialize exact advertised main ref
+        id: source
         shell: bash
         run: |
           set -euo pipefail
-          # Fetch the object without writing directly into a checked-out branch;
-          # Git refuses refs/heads/main:refs/heads/main on main-push runs.
+          # Resolve the requested main SHA from live GitHub authority at execution time.
+          # This keeps PR acceptance valid when main advances after the PR was opened.
           git fetch --force origin "$SOURCE_REF"
-          git cat-file -e "$SOURCE_SHA^{commit}"
-          git update-ref "$SOURCE_REF" "$SOURCE_SHA"
+          source_sha="$(git rev-parse FETCH_HEAD)"
+          git cat-file -e "$source_sha^{commit}"
+          git update-ref "$SOURCE_REF" "$source_sha"
+          printf 'SOURCE_SHA=%s\n' "$source_sha" >> "$GITHUB_ENV"
+          printf 'source_sha=%s\n' "$source_sha" >> "$GITHUB_OUTPUT"
 
       - name: Build authority-validated repository bundle
         id: bundle
@@ -103,7 +107,7 @@ jobs:
       contents: write
     runs-on: ubuntu-24.04
     env:
-      SOURCE_SHA: ${{ github.sha }}
+      SOURCE_SHA: ${{ needs.build-verify-artifact.outputs.source_sha }}
       ARTIFACT_NAME: ${{ needs.build-verify-artifact.outputs.artifact_name }}
       RELEASE_TAG: ${{ needs.build-verify-artifact.outputs.release_tag }}
       BUNDLE_NAME: ${{ needs.build-verify-artifact.outputs.bundle_name }}
