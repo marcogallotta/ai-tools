@@ -1228,6 +1228,30 @@ def _commit_kill_revocation(
     return revocation
 
 
+def _nested_admin_application(
+    self, *, command: str, identity: str
+) -> "DishAdminApplication":
+    """Return an internal admin dispatcher with a distinct deterministic request identity."""
+
+    parent_request_id = str(self.invocation_request_id or "").strip()
+    nested_request_id = None
+    if parent_request_id:
+        nested_request_id = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"dish-admin-nested:{parent_request_id}:{command}:{identity}",
+            )
+        )
+    return DishAdminApplication(
+        self.conn,
+        backend=self.backend,
+        release_loader=self.release_loader,
+        invocation_request_id=nested_request_id,
+        invocation_run_id=self.invocation_run_id,
+        recovery_request_settler=self.recovery_request_settler,
+    )
+
+
 def _command_kill(
     self,
     *,
@@ -1675,8 +1699,13 @@ def _command_kill(
     # than another hidden operator step.
     abandonment = get_abandonment_attempt(self.conn, abandonment_id)
     if abandonment["status"] in {"started", "blocked_manual_reconciliation"}:
-        reconciled = _command_reconcile_abandonment(
+        reconcile_app = _nested_admin_application(
             self,
+            command="reconcile-abandonment",
+            identity=abandonment_id,
+        )
+        reconciled = _command_reconcile_abandonment(
+            reconcile_app,
             trace=AdminTrace(submission_id=operation_id),
             abandonment_id=abandonment_id,
         )
@@ -1800,8 +1829,14 @@ def _command_bulk_kill(
             state="ok",
             data={
                 "selected_count": 0,
+                "revoked_count": 0,
                 "killed_count": 0,
                 "failed_count": 0,
+                "replacement_complete_count": 0,
+                "replacement_ready_count": 0,
+                "checkpoint_preserved_count": 0,
+                "reconciliation_required_count": 0,
+                "downstream_error_count": 0,
                 "results": [],
                 "human_consequence": "No matching Dish runs currently hold unreleased actor leases.",
             },
@@ -1809,7 +1844,15 @@ def _command_bulk_kill(
 
     request_seed = self.invocation_request_id or str(uuid.uuid4())
     results: list[dict[str, Any]] = []
-    failures = 0
+    revoked_count = 0
+    revocation_failures = 0
+    downstream_errors = 0
+    outcome_counts = {
+        "replacement_complete": 0,
+        "replacement_ready": 0,
+        "checkpoint_preserved": 0,
+        "manual_reconciliation_required": 0,
+    }
     for candidate in candidates:
         child_request_id = str(
             uuid.uuid5(
@@ -1861,12 +1904,26 @@ def _command_bulk_kill(
                 self.conn, request_id=child_request_id, result=child_result
             )
         ok = bool(child_result.get("ok"))
-        failures += 0 if ok else 1
         child_data = child_result.get("data") if isinstance(child_result.get("data"), Mapping) else {}
+        fenced = child_data.get("fenced_invocation")
+        revoked = bool(
+            isinstance(fenced, Mapping)
+            and fenced.get("authority_state") == "revoked"
+        )
+        if revoked:
+            revoked_count += 1
+        else:
+            revocation_failures += 1
+        outcome = str(child_data.get("outcome") or "")
+        if outcome in outcome_counts:
+            outcome_counts[outcome] += 1
+        if revoked and not ok:
+            downstream_errors += 1
         results.append(
             {
                 **candidate,
                 "ok": ok,
+                "revoked": revoked,
                 "code": child_result.get("code"),
                 "outcome": child_data.get("outcome"),
                 "human_consequence": child_data.get("human_consequence"),
@@ -1876,17 +1933,23 @@ def _command_bulk_kill(
 
     data = {
         "selected_count": len(candidates),
-        "killed_count": len(candidates) - failures,
-        "failed_count": failures,
+        "revoked_count": revoked_count,
+        "killed_count": revoked_count,
+        "failed_count": revocation_failures,
+        "replacement_complete_count": outcome_counts["replacement_complete"],
+        "replacement_ready_count": outcome_counts["replacement_ready"],
+        "checkpoint_preserved_count": outcome_counts["checkpoint_preserved"],
+        "reconciliation_required_count": outcome_counts["manual_reconciliation_required"],
+        "downstream_error_count": downstream_errors,
         "results": results,
         "human_consequence": (
-            f"Revoked {len(candidates) - failures} of {len(candidates)} selected Dish runs."
-            if failures
-            else f"Revoked all {len(candidates)} selected Dish runs."
+            f"Revoked {revoked_count} of {len(candidates)} selected Dish runs. "
+            f"Replacement complete: {outcome_counts['replacement_complete']}; "
+            f"reconciliation required: {outcome_counts['manual_reconciliation_required']}."
         ),
         "atomic": False,
     }
-    if failures:
+    if revocation_failures or downstream_errors:
         error = DishRuleError(
             "CONFLICT",
             "One or more exact Dish runs changed or could not be safely killed; successful kills were preserved",
@@ -1894,8 +1957,10 @@ def _command_bulk_kill(
             retryable=True,
             details={
                 "selected_count": len(candidates),
-                "killed_count": len(candidates) - failures,
-                "failed_count": failures,
+                "revoked_count": revoked_count,
+                "killed_count": revoked_count,
+                "failed_count": revocation_failures,
+                "downstream_error_count": downstream_errors,
             },
         )
         result = error_envelope(command, error, state="partial")

@@ -464,6 +464,57 @@ def test_issues_renderer_hides_system_items_until_verbose():
     assert "live task inspections: 0" in verbose
 
 
+def test_bulk_kill_renderer_separates_revocation_from_reconciliation():
+    from dish_tool.admin_human import render_admin_result
+
+    result = {
+        "ok": True,
+        "command": "kill-all",
+        "code": "OK",
+        "allowed_actions": [],
+        "data": {
+            "selected_count": 3,
+            "revoked_count": 3,
+            "killed_count": 3,
+            "failed_count": 0,
+            "replacement_complete_count": 1,
+            "replacement_ready_count": 0,
+            "checkpoint_preserved_count": 0,
+            "reconciliation_required_count": 2,
+            "results": [
+                {
+                    "task_title": "Smoked beef",
+                    "revoked": True,
+                    "ok": True,
+                    "outcome": "replacement_complete",
+                },
+                {
+                    "task_title": "Chicken vindaloo",
+                    "revoked": True,
+                    "ok": True,
+                    "outcome": "manual_reconciliation_required",
+                },
+                {
+                    "task_title": "Lushui",
+                    "revoked": True,
+                    "ok": True,
+                    "outcome": "manual_reconciliation_required",
+                },
+            ],
+        },
+        "errors": [],
+    }
+
+    rendered = render_admin_result(result, profile="prod")
+
+    assert "Selected: 3; Revoked: 3; Failed: 0" in rendered
+    assert "Replacement complete: 1; Reconciliation required: 2" in rendered
+    assert "[REPLACED] Smoked beef" in rendered
+    assert "[RECONCILIATION] Chicken vindaloo" in rendered
+    assert "[RECONCILIATION] Lushui" in rendered
+    assert "INTERNAL_ERROR" not in rendered
+
+
 def test_human_renderer_calls_out_ready_to_cook_resting_state():
     from dish_tool.admin_human import render_admin_result
 

@@ -919,19 +919,42 @@ def render_admin_result(
                         )
     elif command in {"kill-all", "kill-all-expired"}:
         selected = int(data.get("selected_count") or 0)
-        killed = int(data.get("killed_count") or 0)
+        revoked = int(data.get("revoked_count") or data.get("killed_count") or 0)
         failed = int(data.get("failed_count") or 0)
+        replacement_complete = int(data.get("replacement_complete_count") or 0)
+        replacement_ready = int(data.get("replacement_ready_count") or 0)
+        checkpoint_preserved = int(data.get("checkpoint_preserved_count") or 0)
+        reconciliation_required = int(data.get("reconciliation_required_count") or 0)
         lines.append("Bulk run replacement")
-        lines.append(f"Selected: {selected}; Revoked: {killed}; Failed: {failed}")
+        lines.append(f"Selected: {selected}; Revoked: {revoked}; Failed: {failed}")
+        lines.append(
+            f"Replacement complete: {replacement_complete}; "
+            f"Reconciliation required: {reconciliation_required}"
+        )
+        if replacement_ready or checkpoint_preserved:
+            lines.append(
+                f"Replacement ready: {replacement_ready}; "
+                f"Checkpoint preserved: {checkpoint_preserved}"
+            )
         consequence = _clean(data.get("human_consequence"))
         if consequence:
             lines.append(consequence)
         rows = data.get("results") if isinstance(data.get("results"), list) else []
+        outcome_labels = {
+            "replacement_complete": "REPLACED",
+            "replacement_ready": "READY",
+            "checkpoint_preserved": "CHECKPOINT",
+            "manual_reconciliation_required": "RECONCILIATION",
+        }
         for index, row in enumerate(rows, start=1):
             if not isinstance(row, Mapping):
                 continue
             title = _clean(row.get("task_title")) or _clean(row.get("task_gid")) or "Dish"
-            status = "OK" if bool(row.get("ok")) else (_clean(row.get("code")) or "FAILED")
+            outcome = _clean(row.get("outcome"))
+            if bool(row.get("revoked")):
+                status = outcome_labels.get(outcome or "", "REVOKED")
+            else:
+                status = _clean(row.get("code")) or "FAILED"
             lines.append(f"{index}. [{status}] {title}")
             if verbose:
                 lines.append(f"   Operation: {_clean(row.get('operation_id')) or 'unknown'}")

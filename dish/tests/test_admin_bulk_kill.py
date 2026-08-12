@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import uuid
+
+import dish_tool.admin as admin_module
 
 from dish_service.leases import LeaseManager, ServicePrincipal
 from dish_tool.admin import DishAdminApplication
-from dish_tool.database import confirm_task_content, create_operation, operation_run_revocation
+from dish_tool.database import (
+    confirm_task_content,
+    create_operation,
+    declare_operation_step,
+    operation_run_revocation,
+)
 from dish_tool.database_initialization import initialize_database
 from dish_tool.models import OperationActors
-from tests.support.abandonment import Backend
+from tests.support.abandonment import Backend, _source
+from tests.support.abandonment_admin import _released_actor_lease
 
 
 def _operation(conn, *, task_gid: str, title: str, run_id: str):
@@ -140,3 +149,104 @@ def test_bulk_kill_cli_flags_are_explicit():
     assert all_args["confirmed"] is True
     assert expired_args["command"] == "kill-all-expired"
     assert expired_args["confirmed"] is True
+
+
+def test_automatic_abandonment_reconcile_uses_distinct_derived_request_identity():
+    conn = initialize_database(":memory:")
+    backend = Backend(section="pi")
+    source = _source(conn, backend, kind="planning")
+    lease = _released_actor_lease(conn, source["operation_id"])
+    declare_operation_step(conn, source["operation_id"], "unfinished", {"x": 1})
+    parent_request_id = "11111111-1111-4111-8111-111111111111"
+    app = DishAdminApplication(
+        conn, backend=backend, invocation_request_id=parent_request_id
+    )
+
+    blocked = app.execute(
+        "abandon-operation",
+        submission_id=source["operation_id"],
+        lease_id=lease["lease_id"],
+        reason="the original conversation is permanently unavailable",
+    )
+
+    assert blocked["ok"], blocked
+    abandonment_id = blocked["data"]["abandonment_id"]
+    nested = admin_module._nested_admin_application(
+        app, command="reconcile-abandonment", identity=abandonment_id
+    )
+    reconciled = admin_module._command_reconcile_abandonment(
+        nested,
+        trace=admin_module.AdminTrace(submission_id=source["operation_id"]),
+        abandonment_id=abandonment_id,
+    )
+
+    assert reconciled["ok"], reconciled
+    expected_nested_request_id = str(
+        uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"dish-admin-nested:{parent_request_id}:reconcile-abandonment:{abandonment_id}",
+        )
+    )
+    executions = conn.execute(
+        "SELECT request_id,command,status FROM operation_executions ORDER BY created_at"
+    ).fetchall()
+    assert [row["request_id"] for row in executions] == [
+        parent_request_id,
+        expected_nested_request_id,
+    ]
+    assert [row["command"] for row in executions] == [
+        "abandon-operation",
+        "reconcile-abandonment",
+    ]
+    assert all(row["status"] == "completed" for row in executions)
+
+
+def test_bulk_kill_counts_committed_revocation_separately_from_downstream_error(monkeypatch):
+    conn = initialize_database(":memory:")
+    op = _operation(conn, task_gid="dish", title="Dish", run_id="dead")
+    LeaseManager(conn).acquire(
+        op["operation_id"], ServicePrincipal("owner", "dead")
+    )
+    outer = DishAdminApplication(
+        conn,
+        backend=Backend(task_gid="dish", title="Dish", section="pi"),
+        invocation_request_id="22222222-2222-4222-8222-222222222222",
+    )
+
+    class FakeChild:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def execute(self, command, **arguments):
+            assert command == "kill"
+            return {
+                "ok": False,
+                "command": "kill",
+                "code": "CONFLICT",
+                "data": {
+                    "fenced_invocation": {"authority_state": "revoked"},
+                    "outcome": "manual_reconciliation_required",
+                    "human_consequence": "Revocation committed; reconciliation remains.",
+                },
+                "errors": [{"rule": "downstream_reconciliation_blocked"}],
+            }
+
+    monkeypatch.setattr(admin_module, "DishAdminApplication", FakeChild)
+
+    result = admin_module._command_bulk_kill(
+        outer,
+        trace=admin_module.AdminTrace(),
+        command="kill-all",
+        expired_only=False,
+        reason="replace unavailable runs",
+        confirmed=True,
+    )
+
+    assert not result["ok"]
+    assert result["data"]["selected_count"] == 1
+    assert result["data"]["revoked_count"] == 1
+    assert result["data"]["killed_count"] == 1
+    assert result["data"]["failed_count"] == 0
+    assert result["data"]["reconciliation_required_count"] == 1
+    assert result["data"]["downstream_error_count"] == 1
+    assert result["data"]["results"][0]["revoked"] is True
