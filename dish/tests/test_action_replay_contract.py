@@ -117,6 +117,11 @@ def test_action_and_runtime_docs_preserve_replay_inventory_and_decision_rules():
     assert "As soon as any Dish envelope is received, stop blind transport retries" in action_guide
     assert "Never blindly retry `BACKEND_UNCERTAIN`" in action_guide
     assert "Truly read-only Actions" in action_guide
+    assert "actual connected-agent run/principal, not a Marco-message boundary" in action_guide
+    assert "Do not rotate a run ID merely because Marco sent another message" in action_guide
+    assert "never construct `--detail ''`" in action_guide
+    assert "ask the real Marco-facing question in ordinary language" in action_guide
+    assert "One Marco message is normally one agent run" not in action_guide
     assert "State-specific procedures" in action_guide
 
     assert "expected argument, state, authorization, and workflow failures are stored" in runtime

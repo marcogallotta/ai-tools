@@ -56,12 +56,15 @@ workflow procedure.
   authority: the imported schema and Dish runtime still enforce authorization, revocation, idempotency,
   and workflow legality, and Dish's returned envelope remains authoritative. If Dish rejects the
   requested action, report that rejection. The override applies only to the message that invokes it.
-- One Marco message is normally one agent run. Create one fresh canonical lowercase UUID as
-  `client.run_id` and reuse it for every Action call, retry, and automatic continuation while
-  answering that message. A later Marco message normally uses a new run ID. Never change run IDs to
-  bypass ownership or manufacture Verification independence. If Marco explicitly invokes `override`
-  and instructs you to reuse an existing run ID for a retry/test continuation, reuse exactly that run
-  ID and let Dish decide whether it remains authoritative.
+- `client.run_id` identifies the actual connected-agent run/principal, not a Marco-message boundary.
+  Create a fresh canonical lowercase UUID when beginning a genuinely fresh agent run, and keep it
+  stable for every Action call and automatic continuation performed by that same run. Do not rotate a
+  run ID merely because Marco sent another message, and do not preserve an old run ID merely because
+  the work is conversationally related if a genuinely new agent run has begun. Never change run IDs
+  to bypass ownership or manufacture Verification independence. Exact transport replay of one
+  logical request always preserves the original run ID and, when present, request ID. If Marco
+  explicitly invokes `override` and instructs you to reuse an existing run ID for a retry/test
+  continuation, reuse exactly that run ID and let Dish decide whether it remains authoritative.
 - For every Action whose imported schema requires `client.request_id`, create a fresh canonical
   lowercase UUID for one logical call. This includes `inspect`: Verification inspection records
   durable evidence even though its operator purpose is observational. If no Dish envelope is received
@@ -94,9 +97,18 @@ workflow procedure.
   or assumed local file. Follow the imported Action schema for correction-specific argument shapes.
 - When Dish returns `human_action`, keep Marco-facing output compact: state the decision/action first,
   quantify any material threshold blocker, then give the simplest available options and consequence.
-  Do not dump raw details, IDs, evidence notes, resume state, or rendered admin commands unless Marco
-  asks for protocol detail or how to execute the action. Never synthesize an admin/recovery command.
-  Wait for Marco's confirmation when Dish requires an admin continuation.
+  Treat prompt labels and command placeholders as templates, not as Marco's answer. If the required
+  answer/detail is blank, omitted, or still represented by a placeholder, ask Marco for the missing
+  value; never construct `--detail ''`, an empty equivalent, or pretend an unanswered prompt supplied
+  authority. Do not dump raw details, IDs, evidence notes, resume state, or rendered admin commands
+  unless Marco asks for protocol detail or how to execute the action. Never synthesize an
+  admin/recovery command. Wait for Marco's confirmation when Dish requires an admin continuation.
+- When authoring a Verification Evidence or Human Review question for persistence, ask the real
+  Marco-facing question in ordinary language. Include the concrete fact or uncertainty he must decide
+  and the decision-relevant consequence; for Human Review, offer concrete plausible choices best-first
+  with the recommended route first when the Action contract accepts choices. Avoid route names,
+  resume-state vocabulary, abstract "signability", or other protocol jargon unless that protocol fact
+  is itself what Marco must decide. Do not omit facts that are actually required to make the decision.
 - A deterministic tool pass is not the semantic stage work. Complete the semantic work required by
   the routed Dish protocol, while letting Dish's current response determine the legal continuation.
 
