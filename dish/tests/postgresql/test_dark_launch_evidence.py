@@ -354,6 +354,7 @@ def _add_shadow_envelope(
 
 
 def test_capture_only_create_cascade_gets_distinct_gap_classification(workflow_db) -> None:
+    """The downstream binding gap is distinguishable without changing binding policy."""
     factory, _ids, context, _task_id = workflow_db
     baseline_id = uuid.uuid4()
     create_envelope_id = uuid.uuid4()
