@@ -31,9 +31,7 @@ export DISH_PG_URL='postgresql+psycopg://...'
 export DISH_LEGACY_WRITER_FENCE='/absolute/path/legacy-writer-fence.json'
 export DISH_PG_CERT_URL='postgresql+psycopg://.../dish_native_cert'
 export DISH_PG_REHEARSAL_URL='postgresql+psycopg://.../dish_rehearsal'
-export DISH_PG_REHEARSAL_LIBPQ_URL='postgresql://.../dish_rehearsal'
 export DISH_PG_RESTORE_URL='postgresql+psycopg://.../dish_restore_verify'
-export DISH_PG_RESTORE_LIBPQ_URL='postgresql://.../dish_restore_verify'
 export DISH_PG_SCHEMA_HEAD="$(.venv/bin/python -c 'from dish_pg.release import ALEMBIC_HEAD; print(ALEMBIC_HEAD)')"
 ```
 
@@ -121,39 +119,47 @@ primary-key requirements do not match. It does not create or migrate the databas
 
 ### 3.3 Backup and restore verification
 
-Run this only while the rehearsal source is quiesced so the source fingerprint and dump describe the
-same logical state. The restore target must be a separately provisioned empty database:
+Run this only while the production-shaped rehearsal source is quiesced. The source must already
+contain material authority rows; an empty migrated schema cannot satisfy this rehearsal. Provision
+the restore target as a separate empty database, and mount the retention destination on an
+independent filesystem device before starting:
 
 ```sh
-DISH_PG_URL="$DISH_PG_REHEARSAL_URL" \
-  .venv/bin/python scripts/dish-pg-operations-evidence database-fingerprint \
-  --database-url-env DISH_PG_URL \
-  --expected-database-name dish_rehearsal \
+mkdir -p /secure/evidence/backup-restore
+.venv/bin/python scripts/dish-pg-backup-restore-rehearsal \
+  --python .venv/bin/python \
+  --source-commit "$(git rev-parse HEAD)" \
   --expected-schema-head "$DISH_PG_SCHEMA_HEAD" \
-  --output /secure/evidence/backup-source-fingerprint.json
-pg_dump "$DISH_PG_REHEARSAL_LIBPQ_URL" \
-  --format=custom --no-owner --no-privileges \
-  --file=/secure/evidence/dish-rehearsal.dump
-sha256sum /secure/evidence/dish-rehearsal.dump \
-  > /secure/evidence/dish-rehearsal.dump.sha256
-test "$(psql "$DISH_PG_RESTORE_LIBPQ_URL" -XAtv ON_ERROR_STOP=1 \
-  -c "SELECT count(*) FROM pg_catalog.pg_tables WHERE schemaname='public'")" = 0
-pg_restore --exit-on-error --single-transaction --no-owner --no-privileges \
-  --dbname="$DISH_PG_RESTORE_LIBPQ_URL" /secure/evidence/dish-rehearsal.dump
-DISH_PG_URL="$DISH_PG_RESTORE_URL" \
-  .venv/bin/python scripts/dish-pg-operations-evidence database-fingerprint \
-  --database-url-env DISH_PG_URL \
-  --expected-database-name dish_restore_verify \
-  --expected-schema-head "$DISH_PG_SCHEMA_HEAD" \
-  --output /secure/evidence/backup-restored-fingerprint.json
-.venv/bin/python scripts/dish-pg-operations-evidence compare-database-fingerprints \
-  --source /secure/evidence/backup-source-fingerprint.json \
-  --restored /secure/evidence/backup-restored-fingerprint.json \
-  --output /secure/evidence/backup-restore-comparison.json
+  --expected-source-database dish_rehearsal \
+  --expected-restore-database dish_restore_verify \
+  --output-dir /secure/evidence/backup-restore \
+  --retention-destination /mnt/OFF_DEVICE/dish/postgresql-authority.dump
 ```
 
-A failed comparison is investigation evidence, never a successful rehearsal. Retain the dump hash,
-both fingerprint reports, and the comparison report together.
+The governed rehearsal refuses `DISH_PG_URL`, `DISH_PG_TEST_URL`, and
+`DISH_TEST_POSTGRESQL_DSN` as database inputs and also rejects exact URL aliases of those protected
+environments. `DISH_PG_REHEARSAL_URL` and `DISH_PG_RESTORE_URL` are the canonical
+`postgresql+psycopg` targets. The command derives the libpq URI used by `psql`, `pg_dump`, and
+`pg_restore` from each canonical target; a separately supplied `--source-libpq-url-env` or
+`--restore-libpq-url-env` is only a fail-closed compatibility assertion and is never used as the
+backup/restore target. A mismatched assertion stops before checkout or database commands.
+
+It verifies the checkout commit, source and restore database identities, and an empty restore
+`public` schema before `pg_dump`. It fingerprints every public authority table before and after the
+dump and requires the material state to remain identical, then copies the mode-0600 dump to the
+independent retention device and verifies its SHA-256 before restore.
+
+Restore uses `--exit-on-error --single-transaction --no-owner --no-privileges`. The restored database
+must have the expected single Alembic head and the same complete table inventory, row counts, ordered
+row digests, and database fingerprint as the source. The backup and retention artifacts are rehashed
+before the rehearsal can pass.
+
+`rehearsal-report.json` binds the exact source commit, canonical source and restore environment names,
+the derived-libpq binding (plus any verified assertion environment), source and restore database
+identities, PostgreSQL tool versions, dump path/hash/size, independent-retention path/hash/device
+identity, all fingerprint/comparison artifacts and hashes, material source row count, and the final
+outcome. Failed runs remain hashed failure evidence and never satisfy the cutover gate. This
+implements the current off-device-copy requirement only; it does not add a PITR/RPO product policy.
 
 ## 4. Create the release candidate
 
