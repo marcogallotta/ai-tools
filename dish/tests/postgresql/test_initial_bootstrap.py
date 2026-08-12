@@ -14,6 +14,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from dish_pg import models
+from dish_pg import stage3_models as wf
 from dish_pg.command_port import CommandCall, PostgresCommandPort
 from dish_pg.bootstrap import (
     DEFAULT_SCHEMA_HEAD,
@@ -407,6 +408,25 @@ def test_registry_revision_uses_truthful_correction_import_without_rewriting_aut
                 == correction.source_bundle_sha256
             )
             assert correction.provenance["source_record_count"] == 0
+            correction_execution_id = uuid.UUID(
+                str(correction.provenance["command_execution_id"])
+            )
+            correction_execution = session.get(
+                wf.CommandExecution, correction_execution_id
+            )
+            assert correction_execution is not None
+            assert correction_execution.command_name == "revise-section-registry"
+            assert correction_execution.status == "committed"
+            correction_request = session.get(
+                wf.ServiceRequest, correction_execution.request_id
+            )
+            assert correction_request is not None
+            assert correction_request.principal_class == "admin"
+            assert correction_request.command_name == "revise-section-registry"
+            assert correction_request.canonical_payload["arguments"] == {
+                "research_queue_section_id": str(DEFAULT_SECTION_ID),
+                "verification_queue_section_id": str(OTHER_SECTION_ID),
+            }
             assert registry_source_import_run(session, version).import_run_id == (
                 bootstrapped.import_run_id
             )
@@ -455,6 +475,55 @@ def test_registry_revision_uses_truthful_correction_import_without_rewriting_aut
                     correction_import_run_id,
                     bootstrapped.binding_id,
                 )
+
+            original_provenance = dict(correction.provenance)
+            original_bundle_sha256 = correction.source_bundle_sha256
+            fake_execution_id = uuid.uuid4()
+            tampered_payload = {
+                "format": "dish-registry-role-correction-v1",
+                "generation_id": str(version.generation_id),
+                "predecessor_registry_version_id": original_provenance[
+                    "predecessor_registry_version_id"
+                ],
+                "source_import_run_id": original_provenance["source_import_run_id"],
+                "command_execution_id": str(fake_execution_id),
+                "requested_roles": original_provenance["requested_roles"],
+                "result_registry_sha256": version.registry_sha256,
+            }
+            tampered_bundle_sha256 = hashlib.sha256(
+                json.dumps(
+                    tampered_payload,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                ).encode("utf-8")
+            ).hexdigest()
+            correction.provenance = {
+                **original_provenance,
+                "command_execution_id": str(fake_execution_id),
+                "correction_bundle_sha256": tampered_bundle_sha256,
+            }
+            correction.source_bundle_sha256 = tampered_bundle_sha256
+            session.flush()
+            with pytest.raises(
+                CoreAuthorityError, match="command execution provenance"
+            ):
+                registry_source_import_run(session, version)
+
+            correction.provenance = {
+                **original_provenance,
+                "source_record_count": 1,
+            }
+            correction.source_bundle_sha256 = original_bundle_sha256
+            session.flush()
+            with pytest.raises(
+                CoreAuthorityError, match="cannot claim imported source records"
+            ):
+                registry_source_import_run(session, version)
+
+            correction.provenance = original_provenance
+            correction.source_bundle_sha256 = original_bundle_sha256
+            session.flush()
     finally:
         engine.dispose()
 
