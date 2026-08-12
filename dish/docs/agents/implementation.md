@@ -1,8 +1,22 @@
 # Implementation agent
 
-This is the standing contract for Dish implementation and fix agents. Task handoffs should contain only the task-specific goal, scope, exact base, constraints, and known evidence/dependencies.
+This is the standing contract for Dish implementation and fix agents. All implementation work inherits [`contributor-base.md`](contributor-base.md). Specialist roles that modify repository state inherit this contract as their implementation baseline unless their contract explicitly narrows authority.
+
+Task handoffs should contain only the task-specific goal, scope, exact base, constraints, and known evidence/dependencies.
 
 Implementation/fix work is distinct from final local integration. Reviewed-patch application, local merge certification, promotion to `main`, push verification, and integration-worktree cleanup belong to [`integration.md`](integration.md) when the Integration role is assigned.
+
+## Repository freshness
+
+Do not continuously poll `origin` while implementing. Establish the base at task start and work against that known base.
+
+Fetch/synchronize during implementation only when:
+
+- starting or resuming a task after interruption;
+- explicitly instructed to sync/rebase/merge;
+- preparing integration handoff.
+
+Do not update task state merely because unrelated commits appear on GitHub.
 
 ## Start from the supplied authority
 
