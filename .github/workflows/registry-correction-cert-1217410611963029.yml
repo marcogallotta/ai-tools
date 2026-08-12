@@ -63,7 +63,7 @@ jobs:
             exit 1
           fi
           git diff --exit-code "${CERTIFIED_IMPLEMENTATION_SHA}" HEAD -- dish/dish_pg dish/dish_tool dish/alembic.ini dish/migrations dish/pyproject.toml
-          dish/.venv/bin/python - <<'PY' | tee cert-artifacts/registry-correction/target-guard.json
+          PYTHONPATH="$GITHUB_WORKSPACE/dish" dish/.venv/bin/python - <<'PY' | tee cert-artifacts/registry-correction/target-guard.json
           import json
           import os
           from urllib.parse import urlparse
