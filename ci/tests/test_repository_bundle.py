@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 SCRIPT = Path(__file__).resolve().parents[2] / 'scripts' / 'repository_bundle.py'
+WORKFLOW = Path(__file__).resolve().parents[2] / '.github' / 'workflows' / 'repository-bundle.yml'
 REPOSITORY = 'marcogallotta/ai-tools'
 REPOSITORY_ID = '1304888921'
 MAIN_REF = 'refs/heads/main'
@@ -75,6 +76,21 @@ def verify(tmp_path: Path, output: Path, sha: str, **overrides):
         '--expected-repository-id', str(params['repository_id']), '--expected-sha', str(params['sha']),
         '--expected-ref', str(params['ref']), '--clone-dir', str(params['clone']), check=False,
     )
+
+
+def test_pull_request_validation_has_read_only_contents_permission():
+    workflow = WORKFLOW.read_text(encoding='utf-8')
+    assert 'permissions:\n  contents: read\n' in workflow
+    assert workflow.count('contents: write') == 1
+
+    build_job = workflow.split('  build-verify-artifact:\n', 1)[1].split(
+        '  publish-release-retention:\n', 1
+    )[0]
+    assert 'contents: write' not in build_job
+
+    publish_job = workflow.split('  publish-release-retention:\n', 1)[1]
+    assert "if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'" in publish_job
+    assert 'permissions:\n      actions: read\n      contents: write\n' in publish_job
 
 
 def test_build_verify_clone_round_trip(tmp_path: Path):
