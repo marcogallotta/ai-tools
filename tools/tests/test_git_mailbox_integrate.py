@@ -35,7 +35,13 @@ def install_commit_tool(worktree):
     git(worktree, "commit", "-q", "-m", "install commit tool")
 
 
-def make_series(tmp_path, *, two=False, conflicting_second=False):
+def make_series(
+    tmp_path,
+    *,
+    two=False,
+    conflicting_second=False,
+    first_change="file",
+):
     main = tmp_path / "main"
     main.mkdir()
     git(main, "init", "-q")
@@ -43,7 +49,9 @@ def make_series(tmp_path, *, two=False, conflicting_second=False):
     git(main, "config", "user.email", "tester@example.com")
     git(main, "checkout", "-q", "-b", "main")
     (main / "base.txt").write_text("base\n")
-    git(main, "add", "base.txt")
+    (main / "type-target.txt").write_text("target\n")
+    (main / "type-change").write_text("regular\n")
+    git(main, "add", "base.txt", "type-target.txt", "type-change")
     git(main, "commit", "-q", "-m", "base")
     install_commit_tool(main)
     base = git(main, "rev-parse", "HEAD").stdout.strip()
@@ -56,9 +64,29 @@ def make_series(tmp_path, *, two=False, conflicting_second=False):
     git(author, "config", "user.name", "Patch Author")
     git(author, "config", "user.email", "author@example.com")
     git(author, "checkout", "-q", "-b", "candidate", base)
-    (author / "one.txt").write_text("one\n")
-    git(author, "add", "one.txt")
+
+    if first_change == "file":
+        (author / "one.txt").write_text("one\n")
+    elif first_change == "leading-dash":
+        (author / "-m").write_text("option-looking filename\n")
+    elif first_change == "commit-tool":
+        malicious = author / "tools" / "git-commit"
+        malicious.write_text(
+            "#!/bin/sh\n"
+            "git commit -m malicious\n"
+            "git update-ref refs/heads/main HEAD\n"
+        )
+        malicious.chmod(0o755)
+    elif first_change == "type-change":
+        path = author / "type-change"
+        path.unlink()
+        path.symlink_to("type-target.txt")
+    else:
+        raise AssertionError(first_change)
+
+    git(author, "add", "-A")
     git(author, "commit", "-q", "-m", "candidate one")
+
     if two:
         if conflicting_second:
             (author / "base.txt").write_text("candidate conflict\n")
@@ -66,9 +94,15 @@ def make_series(tmp_path, *, two=False, conflicting_second=False):
             (author / "two.txt").write_text("two\n")
         git(author, "add", "-A")
         git(author, "commit", "-q", "-m", "candidate two")
+
     mailbox = tmp_path / "series.mbox"
     with mailbox.open("w") as out:
-        subprocess.run([GIT, "-C", str(author), "format-patch", "--stdout", f"{base}..HEAD"], check=True, text=True, stdout=out)
+        subprocess.run(
+            [GIT, "-C", str(author), "format-patch", "--stdout", f"{base}..HEAD"],
+            check=True,
+            text=True,
+            stdout=out,
+        )
     return main, integration, author, mailbox, base
 
 
@@ -133,6 +167,19 @@ def test_repository_resolution_overrides_fail_closed(tmp_path, name, value_from)
     assert heads(main, integration) == (main_before, integration_before)
 
 
+def test_git_config_environment_injection_fails_closed(tmp_path):
+    main, integration, _, mailbox, _ = make_series(tmp_path)
+    main_before, integration_before = heads(main, integration)
+    env = os.environ.copy()
+    env["GIT_CONFIG_COUNT"] = "1"
+    env["GIT_CONFIG_KEY_0"] = "core.hooksPath"
+    env["GIT_CONFIG_VALUE_0"] = str(integration / "hooks")
+    result = run(integration, "integration", mailbox, env=env)
+    assert result.returncode == 1
+    assert "GIT_CONFIG_COUNT" in result.stderr
+    assert heads(main, integration) == (main_before, integration_before)
+
+
 def test_wrong_branch_worktree_identity_fails(tmp_path):
     main, integration, _, mailbox, _ = make_series(tmp_path)
     main_before, integration_before = heads(main, integration)
@@ -147,29 +194,65 @@ def test_main_branch_is_never_a_mailbox_candidate(tmp_path):
     main_before, integration_before = heads(main, integration)
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--worktree", str(main), "--branch", "main", "-C", str(main), str(mailbox)],
-        text=True, capture_output=True,
+        text=True,
+        capture_output=True,
     )
     assert result.returncode == 1
     assert "refuses refs/heads/main" in result.stderr
     assert heads(main, integration) == (main_before, integration_before)
 
 
-def test_detects_main_movement_during_commit(tmp_path):
+def test_candidate_replacement_of_commit_tool_is_not_executed(tmp_path):
+    main, integration, _, mailbox, _ = make_series(tmp_path, first_change="commit-tool")
+    main_before, integration_before = heads(main, integration)
+    result = run(integration, "integration", mailbox)
+    assert result.returncode == 0, result.stderr
+    main_after, integration_after = heads(main, integration)
+    assert main_after == main_before
+    assert integration_after != integration_before
+    assert "update-ref refs/heads/main" in (integration / "tools" / "git-commit").read_text()
+    assert git(integration, "log", "-1", "--format=%s").stdout.strip() == "candidate one"
+
+
+def test_active_post_commit_hook_is_neutralized_and_main_unchanged(tmp_path):
     main, integration, _, mailbox, _ = make_series(tmp_path)
     main_before = git(main, "rev-parse", "refs/heads/main").stdout.strip()
-    # A hook models an unexpected tool/hook side effect during the guarded
-    # commit. The wrapper must stop as soon as the commit returns and sees main
-    # moved; it must not continue to another mailbox patch.
-    hook = Path(git(integration, "rev-parse", "--git-path", "hooks/post-commit").stdout.strip())
-    if not hook.is_absolute():
-        hook = integration / hook
-    hook.parent.mkdir(parents=True, exist_ok=True)
+    marker = tmp_path / "hook-ran"
+    hooks = tmp_path / "candidate-hooks"
+    hooks.mkdir()
+    hook = hooks / "post-commit"
     hook.write_text(
         "#!/bin/sh\n"
+        f"touch {marker}\n"
         "git update-ref refs/heads/main HEAD\n"
     )
     hook.chmod(0o755)
+    git(integration, "config", "core.hooksPath", str(hooks))
+
     result = run(integration, "integration", mailbox)
-    assert result.returncode == 1
-    assert "refs/heads/main moved unexpectedly" in result.stderr
-    assert git(main, "rev-parse", "refs/heads/main").stdout.strip() != main_before
+    assert result.returncode == 0, result.stderr
+    assert git(main, "rev-parse", "refs/heads/main").stdout.strip() == main_before
+    assert not marker.exists()
+    assert (integration / "one.txt").read_text() == "one\n"
+
+
+def test_leading_dash_filename_is_committed_as_data(tmp_path):
+    main, integration, _, mailbox, _ = make_series(tmp_path, first_change="leading-dash")
+    main_before = git(main, "rev-parse", "refs/heads/main").stdout.strip()
+    result = run(integration, "integration", mailbox)
+    assert result.returncode == 0, result.stderr
+    assert (integration / "-m").read_text() == "option-looking filename\n"
+    assert git(integration, "status", "--porcelain").stdout == ""
+    assert git(main, "rev-parse", "refs/heads/main").stdout.strip() == main_before
+
+
+def test_type_change_only_patch_is_committed(tmp_path):
+    main, integration, _, mailbox, _ = make_series(tmp_path, first_change="type-change")
+    main_before = git(main, "rev-parse", "refs/heads/main").stdout.strip()
+    result = run(integration, "integration", mailbox)
+    assert result.returncode == 0, result.stderr
+    path = integration / "type-change"
+    assert path.is_symlink()
+    assert os.readlink(path) == "type-target.txt"
+    assert git(integration, "diff", "HEAD^", "HEAD", "--summary").stdout.strip().startswith("mode change 100644 => 120000 type-change")
+    assert git(main, "rev-parse", "refs/heads/main").stdout.strip() == main_before
