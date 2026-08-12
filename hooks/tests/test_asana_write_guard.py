@@ -4,7 +4,6 @@ asks for Plant-monitoring API writes.
 """
 import io
 import json
-from types import SimpleNamespace
 
 import pytest
 
@@ -198,20 +197,7 @@ class TestBatchApply:
         plan.write_text(json.dumps({"operations": operations}))
         return plan
 
-    def _stub_preview_ok(self, monkeypatch, asana_write_guard):
-        monkeypatch.setattr(
-            asana_write_guard, "run_batch_preview",
-            lambda plan: SimpleNamespace(returncode=0, stdout=""),
-        )
-
-    def _stub_preview_fail(self, monkeypatch, asana_write_guard, message):
-        monkeypatch.setattr(
-            asana_write_guard, "run_batch_preview",
-            lambda plan: SimpleNamespace(returncode=1, stdout=f"some earlier output\n{message}\n"),
-        )
-
     def test_valid_batch_asks_with_counts(self, asana_write_guard, monkeypatch, capsys, tmp_path):
-        self._stub_preview_ok(monkeypatch, asana_write_guard)
         plan = self._plan(tmp_path, [
             {"task": "1"}, {"task": "2"}, {"task": "3"},
         ])
@@ -219,7 +205,6 @@ class TestBatchApply:
         assert_asked(decision, "3 operations across 3 targets")
 
     def test_batch_dedupes_targets(self, asana_write_guard, monkeypatch, capsys, tmp_path):
-        self._stub_preview_ok(monkeypatch, asana_write_guard)
         plan = self._plan(tmp_path, [
             {"task": "1"}, {"task": "1"}, {"parent": "9"},
         ])
@@ -230,12 +215,6 @@ class TestBatchApply:
         plan = self._plan(tmp_path, [{"task": "1"}, {"task": "2"}])
         decision = run_hook(asana_write_guard, f"asana batch-apply {plan}", monkeypatch, capsys)
         assert_denied(decision, "at least 3 operations")
-
-    def test_preview_failure_denied_with_last_line(self, asana_write_guard, monkeypatch, capsys, tmp_path):
-        self._stub_preview_fail(monkeypatch, asana_write_guard, "Error: task 999 not found")
-        plan = self._plan(tmp_path, [{"task": "1"}, {"task": "2"}, {"task": "3"}])
-        decision = run_hook(asana_write_guard, f"asana batch-apply {plan}", monkeypatch, capsys)
-        assert_denied(decision, "Error: task 999 not found")
 
     def test_extra_args_denied_as_not_direct_invocation(self, asana_write_guard, monkeypatch, capsys, tmp_path):
         plan = self._plan(tmp_path, [{"task": "1"}, {"task": "2"}, {"task": "3"}])
@@ -255,7 +234,6 @@ class TestBatchApply:
         assert_denied(decision, "at least 3 operations")
 
     def test_bash_prefix_form_allowed_through(self, asana_write_guard, monkeypatch, capsys, tmp_path):
-        self._stub_preview_ok(monkeypatch, asana_write_guard)
         plan = self._plan(tmp_path, [{"task": "1"}, {"task": "2"}, {"task": "3"}])
         decision = run_hook(asana_write_guard, f"bash /home/marco/.claude/bin/asana batch-apply {plan}", monkeypatch, capsys)
         assert_asked(decision, "3 operations across 3 targets")

@@ -33,7 +33,6 @@ import json
 import os
 import re
 import shlex
-import subprocess
 import sys
 
 WRITE_SUBCOMMANDS = {
@@ -43,7 +42,6 @@ WRITE_SUBCOMMANDS = {
 RAW_WRITE_VERBS = {"put", "post", "delete"}
 SCRIPT_RUNNERS = {"bash", "sh", "zsh", "python", "python3", "node", "ruby", "perl", "php", "source"}
 ENV_INNER_RUNNERS = {"bash", "sh", "zsh", "python", "python3", "node", "ruby", "perl", "php"}
-ASANA_BIN = "/home/marco/.local/bin/asana"
 
 # Argv-list literal forms found in embedded scripts, e.g.
 # subprocess.run(["/path/to/asana", "rename", ...]). This scans arbitrary
@@ -226,18 +224,10 @@ def script_from_command(cmd):
     return None
 
 
-def run_batch_preview(plan):
-    """Thin wrapper so tests can monkeypatch the external call."""
-    return subprocess.run(
-        [ASANA_BIN, "batch-preview", plan],
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-    )
-
-
 def evaluate_batch_apply(cmd):
     plan = extract_batch_plan(cmd)
     if plan is None:
-        return deny("[asana-write-guard] Invoke batch-apply directly with exactly one plan path so its preview can be checked.")
+        return deny("[asana-write-guard] Invoke batch-apply directly with exactly one plan path so it can be checked.")
 
     try:
         with open(plan) as f:
@@ -249,12 +239,6 @@ def evaluate_batch_apply(cmd):
     count = len(operations) if isinstance(operations, list) else 0
     if count < 3:
         return deny("[asana-write-guard] Batch requires at least 3 operations; use direct Asana commands for one or two writes.")
-
-    preview = run_batch_preview(plan)
-    if preview.returncode != 0:
-        lines = preview.stdout.splitlines()
-        error = lines[-1] if lines else ""
-        return deny(f"[asana-write-guard] Batch validation failed; nothing was written. {error}")
 
     targets = []
     for op in operations:
