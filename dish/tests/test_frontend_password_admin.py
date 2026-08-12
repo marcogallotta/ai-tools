@@ -10,7 +10,7 @@ from alembic.config import Config
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 
-from dish_tool.frontend_password_admin import (
+from dish_service.frontend_password_admin import (
     FrontendPasswordAdminSettings,
     provision,
     rotate_password,

@@ -22,7 +22,7 @@ from dish_service.frontend_security import (
     create_restore_fence,
 )
 from dish_service.frontend_settings import FrontendRuntimeSettings
-from dish_tool.frontend_password_admin import (
+from dish_service.frontend_password_admin import (
     FrontendPasswordAdminSettings,
     provision,
     rotate_password,
