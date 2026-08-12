@@ -481,6 +481,90 @@ class TestProtectedCheckoutBranchIsolation:
         )
         assert_asked(decision, "Destructive git operation")
 
+    def test_checkout_ref_with_trailing_bare_double_dash_in_primary_denied(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        # Real repro from review 4920409151: "git checkout <ref> --" with
+        # nothing after "--" still switches branches (verified against real
+        # git) - a bare trailing "--" must not be read as "file checkout".
+        decision = run_hook(
+            destructive_op_guard, "git checkout main --", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_denied(decision, "Refusing 'checkout' branch change")
+
+    def test_checkout_dash_b_with_trailing_bare_double_dash_in_primary_denied(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        decision = run_hook(
+            destructive_op_guard, "git checkout -b agent/foo --", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_denied(decision, "Refusing 'checkout' branch change")
+
+    def test_checkout_ref_with_double_dash_and_pathspec_still_file_only(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        # A pathspec actually present after "--" is the real file-restore
+        # form (verified: does not change the branch) and must stay ASK.
+        decision = run_hook(
+            destructive_op_guard, "git checkout main -- README.md", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_asked(decision, "Destructive git operation")
+
+    def test_switch_with_double_dash_separator_in_primary_denied(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        # Real repro from review 4920409151: "git switch -- <branch>" still
+        # switches (switch has no pathspec-restore mode at all).
+        decision = run_hook(
+            destructive_op_guard, "git switch -- main", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_denied(decision, "Refusing 'switch' branch change")
+
+    def test_switch_dash_c_with_trailing_double_dash_in_primary_denied(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        decision = run_hook(
+            destructive_op_guard, "git switch -c agent/bar --", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_denied(decision, "Refusing 'switch' branch change")
+
+    def test_glob_star_in_dash_c_path_denied_ambiguous(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        # Real repro from review 4920409151: bash expands "primary*" against
+        # the filesystem before git ever sees it, but our own subprocess
+        # git rev-parse call (argv list, no shell) receives it as a literal,
+        # non-existent path and would otherwise fail to resolve, letting
+        # this fall through to ordinary ASK.
+        decision = run_hook(
+            destructive_op_guard, "git -C primary* checkout -b agent/foo", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"].parent),
+        )
+        assert_denied(decision, "unresolvable repository-location override")
+
+    def test_glob_question_mark_in_git_dir_denied_ambiguous(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        decision = run_hook(
+            destructive_op_guard, "git --git-dir=primar?/.git checkout -b agent/foo", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"].parent),
+        )
+        assert_denied(decision, "unresolvable repository-location override")
+
+    def test_glob_bracket_in_env_override_denied_ambiguous(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        decision = run_hook(
+            destructive_op_guard, "GIT_DIR=primar[y]/.git git checkout -b agent/foo", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"].parent),
+        )
+        assert_denied(decision, "unresolvable repository-location override")
+
     def test_read_only_status_in_primary_allowed(self, destructive_op_guard, protected_repo, monkeypatch, capsys):
         decision = run_hook(
             destructive_op_guard, "git status", monkeypatch, capsys,

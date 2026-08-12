@@ -204,18 +204,28 @@ def check_docker(segments):
 # moved.
 
 
+# Characters that mean this hook's Python-level view of the token isn't
+# actually what git (or a real shell) would receive: $/`` are shell
+# expansion, and */?/[ are pathname (glob) expansion - bash expands these
+# against the real filesystem before argv ever reaches git, so a value like
+# "primary*" can resolve to the protected checkout even though our own
+# `git rev-parse -C primary*` subprocess call (argv list, no shell) receives
+# it as a literal, almost certainly non-existent path and fails to resolve.
+SHELL_EXPANSION_CHARS = "$`*?["
+
+
 def _reject_shell_expansion(value):
     """Tilde-expand a literal path/value token, or return None if it
-    contains shell expansion this static, no-subshell check can't safely
-    evaluate. Deliberately does NOT join relative paths against any assumed
-    "current directory": -C chains relative to the *preceding* -C, and
-    -C changes how relative --git-dir/--work-tree values are interpreted
-    regardless of where those options appear relative to -C on the command
-    line - real git resolves that ordering, not this hook. Values are kept
-    literal (only tilde-expanded) and handed to a real `git` subprocess
-    below, which reproduces exact git semantics instead of a hand-rolled
-    approximation of them."""
-    if "$" in value or "`" in value:
+    contains shell/pathname expansion this static, no-subshell check can't
+    safely evaluate (see SHELL_EXPANSION_CHARS). Deliberately does NOT join
+    relative paths against any assumed "current directory": -C chains
+    relative to the *preceding* -C, and -C changes how relative --git-dir/
+    --work-tree values are interpreted regardless of where those options
+    appear relative to -C on the command line - real git resolves that
+    ordering, not this hook. Values are kept literal (only tilde-expanded)
+    and handed to a real `git` subprocess below, which reproduces exact git
+    semantics instead of a hand-rolled approximation of them."""
+    if any(c in value for c in SHELL_EXPANSION_CHARS):
         return None
     return os.path.expanduser(value)
 
@@ -311,11 +321,18 @@ def _resolve_git_invocation(tokens, git_idx):
 
 def _branch_change_kind(tokens, sub_idx, subcommand):
     args = tokens[sub_idx + 1:]
-    if "--" in args:
-        # Explicit pathspec separator: this is a file checkout/restore, not
-        # a branch change. Leave it to check_git's existing ASK handling.
-        return None
     if subcommand == "checkout":
+        if "--" in args:
+            # "--" only means "file pathspec follows" when something
+            # actually follows it - "git checkout <ref> --"/"git checkout -b
+            # <new> --" with nothing after "--" is still a real branch
+            # change (verified against real git); only a pathspec present
+            # after the separator makes this a file restore instead.
+            idx = args.index("--")
+            before, after = args[:idx], args[idx + 1:]
+            if after:
+                return None
+            args = before
         if any(a in ("-b", "-B") for a in args):
             return "checkout -b/-B (create + switch branch)"
         if any(a in ("-h", "--help") for a in args):
@@ -328,7 +345,12 @@ def _branch_change_kind(tokens, sub_idx, subcommand):
         if non_flags:
             return "checkout <ref> (branch attach/detach)"
         return None
-    # switch: every non-help invocation changes/creates the current branch.
+    # switch: "--" only ever terminates option parsing (e.g. to switch to a
+    # branch literally named "--foo") - switch has no pathspec-restore mode,
+    # so unlike checkout, "--" never turns this into a file operation.
+    # Every non-help invocation still changes/creates the current branch
+    # (verified against real git, including "git switch -- <branch>" and
+    # "git switch -c <new> --").
     if any(a in ("-h", "--help") for a in args):
         return None
     return "switch"
