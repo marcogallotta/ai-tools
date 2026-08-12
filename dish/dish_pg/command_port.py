@@ -1641,6 +1641,7 @@ class PostgresCommandPort:
                 agent=str(call.arguments.get("agent")),
                 model=str(call.arguments.get("model")),
                 at=call.now,
+                protocol_release=binding.protocol_release,
             )
         else:
             parts = parse_canonical_document(

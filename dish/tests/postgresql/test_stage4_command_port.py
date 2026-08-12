@@ -74,12 +74,16 @@ def test_task_reference_from_dish_reduces_known_shapes(dish_value, expected) -> 
 
 
 def test_prepare_stamps_researched_by_and_self_verified_from_agent(workflow_db) -> None:
-    """PG must own "Researched by"/"Self-verified" on initial prepare, like legacy.
+    """PG must own tool-owned process fields on initial prepare, like legacy.
 
-    A caller's self-reported provenance line is not required to already match
-    the canonical actor-format grammar; prepare rewrites it from the calling
-    agent/model/date, exactly as ``dish_tool.step6.prepare_live`` does for
-    initial operations.
+    Reproduces the exact PROD shape: a candidate with non-canonical actor-line
+    grammar *and* "Verification protocol release: None" (both present in the
+    real failing gpt submission). Legacy's initial ``prepare`` deterministically
+    overwrites "Status detail", "Resume status", "Verification protocol
+    release", "Verified by", "Researched by", and "Self-verified" from
+    known/computed values regardless of what the candidate wrote there; PG
+    must do the same rather than validating the caller's self-reported text
+    as-is.
     """
     factory, ids, context, task_id = workflow_db
     with session_scope(factory) as session:
@@ -94,6 +98,9 @@ def test_prepare_stamps_researched_by_and_self_verified_from_agent(workflow_db) 
         ).replace(
             "Self-verified: ChatGPT — GPT-5, 2026-07-25",
             "Self-verified: gpt — gpt-5.6-sol, 2026-08-12",
+        ).replace(
+            "Verification protocol release: abc123",
+            "Verification protocol release: None",
         )
         result = port.execute(
             _call(
@@ -111,6 +118,16 @@ def test_prepare_stamps_researched_by_and_self_verified_from_agent(workflow_db) 
             )
         )
         assert result.ok, (result.code, result.http_status, result.data)
+
+        version = session.get(
+            models.ContentVersion, uuid.UUID(result.data["content_version_id"])
+        )
+        assert "Verification protocol release: None" not in version.body
+        assert "Researched by: gpt — gpt-5.6-sol, 2026-08-12" not in version.body
+        assert "Self-verified: gpt — gpt-5.6-sol, 2026-08-12" not in version.body
+        assert "Verified by: None" in version.body
+        assert "Status detail: None" in version.body
+        assert "Resume status: None" in version.body
 
 
 def test_inspect_resolves_task_from_dish_argument(workflow_db) -> None:
