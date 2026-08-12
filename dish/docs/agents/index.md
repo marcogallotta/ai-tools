@@ -2,6 +2,8 @@
 
 This is the canonical router for standing Dish agent roles. Root `CLAUDE.md` points named-role work here so role discovery does not require hard-coded routing in multiple files.
 
+All repository-modifying roles inherit [`contributor-base.md`](contributor-base.md). Specialist contracts add their own scope and authority rules.
+
 | Role / common names | Standing contract |
 |---|---|
 | Coordinator, master, orchestration coordinator | [`coordinator.md`](coordinator.md) |
