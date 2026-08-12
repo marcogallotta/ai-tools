@@ -89,6 +89,7 @@ COMMAND_DEFINITIONS = {
         CommandDefinition("record-human-decision", "R", "admin", True, True, True, workflow_action="record-human-decision"),
         CommandDefinition("resolved", "R", "admin", True, True, True, workflow_action="resolved"),
         CommandDefinition("authorize-governed-change", "L", "admin", True, True, False),
+        CommandDefinition("revise-section-registry", "L", "admin", True, False, False),
         CommandDefinition("recover-lease", "R", "admin", True, True, False),
         CommandDefinition("expire-lease", "L", "admin", True, True, False),
         CommandDefinition("migrate", "L", "admin", True, True, False),

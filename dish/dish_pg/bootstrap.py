@@ -140,6 +140,27 @@ def apply_research_queue_role(
     )
 
 
+def apply_verification_queue_role(
+    sections: tuple[SectionSpec, ...], *, verification_queue_section_id: uuid.UUID
+) -> tuple[SectionSpec, ...]:
+    """Designate one already-discovered section as the Verification Queue."""
+    if not any(section.section_id == verification_queue_section_id for section in sections):
+        raise InitialBootstrapError(
+            f"--verification-queue-section-id {verification_queue_section_id} is not a discovered section"
+        )
+    return tuple(
+        section
+        if section.section_id != verification_queue_section_id
+        else SectionSpec(
+            section_id=section.section_id,
+            section_gid=section.section_gid,
+            section_name=section.section_name,
+            workflow_role="verification_queue",
+        )
+        for section in sections
+    )
+
+
 @dataclass(frozen=True)
 class InitialBootstrapSpec:
     dish_commit: str
@@ -790,6 +811,12 @@ def _parser() -> argparse.ArgumentParser:
         default=None,
         help="designate this discovered section as the Research Queue (workflow_role=research_queue)",
     )
+    parser.add_argument(
+        "--verification-queue-section-id",
+        type=uuid.UUID,
+        default=None,
+        help="designate this discovered section as the Verification Queue (workflow_role=verification_queue)",
+    )
     return parser
 
 
@@ -811,6 +838,15 @@ def main(argv: list[str] | None = None) -> int:
         if args.research_queue_section_id is not None:
             sections = apply_research_queue_role(
                 sections, research_queue_section_id=args.research_queue_section_id
+            )
+        if args.verification_queue_section_id is not None:
+            if args.verification_queue_section_id == args.research_queue_section_id:
+                raise InitialBootstrapError(
+                    "Research Queue and Verification Queue must be different sections"
+                )
+            sections = apply_verification_queue_role(
+                sections,
+                verification_queue_section_id=args.verification_queue_section_id,
             )
         spec = InitialBootstrapSpec(
             dish_commit=args.dish_commit,

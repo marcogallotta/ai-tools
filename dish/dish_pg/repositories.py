@@ -20,6 +20,137 @@ class CoreAuthorityError(ValueError):
     """A requested Stage 2 authority transition is not structurally legal."""
 
 
+REGISTRY_ROLE_CORRECTION_SOURCE_RELEASE = "registry-role-correction-v1"
+REGISTRY_ROLE_CORRECTION_KIND = "registry_role_assignment"
+
+
+def _provenance_uuid(provenance: dict[str, object], key: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(str(provenance[key]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise CoreAuthorityError(
+            f"registry correction provenance has invalid {key}"
+        ) from exc
+
+
+def registry_source_import_run(
+    session: Session,
+    version: models.SectionRegistryVersion,
+) -> models.ImportRun:
+    """Resolve the original source import behind registry-only correction runs."""
+
+    seen: set[uuid.UUID] = set()
+    corrections: list[tuple[models.ImportRun, uuid.UUID]] = []
+    current = version
+    while True:
+        if current.registry_version_id in seen:
+            raise CoreAuthorityError("registry correction provenance contains a cycle")
+        seen.add(current.registry_version_id)
+        import_run = session.get(models.ImportRun, current.import_run_id)
+        if import_run is None or import_run.status != "complete":
+            raise CoreAuthorityError("registry version requires a complete import run")
+        if import_run.source_release != REGISTRY_ROLE_CORRECTION_SOURCE_RELEASE:
+            for correction_run, claimed_source_id in corrections:
+                if (
+                    claimed_source_id != import_run.import_run_id
+                    or correction_run.source_commit != import_run.source_commit
+                    or correction_run.legacy_generation_id != import_run.legacy_generation_id
+                ):
+                    raise CoreAuthorityError(
+                        "registry correction source import lineage is inconsistent"
+                    )
+            return import_run
+
+        provenance = (
+            import_run.provenance if isinstance(import_run.provenance, dict) else {}
+        )
+        if provenance.get("correction_kind") != REGISTRY_ROLE_CORRECTION_KIND:
+            raise CoreAuthorityError("registry correction ImportRun is not honestly labeled")
+        predecessor_id = _provenance_uuid(
+            provenance, "predecessor_registry_version_id"
+        )
+        source_import_run_id = _provenance_uuid(provenance, "source_import_run_id")
+        if provenance.get("correction_bundle_sha256") != import_run.source_bundle_sha256:
+            raise CoreAuthorityError("registry correction bundle identity is inconsistent")
+        if provenance.get("result_registry_sha256") != current.registry_sha256:
+            raise CoreAuthorityError("registry correction result identity is inconsistent")
+        predecessor = session.get(models.SectionRegistryVersion, predecessor_id)
+        if (
+            predecessor is None
+            or predecessor.generation_id != current.generation_id
+            or predecessor.contract_binding_id != current.contract_binding_id
+            or current.version_number != predecessor.version_number + 1
+        ):
+            raise CoreAuthorityError("registry correction predecessor is inconsistent")
+        corrections.append((import_run, source_import_run_id))
+        current = predecessor
+
+
+def _assert_registry_role_correction_entries(
+    session: Session,
+    row: models.SectionRegistryVersion,
+    entries: tuple[models.SectionRegistryEntry, ...],
+) -> None:
+    import_run = session.get(models.ImportRun, row.import_run_id)
+    assert import_run is not None
+    provenance = (
+        import_run.provenance if isinstance(import_run.provenance, dict) else {}
+    )
+    requested = provenance.get("requested_roles")
+    if not isinstance(requested, dict) or set(requested) != {
+        "research_queue",
+        "verification_queue",
+    }:
+        raise CoreAuthorityError(
+            "registry role correction requires exact special-role targets"
+        )
+    targets = {
+        role: _provenance_uuid(requested, role)
+        for role in ("research_queue", "verification_queue")
+    }
+    if targets["research_queue"] == targets["verification_queue"]:
+        raise CoreAuthorityError("registry role correction targets must be distinct")
+    predecessor = session.get(
+        models.SectionRegistryVersion,
+        _provenance_uuid(provenance, "predecessor_registry_version_id"),
+    )
+    if predecessor is None:
+        raise CoreAuthorityError("registry role correction predecessor is missing")
+    prior_entries = tuple(
+        session.scalars(
+            select(models.SectionRegistryEntry).where(
+                models.SectionRegistryEntry.registry_version_id
+                == predecessor.registry_version_id
+            )
+        )
+    )
+    prior_by_section = {entry.section_id: entry for entry in prior_entries}
+    if not set(targets.values()).issubset(prior_by_section):
+        raise CoreAuthorityError(
+            "registry role correction targets must already be registered"
+        )
+    revised_by_section = {entry.section_id: entry for entry in entries}
+    if set(prior_by_section) != set(revised_by_section):
+        raise CoreAuthorityError("registry role correction cannot change section membership")
+    for section_id, prior in prior_by_section.items():
+        revised = revised_by_section[section_id]
+        expected_role = (
+            "research_queue"
+            if section_id == targets["research_queue"]
+            else "verification_queue"
+            if section_id == targets["verification_queue"]
+            else prior.workflow_role
+        )
+        if (
+            revised.ordinal != prior.ordinal
+            or revised.display_name != prior.display_name
+            or revised.workflow_role != expected_role
+        ):
+            raise CoreAuthorityError(
+                "registry role correction may change only the two special workflow roles"
+            )
+
+
 class AuthorityRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
@@ -128,6 +259,7 @@ class RegistryRepository:
         row: models.SectionRegistryVersion,
         entries: Iterable[models.SectionRegistryEntry],
     ) -> None:
+        entries = tuple(entries)
         generation = self.session.get(models.AuthorityGeneration, row.generation_id)
         binding = self.session.get(models.HonestContractBinding, row.contract_binding_id)
         import_run = self.session.get(models.ImportRun, row.import_run_id)
@@ -141,6 +273,9 @@ class RegistryRepository:
             )
         if import_run is None or import_run.status != "complete":
             raise CoreAuthorityError("registry version requires a complete import run")
+        if import_run.source_release == REGISTRY_ROLE_CORRECTION_SOURCE_RELEASE:
+            registry_source_import_run(self.session, row)
+            _assert_registry_role_correction_entries(self.session, row, entries)
         self.session.add(row)
         self.session.flush()
         seen_roles: set[str] = set()

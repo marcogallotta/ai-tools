@@ -34,6 +34,7 @@ from . import stage5_models as tx
 from .command_port import CommandCall, CommandResult, PostgresCommandPort
 from .database import DatabaseSettings, create_database_engine, session_factory, session_scope
 from .read_model import ReadModelError
+from .repositories import CoreAuthorityError, registry_source_import_run
 from .shadow_evidence import (
     ShadowEvaluation,
     canonical_legacy_state,
@@ -187,16 +188,19 @@ def _imported_identity_binding(
         or activation is None
         or activation.generation_id != baseline.generation_id
         or activation.registry_version_id != registry.registry_version_id
+        or activation.registry_revision != active.registry_revision
         or activation.activation_route != "import"
         or activation.import_run_id != registry.import_run_id
-        or activation.registry_revision != active.registry_revision
-        or row.import_run_id != registry.import_run_id
     ):
         return None
-    import_run = session.get(models.ImportRun, registry.import_run_id)
+    try:
+        import_run = registry_source_import_run(session, registry)
+    except CoreAuthorityError:
+        return None
     if (
         import_run is None
         or import_run.status != "complete"
+        or row.import_run_id != import_run.import_run_id
         or import_run.legacy_generation_id != baseline.source_generation_identity
         or import_run.source_commit != baseline.source_commit
     ):
@@ -1116,6 +1120,36 @@ def _translate_workflow_identifiers(
     return translated
 
 
+def _translate_prepare_candidate(
+    envelope: tx.ShadowEnvelope, arguments: Mapping[str, Any]
+) -> dict[str, Any]:
+    """Replay prepare from the legacy committed candidate, not pre-transition input."""
+    translated = dict(arguments)
+    if envelope.command_name != "prepare":
+        return translated
+    snapshot = envelope.source_post_state
+    if not isinstance(snapshot, Mapping):
+        raise ShadowIdentityMappingError("prepare capture has no source post-state")
+    task_gid = str(arguments.get("task_gid") or "").strip()
+    rows = [
+        row
+        for row in _snapshot_rows(snapshot, "task_content_state")
+        if not task_gid or str(row.get("task_gid") or "") == task_gid
+    ]
+    if len(rows) != 1:
+        raise ShadowIdentityMappingError(
+            "prepare capture has no unique committed task content row"
+        )
+    title = rows[0].get("last_confirmed_title")
+    body = rows[0].get("last_confirmed_notes")
+    if not isinstance(title, str) or not isinstance(body, str):
+        raise ShadowIdentityMappingError("prepare committed task content is incomplete")
+    translated["file_text"] = f"{title}\n{body}"
+    translated.pop("title", None)
+    translated.pop("body", None)
+    return translated
+
+
 def _result_payload(result: CommandResult) -> dict[str, Any]:
     return {
         "ok": result.ok,
@@ -1434,7 +1468,9 @@ class CommandPortShadowEvaluator:
         generation = port.reads.active_generation()
         if generation.generation_id != baseline.generation_id:
             raise ValueError("shadow baseline target generation is stale")
-        translated_arguments = _translate_workflow_identifiers(session, envelope, arguments)
+        translated_arguments = _translate_workflow_identifiers(
+            session, envelope, _translate_prepare_candidate(envelope, arguments)
+        )
         _ensure_shadow_run(
             session,
             envelope=envelope,

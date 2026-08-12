@@ -13,12 +13,14 @@ from dish_pg.shadow_worker import (
     ShadowWorker,
     _record_created_task_alias,
     _shadow_uuid,
+    _translate_prepare_candidate,
     _translate_workflow_identifiers,
 )
 from dish_pg.transition import ShadowService
 from dish_pg.workflow import sha256_json
 from dish_service.shadow_spool import ShadowSpool
 from tests.support.postgresql.command import (
+    _add_destination_section,
     _add_verification_queue,
     _call,
     _port,
@@ -33,6 +35,31 @@ from tests.support.postgresql.dark_launch_shadow_worker import (
     _spool,
     _real_verification_target,
 )
+
+
+def test_shadow_prepare_uses_committed_source_candidate() -> None:
+    envelope = SimpleNamespace(
+        command_name="prepare",
+        source_post_state={
+            "tables": {
+                "task_content_state": [
+                    {
+                        "task_gid": "123",
+                        "last_confirmed_title": "[pending-verification] Candidate",
+                        "last_confirmed_notes": "Body\n---\nStatus: pending-verification\n",
+                    }
+                ]
+            }
+        },
+    )
+    translated = _translate_prepare_candidate(
+        envelope,
+        {"task_gid": "123", "file_text": "[ready] Candidate\nold body\n"},
+    )
+    assert translated["file_text"] == (
+        "[pending-verification] Candidate\n"
+        "Body\n---\nStatus: pending-verification\n"
+    )
 
 
 @pytest.mark.parametrize("source_outcome", [{}, {"data": {}}, {"data": {"task_gid": "  "}}])
@@ -94,12 +121,37 @@ def _captured_envelope(session, *, context, source_generation, source_commit, id
 
 
 def test_shadow_identifier_translation_accepts_exact_import_lineage(workflow_db):
-    factory, _ids, context, task_id = workflow_db
+    factory, ids, context, task_id = workflow_db
     operation_id = uuid.uuid4()
     with session_scope(factory) as session:
         run = session.get(models.ImportRun, context["import_run_id"])
         assert run is not None
         _add_imported_operation(session, context=context, task_id=task_id, operation_id=operation_id)
+        verification_section_id = _add_destination_section(
+            session, ids, context, external_id="1217084805070799"
+        )
+        admin_run = _next(ids)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=admin_run,
+            owner="Marco",
+            agent="marco",
+        )
+        revised = _port(session, ids).execute(
+            _call(
+                "revise-section-registry",
+                run_id=admin_run,
+                request_id=_next(ids),
+                principal="admin",
+                owner="Marco",
+                arguments={
+                    "research_queue_section_id": str(context["section_id"]),
+                    "verification_queue_section_id": str(verification_section_id),
+                },
+            )
+        )
+        assert revised.ok is True
         envelope = _captured_envelope(
             session,
             context=context,

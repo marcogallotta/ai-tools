@@ -18,7 +18,7 @@ from .release_history import (
     EXACT_REVOCATION_HISTORY_PROVENANCE_KEY,
     EXACT_REVOCATION_SOURCE_CONTRACT,
 )
-from .repositories import CoreAuthorityError
+from .repositories import CoreAuthorityError, registry_source_import_run
 
 
 class ImportRuntimeError(ValueError):
@@ -55,7 +55,11 @@ def prepare_import_run(
     version = session.get(models.SectionRegistryVersion, active.registry_version_id)
     if version is None:
         raise CoreAuthorityError("active section registry points to a missing version")
-    if version.import_run_id != import_run_id or version.contract_binding_id != contract_binding_id:
+    source_import_run = registry_source_import_run(session, version)
+    if (
+        source_import_run.import_run_id != import_run_id
+        or version.contract_binding_id != contract_binding_id
+    ):
         raise CoreAuthorityError("active section registry is not bound to this import run and contract")
 
 

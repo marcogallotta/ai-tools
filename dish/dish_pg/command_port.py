@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
@@ -41,7 +42,14 @@ from .planner import (
     plan_command,
 )
 from .read_model import PostgresReadModel, ReadModelError
-from .repositories import CoreAuthorityError, RegistryRepository
+from .repositories import (
+    AuthorityRepository,
+    CoreAuthorityError,
+    REGISTRY_ROLE_CORRECTION_KIND,
+    REGISTRY_ROLE_CORRECTION_SOURCE_RELEASE,
+    RegistryRepository,
+    registry_source_import_run,
+)
 from .transition import ProjectionService
 from dish_tool.dish_urls import dish_uuid_from_url
 from dish_tool.errors import DishRuleError
@@ -1059,6 +1067,7 @@ class PostgresCommandPort:
             "record-human-decision": self._record_human_decision,
             "resolved": self._resolved,
             "authorize-governed-change": self._authorize,
+            "revise-section-registry": self._revise_section_registry,
             "recover-lease": self._release_lease,
             "expire-lease": self._release_lease,
             "migrate": self._migrate,
@@ -1068,6 +1077,280 @@ class PostgresCommandPort:
         if handler is None:
             raise CommandRuleError("COMMAND_NOT_PORTED", "retained command has no PostgreSQL handler")
         return handler(call, generation, binding, execution, task, operation)
+
+    def _revise_section_registry(
+        self, call, generation, binding, execution, _task, _operation
+    ) -> dict[str, Any]:
+        def required_section_id(name: str) -> uuid.UUID:
+            raw = call.arguments.get(name)
+            if raw in {None, ""}:
+                raise CommandRuleError(
+                    "REGISTRY_ROLE_SECTION_REQUIRED",
+                    f"{name} is required",
+                    http_status=400,
+                    data={"field": name},
+                )
+            try:
+                return uuid.UUID(str(raw))
+            except ValueError as exc:
+                raise CommandRuleError(
+                    "INVALID_SECTION_ID",
+                    f"{name} must be a UUID",
+                    http_status=400,
+                    data={"field": name},
+                ) from exc
+
+        research_section_id = required_section_id("research_queue_section_id")
+        verification_section_id = required_section_id("verification_queue_section_id")
+        if research_section_id == verification_section_id:
+            raise CommandRuleError(
+                "REGISTRY_ROLE_COLLISION",
+                "Research Queue and Verification Queue must be different sections",
+                http_status=400,
+            )
+
+        statement = select(models.ActiveSectionRegistry).where(
+            models.ActiveSectionRegistry.generation_id == generation.generation_id
+        )
+        if self.session.get_bind().dialect.name == "postgresql":
+            statement = statement.with_for_update()
+        active = self.session.scalar(statement.execution_options(populate_existing=True))
+        if active is None:
+            raise CommandRuleError("REGISTRY_MISSING", "generation has no active section registry")
+        current_version = self.session.get(
+            models.SectionRegistryVersion, active.registry_version_id
+        )
+        if current_version is None:
+            raise CommandRuleError("REGISTRY_MISSING", "active registry version is missing")
+        current_entries = list(
+            self.session.scalars(
+                select(models.SectionRegistryEntry)
+                .where(
+                    models.SectionRegistryEntry.registry_version_id
+                    == current_version.registry_version_id
+                )
+                .order_by(models.SectionRegistryEntry.ordinal)
+            )
+        )
+        by_section = {entry.section_id: entry for entry in current_entries}
+        if research_section_id not in by_section or verification_section_id not in by_section:
+            raise CommandRuleError(
+                "REGISTRY_SECTION_MISSING",
+                "workflow-role targets must already be present in the active registry",
+                http_status=400,
+            )
+        requested = {
+            "research_queue": research_section_id,
+            "verification_queue": verification_section_id,
+        }
+        existing_special = {
+            entry.workflow_role: entry.section_id
+            for entry in current_entries
+            if entry.workflow_role in requested
+        }
+        conflicts = {
+            role: str(section_id)
+            for role, section_id in existing_special.items()
+            if requested[role] != section_id
+        }
+        if conflicts:
+            raise CommandRuleError(
+                "REGISTRY_ROLE_ALREADY_ASSIGNED",
+                "active registry already assigns a special workflow role to another section",
+                data={"conflicts": conflicts},
+            )
+        if all(existing_special.get(role) == section_id for role, section_id in requested.items()):
+            return {
+                "registry_version_id": str(current_version.registry_version_id),
+                "registry_revision": active.registry_revision,
+                "changed": False,
+            }
+
+        source_import_run = registry_source_import_run(self.session, current_version)
+        registry_version_id = self.uuid_factory()
+        correction_import_run_id = self.uuid_factory()
+        activation_id = self.uuid_factory()
+        next_registry_revision = active.registry_revision + 1
+        revised_entries = [
+            models.SectionRegistryEntry(
+                registry_version_id=registry_version_id,
+                section_id=entry.section_id,
+                ordinal=entry.ordinal,
+                display_name=entry.display_name,
+                workflow_role=(
+                    "research_queue"
+                    if entry.section_id == research_section_id
+                    else "verification_queue"
+                    if entry.section_id == verification_section_id
+                    else entry.workflow_role
+                ),
+            )
+            for entry in current_entries
+        ]
+        sections = {
+            section_id: self.session.get(models.GovernedSection, section_id)
+            for section_id in by_section
+        }
+        project_ids = {
+            section.project_id for section in sections.values() if section is not None
+        }
+        if any(section is None for section in sections.values()) or len(project_ids) != 1:
+            raise CommandRuleError(
+                "REGISTRY_AUTHORITY_INVALID",
+                "active registry does not resolve one complete governed project",
+            )
+        project_id = next(iter(project_ids))
+        project = self.session.get(models.GovernedProject, project_id)
+        project_aliases = list(
+            self.session.scalars(
+                select(models.ProjectExternalAlias).where(
+                    models.ProjectExternalAlias.project_id == project_id,
+                    models.ProjectExternalAlias.external_system == "asana",
+                    models.ProjectExternalAlias.state == "active",
+                )
+            )
+        )
+        if project is None or len(project_aliases) != 1:
+            raise CommandRuleError(
+                "REGISTRY_AUTHORITY_INVALID",
+                "active registry project does not have one active Asana identity",
+            )
+        section_aliases: dict[uuid.UUID, str] = {}
+        for section_id in by_section:
+            aliases = list(
+                self.session.scalars(
+                    select(models.SectionExternalAlias).where(
+                        models.SectionExternalAlias.section_id == section_id,
+                        models.SectionExternalAlias.external_system == "asana",
+                        models.SectionExternalAlias.state == "active",
+                    )
+                )
+            )
+            if len(aliases) != 1:
+                raise CommandRuleError(
+                    "REGISTRY_AUTHORITY_INVALID",
+                    "registered section does not have one active Asana identity",
+                    data={"section_id": str(section_id)},
+                )
+            section_aliases[section_id] = aliases[0].external_id
+        registry_payload = {
+            "format": "dish-section-registry-v1",
+            "project": {
+                "project_id": str(project.project_id),
+                "logical_name": project.logical_name,
+                "external_system": "asana",
+                "external_id": project_aliases[0].external_id,
+            },
+            "sections": [
+                {
+                    "section_id": str(entry.section_id),
+                    "logical_name": sections[entry.section_id].logical_name,
+                    "display_name": entry.display_name,
+                    "workflow_role": entry.workflow_role,
+                    "ordinal": entry.ordinal,
+                    "external_system": "asana",
+                    "external_id": section_aliases[entry.section_id],
+                }
+                for entry in revised_entries
+            ],
+        }
+        registry_sha256 = hashlib.sha256(
+            json.dumps(
+                registry_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+            ).encode("utf-8")
+        ).hexdigest()
+        correction_payload = {
+            "format": "dish-registry-role-correction-v1",
+            "generation_id": str(generation.generation_id),
+            "predecessor_registry_version_id": str(
+                current_version.registry_version_id
+            ),
+            "source_import_run_id": str(source_import_run.import_run_id),
+            "command_execution_id": str(execution.execution_id),
+            "requested_roles": {
+                role: str(section_id) for role, section_id in requested.items()
+            },
+            "result_registry_sha256": registry_sha256,
+        }
+        correction_bundle_sha256 = hashlib.sha256(
+            json.dumps(
+                correction_payload,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode("utf-8")
+        ).hexdigest()
+        correction_high_water_mark = (
+            "registry-role-correction:"
+            f"{current_version.registry_version_id}:{registry_sha256}"
+        )
+        AuthorityRepository(self.session).add_import_run(
+            models.ImportRun(
+                import_run_id=correction_import_run_id,
+                source_commit=source_import_run.source_commit,
+                source_release=REGISTRY_ROLE_CORRECTION_SOURCE_RELEASE,
+                legacy_generation_id=source_import_run.legacy_generation_id,
+                baseline_high_water_mark=correction_high_water_mark,
+                source_bundle_sha256=correction_bundle_sha256,
+                status="complete",
+                started_at=call.now,
+                completed_at=call.now,
+                provenance={
+                    "correction_kind": REGISTRY_ROLE_CORRECTION_KIND,
+                    "correction_bundle_sha256": correction_bundle_sha256,
+                    "source_import_run_id": str(source_import_run.import_run_id),
+                    "predecessor_registry_version_id": str(
+                        current_version.registry_version_id
+                    ),
+                    "command_execution_id": str(execution.execution_id),
+                    "requested_roles": {
+                        role: str(section_id)
+                        for role, section_id in requested.items()
+                    },
+                    "result_registry_sha256": registry_sha256,
+                    "source_record_count": 0,
+                },
+            )
+        )
+        registry = RegistryRepository(self.session)
+        registry.add_registry_version(
+            models.SectionRegistryVersion(
+                registry_version_id=registry_version_id,
+                generation_id=generation.generation_id,
+                version_number=current_version.version_number + 1,
+                import_run_id=correction_import_run_id,
+                contract_binding_id=current_version.contract_binding_id,
+                registry_sha256=registry_sha256,
+                created_at=call.now,
+            ),
+            revised_entries,
+        )
+        registry.activate_registry(
+            activation=models.SectionRegistryActivation(
+                registry_activation_id=activation_id,
+                generation_id=generation.generation_id,
+                registry_version_id=registry_version_id,
+                activation_route="import",
+                import_run_id=correction_import_run_id,
+                command_execution_id=None,
+                registry_revision=next_registry_revision,
+                activated_at=call.now,
+            ),
+            current=models.ActiveSectionRegistry(
+                generation_id=generation.generation_id,
+                registry_version_id=registry_version_id,
+                registry_activation_id=activation_id,
+                registry_revision=next_registry_revision,
+                updated_at=call.now,
+            ),
+        )
+        return {
+            "correction_import_run_id": str(correction_import_run_id),
+            "registry_version_id": str(registry_version_id),
+            "registry_activation_id": str(activation_id),
+            "registry_revision": next_registry_revision,
+            "changed": True,
+        }
 
     def _create(self, call, generation, binding, execution, _task, _operation) -> dict[str, Any]:
         title = str(call.arguments.get("title", "")).strip()

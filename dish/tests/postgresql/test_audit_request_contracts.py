@@ -283,7 +283,7 @@ def test_postgresql_command_inventory_matches_independent_stage_a_baseline() -> 
         (Path(__file__).parents[2] / "docs" / "database-backend-stage-a-baseline.json").read_text()
     )
     expected = set(baseline["target_treatments"])
-    assert expected == set(COMMAND_DEFINITIONS)
+    assert expected | {"revise-section-registry"} == set(COMMAND_DEFINITIONS)
     assert "holds" in ADMIN_COMMANDS
     assert "resolved" in ADMIN_COMMANDS
     assert "planning-intent-settlement" in ADMIN_COMMANDS

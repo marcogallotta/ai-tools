@@ -1,6 +1,7 @@
 """First-generation bootstrap and real importer-hook coverage."""
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 import json
 import subprocess
@@ -13,6 +14,7 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from dish_pg import models
+from dish_pg.command_port import CommandCall, PostgresCommandPort
 from dish_pg.bootstrap import (
     DEFAULT_SCHEMA_HEAD,
     DEFAULT_PROJECT_GID,
@@ -20,6 +22,8 @@ from dish_pg.bootstrap import (
     HonestCheckout,
     InitialBootstrapError,
     InitialBootstrapSpec,
+    apply_research_queue_role,
+    apply_verification_queue_role,
     bootstrap_initial_generation,
     inspect_source_bundle,
     resolve_honest_checkout,
@@ -32,7 +36,14 @@ from dish_pg.release_history import (
     EXACT_REVOCATION_HISTORY_PROVENANCE_KEY,
     EXACT_REVOCATION_SOURCE_CONTRACT,
 )
+from dish_pg.repositories import (
+    CoreAuthorityError,
+    REGISTRY_ROLE_CORRECTION_KIND,
+    REGISTRY_ROLE_CORRECTION_SOURCE_RELEASE,
+    registry_source_import_run,
+)
 from dish_pg.transition import ShadowService
+from dish_pg.workflow import WorkflowAuthorityService
 
 NOW = datetime(2026, 8, 3, 20, 0, tzinfo=timezone.utc)
 
@@ -254,6 +265,32 @@ def test_source_bundle_registers_every_distinct_section(tmp_path: Path) -> None:
     assert len({section.workflow_role for section in sections}) == len(sections)
 
 
+def test_bootstrap_role_assignment_is_explicit_for_both_special_queues(tmp_path: Path) -> None:
+    source = _source(
+        tmp_path,
+        _record(uuid.uuid4(), "3010"),
+        _record(
+            uuid.uuid4(),
+            "3011",
+            section_id=OTHER_SECTION_ID,
+            section_gid=OTHER_SECTION_GID,
+            section_name="Verification Queue",
+        ),
+    )
+    sections = section_specs_from_bundle(
+        inspect_source_bundle(source, project_id=DEFAULT_PROJECT_ID)
+    )
+    sections = apply_research_queue_role(
+        sections, research_queue_section_id=DEFAULT_SECTION_ID
+    )
+    sections = apply_verification_queue_role(
+        sections, verification_queue_section_id=OTHER_SECTION_ID
+    )
+    assert {section.workflow_role for section in sections} >= {
+        "research_queue", "verification_queue"
+    }
+
+
 def test_source_bundle_requires_explicit_revocation_history_field(tmp_path: Path) -> None:
     record = _record(uuid.uuid4(), "3002")
     history = dict(record["operation_history"])
@@ -282,6 +319,144 @@ def test_source_bundle_rejects_section_id_reused_for_a_different_name(tmp_path: 
     )
     with pytest.raises(InitialBootstrapError, match="section_name"):
         inspect_source_bundle(source, project_id=DEFAULT_PROJECT_ID)
+
+
+def test_registry_revision_uses_truthful_correction_import_without_rewriting_authority(
+    tmp_path: Path,
+) -> None:
+    source = _source(
+        tmp_path,
+        _record(uuid.uuid4(), "3901"),
+        _record(
+            uuid.uuid4(),
+            "3902",
+            section_id=OTHER_SECTION_ID,
+            section_gid=OTHER_SECTION_GID,
+            section_name="Verification Queue",
+        ),
+    )
+    base_spec = _spec(source)
+    spec = replace(
+        base_spec,
+        sections=apply_research_queue_role(
+            base_spec.sections, research_queue_section_id=DEFAULT_SECTION_ID
+        ),
+    )
+    factory, engine = _factory(tmp_path)
+    try:
+        with session_scope(factory) as session:
+            bootstrapped = bootstrap_initial_generation(session, spec, clock=lambda: NOW)
+        admin_run = uuid.uuid4()
+        request_id = uuid.uuid4()
+        with session_scope(factory) as session:
+            WorkflowAuthorityService(session).register_run(
+                run_id=admin_run,
+                generation_id=bootstrapped.generation_id,
+                owner_id="Marco",
+                agent="marco",
+                capability_digest=b"r" * 32,
+                registered_at=NOW,
+            )
+            revised = PostgresCommandPort(
+                session, cursor_secret=b"registry-revision-test-secret-32b"
+            ).execute(
+                CommandCall(
+                    command_name="revise-section-registry",
+                    arguments={
+                        "research_queue_section_id": str(DEFAULT_SECTION_ID),
+                        "verification_queue_section_id": str(OTHER_SECTION_ID),
+                    },
+                    owner_id="Marco",
+                    principal_class="admin",
+                    run_id=admin_run,
+                    request_id=request_id,
+                    now=NOW,
+                    protocol_release=spec.honest.protocol_version,
+                )
+            )
+            assert revised.ok is True
+            assert revised.data["changed"] is True
+
+            active = session.get(
+                models.ActiveSectionRegistry, bootstrapped.generation_id
+            )
+            assert active is not None
+            assert active.registry_revision == 2
+            version = session.get(
+                models.SectionRegistryVersion, active.registry_version_id
+            )
+            assert version is not None
+            correction_import_run_id = uuid.UUID(
+                str(revised.data["correction_import_run_id"])
+            )
+            assert version.import_run_id == correction_import_run_id
+            correction = session.get(models.ImportRun, correction_import_run_id)
+            assert correction is not None
+            assert correction.status == "complete"
+            assert correction.source_release == REGISTRY_ROLE_CORRECTION_SOURCE_RELEASE
+            assert correction.provenance["correction_kind"] == REGISTRY_ROLE_CORRECTION_KIND
+            assert correction.provenance["source_import_run_id"] == str(
+                bootstrapped.import_run_id
+            )
+            assert correction.provenance["predecessor_registry_version_id"] == str(
+                bootstrapped.registry_version_id
+            )
+            assert correction.provenance["result_registry_sha256"] == version.registry_sha256
+            assert (
+                correction.provenance["correction_bundle_sha256"]
+                == correction.source_bundle_sha256
+            )
+            assert correction.provenance["source_record_count"] == 0
+            assert registry_source_import_run(session, version).import_run_id == (
+                bootstrapped.import_run_id
+            )
+            activation = session.get(
+                models.SectionRegistryActivation, active.registry_activation_id
+            )
+            assert activation is not None
+            assert activation.activation_route == "import"
+            assert activation.import_run_id == correction_import_run_id
+            assert activation.command_execution_id is None
+
+            entries = list(
+                session.scalars(
+                    select(models.SectionRegistryEntry).where(
+                        models.SectionRegistryEntry.registry_version_id
+                        == active.registry_version_id
+                    )
+                )
+            )
+            roles = {entry.section_id: entry.workflow_role for entry in entries}
+            assert roles[DEFAULT_SECTION_ID] == "research_queue"
+            assert roles[OTHER_SECTION_ID] == "verification_queue"
+            original = list(
+                session.scalars(
+                    select(models.SectionRegistryEntry).where(
+                        models.SectionRegistryEntry.registry_version_id
+                        == bootstrapped.registry_version_id
+                    )
+                )
+            )
+            assert {entry.workflow_role for entry in original} == {
+                "research_queue",
+                f"imported-section-{OTHER_SECTION_GID}",
+            }
+            original_version = session.get(
+                models.SectionRegistryVersion, bootstrapped.registry_version_id
+            )
+            assert original_version is not None
+            assert original_version.import_run_id == bootstrapped.import_run_id
+            with pytest.raises(
+                CoreAuthorityError, match="exact-operation revocation source"
+            ):
+                prepare_import_run(
+                    session,
+                    bootstrapped.generation_id,
+                    correction_import_run_id,
+                    bootstrapped.binding_id,
+                )
+    finally:
+        engine.dispose()
 
 
 def test_honest_checkout_uses_real_git_and_asset_hashes(tmp_path: Path, monkeypatch) -> None:
