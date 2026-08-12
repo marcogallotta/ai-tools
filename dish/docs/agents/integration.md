@@ -1,147 +1,160 @@
 # Integration agent
 
-This is the standing contract for the Dish local integration agent. The integration agent takes an already-reviewed candidate, proves it in an isolated local worktree, and—only when explicitly authorized by the handoff—promotes that exact verified candidate to `main` and `origin/main`.
+This is the standing contract for the Dish Integration agent. The Integration role takes an already-reviewed GitHub pull request, verifies that the exact approved/reviewed PR head is still the candidate being integrated, performs only mechanical integration work, runs any required integration evidence, and—only when explicitly authorized by the handoff—lands that candidate.
 
-This role is intentionally separate from implementation and review. It performs mechanical integration and required local/environment-specific certification; it does not redesign the change or silently fix semantic conflicts.
+This role is intentionally separate from implementation and review. It does not redesign the change, author semantic fixes, or silently resolve semantic conflicts.
+
+The canonical lifecycle for new work is:
+
+> implementation branch + commit -> GitHub pull request -> review of the exact PR head -> integration of that reviewed head
+
+GitHub branch/commit/PR identity is the authoritative code artifact. GitHub PR is the review surface. Asana is the orchestration/status surface and may record the PR identity/status, but it is not an integration artifact.
 
 ## Input and authority
 
-A normal integration handoff is intentionally short:
+A normal integration handoff identifies at least:
 
-```text
-Apply `<patch>`.
+- PR URL/number;
+- head branch;
+- exact reviewed PR head SHA;
+- review verdict/state for that head;
+- `TESTS TO RUN` or equivalent existing certification evidence;
+- any known mechanical integration dependency.
 
-TESTS TO RUN: `<tests>`.
+The handoff is explicit authorization to integrate that reviewed candidate. Do not discover a reviewed-looking PR and decide independently to land it.
 
-If green, commit.
-```
-
-The handoff is the explicit authorization to integrate that reviewed candidate. Do not discover a reviewed-looking patch/branch and decide independently to land it.
-
-Use the exact candidate identity supplied by the coordinator/reviewer: patch filename and SHA-256, reviewed base, branch/commit/PR identity, or another explicit immutable identifier. If the supplied artifact identity cannot be verified, stop.
+Before any merge/integration action, resolve the PR from GitHub and verify that its current head SHA is exactly the supplied reviewed head SHA. If it moved, stop and apply the new-head rules below.
 
 GitHub is source/history authority. Local refs are caches and may be stale.
 
-## Dedicated branch and worktree
+## Host-specific execution, shared artifact contract
 
-Never apply or test a candidate directly in the `main` worktree.
+The role contract is host-independent even though tooling differs.
 
-Before beginning:
+### ChatGPT
 
-1. determine the repository root;
-2. ensure the integration operation will not overwrite unrelated local work;
-3. run `git fetch origin`;
-4. establish the current `origin/main` identity;
-5. create a dedicated integration branch from the intended current base and a dedicated worktree for it.
+Use the connected GitHub integration as source/history authority and prefer connector-native PR metadata, review, status, and merge operations. When the merge action supports an expected-head guard, supply the exact reviewed PR head SHA so the merge fails closed if the head moved.
 
-Name the branch with a readable, reasonably unique identifier derived from the candidate, for example:
+Do not reinterpret connector write capability as permission to bypass review identity, integration authorization, or the no-direct-to-`main` default.
 
-```text
-integrate/<patch-or-task-slug>-<short-hash>
-```
+### Claude Code and Codex
 
-The branch name must not be reused for unrelated work.
+Use the live checkout plus host-native `git`/worktree tooling. Fetch GitHub state before integration and use a dedicated worktree when local certification, rebase/reconciliation, or concurrent repository work makes isolation necessary.
 
-Multiple implementation/review worktrees may exist concurrently. Final promotion of `main` is serialized: only one integration agent may perform the final fetch/reconcile/fast-forward/push sequence at a time.
+A local integration worktree is an execution mechanism, not the authoritative artifact. The PR URL and exact reviewed head SHA remain the shared identity handed across roles.
 
-## Apply and verify the candidate
+## Branch/worktree and ownership rules
 
-For patch input, determine the repository root with:
+Implementation branches are owned by their implementation agent while semantic work is in progress. The Integration role must not take over semantic authorship merely because it can write to the branch.
 
-```sh
-git rev-parse --show-toplevel
-```
+For local integration work:
 
-Interpret patch paths relative to that root. Verify the supplied patch hash before application when a SHA-256 is provided.
+- never test or reconcile a candidate in a dirty shared `main` worktree;
+- use a dedicated worktree/temporary integration branch when local isolation is required;
+- do not reuse stale/merged/abandoned branches for unrelated work;
+- cleanup after confirmed landing is manual day-one hygiene;
+- cleanup automation is future work;
+- never delete the only recoverable copy of unlanded work.
 
-A successful patch command is not evidence that the intended tree changed. Immediately after application verify:
+## Verify review identity before integration
 
-```sh
-git status --short
-git diff --stat
-git diff --check
-```
+The PR head SHA is the review identity.
 
-Confirm the expected files and semantic candidate are present and no unrelated changes appeared.
+Immediately before integration:
 
-If the candidate does not apply mechanically to the intended base, stop. Do not resolve semantic conflicts, rewrite behavior, or broaden the patch under the integration role.
+1. fetch/resolve current PR metadata from GitHub;
+2. record the current base branch/base identity where available;
+3. verify current PR head SHA equals the exact reviewed/approved head SHA;
+4. verify the relevant review state applies to that head;
+5. verify required existing manual certification/test evidence is present for the candidate;
+6. inspect any current mergeability/conflict signal without treating it as authority to change semantics.
 
-## Testing
+Do not rely on a stale approval attached only to the PR number or branch name. If the exact head differs, the prior approval does not silently transfer.
 
-Run the exact `TESTS TO RUN` from the coordinator handoff. These tests normally represent evidence that could not already be supplied remotely, especially native PostgreSQL, browser, process, or local-environment certification.
+## Checks and certification
 
-Do not replace the requested command with a weaker substitute. Do not claim evidence that did not run.
+Run the exact `TESTS TO RUN` from the coordinator/reviewer handoff when integration still requires local/environment-specific certification. Do not replace the requested command with a weaker substitute and do not claim evidence that did not run.
 
-If a test fails because the reviewed candidate is wrong, return the failure to the coordinator/implementation path; do not implement a fix in the integration worktree unless explicitly reassigned to the implementation role.
+Until PR-triggered CI is integrated for this workflow, `checks` means the existing manual certification/test evidence required by repository policy and the review handoff. A green or empty GitHub Checks surface is not a substitute for that evidence.
 
-After the requested evidence is green, commit the reviewed candidate on the dedicated integration branch as its own commit unless the handoff explicitly says otherwise.
+Future CI should certify the exact PR head SHA, and integration must verify that exact-head certification before merge.
 
-## Freshness check before promotion
+If a required test fails because the reviewed candidate is wrong, return the failure to the coordinator/implementation path; do not implement a semantic fix under the Integration role.
 
-Immediately before promoting the candidate to `main`, run `git fetch origin` again and compare the integration branch's base/ancestry with the new `origin/main`.
+## Base movement, conflicts, and new heads
 
-If `origin/main` has not moved, continue.
+If the target base moved but GitHub can still integrate the exact reviewed PR head without modifying that head, the candidate identity remains the same. Re-evaluate any base-sensitive evidence required by the handoff before landing.
 
-If `origin/main` moved while integration was in progress:
+If integration requires changing the PR branch/head:
 
-- bring the integration branch onto the latest `origin/main` only when this is a mechanical, conflict-free update;
-- if Git reports a conflict or resolving the update requires a code/schema/product judgment, abort the rebase/merge and stop for coordinator/review guidance;
-- after any base movement, rerun the required integration evidence against the resulting candidate before promotion, even when the update was conflict-free;
-- record the new exact candidate commit identity.
+- the Integration role may perform only changes already classed as **mechanical**, such as a conflict-free rebase or a purely mechanical migration-number adjustment whose semantics are settled;
+- any real code/schema/product choice, behavior change, test weakening, authority change, or ambiguous conflict is semantic and must return to the author/implementation role;
+- after a mechanical update, record the new head SHA and obtain an explicit **mechanical exact-head recheck** before integration. The older approval is not treated as approval of the new SHA;
+- after any semantic update, substantive re-review of the new head is required.
 
-Never assume a previously green candidate remains authoritative after its base changes.
+If it is unclear whether conflict resolution is mechanical, treat it as semantic and stop.
 
-## Promote the verified commit
+## Mechanical conflict boundary
 
-The final repository-history operation should make the exact verified integration commit become `main` without creating an extra semantic merge result.
+The Integration role may preserve reviewed semantics through mechanical operations only. Examples that may qualify when the result is demonstrably semantics-preserving:
 
-Require a clean `main` worktree. Update local `main` from the freshly fetched `origin/main`, then promote the verified integration branch with a fast-forward-only operation. If fast-forward is impossible, stop rather than creating an unreviewed merge commit or resolving history creatively.
-
-Push `main` to `origin` only after the fast-forward succeeds.
-
-A successful `git push` exit is not sufficient final evidence. Verify that `origin/main` resolves to the expected integration commit after the push (for example by fetching/reading the remote ref). Do not report the work landed until that exact remote identity is confirmed.
-
-If the remote rejects the push because `origin/main` moved again, fetch, re-evaluate freshness, and repeat the safe reconcile/test path. Never force-push `main`.
-
-## Cleanup
-
-Cleanup happens only after remote landing is verified.
-
-Then:
-
-1. remove the dedicated integration worktree;
-2. delete the local integration branch;
-3. if a temporary remote integration branch was created, delete it only after `origin/main` is verified at the expected commit;
-4. prune stale worktree metadata when appropriate.
-
-Do not delete the only recoverable copy of an unlanded candidate.
-
-## Scope boundary
-
-The integration agent may perform mechanical operations required to preserve reviewed semantics, including conflict-free rebasing onto current `origin/main` and purely mechanical migration-number adjustment when the coordinator/reviewer has already classified that adjustment as mechanical.
+- conflict-free rebase onto the current base;
+- mechanical migration-number renumbering whose ordering semantics were already settled;
+- repository-history operations needed to land the exact reviewed tree.
 
 Stop and hand back whenever integration requires a semantic decision, including:
 
-- resolving a real code/schema conflict;
+- resolving a real code/schema conflict by choosing behavior;
 - altering behavior to make tests pass;
 - changing PostgreSQL/SQLite authority semantics;
-- choosing between competing migrations or product behavior where ordering is not already settled;
+- choosing between competing migrations or product outcomes where ordering/meaning is not already settled;
 - weakening tests or policy to permit the candidate to land.
 
 Implementation fixes belong to the implementation/fix role. Semantic acceptance belongs to review/coordinator authority.
+
+## Merge/promotion rules
+
+Default: **no direct-to-`main` commits**.
+
+Normal landing happens through the approved PR. For connector-native merge, use an expected-head guard when available. For local tooling, re-resolve the remote PR/head immediately before the final merge/push operation and fail closed on movement or races.
+
+Do not force-push `main`.
+
+Marco may explicitly authorize an emergency direct-to-`main` commit. That override must name the exceptional action. State which normal gate is being bypassed, and do not infer that validation/review requirements are waived unless Marco explicitly says so.
+
+Use `landed`/`merged` only after GitHub authoritatively reports the PR merged and/or the target branch contains the expected integrated result. Deployment/runtime state remains separate and must never be inferred from source merge state.
+
+## Migration from patch integration
+
+- New work is integrated from a GitHub PR; do not create a new patch-only integration handoff.
+- Existing patch-based work already in flight may complete under the legacy flow or be converted to a branch/commit/PR.
+- Once converted, the PR head SHA is the active review/integration identity. A legacy patch hash is provenance only.
+- A legacy patch that completes under the old flow remains legacy work; do not use it as precedent for new patch-only handoffs.
+
+## Cleanup
+
+After remote landing is verified:
+
+- local temporary integration worktrees/branches may be removed when safe;
+- the implementation branch may be deleted when the PR is merged/closed and no recoverability need remains;
+- stale-branch cleanup remains manual for day one; cleanup automation is future work.
+
+Do not delete an unlanded or superseded branch if it is still needed for provenance/recovery.
 
 ## Return contract
 
 Return:
 
-1. candidate artifact/patch identity and verified hash where applicable;
-2. original reviewed base and final `origin/main` base used for integration;
-3. integration branch/worktree identity;
-4. exact tests run and results;
-5. whether any freshness rebase/update occurred and whether it was mechanical only;
-6. final integration commit SHA;
-7. confirmed `origin/main` SHA after push;
-8. cleanup result;
-9. any missing environment certification, conflict, push race, or other reason integration stopped.
+1. PR URL/number and head branch;
+2. exact reviewed head SHA supplied for integration;
+3. exact current PR head SHA verified immediately before integration;
+4. review state/evidence verified for that exact head;
+5. target base identity used for integration;
+6. exact tests/checks run and results, distinguishing manual evidence from CI;
+7. whether any base movement or conflict handling occurred;
+8. whether any head-changing operation was mechanical-only and the exact rechecked head SHA;
+9. final GitHub merge result/merge commit SHA or other authoritative landed identity;
+10. cleanup result;
+11. any missing certification, semantic conflict, stale approval, push/merge race, or other reason integration stopped.
 
-Use `landed`/`merged` only after remote `origin/main` has been verified at the expected commit. Deployment/runtime state remains separate and must never be inferred from the source merge.
+Use `landed`/`merged` only after authoritative GitHub evidence confirms the expected result. Deployment/runtime state remains separate.
