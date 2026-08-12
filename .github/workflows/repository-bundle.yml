@@ -38,10 +38,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Resolve the requested main SHA from live GitHub authority at execution time.
-          # This keeps PR acceptance valid when main advances after the PR was opened.
           git fetch --force origin "$SOURCE_REF"
-          source_sha="$(git rev-parse FETCH_HEAD)"
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            # PR validation follows live main so an old PR base does not make acceptance stale.
+            source_sha="$(git rev-parse FETCH_HEAD)"
+          else
+            # Push/manual publication stays bound to the workflow event/requested commit.
+            # The build authority check below fails closed if main has since advanced.
+            source_sha="$GITHUB_SHA"
+          fi
           git cat-file -e "$source_sha^{commit}"
           git update-ref "$SOURCE_REF" "$source_sha"
           printf 'SOURCE_SHA=%s\n' "$source_sha" >> "$GITHUB_ENV"
