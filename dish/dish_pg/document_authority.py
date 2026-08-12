@@ -109,6 +109,38 @@ def render_parts(document: CanonicalTaskDocument) -> CanonicalDocumentParts:
     return CanonicalDocumentParts(document, lines[0], "\n".join(lines[1:]) + "\n")
 
 
+def prepared_document(
+    file_text: str,
+    *,
+    agent: str,
+    model: str,
+    at: datetime,
+) -> CanonicalDocumentParts:
+    """Parse a fresh initial-operation Research candidate and stamp provenance.
+
+    Mirrors ``dish_tool.step6.prepare_live``'s initial-operation handling:
+    prepare deterministically owns and rewrites "Researched by"/"Self-verified"
+    from the calling agent/model/date, regardless of what the candidate wrote
+    there, rather than validating the caller's self-reported text as-is.
+    """
+    try:
+        document = parse_task_document(str(file_text))
+    except DocumentParseError as exc:
+        raise CanonicalDocumentError(
+            "candidate is not a canonical Dish document",
+            errors=document_parse_error_payloads(exc),
+        ) from exc
+    try:
+        actor_line = material_editor_line(agent, model, at.date().isoformat())
+    except DishRuleError as exc:
+        raise CanonicalDocumentError(str(exc)) from exc
+    state = dict(document.state.values)
+    state["Researched by"] = actor_line
+    state["Self-verified"] = actor_line
+    stamped = dataclasses.replace(document, state=TaskState(state))
+    return _validated_parts(stamped, expected_status="pending-verification")
+
+
 def ready_document(
     document: CanonicalTaskDocument,
     *,

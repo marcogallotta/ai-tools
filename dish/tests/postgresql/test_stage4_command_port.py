@@ -26,6 +26,7 @@ from dish_pg.protocol import AuthenticationError, PostgresProtocolService, Scope
 from dish_pg.read_model import InvalidCursor
 from dish_pg.transition import ProjectionService
 from dish_tool.workflow_policy import WorkflowSnapshot, legal_actions
+from tests.support.canonical import TASK
 from tests.support.postgresql.core import _import_one
 from tests.support.postgresql.command import (
     _add_verification_queue,
@@ -70,6 +71,46 @@ def test_stage4_postgresql_action_path_contract() -> None:
 )
 def test_task_reference_from_dish_reduces_known_shapes(dish_value, expected) -> None:
     assert _task_reference_from_dish(dish_value) == expected
+
+
+def test_prepare_stamps_researched_by_and_self_verified_from_agent(workflow_db) -> None:
+    """PG must own "Researched by"/"Self-verified" on initial prepare, like legacy.
+
+    A caller's self-reported provenance line is not required to already match
+    the canonical actor-format grammar; prepare rewrites it from the calling
+    agent/model/date, exactly as ``dish_tool.step6.prepare_live`` does for
+    initial operations.
+    """
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        _add_verification_queue(session, ids, context)
+        author_run = _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=author_run)
+        port = _port(session, ids)
+        started = _start_initial(port, ids, task_id=task_id, run_id=author_run, agent="gpt")
+        malformed_candidate = TASK.replace(
+            "Researched by: ChatGPT — GPT-5, 2026-07-25",
+            "Researched by: gpt — gpt-5.6-sol, 2026-08-12",
+        ).replace(
+            "Self-verified: ChatGPT — GPT-5, 2026-07-25",
+            "Self-verified: gpt — gpt-5.6-sol, 2026-08-12",
+        )
+        result = port.execute(
+            _call(
+                "prepare",
+                run_id=author_run,
+                request_id=_next(ids),
+                owner="owner-1",
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                    "file_text": malformed_candidate,
+                    "agent": "gpt",
+                    "model": "gpt-5.6-sol",
+                },
+            )
+        )
+        assert result.ok, (result.code, result.http_status, result.data)
 
 
 def test_inspect_resolves_task_from_dish_argument(workflow_db) -> None:
