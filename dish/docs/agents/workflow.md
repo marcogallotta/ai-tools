@@ -26,7 +26,7 @@ Track every material piece of transient state whose loss would make continuation
 - testing, acceptance, certification, rehearsal, and workflow-iteration state;
 - TEST/runtime observations when they affect the work;
 - known defects, accepted gaps, blockers, and Marco decisions still required;
-- exact GitHub base/commit/patch/branch/PR or other artifact identity when applicable;
+- exact GitHub base/branch/commit/PR/head or other artifact identity when applicable; legacy patch identity only for migration/provenance cases;
 - dependencies, expected overlap, and cross-specialist coordination;
 - evidence already obtained, evidence still missing, and the concrete next action.
 
@@ -61,7 +61,7 @@ For every active task, keep notes as the latest consolidated state. Include the 
 - **Goal / problem:** what outcome is being pursued and why;
 - **Current state:** where the work stands now;
 - **Decisions / constraints:** choices already made that constrain the next step;
-- **Git identity:** working base and current patch/commit/PR/artifact identity where applicable;
+- **Git identity:** working base and current branch/commit/PR/head identity where applicable; legacy patch identity only when continuing or recording old-flow provenance;
 - **Environment identity:** relevant TEST/production/runtime identity when actually known, or an explicit unknown when it matters;
 - **Work already attempted:** approaches or fixes whose result affects what should happen next;
 - **Testing / iteration state:** scenario under test, what ran, exact meaningful result, what the result established, and what must run or change next;
@@ -99,7 +99,7 @@ Preserve earlier iteration results when they constrain later work. Do not leave 
 
 ## GitHub and code artifacts
 
-Use GitHub identities rather than Asana attachments as the normal code/history reference. Record the exact base and produced patch/commit/PR identity when it matters to takeover or overlap.
+Use GitHub identities rather than Asana attachments as the normal code/history reference. Record the exact base and produced branch/commit/PR/head identity when it matters to takeover or overlap. Treat patch identity as legacy/diagnostic provenance only.
 
 Asana is not source authority and should not become a parallel code-artifact store. A GitHub commit existing does not mean it is deployed, merged, certified, or operationally complete; record those states separately when material.
 
