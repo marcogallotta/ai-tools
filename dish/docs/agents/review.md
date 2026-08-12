@@ -44,6 +44,20 @@ An approval applies to one exact PR head SHA. When the review surface supports a
 
 Do not treat `PR URL + branch name` alone as sufficient identity; the head SHA must match.
 
+## Durable GitHub review submission
+
+A review is not complete until the verdict is durably submitted on GitHub for the exact reviewed head SHA. A chat-only verdict, detached handoff, or review-claim comment is incomplete and must not be treated as the repository review state.
+
+Before returning any verdict:
+
+1. submit a GitHub pull-request review anchored to the exact reviewed head SHA;
+2. use `APPROVE` for `VERDICT: MERGE` when GitHub permits it;
+3. use `REQUEST_CHANGES` for `VERDICT: BLOCK` when GitHub permits it;
+4. if the authenticated account owns the PR or GitHub otherwise rejects `APPROVE`/`REQUEST_CHANGES`, submit a `COMMENT` review containing the explicit `VERDICT: MERGE` or `VERDICT: BLOCK`, the material findings, and the exact reviewed head SHA;
+5. verify that the submitted review exists on the PR and corresponds to the exact reviewed head before returning the coordinator handoff.
+
+The fallback `COMMENT` review is a transport/account limitation only; it does not weaken the semantic verdict. A claim comment never satisfies this completion gate.
+
 ## Forked review claims
 
 Review may be forked away from the coordinator so review and orchestration can proceed in parallel. Avoid using GitHub assignee state as agent-review ownership: a dead agent must not leave a durable lock.
