@@ -143,7 +143,7 @@ The claim is inactive when:
 - Coordinator explicitly reassigns or takes over;
 - intentional parallel/deep/specialist review is requested.
 
-Visible activity includes a submitted review, review-thread/comment activity, or an explicit claim-renewal/progress comment. Do not keep a claim alive merely because the agent process might still exist somewhere.
+Visible activity includes a submitted review, review-thread/comment activity, or an explicit claim-renewal/progress comment. Do not keep the claim alive merely because the agent process might still exist somewhere.
 
 A submitted GitHub review on the exact head supersedes the claim. Independent specialist reviews may intentionally coexist; the claim prevents accidental duplication, not deliberate multi-review.
 
