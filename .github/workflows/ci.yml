@@ -3,20 +3,33 @@ name: CI
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize, ready_for_review]
   workflow_dispatch:
 
 permissions:
   contents: read
 
+env:
+  # pull_request GITHUB_SHA is the synthetic merge ref. Dish review/integration
+  # identity is always the source PR head SHA.
+  CI_CANDIDATE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+  CI_CANDIDATE_SOURCE: ${{ github.event_name == 'pull_request' && 'pull_request.head.sha' || 'github.sha' }}
+  EXACT_HEAD_STATUS_CONTEXT: Dish / required ordinary CI
+
 jobs:
   bundle-metadata:
     name: Dependency bundle metadata
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-24.04
     outputs:
       python_version: ${{ steps.bundle.outputs.python_version }}
       bundle_id: ${{ steps.bundle.outputs.bundle_id }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.CI_CANDIDATE_SHA }}
       - name: Compute fail-closed bundle identity
         id: bundle
         shell: bash
@@ -35,6 +48,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.CI_CANDIDATE_SHA }}
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ needs.bundle-metadata.outputs.python_version }}
@@ -49,6 +64,7 @@ jobs:
           dish/.venv/bin/python -m pytest -q \
             ci/tests/test_dependency_bundle.py \
             ci/tests/test_repository_bundle.py \
+            ci/tests/test_pr_gate.py \
             --junitxml=.test-artifacts/python/bundles.xml \
             2>&1 | tee .test-artifacts/python/bundles.log
       - name: Validate governed Dish test-selection map
@@ -81,7 +97,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: python-tests-${{ github.sha }}
+          name: python-tests-${{ env.CI_CANDIDATE_SHA }}
           path: .test-artifacts
           if-no-files-found: warn
 
@@ -91,6 +107,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.CI_CANDIDATE_SHA }}
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ needs.bundle-metadata.outputs.python_version }}
@@ -111,7 +129,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: frontend-tooling-${{ github.sha }}
+          name: frontend-tooling-${{ env.CI_CANDIDATE_SHA }}
           path: |
             .test-artifacts
             dish/frontend/dist
@@ -139,6 +157,8 @@ jobs:
       DISH_TEST_POSTGRESQL_DSN: postgresql+psycopg://ai_tools_ci:ci-only-password@127.0.0.1:5432/ai_tools_ci
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.CI_CANDIDATE_SHA }}
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ needs.bundle-metadata.outputs.python_version }}
@@ -176,7 +196,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: native-postgresql-${{ github.sha }}
+          name: native-postgresql-${{ env.CI_CANDIDATE_SHA }}
           path: .test-artifacts
           if-no-files-found: warn
 
@@ -186,6 +206,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.CI_CANDIDATE_SHA }}
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ needs.bundle-metadata.outputs.python_version }}
@@ -218,9 +240,68 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: browser-acceptance-${{ github.sha }}
+          name: browser-acceptance-${{ env.CI_CANDIDATE_SHA }}
           path: |
             .test-artifacts
             dish/.test-artifacts
             dish/frontend/screenshots
           if-no-files-found: warn
+
+  exact-head-ordinary-ci:
+    name: Exact-head ordinary CI gate
+    needs: [python-tests, frontend-tooling, native-postgresql, browser-acceptance]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      statuses: write
+    steps:
+      - name: Write exact candidate evidence metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .test-artifacts/ci-candidate
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          candidate_sha = os.environ["CI_CANDIDATE_SHA"]
+          if len(candidate_sha) != 40:
+              raise SystemExit(f"invalid candidate SHA: {candidate_sha!r}")
+          payload = {
+              "schema": "dish-exact-head-ci-v1",
+              "workflow": os.environ["GITHUB_WORKFLOW"],
+              "event": os.environ["GITHUB_EVENT_NAME"],
+              "candidate_sha": candidate_sha,
+              "candidate_source": os.environ["CI_CANDIDATE_SOURCE"],
+              "workflow_sha": os.environ["GITHUB_SHA"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "required_status_context": os.environ["EXACT_HEAD_STATUS_CONTEXT"],
+          }
+          Path(".test-artifacts/ci-candidate/identity.json").write_text(
+              json.dumps(payload, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(payload, sort_keys=True))
+          PY
+      - name: Upload required ordinary CI evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: required-ordinary-ci-${{ env.CI_CANDIDATE_SHA }}
+          path: .test-artifacts/ci-candidate/identity.json
+          if-no-files-found: error
+      - name: Publish exact-head ordinary CI status
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          short_sha="${CI_CANDIDATE_SHA:0:12}"
+          gh api --method POST \
+            "/repos/$GITHUB_REPOSITORY/statuses/$CI_CANDIDATE_SHA" \
+            -f state=success \
+            -f context="$EXACT_HEAD_STATUS_CONTEXT" \
+            -f target_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            -f description="ordinary CI passed for exact head $short_sha"
