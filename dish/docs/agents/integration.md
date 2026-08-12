@@ -116,13 +116,13 @@ Implementation fixes belong to the implementation/fix role. Semantic acceptance 
 
 Default: **no direct-to-`main` commits**.
 
-Normal landing happens through the approved PR. For connector-native merge, use an expected-head guard when available. For local tooling, re-resolve the remote PR/head immediately before the final merge/push operation and fail closed on movement or races.
+Normal landing happens through the approved PR and must leave that PR in GitHub's `MERGED` state. For connector-native merge, use an expected-head guard when available. For local tooling, re-resolve the remote PR/head immediately before the final merge operation and fail closed on movement or races. If a mechanical rebase changes the PR head, push that branch, obtain the required exact-head mechanical recheck, and merge the updated PR. Do not bypass the PR by pushing rewritten commits directly to the target branch.
 
 Do not force-push `main`.
 
 Marco may explicitly authorize an emergency direct-to-`main` commit. That override must name the exceptional action. State which normal gate is being bypassed, and do not infer that validation/review requirements are waived unless Marco explicitly says so.
 
-Use `landed`/`merged` only after GitHub authoritatively reports the PR merged and/or the target branch contains the expected integrated result. Deployment/runtime state remains separate and must never be inferred from source merge state.
+Before reporting completion, re-resolve the PR and require GitHub to report it merged. If an exceptional out-of-band landing already put the reviewed change on the target branch, first verify the authoritative target contains the equivalent reviewed result, comment on the stale PR with the landed identity and exception, then close it. Report that outcome as `landed out-of-band and closed`, never as `PR merged`; it is recovery, not precedent. Deployment/runtime state remains separate and must never be inferred from source state.
 
 ## Migration from patch integration
 
@@ -135,6 +135,7 @@ Use `landed`/`merged` only after GitHub authoritatively reports the PR merged an
 
 After remote landing is verified:
 
+- verify the PR is merged, or explicitly closed and documented under the out-of-band recovery rule;
 - local temporary integration worktrees/branches may be removed when safe;
 - the implementation branch may be deleted when the PR is merged/closed and no recoverability need remains;
 - stale-branch cleanup remains manual for day one; cleanup automation is future work.
@@ -153,8 +154,8 @@ Return:
 6. exact tests/checks run and results, distinguishing manual evidence from CI;
 7. whether any base movement or conflict handling occurred;
 8. whether any head-changing operation was mechanical-only and the exact rechecked head SHA;
-9. final GitHub merge result/merge commit SHA or other authoritative landed identity;
+9. final GitHub PR state and merge commit SHA, or the authoritative landed identity and closure record for an out-of-band recovery;
 10. cleanup result;
 11. any missing certification, semantic conflict, stale approval, push/merge race, or other reason integration stopped.
 
-Use `landed`/`merged` only after authoritative GitHub evidence confirms the expected result. Deployment/runtime state remains separate.
+Use `PR merged` only when GitHub reports that state. Otherwise use the exact exceptional outcome, such as `landed out-of-band and closed`. Deployment/runtime state remains separate.
