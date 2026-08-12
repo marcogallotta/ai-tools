@@ -1,0 +1,18 @@
+name: Dispatch clear-current-ci candidate
+
+on:
+  push:
+    branches: [agent/clear-current-ci-dispatch]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Dispatch maintained CI on exact implementation head
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref agent/clear-current-ci
