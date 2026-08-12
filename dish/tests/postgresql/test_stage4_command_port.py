@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from dish_pg import models
 from dish_pg import stage3_models as wf
 from dish_pg.command_contract import ACTION_COMMANDS
-from dish_pg.command_port import CommandCall, PostgresCommandPort
+from dish_pg.command_port import CommandCall, PostgresCommandPort, _task_reference_from_dish
 from dish_pg.database import session_scope
 from dish_pg.openapi import postgres_action_openapi
 from dish_pg.planner import (
@@ -27,7 +27,14 @@ from dish_pg.read_model import InvalidCursor
 from dish_pg.transition import ProjectionService
 from dish_tool.workflow_policy import WorkflowSnapshot, legal_actions
 from tests.support.postgresql.core import _import_one
-from tests.support.postgresql.command import _call, _port
+from tests.support.postgresql.command import (
+    _add_verification_queue,
+    _call,
+    _port,
+    _prepare_for_verification,
+    _start_initial,
+    _start_verification,
+)
 from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
 
 SECRET = b"stage-4-cursor-secret-32-bytes!!"
@@ -40,6 +47,111 @@ def test_stage4_postgresql_action_path_contract() -> None:
     assert document["paths"]["/v1/action/inspect"]["post"]["x-openai-isConsequential"] is True
     checked_in = json.loads((ROOT / "openapi/dish-postgresql-action.openapi.json").read_text())
     assert checked_in == document
+
+
+@pytest.mark.parametrize(
+    ("dish_value", "expected"),
+    [
+        ("123456789", "123456789"),
+        (
+            "https://app.asana.com/1/1200569426771227/project/1217084805070730/task/123456789",
+            "123456789",
+        ),
+        ("e55e1667-2a0a-545a-a191-091738d9c347", "e55e1667-2a0a-545a-a191-091738d9c347"),
+        ("", None),
+        # malformed/unsupported shapes must not accidentally resolve to a task
+        ("https://app.asana.com/1/bad/url/shape", None),
+        ("/dishes/not-a-uuid/some-slug", None),
+        ("https://example.com/nonsense", None),
+        # an arbitrary string is passed through unchanged rather than dropped,
+        # so resolve_task's own not-found handling still applies to it
+        ("totally-unrelated-string", "totally-unrelated-string"),
+    ],
+)
+def test_task_reference_from_dish_reduces_known_shapes(dish_value, expected) -> None:
+    assert _task_reference_from_dish(dish_value) == expected
+
+
+def test_inspect_resolves_task_from_dish_argument(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        _add_verification_queue(session, ids, context)
+        author_run = _next(ids)
+        verifier_run = _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=author_run)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=verifier_run,
+            owner="verifier-owner",
+            agent="codex",
+        )
+        port = _port(session, ids)
+        started = _start_initial(port, ids, task_id=task_id, run_id=author_run)
+        _prepare_for_verification(
+            port, ids, task_id=task_id, operation_id=started.data["operation_id"], run_id=author_run
+        )
+        _start_verification(
+            port, ids, task_id=task_id, operation_id=started.data["operation_id"], run_id=verifier_run
+        )
+        result = port.execute(
+            _call(
+                "inspect",
+                run_id=verifier_run,
+                request_id=_next(ids),
+                owner="verifier-owner",
+                principal="verification",
+                arguments={
+                    "dish": "123456789",
+                    "operation_id": started.data["operation_id"],
+                    "agent": "codex",
+                    "independence_attestation": "I independently inspected this exact candidate.",
+                },
+            )
+        )
+    assert result.ok, (result.code, result.http_status, result.data)
+
+
+def test_inspect_without_task_reference_still_requires_one(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        _add_verification_queue(session, ids, context)
+        run_id = _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        result = port.execute(
+            _call(
+                "inspect",
+                run_id=run_id,
+                request_id=_next(ids),
+                owner="owner-1",
+                principal="verification",
+                arguments={"agent": "codex"},
+            )
+        )
+    assert not result.ok
+    assert result.code == "TASK_REQUIRED"
+
+
+def test_inspect_with_unresolvable_dish_argument_does_not_accidentally_resolve(workflow_db) -> None:
+    factory, ids, context, _task_id = workflow_db
+    with session_scope(factory) as session:
+        _add_verification_queue(session, ids, context)
+        run_id = _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        result = port.execute(
+            _call(
+                "inspect",
+                run_id=run_id,
+                request_id=_next(ids),
+                owner="owner-1",
+                principal="verification",
+                arguments={"dish": "https://example.com/nonsense", "agent": "codex"},
+            )
+        )
+    assert not result.ok
+    assert result.code == "TASK_REQUIRED"
 
 
 @pytest.mark.parametrize(

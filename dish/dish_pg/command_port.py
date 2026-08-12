@@ -43,6 +43,9 @@ from .planner import (
 from .read_model import PostgresReadModel, ReadModelError
 from .repositories import CoreAuthorityError, RegistryRepository
 from .transition import ProjectionService
+from dish_tool.dish_urls import dish_uuid_from_url
+from dish_tool.errors import DishRuleError
+from dish_tool.task_urls import task_gid_from_url
 from .workflow import (
     ContentionLost,
     ExecutionSpec,
@@ -96,6 +99,31 @@ class CommandResult:
     retryable: bool = False
     request_replayed: bool = False
 
+
+def _task_reference_from_dish(value: str) -> str | None:
+    """Reduce a legacy ``dish`` reference (Asana task URL, bare Asana gid, Dish
+    frontend URL, or bare Dish UUID) to a value ``resolve_task`` can look up.
+
+    Mirrors the reference shapes ``dish_tool.database._admin_target_task_gid``
+    accepts, minus the SQLite-backed exact-operation-id fallback, which does
+    not apply to task resolution.
+    """
+    clean = value.strip()
+    if not clean:
+        return None
+    if clean.isdecimal():
+        return clean
+    if clean.startswith("/dishes/") or "://" in clean:
+        try:
+            return dish_uuid_from_url(clean)
+        except DishRuleError:
+            if clean.startswith("/dishes/"):
+                return None
+        try:
+            return task_gid_from_url(clean)
+        except DishRuleError:
+            return None
+    return clean
 
 
 class PostgresCommandPort:
@@ -771,6 +799,10 @@ class PostgresCommandPort:
                 raise CommandRuleError("OPERATION_NOT_FOUND", "unknown workflow operation", http_status=404)
         task = None
         task_ref = call.arguments.get("task_id") or call.arguments.get("task_gid")
+        if not task_ref:
+            dish_ref = call.arguments.get("dish")
+            if dish_ref:
+                task_ref = _task_reference_from_dish(str(dish_ref))
         if task_ref:
             try:
                 task = self.reads.resolve_task(str(task_ref))
