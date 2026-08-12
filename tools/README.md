@@ -50,15 +50,22 @@ executed while applying the series. The trusted copy invokes the new `--staged-o
 options before `--` and explicit paths after it, so leading-dash filenames remain data and the
 commit mechanism does not re-stage candidate content.
 
+Immediately after the Git executable is bound, the executor establishes one sanitized Git
+environment and uses it for **every** repository Git subprocess, including boundary verification,
+the initial clean-worktree status, mailbox parsing/apply, staged-path inspection, and the trusted
+commit subprocess. System/global config is excluded; hooks are redirected to a private empty
+directory; `core.fsmonitor` and commit signing are disabled at command-config precedence; and diff
+inspection explicitly disables external diff and textconv helpers. Local repository config remains
+available for ordinary repository identity/index semantics, but it cannot re-enable those executable
+surfaces inside this workflow.
+
 Each mailbox message is split and parsed with Git's `mailsplit`/`mailinfo`, applied to the index
 without creating a commit, then committed through that trusted pre-mutation copy of
-`tools/git-commit`. Author name/email/date and the mailbox commit message are preserved. During the
-commit subprocess, Git is pinned to the already-resolved executable; system/global config is
-excluded; hooks are redirected to a private empty directory; fsmonitor commands and commit signing
-are disabled. This prevents the executor's own commit path from running repository/candidate hooks
-or executable configuration that could mutate shared refs. This is why the supported path does not
-invoke raw `git am`: `git am` creates commits itself and would bypass the project commit mechanism.
-This is a targeted integration rule, not a blanket ban on `git am` for unrelated Git use.
+`tools/git-commit`. Author name/email/date and the mailbox commit message are preserved. The trusted
+commit child is pinned to the already-resolved Git executable and inherits the same sanitized Git
+environment. This is why the supported path does not invoke raw `git am`: `git am` creates commits
+itself and would bypass the project commit mechanism. This is a targeted integration rule, not a
+blanket ban on `git am` for unrelated Git use.
 
 The boundary re-verifies candidate identity and the captured main ref immediately before mutation
 and after each apply/commit. If a patch cannot apply cleanly, the already-committed prefix remains
@@ -107,7 +114,8 @@ Sourcing sections remain available. Governed mutations must go through `dish` or
   repositories: clean application, committed-prefix behavior on a later patch failure, wrong
   `-C`, `GIT_DIR`, `GIT_WORK_TREE`/`GIT_CONFIG_*` overrides, wrong branch/worktree identity,
   explicit main refusal/main immutability, candidate replacement of `tools/git-commit`, active
-  post-commit hooks, leading-dash paths, and type-change-only patches.
+  post-commit hooks, malicious local `core.fsmonitor` configuration before the first status call,
+  leading-dash paths, and type-change-only patches.
 
 The suite runs in `tools/.venv` (it has `pytest` installed alongside the SDK, per
 `requirements.txt`), so no separate test venv is needed:
