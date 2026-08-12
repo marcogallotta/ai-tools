@@ -40,11 +40,21 @@ python3 -m venv .venv
 .venv/bin/python scripts/dish-test-plan --base <revision>
 ```
 
-The ChatGPT GitHub connector and ChatGPT dependency-bundle retrieval path below are **not** standing instructions for Claude Code or Codex. Do not put connector setup, Actions-artifact bundle retrieval, or a user-supplied bundle into their handoffs unless Marco explicitly makes that a task-specific requirement.
+The ChatGPT GitHub connector and ChatGPT repository/dependency-bundle retrieval paths below are **not** standing instructions for Claude Code or Codex. Do not put connector setup, Actions-artifact bundle retrieval, or a user-supplied bundle into their handoffs unless Marco explicitly makes that a task-specific requirement.
 
 ### ChatGPT agents
 
-For ChatGPT agents, use the connected GitHub integration as source/history authority for this private repository. Fetch current authoritative source from GitHub; never let a source snapshot inside a dependency artifact override GitHub source/history.
+For ChatGPT agents, use the connected GitHub integration as source/history authority for this private repository. A repository bundle is a verified bootstrap/cache only; it never overrides GitHub source/history.
+
+For substantial repository-changing work, use the repository bundle first:
+
+- resolve the intended current `refs/heads/main` SHA and repository identity from GitHub authority;
+- retrieve the exact matching Actions artifact named `repository-bundle-<SHA>`; never substitute a stale/newer/older bundle;
+- materialize the artifact in the runtime and run `scripts/repository_bundle.py verify` against the authoritative repository full name/numeric identity, exact SHA, and `refs/heads/main`;
+- use the verified local clone for `git log`, `git diff`, search/grep, tests, and local branch/commit preparation;
+- fail closed if connector retrieval, materialization, checksum/manifest verification, `git bundle verify`, advertised-main validation, or cloned-HEAD validation fails.
+
+The publication and verification contract, cadence, retention, and v1 main-only scope are in [`ci/repository-bundle.md`](ci/repository-bundle.md). GitHub Connect remains the live path for PR state, remote metadata, and small targeted source retrieval. Unless authenticated Git transport is deliberately added later, publish branch/commit/PR state through connector-native GitHub operations rather than assuming the verified clone can push.
 
 Bootstrap Python runtime dependencies from the authoritative GitHub-built dependency bundle rather than asking Marco to upload a virtual environment or bundle manually:
 
@@ -55,7 +65,7 @@ Bootstrap Python runtime dependencies from the authoritative GitHub-built depend
 - preserve the bundle's fail-closed Python/platform/architecture/libc checks. For glibc, a runtime newer than the declared minimum is compatible; an older runtime is not;
 - if connector access, the matching artifact, or runtime compatibility is unavailable, report that exact missing capability rather than falling back to an uploaded archived `.venv`.
 
-This connector-and-bundle bootstrap is **ChatGPT-only policy**. It must not be copied into Claude Code or Codex handoffs.
+These connector-and-bundle bootstraps are **ChatGPT-only policy**. They must not be copied into Claude Code or Codex handoffs.
 
 On Marco's local development machine, the preferred reviewed fast path is `.venv/bin/python scripts/dish-test-lane parallel-safe --workers 4`, or the planner's equivalent `--parallel-workers 4` focused command. Four workers is a locally benchmarked recommendation, not a repository-wide hardware constant. Keep serial execution available for diagnosis and for every selection outside the currently qualified parallel-safe inventory.
 

@@ -41,14 +41,16 @@ jobs:
       - uses: ./.github/actions/setup-python-bundle
         with:
           github-token: ${{ github.token }}
-      - name: Validate dependency-bundle contracts
+      - name: Validate bundle contracts
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p .test-artifacts/python
-          dish/.venv/bin/python -m pytest -q ci/tests/test_dependency_bundle.py \
-            --junitxml=.test-artifacts/python/dependency-bundle.xml \
-            2>&1 | tee .test-artifacts/python/dependency-bundle.log
+          dish/.venv/bin/python -m pytest -q \
+            ci/tests/test_dependency_bundle.py \
+            ci/tests/test_repository_bundle.py \
+            --junitxml=.test-artifacts/python/bundles.xml \
+            2>&1 | tee .test-artifacts/python/bundles.log
       - name: Validate governed Dish test-selection map
         shell: bash
         run: |

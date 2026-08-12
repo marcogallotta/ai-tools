@@ -1,0 +1,198 @@
+name: Repository bundle publication
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repository-bundle-publication
+  cancel-in-progress: false
+
+jobs:
+  build-verify-artifact:
+    name: Build and verify exact-main repository bundle
+    runs-on: ubuntu-24.04
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      artifact_name: ${{ steps.bundle.outputs.artifact_name }}
+      release_tag: ${{ steps.bundle.outputs.release_tag }}
+      bundle_name: ${{ steps.bundle.outputs.bundle_name }}
+      manifest_name: ${{ steps.bundle.outputs.manifest_name }}
+      checksum_name: ${{ steps.bundle.outputs.checksum_name }}
+    env:
+      SOURCE_REF: refs/heads/main
+      REPOSITORY_ID: ${{ github.repository_id }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Materialize exact advertised main ref
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force origin "$SOURCE_REF"
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            # PR validation follows live main so an old PR base does not make acceptance stale.
+            source_sha="$(git rev-parse FETCH_HEAD)"
+          else
+            # Push/manual publication stays bound to the workflow event/requested commit.
+            # The build authority check below fails closed if main has since advanced.
+            source_sha="$GITHUB_SHA"
+          fi
+          git cat-file -e "$source_sha^{commit}"
+          git update-ref "$SOURCE_REF" "$source_sha"
+          printf 'SOURCE_SHA=%s\n' "$source_sha" >> "$GITHUB_ENV"
+          printf 'source_sha=%s\n' "$source_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Build authority-validated repository bundle
+        id: bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf .ci/repository-bundle-publication
+          mkdir -p .ci/repository-bundle-publication
+          python3 scripts/repository_bundle.py build \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --output-dir .ci/repository-bundle-publication \
+            --repository "$GITHUB_REPOSITORY" \
+            --repository-id "$REPOSITORY_ID" \
+            --source-sha "$SOURCE_SHA" \
+            --source-ref "$SOURCE_REF" \
+            --workflow "$GITHUB_WORKFLOW" \
+            --workflow-ref "$GITHUB_WORKFLOW_REF" \
+            --workflow-sha "$GITHUB_WORKFLOW_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Verify checksum, bundle, advertised main, and clone
+        shell: bash
+        env:
+          BUNDLE_NAME: ${{ steps.bundle.outputs.bundle_name }}
+          MANIFEST_NAME: ${{ steps.bundle.outputs.manifest_name }}
+          CHECKSUM_NAME: ${{ steps.bundle.outputs.checksum_name }}
+        run: |
+          set -euo pipefail
+          rm -rf .ci/repository-bundle-clone
+          python3 scripts/repository_bundle.py verify \
+            --bundle ".ci/repository-bundle-publication/$BUNDLE_NAME" \
+            --manifest ".ci/repository-bundle-publication/$MANIFEST_NAME" \
+            --checksum ".ci/repository-bundle-publication/$CHECKSUM_NAME" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --expected-repository-id "$REPOSITORY_ID" \
+            --expected-sha "$SOURCE_SHA" \
+            --expected-ref "$SOURCE_REF" \
+            --clone-dir .ci/repository-bundle-clone
+          test "$(git -C .ci/repository-bundle-clone rev-parse HEAD)" = "$SOURCE_SHA"
+          git -C .ci/repository-bundle-clone log --oneline -3
+          git -C .ci/repository-bundle-clone grep -n "dependency-bundle" -- CLAUDE.md
+
+      - name: Upload ChatGPT Actions artifact mirror
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.bundle.outputs.artifact_name }}
+          path: .ci/repository-bundle-publication
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-release-retention:
+    name: Publish immutable Release and bound retention
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build-verify-artifact
+    permissions:
+      actions: read
+      contents: write
+    runs-on: ubuntu-24.04
+    env:
+      SOURCE_SHA: ${{ needs.build-verify-artifact.outputs.source_sha }}
+      ARTIFACT_NAME: ${{ needs.build-verify-artifact.outputs.artifact_name }}
+      RELEASE_TAG: ${{ needs.build-verify-artifact.outputs.release_tag }}
+      BUNDLE_NAME: ${{ needs.build-verify-artifact.outputs.bundle_name }}
+      MANIFEST_NAME: ${{ needs.build-verify-artifact.outputs.manifest_name }}
+      CHECKSUM_NAME: ${{ needs.build-verify-artifact.outputs.checksum_name }}
+    steps:
+      - name: Download verified Actions artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          rm -rf .ci/repository-bundle-publication
+          mkdir -p .ci/repository-bundle-publication
+          gh run download "$GITHUB_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "$ARTIFACT_NAME" \
+            --dir .ci/repository-bundle-publication
+
+      - name: Publish immutable Release authority
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          publication=.ci/repository-bundle-publication
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            rm -rf .ci/repository-bundle-existing
+            mkdir -p .ci/repository-bundle-existing
+            gh release download "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --dir .ci/repository-bundle-existing \
+              --pattern "$BUNDLE_NAME" \
+              --pattern "$MANIFEST_NAME" \
+              --pattern "$CHECKSUM_NAME"
+            cmp "$publication/$BUNDLE_NAME" ".ci/repository-bundle-existing/$BUNDLE_NAME"
+            cmp "$publication/$MANIFEST_NAME" ".ci/repository-bundle-existing/$MANIFEST_NAME"
+            cmp "$publication/$CHECKSUM_NAME" ".ci/repository-bundle-existing/$CHECKSUM_NAME"
+            echo "Immutable Release already exists with identical assets: $RELEASE_TAG"
+          else
+            gh release create "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$SOURCE_SHA" \
+              --title "$RELEASE_TAG" \
+              --notes "Exact-main repository bootstrap/cache for ChatGPT agents. GitHub remains source/history authority." \
+              "$publication/$BUNDLE_NAME" \
+              "$publication/$MANIFEST_NAME" \
+              "$publication/$CHECKSUM_NAME"
+          fi
+
+      - name: Bound repository-bundle Release retention
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          releases=.ci/repository-bundle-releases.tsv
+          : > "$releases"
+          page=1
+          while :; do
+            page_json="$(gh api --method GET \
+              "/repos/$GITHUB_REPOSITORY/releases" \
+              -f per_page=100 \
+              -f page="$page")"
+            count="$(jq 'length' <<<"$page_json")"
+            jq -r '.[] | select(.tag_name | startswith("repository-bundle-")) | [.created_at, .tag_name] | @tsv' \
+              <<<"$page_json" >> "$releases"
+            if (( count < 100 )); then
+              break
+            fi
+            page=$((page + 1))
+          done
+          sort -r "$releases" \
+            | tail -n +13 \
+            | cut -f2- \
+            > .ci/repository-bundle-prune.txt
+          while IFS= read -r tag; do
+            test -n "$tag" || continue
+            gh release delete "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --cleanup-tag \
+              --yes
+          done < .ci/repository-bundle-prune.txt
