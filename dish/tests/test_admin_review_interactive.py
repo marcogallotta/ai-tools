@@ -427,4 +427,5 @@ def test_interactive_queue_prints_evidence_question_before_prompt(capsys):
     output = capsys.readouterr().out
     assert "Which preserved vegetable is actually available?" in output
     assert output.index("Question: Which preserved vegetable") < len(output)
-    assert any("Evidence / answer" in prompt for prompt in prompts)
+    assert prompts[-1] == "Answer: "
+    assert not any("Evidence / answer" in prompt for prompt in prompts)

@@ -1,6 +1,7 @@
 """Human-first terminal rendering for ``dish-admin`` results."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 from typing import Any, Iterable, Mapping
 
@@ -8,6 +9,54 @@ from typing import Any, Iterable, Mapping
 def _clean(value: Any) -> str | None:
     text = str(value or "").strip()
     return text or None
+
+
+def _utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _localize(value: datetime) -> datetime:
+    return value.astimezone()
+
+
+def _lease_began(value: Any) -> str | None:
+    text = _clean(value)
+    if text is None:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        started_at = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if started_at.tzinfo is None:
+        return None
+
+    elapsed_seconds = max(
+        0,
+        int(
+            (
+                _utc_now() - started_at.astimezone(timezone.utc)
+            ).total_seconds()
+        ),
+    )
+    if elapsed_seconds < 60:
+        age = f"{elapsed_seconds}s"
+    elif elapsed_seconds < 3600:
+        age = f"{elapsed_seconds // 60}m"
+    elif elapsed_seconds < 86400:
+        hours, minutes = divmod(elapsed_seconds // 60, 60)
+        age = f"{hours}h {minutes}m" if minutes else f"{hours}h"
+    else:
+        days, hours = divmod(elapsed_seconds // 3600, 24)
+        age = f"{days}d {hours}h" if hours else f"{days}d"
+
+    local_started = _localize(started_at)
+    absolute = local_started.strftime("%Y-%m-%d %H:%M:%S")
+    zone = local_started.tzname()
+    if zone:
+        absolute += f" {zone}"
+    return f"{absolute} ({age} ago)"
 
 
 def _compact_value(value: Any, *, limit: int = 110) -> str:
@@ -540,6 +589,9 @@ def render_admin_result(
             dish_id = _clean(lease.get("dish_id"))
             if dish_id:
                 lines.append(f"   Dish UUID: {dish_id}")
+            lease_began = _lease_began(lease.get("acquired_at"))
+            if lease_began:
+                lines.append(f"   Lease began: {lease_began}")
             if verbose:
                 lines.append(f"   Stage: {stage}")
                 lines.append(f"   Operation: {_clean(lease.get('operation_id')) or 'unknown'}")

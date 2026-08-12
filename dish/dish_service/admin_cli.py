@@ -748,7 +748,7 @@ def _interactive_supply_evidence(
     print(f"\n{summary}")
     if resolved_question:
         print(f"Question: {resolved_question}")
-    detail = _prompt_review(input_fn, "Evidence / answer: ")
+    detail = _prompt_review(input_fn, "Answer: ")
     if detail.lower() in {"q", "quit", "exit"}:
         return True
     if not detail:

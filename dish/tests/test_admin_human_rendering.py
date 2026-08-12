@@ -397,9 +397,22 @@ def test_agent_handoff_uses_canonical_dish_uuid_not_title():
     assert 'Resume Verification for Ambiguous title' not in rendered
 
 
-def test_active_leases_renderer_keeps_raw_ids_in_verbose_output():
-    from dish_tool.admin_human import render_admin_result
+def test_active_leases_renderer_shows_local_lease_age_and_keeps_raw_ids_in_verbose_output(monkeypatch):
+    from datetime import datetime, timedelta, timezone
 
+    import dish_tool.admin_human as admin_human
+
+    local_tz = timezone(timedelta(hours=2), "CEST")
+    monkeypatch.setattr(
+        admin_human,
+        "_utc_now",
+        lambda: datetime(2026, 8, 12, 18, 25, 32, tzinfo=timezone.utc),
+    )
+    monkeypatch.setattr(
+        admin_human,
+        "_localize",
+        lambda value: value.astimezone(local_tz),
+    )
     result = {
         "ok": True, "command": "active-leases", "code": "OK", "allowed_actions": [],
         "data": {
@@ -408,18 +421,24 @@ def test_active_leases_renderer_keeps_raw_ids_in_verbose_output():
                 "task_title": "Mapo tofu", "dish_id": "11111111-1111-4111-8111-111111111111",
                 "stage": "await_verification", "authority_state": "active",
                 "operation_id": "operation-1", "owner_id": "owner-1", "run_id": "run-1",
-                "lease_id": "lease-1", "acquired_at": "a", "renewed_at": "b", "expires_at": "c",
+                "lease_id": "lease-1",
+                "acquired_at": "2026-08-12T18:14:32+00:00",
+                "renewed_at": "2026-08-12T18:20:00+00:00",
+                "expires_at": "2026-08-12T18:44:32+00:00",
             }],
         },
         "errors": [],
     }
-    normal = render_admin_result(result, profile="prod")
-    verbose = render_admin_result(result, profile="prod", verbose=True)
+    normal = admin_human.render_admin_result(result, profile="prod")
+    verbose = admin_human.render_admin_result(result, profile="prod", verbose=True)
     assert "[ACTIVE] Mapo tofu" in normal
+    assert "Lease began: 2026-08-12 20:14:32 CEST (11m ago)" in normal
     assert "Run: run-1" not in normal
     assert "Lease: lease-1" not in normal
     assert "Run: run-1" in verbose
     assert "Lease: lease-1" in verbose
+    assert "Acquired: 2026-08-12T18:14:32+00:00" in verbose
+    assert "Expires: 2026-08-12T18:44:32+00:00" in verbose
 
 
 def test_issues_renderer_hides_system_items_until_verbose():
