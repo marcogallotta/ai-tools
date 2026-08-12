@@ -75,9 +75,11 @@ Do not rely on a stale approval attached only to the PR number or branch name. I
 
 Run the exact `TESTS TO RUN` from the coordinator/reviewer handoff when integration still requires local/environment-specific certification. Do not replace the requested command with a weaker substitute and do not claim evidence that did not run.
 
-Until PR-triggered CI is integrated for this workflow, `checks` means the existing manual certification/test evidence required by repository policy and the review handoff. A green or empty GitHub Checks surface is not a substitute for that evidence.
+For ordinary PR CI, fail closed unless the exact reviewed PR head has the repository-owned status context `Dish / required ordinary CI` in `success` state. That status is posted directly to the source PR head only after Broad Python, Frontend/tooling, native PostgreSQL, and browser acceptance jobs all succeed on that same checked-out candidate. A green/empty specialized workflow, including repository-bundle publication, is not a substitute.
 
-Future CI should certify the exact PR head SHA, and integration must verify that exact-head certification before merge.
+Use `scripts/pr_gate.py integration` (or an equivalent check with the same invariants) against current PR metadata, the exact reviewed head SHA, and the combined commit-status payload for that exact SHA. It must refuse integration when the PR head moved, the status payload is for another SHA, the required ordinary context is absent/pending/failed, or the PR is back in draft.
+
+Artifact names and the `required-ordinary-ci-<candidate-sha>` identity manifest are diagnostic/audit evidence bound to the candidate; do not reinterpret the workflow's synthetic `GITHUB_SHA` as the source PR head. Any additional manual/local certification required by the PR must likewise name the exact candidate SHA.
 
 If a required test fails because the reviewed candidate is wrong, return the failure to the coordinator/implementation path; do not implement a semantic fix under the Integration role.
 
