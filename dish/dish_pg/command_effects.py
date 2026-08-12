@@ -77,6 +77,12 @@ def effect_spec_for(
             ("update_task_document",),
             verify_mutation_effects=True,
         )
+    if command_name == "hold-reject":
+        return CommandEffectSpec(
+            ("open_evidence_hold", "advance_operation"),
+            (),
+            verify_mutation_effects=True,
+        )
     if command_name == "reject":
         route = str(args.get("route", "large")).replace("_", "-")
         if route == "large":

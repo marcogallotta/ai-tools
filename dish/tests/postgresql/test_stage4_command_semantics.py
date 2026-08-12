@@ -1,7 +1,10 @@
 from __future__ import annotations
 import hashlib
 import uuid
+from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
+from types import SimpleNamespace
 import pytest
 from alembic import command
 from alembic.config import Config
@@ -9,9 +12,25 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from dish_pg import models
 from dish_pg import stage3_models as wf
+from dish_pg import stage5_models as tx
+from dish_pg.command_contract import ACTION_COMMANDS, definition_for
+from dish_pg.command_effects import effect_spec_for
 from dish_pg.command_port import PostgresCommandPort
 from dish_pg.database import session_scope
+from dish_pg.planner import (
+    AuthorityFence,
+    AuthoritativeSnapshot,
+    CanonicalCommandIntent,
+    plan_command,
+)
 from dish_pg.read_model import PostgresReadModel
+from dish_pg.shadow_worker import (
+    _semantic_shadow_command,
+    _semantic_shadow_request_id,
+    _shadow_uuid,
+)
+from dish_pg.workflow import RequestIdentityConflict
+from dish_tool.workflow_policy import WorkflowSnapshot, legal_actions
 from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
 from tests.support.postgresql.release import _prepare_candidate
 from tests.support.postgresql.command import (
@@ -82,6 +101,7 @@ def test_inspection_rejects_author_or_same_agent_as_verifier(workflow_db) -> Non
         assert same_agent.code == "VERIFIER_NOT_INDEPENDENT"
         assert session.scalar(select(func.count()).select_from(wf.VerificationInspectionOccurrence)) == 0
 
+
 def test_small_correction_binds_inspection_correction_activation_and_signoff(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
     with session_scope(factory) as session:
@@ -121,6 +141,7 @@ def test_small_correction_binds_inspection_correction_activation_and_signoff(wor
         assert correction.corrected_content_version_id == activation.content_version_id
         assert signoff.inspection_id == uuid.UUID(inspected.data["inspection_id"])
         assert signoff.signed_content_version_id == activation.content_version_id
+
 
 def test_large_rejection_creates_exact_corrected_occurrence_and_new_cycle(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
@@ -162,8 +183,324 @@ def test_large_rejection_creates_exact_corrected_occurrence_and_new_cycle(workfl
         assert cycles[1].reviewed_content_version_id == correction.corrected_content_version_id
         assert operation.phase == "await_verification" and operation.persisted_actions == ["inspect"]
 
+
+def _valid_hold_reject_planner_state() -> tuple[AuthoritativeSnapshot, CanonicalCommandIntent]:
+    workflow = WorkflowSnapshot(
+        operation_status="open",
+        operation_phase="prepare_required",
+        persisted_actions=("prepare",),
+        live_status="pending-research",
+        live_section_gid="rq",
+        verification_queue_gid="vq",
+        verifier_established=False,
+        latest_cycle_outcome=None,
+        latest_cycle_route=None,
+        validation_rules=(),
+        operation_kind="initial",
+    )
+    intent = CanonicalCommandIntent(
+        "hold-reject",
+        {
+            "route": "evidence",
+            "resume_status": "pending-research",
+            "reason": "need evidence",
+        },
+        "agent",
+        "owner-1",
+        "run-1",
+    )
+    snapshot = AuthoritativeSnapshot(
+        generation_id=str(uuid.uuid4()),
+        task_id=str(uuid.uuid4()),
+        fence=AuthorityFence(1, 1, 1, 1, 1, "prepare_required"),
+        workflow=workflow,
+        task_exists=True,
+        hold_reject_baseline_matches=True,
+        hold_reject_author_owner_id="owner-1",
+        hold_reject_author_run_id="run-1",
+        hold_reject_author_lease_id="lease-1",
+        hold_reject_author_lease_expires_at=NOW + timedelta(minutes=5),
+        hold_reject_registered_agent_matches=True,
+    )
+    return snapshot, intent
+
+
+def test_hold_reject_is_internal_and_does_not_widen_shared_workflow_actions() -> None:
+    definition = definition_for("hold-reject")
+    assert (
+        definition.profile,
+        definition.principal,
+        definition.request_replay,
+        definition.task_required,
+        definition.operation_required,
+        definition.action_exposed,
+        definition.workflow_action,
+    ) == ("L", "agent", True, True, True, False, None)
+    assert "hold-reject" not in ACTION_COMMANDS
+    snapshot, intent = _valid_hold_reject_planner_state()
+    assert legal_actions(snapshot.workflow) == ["prepare"]
+    plan = plan_command(snapshot=snapshot, intent=intent, pinned_now=NOW)
+    assert plan.legal is True
+    assert [mutation.kind for mutation in plan.mutations] == [
+        "open_evidence_hold",
+        "advance_operation",
+    ]
+    assert plan.projection_intents == ()
+    assert effect_spec_for("hold-reject", intent.arguments).projection_event_types == ()
+
+
+def test_hold_reject_planner_fails_closed_for_every_occurrence_fence() -> None:
+    snapshot, intent = _valid_hold_reject_planner_state()
+    workflow = snapshot.workflow
+    assert workflow is not None
+    invalid = [
+        replace(snapshot, workflow=replace(workflow, operation_status="completed")),
+        replace(snapshot, workflow=replace(workflow, operation_kind="change")),
+        replace(snapshot, workflow=replace(workflow, operation_phase="await_verification")),
+        replace(snapshot, workflow=replace(workflow, persisted_actions=("prepare", "reject"))),
+        replace(snapshot, hold_reject_cycle_exists=True),
+        replace(snapshot, hold_reject_evidence_hold_exists=True),
+        replace(snapshot, hold_reject_human_review_exists=True),
+        replace(snapshot, hold_reject_baseline_matches=False),
+        replace(snapshot, hold_reject_candidate_activation_exists=True),
+        replace(snapshot, hold_reject_author_owner_id="other-owner"),
+        replace(snapshot, hold_reject_author_run_id="other-run"),
+        replace(snapshot, hold_reject_author_lease_id=None),
+        replace(snapshot, hold_reject_author_lease_expires_at=NOW),
+        replace(snapshot, hold_reject_registered_agent_matches=False),
+    ]
+    for candidate in invalid:
+        plan = plan_command(snapshot=candidate, intent=intent, pinned_now=NOW)
+        assert plan.legal is False
+        assert plan.result_code == "ACTION_NOT_LEGAL"
+    wrong_principal = replace(intent, principal_class="verification")
+    plan = plan_command(snapshot=snapshot, intent=wrong_principal, pinned_now=NOW)
+    assert plan.legal is False
+    assert plan.result_code == "PRINCIPAL_SCOPE_MISMATCH"
+
+
+def test_hold_reject_rejects_invalid_preconstruction_payloads(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        started = _start_initial(port, ids, task_id=task_id, run_id=run_id)
+        base = {
+            "task_id": str(task_id),
+            "operation_id": started.data["operation_id"],
+            "route": "evidence",
+            "reason": "source evidence is required before construction",
+            "resume_status": "pending-research",
+        }
+        cases = (
+            ({"route": "human-review"}, "INVALID_REJECTION_ROUTE"),
+            ({"resume_status": "pending-verification"}, "INVALID_RESUME_STATUS"),
+            ({"reason": ""}, "REJECTION_REASON_REQUIRED"),
+            ({"file_text": "unexpected"}, "PRECONSTRUCTION_CANDIDATE_UNEXPECTED"),
+            ({"model": "o3"}, "PRECONSTRUCTION_CANDIDATE_UNEXPECTED"),
+            ({"independence_attestation": "unexpected"}, "PRECONSTRUCTION_CANDIDATE_UNEXPECTED"),
+        )
+        for override, expected_code in cases:
+            result = port.execute(
+                _call(
+                    "hold-reject",
+                    run_id=run_id,
+                    request_id=_next(ids),
+                    arguments={**base, **override},
+                )
+            )
+            assert result.ok is False
+            assert result.code == expected_code
+        operation = session.get(wf.WorkflowOperation, uuid.UUID(started.data["operation_id"]))
+        assert operation.phase == "prepare_required"
+        assert operation.persisted_actions == ["prepare"]
+        assert session.scalar(
+            select(func.count()).select_from(wf.EvidenceHold).where(
+                wf.EvidenceHold.operation_id == operation.operation_id
+            )
+        ) == 0
+
+
+def test_hold_reject_creates_only_preconstruction_evidence_hold_and_replays(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    run_id, request_id = _next(ids), _next(ids)
+    with session_scope(factory) as session:
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        started = _start_initial(port, ids, task_id=task_id, run_id=run_id)
+        operation_id = uuid.UUID(started.data["operation_id"])
+        head = session.get(models.TaskAuthorityHead, (context["generation_id"], task_id))
+        baseline_activation_id = head.current_content_activation_id
+        activation = session.get(models.ContentActivation, baseline_activation_id)
+        baseline_content_version_id = activation.content_version_id
+        projection_count = session.scalar(select(func.count()).select_from(tx.ProjectionOutboxEvent))
+        call = _call(
+            "hold-reject",
+            run_id=run_id,
+            request_id=request_id,
+            arguments={
+                "task_id": str(task_id),
+                "operation_id": str(operation_id),
+                "route": "evidence",
+                "reason": "source evidence is required before construction",
+                "resume_status": "pending-research",
+            },
+        )
+        result = port.execute(call)
+        replay = port.execute(call)
+        operation = session.get(wf.WorkflowOperation, operation_id)
+        hold = session.scalar(
+            select(wf.EvidenceHold).where(wf.EvidenceHold.operation_id == operation_id)
+        )
+        head_after = session.get(models.TaskAuthorityHead, (context["generation_id"], task_id))
+        assert result.ok is True
+        assert replay.ok is True and replay.request_replayed is True
+        assert hold is not None and hold.state == "open" and hold.cycle_id is None
+        assert hold.baseline_content_version_id == baseline_content_version_id
+        assert operation.lifecycle == "open"
+        assert operation.phase == "held_evidence"
+        assert operation.persisted_actions == ["supply-evidence"]
+        assert head_after.current_content_activation_id == baseline_activation_id
+        assert session.scalar(
+            select(func.count()).select_from(wf.VerificationCycle).where(
+                wf.VerificationCycle.operation_id == operation_id
+            )
+        ) == 0
+        assert session.scalar(select(func.count()).select_from(tx.ProjectionOutboxEvent)) == projection_count
+        assert session.scalar(
+            select(func.count()).select_from(wf.EvidenceHold).where(
+                wf.EvidenceHold.operation_id == operation_id
+            )
+        ) == 1
+
+        with pytest.raises(RequestIdentityConflict):
+            port.execute(
+                _call(
+                    "hold-reject",
+                    run_id=run_id,
+                    request_id=request_id,
+                    arguments={
+                        "task_id": str(task_id),
+                        "operation_id": str(operation_id),
+                        "route": "evidence",
+                        "reason": "different logical request",
+                        "resume_status": "pending-research",
+                    },
+                )
+            )
+        assert session.scalar(
+            select(func.count()).select_from(wf.EvidenceHold).where(
+                wf.EvidenceHold.operation_id == operation_id
+            )
+        ) == 1
+
+
+def test_verification_evidence_reject_remains_verification_reject(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port, _author_run, verifier_run, started, prepared, _inspected = _verification_ready(
+            session, ids, context, task_id
+        )
+        operation_id = uuid.UUID(started.data["operation_id"])
+        projection_count = session.scalar(select(func.count()).select_from(tx.ProjectionOutboxEvent))
+        rejected = port.execute(
+            _call(
+                "reject",
+                run_id=verifier_run,
+                request_id=_next(ids),
+                owner="verifier-owner",
+                principal="verification",
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": str(operation_id),
+                    "agent": "codex",
+                    "route": "evidence",
+                    "reason": "verification needs more evidence",
+                },
+            )
+        )
+        hold = session.scalar(
+            select(wf.EvidenceHold).where(wf.EvidenceHold.operation_id == operation_id)
+        )
+        assert rejected.ok is True and rejected.command == "reject"
+        assert hold is not None and hold.cycle_id is not None
+        assert hold.baseline_content_version_id != uuid.UUID(prepared.data["content_version_id"])
+        assert session.scalar(select(func.count()).select_from(tx.ProjectionOutboxEvent)) == projection_count + 1
+
+
+def test_shadow_reject_translation_requires_source_preconstruction_proof_and_namespaces_request() -> None:
+    operation_id = uuid.uuid4()
+    envelope = SimpleNamespace(
+        command_name="reject",
+        shadow_baseline_id=uuid.uuid4(),
+        source_authority_generation="legacy-1",
+        source_request_identity="legacy-reject-1",
+        pinned_inputs={"capture_schema": 3},
+        source_pre_state={
+            "selected_tables": ["operations"],
+            "tables": {
+                "operations": [
+                    {
+                        "operation_id": str(operation_id),
+                        "status": "open",
+                        "operation_kind": "initial",
+                        "phase": "prepare_required",
+                        "content_write_completed_at": None,
+                    }
+                ]
+            },
+        },
+    )
+    arguments = {
+        "submission_id": str(operation_id),
+        "route": "evidence",
+        "reason": "need source evidence",
+        "resume_status": "pending-research",
+    }
+    assert _semantic_shadow_command(envelope, arguments) == "hold-reject"
+    translated_id = _semantic_shadow_request_id(
+        envelope, target_command_name="hold-reject"
+    )
+    assert translated_id == _semantic_shadow_request_id(
+        envelope, target_command_name="hold-reject"
+    )
+    assert translated_id != _shadow_uuid(
+        envelope, label="request", value=envelope.source_request_identity
+    )
+
+    verification_envelope = SimpleNamespace(
+        **{
+            **envelope.__dict__,
+            "source_pre_state": {
+                "selected_tables": ["operations"],
+                "tables": {
+                    "operations": [
+                        {
+                            "operation_id": str(operation_id),
+                            "status": "open",
+                            "operation_kind": "initial",
+                            "phase": "await_verification",
+                            "content_write_completed_at": NOW.isoformat(),
+                        }
+                    ]
+                },
+            },
+        }
+    )
+    assert _semantic_shadow_command(verification_envelope, arguments) == "reject"
+    assert _semantic_shadow_request_id(
+        verification_envelope, target_command_name="reject"
+    ) == _shadow_uuid(
+        verification_envelope,
+        label="request",
+        value=verification_envelope.source_request_identity,
+    )
+
+
 def test_verifier_reconstruction_is_bound_to_latest_verification_cycle(workflow_db) -> None:
     return _case_test_verifier_reconstruction_is_bound_to_latest_verification_cycle(workflow_db)
+
 
 def test_submit_rejects_when_current_content_no_longer_matches_signoff(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
@@ -247,6 +584,7 @@ def test_submit_rejects_when_current_content_no_longer_matches_signoff(workflow_
         assert submitted.code == "ACTION_NOT_LEGAL"
         operation = session.get(wf.WorkflowOperation, uuid.UUID(started.data["operation_id"]))
         assert operation.lifecycle == "open"
+
 
 def test_discard_requires_unchanged_creation_baseline_and_no_effect_or_step(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
