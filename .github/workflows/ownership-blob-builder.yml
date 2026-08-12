@@ -1,0 +1,46 @@
+name: Ownership blob builder
+
+on:
+  push:
+    branches: [agent/ownership-blob-builder]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - name: Remove generated frontend dist mappings
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv
+          from pathlib import Path
+
+          path = Path("dish/test_selection/ownership.csv")
+          rows = list(csv.reader(path.open(newline="", encoding="utf-8")))
+          header, body = rows[0], rows[1:]
+          kept = [row for row in body if not row[0].startswith("frontend/dist/")]
+          removed = len(body) - len(kept)
+          if removed != 47:
+              raise SystemExit(f"expected exactly 47 frontend/dist mappings, removed {removed}")
+          with path.open("w", newline="", encoding="utf-8") as handle:
+              writer = csv.writer(handle, lineterminator="\n")
+              writer.writerow(header)
+              writer.writerows(kept)
+          print(f"removed={removed}")
+          PY
+          git diff --check
+          git diff --numstat -- dish/test_selection/ownership.csv
+      - name: Publish generated blob commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add dish/test_selection/ownership.csv
+          git commit -m "Build corrected ownership blob"
+          git push origin HEAD:agent/ownership-blob-builder
