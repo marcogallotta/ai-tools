@@ -41,6 +41,22 @@ Preserve established authority and identity boundaries. Do not introduce a secon
 
 When a dependency, architectural contradiction, or necessary scope expansion appears, report it rather than silently broadening the task.
 
+### Scope discipline
+
+The task brief defines the implementation boundary. Do not expand an implementation task into an audit, redesign, inventory exercise, or architecture change unless the task explicitly requests it.
+
+During investigation, separate:
+
+- facts required to implement the stated change;
+- evidence required to prove the stated invariant;
+- adjacent findings that may be useful but are outside scope.
+
+Only the first two belong in the patch. Record adjacent findings separately as follow-up work.
+
+Once the existing mechanism responsible for the requested invariant is identified, stop discovery and make the smallest change needed to enforce or prove that invariant.
+
+Before adding new files, systems, targets, or process changes, ask whether the change directly satisfies the acceptance criteria. If it improves surrounding systems without being required, do not include it in the patch.
+
 Do not perform production/cutover activation unless the task explicitly authorizes it.
 
 ## Parallel patches and migrations
