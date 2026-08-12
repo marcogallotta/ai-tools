@@ -140,3 +140,30 @@ def test_admin_shows_exact_human_review_decision_context(acceptance):
     expect(admin.locator(".admin-diagnostics[open]")).to_have_count(0)
     acceptance.screenshot("admin-human-review-context")
     acceptance.assert_clean()
+
+def test_admin_inspect_any_dish_rejects_invalid_uuid_without_navigation(acceptance):
+    acceptance.login(return_path="/admin")
+    admin = acceptance.page.locator('[aria-label="Dish administration"]')
+    form = admin.locator(".admin-inspect")
+    expect(form.get_by_role("heading", name="Inspect any Dish")).to_be_visible()
+    input_box = form.get_by_label("Dish UUID")
+    input_box.fill("not-a-dish")
+    form.get_by_role("button", name="Inspect").click()
+
+    expect(form.get_by_role("alert")).to_have_text("Enter a valid non-zero Dish UUID.")
+    expect(input_box).to_have_attribute("aria-invalid", "true")
+    assert acceptance.page.url.split("?", 1)[0].endswith("/admin")
+    acceptance.assert_clean()
+
+
+def test_admin_inspect_any_dish_routes_resting_uuid_to_existing_detail(acceptance):
+    acceptance.runtime.board_state.cards = [CardSpec(TASK_ALPHA, "Alpha soup", section_id=SECTION_VERIFY)]
+    acceptance.login(return_path="/admin")
+    admin = acceptance.page.locator('[aria-label="Dish administration"]')
+    admin.get_by_label("Dish UUID").fill(TASK_ALPHA.upper())
+    admin.get_by_role("button", name="Inspect").click()
+
+    acceptance.wait_detail()
+    assert f"/dishes/{TASK_ALPHA}/dish" in acceptance.page.url
+    assert acceptance.runtime.detail_calls == [TASK_ALPHA]
+    acceptance.assert_clean()

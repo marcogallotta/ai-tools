@@ -1,9 +1,38 @@
 import { postgresSourceSuffix, postgresTaskRoute } from "../routing/routes.js";
 import { workflowText } from "./admin-model.js";
 
+export function adminInspectRoute(value, search = globalThis.window?.location?.search ?? "") {
+  const dishId = String(value ?? "").trim().toLowerCase();
+  return `${postgresTaskRoute(dishId, "dish")}${postgresSourceSuffix(search)}`;
+}
+
 function timeText(value) {
   if (!value) return "No recent recorded activity";
   return new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+}
+
+function inspectDishForm() {
+  const form = document.createElement("form"); form.className = "admin-inspect"; form.noValidate = true;
+  const heading = document.createElement("h2"); heading.id = "admin-inspect-title"; heading.textContent = "Inspect any Dish";
+  form.setAttribute("aria-labelledby", heading.id);
+  const help = document.createElement("p"); help.className = "muted"; help.textContent = "Open the current read-only diagnosis for a canonical Dish UUID, even when it is not listed below.";
+  const controls = document.createElement("div"); controls.className = "admin-inspect__controls";
+  const label = document.createElement("label"); label.htmlFor = "admin-inspect-dish"; label.textContent = "Dish UUID";
+  const input = document.createElement("input"); input.id = "admin-inspect-dish"; input.name = "dish"; input.type = "text"; input.autocomplete = "off"; input.spellcheck = false; input.placeholder = "00000000-0000-0000-0000-000000000000";
+  const button = document.createElement("button"); button.type = "submit"; button.textContent = "Inspect";
+  const error = document.createElement("p"); error.className = "admin-inspect__error"; error.setAttribute("role", "alert"); error.hidden = true;
+  const clearError = () => { input.removeAttribute("aria-invalid"); error.hidden = true; error.textContent = ""; };
+  input.addEventListener("input", clearError);
+  form.addEventListener("submit", (event) => {
+    event.preventDefault(); clearError();
+    try {
+      window.location.assign(adminInspectRoute(input.value));
+    } catch {
+      input.setAttribute("aria-invalid", "true");
+      error.textContent = "Enter a valid non-zero Dish UUID."; error.hidden = false; input.focus();
+    }
+  });
+  controls.append(input, button); form.append(heading, help, label, controls, error); return form;
 }
 
 function summaryCard(value, label, className = "") {
@@ -81,7 +110,7 @@ export function renderAdmin(host, admin) {
     summaryCard(admin.summary.verification, "Needs verification"),
     summaryCard(admin.summary.systemActivity, "System handling it"),
   );
-  intro.append(eyebrow, heading, description, counts); host.append(intro);
+  intro.append(eyebrow, heading, description, inspectDishForm(), counts); host.append(intro);
   host.append(group("Needs you", "Only states that require an operator decision or explicit recovery action.", admin.dishes.filter((dish) => dish.bucket === "needs_you"), "admin-needs-you"));
   host.append(group("Workflow queue", "Dishes waiting for ordinary Research or Verification work. These do not increase the Marco-only needs-you count.", admin.dishes.filter((dish) => dish.bucket === "workflow_queue"), "admin-workflow"));
   host.append(group("System handling it", "Operationally relevant states that are visible without increasing the main needs-you count.", admin.dishes.filter((dish) => dish.bucket === "system_activity"), "admin-system"));
