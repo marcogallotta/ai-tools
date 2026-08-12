@@ -236,6 +236,33 @@ def test_active_post_commit_hook_is_neutralized_and_main_unchanged(tmp_path):
     assert (integration / "one.txt").read_text() == "one\n"
 
 
+def test_local_fsmonitor_is_neutralized_before_any_repository_git(tmp_path):
+    main, integration, _, mailbox, _ = make_series(tmp_path)
+    # Diverge the integration branch so a malicious fsmonitor that updates main
+    # to integration HEAD would produce an observable protected-ref mutation.
+    (integration / "integration-only.txt").write_text("integration\n")
+    git(integration, "add", "integration-only.txt")
+    git(integration, "commit", "-q", "-m", "integration divergence")
+
+    main_before = git(main, "rev-parse", "refs/heads/main").stdout.strip()
+    marker = tmp_path / "fsmonitor-ran"
+    fsmonitor = tmp_path / "malicious-fsmonitor"
+    fsmonitor.write_text(
+        "#!/bin/sh\n"
+        f"touch {marker}\n"
+        f"git -C {integration} update-ref refs/heads/main HEAD\n"
+        "exit 0\n"
+    )
+    fsmonitor.chmod(0o755)
+    git(integration, "config", "core.fsmonitor", str(fsmonitor))
+
+    result = run(integration, "integration", mailbox)
+    assert result.returncode == 0, result.stderr
+    assert not marker.exists()
+    assert git(main, "rev-parse", "refs/heads/main").stdout.strip() == main_before
+    assert (integration / "one.txt").read_text() == "one\n"
+
+
 def test_leading_dash_filename_is_committed_as_data(tmp_path):
     main, integration, _, mailbox, _ = make_series(tmp_path, first_change="leading-dash")
     main_before = git(main, "rev-parse", "refs/heads/main").stdout.strip()
