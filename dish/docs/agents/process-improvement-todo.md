@@ -14,16 +14,16 @@ These are explicitly **not adopted policy yet**. They are retained so they survi
 - Define audit cadence, number/parallelism of independent audit agents, milestone/time backstops, and exact escalation rules for when an audit finding interrupts current work versus becoming scheduled follow-up.
 - Preserve the distinction that an audit finding on an older baseline does not automatically block a newer pending merge.
 
-## Patch shape and task discipline
+## PR/change shape and task discipline
 
-- Research/adopt a patch-size/decomposition policy: large implementation tasks may need an ordered stack of smaller independently reviewable patches/commits rather than one massive diff.
+- Research/adopt a PR/change decomposition policy: large implementation tasks may need ordered smaller independently reviewable PRs, or coherent commits within one PR, rather than one massive diff.
 - Research/adopt an early wrong-problem/scope-creep gate so agents solve the requested problem and defer unnecessary expansion.
 - Research/adopt an information-budget rule for agent returns: omit dead information that changes neither Marco's next decision/action nor durable project state.
 
 ## Human and specialist roles
 
 - Refine the small set of situations that genuinely require Marco's explicit human judgment; keep those escalations focused on the highest-value decision.
-- Extend the adopted standing-contract pattern beyond Workflow to recurring specialist agents such as frontend, PostgreSQL, and release/cutover after the pilot demonstrates reliable takeover.
+- Extend the adopted standing-contract pattern deliberately when another recurring specialist role justifies it. Workflow, PostgreSQL / Dark Launch, and Development Workflow already have standing specialist lanes.
 
 ## Workflow / PostgreSQL cutover discussion
 
@@ -33,7 +33,7 @@ These are explicitly **not adopted policy yet**. They are retained so they survi
 
 ## Live coordination / Asana / Git
 
-- The `Dish — Coordinator` and `Dish — Workflow` Asana projects are the adopted pilot for live coordination. Validate that a replacement coordinator/Workflow specialist can take over from repository + Asana without conversation reconstruction, then expand the specialist-project pattern deliberately.
+- Current adopted coordination lanes include `Dish — Coordinator`, `Dish — Workflow`, `Dish — PostgreSQL / Dark Launch`, and `Dish — Development Workflow`. Validate that replacement coordinators/specialists can take over from repository + their adopted Asana projects without conversation reconstruction before expanding the specialist-project pattern further.
 - Define safe claiming/concurrency before multiple autonomous agents can independently claim the same `Ready` work; section movement alone is not an atomic claim mechanism.
 - Investigate moving concurrent local Codex/Claude implementation and investigation work out of one shared `main` checkout and into isolated Git worktrees, including creation/cleanup ownership, exact-base identity, integration, and collision rules.
 - Investigate a first-class read-only way for agents to determine the exact code/schema/config/runtime currently deployed in TEST and production. GitHub source/history and Asana coordination state must not be treated as proof of deployed state.
