@@ -207,7 +207,7 @@ def _unbound_create_cascade_details(connection, gap: tx.ShadowGap) -> dict[str, 
 
 @event.listens_for(tx.ShadowGap, "before_insert")
 def _classify_unbound_create_cascade(_mapper, connection, gap: tx.ShadowGap) -> None:
-    """Reclassify only proven unbound-create cascades; generic failures stay generic."""
+    """Persist a distinct parity signal only for proven unbound-create cascades."""
     classification = _unbound_create_cascade_details(connection, gap)
     if classification is None:
         return
