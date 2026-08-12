@@ -107,6 +107,7 @@ def _parser() -> argparse.ArgumentParser:
     fence_verify = sub.add_parser("writer-fence-verify")
     fence_verify.add_argument("fence_id")
     fence_verify.add_argument("--proof-file", type=Path, required=True)
+    fence_verify.add_argument("--writer-inventory-file", type=Path, required=True)
     fence_verify.add_argument("--verified-at", required=True)
 
     fence_status = sub.add_parser("writer-fence-status")
@@ -518,6 +519,7 @@ def _service_call(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                     fence_id=_uuid(args.fence_id),
                     proof=_load(args.proof_file),
                     verified_at=_time(args.verified_at),
+                    writer_inventory_path=args.writer_inventory_file,
                     required_writer_inventory=REQUIRED_LEGACY_WRITER_INVENTORY,
                 )
                 return {"ok": True, **_row_id(row), "proof_sha256": row.proof_sha256, "state": row.state}, 0

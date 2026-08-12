@@ -332,6 +332,7 @@ class CutoverControlAuthority:
         fence_id: uuid.UUID,
         proof: Mapping[str, Any],
         verified_at: datetime,
+        writer_inventory_path: Path | None = None,
         required_writer_inventory: Collection[str] | None = None,
     ) -> rel.LegacyWriterFence:
         row = self._fence(fence_id)
@@ -342,6 +343,52 @@ class CutoverControlAuthority:
             required_writer_inventory=required_writer_inventory,
         )
         body = dict(proof)
+        production_writer_inventory = frozenset(
+            {"dish-service-prod.service", "dish", "dish-admin"}
+        )
+        if frozenset(required_writer_inventory or ()) == production_writer_inventory:
+            if writer_inventory_path is None:
+                raise ReleaseAuthorityError(
+                    "production writer fence verification requires the raw writer inventory"
+                )
+            cutover = self.session.scalar(
+                select(rel.CutoverRun).where(
+                    rel.CutoverRun.candidate_id == candidate.candidate_id
+                )
+            )
+            if cutover is None:
+                raise ReleaseAuthorityError(
+                    "writer fence inventory binding requires a prepared cutover run"
+                )
+            from .operations_evidence import (
+                OperationsEvidenceError,
+                validate_legacy_writer_inventory,
+            )
+
+            try:
+                inventory_report = validate_legacy_writer_inventory(
+                    inventory_path=writer_inventory_path,
+                    expected_candidate_id=str(candidate.candidate_id),
+                    expected_cutover_run_id=str(cutover.cutover_run_id),
+                    expected_source_commit=str(candidate.source_commit),
+                )
+            except OperationsEvidenceError as exc:
+                raise ReleaseAuthorityError(
+                    f"legacy writer inventory validation failed: {exc}"
+                ) from exc
+            if "legacy_writer_inventory" in body:
+                raise ReleaseAuthorityError(
+                    "legacy_writer_inventory is authority-owned proof evidence"
+                )
+            body["legacy_writer_inventory"] = {
+                "format": inventory_report["format"],
+                "inventory_sha256": inventory_report["inventory_sha256"],
+                "report_sha256": inventory_report["report_sha256"],
+                "candidate_id": inventory_report["candidate_id"],
+                "cutover_run_id": inventory_report["cutover_run_id"],
+                "source_commit": inventory_report["source_commit"],
+                "writer_count": inventory_report["writer_count"],
+            }
         required = {
             "probe_kind": "authenticated_mutation_rejected_before_body_parse",
             "candidate_id": str(candidate.candidate_id),

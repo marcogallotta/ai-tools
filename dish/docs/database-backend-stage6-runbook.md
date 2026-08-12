@@ -468,12 +468,15 @@ no writers and give a nonblank reason.
 ```
 
 A self-consistent inventory for the wrong candidate, cutover run, or source commit is rejected.
+`writer-fence-verify` revalidates that raw inventory and binds its inventory/report SHA-256
+identity into the persisted writer-fence proof.
 
 Record exact probe evidence:
 
 ```sh
 scripts/dish-pg-release writer-fence-verify FENCE_UUID \
   --proof-file /secure/evidence/fence-proof.json \
+  --writer-inventory-file /secure/evidence/legacy-writer-inventory.json \
   --verified-at RFC3339_WITH_OFFSET
 scripts/dish-pg-release cutover-mark-fenced CUTOVER_UUID \
   --recorded-at RFC3339_WITH_OFFSET

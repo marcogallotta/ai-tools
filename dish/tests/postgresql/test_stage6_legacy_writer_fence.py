@@ -4,13 +4,19 @@ import hashlib
 import json
 import os
 import stat
+import uuid
 from datetime import datetime, timezone
 from http.client import HTTPConnection
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 import pytest
 
+import dish_pg.cutover_control as cutover_control_module
+from dish_pg import operations_evidence
+from dish_pg.cutover_control import CutoverControlAuthority
+from dish_pg.release_evidence import ReleaseAuthorityError, sha256_json
 from dish_service.application import DishService
 from dish_service.config import ServiceConfig
 from dish_service.http import build_server
@@ -399,3 +405,107 @@ def test_http_fence_runs_after_authentication_and_before_body_parsing(tmp_path: 
         assert fenced["errors"][0]["rule"] == "legacy_writer_fenced"
     finally:
         stop_server(server, thread)
+
+
+def test_release_authority_revalidates_and_hash_binds_writer_inventory(
+    tmp_path: Path, monkeypatch
+) -> None:
+    candidate_id = uuid.uuid4()
+    cutover_run_id = uuid.uuid4()
+    source_commit = "a" * 40
+    row = SimpleNamespace(
+        candidate_id=candidate_id,
+        target_identity="legacy-service@host",
+        manifest_sha256="b" * 64,
+        engaged_at=NOW,
+        state="engaged",
+        fence_revision=1,
+        proof_sha256=None,
+        verified_at=None,
+    )
+    candidate = SimpleNamespace(
+        candidate_id=candidate_id, source_commit=source_commit
+    )
+    cutover = SimpleNamespace(cutover_run_id=cutover_run_id)
+    authority = object.__new__(CutoverControlAuthority)
+    authority.session = SimpleNamespace(
+        scalar=lambda _statement: cutover, flush=lambda: None
+    )
+    authority._fence = lambda _fence_id: row
+    authority._candidate = lambda _candidate_id: candidate
+    authority._require_not_future = lambda *_args: None
+    monkeypatch.setattr(
+        cutover_control_module,
+        "validate_writer_fence_observation",
+        lambda *_args, **_kwargs: SimpleNamespace(),
+    )
+    inventory_report = {
+        "format": "dish-legacy-writer-inventory-report-v1",
+        "inventory_sha256": "1" * 64,
+        "report_sha256": "2" * 64,
+        "candidate_id": str(candidate_id),
+        "cutover_run_id": str(cutover_run_id),
+        "source_commit": source_commit,
+        "writer_count": 3,
+    }
+    captured: dict[str, object] = {}
+
+    def fake_validate_inventory(**kwargs):
+        captured.update(kwargs)
+        return inventory_report
+
+    monkeypatch.setattr(
+        operations_evidence, "validate_legacy_writer_inventory", fake_validate_inventory
+    )
+    inventory_path = tmp_path / "legacy-writer-inventory.json"
+    required_writers = {"dish-service-prod.service", "dish", "dish-admin"}
+    proof = {
+        "probe_kind": "authenticated_mutation_rejected_before_body_parse",
+        "candidate_id": str(candidate_id),
+        "target_identity": row.target_identity,
+        "fence_manifest_sha256": row.manifest_sha256,
+        "request_token_sha256": "c" * 64,
+        "http_status": 409,
+        "response_code": "CONFLICT",
+        "response_rule": "legacy_writer_fenced",
+        "response_retryable": False,
+        "body_loaded": False,
+        "result": "pass",
+    }
+
+    with pytest.raises(
+        ReleaseAuthorityError, match="requires the raw writer inventory"
+    ):
+        authority.verify_writer_fence(
+            fence_id=uuid.uuid4(),
+            proof=proof,
+            verified_at=NOW,
+            required_writer_inventory=required_writers,
+        )
+
+    authority.verify_writer_fence(
+        fence_id=uuid.uuid4(),
+        proof=proof,
+        verified_at=NOW,
+        writer_inventory_path=inventory_path,
+        required_writer_inventory=required_writers,
+    )
+    assert captured == {
+        "inventory_path": inventory_path,
+        "expected_candidate_id": str(candidate_id),
+        "expected_cutover_run_id": str(cutover_run_id),
+        "expected_source_commit": source_commit,
+    }
+    expected_body = dict(proof)
+    expected_body["legacy_writer_inventory"] = dict(inventory_report)
+    assert row.proof_sha256 == sha256_json(expected_body)
+
+    inventory_report["inventory_sha256"] = "d" * 64
+    with pytest.raises(ReleaseAuthorityError, match="proof conflict"):
+        authority.verify_writer_fence(
+            fence_id=uuid.uuid4(),
+            proof=proof,
+            verified_at=NOW,
+            writer_inventory_path=inventory_path,
+            required_writer_inventory=required_writers,
+        )
