@@ -209,6 +209,34 @@ def test_read_exposes_change_only_for_exact_signed_ready_resting_task(tmp_path):
     assert "required_start_kind" not in unsigned["data"]
 
 
+def test_read_suppresses_change_when_signed_ready_task_is_in_excluded_section(tmp_path):
+    app, backend = _signed_ready(tmp_path)
+    backend.section = "src"
+
+    read = app.execute("read", agent="gpt", task_gid="t")
+
+    assert read["ok"]
+    assert read["allowed_actions"] == []
+    assert "required_start_kind" not in read["data"]
+
+    started = app.execute(
+        "start",
+        agent="gpt",
+        task_gid="t",
+        kind="change",
+        change_level="small",
+        change_reason="Correct one exact detail",
+        run_id="excluded-change-run",
+    )
+
+    assert not started["ok"]
+    assert started["code"] == "UNMANAGED_TASK"
+    assert started["errors"] == [{"rule": "task_in_excluded_section"}]
+    assert app.conn.execute(
+        "SELECT COUNT(*) FROM operations WHERE status IN ('open','uncertain')"
+    ).fetchone()[0] == 0
+
+
 def test_start_uses_same_resting_authority_and_wrong_kind_cannot_strand_operation(tmp_path):
     app, _backend = _signed_ready(tmp_path)
 

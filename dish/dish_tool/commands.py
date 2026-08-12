@@ -881,9 +881,14 @@ def _step5_read(
     }
     operation_id = _active_operation_id(self.conn, task_gid=task_gid)
     if operation_id is None:
-        required_start_kind = _resting_task_required_start_kind(
-            self.conn, live=live, diagnostics=diag
+        registry = SectionRegistry.from_sections(
+            self.backend.list_sections(COOKING_PROJECT_GID)
         )
+        required_start_kind = None
+        if is_protocol_managed(live.section_gid, registry):
+            required_start_kind = _resting_task_required_start_kind(
+                self.conn, live=live, diagnostics=diag
+            )
         if required_start_kind is not None:
             data["required_start_kind"] = required_start_kind
         return result_envelope(
