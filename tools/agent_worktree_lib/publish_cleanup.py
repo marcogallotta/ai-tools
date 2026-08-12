@@ -84,6 +84,18 @@ def remote_contains_head(runner: GitRunner, repo: Repository, remote_head: str |
     return result.returncode == 0
 
 
+def ignored_untracked_paths(runner: GitRunner, worktree) -> list[str]:
+    result = runner.run(
+        worktree,
+        "ls-files",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "-z",
+    )
+    return [path for path in result.stdout.split("\0") if path]
+
+
 def command_cleanup(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]:
     task_gid = require_task_gid(args.task)
     if args.disposition not in DISPOSITIONS:
@@ -94,6 +106,14 @@ def command_cleanup(args: argparse.Namespace, runner: GitRunner) -> dict[str, An
         identity = verify_owned_worktree(runner, repo, state)
         if identity.dirty:
             fail("DIRTY_CLEANUP", "cleanup refuses a dirty owned worktree/index")
+        ignored = ignored_untracked_paths(runner, identity.path)
+        if ignored:
+            preview = ", ".join(repr(path) for path in ignored[:3])
+            suffix = "" if len(ignored) <= 3 else f" (+{len(ignored) - 3} more)"
+            fail(
+                "IGNORED_CONTENT_CLEANUP",
+                "cleanup refuses ignored task-local content omitted by normal Git status: " + preview + suffix,
+            )
         relation, remote_head = remote_relation(runner, repo, state["branch"], identity.head)
         if relation == "remote-ahead":
             fail("REMOTE_AHEAD", "cleanup refuses an owned branch whose remote head is ahead; explicit recovery is required")

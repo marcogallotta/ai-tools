@@ -53,6 +53,30 @@ def test_cleanup_refuses_dirty_only_recovery_copy_remote_ahead_and_divergence(h:
     assert_error(result, "REMOTE_DIVERGED")
 
 
+def test_cleanup_refuses_ignored_task_local_content_and_preserves_worktree(h: Harness) -> None:
+    task = "1064"
+    branch = "agent/cleanup-ignored"
+    h.start(task=task, branch=branch)
+    h.tool("publish", "--task", task, "--json")
+
+    exclude = Path(git_out(h.wt(task), "rev-parse", "--git-path", "info/exclude"))
+    with exclude.open("a", encoding="utf-8") as handle:
+        handle.write("\nignored-cleanup.bin\n")
+    ignored = h.wt(task) / "ignored-cleanup.bin"
+    ignored.write_text("only task-local copy\n", encoding="utf-8")
+
+    assert git_out(h.wt(task), "status", "--porcelain=v1", "--untracked-files=all") == ""
+    assert git_out(h.wt(task), "ls-files", "--others", "--ignored", "--exclude-standard") == ignored.name
+
+    result = h.tool("cleanup", "--task", task, "--disposition", "closed", "--json", check=False)
+    assert_error(result, "IGNORED_CONTENT_CLEANUP")
+    assert h.wt(task).is_dir()
+    assert ignored.read_text(encoding="utf-8") == "only task-local copy\n"
+    assert h.state(task)["lifecycle"] == "active"
+    records = git_out(h.primary, "worktree", "list", "--porcelain")
+    assert str(h.wt(task)) in records and "locked" in records
+
+
 @pytest.mark.parametrize("name", ["GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_NAMESPACE", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0"])
 def test_hostile_repository_and_config_environment_fails_before_mutation(h: Harness, name: str) -> None:
     env = h.env.copy()
