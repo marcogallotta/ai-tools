@@ -1,0 +1,74 @@
+name: Disposable registry correction native certification
+
+on:
+  push:
+    branches:
+      - agent/registry-correction-native-cert-20260812
+
+permissions:
+  contents: read
+
+jobs:
+  certify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17.10
+        env:
+          POSTGRES_DB: ai_tools_registry_cert
+          POSTGRES_USER: ai_tools_registry_cert
+          POSTGRES_PASSWORD: cert-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ai_tools_registry_cert -d ai_tools_registry_cert"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DISH_TEST_POSTGRESQL_DSN: postgresql+psycopg://ai_tools_registry_cert:cert-only-password@127.0.0.1:5432/ai_tools_registry_cert
+    steps:
+      - name: Checkout exact source under certification
+        uses: actions/checkout@v6
+        with:
+          ref: 7e65e1796fb5db6f5545b3acd52a2d60c18d8050
+          fetch-depth: 1
+      - name: Checkout disposable harness separately
+        uses: actions/checkout@v6
+        with:
+          ref: agent/registry-correction-native-cert-20260812
+          path: cert-harness
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13.5'
+          check-latest: false
+      - name: Install authoritative dependency bundle
+        uses: ./.github/actions/setup-python-bundle
+        with:
+          github-token: ${{ github.token }}
+      - name: Prove source and isolated native PostgreSQL identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "7e65e1796fb5db6f5545b3acd52a2d60c18d8050"
+          dish/.venv/bin/python - <<'PY'
+          import os
+          from urllib.parse import urlparse
+          import psycopg
+          p=urlparse(os.environ['DISH_TEST_POSTGRESQL_DSN'])
+          assert p.hostname in {'127.0.0.1','localhost'}
+          assert p.username == 'ai_tools_registry_cert'
+          assert p.path == '/ai_tools_registry_cert'
+          dsn=os.environ['DISH_TEST_POSTGRESQL_DSN'].replace('postgresql+psycopg://','postgresql://')
+          with psycopg.connect(dsn) as c:
+              row=c.execute('select version(), current_database(), current_user').fetchone()
+          print('CERT_RUNTIME_IDENTITY='+'|'.join(row))
+          PY
+      - name: Run production-shaped correction rehearsal
+        shell: bash
+        run: |
+          set -euo pipefail
+          PYTHONPATH=dish dish/.venv/bin/python cert-harness/ci/disposable_registry_correction_cert.py
