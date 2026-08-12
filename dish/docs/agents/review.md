@@ -46,17 +46,19 @@ Do not treat `PR URL + branch name` alone as sufficient identity; the head SHA m
 
 ## Durable GitHub review submission
 
-A review is not complete until the verdict is durably submitted on GitHub for the exact reviewed head SHA. A chat-only verdict, detached handoff, or review-claim comment is incomplete and must not be treated as the repository review state.
+A review is not complete until the verdict is durably submitted as a formal GitHub pull-request review for the exact reviewed head SHA. A chat-only verdict, detached handoff, or review-claim issue comment is incomplete and must not be treated as repository review state.
+
+Dish agents currently act through the same GitHub account that owns agent-authored PRs. GitHub therefore does not permit those agents to use `APPROVE` or `REQUEST_CHANGES` on their own PRs. Under the current Dish workflow, **every completed agent review must use a formal `COMMENT` review** as the canonical transport; do not treat `APPROVE`/`REQUEST_CHANGES` as the normal agent-review path.
 
 Before returning any verdict:
 
-1. submit a GitHub pull-request review anchored to the exact reviewed head SHA;
-2. use `APPROVE` for `VERDICT: MERGE` when GitHub permits it;
-3. use `REQUEST_CHANGES` for `VERDICT: BLOCK` when GitHub permits it;
-4. if the authenticated account owns the PR or GitHub otherwise rejects `APPROVE`/`REQUEST_CHANGES`, submit a `COMMENT` review containing the explicit `VERDICT: MERGE` or `VERDICT: BLOCK`, the material findings, and the exact reviewed head SHA;
-5. verify that the submitted review exists on the PR and corresponds to the exact reviewed head before returning the coordinator handoff.
+1. submit a GitHub pull-request `COMMENT` review anchored to the exact reviewed head SHA;
+2. include the explicit textual `VERDICT: MERGE` or `VERDICT: BLOCK`;
+3. include the material findings and the exact reviewed head SHA in that review;
+4. include the normal Dish agent attribution;
+5. verify that the submitted review exists on the PR and is anchored to the exact reviewed head before returning the coordinator handoff.
 
-The fallback `COMMENT` review is a transport/account limitation only; it does not weaken the semantic verdict. A claim comment never satisfies this completion gate.
+A review-claim issue comment never satisfies this completion gate. If Dish later adopts distinct GitHub reviewer identities that can submit stateful approvals/change requests, Development Workflow may revise this transport rule deliberately; until then formal `COMMENT` review is authoritative agent-review submission.
 
 ## Forked review claims
 
