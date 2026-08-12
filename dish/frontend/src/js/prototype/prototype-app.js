@@ -1,9 +1,7 @@
 import { attentionLabels, boardFixture, zeroSectionFixture } from "../../../fixtures/stage1-board.js";
 import { detailForCard } from "../../../fixtures/stage1-details.js";
 import { extremeBoardFixture } from "../../../fixtures/stage1-extreme.js";
-import { adminEmptyFixture, adminExtremeFixture, adminFixture, lifecycleFixtures } from "../../../fixtures/stage1-states.js";
-import { mapAdminResponse } from "../features/admin/admin-model.js";
-import { renderAdmin } from "../features/admin/admin.js";
+import { lifecycleFixtures } from "../../../fixtures/stage1-states.js";
 import { loadFixtureContinuation, renderBoard } from "../features/board/board.js";
 import { closeTaskDetail, openTaskDetail } from "../features/detail/task-detail.js";
 import { effectiveTaskContributions, groupNotices } from "../features/notices/notice-model.js";
@@ -20,26 +18,6 @@ export function fixtureForScenario(name) {
   if (name === "zero") return structuredClone(zeroSectionFixture);
   if (name === "extreme") return structuredClone(extremeBoardFixture);
   return structuredClone(boardFixture);
-}
-
-export function adminFixtureForScenario(name) {
-  if (name === "admin-empty") return structuredClone(adminEmptyFixture);
-  if (name === "admin-extreme") return structuredClone(adminExtremeFixture);
-  return structuredClone(adminFixture);
-}
-
-export function renderFixtureAdmin(root, scenario = "admin", { reviewMode = false } = {}) {
-  removeRouteListener?.();
-  removeRouteListener = null;
-  if (reviewMode) installFixtureReviewBoundary();
-  closeTaskDetail({ restoreFocus: false });
-  const { shell, main } = createApplicationFrame({ environmentLabel: "Fixture prototype — not canonical data" });
-  if (reviewMode) shell.querySelector(".app-header")?.after(createReviewToolbar(scenario));
-  renderAdmin(main, mapAdminResponse(adminFixtureForScenario(scenario)));
-  root.replaceChildren(shell);
-  root.hidden = false;
-  root.dataset.shellState = "fixture-admin";
-  root.dataset.fixtureScenario = scenario;
 }
 
 function lifecycleNotice(state) {
