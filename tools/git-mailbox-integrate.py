@@ -37,6 +37,7 @@ FORBIDDEN_GIT_ENV = (
 )
 
 _GIT_EXE: Path | None = None
+_GIT_ENV: dict[str, str] | None = None
 
 
 class IntegrationError(RuntimeError):
@@ -87,10 +88,59 @@ def bind_git_executable(worktree: Path) -> None:
     _GIT_EXE = resolved
 
 
+def establish_git_environment(temp: Path) -> None:
+    """Create the one sanitized environment used by every executor-owned Git."""
+    global _GIT_ENV
+    if _GIT_EXE is None:
+        fail("git executable boundary was not established")
+
+    hooks_dir = temp / "empty-hooks"
+    hooks_dir.mkdir(mode=0o700)
+    safe_home = temp / "home"
+    safe_home.mkdir(mode=0o700)
+    xdg_home = safe_home / "xdg"
+    xdg_home.mkdir(mode=0o700)
+
+    env = os.environ.copy()
+    for name in list(env):
+        if name.startswith("GIT_CONFIG_") or name in FORBIDDEN_GIT_ENV:
+            env.pop(name, None)
+
+    # Local repository config remains readable for ordinary repository identity
+    # and index semantics, but command-scope values override every executable
+    # mutation surface used by this workflow. Global/system config and attributes
+    # are detached from the caller so they cannot introduce helpers after the
+    # boundary has been established.
+    env["HOME"] = str(safe_home)
+    env["XDG_CONFIG_HOME"] = str(xdg_home)
+    env["GIT_CONFIG_NOSYSTEM"] = "1"
+    env["GIT_CONFIG_SYSTEM"] = os.devnull
+    env["GIT_CONFIG_GLOBAL"] = os.devnull
+    env["GIT_CONFIG_COUNT"] = "3"
+    env["GIT_CONFIG_KEY_0"] = "core.hooksPath"
+    env["GIT_CONFIG_VALUE_0"] = str(hooks_dir)
+    env["GIT_CONFIG_KEY_1"] = "core.fsmonitor"
+    env["GIT_CONFIG_VALUE_1"] = "false"
+    env["GIT_CONFIG_KEY_2"] = "commit.gpgSign"
+    env["GIT_CONFIG_VALUE_2"] = "false"
+    env["GIT_ATTR_NOSYSTEM"] = "1"
+    _GIT_ENV = env
+
+
+def git_environment() -> dict[str, str]:
+    if _GIT_ENV is None:
+        fail("sanitized Git execution environment was not established")
+    return _GIT_ENV
+
+
 def git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess:
     if _GIT_EXE is None:
         fail("git executable boundary was not established")
-    return run([str(_GIT_EXE), "-C", str(cwd), *args], check=check)
+    return run(
+        [str(_GIT_EXE), "-C", str(cwd), *args],
+        env=git_environment(),
+        check=check,
+    )
 
 
 def absolute_git_path(cwd: Path, *args: str) -> Path:
@@ -242,6 +292,7 @@ def parse_mailinfo(worktree: Path, mail: Path, temp: Path) -> tuple[str, str, st
                 str(message_path),
                 str(patch_path),
             ],
+            env=git_environment(),
             stdin=source,
             text=False,
         )
@@ -262,7 +313,15 @@ def parse_mailinfo(worktree: Path, mail: Path, temp: Path) -> tuple[str, str, st
 
 
 def staged_paths(worktree: Path) -> list[str]:
-    raw = git(worktree, "diff", "--cached", "--name-only", "-z").stdout
+    raw = git(
+        worktree,
+        "diff",
+        "--cached",
+        "--name-only",
+        "--no-ext-diff",
+        "--no-textconv",
+        "-z",
+    ).stdout
     return [path for path in raw.split("\0") if path]
 
 
@@ -303,131 +362,108 @@ def prepare_trusted_git_bin(temp: Path) -> Path:
     return bin_dir
 
 
-def commit_environment(author: str, author_date: str, bin_dir: Path, hooks_dir: Path) -> dict[str, str]:
-    env = os.environ.copy()
-    for name in list(env):
-        if name.startswith("GIT_CONFIG_") or name in FORBIDDEN_GIT_ENV:
-            env.pop(name, None)
-
+def commit_environment(author: str, author_date: str, bin_dir: Path) -> dict[str, str]:
+    env = git_environment().copy()
     env["GIT_AUTHOR_NAME"] = author.rsplit(" <", 1)[0]
     env["GIT_AUTHOR_EMAIL"] = author.rsplit("<", 1)[1].rstrip(">")
     env["GIT_AUTHOR_DATE"] = author_date
-
-    # The trusted commit tool still shells out to Git. Pin that child to the
-    # already-bound Git executable and remove executable mutation surfaces:
-    # repository/candidate hooks, fsmonitor commands, and commit signing.
-    # Global/system config is excluded so a candidate cannot smuggle new config
-    # through a worktree-controlled HOME/XDG path between verification and commit.
+    # The trusted commit tool shells out to Git by name. Pin that child to the
+    # already-bound executable while inheriting the same sanitized Git config.
     env["PATH"] = str(bin_dir)
-    env["GIT_CONFIG_NOSYSTEM"] = "1"
-    env["GIT_CONFIG_SYSTEM"] = os.devnull
-    env["GIT_CONFIG_GLOBAL"] = os.devnull
-    env["GIT_CONFIG_COUNT"] = "3"
-    env["GIT_CONFIG_KEY_0"] = "core.hooksPath"
-    env["GIT_CONFIG_VALUE_0"] = str(hooks_dir)
-    env["GIT_CONFIG_KEY_1"] = "core.fsmonitor"
-    env["GIT_CONFIG_VALUE_1"] = "false"
-    env["GIT_CONFIG_KEY_2"] = "commit.gpgSign"
-    env["GIT_CONFIG_VALUE_2"] = "false"
-    env["GIT_ATTR_NOSYSTEM"] = "1"
     return env
 
 
-def apply_series(boundary: Boundary, mailboxes: list[Path]) -> int:
+def apply_series(boundary: Boundary, mailboxes: list[Path], temp: Path) -> int:
     clean_worktree_required(boundary.worktree)
     expected_head = boundary.head
     boundary.verify(expected_head)
 
-    with tempfile.TemporaryDirectory(prefix="git-mailbox-integrate-") as temp_name:
-        temp = Path(temp_name)
-        trusted_commit_tool = prepare_trusted_commit_tool(boundary, temp)
-        trusted_bin = prepare_trusted_git_bin(temp)
-        empty_hooks = temp / "empty-hooks"
-        empty_hooks.mkdir(mode=0o700)
+    trusted_commit_tool = prepare_trusted_commit_tool(boundary, temp)
+    trusted_bin = prepare_trusted_git_bin(temp)
+    boundary.verify(expected_head)
+
+    split = temp / "mail"
+    split.mkdir()
+    split_result = git(
+        boundary.worktree,
+        "mailsplit",
+        "-d4",
+        f"-o{split}",
+        "--",
+        *(str(path) for path in mailboxes),
+    )
+    try:
+        count = int(split_result.stdout.strip())
+    except ValueError:
+        fail(f"could not determine mailbox message count: {split_result.stdout!r}")
+    if count < 1:
+        fail("mailbox contained no messages")
+
+    for number in range(1, count + 1):
+        boundary.verify(expected_head)
+        mail = split / f"{number:04d}"
+        message, author, author_date, patch = parse_mailinfo(boundary.worktree, mail, temp)
         boundary.verify(expected_head)
 
-        split = temp / "mail"
-        split.mkdir()
-        split_result = git(
+        applied = git(
             boundary.worktree,
-            "mailsplit",
-            "-d4",
-            f"-o{split}",
-            "--",
-            *(str(path) for path in mailboxes),
+            "apply",
+            "--index",
+            "--whitespace=nowarn",
+            str(patch),
+            check=False,
         )
-        try:
-            count = int(split_result.stdout.strip())
-        except ValueError:
-            fail(f"could not determine mailbox message count: {split_result.stdout!r}")
-        if count < 1:
-            fail("mailbox contained no messages")
-
-        for number in range(1, count + 1):
+        if applied.returncode != 0:
             boundary.verify(expected_head)
-            mail = split / f"{number:04d}"
-            message, author, author_date, patch = parse_mailinfo(boundary.worktree, mail, temp)
-            boundary.verify(expected_head)
-
-            applied = git(
-                boundary.worktree,
-                "apply",
-                "--index",
-                "--whitespace=nowarn",
-                str(patch),
-                check=False,
+            fail(
+                f"mailbox patch {number}/{count} failed to apply; committed prefix is preserved, "
+                "failed patch was not committed:\n"
+                + applied.stderr.rstrip()
             )
-            if applied.returncode != 0:
-                boundary.verify(expected_head)
-                fail(
-                    f"mailbox patch {number}/{count} failed to apply; committed prefix is preserved, "
-                    "failed patch was not committed:\n"
-                    + applied.stderr.rstrip()
-                )
 
-            boundary.verify(expected_head)
-            paths = staged_paths(boundary.worktree)
-            if not paths:
-                fail(f"mailbox patch {number}/{count} produced no staged changes")
+        boundary.verify(expected_head)
+        paths = staged_paths(boundary.worktree)
+        if not paths:
+            fail(f"mailbox patch {number}/{count} produced no staged changes")
 
+        boundary.verify(expected_head)
+        committed = run(
+            [
+                sys.executable,
+                str(trusted_commit_tool),
+                "--staged-only",
+                "-m",
+                message,
+                "-C",
+                str(boundary.worktree),
+                "--",
+                *paths,
+            ],
+            cwd=boundary.worktree,
+            env=commit_environment(author, author_date, trusted_bin),
+            check=False,
+        )
+        if committed.returncode != 0:
             boundary.verify(expected_head)
-            committed = run(
-                [
-                    sys.executable,
-                    str(trusted_commit_tool),
-                    "--staged-only",
-                    "-m",
-                    message,
-                    "-C",
-                    str(boundary.worktree),
-                    "--",
-                    *paths,
-                ],
-                cwd=boundary.worktree,
-                env=commit_environment(author, author_date, trusted_bin, empty_hooks),
-                check=False,
+            fail(
+                f"approved commit mechanism failed for mailbox patch {number}/{count}:\n"
+                + committed.stderr.rstrip()
             )
-            if committed.returncode != 0:
-                boundary.verify(expected_head)
-                fail(
-                    f"approved commit mechanism failed for mailbox patch {number}/{count}:\n"
-                    + committed.stderr.rstrip()
-                )
 
-            new_head = resolve_ref(boundary.worktree, "HEAD")
-            if new_head == expected_head:
-                fail(f"approved commit mechanism reported success but HEAD did not advance for patch {number}/{count}")
-            # The new commit must be a direct child of the head we verified before
-            # invoking the commit mechanism; this catches unexpected candidate
-            # movement during the commit window.
-            parent = git(boundary.worktree, "rev-parse", f"{new_head}^").stdout.strip()
-            if parent != expected_head:
-                fail(
-                    f"candidate history changed unexpectedly during commit: expected parent {expected_head}, "
-                    f"found {parent}"
-                )
-            expected_head = new_head
-            boundary.verify(expected_head)
+        new_head = resolve_ref(boundary.worktree, "HEAD")
+        if new_head == expected_head:
+            fail(f"approved commit mechanism reported success but HEAD did not advance for patch {number}/{count}")
+        # The new commit must be a direct child of the head we verified before
+        # invoking the commit mechanism; this catches unexpected candidate
+        # movement during the commit window.
+        parent = git(boundary.worktree, "rev-parse", f"{new_head}^").stdout.strip()
+        if parent != expected_head:
+            fail(
+                f"candidate history changed unexpectedly during commit: expected parent {expected_head}, "
+                f"found {parent}"
+            )
+        expected_head = new_head
+        boundary.verify(expected_head)
 
     boundary.verify(expected_head)
     print(
@@ -460,8 +496,14 @@ def main(argv: list[str]) -> int:
         if missing:
             fail("mailbox file(s) not found: " + ", ".join(missing))
         bind_git_executable(worktree)
-        boundary = Boundary(execution_cwd, worktree, args.branch)
-        return apply_series(boundary, mailboxes)
+        # Establish sanitization before the first repository Git command. The
+        # temporary root also holds the trusted commit-tool copy and empty hook
+        # directory, so the same boundary survives for the whole series.
+        with tempfile.TemporaryDirectory(prefix="git-mailbox-integrate-") as temp_name:
+            temp = Path(temp_name)
+            establish_git_environment(temp)
+            boundary = Boundary(execution_cwd, worktree, args.branch)
+            return apply_series(boundary, mailboxes, temp)
     except IntegrationError as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
