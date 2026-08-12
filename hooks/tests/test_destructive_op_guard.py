@@ -402,6 +402,53 @@ class TestProtectedCheckoutBranchIsolation:
         )
         assert_denied(decision, "Refusing 'checkout' branch change")
 
+    def test_relative_git_dir_before_dash_c_resolves_relative_to_dash_c_denied(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        # Real repro from review 4920289206: real git interprets a relative
+        # --git-dir/--work-tree value relative to the directory -C lands on,
+        # regardless of which option appears first on the command line. A
+        # hook that resolves --git-dir against the *original* cwd instead
+        # (independent of -C) would miss this and let it fall through.
+        decision = run_hook(
+            destructive_op_guard,
+            "git --git-dir=.git -C primary checkout -b agent/foo",
+            monkeypatch,
+            capsys,
+            cwd=str(protected_repo["primary"].parent),
+        )
+        assert_denied(decision, "Refusing 'checkout' branch change")
+
+    def test_relative_git_dir_before_dash_c_resolves_to_unrelated_falls_through(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        decision = run_hook(
+            destructive_op_guard,
+            "git --git-dir=.git -C unrelated checkout -b agent/foo",
+            monkeypatch,
+            capsys,
+            cwd=str(protected_repo["unrelated"].parent),
+        )
+        assert_asked(decision, "Destructive git operation")
+
+    def test_chained_relative_dash_c_resolves_to_primary_denied(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        # Real repro from review 4920289206: successive relative -C values
+        # chain from the *preceding* -C, not from the original cwd. Here the
+        # first -C lands on an unrelated plain directory and the second -C
+        # is relative to that, not to the hook's own starting cwd.
+        sibling = protected_repo["primary"].parent / "sibling"
+        sibling.mkdir()
+        decision = run_hook(
+            destructive_op_guard,
+            "git -C sibling -C ../primary checkout -b agent/foo",
+            monkeypatch,
+            capsys,
+            cwd=str(protected_repo["primary"].parent),
+        )
+        assert_denied(decision, "Refusing 'checkout' branch change")
+
     def test_no_approval_path_offered_on_denial(self, destructive_op_guard, protected_repo, monkeypatch, capsys):
         decision = run_hook(
             destructive_op_guard, "git checkout -b agent/foo", monkeypatch, capsys,
