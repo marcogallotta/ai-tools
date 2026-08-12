@@ -23,6 +23,36 @@ GitHub branch/commit/PR identity is the authoritative code artifact and GitHub P
 
 Existing patch-based work already in flight may finish under the legacy flow or be converted to a PR. Once converted, the PR head SHA is the active review/integration identity and the patch identity is provenance only.
 
+## GitHub agent attribution
+
+When an agent writes to GitHub through credentials or an account that belongs to Marco, the GitHub artifact must make the agent authorship explicit so human and agent actions are not confused.
+
+This applies to agent-authored:
+
+- pull request descriptions or edits;
+- pull request reviews;
+- pull request and issue comments or replies;
+- inline review comments;
+- other GitHub discussion text written through Marco's credentials.
+
+Use a short footer in the authored text:
+
+> `— Dish Agent: <role> | <host>`
+
+Examples:
+
+> `— Dish Agent: Review | ChatGPT`
+>
+> `— Dish Agent: Implementation | Codex`
+
+When task identity materially helps disambiguate concurrent work, append it:
+
+> `— Dish Agent: Review | ChatGPT | task 1234567890`
+
+Marco's own human-authored GitHub discussion does not require this footer. The footer identifies the acting agent role/host only; it does not change GitHub authentication identity, grant approval authority, or replace exact PR-head identity requirements.
+
+Do not add this footer to ordinary commit-message prose. Commit authorship/signing policy is separate.
+
 ## Execution-host boundary
 
 Role and execution host are separate concerns. The same Dish role may run under ChatGPT, Claude Code, or Codex, but host-specific transport/bootstrap policy does not transfer with the role.
