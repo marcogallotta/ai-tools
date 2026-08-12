@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+"""Fail-closed task-owned worktree lifecycle for local Dish implementation agents."""
+from __future__ import annotations
+
+import sys
+
+from agent_worktree_lib.cli import main
+from agent_worktree_lib.common import AgentWorktreeError
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except AgentWorktreeError as exc:
+        print(f"ERROR {exc.code}: {exc.message}", file=sys.stderr)
+        raise SystemExit(1)

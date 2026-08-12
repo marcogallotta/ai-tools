@@ -31,7 +31,9 @@ Execution environment and repository transport are **agent-host-specific**. A Di
 
 ### Claude Code and Codex
 
-Claude Code and Codex use their live checkout plus their host-native Git/tooling and environment. Create or use the repository-local environment with the current interpreter as needed:
+Claude Code and Codex use their live checkout plus their host-native Git/tooling and environment. For implementation/fix work, use the repository-owned `tools/agent-worktree` lifecycle rather than creating a competing branch/worktree or synchronizing the operator `main` checkout. First creation requires the coordinator-supplied exact base ref + SHA to still match `origin`; resume observes current origin state without automatically resetting, merging, rebasing, or chasing a moved `main`. Enter the returned owned path directly or use `tools/agent-worktree exec --task <gid> -- <agent-command>`.
+
+Create or use the repository-local environment with the current interpreter as needed:
 
 ```sh
 cd dish

@@ -12,7 +12,9 @@ GitHub branch/commit/PR identity is the authoritative code artifact and review s
 
 ## Repository freshness
 
-Do not continuously poll `origin` while implementing. Establish the base at task start and work against that known base.
+Do not continuously poll `origin` while implementing. Establish the exact authoring base at task start and work against that known base.
+
+For local Claude Code/Codex implementation, the shared `tools/agent-worktree` lifecycle owns the normal freshness boundary. First creation verifies the supplied exact base ref + SHA against authoritative `origin` before it creates the owned branch/worktree. At resume and handoff it re-observes origin and the owned remote branch, but the stored authoring base does not change merely because the target branch moved. Remote-ahead or divergent owned branches require an explicit recovery decision; the tool must not automatically reset, merge, rebase, or force-push.
 
 Fetch/synchronize during implementation only when:
 
@@ -39,10 +41,11 @@ Day-one branch rules:
 - name agent-created branches `agent/<short-task-slug>` unless the handoff establishes another repository convention;
 - one implementation agent owns the branch while semantic implementation is in progress;
 - another agent must not push semantic changes to that branch without an explicit handoff of ownership;
-- Claude Code/Codex local work should use a dedicated worktree when concurrent repository work could otherwise share an index or working tree;
+- Claude Code/Codex local implementation uses the shared `tools/agent-worktree` lifecycle so one task attempt has one durable external linked worktree, one owned branch, and task-keyed recoverability state under `~/.local/state/dish/worktrees/`; do not create a competing host-specific lifecycle;
+- replacement local agents resume the same task record/branch/worktree after explicit orchestration handoff; takeover changes local provenance only and does not infer agent liveness;
 - ChatGPT uses the connected GitHub integration as repository source/history authority and may perform the branch/commit/PR flow through connector-native GitHub operations;
 - do not reuse a branch whose PR was merged, closed, abandoned, or superseded for unrelated work;
-- stale-branch cleanup is manual day-one hygiene. Cleanup automation is future work; never delete a branch that may be the only recoverable copy of unlanded work.
+- local worktree cleanup goes through the shared lifecycle only after disposition is established by GitHub/Asana authority; it must refuse dirty, ambiguous, or unrecoverable state and must not remove the only recovery pointer.
 
 Marco may explicitly authorize an emergency direct-to-`main` commit. That override must be stated explicitly for the specific change; it is not a standing shortcut and does not silently waive required validation or review evidence unless Marco says so.
 
@@ -83,7 +86,7 @@ If the task has moved projects or its live Asana URL is available, prefer the cu
 Host tooling differs, but the artifact contract does not:
 
 - **ChatGPT:** use the connected GitHub integration as source/history authority and use connector-native branch/commit/PR operations when available;
-- **Claude Code/Codex:** use the live checkout plus host-native `git`/worktree tooling, then push the owned branch and open/update the GitHub PR.
+- **Claude Code/Codex:** use the live checkout plus the repository-owned `tools/agent-worktree` lifecycle for local branch/worktree freshness, ownership, publication, and handoff verification, then open/update the GitHub PR.
 
 Regardless of host, the coordinator/reviewer/integrator must be able to identify the same branch, commit, PR URL, and exact PR head SHA.
 

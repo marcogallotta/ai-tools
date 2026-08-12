@@ -33,9 +33,17 @@ handles agent identity separately (see root `CLAUDE.md`). Do not extend this mec
   "role": "postgresql-dark-launch",
   "assigned_at": "2026-08-12T00:00:00Z",
   "notes": "free text",
-  "workspace": "optional metadata, e.g. checkout path"
+  "workspace": "optional metadata, e.g. checkout path",
+  "active_worktree": {
+    "task_gid": "1234567890",
+    "state_path": "/home/user/.local/state/dish/worktrees/1234567890.json",
+    "worktree": "/home/user/.local/share/dish/worktrees/ai-tools/1234567890",
+    "branch": "agent/example-task"
+  }
 }
 ```
+
+`active_worktree` is optional compatibility/recovery metadata written by `tools/agent-worktree`; older records without it remain valid. The task-keyed worktree record is the local lifecycle record. Neither record is authoritative task assignment, and `active_worktree` must not be interpreted as a heartbeat or proof that its recorded agent is still running.
 
 ## Staleness: not yet solved
 
