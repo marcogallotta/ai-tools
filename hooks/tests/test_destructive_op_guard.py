@@ -556,14 +556,104 @@ class TestProtectedCheckoutBranchIsolation:
         )
         assert_denied(decision, "unresolvable repository-location override")
 
-    def test_glob_bracket_in_env_override_denied_ambiguous(
+    def test_glob_bracket_in_env_override_not_ambiguous_falls_through(
         self, destructive_op_guard, protected_repo, monkeypatch, capsys
     ):
+        # Fix for review 4920522911: bash does NOT pathname-expand a
+        # VAR=value assignment's right-hand side (verified against real
+        # bash), so "[y]" here is always literal regardless of quoting -
+        # this resolves as the literal (nonexistent) path "primar[y]/.git"
+        # and correctly falls through to ordinary ask, not ambiguous-deny.
         decision = run_hook(
             destructive_op_guard, "GIT_DIR=primar[y]/.git git checkout -b agent/foo", monkeypatch, capsys,
             cwd=str(protected_repo["primary"].parent),
         )
+        assert_asked(decision, "Destructive git operation")
+
+    def test_quoted_bracket_glob_in_dash_c_not_ambiguous_falls_through(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        # Fix for review 4920522911: a single-quoted glob character is
+        # never expansion-eligible - shlex-level quote removal makes
+        # 'repo[1]' and repo[1] look identical as plain text, so the fix
+        # must track quoting, not just scan the final token text.
+        decision = run_hook(
+            destructive_op_guard, "git -C 'repo[1]' checkout -b agent/foo", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_asked(decision, "Destructive git operation")
+
+    def test_escaped_glob_star_in_dash_c_not_ambiguous_falls_through(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        decision = run_hook(
+            destructive_op_guard, r"git -C repo\* checkout -b agent/foo", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_asked(decision, "Destructive git operation")
+
+    def test_unquoted_bracket_glob_in_dash_c_still_ambiguous_denied(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        # Contrast with the quoted/escaped cases above: genuinely unquoted
+        # "[" is still pathname-expansion-eligible on the command line and
+        # must still fail closed.
+        decision = run_hook(
+            destructive_op_guard, "git -C repo[1] checkout -b agent/foo", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"]),
+        )
         assert_denied(decision, "unresolvable repository-location override")
+
+    def test_quoted_dollar_in_git_dir_env_override_not_ambiguous_falls_through(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        decision = run_hook(
+            destructive_op_guard, "GIT_DIR='$FAKE' git checkout -b agent/foo", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_asked(decision, "Destructive git operation")
+
+    def test_unquoted_dollar_in_git_dir_env_override_still_ambiguous_denied(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        decision = run_hook(
+            destructive_op_guard, "GIT_DIR=$FAKE git checkout -b agent/foo", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_denied(decision, "unresolvable repository-location override")
+
+    def test_switch_double_dash_then_dash_h_branch_name_in_primary_denied(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        # Real repro from review 4920522911: "--" ends option parsing for
+        # switch entirely, so "-h" after it is a literal branch name, not a
+        # help flag (verified against real git: a ref named "-h", created
+        # via update-ref since `git branch` itself refuses the name, really
+        # gets switched to by "git switch -- -h").
+        decision = run_hook(
+            destructive_op_guard, "git switch -- -h", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_denied(decision, "Refusing 'switch' branch change")
+
+    def test_switch_double_dash_then_dash_dash_help_branch_name_in_primary_denied(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        decision = run_hook(
+            destructive_op_guard, "git switch -- --help", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_denied(decision, "Refusing 'switch' branch change")
+
+    def test_switch_real_help_flag_without_double_dash_still_allowed(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        # Control: a genuine -h (no preceding "--") is still read as help.
+        decision = run_hook(
+            destructive_op_guard, "git switch -h", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_allowed(decision)
 
     def test_read_only_status_in_primary_allowed(self, destructive_op_guard, protected_repo, monkeypatch, capsys):
         decision = run_hook(
