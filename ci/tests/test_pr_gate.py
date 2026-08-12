@@ -68,6 +68,9 @@ def test_evidence_and_required_status_bind_to_candidate_sha_not_github_sha():
     assert '"workflow_sha": os.environ["GITHUB_SHA"]' in workflow
     assert '"/repos/$GITHUB_REPOSITORY/statuses/$CI_CANDIDATE_SHA"' in workflow
     assert "${{ github.sha }}" not in workflow
+    assert "POSTGRES_DB: dish_ai_tools_test" in workflow
+    assert "/dish_ai_tools_test" in workflow
+    assert "include-hidden-files: true" in workflow
 
 
 def test_each_review_ready_attempt_invalidates_prior_success_and_always_finalizes():
