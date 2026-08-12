@@ -31,8 +31,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git fetch --force origin \
-            "$SOURCE_REF:$SOURCE_REF"
+          # Fetch the object without writing directly into a checked-out branch;
+          # Git refuses refs/heads/main:refs/heads/main on main-push runs.
+          git fetch --force origin "$SOURCE_REF"
+          git cat-file -e "$SOURCE_SHA^{commit}"
+          git update-ref "$SOURCE_REF" "$SOURCE_SHA"
 
       - name: Build authority-validated repository bundle
         id: bundle
