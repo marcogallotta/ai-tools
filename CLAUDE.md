@@ -10,7 +10,7 @@ If you are told to assume, act as, or hand work to a named Dish role, read that 
 
 Standing role contracts contain stable policy so task handoffs can stay short and contain only the task-specific delta. If a handoff conflicts with a standing role contract, flag the conflict rather than silently choosing a new policy.
 
-For patch application or commit/integration work, follow the patch-application verification rule in `dish/docs/agents/implementation.md`: determine the repository root first and verify the expected diff exists after application. A successful command exit alone is not evidence that a patch was applied.
+For reviewed-patch application, local integration certification, commit/promotion to `main`, push verification, or integration-worktree cleanup, follow the dedicated Integration agent contract in `dish/docs/agents/integration.md`. Implementation/fix agents do not inherit final integration authority merely because they produced the patch.
 
 ## Dish safety and environments
 
