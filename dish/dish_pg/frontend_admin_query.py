@@ -114,6 +114,7 @@ class FrontendAdminQuery:
                 .where(
                     workflow.HumanReviewRequirement.generation_id == context.generation_id,
                     workflow.HumanReviewRequirement.task_id.in_(task_ids),
+                    workflow.HumanReviewRequirement.route == "human_review",
                     workflow.HumanReviewRequirement.state == "open",
                     workflow.WorkflowOperation.lifecycle == "open",
                 )
