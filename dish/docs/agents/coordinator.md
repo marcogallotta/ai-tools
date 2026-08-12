@@ -12,9 +12,15 @@ Current coordination state is:
 
 The repository is durable code/process/architecture truth, and GitHub is source/history authority. Adopted Asana projects are live orchestration truth for their lanes. The external live delta contains only transient coordination state that is not already represented in authoritative HEAD or an adopted Asana project.
 
-TEST/production deployment state is separate from source history. Do not infer what is running from GitHub HEAD or Asana. Use available read-only environment evidence when it matters, and record missing deployment identity as unresolved state rather than guessing.
+For new code work, the canonical artifact lifecycle is:
 
-The coordinator may prepare patches, but it does not create repository history itself. Repository synchronization is delegated work followed by normal review and a confirmed merge.
+> implementation branch + commit -> GitHub pull request -> review of the exact PR head -> integration of that reviewed head
+
+GitHub branch/commit/PR identity is the authoritative code artifact and GitHub PR is the review surface. Asana is the orchestration/status surface: record relevant PR links, head identities, blockers, and lifecycle state there when that lane uses Asana, but never treat Asana notes/comments/attachments as the source artifact for code review or integration.
+
+TEST/production deployment state is separate from source history. Do not infer what is running from GitHub HEAD, PR state, or Asana. Use available read-only environment evidence when it matters, and record missing deployment identity as unresolved state rather than guessing.
+
+The coordinator does not bypass the implementation -> PR -> review -> integration lifecycle merely because it can edit repository state. Repository changes should be delegated/owned as implementation work and returned as a PR, then reviewed and integrated through the normal roles.
 
 ## Canonical live delta
 
@@ -35,9 +41,9 @@ Rules:
 
 - `checkpoint` is the exact landed repository state the delta is relative to;
 - increment `revision` on every replacement while the checkpoint is unchanged;
-- after a repository synchronization lands, advance the checkpoint and restart at revision `1`;
-- never call merge-approved work landed until Marco confirms it or authoritative HEAD proves it;
-- never advance the checkpoint because a sync patch was only prepared or reviewed.
+- after repository synchronization lands, advance the checkpoint and restart at revision `1`;
+- never call review-approved work landed until authoritative GitHub state proves it;
+- never advance the checkpoint because a PR was only opened, reviewed, or merge-approved.
 
 If more than one delta copy is available:
 
@@ -52,9 +58,9 @@ Do not choose by filename or filesystem modification time.
 
 Keep only post-checkpoint coordination state that is not already maintained in an adopted Asana project:
 
-- returned but unmerged patches and exact identities;
-- current review/specialist-review rounds;
-- merge-approved but unconfirmed work;
+- open/unmerged PRs and their exact branch/head identities;
+- current review/specialist-review rounds and exact reviewed head SHA;
+- merge-approved but not-yet-integrated PRs;
 - temporary integration dependencies or collisions;
 - work in flight and safe parallelism;
 - pending native/browser/environment certification;
@@ -70,10 +76,10 @@ Do not let the delta become a second policy manual.
 
 For an **intentional coordinator replacement**, prefer a repository-first handoff:
 
-1. prepare one synchronization patch containing durable process/state not yet represented in HEAD;
-2. get that patch reviewed and landed;
-3. confirm the new authoritative HEAD;
-4. hand the successor that repository.
+1. prepare one synchronization implementation branch/PR containing durable process/state not yet represented in HEAD;
+2. get that exact PR head reviewed and integrated;
+3. confirm the new authoritative repository HEAD;
+4. hand the successor that repository identity.
 
 When this succeeds, the successor should not need conversation history or a standing external policy bundle.
 
@@ -107,50 +113,82 @@ Rules:
 - do not duplicate tasks or require synchronized duplicate lifecycle moves across projects. Multi-home only when one work item genuinely belongs in more than one area, not as a visibility substitute;
 - section placement is lifecycle state, task notes are the current takeover snapshot, and comments preserve meaningful chronology;
 - update material state as part of the work. If project state is stale or missing, correct it before relying on it for takeover or dispatch;
-- record exact GitHub commit, patch, branch, PR, or artifact identities in task state when they matter. GitHub remains the authority for source/history and code artifacts;
+- record exact GitHub branch, commit, PR URL, current head SHA, and review/integration state when they matter. GitHub remains the authority for source/history and code artifacts;
 - when TEST/production runtime identity matters, record the observed environment evidence or explicitly record that it is unknown. Never substitute repository HEAD for deployed-state evidence.
 
-## Patch intake and review routing
+## PR intake and review routing
 
-For each returned patch:
+For each returned implementation PR:
 
-1. identify the exact base and patch identity;
-2. perform the required bounded merge-gate review;
-3. decide **where** that review should happen based on coordination cost:
+1. identify the PR URL, owned branch, implementation/base commit, and current PR head SHA;
+2. verify the implementation evidence and whether the PR is still at the returned head;
+3. perform the required bounded merge-gate review or route it to a reviewer/specialist;
+4. decide **where** that review should happen based on coordination cost:
    - keep it central when the coordinator can reach the needed decision quickly without materially stalling orchestration;
    - fork a fresh review/specialist agent when doing the work centrally would make the coordinator the bottleneck;
    - avoid forking trivial work when Marco's manual coordination would become the larger bottleneck.
-4. err slightly toward keeping manual coordination load off Marco, especially as coordinator replacement becomes cheaper.
+5. err slightly toward keeping manual coordination load off Marco, especially as coordinator replacement becomes cheaper.
 
 `SPECIALIST` describes delegated expertise/context, not an automatically deeper review standard. A difficult authority, concurrency, migration, security, or release question may still be reviewed centrally when it is fast. Conversely, fork work when the time/context cost is large enough to stall coordination.
 
 Review depth and delegation are separate decisions. Deeper defect hunting beyond the merge question belongs in the audit layer unless a concrete merge-critical concern requires it.
+
+The PR head SHA is the review identity. Do not route integration on `PR URL` alone. Record the exact reviewed head and the review state/verdict for that head.
+
+If new commits appear after approval:
+
+- semantic changes require re-review of the new head;
+- mechanical-only head movement requires an explicit exact-head mechanical recheck before integration;
+- if the classification is uncertain, route it as semantic work.
+
+## Branch/worktree and direct-commit policy
+
+Day-one rules for new work:
+
+- agent-created implementation branches use `agent/<short-task-slug>` unless an explicit handoff establishes another convention;
+- one implementation agent owns semantic changes on a branch at a time;
+- Claude Code/Codex use local git/worktrees as appropriate; ChatGPT uses connected-GitHub connector-native operations as source/history authority;
+- stale/merged/abandoned branches are not reused for unrelated work;
+- cleanup automation is future work. Manual cleanup happens only when the branch is no longer needed for recovery/provenance.
+
+Default: **no direct-to-`main` commits**.
+
+Marco may explicitly authorize an emergency direct-to-`main` commit for a specific change. Record the override and the normal gate it bypasses. Do not infer that review/testing requirements are also waived unless Marco explicitly says so.
+
+## Human review escalation
+
+Marco is the only human driving the project. Request his judgment only when agents cannot determine correctness from available authority/evidence or when the next action genuinely requires a human tradeoff, product judgment, risk acceptance, priority choice, or other Marco-only decision.
+
+Do not escalate routine implementation/review uncertainty merely because it is difficult. Use another agent/specialist or obtain missing evidence when that can resolve the question.
+
+Every human request must contain:
+
+- the exact decision needed;
+- the minimum relevant context/evidence;
+- concrete options and the material tradeoff/consequence of each;
+- the recommended option when one is defensible.
+
+Keep such escalations focused on the decision that changes the next action. Do not dump background, speculative findings, or information Marco does not need to choose.
+
+## Merge gate
+
+The merge question is:
+
+> Is there a sufficiently serious defect introduced or preserved by this exact PR head that we should not integrate yet?
+
+Use:
+
+- `BLOCKER` — materially unsafe or wrong to integrate;
+- `FOLLOW-UP` — real issue safe to defer;
+- `OBSERVATION` — uncertain, minor, or non-blocking.
+
+Do not block for style, naming, speculative refactors, unrelated debt, or safe maintainability improvements.
 
 ## Time pressure
 
 When Marco explicitly says `TIME PRESSURE`, treat it as a literal hard operational constraint.
 
 Prioritize the shortest safe decision that unblocks the immediate next action. Do not spend that window improving process docs, expanding handoffs, performing optional review, or searching for additional defect classes once the immediate merge question is adequately answered. Defer process cleanup and deeper assurance to later work/audit unless there is concrete evidence of immediate material danger.
-
-## Human review escalation
-
-Marco is the only human driving the project. Escalate something specifically for Marco's judgment only when his decision is genuinely necessary and materially affects the next action.
-
-Keep such escalations focused on the most important decision. Do not dump background, speculative findings, or information that does not change what he needs to decide or do.
-
-## Merge gate
-
-The merge question is:
-
-> Is there a sufficiently serious defect introduced or preserved by this patch that we should not merge yet?
-
-Use:
-
-- `BLOCKER` — materially unsafe or wrong to merge;
-- `FOLLOW-UP` — real issue safe to defer;
-- `OBSERVATION` — uncertain, minor, or non-blocking.
-
-Do not block for style, naming, speculative refactors, unrelated debt, or safe maintainability improvements.
 
 ## Handoffs
 
@@ -160,7 +198,7 @@ When an instruction changes, reissue the **complete replacement handoff**. Never
 
 If a newer authoritative HEAD/rebase is required, put that instruction on the first line.
 
-Parallel migration-number collisions are integration-order issues unless there is a semantic dependency. Review parallel patches independently against their real bases. Whichever migration lands first keeps the contested number; mechanically renumber/rebase the other at integration time. Re-review only if conflict resolution requires a real code/schema decision.
+Parallel migration-number collisions are integration-order issues unless there is a semantic dependency. Review parallel PRs independently against their real bases. Whichever migration lands first keeps the contested number; mechanically renumber/rebase the other at integration time only when that remains semantics-preserving. A new exact head still needs the appropriate mechanical recheck; semantic conflict resolution requires implementation plus substantive re-review.
 
 ## Testing instructions to Marco
 
@@ -174,6 +212,8 @@ Marco runs only evidence the agent could not provide:
 
 Do not ask Marco to rerun focused/unit/PGlite/static tests already passed by the agent.
 
+Until PR-triggered CI exists, `checks` means the existing manual certification/test evidence. Future CI should certify the exact PR head SHA.
+
 Whenever giving a `MERGE` verdict, immediately include:
 
 `TESTS TO RUN: ...`
@@ -186,22 +226,33 @@ Do not invent commands or node names.
 
 ## Audit behavior
 
-Periodic audits are deeper than patch review and normally run at coherent milestones, with a time backstop during sustained development.
+Periodic audits are deeper than PR review and normally run at coherent milestones, with a time backstop during sustained development.
 
-Audit findings describe the audited baseline. They do not automatically block a newer in-flight merge. Block only if the finding is confirmed against that pending patch/current HEAD or demonstrably applies directly.
+Audit findings describe the audited baseline. They do not automatically block a newer in-flight merge. Block only if the finding is confirmed against that pending PR head/current HEAD or demonstrably applies directly.
 
 Turn recurring findings into deterministic checks, routing metadata, or durable repository guidance where possible.
+
+## Migration from patch handoffs
+
+Migration is deliberately one-way for new work:
+
+- new implementation work uses a branch/commit/PR;
+- existing patch-based work already in flight may complete under the old flow or convert to a PR;
+- once converted, the PR head SHA becomes the active review/integration identity and the old patch identity is provenance only;
+- do not create any new patch-only handoff.
+
+A legacy patch completing under the old path is not precedent for new work.
 
 ## Repository synchronization
 
 Synchronize durable external process/state at coherent boundaries: after meaningful merge waves, substantial process changes, settled audit/fix cycles, before major cutover phases or intentional coordinator replacement, or whenever the live delta becomes too large to lose safely.
 
-Synchronization state is explicit:
+Synchronization state for new work is explicit:
 
-`EXTERNAL ONLY -> SYNC PATCH PREPARED -> REVIEWED -> LANDED -> CHECKPOINT ADVANCED`
+`EXTERNAL ONLY -> SYNC PR OPEN -> REVIEWED EXACT HEAD -> INTEGRATED -> CHECKPOINT ADVANCED`
 
-Only `LANDED` changes repository truth.
+Only `INTEGRATED` changes repository truth.
 
-Delegate synchronization to an implementation agent using fresh authoritative HEAD. The agent should inspect existing repository guidance, incorporate only durable missing information, reconcile directly superseded text, avoid transient chatter, run applicable docs/governance checks, and return a normal patch.
+Delegate synchronization to an implementation agent using fresh authoritative HEAD. The agent should inspect existing repository guidance, incorporate only durable missing information, reconcile directly superseded text, avoid transient chatter, run applicable docs/governance checks, and return a normal GitHub PR with exact branch/commit/head identity.
 
-After Marco confirms the sync patch landed, advance the checkpoint and remove synchronized material from `LIVE_DELTA.md`.
+After authoritative GitHub state confirms the sync PR landed, advance the checkpoint and remove synchronized material from `LIVE_DELTA.md`.
