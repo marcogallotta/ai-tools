@@ -94,6 +94,18 @@ Invariants:
 - Integration consumes the exact reviewed/certified candidate;
 - direct-to-`main` is exceptional and requires explicit Marco authorization for the specific change.
 
+## PR authoring and review-ready state
+
+Use GitHub's native draft state as the canonical authoring gate:
+
+- `draft=true` = AUTHORING / NOT REVIEWABLE; early draft PR creation is allowed for durable identity;
+- before transition, Implementation finishes task-scoped evidence, updates durable PR context/evidence/limitations, and records the exact current head SHA;
+- the author explicitly marks the PR ready; `draft=false` = REVIEW-READY for ordinary discovery;
+- Coordinator/Review polling ignores drafts unless Marco explicitly requests early review;
+- semantic commits after review begins still invalidate prior exact-head review regardless of draft history.
+
+`scripts/pr_gate.py review-ready` is the repository-owned deterministic predicate for tooling/evals. Do not create a second label/state machine for review readiness.
+
 ## PR self-containment for forked review
 
 Review should be able to run independently of the Coordinator conversation.
@@ -131,7 +143,7 @@ The claim is inactive when:
 - Coordinator explicitly reassigns or takes over;
 - intentional parallel/deep/specialist review is requested.
 
-Visible activity includes a submitted review, review-thread/comment activity, or an explicit claim-renewal/progress comment. Do not keep the claim alive merely because the agent process might still exist somewhere.
+Visible activity includes a submitted review, review-thread/comment activity, or an explicit claim-renewal/progress comment. Do not keep a claim alive merely because the agent process might still exist somewhere.
 
 A submitted GitHub review on the exact head supersedes the claim. Independent specialist reviews may intentionally coexist; the claim prevents accidental duplication, not deliberate multi-review.
 
@@ -174,9 +186,11 @@ The development workflow should make evidence bind to the exact candidate being 
 
 Maintain the repository-owned test-selection/planning authority rather than inventing disconnected GitHub-only path rules.
 
-Where PR-triggered checks exist, they must identify the exact candidate/head they certify. Until automation covers a guarantee, governed manual/native evidence remains valid when its exact candidate identity is recorded.
+Ordinary CI runs for review-ready PR candidates and explicitly derives candidate identity from `pull_request.head.sha`; `GITHUB_SHA` on `pull_request` is not treated as the review identity. Every test checkout and evidence artifact for exact-head certification uses that candidate SHA.
 
-Optimization work must not weaken native PostgreSQL, browser, process/restart, migration, or other real-boundary evidence merely to reduce latency.
+The ordinary full-suite checkpoint publishes `Dish / required ordinary CI` directly on the exact candidate head only after all ordinary lanes succeed, plus `required-ordinary-ci-<candidate-sha>` metadata. Integration fails closed on absence, failure, stale/mismatched SHA, or a specialized-only green surface. `scripts/pr_gate.py integration` is the deterministic repository predicate for that gate.
+
+Until automation covers a separate guarantee, governed manual/native evidence remains valid when its exact candidate identity is recorded. Optimization work must not weaken native PostgreSQL, browser, process/restart, migration, or other real-boundary evidence merely to reduce latency.
 
 ## Agent lifecycle and compaction recovery
 
