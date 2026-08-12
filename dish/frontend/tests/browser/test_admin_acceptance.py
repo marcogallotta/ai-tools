@@ -164,6 +164,6 @@ def test_admin_inspect_any_dish_routes_resting_uuid_to_existing_detail(acceptanc
     admin.get_by_role("button", name="Inspect").click()
 
     acceptance.wait_detail()
-    assert f"/dishes/{TASK_ALPHA}/dish" in acceptance.page.url
+    assert f"/dishes/{TASK_ALPHA}/alpha-soup" in acceptance.page.url
     assert acceptance.runtime.detail_calls == [TASK_ALPHA]
     acceptance.assert_clean()
