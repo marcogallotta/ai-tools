@@ -124,6 +124,8 @@ Marco may explicitly authorize an emergency direct-to-`main` commit. That overri
 
 Before reporting completion, re-resolve the PR and require GitHub to report it merged. If an exceptional out-of-band landing already put the reviewed change on the target branch, first verify the authoritative target contains the equivalent reviewed result, comment on the stale PR with the landed identity and exception, then close it. Report that outcome as `landed out-of-band and closed`, never as `PR merged`; it is recovery, not precedent. Deployment/runtime state remains separate and must never be inferred from source state.
 
+After GitHub confirms a merge, a local-checkout integrator must fetch the target branch and automatically attempt to synchronize its local target-branch worktree. Fast-forward it with `merge --ff-only` only when that worktree is clean, is checked out on the expected target branch, and its local branch is an ancestor of the fetched remote branch. If any guard fails, leave the worktree untouched and report local synchronization as pending; local synchronization is cleanup, not merge authority.
+
 ## Migration from patch integration
 
 - New work is integrated from a GitHub PR; do not create a new patch-only integration handoff.
@@ -136,6 +138,7 @@ Before reporting completion, re-resolve the PR and require GitHub to report it m
 After remote landing is verified:
 
 - verify the PR is merged, or explicitly closed and documented under the out-of-band recovery rule;
+- confirm the guarded local target-branch synchronization completed or was left untouched and reported pending;
 - local temporary integration worktrees/branches may be removed when safe;
 - the implementation branch may be deleted when the PR is merged/closed and no recoverability need remains;
 - stale-branch cleanup remains manual for day one; cleanup automation is future work.
