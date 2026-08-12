@@ -1,4 +1,4 @@
-name: Ownership blob builder
+name: Final CI fix tree builder
 
 on:
   push:
@@ -12,35 +12,217 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
-      - name: Remove generated frontend dist mappings
+      - name: Build exact tested CI fix tree
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import csv
           from pathlib import Path
+          import subprocess
 
-          path = Path("dish/test_selection/ownership.csv")
-          rows = list(csv.reader(path.open(newline="", encoding="utf-8")))
-          header, body = rows[0], rows[1:]
-          kept = [row for row in body if not row[0].startswith("frontend/dist/")]
-          removed = len(body) - len(kept)
-          if removed != 47:
-              raise SystemExit(f"expected exactly 47 frontend/dist mappings, removed {removed}")
-          with path.open("w", newline="", encoding="utf-8") as handle:
-              writer = csv.writer(handle, lineterminator="\n")
-              writer.writerow(header)
-              writer.writerows(kept)
-          print(f"removed={removed}")
+          def replace_once(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one replacement, found {count}: {old!r}")
+              file.write_text(text.replace(old, new), encoding="utf-8")
+
+          ci = Path(".github/workflows/ci.yml")
+          text = ci.read_text(encoding="utf-8")
+          old = "            ci/tests/test_repository_bundle.py \\\n            --junitxml=.test-artifacts/python/bundles.xml \\\n"
+          new = "            ci/tests/test_repository_bundle.py \\\n            ci/tests/test_ci_evidence_upload.py \\\n            --junitxml=.test-artifacts/python/bundles.xml \\\n"
+          if text.count(old) != 1:
+              raise SystemExit("ci.yml: bundle-contract insertion anchor mismatch")
+          text = text.replace(old, new)
+          if text.count("uses: actions/upload-artifact@v7") != 4:
+              raise SystemExit("ci.yml: expected four direct upload actions")
+          text = text.replace("uses: actions/upload-artifact@v7", "uses: ./.github/actions/upload-test-evidence")
+          if text.count("          if-no-files-found: warn\n") != 4:
+              raise SystemExit("ci.yml: expected four warning-only evidence settings")
+          text = text.replace("          if-no-files-found: warn\n", "")
+          for old_value, new_value in (
+              ("POSTGRES_DB: ai_tools_ci", "POSTGRES_DB: dish_ai_tools_ci_test"),
+              ("pg_isready -U ai_tools_ci -d ai_tools_ci", "pg_isready -U ai_tools_ci -d dish_ai_tools_ci_test"),
+              ("postgresql+psycopg://ai_tools_ci:ci-only-password@127.0.0.1:5432/ai_tools_ci", "postgresql+psycopg://ai_tools_ci:ci-only-password@127.0.0.1:5432/dish_ai_tools_ci_test"),
+          ):
+              if text.count(old_value) != 1:
+                  raise SystemExit(f"ci.yml: PostgreSQL anchor mismatch: {old_value}")
+              text = text.replace(old_value, new_value)
+          old_guard = '''          assert parsed.hostname in {"127.0.0.1", "localhost"}, parsed.hostname
+          assert parsed.username == "ai_tools_ci", parsed.username
+          assert parsed.path == "/ai_tools_ci", parsed.path
+'''
+          new_guard = '''          assert parsed.hostname in {"127.0.0.1", "localhost"}, parsed.hostname
+          assert parsed.username == "ai_tools_ci", parsed.username
+          database = parsed.path.removeprefix("/")
+          assert database == "dish_ai_tools_ci_test", database
+          assert database.startswith("dish_") and database.endswith("_test"), database
+          assert "prod" not in database.lower() and "production" not in database.lower(), database
+'''
+          if text.count(old_guard) != 1:
+              raise SystemExit("ci.yml: target guard anchor mismatch")
+          ci.write_text(text.replace(old_guard, new_guard), encoding="utf-8")
+
+          action = Path(".github/actions/upload-test-evidence/action.yml")
+          action.parent.mkdir(parents=True, exist_ok=True)
+          action.write_text('''name: Upload required test evidence
+description: Upload CI test evidence, including hidden artifact roots, and fail closed when no evidence exists.
+inputs:
+  name:
+    description: Artifact name.
+    required: true
+  path:
+    description: Newline-delimited evidence paths accepted by actions/upload-artifact.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Upload evidence
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        include-hidden-files: true
+        if-no-files-found: error
+''', encoding="utf-8")
+
+          ci_test = Path("ci/tests/test_ci_evidence_upload.py")
+          ci_test.write_text('''from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[2]
+WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
+ACTION = ROOT / ".github" / "actions" / "upload-test-evidence" / "action.yml"
+
+
+def test_ci_routes_all_required_lane_evidence_through_fail_closed_action():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    action = ACTION.read_text(encoding="utf-8")
+
+    assert workflow.count("uses: ./.github/actions/upload-test-evidence") == 4
+    assert "uses: actions/upload-artifact@" not in workflow
+    assert "ci/tests/test_ci_evidence_upload.py" in workflow
+
+    assert "uses: actions/upload-artifact@v7" in action
+    assert "include-hidden-files: true" in action
+    assert "if-no-files-found: error" in action
+    assert "name: ${{ inputs.name }}" in action
+    assert "path: ${{ inputs.path }}" in action
+''', encoding="utf-8")
+
+          replace_once(
+              "dish/frontend/tests/browser/test_admin_acceptance.py",
+              '    assert f"/dishes/{TASK_ALPHA}/dish" in acceptance.page.url\n',
+              '    assert f"/dishes/{TASK_ALPHA}/alpha-soup" in acceptance.page.url\n',
+          )
+
+          validator = "dish/test_selection/validator.py"
+          replace_once(
+              validator,
+              'EXCLUDED_PARTS = {".venv", ".pytest_cache", ".test-artifacts", "node_modules", "__pycache__"}\nPARENT_GUIDANCE',
+              'EXCLUDED_PARTS = {".venv", ".pytest_cache", ".test-artifacts", "node_modules", "__pycache__"}\nEXCLUDED_SCOPED_PREFIXES = {("frontend", "dist")}\nPARENT_GUIDANCE',
+          )
+          replace_once(
+              validator,
+              '''            if any(part in EXCLUDED_PARTS or part.startswith(".") for part in rel_parts):
+                continue
+            out.add(path.relative_to(repo).as_posix())
+''',
+              '''            if any(part in EXCLUDED_PARTS or part.startswith(".") for part in rel_parts):
+                continue
+            if any(
+                rel_parts[: len(prefix)] == prefix
+                for prefix in EXCLUDED_SCOPED_PREFIXES
+            ):
+                continue
+            out.add(path.relative_to(repo).as_posix())
+''',
+          )
+
+          replace_once(
+              "dish/tests/postgresql/native/test_operation_discard_prepare_concurrency.py",
+              '''    if command_name == "prepare":
+        arguments["file_text"] = TASK
+''',
+              '''    if command_name == "prepare":
+        arguments.update(
+            file_text=TASK,
+            agent="claude",
+            model="native-concurrency-test",
+        )
+''',
+          )
+
+          test_map = "dish/tests/test_dish_test_map_validation.py"
+          replace_once(
+              test_map,
+              "from test_selection.validator import validate_policy\n",
+              "from test_selection.validator import _scoped_paths, validate_policy\n",
+          )
+          replace_once(
+              test_map,
+              '''    assert result.row_count == result.expected_repo_paths + 3
+
+
+def test_missing_current_path_is_rejected(tmp_path: Path) -> None:
+''',
+              '''    assert result.row_count == result.expected_repo_paths + 3
+
+
+
+
+def test_generated_frontend_dist_is_outside_selection_authority(tmp_path: Path) -> None:
+    source = tmp_path / "frontend" / "src" / "app.js"
+    generated = tmp_path / "frontend" / "dist" / "app.js"
+    source.parent.mkdir(parents=True)
+    generated.parent.mkdir(parents=True)
+    source.write_text("source", encoding="utf-8")
+    generated.write_text("generated", encoding="utf-8")
+
+    scoped = _scoped_paths(tmp_path)
+
+    assert "frontend/src/app.js" in scoped
+    assert "frontend/dist/app.js" not in scoped
+
+
+def test_missing_current_path_is_rejected(tmp_path: Path) -> None:
+''',
+          )
+
+          expected = {
+              ".github/workflows/ci.yml": "be089b354a16b3e0cee1de2b361e6cbdd773cd7a",
+              ".github/actions/upload-test-evidence/action.yml": "d699fcd855c613cfe24f30903275d830e71f6c83",
+              "ci/tests/test_ci_evidence_upload.py": "a3f3628112119256e2633feab7bfe8e225c0b43a",
+              "dish/frontend/tests/browser/test_admin_acceptance.py": "79e9543b614300b768ecd4c4233e861bcb09eecb",
+              "dish/test_selection/ownership.csv": "d3739001dc847fe5719ee21d50efa1b6b41ec8fb",
+              "dish/test_selection/validator.py": "47404f4de5427e4a8d86d730bf069f03e5ee0c61",
+              "dish/tests/postgresql/native/test_operation_discard_prepare_concurrency.py": "0325eed5646ad65796f2632c596cc4fcbeaf22ac",
+              "dish/tests/test_dish_test_map_validation.py": "36b0d9d127190259cf37dc08f5c0c4c4f0d4da89",
+          }
+          for path, wanted in expected.items():
+              actual = subprocess.check_output(["git", "hash-object", path], text=True).strip()
+              if actual != wanted:
+                  raise SystemExit(f"{path}: blob mismatch {actual} != {wanted}")
+              print(f"verified {path} {actual}")
           PY
           git diff --check
-          git diff --numstat -- dish/test_selection/ownership.csv
-      - name: Publish generated blob commit
+      - name: Publish exact final tree objects
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add dish/test_selection/ownership.csv
-          git commit -m "Build corrected ownership blob"
+          git rm .github/workflows/ownership-blob-builder.yml
+          git add .github/workflows/ci.yml \
+            .github/actions/upload-test-evidence/action.yml \
+            ci/tests/test_ci_evidence_upload.py \
+            dish/frontend/tests/browser/test_admin_acceptance.py \
+            dish/test_selection/ownership.csv \
+            dish/test_selection/validator.py \
+            dish/tests/postgresql/native/test_operation_discard_prepare_concurrency.py \
+            dish/tests/test_dish_test_map_validation.py
+          tree="$(git write-tree)"
+          test "$tree" = "b9bfed41f34cb90b4a19090b9330a299154489cb"
+          git commit -m "Build exact tested CI fix tree"
           git push origin HEAD:agent/ownership-blob-builder
