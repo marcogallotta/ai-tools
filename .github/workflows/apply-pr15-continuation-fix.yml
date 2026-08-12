@@ -1,0 +1,39 @@
+name: Apply PR 15 continuation fix
+
+on:
+  push:
+    branches:
+      - agent/pg-hold-reject
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Apply exact reviewed-head patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git hash-object dish/dish_pg/command_effects.py)" = "9083dc98a4bc3c1b5c7defe764ef87b6c7945efc"
+          test "$(git hash-object dish/dish_pg/planner.py)" = "429d9300c4556c66bc529c77e1f7384e3b0a4d0e"
+          test "$(git hash-object dish/dish_pg/command_port.py)" = "a96bf6eaf9cbf97f4be20e1dd7adc785f25da286"
+          test "$(git hash-object dish/tests/postgresql/test_stage4_command_semantics.py)" = "9e04b82796f9be3a92c8ae0321144c498a679006"
+          git apply --check .github/pr15-incremental.patch
+          git apply .github/pr15-incremental.patch
+          test "$(git hash-object dish/dish_pg/command_effects.py)" = "cb3d2ec7abe2c657fec5613cc9a14bfb58aebbd8"
+          test "$(git hash-object dish/dish_pg/planner.py)" = "b58d15a8877e99c723112287d9250bbe802a74a5"
+          test "$(git hash-object dish/dish_pg/command_port.py)" = "7362928250d26afa041d7b829ad75bbc9da73e84"
+          test "$(git hash-object dish/tests/postgresql/test_stage4_command_semantics.py)" = "5488dfbe383ca647cec1b3aa6f23f3be11bcc042"
+          rm .github/pr15-incremental.patch .github/workflows/apply-pr15-continuation-fix.yml
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Resume preconstruction evidence holds"
+          git push origin HEAD:agent/pg-hold-reject
