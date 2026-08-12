@@ -8,6 +8,7 @@ This is the canonical router for standing Dish agent roles. Root `CLAUDE.md` poi
 | Implementation agent, fix agent, integrator | [`implementation.md`](implementation.md) |
 | Patch reviewer, review specialist | [`review.md`](review.md) |
 | Workflow specialist, workflow agent | [`workflow.md`](workflow.md) |
+| PostgreSQL specialist, dark-launch specialist, dark-launch agent, PostgreSQL agent | [`postgresql-dark-launch.md`](postgresql-dark-launch.md) |
 
 ## Execution-host boundary
 
