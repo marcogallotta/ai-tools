@@ -131,11 +131,25 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release list \
-            --repo "$GITHUB_REPOSITORY" \
-            --limit 100 \
-            --json tagName,createdAt \
-            --jq '[.[] | select(.tagName | startswith("repository-bundle-"))] | sort_by(.createdAt) | reverse | .[12:] | .[].tagName' \
+          releases=.ci/repository-bundle-releases.tsv
+          : > "$releases"
+          page=1
+          while :; do
+            page_json="$(gh api --method GET \
+              "/repos/$GITHUB_REPOSITORY/releases" \
+              -f per_page=100 \
+              -f page="$page")"
+            count="$(jq 'length' <<<"$page_json")"
+            jq -r '.[] | select(.tag_name | startswith("repository-bundle-")) | [.created_at, .tag_name] | @tsv' \
+              <<<"$page_json" >> "$releases"
+            if (( count < 100 )); then
+              break
+            fi
+            page=$((page + 1))
+          done
+          sort -r "$releases" \
+            | tail -n +13 \
+            | cut -f2- \
             > .ci/repository-bundle-prune.txt
           while IFS= read -r tag; do
             test -n "$tag" || continue
