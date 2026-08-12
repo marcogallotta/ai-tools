@@ -16,18 +16,18 @@ jobs:
       postgres:
         image: postgres:17.10
         env:
-          POSTGRES_DB: ai_tools_ci
+          POSTGRES_DB: dish_ai_tools_ci_test
           POSTGRES_USER: ai_tools_ci
           POSTGRES_PASSWORD: ci-only-password
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U ai_tools_ci -d ai_tools_ci"
+          --health-cmd "pg_isready -U ai_tools_ci -d dish_ai_tools_ci_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
     env:
-      DISH_TEST_POSTGRESQL_DSN: postgresql+psycopg://ai_tools_ci:ci-only-password@127.0.0.1:5432/ai_tools_ci
+      DISH_TEST_POSTGRESQL_DSN: postgresql+psycopg://ai_tools_ci:ci-only-password@127.0.0.1:5432/dish_ai_tools_ci_test
     steps:
       - uses: actions/checkout@v6
         with:
@@ -49,9 +49,12 @@ jobs:
 
           assert os.environ.get("GITHUB_ACTIONS") == "true", "native PostgreSQL lane is CI-only here"
           parsed = urlparse(os.environ["DISH_TEST_POSTGRESQL_DSN"])
+          database = parsed.path.removeprefix("/")
           assert parsed.hostname in {"127.0.0.1", "localhost"}, parsed.hostname
           assert parsed.username == "ai_tools_ci", parsed.username
-          assert parsed.path == "/ai_tools_ci", parsed.path
+          assert database == "dish_ai_tools_ci_test", database
+          assert database.startswith("dish_") and database.endswith("_test"), database
+          assert "prod" not in database.lower() and "production" not in database.lower(), database
           print("CI PostgreSQL target guard passed")
           PY
       - name: Run governed native PostgreSQL certification
