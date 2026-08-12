@@ -23,4 +23,5 @@ Rules:
 - when a handoff says to assume or act as a named role, read this index and then the mapped contract before acting;
 - role contracts contain stable policy; task handoffs should contain only the task-specific delta;
 - do not infer a standing contract from a nearby filename or silently combine incompatible role policies;
-- if a requested recurring role is not listed, use root/architecture guidance plus the explicit task handoff and flag the missing standing contract when it materially affects execution.
+- if a requested recurring role is not listed, use root/architecture guidance plus the explicit task handoff and flag the missing standing contract when it materially affects execution;
+- a local-checkout agent (Claude Code, Codex) must record its own current role locally for provenance — see [`identity.md`](identity.md); this does not apply to ChatGPT, and it is never authoritative.
