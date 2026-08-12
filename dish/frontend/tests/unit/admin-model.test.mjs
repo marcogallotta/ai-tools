@@ -40,6 +40,15 @@ test("admin contract maps dish-first attention and operator journal", () => {
   assert.equal(workflowText(mapped.dishes[0].status), "No active operation");
 });
 
+test("admin contract accepts a durable Human Review question beyond the old generic-message bound", () => {
+  const value = payload();
+  const question = `Choose between the documented operator alternatives after reviewing this full context: ${"material evidence and consequence; ".repeat(20)}`;
+  assert.ok(question.length > 300);
+  value.dishes[0].attention[0].message = question;
+  const mapped = mapAdminResponse(value);
+  assert.equal(mapped.dishes[0].attention[0].message, question);
+});
+
 test("admin contract rejects summary counts that disagree with dishes", () => {
   const value = payload();
   value.summary.needs_you = 2;
