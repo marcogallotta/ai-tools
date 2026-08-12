@@ -206,14 +206,15 @@ def _has_env_override(tokens):
     return any(GIT_ENV_OVERRIDE_RE.match(t) for t in tokens)
 
 
-def _cwd_in_protected_checkout(cwd):
-    # Unknown cwd can't be ruled out as the protected checkout - fail closed.
-    if not cwd:
-        return True
-    resolved = os.path.realpath(cwd)
-    return resolved == PROTECTED_CHECKOUT_ROOT or resolved.startswith(
-        PROTECTED_CHECKOUT_ROOT + os.sep
-    )
+# Global options that take a value and can affect repository/config identity
+# (-c can set core.worktree or similar; --config-env indirects through an
+# arbitrary env var; --git-dir/--work-tree retarget the repo directly).
+# Rather than trying to tell a safe value from an unsafe one, any of these
+# marks the whole invocation ambiguous. Each can appear as two separate
+# tokens ("--git-dir <path>") or attached with "=" ("--git-dir=<path>") -
+# both forms must be consumed as a single unit so the token that follows
+# isn't misread as the git subcommand.
+GIT_AMBIGUOUS_VALUE_OPTS = ("-c", "--config-env", "--git-dir", "--work-tree")
 
 
 def _resolve_git_invocation(tokens, git_idx, base_dir):
@@ -221,8 +222,8 @@ def _resolve_git_invocation(tokens, git_idx, base_dir):
     -C the way git itself does (relative to the previous -C). Returns
     (resolved_dir, subcommand_index, ambiguous). ``ambiguous`` covers
     constructs this static, no-shell-expansion check cannot safely resolve:
-    a -C value containing shell expansion, or another repository-identity
-    global option (--git-dir/--work-tree)."""
+    a -C value containing shell expansion, or a value-taking global option
+    that can affect repository/config identity (see GIT_AMBIGUOUS_VALUE_OPTS)."""
     current = base_dir
     ambiguous = False
     i = git_idx + 1
@@ -241,11 +242,15 @@ def _resolve_git_invocation(tokens, git_idx, base_dir):
                 current = path if os.path.isabs(path) else os.path.normpath(os.path.join(current, path))
             i += 2
             continue
-        if (
-            t in ("--git-dir", "--work-tree")
-            or t.startswith("--git-dir=")
-            or t.startswith("--work-tree=")
-        ):
+        if t in GIT_AMBIGUOUS_VALUE_OPTS:
+            # Separate-argument form: "<opt> <value>" - both tokens belong to
+            # this option and must be consumed together, even if the value
+            # itself happens to start with "-".
+            ambiguous = True
+            i += 2 if i + 1 < len(tokens) else 1
+            continue
+        if any(t.startswith(opt + "=") for opt in GIT_AMBIGUOUS_VALUE_OPTS):
+            # Attached-argument form: "<opt>=<value>" in one token.
             ambiguous = True
             i += 1
             continue
@@ -343,17 +348,21 @@ def check_protected_checkout(segments, cwd):
             if kind is None:
                 continue
             if env_override or ambiguous:
-                if _cwd_in_protected_checkout(cwd):
-                    return deny(
-                        "[destructive-op-guard] This git "
-                        f"{subcommand} branch change has ambiguous repository "
-                        "resolution (env override or an unresolvable -C) while "
-                        f"running from inside {PROTECTED_CHECKOUT_ROOT}. Refusing "
-                        "to guess whether it targets the protected shared "
-                        "checkout. Create/enter an owned worktree "
-                        "(git worktree add <path> <branch>) and retry there."
-                    )
-                continue
+                # Deny regardless of cwd: an env override or an unresolvable
+                # global option can retarget Git at the protected checkout
+                # from anywhere, so the session's starting directory proves
+                # nothing about where this invocation actually lands. Cwd is
+                # only used above to resolve -C paths, never to rule this
+                # branch out.
+                return deny(
+                    "[destructive-op-guard] This git "
+                    f"{subcommand} branch change has ambiguous repository "
+                    "resolution (env override or an unresolvable/identity-"
+                    "affecting global option). Refusing to guess whether it "
+                    "targets the protected shared checkout. Create/enter an "
+                    "owned worktree (git worktree add <path> <branch>) and "
+                    "retry there."
+                )
             identity = _resolve_repo_identity(resolved)
             if identity is None:
                 continue

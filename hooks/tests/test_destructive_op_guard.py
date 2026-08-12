@@ -459,14 +459,19 @@ class TestProtectedCheckoutBranchIsolation:
         )
         assert_denied(decision, "ambiguous repository resolution")
 
-    def test_env_override_outside_primary_not_hard_denied(
+    def test_env_override_outside_primary_still_denied(
         self, destructive_op_guard, protected_repo, monkeypatch, capsys
     ):
+        # GIT_DIR can retarget Git at the protected checkout from anywhere;
+        # the session's own cwd proves nothing about where this actually
+        # lands, so an ambiguous env override must deny regardless of cwd
+        # (real repro: PR #16 review 4920042246 confirmed cwd-outside-primary
+        # bypassed this into the ordinary ASK path).
         decision = run_hook(
             destructive_op_guard, "GIT_DIR=/tmp/x git checkout -b agent/foo", monkeypatch, capsys,
             cwd=str(protected_repo["unrelated"]),
         )
-        assert_asked(decision, "Destructive git operation")
+        assert_denied(decision, "ambiguous repository resolution")
 
     def test_missing_cwd_fails_closed_to_denied(self, destructive_op_guard, protected_repo, monkeypatch, capsys):
         # No cwd in the hook payload at all: can't rule out the protected
@@ -475,3 +480,63 @@ class TestProtectedCheckoutBranchIsolation:
             destructive_op_guard, "GIT_DIR=/tmp/x git checkout -b agent/foo", monkeypatch, capsys,
         )
         assert_denied(decision, "ambiguous repository resolution")
+
+    def test_work_tree_override_outside_primary_denied(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        decision = run_hook(
+            destructive_op_guard, "GIT_WORK_TREE=/tmp/x git checkout -b agent/foo", monkeypatch, capsys,
+            cwd=str(protected_repo["unrelated"]),
+        )
+        assert_denied(decision, "ambiguous repository resolution")
+
+    def test_dash_c_config_global_option_in_primary_still_denied(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        # Real repro from review 4920042246: the separate-token value of
+        # "-c" was previously misread as the subcommand, so the actual
+        # "checkout -b" further along was never classified at all.
+        decision = run_hook(
+            destructive_op_guard, "git -c color.ui=false checkout -b agent/foo", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_denied(decision, "ambiguous repository resolution")
+
+    def test_config_env_global_option_in_primary_still_denied(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        decision = run_hook(
+            destructive_op_guard,
+            "git --config-env core.editor=SOME_ENV checkout -b agent/foo",
+            monkeypatch,
+            capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_denied(decision, "ambiguous repository resolution")
+
+    def test_separate_token_git_dir_and_work_tree_in_primary_still_denied(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        # Real repro from review 4920042246: separate-argument --git-dir/
+        # --work-tree previously consumed only the flag token, leaving the
+        # path value to be misread as the subcommand.
+        decision = run_hook(
+            destructive_op_guard,
+            f"git --git-dir {protected_repo['primary']}/.git --work-tree {protected_repo['primary']} "
+            "checkout -b agent/foo",
+            monkeypatch,
+            capsys,
+            cwd=str(protected_repo["unrelated"]),
+        )
+        assert_denied(decision, "ambiguous repository resolution")
+
+    def test_dash_c_config_option_does_not_break_ordinary_readonly_git(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        # Correct consumption of "-c <value>" must not misclassify an
+        # unrelated read-only subcommand as a branch change either.
+        decision = run_hook(
+            destructive_op_guard, "git -c color.ui=false status", monkeypatch, capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_allowed(decision)
