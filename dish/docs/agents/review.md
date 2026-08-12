@@ -33,12 +33,40 @@ Before reviewing:
 1. resolve the supplied PR in GitHub;
 2. record the base branch/base SHA when available;
 3. record the current PR head branch and exact head SHA;
-4. inspect the PR diff and relevant evidence for that exact head;
-5. make review comments on the PR rather than returning a detached patch review.
+4. inspect the PR description for the owning Asana task and implementation evidence/context;
+5. fetch the linked Asana task when task intent, decisions, dependencies, or live orchestration state matter;
+6. inspect the PR diff and relevant repository authority/evidence for that exact head;
+7. make review comments on the PR rather than returning a detached patch review.
+
+A reviewer must not depend on coordinator chat history. The durable takeover context is the PR, its linked Asana task, current repository authority, and existing GitHub review discussion. If the PR omits the owning Asana task when one exists or lacks enough implementation context to identify the intended change, request that durable context rather than reconstructing it from private conversation.
 
 An approval applies to one exact PR head SHA. When the review surface supports anchoring a submitted review to a commit, anchor it to that head SHA. The return contract must always state the exact reviewed head SHA even if GitHub's branch-protection settings do not automatically dismiss stale approvals.
 
 Do not treat `PR URL + branch name` alone as sufficient identity; the head SHA must match.
+
+## Forked review claims
+
+Review may be forked away from the coordinator so review and orchestration can proceed in parallel. Avoid using GitHub assignee state as agent-review ownership: a dead agent must not leave a durable lock.
+
+Before substantive review, a forked reviewer should inspect current PR comments/reviews for an active claim on the exact current head. If none is active, post a short claim comment such as:
+
+> `REVIEW CLAIMED — head <exact-sha> — stale after 60m without review activity.`
+
+Sign the comment with the normal Dish agent attribution footer.
+
+The claim is an **advisory soft lease**, not review authority. It exists only to avoid wasting agents on accidental duplicate review.
+
+A claim is no longer active when any of these is true:
+
+- the PR head SHA changes;
+- the claimant explicitly releases it;
+- 60 minutes pass with no visible review activity from the claimant on the PR;
+- the coordinator explicitly reassigns or takes over the review;
+- intentional parallel/deep review is requested.
+
+Visible review activity includes a submitted review, review-thread/comment activity, or an explicit claim-renewal/progress comment. Do not keep a claim alive merely because the agent process may still exist somewhere.
+
+When a submitted GitHub review exists for the exact head, that review state supersedes the claim. A second reviewer may still be deliberately assigned for a specialist or independent review; the soft claim only prevents accidental duplication.
 
 ## Review depth
 
