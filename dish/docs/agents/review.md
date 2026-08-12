@@ -33,12 +33,56 @@ Before reviewing:
 1. resolve the supplied PR in GitHub;
 2. record the base branch/base SHA when available;
 3. record the current PR head branch and exact head SHA;
-4. inspect the PR diff and relevant evidence for that exact head;
-5. make review comments on the PR rather than returning a detached patch review.
+4. inspect the PR description for the owning Asana task and implementation evidence/context;
+5. fetch the linked Asana task when task intent, decisions, dependencies, or live orchestration state matter;
+6. inspect the PR diff and relevant repository authority/evidence for that exact head;
+7. make review comments on the PR rather than returning a detached patch review.
+
+A reviewer must not depend on coordinator chat history. The durable takeover context is the PR, its linked Asana task, current repository authority, and existing GitHub review discussion. If the PR omits the owning Asana task when one exists or lacks enough implementation context to identify the intended change, request that durable context rather than reconstructing it from private conversation.
 
 An approval applies to one exact PR head SHA. When the review surface supports anchoring a submitted review to a commit, anchor it to that head SHA. The return contract must always state the exact reviewed head SHA even if GitHub's branch-protection settings do not automatically dismiss stale approvals.
 
 Do not treat `PR URL + branch name` alone as sufficient identity; the head SHA must match.
+
+## Durable GitHub review submission
+
+A review is not complete until the verdict is durably submitted as a formal GitHub pull-request review for the exact reviewed head SHA. A chat-only verdict, detached handoff, or review-claim issue comment is incomplete and must not be treated as repository review state.
+
+Dish agents currently act through the same GitHub account that owns agent-authored PRs. GitHub therefore does not permit those agents to use `APPROVE` or `REQUEST_CHANGES` on their own PRs. Under the current Dish workflow, **every completed agent review must use a formal `COMMENT` review** as the canonical transport; do not treat `APPROVE`/`REQUEST_CHANGES` as the normal agent-review path.
+
+Before returning any verdict:
+
+1. submit a GitHub pull-request `COMMENT` review anchored to the exact reviewed head SHA;
+2. include the explicit textual `VERDICT: MERGE` or `VERDICT: BLOCK`;
+3. include the material findings and the exact reviewed head SHA in that review;
+4. include the normal Dish agent attribution;
+5. verify that the submitted review exists on the PR and is anchored to the exact reviewed head before returning the coordinator handoff.
+
+A review-claim issue comment never satisfies this completion gate. If Dish later adopts distinct GitHub reviewer identities that can submit stateful approvals/change requests, Development Workflow may revise this transport rule deliberately; until then formal `COMMENT` review is authoritative agent-review submission.
+
+## Forked review claims
+
+Review may be forked away from the coordinator so review and orchestration can proceed in parallel. Avoid using GitHub assignee state as agent-review ownership: a dead agent must not leave a durable lock.
+
+Before substantive review, a forked reviewer should inspect current PR comments/reviews for an active claim on the exact current head. If none is active, post a short claim comment such as:
+
+> `REVIEW CLAIMED — head <exact-sha> — stale after 60m without review activity.`
+
+Sign the comment with the normal Dish agent attribution footer.
+
+The claim is an **advisory soft lease**, not review authority. It exists only to avoid wasting agents on accidental duplicate review.
+
+A claim is no longer active when any of these is true:
+
+- the PR head SHA changes;
+- the claimant explicitly releases it;
+- 60 minutes pass with no visible review activity from the claimant on the PR;
+- the coordinator explicitly reassigns or takes over the review;
+- intentional parallel/deep review is requested.
+
+Visible review activity includes a submitted review, review-thread/comment activity, or an explicit claim-renewal/progress comment. Do not keep a claim alive merely because the agent process may still exist somewhere.
+
+When a submitted GitHub review exists for the exact head, that review state supersedes the claim. A second reviewer may still be deliberately assigned for a specialist or independent review; the soft claim only prevents accidental duplication.
 
 ## Review depth
 

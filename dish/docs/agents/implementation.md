@@ -61,6 +61,25 @@ For new work:
 
 The PR is the review surface. Do not create a patch file or patch-only handoff for new work.
 
+### Durable review context in the PR
+
+A fresh reviewer must be able to take the PR without coordinator chat history or the original implementation-agent session. The PR description therefore carries the minimum durable review context and links back to live orchestration.
+
+Before requesting review, ensure the PR description contains:
+
+- the owning Asana task URL or GID;
+- the exact task goal and implementation scope;
+- the exact source/base SHA and current PR head SHA;
+- a concise semantic summary;
+- the exact changed files or a clear changed-surface summary when the PR is large;
+- tests/checks/evidence actually run and any environment limitation or missing certification;
+- material dependencies, parallel PRs, migration/integration ordering, or known overlap;
+- any specialist invariant or narrow review question already known.
+
+Do not paste the entire Asana task or duplicate long review discussion into the PR. The PR should carry enough durable context to route and start review; the reviewer still reads current repository authority and fetches the linked Asana task when task intent, decisions, dependencies, or live orchestration state matter.
+
+If the task has moved projects or its live Asana URL is available, prefer the current task permalink rather than a stale copied project path. A PR that cannot identify its owning task when one exists is not ready to enter review.
+
 Host tooling differs, but the artifact contract does not:
 
 - **ChatGPT:** use the connected GitHub integration as source/history authority and use connector-native branch/commit/PR operations when available;
