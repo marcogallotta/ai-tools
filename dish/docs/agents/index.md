@@ -7,6 +7,7 @@ All repository-modifying roles inherit [`contributor-base.md`](contributor-base.
 | Role / common names | Standing contract |
 |---|---|
 | Coordinator, master, orchestration coordinator | [`coordinator.md`](coordinator.md) |
+| Development Workflow specialist, development workflow agent, developer-process specialist | [`development-workflow.md`](development-workflow.md) |
 | Implementation agent, fix agent | [`implementation.md`](implementation.md) |
 | Integration agent, integrator | [`integration.md`](integration.md) |
 | PR reviewer, review specialist | [`review.md`](review.md) |
