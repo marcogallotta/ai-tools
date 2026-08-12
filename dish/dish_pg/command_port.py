@@ -32,6 +32,7 @@ from .document_authority import (
     destination_gid,
     held_document,
     parse_canonical_document,
+    prepared_document,
     ready_document,
     resumed_document,
 )
@@ -1634,12 +1635,21 @@ class PostgresCommandPort:
         )
         file_text = call.arguments.get("file_text")
         body_value = call.arguments.get("body")
-        parts = parse_canonical_document(
-            file_text=str(file_text) if file_text is not None else None,
-            title=str(call.arguments.get("title", prior.title)),
-            body=str(body_value) if body_value is not None else None,
-            expected_status="pending-verification",
-        )
+        if operation.kind == "initial" and file_text is not None:
+            parts = prepared_document(
+                str(file_text),
+                agent=str(call.arguments.get("agent")),
+                model=str(call.arguments.get("model")),
+                at=call.now,
+                protocol_release=binding.protocol_release,
+            )
+        else:
+            parts = parse_canonical_document(
+                file_text=str(file_text) if file_text is not None else None,
+                title=str(call.arguments.get("title", prior.title)),
+                body=str(body_value) if body_value is not None else None,
+                expected_status="pending-verification",
+            )
         version_id = self._activate_document(
             generation_id=generation.generation_id,
             task_id=task.task_id,

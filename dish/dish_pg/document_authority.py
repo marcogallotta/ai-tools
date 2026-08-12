@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any, Mapping
 
 from dish_tool.errors import DishRuleError
-from dish_tool.lifecycle import hold, ready, resumed
+from dish_tool.lifecycle import hold, pending_verification, ready, resumed
 from dish_tool.governed_diff import preserve_material_change_history
 from dish_tool.models import material_editor_line, verification_actor_line
 from dish_tool.task_document import (
@@ -107,6 +107,55 @@ def render_parts(document: CanonicalTaskDocument) -> CanonicalDocumentParts:
     rendered = document.render()
     lines = rendered.splitlines()
     return CanonicalDocumentParts(document, lines[0], "\n".join(lines[1:]) + "\n")
+
+
+def prepared_document(
+    file_text: str,
+    *,
+    agent: str,
+    model: str,
+    at: datetime,
+    protocol_release: str,
+) -> CanonicalDocumentParts:
+    """Parse a fresh initial-operation Research candidate and stamp provenance.
+
+    Mirrors ``dish_tool.step6.prepare_live``'s initial-operation handling:
+    prepare deterministically owns and rewrites "Status", "Status detail",
+    "Resume status", "Verification protocol release", "Verified by",
+    "Researched by", and "Self-verified" from known/computed values,
+    regardless of what the candidate wrote there, rather than validating the
+    caller's self-reported text as-is.
+
+    ``protocol_release`` is PG's own authority-binding protocol identity
+    (``AuthorityBinding.protocol_release``), not a byte-identical replica of
+    legacy's git-content-hash of the live Verification protocol document
+    (``dish_tool.releases.current_verification_protocol_release``): PostgreSQL
+    has no equivalent git-tree-reading mechanism, and building one is a
+    separate, larger piece of work than this fix. Using PG's own binding
+    identity still satisfies the actual requirement -- an authoritative,
+    non-caller-supplied, non-"None" value -- rather than trusting whatever
+    the candidate wrote (including "None", which legacy would never persist
+    for an open pending-verification record).
+    """
+    try:
+        document = parse_task_document(str(file_text))
+    except DocumentParseError as exc:
+        raise CanonicalDocumentError(
+            "candidate is not a canonical Dish document",
+            errors=document_parse_error_payloads(exc),
+        ) from exc
+    try:
+        actor_line = material_editor_line(agent, model, at.date().isoformat())
+    except DishRuleError as exc:
+        raise CanonicalDocumentError(str(exc)) from exc
+    normalized = pending_verification(
+        document.state.values, protocol_release=protocol_release
+    )
+    state = dict(normalized.values)
+    state["Researched by"] = actor_line
+    state["Self-verified"] = actor_line
+    stamped = dataclasses.replace(document, state=TaskState(state))
+    return _validated_parts(stamped, expected_status="pending-verification")
 
 
 def ready_document(

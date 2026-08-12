@@ -153,7 +153,17 @@ def _start_initial(port: PostgresCommandPort, ids, *, task_id, run_id, owner="ow
     return result
 
 
-def _prepare_for_verification(port: PostgresCommandPort, ids, *, task_id, operation_id, run_id, owner="owner-1"):
+def _prepare_for_verification(
+    port: PostgresCommandPort,
+    ids,
+    *,
+    task_id,
+    operation_id,
+    run_id,
+    owner="owner-1",
+    agent="claude",
+    model="test-model",
+):
     result = port.execute(
         _call(
             "prepare",
@@ -164,10 +174,12 @@ def _prepare_for_verification(port: PostgresCommandPort, ids, *, task_id, operat
                 "task_id": str(task_id),
                 "operation_id": operation_id,
                 "file_text": TASK,
+                "agent": agent,
+                "model": model,
             },
         )
     )
-    assert result.ok
+    assert result.ok, (result.code, result.http_status, result.data)
     return result
 
 

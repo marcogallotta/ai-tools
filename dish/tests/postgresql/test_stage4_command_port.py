@@ -26,6 +26,7 @@ from dish_pg.protocol import AuthenticationError, PostgresProtocolService, Scope
 from dish_pg.read_model import InvalidCursor
 from dish_pg.transition import ProjectionService
 from dish_tool.workflow_policy import WorkflowSnapshot, legal_actions
+from tests.support.canonical import TASK
 from tests.support.postgresql.core import _import_one
 from tests.support.postgresql.command import (
     _add_verification_queue,
@@ -70,6 +71,63 @@ def test_stage4_postgresql_action_path_contract() -> None:
 )
 def test_task_reference_from_dish_reduces_known_shapes(dish_value, expected) -> None:
     assert _task_reference_from_dish(dish_value) == expected
+
+
+def test_prepare_stamps_researched_by_and_self_verified_from_agent(workflow_db) -> None:
+    """PG must own tool-owned process fields on initial prepare, like legacy.
+
+    Reproduces the exact PROD shape: a candidate with non-canonical actor-line
+    grammar *and* "Verification protocol release: None" (both present in the
+    real failing gpt submission). Legacy's initial ``prepare`` deterministically
+    overwrites "Status detail", "Resume status", "Verification protocol
+    release", "Verified by", "Researched by", and "Self-verified" from
+    known/computed values regardless of what the candidate wrote there; PG
+    must do the same rather than validating the caller's self-reported text
+    as-is.
+    """
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        _add_verification_queue(session, ids, context)
+        author_run = _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=author_run)
+        port = _port(session, ids)
+        started = _start_initial(port, ids, task_id=task_id, run_id=author_run, agent="gpt")
+        malformed_candidate = TASK.replace(
+            "Researched by: ChatGPT — GPT-5, 2026-07-25",
+            "Researched by: gpt — gpt-5.6-sol, 2026-08-12",
+        ).replace(
+            "Self-verified: ChatGPT — GPT-5, 2026-07-25",
+            "Self-verified: gpt — gpt-5.6-sol, 2026-08-12",
+        ).replace(
+            "Verification protocol release: abc123",
+            "Verification protocol release: None",
+        )
+        result = port.execute(
+            _call(
+                "prepare",
+                run_id=author_run,
+                request_id=_next(ids),
+                owner="owner-1",
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                    "file_text": malformed_candidate,
+                    "agent": "gpt",
+                    "model": "gpt-5.6-sol",
+                },
+            )
+        )
+        assert result.ok, (result.code, result.http_status, result.data)
+
+        version = session.get(
+            models.ContentVersion, uuid.UUID(result.data["content_version_id"])
+        )
+        assert "Verification protocol release: None" not in version.body
+        assert "Researched by: gpt — gpt-5.6-sol, 2026-08-12" not in version.body
+        assert "Self-verified: gpt — gpt-5.6-sol, 2026-08-12" not in version.body
+        assert "Verified by: None" in version.body
+        assert "Status detail: None" in version.body
+        assert "Resume status: None" in version.body
 
 
 def test_inspect_resolves_task_from_dish_argument(workflow_db) -> None:
