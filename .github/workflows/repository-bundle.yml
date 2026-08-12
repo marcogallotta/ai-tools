@@ -8,16 +8,22 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: repository-bundle-publication
   cancel-in-progress: false
 
 jobs:
-  build-verify-publish:
+  build-verify-artifact:
     name: Build and verify exact-main repository bundle
     runs-on: ubuntu-24.04
+    outputs:
+      artifact_name: ${{ steps.bundle.outputs.artifact_name }}
+      release_tag: ${{ steps.bundle.outputs.release_tag }}
+      bundle_name: ${{ steps.bundle.outputs.bundle_name }}
+      manifest_name: ${{ steps.bundle.outputs.manifest_name }}
+      checksum_name: ${{ steps.bundle.outputs.checksum_name }}
     env:
       SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.sha }}
       SOURCE_REF: refs/heads/main
@@ -80,15 +86,47 @@ jobs:
           git -C .ci/repository-bundle-clone log --oneline -3
           git -C .ci/repository-bundle-clone grep -n "dependency-bundle" -- CLAUDE.md
 
-      - name: Publish immutable Release authority
-        if: github.event_name != 'pull_request'
+      - name: Upload ChatGPT Actions artifact mirror
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.bundle.outputs.artifact_name }}
+          path: .ci/repository-bundle-publication
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-release-retention:
+    name: Publish immutable Release and bound retention
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build-verify-artifact
+    permissions:
+      actions: read
+      contents: write
+    runs-on: ubuntu-24.04
+    env:
+      SOURCE_SHA: ${{ github.sha }}
+      ARTIFACT_NAME: ${{ needs.build-verify-artifact.outputs.artifact_name }}
+      RELEASE_TAG: ${{ needs.build-verify-artifact.outputs.release_tag }}
+      BUNDLE_NAME: ${{ needs.build-verify-artifact.outputs.bundle_name }}
+      MANIFEST_NAME: ${{ needs.build-verify-artifact.outputs.manifest_name }}
+      CHECKSUM_NAME: ${{ needs.build-verify-artifact.outputs.checksum_name }}
+    steps:
+      - name: Download verified Actions artifact
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.bundle.outputs.release_tag }}
-          BUNDLE_NAME: ${{ steps.bundle.outputs.bundle_name }}
-          MANIFEST_NAME: ${{ steps.bundle.outputs.manifest_name }}
-          CHECKSUM_NAME: ${{ steps.bundle.outputs.checksum_name }}
+        run: |
+          set -euo pipefail
+          rm -rf .ci/repository-bundle-publication
+          mkdir -p .ci/repository-bundle-publication
+          gh run download "$GITHUB_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "$ARTIFACT_NAME" \
+            --dir .ci/repository-bundle-publication
+
+      - name: Publish immutable Release authority
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           publication=.ci/repository-bundle-publication
@@ -116,16 +154,7 @@ jobs:
               "$publication/$CHECKSUM_NAME"
           fi
 
-      - name: Upload ChatGPT Actions artifact mirror
-        uses: actions/upload-artifact@v7
-        with:
-          name: ${{ steps.bundle.outputs.artifact_name }}
-          path: .ci/repository-bundle-publication
-          if-no-files-found: error
-          retention-days: 30
-
       - name: Bound repository-bundle Release retention
-        if: github.event_name != 'pull_request'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
