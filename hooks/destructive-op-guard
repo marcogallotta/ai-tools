@@ -37,9 +37,11 @@ SSH_VALUE_FLAGS = set("bicloDEeFIiJLmopQRSWw")
 # in an isolated worktree instead.
 PROTECTED_CHECKOUT_ROOT = os.path.realpath(os.path.expanduser("~/ai-tools"))
 
-GIT_ENV_OVERRIDE_RE = re.compile(
-    r"^(GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR|GIT_CONFIG_[A-Za-z0-9_]*)="
-)
+# GIT_DIR/GIT_WORK_TREE/GIT_COMMON_DIR retarget which repository/worktree
+# Git actually operates on. GIT_CONFIG_* only injects config *values* (like
+# -c) and is handled separately below - it never changes which repo is
+# targeted, so it must not be treated the same as a location override.
+GIT_ENV_LOCATION_OVERRIDE_RE = re.compile(r"^(GIT_DIR|GIT_WORK_TREE|GIT_COMMON_DIR)=(.*)$")
 
 
 def ask(reason):
@@ -202,29 +204,60 @@ def check_docker(segments):
 # moved.
 
 
-def _has_env_override(tokens):
-    return any(GIT_ENV_OVERRIDE_RE.match(t) for t in tokens)
+def _resolve_literal_path(value, base_dir):
+    """Expand/join a literal path token the way -C's argument would be
+    resolved, or return None if it contains shell expansion this static
+    check can't safely evaluate."""
+    if "$" in value or "`" in value:
+        return None
+    expanded = os.path.expanduser(value)
+    return expanded if os.path.isabs(expanded) else os.path.normpath(os.path.join(base_dir, expanded))
 
 
-# Global options that take a value and can affect repository/config identity
-# (-c can set core.worktree or similar; --config-env indirects through an
-# arbitrary env var; --git-dir/--work-tree retarget the repo directly).
-# Rather than trying to tell a safe value from an unsafe one, any of these
-# marks the whole invocation ambiguous. Each can appear as two separate
-# tokens ("--git-dir <path>") or attached with "=" ("--git-dir=<path>") -
-# both forms must be consumed as a single unit so the token that follows
-# isn't misread as the git subcommand.
-GIT_AMBIGUOUS_VALUE_OPTS = ("-c", "--config-env", "--git-dir", "--work-tree")
+def _env_location_overrides(tokens, base_dir):
+    """Scan VAR=value prefix tokens for GIT_DIR/GIT_WORK_TREE/GIT_COMMON_DIR
+    - these retarget which repository/worktree Git operates on, unlike
+    GIT_CONFIG_* (config values only, handled like -c below). Returns
+    (extra_env, ambiguous): extra_env reproduces the override for an actual
+    `git rev-parse` subprocess so real identity resolution decides the
+    outcome instead of a blanket guess; ambiguous is True when a location
+    override is present but its value can't be safely resolved."""
+    extra_env = {}
+    ambiguous = False
+    for t in tokens:
+        match = GIT_ENV_LOCATION_OVERRIDE_RE.match(t)
+        if match is None:
+            continue
+        name, value = match.group(1), match.group(2)
+        resolved = _resolve_literal_path(value, base_dir) if value else None
+        if resolved is None:
+            ambiguous = True
+        else:
+            extra_env[name] = resolved
+    return extra_env, ambiguous
+
+
+# Global options that take a value. -c/--config-env only inject config
+# *values* (like GIT_CONFIG_*) and never change which repository Git
+# targets, so they're consumed here (to keep the token walk correct) but
+# never marked ambiguous. --git-dir/--work-tree do change the target, so
+# their literal-path values are folded into git_dir/work_tree overrides and
+# actually resolved below rather than guessed at.
+GIT_CONFIG_VALUE_OPTS = ("-c", "--config-env")
+GIT_LOCATION_VALUE_OPTS = ("--git-dir", "--work-tree")
 
 
 def _resolve_git_invocation(tokens, git_idx, base_dir):
     """Walk global options after 'git' up to the subcommand, applying each
-    -C the way git itself does (relative to the previous -C). Returns
-    (resolved_dir, subcommand_index, ambiguous). ``ambiguous`` covers
+    -C/--git-dir/--work-tree the way git itself would. Returns
+    (location_args, subcommand_index, ambiguous): ``location_args`` is the
+    literal list of git global flags needed to reproduce this invocation's
+    actual repository/working-tree resolution via a real `git rev-parse`
+    subprocess (so identity is proven, not guessed). ``ambiguous`` covers
     constructs this static, no-shell-expansion check cannot safely resolve:
-    a -C value containing shell expansion, or a value-taking global option
-    that can affect repository/config identity (see GIT_AMBIGUOUS_VALUE_OPTS)."""
-    current = base_dir
+    a -C/--git-dir/--work-tree value containing shell expansion, or a
+    location option with no value."""
+    location_args = ["-C", base_dir]
     ambiguous = False
     i = git_idx + 1
     while i < len(tokens):
@@ -234,34 +267,50 @@ def _resolve_git_invocation(tokens, git_idx, base_dir):
                 ambiguous = True
                 i += 1
                 continue
-            path = tokens[i + 1]
-            if "$" in path or "`" in path:
+            resolved = _resolve_literal_path(tokens[i + 1], base_dir)
+            if resolved is None:
                 ambiguous = True
             else:
-                path = os.path.expanduser(path)
-                current = path if os.path.isabs(path) else os.path.normpath(os.path.join(current, path))
+                location_args += ["-C", resolved]
             i += 2
             continue
-        if t in GIT_AMBIGUOUS_VALUE_OPTS:
-            # Separate-argument form: "<opt> <value>" - both tokens belong to
-            # this option and must be consumed together, even if the value
-            # itself happens to start with "-".
-            ambiguous = True
+        if t in GIT_LOCATION_VALUE_OPTS:
+            if i + 1 >= len(tokens):
+                ambiguous = True
+                i += 1
+                continue
+            resolved = _resolve_literal_path(tokens[i + 1], base_dir)
+            if resolved is None:
+                ambiguous = True
+            else:
+                location_args.append(f"{t}={resolved}")
+            i += 2
+            continue
+        if any(t.startswith(opt + "=") for opt in GIT_LOCATION_VALUE_OPTS):
+            flag, _, value = t.partition("=")
+            resolved = _resolve_literal_path(value, base_dir)
+            if resolved is None:
+                ambiguous = True
+            else:
+                location_args.append(f"{flag}={resolved}")
+            i += 1
+            continue
+        if t in GIT_CONFIG_VALUE_OPTS:
+            # Separate-argument form: "<opt> <value>" - config-only, never
+            # affects which repo is targeted, so just consumed, not folded
+            # into location_args and never marks this ambiguous.
             i += 2 if i + 1 < len(tokens) else 1
             continue
-        if any(t.startswith(opt + "=") for opt in GIT_AMBIGUOUS_VALUE_OPTS):
-            # Attached-argument form: "<opt>=<value>" in one token.
-            ambiguous = True
+        if any(t.startswith(opt + "=") for opt in GIT_CONFIG_VALUE_OPTS):
             i += 1
             continue
         if t.startswith("-"):
             i += 1
             continue
-        # Reached the subcommand: keep scanning past it is unnecessary, this
-        # is the token the caller classifies. ``ambiguous`` reflects whatever
-        # was found on the way here, even if resolution kept going.
-        return current, i, ambiguous
-    return current, None, ambiguous
+        # Reached the subcommand: this is the token the caller classifies.
+        # ``ambiguous`` reflects whatever was found on the way here.
+        return location_args, i, ambiguous
+    return location_args, None, ambiguous
 
 
 def _branch_change_kind(tokens, sub_idx, subcommand):
@@ -289,13 +338,15 @@ def _branch_change_kind(tokens, sub_idx, subcommand):
     return "switch"
 
 
-def _git_rev_parse(directory, arg):
+def _git_rev_parse(location_args, extra_env, arg):
+    env = {**os.environ, **extra_env} if extra_env else None
     try:
         result = subprocess.run(
-            ["git", "-C", directory, "rev-parse", "--path-format=absolute", arg],
+            ["git", *location_args, "rev-parse", "--path-format=absolute", arg],
             capture_output=True,
             text=True,
             timeout=5,
+            env=env,
         )
     except OSError:
         return None
@@ -304,15 +355,18 @@ def _git_rev_parse(directory, arg):
     return result.stdout.strip() or None
 
 
-def _resolve_repo_identity(directory):
-    """Return (toplevel, git_dir, common_dir) for the repo containing
-    ``directory``, or None if it's not inside a git repository (or git
-    itself couldn't be run) - in which case this check doesn't apply."""
-    toplevel = _git_rev_parse(directory, "--show-toplevel")
+def _resolve_repo_identity(location_args, extra_env):
+    """Return (toplevel, git_dir, common_dir) for the repo/worktree that
+    ``location_args``/``extra_env`` (the invocation's actual -C/--git-dir/
+    --work-tree/GIT_DIR/GIT_WORK_TREE/GIT_COMMON_DIR resolution) would
+    target, resolved via real `git rev-parse` rather than guessed - or None
+    if that's not inside a git repository (or git itself couldn't be run),
+    in which case this check doesn't apply."""
+    toplevel = _git_rev_parse(location_args, extra_env, "--show-toplevel")
     if toplevel is None:
         return None
-    git_dir = _git_rev_parse(directory, "--git-dir")
-    common_dir = _git_rev_parse(directory, "--git-common-dir")
+    git_dir = _git_rev_parse(location_args, extra_env, "--git-dir")
+    common_dir = _git_rev_parse(location_args, extra_env, "--git-common-dir")
     if git_dir is None or common_dir is None:
         return None
     return toplevel, git_dir, common_dir
@@ -334,11 +388,11 @@ def check_protected_checkout(segments, cwd):
     base_dir = cwd or PROTECTED_CHECKOUT_ROOT
     for seg in segments:
         tokens = tokenize(seg)
-        env_override = _has_env_override(tokens)
+        extra_env, env_ambiguous = _env_location_overrides(tokens, base_dir)
         for gi, t in enumerate(tokens):
             if not is_word(t, "git"):
                 continue
-            resolved, sub_idx, ambiguous = _resolve_git_invocation(tokens, gi, base_dir)
+            location_args, sub_idx, ambiguous = _resolve_git_invocation(tokens, gi, base_dir)
             if sub_idx is None:
                 continue
             subcommand = basename_token(tokens[sub_idx])
@@ -347,23 +401,27 @@ def check_protected_checkout(segments, cwd):
             kind = _branch_change_kind(tokens, sub_idx, subcommand)
             if kind is None:
                 continue
-            if env_override or ambiguous:
-                # Deny regardless of cwd: an env override or an unresolvable
-                # global option can retarget Git at the protected checkout
-                # from anywhere, so the session's starting directory proves
-                # nothing about where this invocation actually lands. Cwd is
-                # only used above to resolve -C paths, never to rule this
-                # branch out.
+            if env_ambiguous or ambiguous:
+                # A location override is present but couldn't be safely
+                # resolved (shell expansion, missing value): can't rule out
+                # the protected checkout, so deny regardless of cwd - the
+                # session's starting directory proves nothing about where an
+                # unresolvable override actually lands.
                 return deny(
                     "[destructive-op-guard] This git "
-                    f"{subcommand} branch change has ambiguous repository "
-                    "resolution (env override or an unresolvable/identity-"
-                    "affecting global option). Refusing to guess whether it "
-                    "targets the protected shared checkout. Create/enter an "
-                    "owned worktree (git worktree add <path> <branch>) and "
-                    "retry there."
+                    f"{subcommand} branch change has an unresolvable "
+                    "repository-location override (GIT_DIR/GIT_WORK_TREE/"
+                    "GIT_COMMON_DIR/-C/--git-dir/--work-tree with shell "
+                    "expansion or a missing value). Refusing to guess "
+                    "whether it targets the protected shared checkout. "
+                    "Create/enter an owned worktree (git worktree add "
+                    "<path> <branch>) and retry there."
                 )
-            identity = _resolve_repo_identity(resolved)
+            # Any resolvable location override (env or flag) is real and
+            # proven here via actual git rev-parse, not guessed - so a
+            # provably unrelated repository correctly falls through to
+            # ordinary policy instead of being blanket-denied.
+            identity = _resolve_repo_identity(location_args, extra_env)
             if identity is None:
                 continue
             _toplevel, git_dir, common_dir = identity

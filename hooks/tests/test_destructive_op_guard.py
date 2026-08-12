@@ -441,66 +441,105 @@ class TestProtectedCheckoutBranchIsolation:
         )
         assert_allowed(decision)
 
-    def test_env_override_prefix_in_primary_denied_ambiguous(
+    def test_git_dir_env_override_resolving_to_primary_denied(
         self, destructive_op_guard, protected_repo, monkeypatch, capsys
     ):
+        # Real repro from review 4920042246: GIT_DIR can retarget Git at the
+        # protected checkout from a cwd outside it entirely. Resolved via a
+        # real git rev-parse against the override, not guessed from cwd.
         decision = run_hook(
-            destructive_op_guard, "GIT_DIR=/tmp/x git checkout -b agent/foo", monkeypatch, capsys,
+            destructive_op_guard,
+            f"GIT_DIR={protected_repo['primary']}/.git git checkout -b agent/foo",
+            monkeypatch,
+            capsys,
+            cwd=str(protected_repo["unrelated"]),
+        )
+        assert_denied(decision, "Refusing 'checkout' branch change")
+
+    def test_git_dir_env_override_resolving_to_unrelated_repo_falls_through(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        # Fix for review 4920205286's blocker: a GIT_DIR override that
+        # actually, provably resolves to an unrelated repository must retain
+        # ordinary behavior (ask), not be blanket-denied.
+        decision = run_hook(
+            destructive_op_guard,
+            f"GIT_DIR={protected_repo['unrelated']}/.git git checkout -b agent/foo",
+            monkeypatch,
+            capsys,
             cwd=str(protected_repo["primary"]),
         )
-        assert_denied(decision, "ambiguous repository resolution")
+        assert_asked(decision, "Destructive git operation")
 
-    def test_unresolvable_dash_c_in_primary_denied_ambiguous(
+    def test_unresolvable_dash_capital_c_in_primary_denied_ambiguous(
         self, destructive_op_guard, protected_repo, monkeypatch, capsys
     ):
         decision = run_hook(
             destructive_op_guard, "git -C $SOME_VAR checkout -b agent/foo", monkeypatch, capsys,
             cwd=str(protected_repo["primary"]),
         )
-        assert_denied(decision, "ambiguous repository resolution")
+        assert_denied(decision, "unresolvable repository-location override")
 
-    def test_env_override_outside_primary_still_denied(
+    def test_unresolvable_git_dir_env_override_denied_regardless_of_cwd(
         self, destructive_op_guard, protected_repo, monkeypatch, capsys
     ):
-        # GIT_DIR can retarget Git at the protected checkout from anywhere;
-        # the session's own cwd proves nothing about where this actually
-        # lands, so an ambiguous env override must deny regardless of cwd
-        # (real repro: PR #16 review 4920042246 confirmed cwd-outside-primary
-        # bypassed this into the ordinary ASK path).
+        # A GIT_DIR value using shell expansion can't be resolved statically
+        # and can't be ruled out as targeting the protected checkout from
+        # any cwd, so this still denies unconditionally.
         decision = run_hook(
-            destructive_op_guard, "GIT_DIR=/tmp/x git checkout -b agent/foo", monkeypatch, capsys,
+            destructive_op_guard, "GIT_DIR=$SOME_VAR git checkout -b agent/foo", monkeypatch, capsys,
             cwd=str(protected_repo["unrelated"]),
         )
-        assert_denied(decision, "ambiguous repository resolution")
+        assert_denied(decision, "unresolvable repository-location override")
 
-    def test_missing_cwd_fails_closed_to_denied(self, destructive_op_guard, protected_repo, monkeypatch, capsys):
-        # No cwd in the hook payload at all: can't rule out the protected
-        # checkout, so an ambiguous resolution still denies rather than asks.
+    def test_missing_cwd_with_unresolvable_override_fails_closed_to_denied(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        # No cwd in the hook payload at all, combined with an unresolvable
+        # override: still denies rather than asks.
         decision = run_hook(
-            destructive_op_guard, "GIT_DIR=/tmp/x git checkout -b agent/foo", monkeypatch, capsys,
+            destructive_op_guard, "GIT_DIR=$SOME_VAR git checkout -b agent/foo", monkeypatch, capsys,
         )
-        assert_denied(decision, "ambiguous repository resolution")
+        assert_denied(decision, "unresolvable repository-location override")
 
-    def test_work_tree_override_outside_primary_denied(
+    def test_work_tree_env_override_resolving_to_primary_denied(
         self, destructive_op_guard, protected_repo, monkeypatch, capsys
     ):
         decision = run_hook(
-            destructive_op_guard, "GIT_WORK_TREE=/tmp/x git checkout -b agent/foo", monkeypatch, capsys,
+            destructive_op_guard,
+            f"GIT_WORK_TREE={protected_repo['primary']} GIT_DIR={protected_repo['primary']}/.git "
+            "git checkout -b agent/foo",
+            monkeypatch,
+            capsys,
             cwd=str(protected_repo["unrelated"]),
         )
-        assert_denied(decision, "ambiguous repository resolution")
+        assert_denied(decision, "Refusing 'checkout' branch change")
 
     def test_dash_c_config_global_option_in_primary_still_denied(
         self, destructive_op_guard, protected_repo, monkeypatch, capsys
     ):
         # Real repro from review 4920042246: the separate-token value of
         # "-c" was previously misread as the subcommand, so the actual
-        # "checkout -b" further along was never classified at all.
+        # "checkout -b" further along was never classified at all. -c is
+        # config-only, so this now denies via real primary-identity
+        # resolution, not the ambiguity path.
         decision = run_hook(
             destructive_op_guard, "git -c color.ui=false checkout -b agent/foo", monkeypatch, capsys,
             cwd=str(protected_repo["primary"]),
         )
-        assert_denied(decision, "ambiguous repository resolution")
+        assert_denied(decision, "Refusing 'checkout' branch change")
+
+    def test_dash_c_config_global_option_in_unrelated_repo_not_denied(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        # Real repro from review 4920205286's blocker: a benign -c override
+        # in an unrelated repository must retain ordinary behavior (ask),
+        # not be blanket-denied merely because -c was present.
+        decision = run_hook(
+            destructive_op_guard, "git -c color.ui=false checkout feature", monkeypatch, capsys,
+            cwd=str(protected_repo["unrelated"]),
+        )
+        assert_asked(decision, "Destructive git operation")
 
     def test_config_env_global_option_in_primary_still_denied(
         self, destructive_op_guard, protected_repo, monkeypatch, capsys
@@ -512,9 +551,21 @@ class TestProtectedCheckoutBranchIsolation:
             capsys,
             cwd=str(protected_repo["primary"]),
         )
-        assert_denied(decision, "ambiguous repository resolution")
+        assert_denied(decision, "Refusing 'checkout' branch change")
 
-    def test_separate_token_git_dir_and_work_tree_in_primary_still_denied(
+    def test_config_env_global_option_in_unrelated_repo_not_denied(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        decision = run_hook(
+            destructive_op_guard,
+            "git --config-env core.editor=SOME_ENV checkout feature",
+            monkeypatch,
+            capsys,
+            cwd=str(protected_repo["unrelated"]),
+        )
+        assert_asked(decision, "Destructive git operation")
+
+    def test_separate_token_git_dir_and_work_tree_resolving_to_primary_denied(
         self, destructive_op_guard, protected_repo, monkeypatch, capsys
     ):
         # Real repro from review 4920042246: separate-argument --git-dir/
@@ -528,7 +579,29 @@ class TestProtectedCheckoutBranchIsolation:
             capsys,
             cwd=str(protected_repo["unrelated"]),
         )
-        assert_denied(decision, "ambiguous repository resolution")
+        assert_denied(decision, "Refusing 'checkout' branch change")
+
+    def test_separate_token_git_dir_and_work_tree_resolving_to_unrelated_falls_through(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        decision = run_hook(
+            destructive_op_guard,
+            f"git --git-dir {protected_repo['unrelated']}/.git --work-tree {protected_repo['unrelated']} "
+            "checkout -b agent/foo",
+            monkeypatch,
+            capsys,
+            cwd=str(protected_repo["primary"]),
+        )
+        assert_asked(decision, "Destructive git operation")
+
+    def test_unresolvable_git_dir_flag_denied_ambiguous(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys
+    ):
+        decision = run_hook(
+            destructive_op_guard, "git --git-dir $SOME_VAR checkout -b agent/foo", monkeypatch, capsys,
+            cwd=str(protected_repo["unrelated"]),
+        )
+        assert_denied(decision, "unresolvable repository-location override")
 
     def test_dash_c_config_option_does_not_break_ordinary_readonly_git(
         self, destructive_op_guard, protected_repo, monkeypatch, capsys
