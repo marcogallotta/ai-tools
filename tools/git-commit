@@ -175,6 +175,61 @@ def check_dish_version_guard(repo_root):
         )
 
 
+# Files whose semantics are shared across concurrent agents/sessions. A clean
+# (no conflict-marker) merge touching these is not auto-applied, even though
+# git itself can merge it without markers — two non-overlapping edits to a
+# role contract or CLAUDE.md can still be a real policy disagreement that a
+# human should see, not just a textual accident.
+SHARED_AUTHORITY_BASENAMES = {"CLAUDE.md"}
+SHARED_AUTHORITY_PATH_MARKERS = ("/docs/agents/",)
+
+
+def is_shared_authority_path(path):
+    if Path(path).name in SHARED_AUTHORITY_BASENAMES:
+        return True
+    return any(marker in f"/{path}" for marker in SHARED_AUTHORITY_PATH_MARKERS)
+
+
+def try_auto_merge(git_cwd, sha):
+    """Attempt to resolve a non-fast-forward push by merging origin/main in.
+
+    Only proceeds when the merge is conflict-free (no conflict markers) AND
+    none of the files origin/main changed since the common ancestor are
+    shared-authority files. Anything else is left for a human, unchanged from
+    prior behavior. Returns the new HEAD sha on success, or None if no
+    auto-merge was attempted/possible.
+    """
+    remote_changed = run_git(
+        git_cwd, "diff", "--name-only", f"{sha}...refs/remotes/origin/main"
+    ).stdout.splitlines()
+    if any(is_shared_authority_path(p) for p in remote_changed):
+        return None
+
+    attempt = run_git(
+        git_cwd, "merge", "--no-commit", "--no-ff", "refs/remotes/origin/main", check=False
+    )
+    if attempt.returncode != 0:
+        run_git(git_cwd, "merge", "--abort", check=False)
+        return None
+
+    unmerged = run_git(git_cwd, "diff", "--name-only", "--diff-filter=U").stdout.strip()
+    if unmerged:
+        run_git(git_cwd, "merge", "--abort", check=False)
+        return None
+
+    commit = subprocess.run(
+        ["git", "-C", str(git_cwd), "commit", "--no-edit"],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    if commit.returncode != 0:
+        run_git(git_cwd, "merge", "--abort", check=False)
+        return None
+
+    return run_git(git_cwd, "rev-parse", "HEAD").stdout.strip()
+
+
 def push_main(git_cwd, sha):
     last_push = None
     for _ in range(3):
@@ -221,6 +276,33 @@ def push_main(git_cwd, sha):
         )
         return 0
 
+    merged_sha = try_auto_merge(git_cwd, sha)
+    if merged_sha is not None:
+        # A conflict-free git merge is not evidence the combined state is
+        # still correct — only that it merged textually. Never push this
+        # automatically; require whatever tests the change needs to be
+        # rerun against the merged commit first, same as the integration
+        # role's freshness-check contract requires even for a mechanical,
+        # conflict-free rebase/merge.
+        print(f"Commit succeeded locally ({sha}).", file=sys.stderr)
+        print(
+            f"origin/main had diverged; merged it in cleanly and committed locally "
+            f"as {merged_sha} (NOT pushed).",
+            file=sys.stderr,
+        )
+        print(
+            "Rerun the tests this change requires against the merged commit before "
+            "pushing. A clean textual merge is not evidence the combined state is "
+            "still correct.",
+            file=sys.stderr,
+        )
+        print(
+            "Once green, push manually. Do not force-push, rebase, or modify "
+            "credentials to resolve this.",
+            file=sys.stderr,
+        )
+        return 1
+
     ahead = run_git(
         git_cwd,
         "rev-list",
@@ -233,6 +315,13 @@ def push_main(git_cwd, sha):
     print(
         f"Confirmed: origin/main does NOT have {sha} "
         f"(local is ahead by {ahead} commit(s)).",
+        file=sys.stderr,
+    )
+    print(
+        "An automatic clean merge was not applied — either it conflicted, or "
+        "origin/main's changes touch a shared-authority file (CLAUDE.md, "
+        "docs/agents/*) that always needs a human look even without a textual "
+        "conflict.",
         file=sys.stderr,
     )
     print(
