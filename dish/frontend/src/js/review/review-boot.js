@@ -1,9 +1,10 @@
 import { DOCUMENT_TITLE } from "../config.js";
+import { renderFixtureAdmin } from "../prototype/admin-prototype.js";
 import { renderFixturePrototype } from "../prototype/prototype-app.js";
 import { parseTaskRoute } from "../prototype/prototype-routes.js";
 import { renderLoginShell } from "../shell/login-shell.js";
 import { installFixtureReviewBoundary } from "./review-boundary.js";
-import { isReviewScenario, scenarioTaskId } from "./review-catalog.js";
+import { isAdminReviewScenario, isReviewScenario, scenarioTaskId } from "./review-catalog.js";
 import { createReviewToolbar } from "./review-toolbar.js";
 
 export function resolveReviewInitialView(search = window.location.search, pathname = window.location.pathname) {
@@ -27,6 +28,10 @@ export function bootReview(root = document.querySelector("#app")) {
   if (initial.view === "login") {
     renderLoginShell(root);
     root.prepend(createReviewToolbar("login"));
+    return;
+  }
+  if (isAdminReviewScenario(initial.scenario)) {
+    renderFixtureAdmin(root, initial.scenario, { reviewMode: true });
     return;
   }
   renderFixturePrototype(root, initial.scenario, initial.taskId, { reviewMode: true });
