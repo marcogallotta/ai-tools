@@ -71,5 +71,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sed -i "s/'cert-r'/'930000000000001'/; s/'cert-v'/'930000000000002'/; s/agent='cert-agent'/agent='gpt'/" cert-harness/ci/disposable_registry_correction_cert.py
+          dish/.venv/bin/python - <<'PY'
+          from pathlib import Path
+          p=Path('cert-harness/ci/disposable_registry_correction_cert.py')
+          s=p.read_text()
+          s=s.replace("'cert-r'", "'930000000000001'").replace("'cert-v'", "'930000000000002'")
+          s=s.replace("'s1'", "'930000000000003'").replace("'s2'", "'930000000000004'")
+          s=s.replace("agent='cert-agent'", "agent='gpt'")
+          s=s.replace('from dish_pg.command_port import CommandCall,PostgresCommandPort', 'from dish_pg.command_port import CommandCall,PostgresCommandPort\nfrom dish_pg.transition import ProjectionService')
+          needle="WorkflowAuthorityService(s).register_run(run_id=ar,generation_id=boot.generation_id,owner_id='cert-agent',agent='gpt',capability_digest=b'a'*32,registered_at=NOW+timedelta(seconds=2)); cr=PostgresCommandPort(s,cursor_secret=b'x'*32).execute("
+          repl="WorkflowAuthorityService(s).register_run(run_id=ar,generation_id=boot.generation_id,owner_id='cert-agent',agent='gpt',capability_digest=b'a'*32,registered_at=NOW+timedelta(seconds=2)); proj=ProjectionService(s); proj.activate_epoch(generation_id=boot.generation_id,activation_reason='registry certification',created_at=NOW+timedelta(seconds=2),external_effects_enabled=False); cr=PostgresCommandPort(s,cursor_secret=b'x'*32,projection_recorder=proj).execute("
+          assert needle in s
+          s=s.replace(needle,repl)
+          p.write_text(s)
+          PY
           PYTHONPATH=dish dish/.venv/bin/python cert-harness/ci/disposable_registry_correction_cert.py
