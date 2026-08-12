@@ -1,6 +1,5 @@
 import { DOCUMENT_TITLE } from "../config.js";
-import { renderFixtureAdmin } from "../prototype/admin-prototype.js";
-import { renderFixturePrototype } from "../prototype/prototype-app.js";
+import { renderFixtureAdmin, renderFixturePrototype } from "../prototype/prototype-app.js";
 import { parseTaskRoute } from "../prototype/prototype-routes.js";
 import { renderLoginShell } from "../shell/login-shell.js";
 import { installFixtureReviewBoundary } from "./review-boundary.js";
