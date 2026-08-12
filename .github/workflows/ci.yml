@@ -169,18 +169,18 @@ jobs:
       postgres:
         image: postgres:17.10
         env:
-          POSTGRES_DB: ai_tools_ci
+          POSTGRES_DB: dish_ai_tools_test
           POSTGRES_USER: ai_tools_ci
           POSTGRES_PASSWORD: ci-only-password
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U ai_tools_ci -d ai_tools_ci"
+          --health-cmd "pg_isready -U ai_tools_ci -d dish_ai_tools_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
     env:
-      DISH_TEST_POSTGRESQL_DSN: postgresql+psycopg://ai_tools_ci:ci-only-password@127.0.0.1:5432/ai_tools_ci
+      DISH_TEST_POSTGRESQL_DSN: postgresql+psycopg://ai_tools_ci:ci-only-password@127.0.0.1:5432/dish_ai_tools_test
     steps:
       - uses: actions/checkout@v6
         with:
@@ -204,7 +204,7 @@ jobs:
           parsed = urlparse(os.environ["DISH_TEST_POSTGRESQL_DSN"])
           assert parsed.hostname in {"127.0.0.1", "localhost"}, parsed.hostname
           assert parsed.username == "ai_tools_ci", parsed.username
-          assert parsed.path == "/ai_tools_ci", parsed.path
+          assert parsed.path == "/dish_ai_tools_test", parsed.path
           print("CI PostgreSQL target guard passed")
           PY
       - name: Run governed native PostgreSQL certification
