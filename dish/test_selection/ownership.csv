@@ -243,8 +243,12 @@ dish_tool/workflow_snapshot.py,production,4,4,authority; read-model,tests/test_a
 dish_tool/abandonment_view.py,production,4,4,authority; recovery; workflow-policy,tests/test_abandonment_admin_workflow.py; tests/test_application_service.py,tests/test_abandonment_reconciliation.py; tests/test_service_runtime_boundary.py,none,,focused authority/identity; focused recovery/persistence; smoke,Add database-boundary when persisted abandonment fact selection changes. | Add mutation evidence when abandonment recovery action semantics change.,durable SQLite state or recovery semantics change; critical authority or recovery invariant changes
 docs/abandoned-run-ownership-design.md,documentation,1,1,documentation,,,none,,,,
 docs/agents/coordinator.md,documentation,1,1,agent-policy; documentation,,,none,,,,
+docs/agents/contributor-base.md,documentation,1,1,agent-policy; documentation,,,none,,,,
+docs/agents/identity.md,documentation,1,1,agent-policy; documentation,,,none,,,,
 docs/agents/index.md,documentation,1,1,agent-policy; documentation,,,none,,,,
+docs/agents/integration.md,documentation,1,1,agent-policy; documentation,,,none,,,,
 docs/agents/process-improvement-todo.md,documentation,1,1,agent-policy; documentation,,,none,,,,
+docs/agents/postgresql-dark-launch.md,documentation,1,1,agent-policy; documentation,,,none,,,,
 docs/agents/workflow.md,documentation,1,1,agent-policy; documentation,,,none,,,,
 docs/architecture.md,documentation,1,1,documentation,,,none,,,,
 docs/architecture/authority-and-data-ownership.md,documentation,1,1,architecture; documentation,tests/test_architecture_knowledge_base.py,,none,,,,
@@ -961,8 +965,6 @@ dish_pg/migrations/versions/0036_exact_operation_run_revocations.py,production,6
 dish_pg/migrations/versions/0037_release_identity_contract.py,production,6,6,migration-graph; native-pg; pglite-required; release-critical,tests/postgresql/test_release_identity_binding.py,tests/postgresql/native/test_recovery_authority_transition.py; tests/postgresql/pglite/test_pglite_migrations.py; tests/postgresql/test_frozen_migration_history.py; tests/postgresql/test_release_identity_binding.py,none,,PGlite primary; SQLite database-boundary; focused schema/model/migration; native PostgreSQL certification,"Add the release bundle when candidate identity, evidence provenance, runtime contract binding, or rollback-burn semantics change.",migration graph or populated upgrade changes; release identity or irreversible cutover semantics change
 dish_pg/migrations/versions/0038_cutover_rehearsal_identity.py,production,6,6,migration-graph; native-pg; pglite-required; release-critical,tests/postgresql/test_stage6_cutover_first_admission.py,tests/postgresql/native/test_recovery_authority_transition.py; tests/postgresql/pglite/test_pglite_migrations.py; tests/postgresql/test_frozen_migration_history.py; tests/postgresql/test_stage6_cutover_first_admission.py,none,,PGlite primary; SQLite database-boundary; focused schema/model/migration; native PostgreSQL certification,"Add the release bundle when candidate identity, evidence provenance, runtime contract binding, or rollback-burn semantics change.",migration graph or populated upgrade changes; release identity or irreversible cutover semantics change
 tests/postgresql/test_release_identity_binding.py,test,1,8,isolated-test; native-pg; release-critical; sqlite-boundary,,,none,,SQLite database-boundary; exact changed test/module,"Add the release bundle only when this secondary change alters candidate, evidence, runtime binding, or cutover semantics.",secondary release-critical semantics change
-docs/agents/coordinator.md,documentation,1,1,agent-policy; documentation,,,none,,,,
 docs/agents/implementation.md,documentation,1,1,agent-policy; documentation,,,none,,,,
-docs/agents/process-improvement-todo.md,documentation,1,1,agent-policy; documentation,,,none,,,,
 docs/agents/review.md,documentation,1,1,agent-policy; documentation,,,none,,,,
 tests/support/postgresql/terminal_history_backfill.py,shared-test-infrastructure,1,4,isolated-test; native-pg; postgresql-test-support; shared-test-infrastructure,,,cross-lane,exact changed test/module; native PostgreSQL certification,exact changed test/module; native PostgreSQL certification,,
