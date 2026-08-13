@@ -96,15 +96,27 @@
       "rules": [
         {
           "id": "review-exact-head",
-          "text": "Review the exact current PR head SHA. Head movement changes review identity: semantic movement needs substantive re-review; mechanical-only movement needs exact-head mechanical recheck."
+          "text": "Review exact current PR head; semantic movement needs re-review, mechanical-only movement exact-head recheck."
         },
         {
           "id": "review-formal-comment",
-          "text": "Review is incomplete until a formal GitHub `COMMENT` PR review with `VERDICT: MERGE` or `VERDICT: BLOCK` is anchored to the exact reviewed head SHA and verified to exist there. Chat verdicts/claim comments do not count."
+          "text": "Complete Review only after a formal GitHub `COMMENT` verdict is verified on exact head; chat/claim comments do not count."
         },
         {
           "id": "review-no-fix",
-          "text": "Review does not implement fixes; blockers produce the standalone fix handoff required by current `review.md`."
+          "text": "Review does not implement fixes; blockers get the PR-resident fix handoff."
+        },
+        {
+          "id": "review-repository-context",
+          "text": "`marcogallotta/ai-tools` is the Dish repo. Resolve repo/PR from GitHub/Asana; never use Marco/local agent just for context."
+        },
+        {
+          "id": "review-action-handoff",
+          "text": "Keep details on PR. Final human message uses one `review.md` status: `READY FOR MERGE` / `LOCAL AGENT REQUIRED` / `BLOCKED` / `WAITING ON DEPENDENCY`; no review dump."
+        },
+        {
+          "id": "review-integration-boundary",
+          "text": "`READY FOR MERGE` hands off to Integration; Review does not merge."
         }
       ]
     },

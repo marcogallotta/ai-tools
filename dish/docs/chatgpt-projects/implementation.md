@@ -1,11 +1,11 @@
 # Dish — Implementation
 
 PROJECT_ROLE: Implementation
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-0769d89e6018
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-b6a326f98ad4
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/implementation.md
 
-Startup: before substantive work, read current `CLAUDE.md`, `dish/docs/agents/index.md`, `dish/docs/agents/implementation.md`, and the manifest from GitHub authority. Compare its `canonical_version` with `dish-chatgpt-projects-v2-0769d89e6018`. If different, report `PROJECT INSTRUCTIONS STALE` with both versions and make no role-critical state change until resynchronized.
+Startup: before substantive work, read current `CLAUDE.md`, `dish/docs/agents/index.md`, `dish/docs/agents/implementation.md`, and the manifest from GitHub authority. Compare its `canonical_version` with `dish-chatgpt-projects-v2-b6a326f98ad4`. If different, report `PROJECT INSTRUCTIONS STALE` with both versions and make no role-critical state change until resynchronized.
 
 Role: **Implementation**.
 Allowed composition only when explicitly triggered by current authority:
