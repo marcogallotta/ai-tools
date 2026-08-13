@@ -1,0 +1,309 @@
+name: Full regression
+run-name: Full regression / ${{ github.sha }} / ${{ github.event_name }}
+
+on:
+  schedule:
+    # Deliberately off the top of the hour; scheduled workflows run latest default-branch code.
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: Why Coordinator requested an additional full run
+        required: false
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: dish-full-regression-main
+  cancel-in-progress: false
+
+jobs:
+  full-regression:
+    name: Full-system diagnostic regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      FULL_REGRESSION_OUTPUT: .test-artifacts/full-regression
+      DISH_TEST_POSTGRESQL_DSN: postgresql+psycopg://ai_tools_ci:ci-only-password@127.0.0.1:5432/dish_ai_tools_ci_test
+    steps:
+      - name: Mark workflow start
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'FULL_REGRESSION_STARTED_EPOCH=%s\n' "$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Require exact main execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = 'refs/heads/main' || {
+            echo "Full regression must run against refs/heads/main, got $GITHUB_REF" >&2
+            exit 2
+          }
+          test "${#GITHUB_SHA}" -eq 40
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Discover prior completed full-regression runs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$FULL_REGRESSION_OUTPUT/discovery"
+          gh api \
+            "/repos/$GITHUB_REPOSITORY/actions/workflows/full-regression.yml/runs?branch=main&status=completed&per_page=100" \
+            > "$FULL_REGRESSION_OUTPUT/discovery/runs.json"
+
+      - name: Skip unchanged scheduled main after a successful equivalent result
+        id: decision
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/full_regression.py decide \
+            --runs-json "$FULL_REGRESSION_OUTPUT/discovery/runs.json" \
+            --main-sha "$GITHUB_SHA" \
+            --event "$GITHUB_EVENT_NAME" \
+            --current-run-id "$GITHUB_RUN_ID" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Report unchanged-main dedupe
+        if: steps.decision.outputs.should_run != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Skipping heavy full regression: unchanged main $GITHUB_SHA already has completed successful run ${{ steps.decision.outputs.equivalent_success_run_id }}."
+          {
+            echo '## Full regression deduplicated'
+            echo
+            echo "Main SHA: \`$GITHUB_SHA\`"
+            echo "Equivalent completed run: \`${{ steps.decision.outputs.equivalent_success_run_id }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Begin durable full-regression evidence
+        if: steps.decision.outputs.should_run == 'true'
+        shell: bash
+        env:
+          MANUAL_REASON: ${{ github.event.inputs.reason || '' }}
+        run: |
+          set -euo pipefail
+          python3 scripts/full_regression.py begin \
+            --output-dir "$FULL_REGRESSION_OUTPUT" \
+            --main-sha "$GITHUB_SHA" \
+            --previous-main-sha "${{ steps.decision.outputs.previous_main_sha }}" \
+            --previous-run-id "${{ steps.decision.outputs.previous_run_id }}" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$GITHUB_RUN_ATTEMPT" \
+            --event "$GITHUB_EVENT_NAME" \
+            --reason "$MANUAL_REASON" \
+            --workflow-ref "$GITHUB_WORKFLOW_REF" \
+            --started-at-epoch "$FULL_REGRESSION_STARTED_EPOCH"
+
+      - name: Read dependency bundle Python version
+        id: bundle
+        if: steps.decision.outputs.should_run == 'true'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/dependency_bundle.py expected \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v6
+        id: setup-python
+        if: steps.decision.outputs.should_run == 'true'
+        continue-on-error: true
+        with:
+          python-version: ${{ steps.bundle.outputs.python_version || '3.12' }}
+
+      - name: Record Python setup result
+        if: always() && steps.decision.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          python3 scripts/full_regression.py record-phase \
+            --output-dir "$FULL_REGRESSION_OUTPUT" \
+            --phase setup-python \
+            --outcome '${{ steps.setup-python.outcome }}'
+
+      - uses: ./.github/actions/setup-python-bundle
+        id: setup-bundle
+        if: steps.decision.outputs.should_run == 'true'
+        continue-on-error: true
+        with:
+          github-token: ${{ github.token }}
+
+      - name: Record dependency bundle setup result
+        if: always() && steps.decision.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          python3 scripts/full_regression.py record-phase \
+            --output-dir "$FULL_REGRESSION_OUTPUT" \
+            --phase dependency-bundle \
+            --outcome '${{ steps.setup-bundle.outcome }}'
+
+      - uses: actions/setup-node@v6
+        id: setup-node
+        if: steps.decision.outputs.should_run == 'true'
+        continue-on-error: true
+        with:
+          node-version: '22'
+
+      - name: Record Node setup result
+        if: always() && steps.decision.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          python3 scripts/full_regression.py record-phase \
+            --output-dir "$FULL_REGRESSION_OUTPUT" \
+            --phase setup-node \
+            --outcome '${{ steps.setup-node.outcome }}'
+
+      # Adapter seam: the command following `--` can be replaced by Agent C's shared lane runner.
+      # This workflow owns force-all/continue/evidence semantics, not final lane command semantics.
+      - name: Run Python/control-plane group
+        if: always() && steps.decision.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          python3 scripts/full_regression.py run-lane \
+            --output-dir "$FULL_REGRESSION_OUTPUT" \
+            --lane python-control-plane -- \
+            bash -lc '
+              set +e
+              mkdir -p .test-artifacts/full-regression/junit
+              rc=0
+              dish/.venv/bin/python -m pytest -q ci/tests \
+                --junitxml=.test-artifacts/full-regression/junit/ci.xml || rc=1
+              (cd dish && .venv/bin/python scripts/dish-test-plan --validate) || rc=1
+              (cd dish && .venv/bin/python -m pytest -q tests \
+                --junitxml=../.test-artifacts/full-regression/junit/dish.xml) || rc=1
+              tools/.venv/bin/python -m pytest -q tools/tests \
+                --junitxml=.test-artifacts/full-regression/junit/tools.xml || rc=1
+              exit "$rc"
+            '
+
+      - name: Run frontend static/tooling group
+        if: always() && steps.decision.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          python3 scripts/full_regression.py run-lane \
+            --output-dir "$FULL_REGRESSION_OUTPUT" \
+            --lane frontend-static-tooling -- \
+            npm --prefix dish/frontend run check:static
+
+      - name: Start isolated PostgreSQL for native group
+        if: always() && steps.decision.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          python3 scripts/full_regression.py run-phase \
+            --output-dir "$FULL_REGRESSION_OUTPUT" \
+            --phase native-postgresql-setup -- \
+            bash -lc '
+              set -euo pipefail
+              docker rm -f dish-full-regression-postgres >/dev/null 2>&1 || true
+              docker run -d --rm \
+                --name dish-full-regression-postgres \
+                -e POSTGRES_DB=dish_ai_tools_ci_test \
+                -e POSTGRES_USER=ai_tools_ci \
+                -e POSTGRES_PASSWORD=ci-only-password \
+                -p 5432:5432 postgres:17.10 >/dev/null
+              for _ in $(seq 1 60); do
+                if docker exec dish-full-regression-postgres \
+                  pg_isready -U ai_tools_ci -d dish_ai_tools_ci_test >/dev/null 2>&1; then
+                  exit 0
+                fi
+                sleep 1
+              done
+              echo "PostgreSQL did not become ready" >&2
+              exit 1
+            '
+
+      - name: Run native PostgreSQL group
+        if: always() && steps.decision.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          python3 scripts/full_regression.py run-lane \
+            --output-dir "$FULL_REGRESSION_OUTPUT" \
+            --lane native-postgresql -- \
+            dish/.venv/bin/python dish/scripts/dish-pg-native-certification \
+              --output .test-artifacts/full-regression/native-postgresql-report.json \
+              --waive-skip 'tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_database_disconnect_rolls_back_then_recovers_once=no runner wires DISH_SECTION1_COMPOSE_JSON to the shared TEST PostgreSQL target; revisit before setting external_effects_enabled=true' \
+              --waive-skip 'tests/postgresql/native/test_process_failure_command.py::test_command_process_disconnect_before_commit_fails_closed_and_recovers=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure' \
+              --waive-skip 'tests/postgresql/native/test_process_failure_disconnect.py::test_projection_worker_fails_clearly_across_postgresql_disconnect=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure' \
+              --waive-skip 'tests/postgresql/native/test_process_failure_disconnect.py::test_reconciliation_worker_writes_nothing_while_postgresql_is_down=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure'
+
+      - name: Stop isolated PostgreSQL
+        if: always() && steps.decision.outputs.should_run == 'true'
+        continue-on-error: true
+        shell: bash
+        run: docker rm -f dish-full-regression-postgres >/dev/null 2>&1 || true
+
+      - name: Install maintained Chromium runtime
+        if: always() && steps.decision.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          python3 scripts/full_regression.py run-phase \
+            --output-dir "$FULL_REGRESSION_OUTPUT" \
+            --phase chromium-setup -- \
+            dish/.venv/bin/python -m playwright install --with-deps chromium
+
+      - name: Run browser acceptance group
+        if: always() && steps.decision.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          python3 scripts/full_regression.py run-lane \
+            --output-dir "$FULL_REGRESSION_OUTPUT" \
+            --lane browser-acceptance -- \
+            bash -lc '
+              set +e
+              rc=0
+              npm --prefix dish/frontend run test:browser || rc=1
+              npm --prefix dish/frontend run test:acceptance || rc=1
+              exit "$rc"
+            '
+
+      - name: Finalize full-regression evidence
+        if: always() && steps.decision.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/full_regression.py finalize \
+            --output-dir "$FULL_REGRESSION_OUTPUT" \
+            --evidence "$FULL_REGRESSION_OUTPUT/evidence.json"
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+          payload = json.loads(Path('.test-artifacts/full-regression/evidence.json').read_text())
+          print('## Full regression')
+          print()
+          print(f"Main SHA: `{payload['main_sha']}`")
+          print(f"Range: `{payload['commit_range'] or 'initial full-regression baseline'}`")
+          print(f"Result: **{payload['overall_result']}**")
+          print(f"Approximate billed minutes: {payload['estimated_billed_minutes']}")
+          if payload['failures']:
+              print()
+              print('Failures requiring durable triage:')
+              for failure in payload['failures']:
+                  print(f"- `{failure['failure_id']}` ({failure['failure_kind']})")
+          PY
+
+      - name: Upload durable full-regression evidence
+        if: always() && steps.decision.outputs.should_run == 'true'
+        uses: ./.github/actions/upload-test-evidence
+        with:
+          name: full-regression-${{ github.sha }}
+          path: |
+            .test-artifacts/full-regression
+            dish/.test-artifacts
+            dish/frontend/screenshots
+
+      - name: Enforce terminal full-regression result after evidence upload
+        if: always() && steps.decision.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          python3 scripts/full_regression.py enforce \
+            --evidence "$FULL_REGRESSION_OUTPUT/evidence.json"

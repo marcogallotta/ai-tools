@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/marcogallotta/ai-tools/ci/schemas/full-regression-triage-v1.schema.json",
+  "title": "Dish full regression failure triage v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "full_regression_run_id",
+    "main_sha",
+    "failure_id",
+    "classification",
+    "analysis"
+  ],
+  "properties": {
+    "schema": {"const": "dish-full-regression-triage-v1"},
+    "full_regression_run_id": {"type": "string", "minLength": 1},
+    "main_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "failure_id": {"type": "string", "minLength": 1},
+    "classification": {
+      "enum": ["related regression", "unrelated baseline", "environment-infrastructure"]
+    },
+    "analysis": {"type": "string", "minLength": 1},
+    "responsible_change": {
+      "type": "object",
+      "required": ["pr_number", "head_sha"],
+      "properties": {
+        "pr_number": {"type": "integer", "minimum": 1},
+        "head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      }
+    },
+    "certification": {
+      "type": "object",
+      "required": ["plan_id", "run_id", "candidate_sha"],
+      "properties": {
+        "plan_id": {"type": "string", "minLength": 1},
+        "run_id": {"type": "string", "minLength": 1},
+        "candidate_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      }
+    },
+    "failing_invariant": {"type": "string", "minLength": 1},
+    "failing_lane": {"type": "string", "minLength": 1},
+    "selector_miss": {"type": "boolean"},
+    "required_selector_correction": {
+      "type": "object",
+      "required": [
+        "owner_action",
+        "policy_update_paths",
+        "representative_selector_regression"
+      ],
+      "properties": {
+        "owner_action": {"type": "string", "minLength": 1},
+        "policy_update_paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "representative_selector_regression": {
+          "type": "object",
+          "required": ["test_path", "changed_path_class", "expected_lane"],
+          "properties": {
+            "test_path": {"type": "string", "minLength": 1},
+            "changed_path_class": {"type": "string", "minLength": 1},
+            "expected_lane": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"classification": {"const": "related regression"}}},
+      "then": {
+        "required": [
+          "responsible_change",
+          "certification",
+          "failing_invariant",
+          "failing_lane",
+          "selector_miss"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "classification": {"const": "related regression"},
+          "selector_miss": {"const": true}
+        },
+        "required": ["classification", "selector_miss"]
+      },
+      "then": {"required": ["required_selector_correction"]}
+    }
+  ]
+}
