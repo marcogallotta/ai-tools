@@ -8,6 +8,9 @@ Type=oneshot
 User=marco
 WorkingDirectory=/home/marco/ai-tools/dish
 EnvironmentFile=/home/marco/.config/dish-service/postgres-backup.env
+# The default writable root may be absent on first activation. The '+' prefix
+# lets only this fixed-path preparation command bypass User=/filesystem sandboxing.
+ExecStartPre=+/usr/bin/install -d -m 0700 -o marco -g marco /home/marco/.local/state/dish/prod/postgresql-backups
 ExecStart=/home/marco/ai-tools/dish/.venv/bin/python scripts/dish-pg-scheduled-backup run
 TimeoutStartSec=2h
 UMask=0077
@@ -15,7 +18,8 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only
-ReadWritePaths=/home/marco/.local/state/dish/prod/postgresql-backups
+# '-' avoids namespace setup failing before ExecStartPre creates the default root.
+ReadWritePaths=-/home/marco/.local/state/dish/prod/postgresql-backups
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
