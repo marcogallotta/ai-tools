@@ -123,6 +123,16 @@ Every implementation PR entering Review must identify its owning Asana task when
 
 Do not turn the PR body into a copy of the entire Asana task. The reviewer may fetch the current linked Asana task and repository authority as needed. Coordinator chat history is never required review context.
 
+## Publication fallback and durable local completion
+
+ChatGPT is the default heavy repository-work host only when the **complete intended changed surface** has a safe durable publication path. If substantive implementation/evidence is complete but one required branch edit cannot be safely published with the available connector, classify the residual state as `PUBLICATION BLOCKER`, never `LOCAL CERTIFICATION`. Local certification means the complete implementation is already published and only environment-bound evidence remains.
+
+The canonical durable state is the existing draft PR section `## PUBLICATION BLOCKER — LOCAL BRANCH COMPLETION REQUIRED BEFORE REVIEW` with `State: LOCAL IMPLEMENTATION COMPLETION REQUIRED`. Its standalone handoff must carry the exact PR/branch/current head, exact missing path and smallest mechanical delta, transport reason, completed evidence and what it proves, focused stable commands, explicit branch ownership transfer to local Implementation completion, and the requirement to push that same branch and return the new exact head. This PR update happens before any human notification; human chat contains only concise status/action and points back to the PR.
+
+The local agent is a narrow completion transport, not the default heavy implementation host. It may apply only the unpublished mechanical delta on the existing PR branch, may not broaden semantics, write `main`, reconstruct a governed file from partial/truncated content, or create parallel authority, and runs only focused verification for that delta. On success it updates/removes the blocker state and returns the new exact head.
+
+A completion head created before Review enters normal Review. A completion head created after Review invalidates the old exact-head identity; normal semantic/mechanical recheck rules decide the required review depth and no prior verdict transfers silently. Lifecycle/dispatcher tooling must derive `LOCAL IMPLEMENTATION COMPLETION REQUIRED` directly from PR state rather than coordinator conversation. A server-side expected-head branch patch primitive is a separate tooling improvement, not part of this fallback contract.
+
 ## Review forking and soft claims
 
 Review may be forked to dedicated Review agents so Coordinator can continue orchestration while reviews happen in parallel.

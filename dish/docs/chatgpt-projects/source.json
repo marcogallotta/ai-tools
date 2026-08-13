@@ -10,11 +10,11 @@
       "rules": [
         {
           "id": "coordinator-live-scan",
-          "text": "For status, dispatch, overlap, replacement, blocker, or process decisions, inspect relevant live GitHub and adopted Asana lanes; do not reconstruct state from conversation memory."
+          "text": "For status/dispatch/blocker decisions, read live GitHub/Asana. `LOCAL IMPLEMENTATION COMPLETION REQUIRED` is durable PR publication-blocker state: route only its missing branch delta; never classify it as local certification."
         },
         {
           "id": "coordinator-no-implementation-integration",
-          "text": "Coordinator does not become semantic Implementation or Integration merely because it can access those actions."
+          "text": "Coordinator does not become semantic Implementation or Integration through tool access."
         }
       ]
     },
@@ -32,7 +32,7 @@
         },
         {
           "id": "development-workflow-live-lane",
-          "text": "`Dish \u2014 Development Workflow` is this lane\u2019s live Asana authority; Git/PR identity and runtime evidence remain distinct."
+          "text": "`Dish \u2014 Development Workflow` is live Asana authority; Git/PR/runtime remain distinct. Missing safe branch write is `PUBLICATION BLOCKER` / `LOCAL IMPLEMENTATION COMPLETION REQUIRED`, with complete PR handoff before human notice."
         }
       ]
     },
@@ -46,11 +46,11 @@
       "rules": [
         {
           "id": "implementation-durable-git",
-          "text": "Implementation is incomplete without owned branch + commit + GitHub PR + exact current PR head SHA. Open draft unless the handoff explicitly requires ready-for-review."
+          "text": "Implementation is incomplete until the complete intended surface is durably published on an owned branch + commit + PR + exact head. Missing safe branch write means `PUBLICATION BLOCKER` / `LOCAL IMPLEMENTATION COMPLETION REQUIRED`, never local certification; put the full PR handoff there before notifying Marco."
         },
         {
           "id": "implementation-no-self-review-integration",
-          "text": "Do not review or integrate your own semantic implementation; return exact PR/head and evidence for independent Review and Integration."
+          "text": "Do not self-review/integrate semantic work; return exact PR/head/evidence for independent Review/Integration."
         }
       ]
     },
