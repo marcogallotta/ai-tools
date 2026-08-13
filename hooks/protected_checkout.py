@@ -329,7 +329,9 @@ def _deny_alias_ambiguous(subcommand):
     )
 
 
-def _classify_git(pairs, git_idx, cwd, protected_root, depth, seen_aliases):
+def _classify_git(
+    pairs, git_idx, cwd, protected_root, depth, seen_aliases, inherited_env
+):
     location_args, global_args, sub_idx, ambiguous, alias_config_ambiguous = (
         _resolve_git_invocation(pairs, git_idx)
     )
@@ -340,7 +342,7 @@ def _classify_git(pairs, git_idx, cwd, protected_root, depth, seen_aliases):
     prefix_pairs = pairs[:git_idx]
     command_env, ambiguous_env_names = _command_environment(prefix_pairs)
     location_env, env_ambiguous = _env_location_overrides(prefix_pairs)
-    extra_env = {**command_env, **location_env}
+    extra_env = {**inherited_env, **command_env, **location_env}
 
     if subcommand in ("checkout", "switch"):
         kind = _branch_change_kind(args, subcommand)
@@ -367,7 +369,12 @@ def _classify_git(pairs, git_idx, cwd, protected_root, depth, seen_aliases):
     alias_cwd = identity[0] if identity is not None else cwd
     if alias.startswith("!"):
         return _classify_command(
-            alias[1:], alias_cwd, protected_root, depth + 1, seen_aliases | {subcommand}
+            alias[1:],
+            alias_cwd,
+            protected_root,
+            depth + 1,
+            seen_aliases | {subcommand},
+            extra_env,
         )
     try:
         expanded = shlex.split(alias, posix=True) + args
@@ -376,7 +383,15 @@ def _classify_git(pairs, git_idx, cwd, protected_root, depth, seen_aliases):
             return _deny_alias_ambiguous(subcommand)
         return None
     synthetic = [(token, set()) for token in ["git", *global_args, *expanded]]
-    return _classify_git(synthetic, 0, cwd, protected_root, depth + 1, seen_aliases | {subcommand})
+    return _classify_git(
+        synthetic,
+        0,
+        cwd,
+        protected_root,
+        depth + 1,
+        seen_aliases | {subcommand},
+        extra_env,
+    )
 
 
 def _command_index(pairs):
@@ -438,22 +453,39 @@ def _is_persistent_shell(tokens, shell_idx):
     return not any(not arg.startswith("-") for arg in args)
 
 
-def _classify_segment(segment, cwd, protected_root, depth, seen_aliases):
+def _classify_segment(
+    segment, cwd, protected_root, depth, seen_aliases, inherited_env
+):
     pairs = _classify_tokens(segment)
     command_idx = _command_index(pairs)
     if command_idx is None:
         return None
     command = basename_token(pairs[command_idx][0])
     if command == "git":
-        return _classify_git(pairs, command_idx, cwd, protected_root, depth, seen_aliases)
+        return _classify_git(
+            pairs,
+            command_idx,
+            cwd,
+            protected_root,
+            depth,
+            seen_aliases,
+            inherited_env,
+        )
     if command not in SHELL_COMMANDS:
         return None
     tokens = [token for token, _active in pairs]
     payload = _shell_payload(tokens, command_idx)
     if payload is not None and depth < 6:
-        return _classify_command(payload, cwd, protected_root, depth + 1, seen_aliases)
+        return _classify_command(
+            payload,
+            cwd,
+            protected_root,
+            depth + 1,
+            seen_aliases,
+            inherited_env,
+        )
     if _is_persistent_shell(tokens, command_idx):
-        identity = _resolve_repo_identity([], {}, cwd)
+        identity = _resolve_repo_identity([], inherited_env, cwd)
         if _is_protected_primary(identity, protected_root):
             return (
                 f"[protected-checkout] Refusing persistent/interactive {command} launch from "
@@ -464,12 +496,21 @@ def _classify_segment(segment, cwd, protected_root, depth, seen_aliases):
     return None
 
 
-def _classify_command(command, cwd, protected_root, depth, seen_aliases):
+def _classify_command(
+    command, cwd, protected_root, depth, seen_aliases, inherited_env
+):
     current_cwd = cwd
     for segment in split_segments(command):
         if not segment.strip():
             continue
-        reason = _classify_segment(segment, current_cwd, protected_root, depth, seen_aliases)
+        reason = _classify_segment(
+            segment,
+            current_cwd,
+            protected_root,
+            depth,
+            seen_aliases,
+            inherited_env,
+        )
         if reason:
             return reason
         changed_cwd = _literal_cd_target(segment, current_cwd)
@@ -484,4 +525,4 @@ def classify(command, cwd, protected_root=None):
         protected_root = DEFAULT_PROTECTED_CHECKOUT_ROOT
     root = os.path.realpath(os.path.expanduser(protected_root))
     base_dir = cwd or root
-    return _classify_command(command, base_dir, root, 0, set())
+    return _classify_command(command, base_dir, root, 0, set(), {})

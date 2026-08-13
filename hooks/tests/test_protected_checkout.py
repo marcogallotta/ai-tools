@@ -157,6 +157,61 @@ def test_git_config_count_alias_uses_visible_command_environment(
     assert "Refusing 'checkout'" in classify(classifier_module, protected_repo, command)
 
 
+def test_config_env_is_preserved_through_recursive_alias_expansion(
+    classifier_module, protected_repo
+):
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(protected_repo["primary"]),
+            "config",
+            "alias.second",
+            "checkout -b chained-config-env",
+        ],
+        check=True,
+    )
+    command = "MUTATOR=second git --config-env=alias.first=MUTATOR first"
+    assert "Refusing 'checkout'" in classify(classifier_module, protected_repo, command)
+
+
+def test_git_config_count_is_preserved_through_recursive_alias_expansion(
+    classifier_module, protected_repo
+):
+    command = (
+        "GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=alias.first GIT_CONFIG_VALUE_0=second "
+        "GIT_CONFIG_KEY_1=alias.second "
+        "GIT_CONFIG_VALUE_1='checkout -b chained-count' git first"
+    )
+    assert "Refusing 'checkout'" in classify(classifier_module, protected_repo, command)
+
+
+def test_recursive_command_environment_alias_forms_remain_allowed_outside_primary(
+    classifier_module, protected_repo
+):
+    for location in ("linked", "unrelated"):
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(protected_repo[location]),
+                "config",
+                "alias.second",
+                "checkout -b chained-config-env",
+            ],
+            check=True,
+        )
+    commands = (
+        "MUTATOR=second git --config-env=alias.first=MUTATOR first",
+        "GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=alias.first GIT_CONFIG_VALUE_0=second "
+        "GIT_CONFIG_KEY_1=alias.second "
+        "GIT_CONFIG_VALUE_1='checkout -b chained-count' git first",
+    )
+    for command in commands:
+        assert classify(classifier_module, protected_repo, command, cwd="linked") is None
+        assert classify(classifier_module, protected_repo, command, cwd="unrelated") is None
+
+
 def test_command_environment_alias_forms_remain_allowed_outside_primary(
     classifier_module, protected_repo
 ):
