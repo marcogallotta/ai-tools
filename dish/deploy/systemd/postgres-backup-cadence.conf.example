@@ -1,0 +1,6 @@
+# Install as /etc/systemd/system/dish-postgres-backup.timer.d/cadence.conf,
+# then edit the replacement OnCalendar value and run systemctl daemon-reload.
+# Keep DISH_PG_BACKUP_MAX_AGE_SECONDS coherent with the chosen cadence.
+[Timer]
+OnCalendar=
+OnCalendar=*-*-* 00/6:00:00 UTC

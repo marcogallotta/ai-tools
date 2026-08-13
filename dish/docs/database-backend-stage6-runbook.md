@@ -161,6 +161,91 @@ identity, all fingerprint/comparison artifacts and hashes, material source row c
 outcome. Failed runs remain hashed failure evidence and never satisfy the cutover gate. This
 implements the current off-device-copy requirement only; it does not add a PITR/RPO product policy.
 
+### 3.4 Scheduled production backup operation
+
+The production backup job is deliberately separate from the PostgreSQL service lifecycle. Starting a
+backup never starts or restarts PostgreSQL; an unavailable database makes the backup service fail and
+remain visible in systemd/journal evidence. The default timer cadence is every six hours at
+00:00/06:00/12:00/18:00 UTC with `Persistent=true`. The default retention window is seven days
+(`604800` seconds), and health becomes stale after seven hours (`25200` seconds), leaving one hour of
+run-time grace beyond the default cadence. All three values are operator-configurable.
+
+Before activation, create the mode-0600 environment file from
+`deploy/systemd/postgres-backup.env.example`. `DISH_PG_BACKUP_OFF_DEVICE_DIR` must already exist on a
+filesystem device different from `DISH_PG_BACKUP_LOCAL_DIR`; the backup command refuses to create a
+missing off-device path so an absent mount cannot degrade silently into another local copy. The
+default systemd sandbox whitelists the default local backup directory and assumes the off-device
+destination is outside `/home` (for example `/mnt`). If an authorized deployment changes
+`DISH_PG_BACKUP_LOCAL_DIR`, or chooses an off-device destination under a protected home path, add an
+explicit `ReadWritePaths=` drop-in for the configured path rather than weakening the service sandbox
+generally.
+
+The repository ships these activation artifacts, but **do not enable or start them merely because
+they are installed**. Installation/activation is a separate production-authorized operation:
+
+```sh
+install -m 0600 deploy/systemd/postgres-backup.env.example \
+  /home/marco/.config/dish-service/postgres-backup.env
+# Edit the populated file with the exact production DB identity, deployed Alembic head,
+# independent mounted destination, retention, and freshness threshold.
+
+sudo install -m 0644 deploy/systemd/dish-postgres-backup.service \
+  /etc/systemd/system/dish-postgres-backup.service
+sudo install -m 0644 deploy/systemd/dish-postgres-backup.timer \
+  /etc/systemd/system/dish-postgres-backup.timer
+
+# Optional cadence override. Edit OnCalendar before installation. Keep
+# DISH_PG_BACKUP_MAX_AGE_SECONDS coherent with the resulting interval.
+sudo install -d -m 0755 /etc/systemd/system/dish-postgres-backup.timer.d
+sudo install -m 0644 deploy/systemd/postgres-backup-cadence.conf.example \
+  /etc/systemd/system/dish-postgres-backup.timer.d/cadence.conf
+
+sudo systemctl daemon-reload
+# Production authorization required before either command below:
+# sudo systemctl enable --now dish-postgres-backup.timer
+# sudo systemctl start dish-postgres-backup.service
+```
+
+Each successful service run:
+
+1. fail-closes on the configured database name, single Alembic head, empty-table inventory, missing
+   off-device mount, same-device destination, or overlapping backup run;
+2. writes a mode-0600 custom-format `pg_dump --no-owner --no-privileges` archive into a hidden local
+   candidate directory, validates it with `pg_restore --list`, writes a SHA-256 sidecar, and rehashes
+   it;
+3. copies that exact archive to a hidden temporary file on the independent device, fsyncs it, checks
+   the SHA-256, atomically publishes the copy plus checksum sidecar, rehashes it, and validates the
+   copied archive with `pg_restore --list`;
+4. atomically publishes the local backup report/directory only after both artifact copies are valid;
+5. applies retention only after that new local + off-device pair has succeeded. A failed dump/copy
+   therefore cannot prune the previous usable backup. A retention failure leaves the newly verified
+   pair in place but makes the run fail visibly.
+
+The local root also carries a self-hashed `last-attempt.json`. The health command rehashes both
+latest artifact copies and checksum sidecars, rechecks current device independence, reports the
+latest successful backup time/age/database/schema/hash/local path/off-device destination, and fails
+when the artifact is stale or the latest attempt failed. Run it with the same environment values as
+the service, for example from an operator shell that has loaded the mode-0600 environment file:
+
+```sh
+set -a
+. /home/marco/.config/dish-service/postgres-backup.env
+set +a
+.venv/bin/python scripts/dish-pg-scheduled-backup health
+systemctl status dish-postgres-backup.timer dish-postgres-backup.service
+journalctl -u dish-postgres-backup.service --since '24 hours ago'
+```
+
+The scheduled `.dump` is intentionally the same PostgreSQL custom archive shape used by section 3.3
+and declares the same clean-restore flags: `--exit-on-error --single-transaction --no-owner
+--no-privileges`. This implementation does not itself certify a real production restore. The final
+recovery gate must use an artifact produced by an actual authorized timer-triggered run, restore that
+artifact into a separate clean database, and execute the existing `database-fingerprint` /
+`compare-database-fingerprints` procedure while the production source is quiesced so the source
+fingerprint can be bound meaningfully to that backup. Record the scheduled backup report/hash,
+off-device hash, clean-restore evidence, source/restored fingerprints, comparison, and exact deployed
+source commit together.
+
 ## 4. Create the release candidate
 
 Prepare a mode-0600 JSON file containing exact UUIDs plus the canonical source and governed rehearsal-environment identities:

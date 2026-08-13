@@ -1,0 +1,24 @@
+[Unit]
+Description=Dish PostgreSQL production backup
+After=network-online.target dish-postgres-prod.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=marco
+WorkingDirectory=/home/marco/ai-tools/dish
+EnvironmentFile=/home/marco/.config/dish-service/postgres-backup.env
+ExecStart=/home/marco/ai-tools/dish/.venv/bin/python scripts/dish-pg-scheduled-backup run
+TimeoutStartSec=2h
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/marco/.local/state/dish/prod/postgresql-backups
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
