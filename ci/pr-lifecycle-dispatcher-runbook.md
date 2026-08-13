@@ -38,6 +38,7 @@ The JSON schema is `dish-pr-lifecycle-status-v1`. The state engine distinguishes
 - `local_implementation_completion_required`;
 - `local_certification_required`;
 - `waiting_ci_certification`;
+- `waiting_external_dependency`;
 - `integration_ready`;
 - `merging_integration_in_progress`;
 - `merged`;
@@ -109,6 +110,19 @@ or `--implementation-fixer`. The command receives `dish-pr-fix-dispatch-v1` JSON
 Before launching the consumer, the dispatcher writes an exact-head `phase=fix` lease. A fresh `phase=fix` or `phase=implementation` lease on the current blocked head prevents duplicate dispatch. A head move immediately invalidates the old review and lease; the dispatcher never launches a fix consumer for a BLOCK that is no longer on the current head. If the configured command fails synchronously, the dispatcher releases its lease so recovery is not deadlocked.
 
 Missing implementation/fix consumer configuration is a deployment boundary, not a request for Marco to forward the review transcript. The durable BLOCK review remains on GitHub until the consumer is configured/recovered.
+
+
+## External dependency blockers
+
+A failed exact-head required check may enter `WAITING ON EXTERNAL DEPENDENCY` only when the PR carries a valid durable dependency record matching that exact check. The marker is a GitHub PR comment and is restart-reconstructable:
+
+```text
+<!-- dish-external-dependency:v1 action=blocked task=<16-digit-gid> pr=<owner-pr> check=<percent-encoded-check> main=<40-char-main-sha> evidence=<percent-encoded-reference> reason=<percent-encoded-reason> -->
+```
+
+`pr=` is optional when no code PR owns the fix. `task=`, `check=`, `main=`, and `evidence=` are mandatory. Values that may contain spaces are percent-encoded. Malformed records never authorize external ownership. Records are ordered deterministically by comment timestamp, numeric comment id, then marker order; the newest valid record wins. Resolution/supersession uses the same full identity with `action=resolved`, or is observed from a merged owner PR / completed owner task when that authority is available. A closed-unmerged owner PR remains blocked explicitly.
+
+While externally blocked the dispatcher does not launch Implementation/fix or local-certification work for the blocked PR and does not merge it. Human output is only the concise owner/check status. Once the owner resolves, the target PR returns to exact-head evidence evaluation; it does not inherit or skip CI/Review.
 
 ## Local work after Review MERGE
 

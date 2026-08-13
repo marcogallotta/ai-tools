@@ -67,6 +67,79 @@ def task_ids_from_pr(pr: Mapping[str, Any]) -> list[str]:
     return sorted(set(TASK_GID_RE.findall(text)))
 
 
+def _decode_marker_value(value: str | None, *, field: str) -> str:
+    if value is None:
+        raise LifecycleError(f"external dependency marker is missing {field}")
+    decoded = urlparse.unquote(value).strip()
+    if not decoded:
+        raise LifecycleError(f"external dependency marker has empty {field}")
+    return decoded
+
+
+def parse_external_dependency(
+    comments: Iterable[Mapping[str, Any]],
+) -> ExternalDependency | None:
+    """Return the newest durable external-dependency record, failing closed on malformed markers."""
+    records: list[ExternalDependency] = []
+    for comment in comments:
+        body = str(comment.get("body") or "")
+        fields_list = _marker_fields(body, EXTERNAL_DEPENDENCY_MARKER)
+        if not fields_list:
+            continue
+        timestamp = _parse_time(comment.get("updated_at") or comment.get("created_at"))
+        if timestamp is None:
+            raise LifecycleError("external dependency marker comment is missing a valid timestamp")
+        raw_id = comment.get("id")
+        try:
+            comment_id = int(raw_id)
+        except (TypeError, ValueError) as exc:
+            raise LifecycleError("external dependency marker comment is missing a numeric id") from exc
+        for marker_index, fields in enumerate(fields_list):
+            action = str(fields.get("action") or "").lower()
+            if action not in {"blocked", "resolved"}:
+                raise LifecycleError("external dependency marker action must be blocked or resolved")
+            task_gid = str(fields.get("task") or "")
+            if TASK_GID_RE.fullmatch(task_gid) is None:
+                raise LifecycleError("external dependency marker has invalid task GID")
+            owner_pr: int | None = None
+            if fields.get("pr") not in {None, ""}:
+                try:
+                    owner_pr = int(str(fields["pr"]))
+                except ValueError as exc:
+                    raise LifecycleError("external dependency marker has invalid PR number") from exc
+                if owner_pr <= 0:
+                    raise LifecycleError("external dependency marker has invalid PR number")
+            check = _decode_marker_value(fields.get("check"), field="check identity")
+            main_sha = str(fields.get("main") or "").lower()
+            if FULL_SHA_RE.fullmatch(main_sha) is None:
+                raise LifecycleError("external dependency marker has invalid main SHA")
+            evidence = _decode_marker_value(fields.get("evidence"), field="evidence reference")
+            reason_value = fields.get("reason")
+            reason = urlparse.unquote(reason_value).strip() if reason_value else None
+            records.append(
+                ExternalDependency(
+                    action=action,
+                    task_gid=task_gid,
+                    owner_pr=owner_pr,
+                    check=check,
+                    main_sha=main_sha,
+                    evidence=evidence,
+                    reason=reason or None,
+                    timestamp=timestamp,
+                    comment_id=comment_id,
+                    marker_index=marker_index,
+                )
+            )
+    if not records:
+        return None
+    return max(records, key=lambda item: (item.timestamp, item.comment_id, item.marker_index))
+
+
+def external_dependency_human_action(record: ExternalDependency) -> str:
+    owner = f"PR #{record.owner_pr} / task {record.task_gid}" if record.owner_pr else f"task {record.task_gid}"
+    return f"Waiting on {owner}: {record.check}. No action for Marco."
+
+
 def parse_leases(
     comments: Iterable[Mapping[str, Any]],
     *,

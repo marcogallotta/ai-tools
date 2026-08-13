@@ -38,6 +38,53 @@ class LifecycleInspectMixin:
                 values.append({"gid": gid, "error": str(exc)})
         return values
 
+
+    def _external_dependency_for_failed_check(
+        self,
+        comments: list[dict[str, Any]],
+        *,
+        check_identity: str,
+    ) -> tuple[ExternalDependency | None, str | None]:
+        try:
+            record = parse_external_dependency(comments)
+        except LifecycleError as exc:
+            return None, f"external dependency marker invalid: {exc}"
+        if record is None or record.action == "resolved" or record.check != check_identity:
+            return None, None
+
+        status_reason = record.reason
+        if record.owner_pr is not None:
+            try:
+                owner = self.github.get_pr(record.owner_pr)
+            except (LifecycleError, AssertionError):
+                owner = None
+            if owner is not None:
+                if bool(owner.get("merged") or owner.get("merged_at")):
+                    return None, f"external owner PR #{record.owner_pr} is merged; re-evaluate exact-head evidence"
+                owner_state = pr_gate.pr_state(owner)
+                if owner_state != "open":
+                    status_reason = (
+                        f"external owner PR #{record.owner_pr} is closed unmerged; dependency remains unresolved"
+                    )
+        elif self.asana is not None:
+            try:
+                owner_task = self.asana.get_task(record.task_gid)
+            except LifecycleError:
+                owner_task = None
+            if owner_task is not None and bool(owner_task.get("completed")):
+                return None, f"external owner task {record.task_gid} is complete; re-evaluate exact-head evidence"
+
+        return record, status_reason
+
+    @staticmethod
+    def _failed_required_ci_identity(exc: pr_gate.GateError) -> str | None:
+        message = str(exc).lower()
+        failed_run = "newest ordinary ci workflow attempt" in message and "concluded" in message and "expected 'success'" in message
+        failed_status = "required ordinary ci status for newest workflow attempt is" in message and "expected 'success'" in message
+        if failed_run or failed_status:
+            return pr_gate.REQUIRED_ORDINARY_CI_CONTEXT
+        return None
+
     def inspect(self, pr: dict[str, Any]) -> PRLifecycle:
         number = _pr_number(pr)
         current = self.github.get_pr(number)
@@ -222,7 +269,45 @@ class LifecycleInspectMixin:
                 combined_status=combined,
                 workflow_runs=runs,
             )
-        except (pr_gate.GateError, LifecycleError) as exc:
+        except pr_gate.GateError as exc:
+            failed_check = self._failed_required_ci_identity(exc)
+            marker_note = None
+            if failed_check:
+                dependency, marker_note = self._external_dependency_for_failed_check(
+                    comments, check_identity=failed_check
+                )
+                if dependency is not None:
+                    reason = dependency.reason or str(exc)
+                    if marker_note:
+                        reason = f"{reason}; {marker_note}"
+                    return PRLifecycle(
+                        **base_kwargs,
+                        state=LifecycleState.WAITING_EXTERNAL_DEPENDENCY,
+                        state_label=STATE_LABELS[LifecycleState.WAITING_EXTERNAL_DEPENDENCY],
+                        review_class=review_class,
+                        review_verdict=verdict,
+                        reviewed_head=reviewed_head,
+                        active_leases=lease_payload,
+                        local_work=local_payload,
+                        external_dependency=dependency.json(),
+                        residual_reason=reason,
+                        human_action=external_dependency_human_action(dependency),
+                    )
+            residual = str(exc)
+            if marker_note:
+                residual = f"{residual}; {marker_note}"
+            return PRLifecycle(
+                **base_kwargs,
+                state=LifecycleState.WAITING_CI,
+                state_label=STATE_LABELS[LifecycleState.WAITING_CI],
+                review_class=review_class,
+                review_verdict=verdict,
+                reviewed_head=reviewed_head,
+                active_leases=lease_payload,
+                local_work=local_payload,
+                residual_reason=residual,
+            )
+        except LifecycleError as exc:
             return PRLifecycle(
                 **base_kwargs,
                 state=LifecycleState.WAITING_CI,
