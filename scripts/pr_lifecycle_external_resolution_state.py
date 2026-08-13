@@ -1,1 +1,1 @@
-# external resolution routing
+from pr_lifecycle_external_resolution_owner import external_resolution_boundary
