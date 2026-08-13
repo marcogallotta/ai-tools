@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Report repository GitHub Actions runtime, rounded billed minutes, and approximate cost."""
+"""Report GitHub Actions runtime, rounded billed minutes, and allowance-aware cost."""
 from __future__ import annotations
 
 import argparse
@@ -69,6 +69,9 @@ def load_billing_config(path: Path) -> dict[str, object]:
     for label, rate in rates.items():
         if not isinstance(label, str) or not isinstance(rate, (int, float)) or rate < 0:
             raise CostReportError("billing rates must map runner labels to non-negative numbers")
+    allowance = config.get("included_minutes_per_month")
+    if not isinstance(allowance, int) or isinstance(allowance, bool) or allowance < 0:
+        raise CostReportError("included_minutes_per_month must be a non-negative integer")
     return config
 
 
@@ -88,99 +91,181 @@ def _rate_for_job(job: Mapping[str, object], config: Mapping[str, object]) -> tu
     return matches[0]
 
 
+def _period(
+    since: str | None,
+    until: str | None,
+    monthly_billed_minutes_before_period: int | None,
+) -> tuple[dict[str, object], int]:
+    if (since is None) != (until is None):
+        raise CostReportError("since and until must be supplied together")
+    if monthly_billed_minutes_before_period is not None and (
+        not isinstance(monthly_billed_minutes_before_period, int)
+        or isinstance(monthly_billed_minutes_before_period, bool)
+        or monthly_billed_minutes_before_period < 0
+    ):
+        raise CostReportError("monthly_billed_minutes_before_period must be a non-negative integer")
+    if since is None:
+        return {"since": None, "until": None, "billing_month_utc": None}, monthly_billed_minutes_before_period or 0
+
+    start = _parse_timestamp(since, field="since")
+    end = _parse_timestamp(until, field="until")
+    if end < start:
+        raise CostReportError("until must not precede since")
+    if (start.year, start.month) != (end.year, end.month):
+        raise CostReportError("cost report period must stay within one UTC calendar month")
+    month_start = start.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    if start != month_start and monthly_billed_minutes_before_period is None:
+        raise CostReportError(
+            "non-month-start periods require monthly_billed_minutes_before_period for truthful overage accounting"
+        )
+    return {
+        "since": since,
+        "until": until,
+        "billing_month_utc": f"{start.year:04d}-{start.month:02d}",
+    }, monthly_billed_minutes_before_period or 0
+
+
 def build_report(
     jobs: Iterable[Mapping[str, object]],
     *,
     config: Mapping[str, object],
     since: str | None = None,
     until: str | None = None,
+    monthly_billed_minutes_before_period: int | None = None,
 ) -> dict[str, object]:
-    by_workflow: dict[str, dict[str, object]] = {}
-    total_runtime = 0
-    total_billed = 0
-    total_cost = 0.0
-    total_jobs = 0
-    cancelled_billed = 0
+    period, prior_billed = _period(since, until, monthly_billed_minutes_before_period)
+    allowance = int(config.get("included_minutes_per_month", 0))
+
+    seen_ids: set[object] = set()
+    prepared: list[dict[str, object]] = []
+    for job in jobs:
+        job_id = job.get("id")
+        if job_id in seen_ids:
+            continue
+        seen_ids.add(job_id)
+        seconds = runtime_seconds(job)
+        minutes = billed_minutes(job)
+        label, rate = _rate_for_job(job, config)
+        started = None if minutes == 0 else _parse_timestamp(job.get("started_at"), field="started_at")
+        prepared.append({
+            "job": job,
+            "job_id": job_id,
+            "workflow": str(job.get("workflow_name") or "<unknown workflow>"),
+            "name": str(job.get("name") or "<unknown job>"),
+            "runtime_seconds": seconds,
+            "billed_minutes": minutes,
+            "billing_label": label,
+            "rate": rate,
+            "started": started,
+            "gross_equivalent_cost_usd": minutes * rate,
+            "overage_billed_minutes": 0,
+            "approximate_overage_cost_usd": 0.0,
+        })
+
+    remaining_allowance = max(0, allowance - prior_billed)
+    chargeable = [item for item in prepared if int(item["billed_minutes"]) > 0]
+    chargeable.sort(key=lambda item: (item["started"], str(item["job_id"])))
+    for item in chargeable:
+        minutes = int(item["billed_minutes"])
+        included_here = min(minutes, remaining_allowance)
+        overage = minutes - included_here
+        remaining_allowance -= included_here
+        item["overage_billed_minutes"] = overage
+        item["approximate_overage_cost_usd"] = overage * float(item["rate"])
 
     workflow_acc: dict[str, dict[str, object]] = defaultdict(
         lambda: {
             "jobs": 0,
             "runtime_seconds": 0,
             "billed_minutes": 0,
-            "approximate_cost_usd": 0.0,
+            "cancelled_billed_minutes": 0,
+            "gross_equivalent_cost_usd": 0.0,
+            "overage_billed_minutes": 0,
+            "approximate_overage_cost_usd": 0.0,
             "by_job": defaultdict(
                 lambda: {
                     "jobs": 0,
                     "runtime_seconds": 0,
                     "billed_minutes": 0,
-                    "approximate_cost_usd": 0.0,
+                    "cancelled_billed_minutes": 0,
+                    "gross_equivalent_cost_usd": 0.0,
+                    "overage_billed_minutes": 0,
+                    "approximate_overage_cost_usd": 0.0,
                 }
             ),
         }
     )
+    totals = {
+        "jobs": 0,
+        "runtime_seconds": 0,
+        "billed_minutes": 0,
+        "cancelled_billed_minutes": 0,
+        "gross_equivalent_cost_usd": 0.0,
+        "overage_billed_minutes": 0,
+        "approximate_overage_cost_usd": 0.0,
+    }
 
-    seen_ids: set[object] = set()
-    for job in jobs:
-        job_id = job.get("id")
-        if job_id in seen_ids:
-            continue
-        seen_ids.add(job_id)
-        workflow = str(job.get("workflow_name") or "<unknown workflow>")
-        name = str(job.get("name") or "<unknown job>")
-        seconds = runtime_seconds(job)
-        minutes = billed_minutes(job)
-        _, rate = _rate_for_job(job, config)
-        cost = minutes * rate
+    for item in prepared:
+        job = item["job"]
+        assert isinstance(job, Mapping)
+        cancelled = int(item["billed_minutes"]) if job.get("conclusion") == "cancelled" else 0
+        metrics = {
+            "jobs": 1,
+            "runtime_seconds": int(item["runtime_seconds"]),
+            "billed_minutes": int(item["billed_minutes"]),
+            "cancelled_billed_minutes": cancelled,
+            "gross_equivalent_cost_usd": float(item["gross_equivalent_cost_usd"]),
+            "overage_billed_minutes": int(item["overage_billed_minutes"]),
+            "approximate_overage_cost_usd": float(item["approximate_overage_cost_usd"]),
+        }
+        for key, value in metrics.items():
+            totals[key] += value
+        workflow_entry = workflow_acc[str(item["workflow"])]
+        job_entry = workflow_entry["by_job"][str(item["name"])]
+        for target in (workflow_entry, job_entry):
+            for key, value in metrics.items():
+                target[key] += value
 
-        total_jobs += 1
-        total_runtime += seconds
-        total_billed += minutes
-        total_cost += cost
-        if job.get("conclusion") == "cancelled":
-            cancelled_billed += minutes
+    def _rounded(entry: Mapping[str, object]) -> dict[str, object]:
+        return {
+            **entry,
+            "gross_equivalent_cost_usd": round(float(entry["gross_equivalent_cost_usd"]), 6),
+            "approximate_overage_cost_usd": round(float(entry["approximate_overage_cost_usd"]), 6),
+        }
 
-        workflow_entry = workflow_acc[workflow]
-        workflow_entry["jobs"] = int(workflow_entry["jobs"]) + 1
-        workflow_entry["runtime_seconds"] = int(workflow_entry["runtime_seconds"]) + seconds
-        workflow_entry["billed_minutes"] = int(workflow_entry["billed_minutes"]) + minutes
-        workflow_entry["approximate_cost_usd"] = float(workflow_entry["approximate_cost_usd"]) + cost
-        jobs_entry = workflow_entry["by_job"]
-        assert isinstance(jobs_entry, defaultdict)
-        job_entry = jobs_entry[name]
-        job_entry["jobs"] += 1
-        job_entry["runtime_seconds"] += seconds
-        job_entry["billed_minutes"] += minutes
-        job_entry["approximate_cost_usd"] += cost
-
+    by_workflow: dict[str, dict[str, object]] = {}
     for workflow in sorted(workflow_acc):
         entry = workflow_acc[workflow]
-        jobs_entry = entry["by_job"]
+        jobs_entry = entry.pop("by_job")
         assert isinstance(jobs_entry, defaultdict)
-        entry["by_job"] = {
-            job_name: {
-                **job_data,
-                "approximate_cost_usd": round(job_data["approximate_cost_usd"], 6),
-            }
+        rendered = _rounded(entry)
+        rendered["by_job"] = {
+            job_name: _rounded(job_data)
             for job_name, job_data in sorted(jobs_entry.items())
         }
-        entry["approximate_cost_usd"] = round(float(entry["approximate_cost_usd"]), 6)
-        by_workflow[workflow] = entry
+        by_workflow[workflow] = rendered
 
+    total_billed = int(totals["billed_minutes"])
+    prior_overage = max(0, prior_billed - allowance)
+    ending_overage = max(0, prior_billed + total_billed - allowance)
+    assert int(totals["overage_billed_minutes"]) == ending_overage - prior_overage
+
+    totals = _rounded(totals)
     return {
         "schema": REPORT_SCHEMA,
-        "period": {"since": since, "until": until},
+        "period": period,
         "billing_config": {
             "job_rounding": config.get("job_rounding"),
-            "included_minutes_per_month": config.get("included_minutes_per_month"),
+            "included_minutes_per_month": allowance,
             "rates_usd_per_billed_minute": config.get("rates_usd_per_billed_minute"),
         },
-        "totals": {
-            "jobs": total_jobs,
-            "runtime_seconds": total_runtime,
-            "billed_minutes": total_billed,
-            "cancelled_billed_minutes": cancelled_billed,
-            "approximate_cost_usd": round(total_cost, 6),
+        "allowance": {
+            "monthly_billed_minutes_before_period": prior_billed,
+            "included_minutes_remaining_before_period": max(0, allowance - prior_billed),
+            "included_minutes_remaining_after_period": max(0, allowance - prior_billed - total_billed),
+            "allocation_rule": "started_at_then_job_id",
         },
+        "totals": totals,
         "by_workflow": by_workflow,
     }
 
@@ -218,17 +303,8 @@ class GitHubClient:
         page = 1
         created = f"{since}..{until}"
         while True:
-            query = urlencode(
-                {
-                    "status": "completed",
-                    "created": created,
-                    "per_page": 100,
-                    "page": page,
-                }
-            )
-            payload = self._get_json(
-                f"https://api.github.com/repos/{self.repo}/actions/runs?{query}"
-            )
+            query = urlencode({"status": "completed", "created": created, "per_page": 100, "page": page})
+            payload = self._get_json(f"https://api.github.com/repos/{self.repo}/actions/runs?{query}")
             batch = payload.get("workflow_runs")
             if not isinstance(batch, list):
                 raise CostReportError("workflow runs response is missing workflow_runs")
@@ -242,9 +318,7 @@ class GitHubClient:
         page = 1
         while True:
             query = urlencode({"filter": "all", "per_page": 100, "page": page})
-            payload = self._get_json(
-                f"https://api.github.com/repos/{self.repo}/actions/runs/{run_id}/jobs?{query}"
-            )
+            payload = self._get_json(f"https://api.github.com/repos/{self.repo}/actions/runs/{run_id}/jobs?{query}")
             batch = payload.get("jobs")
             if not isinstance(batch, list):
                 raise CostReportError(f"jobs response for run {run_id} is missing jobs")
@@ -257,13 +331,10 @@ class GitHubClient:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="actions_cost_report")
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY"))
-    parser.add_argument("--since", required=True, help="inclusive ISO date/time accepted by GitHub created filter")
-    parser.add_argument("--until", required=True, help="inclusive ISO date/time accepted by GitHub created filter")
-    parser.add_argument(
-        "--config",
-        type=Path,
-        default=Path("ci/actions-billing.json"),
-    )
+    parser.add_argument("--since", required=True, help="inclusive ISO timestamp; report must stay within one UTC month")
+    parser.add_argument("--until", required=True, help="inclusive ISO timestamp; report must stay within one UTC month")
+    parser.add_argument("--monthly-billed-before-period", type=int)
+    parser.add_argument("--config", type=Path, default=Path("ci/actions-billing.json"))
     parser.add_argument("--output", type=Path)
     parser.add_argument("--token-env", default="GH_TOKEN")
     return parser
@@ -277,7 +348,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         client = GitHubClient(repo=args.repo or "", token=token)
         runs = client.completed_runs(since=args.since, until=args.until)
         jobs = [job for run in runs for job in client.jobs_for_run(run.get("id"))]
-        report = build_report(jobs, config=config, since=args.since, until=args.until)
+        report = build_report(
+            jobs,
+            config=config,
+            since=args.since,
+            until=args.until,
+            monthly_billed_minutes_before_period=args.monthly_billed_before_period,
+        )
         rendered = json.dumps(report, indent=2, sort_keys=True) + "\n"
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
