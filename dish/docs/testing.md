@@ -174,9 +174,11 @@ For every Dish code or test change, start with the complete changed-path set:
 The command reads `test_selection/ownership.csv`, takes the union across mixed changes, and prints
 focused owner tests plus governed lane commands. For Git-based planning it also reads the map at the
 base revision so deleted paths retain their prior test ownership. The map is a strong current-HEAD
-prior; it does not replace semantic review. An agent must evaluate the actual invariant, authority, durable state,
-external effect, transaction boundary, and release consequence changed. Add any additional required
-lane explicitly:
+prior; it does not replace semantic review. Frontend evidence is split into independent governed
+`frontend static/tooling` and `browser acceptance` lanes, and production/config PostgreSQL rows marked
+`native-pg` select `native PostgreSQL certification` rather than relying on advisory follow-up. An agent
+must evaluate the actual invariant, authority, durable state, external effect, transaction boundary, and
+release consequence changed. Add any additional required lane explicitly:
 
 ```sh
 .venv/bin/python scripts/dish-test-plan \
@@ -230,7 +232,9 @@ Test rows select their own module automatically, so `direct_owner_tests` and
 uses fan-out scope: narrow helpers run known consumers; cross-lane helpers run their consumer lanes;
 only genuinely global collection, dependency, fixture, selector, or governed-runner changes force
 the ordinary full suite before handoff. A row addition that only classifies a new path does not by
-itself force the full suite.
+itself force the full suite. `--integration-checkpoint` records checkpoint metadata only; Integration
+is not itself a reason to add `ordinary full suite`. Broad/full selection must come from the changed-path
+policy, unresolved semantic uncertainty, a high-consequence rule, or an explicit additive escalation.
 
 Validate the map after adding, deleting, renaming, or reclassifying a path:
 
@@ -252,18 +256,28 @@ results, conditional lanes omitted with reasons, and any unresolved uncertainty.
 review these decisions; repeated mistakes should become clearer map rules, examples, inventories, or
 structural checks.
 
-## Frontend browser acceptance
+## Frontend static/tooling and browser acceptance
 
-Delivery Stage 7 adds a committed Playwright suite under `frontend/tests/browser/`. It drives the
-production `frontend/dist` through the real private Dish HTTP surface with deterministic read-only
-acceptance state; it does not mount mocked frontend components. The normal frontend gate includes
-this suite after the static/unit/build checks:
+Frontend certification has two independently selectable boundaries. `frontend static/tooling` runs
+format/lint/schema/unit/build evidence without allocating a browser:
 
 ```sh
-npm --prefix frontend run check
+npm --prefix frontend run check:static
 ```
 
-For focused browser iteration, build once and run only the acceptance suite:
+`browser acceptance` drives the production `frontend/dist` through the real private Dish HTTP surface
+with deterministic read-only acceptance state; it does not mount mocked frontend components. The lane
+is selected for browser/presentation/session source, browser test infrastructure, and backend frontend
+contracts whose changed invariant can alter browser behavior. Pure unit/tooling/generated-check changes
+can remain static-only unless their semantic change alters emitted production assets, browser runtime
+contracts/dependencies, or acceptance execution. The standalone governed command rebuilds as needed:
+
+```sh
+npm --prefix frontend run test:acceptance
+```
+
+`npm --prefix frontend run check` remains a convenience aggregate of static plus built acceptance; it is
+not a selector lane. For focused browser iteration, build once and run only the acceptance suite:
 
 ```sh
 npm --prefix frontend run build
@@ -480,8 +494,12 @@ explicit `--waive-skip NODEID=REASON`. The report includes dialect, driver, data
 version, selected/executed/passed/failed/error/skipped/unavailable counts, duration, and exact node
 IDs.
 
-Native-marked tests in ordinary source or full-suite runs skip before their bodies with a governed
-reason unless `--postgresql` is present. They never substitute SQLite. The native branch of
+Production/config/source-artifact ownership rows carrying the `native-pg` trait select this lane by
+default. Narrow PGlite and source-level PostgreSQL tests are not blanket-promoted merely because their
+fixtures mention PostgreSQL; they remain focused unless their owning production/config path or an
+explicit semantic escalation requires native evidence. Native-marked tests in ordinary source or
+full-suite runs skip before their bodies with a governed reason unless `--postgresql` is present. They
+never substitute SQLite. The native branch of
 `tests/support/postgresql/core.py` drops and recreates the disposable `public` schema before each
 owning test, then runs Alembic through `head`. It must not use `Base.metadata.create_all()`:
 hand-written PostgreSQL triggers and constraints are part of the behavior under certification.

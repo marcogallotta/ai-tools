@@ -258,6 +258,24 @@ def validate_policy(
         if kind == "test" and not row.get("domain_class_for_tests"):
             errors.append(f"{prefix}: test lacks domain class")
 
+        if kind == "frontend-source" and path.startswith("frontend/"):
+            if "frontend static/tooling" not in lanes:
+                errors.append(f"{prefix}: frontend source lacks frontend static/tooling lane")
+        if path.startswith("frontend/tests/unit/") and "frontend static/tooling" not in lanes:
+            errors.append(f"{prefix}: frontend unit test lacks frontend static/tooling lane")
+        if path.startswith("frontend/tests/browser/") and "browser acceptance" not in lanes:
+            errors.append(f"{prefix}: browser test/support lacks browser acceptance lane")
+        if "browser-boundary" in traits and "browser acceptance" not in lanes:
+            errors.append(f"{prefix}: browser-boundary trait lacks browser acceptance lane")
+        if "browser acceptance" in lanes and "browser-boundary" not in traits:
+            errors.append(f"{prefix}: browser acceptance lane lacks browser-boundary trait")
+        if kind in {"production", "config-or-runner", "source-artifact"} and "native-pg" in traits:
+            if "native PostgreSQL certification" not in lanes:
+                errors.append(
+                    f"{prefix}: native-pg production/config path lacks "
+                    "native PostgreSQL certification"
+                )
+
         if "/migrations/versions/" in path:
             required = {
                 "SQLite database-boundary",
