@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+from enum import Enum
 import json
 import re
 import sys
@@ -18,6 +19,17 @@ _VERDICT_RE = re.compile(r"(?im)^\s*VERDICT:\s*(MERGE|BLOCK)\s*$")
 
 class GateError(ValueError):
     """The supplied GitHub state does not satisfy a lifecycle gate."""
+
+
+class GateDiagnosis(str, Enum):
+    """Structured exact-head Integration evidence state."""
+
+    PASS = "PASS"
+    PENDING = "PENDING"
+    FAILED_REQUIRED_CI = "FAILED_REQUIRED_CI"
+    EVIDENCE_MISSING_OR_STALE = "EVIDENCE_MISSING_OR_STALE"
+    HEAD_MOVED = "HEAD_MOVED"
+    INFRASTRUCTURE_ERROR = "INFRASTRUCTURE_ERROR"
 
 
 def _load_json(path: str) -> dict[str, Any]:
@@ -219,6 +231,195 @@ def _required_status_for_attempt(
     return max(candidates, key=lambda candidate: candidate[0])[1]
 
 
+def _diagnosis_result(
+    state: GateDiagnosis,
+    *,
+    current_head: str,
+    reviewed_head: str,
+    reason: str,
+    certified_sha: str | None = None,
+    run: dict[str, Any] | None = None,
+    required_status: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "diagnosis": state.value,
+        "current_head": current_head,
+        "reviewed_head": reviewed_head,
+        "certified_sha": certified_sha,
+        "required_status_context": REQUIRED_ORDINARY_CI_CONTEXT,
+        "reason": reason,
+    }
+    if run is not None:
+        result.update(
+            {
+                "required_workflow_run_id": _run_int(run, "id"),
+                "required_workflow_run_attempt": _run_int(run, "run_attempt"),
+                "required_workflow_run_started_at": run.get("run_started_at"),
+                "required_workflow_status": str(run.get("status", "")).lower(),
+                "required_workflow_conclusion": str(run.get("conclusion") or "").lower(),
+            }
+        )
+    if required_status is not None:
+        result.update(
+            {
+                "required_status_state": str(required_status.get("state", "")).lower(),
+                "target_url": required_status.get("target_url"),
+            }
+        )
+    return result
+
+
+def diagnose_integration_gate(
+    pr: dict[str, Any],
+    *,
+    reviewed_head: str,
+    combined_status: dict[str, Any],
+    workflow_runs: dict[str, Any],
+) -> dict[str, Any]:
+    """Classify exact-head Integration evidence without weakening the success gate."""
+    current_head = _head_sha(pr)
+    if current_head != reviewed_head:
+        reason = (
+            f"PR head moved: reviewed {reviewed_head}, current {current_head}; "
+            "re-review is required"
+        )
+        return _diagnosis_result(
+            GateDiagnosis.HEAD_MOVED,
+            current_head=current_head,
+            reviewed_head=reviewed_head,
+            reason=reason,
+        )
+
+    if _state(pr) != "open":
+        reason = f"PR state is {_state(pr)!r}, expected 'open'"
+        return _diagnosis_result(
+            GateDiagnosis.EVIDENCE_MISSING_OR_STALE,
+            current_head=current_head,
+            reviewed_head=reviewed_head,
+            reason=reason,
+        )
+    if _draft(pr):
+        reason = "PR is draft; ordinary integration requires review-ready state"
+        return _diagnosis_result(
+            GateDiagnosis.EVIDENCE_MISSING_OR_STALE,
+            current_head=current_head,
+            reviewed_head=reviewed_head,
+            reason=reason,
+        )
+
+    status_sha = str(combined_status.get("sha", ""))
+    if status_sha != reviewed_head:
+        reason = (
+            f"required CI evidence is for {status_sha or '<missing>'}, "
+            f"not reviewed head {reviewed_head}"
+        )
+        return _diagnosis_result(
+            GateDiagnosis.EVIDENCE_MISSING_OR_STALE,
+            current_head=current_head,
+            reviewed_head=reviewed_head,
+            certified_sha=status_sha or None,
+            reason=reason,
+        )
+
+    try:
+        newest_run, newest_started_at = _newest_ordinary_ci_attempt(
+            workflow_runs, reviewed_head=reviewed_head
+        )
+    except GateError as exc:
+        return _diagnosis_result(
+            GateDiagnosis.EVIDENCE_MISSING_OR_STALE,
+            current_head=current_head,
+            reviewed_head=reviewed_head,
+            certified_sha=status_sha,
+            reason=str(exc),
+        )
+
+    run_id = _run_int(newest_run, "id")
+    run_attempt = _run_int(newest_run, "run_attempt")
+    run_status = str(newest_run.get("status", "")).lower()
+    run_conclusion = str(newest_run.get("conclusion") or "").lower()
+    if run_status != "completed":
+        reason = (
+            f"newest ordinary CI workflow attempt {run_id}/{run_attempt} is "
+            f"{run_status or '<missing>'}, expected 'completed'"
+        )
+        return _diagnosis_result(
+            GateDiagnosis.PENDING,
+            current_head=current_head,
+            reviewed_head=reviewed_head,
+            certified_sha=status_sha,
+            run=newest_run,
+            reason=reason,
+        )
+    if run_conclusion != "success":
+        reason = (
+            f"newest ordinary CI workflow attempt {run_id}/{run_attempt} concluded "
+            f"{run_conclusion or '<missing>'}, expected 'success'"
+        )
+        return _diagnosis_result(
+            GateDiagnosis.FAILED_REQUIRED_CI,
+            current_head=current_head,
+            reviewed_head=reviewed_head,
+            certified_sha=status_sha,
+            run=newest_run,
+            reason=reason,
+        )
+
+    try:
+        required = _required_status_for_attempt(
+            combined_status, run_id=run_id, attempt_started_at=newest_started_at
+        )
+    except GateError as exc:
+        return _diagnosis_result(
+            GateDiagnosis.EVIDENCE_MISSING_OR_STALE,
+            current_head=current_head,
+            reviewed_head=reviewed_head,
+            certified_sha=status_sha,
+            run=newest_run,
+            reason=str(exc),
+        )
+
+    status_state = str(required.get("state", "")).lower()
+    if status_state == "pending":
+        reason = (
+            "required ordinary CI status for newest workflow attempt is pending, "
+            "expected 'success'"
+        )
+        return _diagnosis_result(
+            GateDiagnosis.PENDING,
+            current_head=current_head,
+            reviewed_head=reviewed_head,
+            certified_sha=status_sha,
+            run=newest_run,
+            required_status=required,
+            reason=reason,
+        )
+    if status_state != "success":
+        reason = (
+            f"required ordinary CI status for newest workflow attempt is "
+            f"{status_state or '<missing>'}, expected 'success'"
+        )
+        return _diagnosis_result(
+            GateDiagnosis.FAILED_REQUIRED_CI,
+            current_head=current_head,
+            reviewed_head=reviewed_head,
+            certified_sha=status_sha,
+            run=newest_run,
+            required_status=required,
+            reason=reason,
+        )
+
+    return _diagnosis_result(
+        GateDiagnosis.PASS,
+        current_head=current_head,
+        reviewed_head=reviewed_head,
+        certified_sha=status_sha,
+        run=newest_run,
+        required_status=required,
+        reason="exact reviewed head has current successful required ordinary CI",
+    )
+
+
 def evaluate_integration_gate(
     pr: dict[str, Any],
     *,
@@ -227,63 +428,15 @@ def evaluate_integration_gate(
     workflow_runs: dict[str, Any],
 ) -> dict[str, Any]:
     """Validate that Integration is acting on the exact reviewed, fully certified PR head."""
-    if _state(pr) != "open":
-        raise GateError(f"PR state is {_state(pr)!r}, expected 'open'")
-    if _draft(pr):
-        raise GateError("PR is draft; ordinary integration requires review-ready state")
-
-    current_head = _head_sha(pr)
-    if current_head != reviewed_head:
-        raise GateError(
-            f"PR head moved: reviewed {reviewed_head}, current {current_head}; re-review is required"
-        )
-
-    status_sha = str(combined_status.get("sha", ""))
-    if status_sha != reviewed_head:
-        raise GateError(
-            f"required CI evidence is for {status_sha or '<missing>'}, not reviewed head {reviewed_head}"
-        )
-
-    newest_run, newest_started_at = _newest_ordinary_ci_attempt(
-        workflow_runs, reviewed_head=reviewed_head
+    diagnosis = diagnose_integration_gate(
+        pr,
+        reviewed_head=reviewed_head,
+        combined_status=combined_status,
+        workflow_runs=workflow_runs,
     )
-    run_id = _run_int(newest_run, "id")
-    run_attempt = _run_int(newest_run, "run_attempt")
-    run_status = str(newest_run.get("status", "")).lower()
-    run_conclusion = str(newest_run.get("conclusion") or "").lower()
-    if run_status != "completed":
-        raise GateError(
-            f"newest ordinary CI workflow attempt {run_id}/{run_attempt} is {run_status or '<missing>'}, expected 'completed'"
-        )
-    if run_conclusion != "success":
-        raise GateError(
-            f"newest ordinary CI workflow attempt {run_id}/{run_attempt} concluded {run_conclusion or '<missing>'}, expected 'success'"
-        )
-
-    required = _required_status_for_attempt(
-        combined_status,
-        run_id=run_id,
-        attempt_started_at=newest_started_at,
-    )
-    state = str(required.get("state", "")).lower()
-    if state != "success":
-        raise GateError(
-            f"required ordinary CI status for newest workflow attempt is {state or '<missing>'}, expected 'success'"
-        )
-
-    return {
-        "ok": True,
-        "current_head": current_head,
-        "reviewed_head": reviewed_head,
-        "certified_sha": status_sha,
-        "required_status_context": REQUIRED_ORDINARY_CI_CONTEXT,
-        "required_status_state": state,
-        "required_workflow_run_id": run_id,
-        "required_workflow_run_attempt": run_attempt,
-        "required_workflow_run_started_at": newest_run.get("run_started_at"),
-        "required_workflow_conclusion": run_conclusion,
-        "target_url": required.get("target_url"),
-    }
+    if diagnosis["diagnosis"] != GateDiagnosis.PASS.value:
+        raise GateError(str(diagnosis["reason"]))
+    return {"ok": True, **diagnosis}
 
 
 def _parser() -> argparse.ArgumentParser:

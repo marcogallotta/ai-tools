@@ -177,6 +177,30 @@ state, detached ownership, and stale/missing/ambiguous origin evidence. If the e
 missing locally, it uses a no-destination `fetch --no-write-fetch-head` shape and proves the object
 exists without moving local `main` or another task branch.
 
+### Adopt an explicitly handed-off remote PR branch
+
+When a ChatGPT-created `agent/*` PR branch already exists on verified origin but has no local task
+state, an orchestrator can hand its exact identity to a local agent without bypassing this lifecycle:
+
+```sh
+tools/agent-worktree adopt \
+  --task <task_gid> \
+  --branch agent/<existing-pr-branch> \
+  --base-ref refs/heads/main \
+  --base <original-authoring-base-sha> \
+  --expected-head <exact-current-remote-pr-head> \
+  --agent-id <local-agent-id>
+```
+
+`adopt` is a fail-closed first-state operation, not arbitrary branch takeover. It requires no existing
+task state or local branch, verifies the canonical repository and remote branch, requires the supplied
+authoring base to be an ancestor of the handed-off head, and re-reads the exact remote branch before
+and after creating a locked linked worktree. Any head mismatch before creation leaves no task
+state/worktree mutation; a post-create verification race is rolled back locally. Adoption never
+resets, rebases, merges, or pushes. On success the durable task record starts with local, published,
+and remote-owned heads all equal to the verified handed-off head, after which normal
+`resume`/`publish`/`verify-handoff`/`cleanup` behavior is unchanged.
+
 ### Resume and status
 
 ```sh

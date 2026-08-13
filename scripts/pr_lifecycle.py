@@ -11,12 +11,92 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from pr_lifecycle_support import *
 from pr_lifecycle_helpers import *
+from pr_lifecycle_helpers import _parse_time
+from pr_lifecycle_external_replay import replay_external_dependency
 from pr_lifecycle_engine_inspect import LifecycleInspectMixin
 from pr_lifecycle_engine_actions import LifecycleActionsMixin
+from pr_lifecycle_authoring_actions import LifecycleAuthoringActionsMixin
+from pr_lifecycle_integration_certification import LocalIntegrationCertificationMixin
 
-class LifecycleEngine(LifecycleInspectMixin, LifecycleActionsMixin):
-    pass
+class LifecycleEngine(
+    LocalIntegrationCertificationMixin,
+    LifecycleInspectMixin,
+    LifecycleAuthoringActionsMixin,
+    LifecycleActionsMixin,
+):
+    def _external_resolution_boundary(self, lifecycle):
+        try:
+            active, resolution = replay_external_dependency(
+                self.github.get_comments(lifecycle.number)
+            )
+        except LifecycleError:
+            return None
+        check = pr_gate.REQUIRED_ORDINARY_CI_CONTEXT
+        if resolution is not None and resolution.check == check:
+            return resolution.timestamp, "external dependency was explicitly resolved"
+        if active is None or active.check != check:
+            return None
+        if active.owner_pr is not None:
+            try:
+                owner = self.github.get_pr(active.owner_pr)
+            except (LifecycleError, AssertionError):
+                owner = None
+            if owner is not None and bool(owner.get("merged") or owner.get("merged_at")):
+                return (
+                    _parse_time(owner.get("merged_at")),
+                    f"external owner PR #{active.owner_pr} is merged",
+                )
+            return None
+        if self.asana is None:
+            return None
+        try:
+            owner_task = self.asana.get_task(active.task_gid)
+        except LifecycleError:
+            owner_task = None
+        if owner_task is not None and bool(owner_task.get("completed")):
+            return (
+                _parse_time(owner_task.get("completed_at")),
+                f"external owner task {active.task_gid} is complete",
+            )
+        return None
 
+    def inspect(self, pr):
+        lifecycle = super().inspect(pr)
+        if (
+            lifecycle.state != LifecycleState.CHANGES_REQUESTED
+            or not lifecycle.gate
+            or lifecycle.gate.get("diagnosis")
+            != pr_gate.GateDiagnosis.FAILED_REQUIRED_CI.value
+        ):
+            return lifecycle
+        boundary = self._external_resolution_boundary(lifecycle)
+        if boundary is None:
+            return lifecycle
+        resolved_at, reason = boundary
+        run_started_at = _parse_time(
+            lifecycle.gate.get("required_workflow_run_started_at")
+        )
+        if (
+            resolved_at is not None
+            and run_started_at is not None
+            and run_started_at > resolved_at
+        ):
+            return lifecycle
+        stale = dict(lifecycle.gate)
+        stale["diagnosis"] = pr_gate.GateDiagnosis.EVIDENCE_MISSING_OR_STALE.value
+        stale["reason"] = (
+            f"{reason}; stale failed CI. Integration must refresh/re-run exact-head "
+            "evidence before assigning failure ownership."
+        )
+        lifecycle.state = LifecycleState.REVIEW_PASSED
+        lifecycle.state_label = STATE_LABELS[LifecycleState.REVIEW_PASSED]
+        lifecycle.gate = stale
+        lifecycle.residual_reason = (
+            "Integration evidence is stale after external dependency resolution; "
+            "refresh/re-run exact-head evidence."
+        )
+        lifecycle.human_action = None
+        return lifecycle
 def _parse_specialist_triggers(value: str | None) -> dict[str, str]:
     if not value:
         return {}
@@ -61,6 +141,10 @@ def _build_engine(
     fixer = ImplementationFixDispatcher(
         args.implementation_fixer or os.getenv("DISH_IMPLEMENTATION_FIX_COMMAND")
     )
+    certifier = ImplementationFixDispatcher(
+        args.local_integration_certifier or os.getenv("DISH_LOCAL_INTEGRATION_CERTIFICATION_COMMAND")
+    )
+    engine.local_integration_certifier = certifier
     return engine, workspace, local, fixer
 
 
@@ -126,6 +210,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--implementation-fixer",
         help="existing implementation/fix consumer command; receives exact-head BLOCK dispatch JSON on stdin",
+    )
+    parser.add_argument(
+        "--local-integration-certifier",
+        help="local Integration consumer; receives complete exact-head certification handoff JSON on stdin",
     )
     parser.add_argument("--integration-authority", action="store_true", help="explicitly compose bounded Integration after exact-head MERGE")
     parser.add_argument("--no-merge-capability", action="store_true", help="declare that this host cannot perform GitHub merge")

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import argparse
-import socket
 from pathlib import Path
 from typing import Any
 
-from .common import (AgentWorktreeError, EXPECTED_REPOSITORY, SCHEMA_VERSION, GitRunner, fail, now_utc, require_agent_id, require_full_sha, require_task_gid, worktree_records)
+from .common import (AgentWorktreeError, GitRunner, fail, now_utc, require_agent_id, require_full_sha, require_task_gid, worktree_records, find_worktree_record)
 from .operations import (
     branch_exists, candidate_path_is_safe, payload_from_state, remote_and_target_observation,
     owner_agent_id, remote_ref_sha, resolve_repository_from_state, update_owner, validate_base_ref,
@@ -13,9 +12,217 @@ from .operations import (
 )
 from .repository import discover_repository
 from .state import (
-    TaskLock, atomic_write_json, clear_agent_reference, load_task_state, set_agent_reference,
-    state_path, task_worktree_path, validate_agent_state,
+    TaskLock, atomic_write_json, clear_agent_reference, load_task_state, new_active_task_state,
+    set_agent_reference, state_path, task_worktree_path, validate_agent_state,
 )
+
+def _checked_out_path(runner: GitRunner, cwd: Path, branch: str) -> str | None:
+    ref = f"refs/heads/{branch}"
+    for record in worktree_records(runner, cwd):
+        if record.get("branch") == ref:
+            return record.get("worktree") or "<unknown>"
+    return None
+
+
+def _rollback_local_adoption(
+    runner: GitRunner,
+    *,
+    repo,
+    candidate: Path,
+    branch: str,
+    expected_head: str,
+    owns_branch: bool,
+) -> str | None:
+    """Best-effort removal of only the worktree/ref this adopt attempt provably created."""
+    errors: list[str] = []
+    ref = f"refs/heads/{branch}"
+    record = find_worktree_record(worktree_records(runner, repo.source_top), candidate)
+    if record is not None:
+        if record.get("branch") != ref:
+            errors.append(f"candidate worktree is registered to unexpected branch {record.get('branch')!r}")
+        else:
+            unlock = runner.run(repo.source_top, "worktree", "unlock", str(candidate), check=False)
+            if unlock.returncode != 0:
+                errors.append(f"worktree unlock failed: {unlock.stderr.strip()}")
+            else:
+                remove = runner.run(repo.source_top, "worktree", "remove", str(candidate), check=False)
+                if remove.returncode != 0:
+                    errors.append(f"worktree remove failed: {remove.stderr.strip()}")
+
+    if owns_branch and branch_exists(runner, repo.source_top, branch):
+        checked = _checked_out_path(runner, repo.source_top, branch)
+        if checked is not None:
+            errors.append(f"local branch remained checked out at {checked}")
+        else:
+            actual = runner.sha(repo.source_top, ref)
+            if actual != expected_head:
+                errors.append(f"local branch moved during rollback: {actual} != {expected_head}")
+            else:
+                deleted = runner.run(repo.source_top, "update-ref", "-d", ref, expected_head, check=False)
+                if deleted.returncode != 0:
+                    errors.append(f"conditional local branch deletion failed: {deleted.stderr.strip()}")
+    return "; ".join(errors) if errors else None
+
+
+def command_adopt(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]:
+    task_gid = require_task_gid(args.task)
+    agent_id = require_agent_id(args.agent_id)
+    base_sha = require_full_sha(args.base, "supplied base SHA")
+    expected_head = require_full_sha(args.expected_head, "expected remote branch HEAD")
+    validate_agent_state(agent_id)
+
+    with TaskLock(task_gid):
+        state_file = state_path(task_gid)
+        if state_file.exists():
+            fail(
+                "ADOPTION_STATE_EXISTS",
+                "task already has durable worktree state; use resume/--takeover instead of adopting the remote branch again",
+            )
+
+        repo = discover_repository(runner, Path(args.repo))
+        branch = validate_branch(runner, repo.source_top, args.branch)
+        base_ref = validate_base_ref(runner, repo.source_top, args.base_ref)
+        candidate = task_worktree_path(task_gid).resolve()
+        runner.check_candidate(candidate)
+        candidate_path_is_safe(repo, runner, candidate)
+
+        if branch_exists(runner, repo.source_top, branch):
+            checked = _checked_out_path(runner, repo.source_top, branch)
+            if checked is not None:
+                fail("BRANCH_CHECKED_OUT", f"handoff branch already exists and is checked out elsewhere: {checked}")
+            fail("BRANCH_COLLISION", f"handoff branch already exists locally without matching task state: {branch}")
+
+        remote_ref = f"refs/heads/{branch}"
+        remote_head = remote_ref_sha(runner, repo, remote_ref, allow_missing=True)
+        if remote_head is None:
+            fail("REMOTE_BRANCH_MISSING", f"explicit handoff branch does not exist on verified origin: {branch}")
+        if remote_head != expected_head:
+            fail(
+                "EXPECTED_HEAD_MISMATCH",
+                f"remote handoff branch moved or was misidentified: expected {expected_head}, origin has {remote_head}; no state/worktree was created",
+            )
+
+        target_head = remote_ref_sha(runner, repo, base_ref)
+        assert target_head is not None
+        ensure_commit_object(runner, repo, base_sha)
+        ensure_commit_object(runner, repo, expected_head)
+        if runner.sha(repo.source_top, base_sha) != base_sha:
+            fail("BASE_FETCH_FAILED", "supplied base does not resolve to the exact fetched commit")
+        if runner.sha(repo.source_top, expected_head) != expected_head:
+            fail("HANDOFF_FETCH_FAILED", "expected remote branch HEAD does not resolve to the exact fetched commit")
+        ancestor = runner.run(repo.source_top, "merge-base", "--is-ancestor", base_sha, expected_head, check=False)
+        if ancestor.returncode == 1:
+            fail(
+                "BASE_NOT_ANCESTOR",
+                f"supplied authoring base {base_sha} is not an ancestor of handed-off head {expected_head}",
+            )
+        if ancestor.returncode != 0:
+            fail("ANCESTRY_CHECK_FAILED", "could not verify the supplied base against the handed-off branch head")
+
+        remote_head = remote_ref_sha(runner, repo, remote_ref)
+        assert remote_head is not None
+        if remote_head != expected_head:
+            fail(
+                "EXPECTED_HEAD_MISMATCH",
+                f"remote handoff branch moved before adoption: expected {expected_head}, origin has {remote_head}; no state/worktree was created",
+            )
+
+        candidate.parent.mkdir(parents=True, exist_ok=True)
+        reason = f"Dish task {task_gid}; adopted remote branch; agent {agent_id or 'unrecorded'}"
+
+        # Atomic create-if-absent: old-value is the all-zero SHA, git's sentinel for "ref must
+        # not already exist". Success here is definitive proof that this call, and no concurrent
+        # local creator, created the branch ref — rollback below must never touch a branch it
+        # cannot prove it created this way.
+        create_ref = runner.run(
+            repo.source_top, "update-ref", remote_ref, expected_head, "0" * 40, check=False,
+        )
+        if create_ref.returncode != 0:
+            fail(
+                "BRANCH_CREATE_RACE",
+                f"local branch ref creation for handoff failed, likely raced by another local creator: {create_ref.stderr.strip()}",
+            )
+
+        add = runner.run(
+            repo.source_top,
+            "worktree",
+            "add",
+            "--lock",
+            "--reason",
+            reason,
+            str(candidate),
+            branch,
+            check=False,
+        )
+        if add.returncode != 0:
+            rollback_error = _rollback_local_adoption(
+                runner, repo=repo, candidate=candidate, branch=branch, expected_head=expected_head, owns_branch=True
+            )
+            if rollback_error:
+                fail(
+                    "ADOPTION_ROLLBACK_FAILED",
+                    f"git worktree adoption failed and local rollback was incomplete: {rollback_error}",
+                )
+            fail("WORKTREE_ADOPT_FAILED", f"git worktree add failed without durable state: {add.stderr.strip()}")
+
+        try:
+            git_dir = runner.path(candidate, "--git-dir")
+            provisional = new_active_task_state(
+                task_gid=task_gid,
+                branch=branch,
+                worktree_path=candidate,
+                git_common_dir=repo.common_dir,
+                git_dir=git_dir,
+                origin_id=repo.origin_id,
+                base_ref=base_ref,
+                base_sha=base_sha,
+                agent_id=agent_id,
+                local_head=expected_head,
+                published_head=expected_head,
+                remote_owned_head=expected_head,
+                remote_relation="equal",
+                target_current_head=target_head,
+            )
+            identity = verify_owned_worktree(runner, repo, provisional)
+            if identity.head != expected_head:
+                fail(
+                    "WORKTREE_ADOPT_VERIFY_FAILED",
+                    f"adopted worktree HEAD {identity.head} != exact handed-off head {expected_head}",
+                )
+
+            verified_remote = remote_ref_sha(runner, repo, remote_ref)
+            assert verified_remote is not None
+            if verified_remote != expected_head:
+                fail(
+                    "EXPECTED_HEAD_MOVED",
+                    f"remote handoff branch moved during adoption: expected {expected_head}, origin has {verified_remote}",
+                )
+            current_target = remote_ref_sha(runner, repo, base_ref)
+            assert current_target is not None
+            provisional["target_current_head"] = current_target
+        except AgentWorktreeError as exc:
+            rollback_error = _rollback_local_adoption(
+                runner, repo=repo, candidate=candidate, branch=branch, expected_head=expected_head, owns_branch=True
+            )
+            if rollback_error:
+                fail(
+                    "ADOPTION_ROLLBACK_FAILED",
+                    f"post-create adoption verification failed with {exc.code} and rollback was incomplete: {rollback_error}",
+                )
+            raise
+
+        atomic_write_json(state_file, provisional)
+        if agent_id is not None:
+            set_agent_reference(agent_id, provisional)
+        return payload_from_state(
+            "adopt",
+            provisional,
+            identity,
+            relation="equal",
+            remote_head=expected_head,
+            target_head=current_target,
+        )
+
 
 def command_start(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]:
     task_gid = require_task_gid(args.task)
@@ -78,34 +285,23 @@ def command_start(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]
         if add.returncode != 0:
             fail("WORKTREE_CREATE_FAILED", f"git worktree add failed without recovery mutation: {add.stderr.strip()}")
 
-        # Build provisional state from actual Git identity; no state file is written
-        # until every top-level/git-dir/common-dir/registry/branch/HEAD check passes.
         git_dir = runner.path(candidate, "--git-dir")
-        provisional = {
-            "schema_version": SCHEMA_VERSION,
-            "repository": {"full_name": EXPECTED_REPOSITORY, "origin_id": repo.origin_id},
-            "task_gid": task_gid,
-            "branch": branch,
-            "worktree_path": str(candidate),
-            "git_common_dir": str(repo.common_dir),
-            "git_dir": str(git_dir),
-            "base_ref": base_ref,
-            "base_sha": base_sha,
-            "owner": {"agent_id": agent_id, "host": socket.gethostname()},
-            "created_at": now_utc(),
-            "last_verified_at": now_utc(),
-            "local_head": base_sha,
-            "published_head": None,
-            "remote_owned_head": None,
-            "remote_relation": "absent",
-            "remote_checked_at": now_utc(),
-            "target_current_head": remote_base,
-            "target_checked_at": now_utc(),
-            "pr_url": None,
-            "pr_head": None,
-            "lifecycle": "active",
-            "disposition": None,
-        }
+        provisional = new_active_task_state(
+            task_gid=task_gid,
+            branch=branch,
+            worktree_path=candidate,
+            git_common_dir=repo.common_dir,
+            git_dir=git_dir,
+            origin_id=repo.origin_id,
+            base_ref=base_ref,
+            base_sha=base_sha,
+            agent_id=agent_id,
+            local_head=base_sha,
+            published_head=None,
+            remote_owned_head=None,
+            remote_relation="absent",
+            target_current_head=remote_base,
+        )
         identity = verify_owned_worktree(runner, repo, provisional)
         if identity.head != base_sha:
             fail("WORKTREE_CREATE_VERIFY_FAILED", f"created worktree HEAD {identity.head} != exact base {base_sha}")

@@ -291,3 +291,56 @@ def test_exact_reviewed_head_with_required_ordinary_ci_passes_gate():
     assert result["required_status_context"] == pr_gate.REQUIRED_ORDINARY_CI_CONTEXT
     assert result["required_workflow_run_id"] == 123
     assert result["required_workflow_run_attempt"] == 1
+
+
+def diagnose(*, candidate_pr=None, combined=None, workflow_runs=None, reviewed_head=HEAD):
+    return pr_gate.diagnose_integration_gate(
+        candidate_pr or pr(draft=False),
+        reviewed_head=reviewed_head,
+        combined_status=combined or statuses(sha=reviewed_head),
+        workflow_runs=workflow_runs or runs(run(head=reviewed_head)),
+    )
+
+
+def test_review_discovery_ignores_base_staleness_and_ci_state():
+    candidate = pr(draft=False)
+    candidate["base"] = {"ref": "main", "sha": "c" * 40}
+    assert pr_gate.is_review_discoverable(candidate) is True
+
+
+def test_diagnosis_pending_is_integration_wait_state():
+    result = diagnose(
+        workflow_runs=runs(run(status="in_progress", conclusion=None))
+    )
+    assert result["diagnosis"] == pr_gate.GateDiagnosis.PENDING.value
+    assert result["required_workflow_run_id"] == 123
+
+
+def test_diagnosis_failed_required_ci_preserves_exact_failure_identity():
+    result = diagnose(workflow_runs=runs(run(conclusion="failure")))
+    assert result["diagnosis"] == pr_gate.GateDiagnosis.FAILED_REQUIRED_CI.value
+    assert result["required_status_context"] == pr_gate.REQUIRED_ORDINARY_CI_CONTEXT
+    assert result["required_workflow_run_id"] == 123
+
+
+def test_diagnosis_missing_or_stale_evidence_is_not_pending():
+    result = diagnose(combined={"sha": HEAD, "statuses": []})
+    assert result["diagnosis"] == pr_gate.GateDiagnosis.EVIDENCE_MISSING_OR_STALE.value
+    assert "absent" in result["reason"]
+
+
+def test_diagnosis_head_movement_requires_new_review_identity():
+    result = diagnose(candidate_pr=pr(draft=False, head=NEW_HEAD))
+    assert result["diagnosis"] == pr_gate.GateDiagnosis.HEAD_MOVED.value
+    assert result["current_head"] == NEW_HEAD
+
+
+def test_diagnosis_newest_failed_attempt_cannot_be_masked_by_older_success():
+    combined = statuses(run_id=123, updated_at="2026-08-12T19:05:00Z")
+    workflow_runs = runs(
+        run(run_id=123, started_at="2026-08-12T19:00:00Z", conclusion="success"),
+        run(run_id=124, started_at="2026-08-12T19:10:00Z", conclusion="failure"),
+    )
+    result = diagnose(combined=combined, workflow_runs=workflow_runs)
+    assert result["diagnosis"] == pr_gate.GateDiagnosis.FAILED_REQUIRED_CI.value
+    assert result["required_workflow_run_id"] == 124
