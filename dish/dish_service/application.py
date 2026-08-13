@@ -1405,14 +1405,48 @@ class DishService:
                 data["recovery_required"] = True
         elif active is not None:
             if leases.is_expired(active) and leases.is_owned_by(active, principal):
-                after_recovery_actions = list(actions)
-                actions = []
-                access = {
-                    "state": "expired",
-                    "rule": "service_lease_expired",
-                    "required_admin_action": "recover-lease",
-                }
-                data["recovery_required"] = True
+                try:
+                    leases.revive_expired_actor(
+                        operation_id,
+                        principal,
+                        manage_transaction=not conn.in_transaction,
+                        check_only=True,
+                    )
+                except DishRuleError as revival_error:
+                    actions = []
+                    access_guidance = _admin_inspect_guidance(
+                        operation_id,
+                        summary="Inspect an expired same-run lease with a recovery fence.",
+                        effect=(
+                            "Dish will identify the exact recovery or replacement state; lease expiry "
+                            "alone does not revoke the original durable run."
+                        ),
+                    )
+                    access = {
+                        "state": "expired_same_run_blocked",
+                        "rule": revival_error.rule,
+                        "expires_at": active["expires_at"],
+                        "required_admin_action": access_guidance["required_admin_action"],
+                    }
+                    data["recovery_required"] = True
+                else:
+                    actions = ["renew-lease"]
+                    data["agent_action"] = {
+                        "command": "renew-lease",
+                        "arguments": {"operation_id": operation_id},
+                    }
+                    data["legal_next_actions"] = ["renew-lease"]
+                    data["legal_next_step"] = (
+                        "This is the same durable run and its actor lease expired cleanly. "
+                        "Call renew-lease with data.agent_action.arguments to revive the same run; "
+                        "no Marco/admin recovery and no new run_id are required."
+                    )
+                    access = {
+                        "state": "expired_same_run_revivable",
+                        "rule": "service_lease_same_run_revivable",
+                        "lease_id": active["lease_id"],
+                        "expires_at": active["expires_at"],
+                    }
             elif leases.is_owned_by(active, principal):
                 access = {"state": "owned"}
             else:
@@ -2234,7 +2268,21 @@ class DishService:
                 )
                 state.acquired_for_request = True
             else:
-                state.leases.assert_owned(operation_id, state.principal)
+                if (
+                    state.leases.is_owned_by(active, state.principal)
+                    and state.leases.is_expired(active)
+                ):
+                    state.leases.revive_expired_actor(
+                        operation_id,
+                        state.principal,
+                        request_id=(
+                            None
+                            if state.request_row is None
+                            else str(state.request_row["request_id"])
+                        ),
+                    )
+                else:
+                    state.leases.assert_owned(operation_id, state.principal)
             return
         if command == "start" and prepared.get("kind") == "verification":
             if not operation_id:
@@ -2260,7 +2308,21 @@ class DishService:
                 )
                 state.acquired_for_request = True
             else:
-                state.leases.assert_owned(operation_id, state.principal)
+                if (
+                    state.leases.is_owned_by(active, state.principal)
+                    and state.leases.is_expired(active)
+                ):
+                    state.leases.revive_expired_actor(
+                        operation_id,
+                        state.principal,
+                        request_id=(
+                            None
+                            if state.request_row is None
+                            else str(state.request_row["request_id"])
+                        ),
+                    )
+                else:
+                    state.leases.assert_owned(operation_id, state.principal)
 
     def _dispatch_agent_command(
         self,

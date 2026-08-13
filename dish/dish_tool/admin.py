@@ -873,11 +873,21 @@ def _command_inspect(
         )
         problem = "A Dish run currently owns this workflow operation."
     elif safe_reclaim is not None and safe_reclaim.eligible:
-        waiting_for = "a fresh agent to reclaim the inactive clean attempt"
-        problem = (
-            "The prior agent run is inactive and committed state is mechanically safe "
-            "for a different run to reclaim."
-        )
+        if latest_lease is not None and latest_lease["released_at"] is None:
+            waiting_for = (
+                "the original run to resume or a fresh agent to reclaim the inactive clean attempt"
+            )
+            problem = (
+                "The prior agent lease expired cleanly. The original owner/run may still resume "
+                "that same durable operation until a replacement wins authority; committed state is "
+                "also mechanically safe for a different run to reclaim."
+            )
+        else:
+            waiting_for = "a fresh agent to reclaim the inactive clean attempt"
+            problem = (
+                "The prior agent run is inactive and committed state is mechanically safe "
+                "for a different run to reclaim."
+            )
         agent_actions_override = [
             {
                 "command": "safe-reclaim",

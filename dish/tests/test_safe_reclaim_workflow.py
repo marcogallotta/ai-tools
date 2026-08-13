@@ -13,6 +13,7 @@ from dish_service.request_replay import (
     settle_resolved_operation_requests,
 )
 from dish_tool.database import (
+    create_abandonment_attempt_in_transaction,
     record_marco_authorization,
     revoke_operation_run_in_transaction,
 )
@@ -312,15 +313,190 @@ def test_safe_reclaim_preserves_unused_marco_authorization_with_provenance(tmp_p
     finally:
         conn.close()
 
-def test_same_expired_run_still_gets_recover_lease_not_safe_reclaim(tmp_path):
+def test_same_expired_run_gets_connected_renewal_not_safe_reclaim(tmp_path):
     service, verifier, operation_id, _identity = _verification_with_expired_lease(tmp_path)
     inspected = service.execute_agent(
         "read", {"agent": "codex", "task_gid": "t"}, principal=verifier
     )
-    assert inspected["allowed_actions"] == []
-    assert inspected["data"]["required_admin_action"] == "recover-lease"
-    assert inspected["data"]["service_access"]["state"] == "expired"
+    assert inspected["allowed_actions"] == ["renew-lease"]
+    assert inspected["data"].get("required_admin_action") is None
+    assert inspected["data"]["service_access"]["state"] == "expired_same_run_revivable"
+    assert inspected["data"]["agent_action"] == {
+        "command": "renew-lease",
+        "arguments": {"operation_id": operation_id},
+    }
     assert "safe-reclaim" not in inspected["data"].get("legal_next_actions", [])
+
+
+def test_original_run_revival_wins_before_fresh_safe_reclaim(tmp_path):
+    service, old_verifier, fresh, operation_id, lease_id = _fresh_reclaimable_verification(tmp_path)
+
+    revived = service.renew_lease(operation_id, old_verifier, request_id=str(uuid.uuid4()))
+    assert revived["ok"] is True
+    assert revived["data"]["service_lease"]["lease_id"] == lease_id
+
+    reclaimed = service.execute_agent(
+        "safe-reclaim",
+        {"agent": "claude", "submission_id": operation_id, "lease_id": lease_id},
+        principal=fresh,
+        request_id=str(uuid.uuid4()),
+    )
+    assert reclaimed["ok"] is False
+    assert reclaimed["errors"][0]["rule"] == "safe_reclaim_not_eligible"
+    failed = {
+        item["rule"]
+        for item in reclaimed["errors"][0]["eligibility"]["failed_clauses"]
+    }
+    assert "safe_reclaim_live_lease" in failed
+
+
+def test_fresh_safe_reclaim_wins_before_original_run_revival(tmp_path):
+    service, old_verifier, fresh, operation_id, lease_id = _fresh_reclaimable_verification(tmp_path)
+
+    reclaimed = service.execute_agent(
+        "safe-reclaim",
+        {"agent": "claude", "submission_id": operation_id, "lease_id": lease_id},
+        principal=fresh,
+        request_id=str(uuid.uuid4()),
+    )
+    assert reclaimed["ok"] is True
+
+    revived = service.renew_lease(operation_id, old_verifier, request_id=str(uuid.uuid4()))
+    assert revived["ok"] is False
+    assert revived["code"] == "WRONG_STATE"
+    assert revived["errors"][0]["rule"] == "operation_not_open"
+
+
+def test_revoked_expired_original_run_cannot_revive(tmp_path):
+    service, verifier, operation_id, _identity = _verification_with_expired_lease(tmp_path)
+    conn = initialize_database(service.config.db_path)
+    try:
+        lease = conn.execute(
+            "SELECT * FROM service_leases WHERE operation_id=? AND released_at IS NULL",
+            (operation_id,),
+        ).fetchone()
+        with immediate_transaction(conn, "test_revoke_expired_original_run"):
+            revoke_operation_run_in_transaction(
+                conn,
+                operation_id=operation_id,
+                owner_id=verifier.owner_id,
+                run_id=verifier.run_id,
+                source_lease_id=lease["lease_id"],
+                reason="test explicit kill",
+            )
+    finally:
+        conn.close()
+
+    revived = service.renew_lease(operation_id, verifier, request_id=str(uuid.uuid4()))
+    assert revived["ok"] is False
+    assert revived["code"] == "AGENT_MISMATCH"
+    assert revived["errors"][0]["rule"] == "killed_run_revoked"
+
+
+def test_abandoned_expired_original_run_cannot_revive(tmp_path):
+    service, verifier, operation_id, _identity = _verification_with_expired_lease(tmp_path)
+    conn = initialize_database(service.config.db_path)
+    try:
+        lease = conn.execute(
+            "SELECT * FROM service_leases WHERE operation_id=? AND released_at IS NULL",
+            (operation_id,),
+        ).fetchone()
+        with immediate_transaction(conn, "test_abandon_expired_original_run"):
+            create_abandonment_attempt_in_transaction(
+                conn,
+                abandonment_id=str(uuid.uuid4()),
+                task_gid=lease["task_gid"],
+                source_operation_id=operation_id,
+                source_lease_id=lease["lease_id"],
+                abandoned_owner_id=verifier.owner_id,
+                abandoned_run_id=verifier.run_id,
+                attempt_cycle_id=lease["context_cycle_id"],
+                reason="test conversation permanently unavailable",
+                created_at=lease["expires_at"],
+            )
+    finally:
+        conn.close()
+
+    revived = service.renew_lease(operation_id, verifier, request_id=str(uuid.uuid4()))
+    assert revived["ok"] is False
+    assert revived["code"] == "AGENT_MISMATCH"
+    error = revived["errors"][0]
+    assert error["rule"] == "service_lease_revival_superseded"
+    assert error["abandonment_status"] == "started"
+
+
+def test_unresolved_consequential_execution_blocks_same_run_revival(tmp_path):
+    service, verifier, operation_id, _identity = _verification_with_expired_lease(tmp_path)
+    conn = initialize_database(service.config.db_path)
+    try:
+        claim_operation_execution(
+            conn, operation_id=operation_id, command="approve", request_id=None
+        )
+    finally:
+        conn.close()
+
+    revived = service.renew_lease(operation_id, verifier, request_id=str(uuid.uuid4()))
+    assert revived["ok"] is False
+    assert revived["code"] == "WRONG_STATE"
+    assert revived["errors"][0]["rule"] == "service_lease_revival_recovery_required"
+    assert "execution_claim" in revived["errors"][0]
+    assert "unresolved_executions" in revived["errors"][0]
+
+
+def test_unresolved_consequential_request_blocks_same_run_revival(tmp_path):
+    service, verifier, operation_id, _identity = _verification_with_expired_lease(tmp_path)
+    stranded_request_id = _strand_service_request_after_resolved_execution(
+        service, operation_id, verifier
+    )
+
+    revived = service.renew_lease(operation_id, verifier, request_id=str(uuid.uuid4()))
+
+    assert revived["ok"] is False
+    assert revived["code"] == "WRONG_STATE"
+    error = revived["errors"][0]
+    assert error["rule"] == "service_lease_revival_recovery_required"
+    assert [item["request_id"] for item in error["unresolved_requests"]] == [
+        stranded_request_id
+    ]
+
+
+def test_prepare_required_original_run_resumes_without_admin_recovery(tmp_path):
+    clock = Clock()
+    service, _backend = _service(tmp_path, clock=clock, ttl=30)
+    original = _principal("action", "29dfd41e-2942-4620-919a-c4b624b63ad8")
+    started = _start(service, original)
+    operation_id = started["submission_id"]
+    original_lease_id = started["data"]["service_lease"]["lease_id"]
+    clock.advance(31)
+
+    prepared = service.execute_agent(
+        "prepare",
+        {
+            "agent": "gpt",
+            "model": "gpt-5.6-sol",
+            "submission_id": operation_id,
+            "file_text": TASK,
+        },
+        principal=original,
+        request_id=str(uuid.uuid4()),
+    )
+
+    assert prepared["ok"] is True
+    assert prepared["submission_id"] == operation_id
+    assert prepared["data"].get("required_admin_action") is None
+    conn = initialize_database(service.config.db_path)
+    try:
+        lease = conn.execute(
+            "SELECT * FROM service_leases WHERE lease_id=?", (original_lease_id,)
+        ).fetchone()
+        operation = conn.execute(
+            "SELECT status,phase FROM operations WHERE operation_id=?", (operation_id,)
+        ).fetchone()
+        assert lease["run_id"] == original.run_id
+        assert lease["release_reason"].startswith("workflow_handoff:")
+        assert tuple(operation) == ("open", "await_verification")
+    finally:
+        conn.close()
 
 
 def test_safe_reclaim_exact_request_replays_after_commit(tmp_path):
