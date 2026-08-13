@@ -1,0 +1,18 @@
+{
+  "description": "Mechanical protection for the shared primary ai-tools checkout.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^Bash$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/marco/.local/bin/codex-protected-checkout",
+            "timeout": 10,
+            "statusMessage": "Checking protected checkout"
+          }
+        ]
+      }
+    ]
+  }
+}

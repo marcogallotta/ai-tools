@@ -32,9 +32,9 @@ Reads the API token from `~/.config/asana-cli/.env`. Every write goes through a 
 dish-task notes to Asana. Live multi-agent use runs through the laptop-hosted `dish-service`;
 local direct mode is limited to controlled single-agent testing. See `dish/README.md`.
 
-**`hooks/`** — Claude Code PreToolUse guards that make the above non-optional: they block
-carpet-bomb `git`/`rm` patterns, compound bash, raw redirects, and unguarded Asana and
-Anthropic-API writes.
+**`hooks/`** — host adapters and shared classifiers used by Claude Code and Codex
+PreToolUse guards. They block carpet-bomb `git`/`rm` patterns, compound bash, raw redirects,
+unguarded Asana and Anthropic-API writes, and branch changes in the shared primary checkout.
 
 ## Instructions for agents
 
@@ -52,13 +52,15 @@ The repo is used through `~/.claude/` and `~/.local/bin/`, not from this directo
 |---|---|
 | `CLAUDE-global.md` | `~/.claude/CLAUDE.md` |
 | `hooks/` | `~/.claude/hooks/` |
+| `codex/hooks.json` | `~/.codex/hooks.json` |
+| `hooks/codex-protected-checkout` | `~/.local/bin/codex-protected-checkout` |
 | `tools/git-commit` | `~/.local/bin/git-commit` |
 | `tools/asana` | `~/.local/bin/asana` |
 | `dish/dish` | `~/.local/bin/dish` |
 | `dish/dish-admin` | `~/.local/bin/dish-admin` |
 | `dish/dish-service` | `~/.local/bin/dish-service` |
 
-The two agent-facing config paths live under `~/.claude/` because Claude Code discovers them
-by location. The executables live in `~/.local/bin/`, which is on the real `PATH`, so
-`git-commit`, `asana`, `dish`, and `dish-admin` work in Claude Code, Codex, and plain shell
-sessions alike.
+Agent-facing hook configs live under each host's discovery path. Shared executables live in
+`~/.local/bin/`, which is on the real `PATH`, so `git-commit`, `asana`, `dish`, and
+`dish-admin` work in Claude Code, Codex, and plain shell sessions alike. See
+`codex/README.md` for the protected-checkout boundary and exact-head runtime certification.
