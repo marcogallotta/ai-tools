@@ -5,7 +5,7 @@ import argparse
 from .common import AgentWorktreeError, DISPOSITIONS, GitRunner, reject_repository_overrides
 from .operations import emit
 from .publish_cleanup import command_cleanup, command_exec, command_publish, command_verify_handoff
-from .start_resume import command_resume, command_start, command_status
+from .start_resume import command_adopt, command_resume, command_start, command_status
 
 def add_json_flag(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--json", action="store_true", help="emit one machine-readable JSON object")
@@ -14,6 +14,15 @@ def add_json_flag(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
+
+    adopt = sub.add_parser("adopt", help="adopt an existing remote branch this local lifecycle never created")
+    adopt.add_argument("--task", required=True)
+    adopt.add_argument("--branch", required=True)
+    adopt.add_argument("--expected-head", required=True, help="exact remote branch head SHA being adopted")
+    adopt.add_argument("--base-ref", required=True)
+    adopt.add_argument("--agent-id", required=True)
+    adopt.add_argument("--repo", default=".", help="existing checkout/worktree used to identify the shared repository")
+    add_json_flag(adopt)
 
     start = sub.add_parser("start", help="create or resume the durable task-owned worktree")
     start.add_argument("--task", required=True)
@@ -58,7 +67,9 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     runner = GitRunner()
     try:
-        if args.command == "start":
+        if args.command == "adopt":
+            payload = command_adopt(args, runner)
+        elif args.command == "start":
             payload = command_start(args, runner)
         elif args.command == "resume":
             payload = command_resume(args, runner)
