@@ -29,7 +29,9 @@ def _parse_specialist_triggers(value: str | None) -> dict[str, str]:
     return parsed
 
 
-def _build_engine(args: argparse.Namespace) -> tuple[LifecycleEngine, WorkspaceAgentDispatcher | None, LocalReviewDispatcher]:
+def _build_engine(
+    args: argparse.Namespace,
+) -> tuple[LifecycleEngine, WorkspaceAgentDispatcher | None, LocalReviewDispatcher, ImplementationFixDispatcher]:
     token = args.github_token or os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
     if not token:
         raise LifecycleError("GitHub token is required via --github-token, GITHUB_TOKEN, or GH_TOKEN")
@@ -56,7 +58,10 @@ def _build_engine(args: argparse.Namespace) -> tuple[LifecycleEngine, WorkspaceA
             api_root=args.workspace_api_root,
         )
     local = LocalReviewDispatcher(args.local_reviewer or os.getenv("DISH_LOCAL_REVIEW_COMMAND"))
-    return engine, workspace, local
+    fixer = ImplementationFixDispatcher(
+        args.implementation_fixer or os.getenv("DISH_IMPLEMENTATION_FIX_COMMAND")
+    )
+    return engine, workspace, local, fixer
 
 
 def _render_json(values: list[PRLifecycle], *, repository: str) -> str:
@@ -118,6 +123,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--workspace-token", help=argparse.SUPPRESS)
     parser.add_argument("--review-trigger-id")
     parser.add_argument("--local-reviewer", help="bounded local reviewer command; receives lifecycle JSON on stdin")
+    parser.add_argument(
+        "--implementation-fixer",
+        help="existing implementation/fix consumer command; receives exact-head BLOCK dispatch JSON on stdin",
+    )
     parser.add_argument("--integration-authority", action="store_true", help="explicitly compose bounded Integration after exact-head MERGE")
     parser.add_argument("--no-merge-capability", action="store_true", help="declare that this host cannot perform GitHub merge")
     parser.add_argument("--merge-method", choices=["merge", "squash", "rebase"], default="squash")
@@ -140,20 +149,30 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        engine, workspace, local = _build_engine(args)
+        engine, workspace, local, fixer = _build_engine(args)
         if args.command == "status":
             values = engine.status(include_closed=args.include_closed)
             print(_render_json(values, repository=args.repo) if args.format == "json" else _render_table(values))
             return 0
         if args.command == "dispatch":
-            values = engine.dispatch(workspace=workspace, local_reviewer=local, notify=_notification_printer)
+            values = engine.dispatch(
+                workspace=workspace,
+                local_reviewer=local,
+                implementation_fixer=fixer,
+                notify=_notification_printer,
+            )
             print(_render_json(values, repository=args.repo) if args.format == "json" else _render_table(values))
             return 0
         if args.interval < 1.0:
             raise LifecycleError("watch --interval must be at least 1 second")
         while True:
             values = (
-                engine.dispatch(workspace=workspace, local_reviewer=local, notify=_notification_printer)
+                engine.dispatch(
+                    workspace=workspace,
+                    local_reviewer=local,
+                    implementation_fixer=fixer,
+                    notify=_notification_printer,
+                )
                 if args.dispatch
                 else engine.status()
             )

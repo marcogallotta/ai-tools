@@ -412,3 +412,28 @@ class LocalReviewDispatcher:
             raise LifecycleError(
                 f"bounded local reviewer failed with exit {completed.returncode}{': ' + detail if detail else ''}"
             )
+
+
+class ImplementationFixDispatcher:
+    """Invoke the configured existing implementation/fix consumer with exact-head BLOCK context."""
+
+    def __init__(self, command: str | None) -> None:
+        self.command = command
+
+    def dispatch(self, context: dict[str, Any]) -> None:
+        if not self.command:
+            raise LifecycleError("implementation/fix dispatcher command is unavailable")
+        completed = subprocess.run(
+            shlex.split(self.command),
+            input=json.dumps(context),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if completed.returncode != 0:
+            detail = completed.stderr.strip() or completed.stdout.strip()
+            raise LifecycleError(
+                f"implementation/fix dispatcher failed with exit {completed.returncode}"
+                f"{': ' + detail if detail else ''}"
+            )

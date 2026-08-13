@@ -96,6 +96,20 @@ The adapter calls the Workspace Agents trigger API with the exact PR URL/number,
 
 If the required token or published trigger is unavailable, the dispatcher reports that exact configuration boundary. It does not silently substitute Claude/Codex as the semantic reviewer.
 
+## BLOCK -> implementation/fix routing
+
+A formal exact-head `VERDICT: BLOCK` is not only a status classification. `dispatch` routes it to the configured existing implementation/fix consumer. Configure that consumer with:
+
+```sh
+DISH_IMPLEMENTATION_FIX_COMMAND='<existing implementation/fix launcher>'
+```
+
+or `--implementation-fixer`. The command receives `dish-pr-fix-dispatch-v1` JSON on standard input containing the exact PR URL/number, branch, blocked head SHA, owning task IDs, the authoritative formal BLOCK review, and the current lifecycle snapshot. The consumer must follow `dish/docs/agents/implementation.md`, update the existing PR branch, and re-read GitHub before semantic work.
+
+Before launching the consumer, the dispatcher writes an exact-head `phase=fix` lease. A fresh `phase=fix` or `phase=implementation` lease on the current blocked head prevents duplicate dispatch. A head move immediately invalidates the old review and lease; the dispatcher never launches a fix consumer for a BLOCK that is no longer on the current head. If the configured command fails synchronously, the dispatcher releases its lease so recovery is not deadlocked.
+
+Missing implementation/fix consumer configuration is a deployment boundary, not a request for Marco to forward the review transcript. The durable BLOCK review remains on GitHub until the consumer is configured/recovered.
+
 ## Local work after Review MERGE
 
 A formal Review must keep using its required `TESTS TO RUN:` line. A non-`NONE` command creates `LOCAL CERTIFICATION REQUIRED` until the exact head has a durable completion marker:

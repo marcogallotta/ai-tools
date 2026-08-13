@@ -122,10 +122,72 @@ class LifecycleActionsMixin:
         *,
         workspace: WorkspaceAgentDispatcher | None,
         local_reviewer: LocalReviewDispatcher | None,
+        implementation_fixer: ImplementationFixDispatcher | None = None,
         notify: Callable[[str], None] | None = None,
     ) -> PRLifecycle:
         notify = notify or (lambda _: None)
         current = self.inspect(self.github.get_pr(pr.number))
+
+        if current.state == LifecycleState.CHANGES_REQUESTED:
+            active_fix = any(
+                lease.get("phase") in {"fix", "implementation"}
+                for lease in current.active_leases
+            )
+            if active_fix:
+                return current
+
+            reviews = self.github.get_reviews(current.number)
+            exact_review = pr_gate.latest_exact_head_review(reviews, reviewed_head=current.head)
+            if exact_review is None or exact_review.get("verdict") != "BLOCK":
+                return self.inspect(self.github.get_pr(current.number))
+
+            if implementation_fixer is None or not implementation_fixer.command:
+                current.residual_reason = "implementation/fix dispatcher is not configured"
+                current.human_action = "configure the existing implementation/fix consumer command"
+                self._notify_once(
+                    current,
+                    kind="fix-dispatch-config",
+                    action=current.human_action,
+                    message=(
+                        f"PR #{current.number} — fix dispatch unavailable. "
+                        "Action: configure the existing implementation/fix consumer command."
+                    ),
+                    notify=notify,
+                )
+                return current
+
+            lease_id = self._post_lease(current, phase="fix")
+            reread = self.inspect(self.github.get_pr(current.number))
+            if reread.head != current.head or reread.state != LifecycleState.CHANGES_REQUESTED:
+                self._release_lease(
+                    current.number, lease_id, reason="exact blocked head moved before fix dispatch"
+                )
+                return reread
+
+            context = {
+                "schema": "dish-pr-fix-dispatch-v1",
+                "repository": self.github.repository,
+                "pr_url": current.url,
+                "pr_number": current.number,
+                "branch": current.branch,
+                "blocked_head": current.head,
+                "task_ids": current.task_ids,
+                "formal_block_review": exact_review,
+                "lifecycle": reread.json(),
+                "instruction": (
+                    "Follow the current repository Implementation contract. Update the existing PR/branch, "
+                    "treat blocked_head as the exact review identity, re-read GitHub before semantic work, "
+                    "and return the new exact PR head for the reviewer's requested disposition."
+                ),
+            }
+            try:
+                implementation_fixer.dispatch(context)
+            except LifecycleError:
+                self._release_lease(
+                    current.number, lease_id, reason="implementation/fix dispatcher failed"
+                )
+                raise
+            return self.inspect(self.github.get_pr(current.number))
 
         if current.state == LifecycleState.REVIEW_READY:
             review_class = current.review_class or "substantive"
@@ -229,6 +291,7 @@ class LifecycleActionsMixin:
         include_closed: bool = False,
         workspace: WorkspaceAgentDispatcher | None = None,
         local_reviewer: LocalReviewDispatcher | None = None,
+        implementation_fixer: ImplementationFixDispatcher | None = None,
         notify: Callable[[str], None] | None = None,
     ) -> list[PRLifecycle]:
         values = self.status(include_closed=include_closed)
@@ -242,6 +305,7 @@ class LifecycleActionsMixin:
                     value,
                     workspace=workspace,
                     local_reviewer=local_reviewer,
+                    implementation_fixer=implementation_fixer,
                     notify=notify,
                 )
             )
