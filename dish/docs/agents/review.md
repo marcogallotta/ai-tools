@@ -26,6 +26,12 @@ Do not block for style, naming, speculative refactors, unrelated debt, or mainta
 
 Stop once the merge question can be answered confidently.
 
+## Review discovery gate
+
+Ordinary review discovery considers only open PRs with GitHub `draft=false`. A draft PR is AUTHORING / NOT REVIEWABLE even if it already has a durable PR URL and implementation commits. Ignore draft PRs in polling/queue discovery unless Marco explicitly requests an exceptional early review.
+
+The repository helper `scripts/pr_gate.py review-ready` encodes this fail-closed rule for hosts that need a machine-readable check. The native GitHub draft/ready-for-review state is canonical; do not add a parallel review-ready label.
+
 ## PR identity and review state
 
 Before reviewing:
@@ -112,7 +118,7 @@ No venv is supplied by default. Ask only if genuinely necessary.
 
 Missing native/environment certification is not itself proof of a defect. State the exact missing certification separately from the semantic verdict.
 
-Until PR-triggered CI exists for this workflow, `checks` means the existing manual certification/test evidence for the exact candidate. Do not infer exact-head CI certification from a generic GitHub Checks surface. Future CI should run on and certify the exact PR head SHA.
+Ordinary CI is required to certify the exact source PR head SHA. Do not interpret a green specialized workflow or the `pull_request` synthetic merge SHA as certification of the reviewed head. The required ordinary-CI status is published directly on the exact candidate head only after all ordinary lanes pass; missing/pending CI is integration evidence state, not permission to weaken review identity.
 
 ## New commits, rebases, and parallel work
 

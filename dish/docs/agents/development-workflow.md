@@ -94,6 +94,18 @@ Invariants:
 - Integration consumes the exact reviewed/certified candidate;
 - direct-to-`main` is exceptional and requires explicit Marco authorization for the specific change.
 
+## PR authoring and review-ready state
+
+Use GitHub's native draft state as the canonical authoring gate:
+
+- `draft=true` = AUTHORING / NOT REVIEWABLE; early draft PR creation is allowed for durable identity;
+- before transition, Implementation finishes task-scoped evidence, updates durable PR context/evidence/limitations, and records the exact current head SHA;
+- the author explicitly marks the PR ready; `draft=false` = REVIEW-READY for ordinary discovery;
+- Coordinator/Review polling ignores drafts unless Marco explicitly requests early review;
+- semantic commits after review begins still invalidate prior exact-head review regardless of draft history.
+
+`scripts/pr_gate.py review-ready` is the repository-owned deterministic predicate for tooling/evals. Do not create a second label/state machine for review readiness.
+
 ## PR self-containment for forked review
 
 Review should be able to run independently of the Coordinator conversation.
@@ -176,7 +188,9 @@ The development workflow should make evidence bind to the exact candidate being 
 
 Maintain the repository-owned test-selection/planning authority rather than inventing disconnected GitHub-only path rules.
 
-Where PR-triggered checks exist, they must identify the exact candidate/head they certify. Until automation covers a guarantee, governed manual/native evidence remains valid when its exact candidate identity is recorded.
+Ordinary CI runs for review-ready PR candidates and explicitly derives candidate identity from `pull_request.head.sha`; `GITHUB_SHA` on `pull_request` is not treated as the review identity. Every test checkout and evidence artifact for exact-head certification uses that candidate SHA.
+
+Every review-ready ordinary-CI attempt first publishes `Dish / required ordinary CI` as `pending` on the exact candidate head before required lanes start, then an `always()` finalizer publishes terminal `success` only when every required lane succeeded or terminal `failure` otherwise. The attempt also writes `required-ordinary-ci-<candidate-sha>` metadata with the exact head, run/attempt identity, terminal status, and lane results. This prevents an older same-head success from surviving a newer pending/failed attempt. Integration fails closed on absence, pending/failure, stale/mismatched SHA, or a specialized-only green surface. `scripts/pr_gate.py integration` is the deterministic repository predicate for that gate.
 
 Development Workflow owns proactive CI health triage for current `main`, active work whose CI state is material to progress, and review-ready/review-critical PR candidates. This is part of the existing Development Workflow lifecycle, not a second CI lifecycle. Use event-driven discovery where available or a short-interval polling/check trigger suitable for this project's fast PR rate; day/week-scale polling is not sufficient. Persistent unexplained red CI must not sit unowned.
 
@@ -189,7 +203,7 @@ For every material failing GitHub Actions run:
 - treat missing or failed evidence upload as a Development Workflow defect, but continue inspecting the underlying run/log failure independently so an evidence-path failure cannot hide the actual defect indefinitely;
 - if the exact cause cannot yet be resolved, preserve the best available evidence, state what remains unknown, and assign the next diagnostic owner/action rather than leaving the red run unexplained and ownerless.
 
-Optimization work must not weaken native PostgreSQL, browser, process/restart, migration, or other real-boundary evidence merely to reduce latency.
+Until automation covers a separate guarantee, governed manual/native evidence remains valid when its exact candidate identity is recorded. Optimization work must not weaken native PostgreSQL, browser, process/restart, migration, or other real-boundary evidence merely to reduce latency.
 
 ## Agent lifecycle and compaction recovery
 

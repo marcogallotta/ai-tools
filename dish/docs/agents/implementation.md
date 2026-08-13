@@ -57,12 +57,16 @@ For new work:
 
 1. create or take ownership of the implementation branch from the exact supplied base;
 2. make the smallest coherent change that satisfies the task;
-3. run the applicable evidence for the complete changed-path set;
-4. commit the intended files with a concise commit message;
-5. push/publish the branch to GitHub;
-6. open a **draft pull request** against the intended base branch unless the handoff explicitly requires a ready-for-review PR;
-7. verify the PR's current head SHA from GitHub;
-8. return the PR URL, branch name, implementation commit SHA, and PR head SHA together with the evidence and semantic summary.
+3. commit/publish coherent work on the owned branch;
+4. open a **draft pull request** early when useful for durable Git/PR identity;
+5. finish the applicable task-scoped evidence for the complete changed-path set while the PR remains draft;
+6. update the PR description with final implementation evidence/limitations and the exact current head SHA;
+7. verify every recorded SHA is current, then explicitly mark the PR **ready for review**;
+8. verify GitHub now reports `draft=false`; only then return it for ordinary review discovery.
+
+`draft=true` means **AUTHORING / NOT REVIEWABLE**. The PR may exist and receive implementation commits while evidence is still in progress, but ordinary Coordinator/Review discovery must ignore it. Marco may explicitly request an exceptional early review of a draft; that is an override, not a change to the normal state machine.
+
+The ready-for-review transition is the author's explicit handoff from AUTHORING to REVIEW-READY. PR-triggered ordinary CI starts from this review-ready state and may complete while review proceeds; any CI still pending at the transition must be named as pending integration evidence rather than claimed as passed.
 
 The PR is the review surface. Do not create a patch file or patch-only handoff for new work.
 
@@ -160,7 +164,7 @@ Do not claim tests that did not run.
 
 A venv is not part of the handoff by default. Build/use the environment according to root `CLAUDE.md`. If a required environment-specific guarantee cannot be exercised, state the exact missing certification.
 
-Until PR-triggered CI is integrated for this workflow, `checks` means the existing manual certification/test evidence applicable to the change. Do not imply that a green GitHub Checks surface exists when the evidence was run manually. Future CI should certify the exact PR head SHA.
+Ordinary PR CI is exact-head evidence: on `pull_request`, candidate identity is the source PR head SHA, not the synthetic merge `GITHUB_SHA`. Required ordinary CI must test that exact source head and publish the repository-defined exact-head status/evidence for it. Manual/native evidence remains valid only for guarantees not automated by CI and must record the exact candidate SHA.
 
 Do not rerun large suites merely to produce volume when existing focused evidence plus governed lanes establish the changed behavior, but follow repository requirements for completed change blocks.
 

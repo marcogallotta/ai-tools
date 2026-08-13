@@ -122,6 +122,8 @@ Rules:
 
 ## PR intake and review routing
 
+Ordinary review discovery must filter out GitHub draft PRs. `draft=true` means implementation is still AUTHORING even when the PR already exists; do not dispatch it for ordinary review. `draft=false` is the explicit REVIEW-READY transition. Marco may explicitly request an exceptional early review of a draft. `scripts/pr_gate.py review-ready` encodes the same predicate for machine use.
+
 For each returned implementation PR:
 
 1. identify the PR URL, owned branch, implementation/base commit, and current PR head SHA;
@@ -216,7 +218,7 @@ Marco runs only evidence the agent could not provide:
 
 Do not ask Marco to rerun focused/unit/PGlite/static tests already passed by the agent.
 
-Until PR-triggered CI exists, `checks` means the existing manual certification/test evidence. Future CI should certify the exact PR head SHA.
+Ordinary PR CI must certify the exact source PR head SHA, not the synthetic pull-request merge SHA. Integration requires the exact-head `Dish / required ordinary CI` success status for the reviewed SHA; specialized/empty green workflows are insufficient. Additional manual/local certification, when genuinely required, must also record the exact candidate SHA.
 
 Whenever giving a `MERGE` verdict, immediately include:
 
