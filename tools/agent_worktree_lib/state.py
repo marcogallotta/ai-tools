@@ -3,13 +3,14 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import socket
 import tempfile
 from pathlib import Path
 from typing import Any
 
 from .common import (
     AGENT_ID_RE, EXPECTED_ORIGIN_ID, EXPECTED_REPOSITORY, SCHEMA_VERSION,
-    AgentWorktreeError, fail, require_agent_id, require_full_sha, require_task_gid,
+    AgentWorktreeError, fail, now_utc, require_agent_id, require_full_sha, require_task_gid,
 )
 
 def state_root() -> Path:
@@ -33,6 +34,52 @@ def worktree_root() -> Path:
 
 def task_worktree_path(task_gid: str) -> Path:
     return worktree_root() / require_task_gid(task_gid)
+
+
+def new_active_task_state(
+    *,
+    task_gid: str,
+    branch: str,
+    worktree_path: Path,
+    git_common_dir: Path,
+    git_dir: Path,
+    origin_id: str,
+    base_ref: str,
+    base_sha: str,
+    agent_id: str | None,
+    local_head: str,
+    published_head: str | None,
+    remote_owned_head: str | None,
+    remote_relation: str,
+    target_current_head: str,
+) -> dict[str, Any]:
+    """Build the single durable active-worktree state shape used by start/adopt."""
+    stamp = now_utc()
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "repository": {"full_name": EXPECTED_REPOSITORY, "origin_id": origin_id},
+        "task_gid": task_gid,
+        "branch": branch,
+        "worktree_path": str(worktree_path),
+        "git_common_dir": str(git_common_dir),
+        "git_dir": str(git_dir),
+        "base_ref": base_ref,
+        "base_sha": base_sha,
+        "owner": {"agent_id": agent_id, "host": socket.gethostname()},
+        "created_at": stamp,
+        "last_verified_at": stamp,
+        "local_head": local_head,
+        "published_head": published_head,
+        "remote_owned_head": remote_owned_head,
+        "remote_relation": remote_relation,
+        "remote_checked_at": stamp,
+        "target_current_head": target_current_head,
+        "target_checked_at": stamp,
+        "pr_url": None,
+        "pr_head": None,
+        "lifecycle": "active",
+        "disposition": None,
+    }
 
 
 def ensure_state_dir() -> None:
