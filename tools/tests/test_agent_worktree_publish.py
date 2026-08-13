@@ -33,7 +33,7 @@ def test_publish_refuses_main_or_other_branch_identity_tampering(h: Harness) -> 
     state["branch"] = "agent/other-task"
     h.state_path().write_text(json.dumps(state) + "\n")
     result = h.tool("publish", "--task", "1001", "--json", check=False)
-    assert_error(result, "OWNERSHIP_CLAIM_REQUIRED")
+    assert_error(result, "BRANCH_MISMATCH")
 
 
 def test_verify_handoff_requires_remote_equal_and_reports_four_distinct_heads(h: Harness) -> None:

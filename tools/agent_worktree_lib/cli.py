@@ -4,7 +4,7 @@ import argparse
 
 from .common import AgentWorktreeError, DISPOSITIONS, GitRunner, reject_repository_overrides
 from .operations import emit
-from .ownership import command_claim, require_active_claim
+from .ownership import claim_status, command_claim, require_active_claim
 from .publish_cleanup import command_cleanup, command_exec, command_publish, command_verify_handoff
 from .start_resume import command_adopt, command_resume, command_start, command_status
 from .state import load_task_state
@@ -23,6 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
     claim.add_argument("--agent-id", required=True)
     claim.add_argument("--repo", default=".", help="existing checkout/worktree used to identify the shared repository")
     claim.add_argument("--takeover", action="store_true", help="explicitly accept a stale/released prior owner after orchestration handoff")
+    claim.add_argument("--expected-claim", help="exact prior claim id required with --takeover")
     claim.add_argument("--pr-number", type=int)
     claim.add_argument("--pr-head")
     claim.add_argument("--pr-lease-state", choices=("active", "none"))
@@ -105,6 +106,7 @@ def main(argv: list[str] | None = None) -> int:
             payload = command_resume(args, runner)
         elif args.command == "status":
             payload = command_status(args, runner)
+            payload["claim"] = claim_status(args.task)
         elif args.command == "publish":
             payload = command_publish(args, runner)
         elif args.command == "verify-handoff":

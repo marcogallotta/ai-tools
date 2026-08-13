@@ -171,9 +171,6 @@ def claim_status(task_gid: str) -> dict[str, Any]:
     if any(value != held[0] for value in held[1:]):
         state = "ambiguous"
     elif held[0] and record.get("released_at") is not None:
-        # A new process may have acquired the OS locks just before replacing a
-        # previously released record. Until its metadata write is visible the
-        # lock/record pair is contradictory, so never call that transition live.
         state = "ambiguous"
     elif held[0]:
         state = "live"
@@ -190,6 +187,7 @@ def claim_status(task_gid: str) -> dict[str, Any]:
         "acquired_at": record["acquired_at"],
         "released_at": record.get("released_at"),
         "takeover": bool(record.get("takeover")),
+        "claim_id": record["token"],
         "pr": record.get("pr"),
     }
 
@@ -320,6 +318,17 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
     repo = discover_repository(runner, Path(args.repo))
     branch = validate_branch(runner, repo.source_top, args.branch)
     pr = _normalize_pr(args)
+    expected_claim = args.expected_claim
+    if args.takeover and not expected_claim:
+        fail(
+            "EXPECTED_CLAIM_REQUIRED",
+            "claim --takeover requires --expected-claim with the exact current claim id",
+        )
+    if expected_claim and not args.takeover:
+        fail(
+            "EXPECTED_CLAIM_REQUIRES_TAKEOVER",
+            "--expected-claim is valid only with claim --takeover",
+        )
     argv = list(args.argv)
     if argv and argv[0] == "--":
         argv = argv[1:]
@@ -334,7 +343,7 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
     token = uuid.uuid4().hex
     path = claim_path(task_gid)
     try:
-        _reconcile_existing(
+        previous = _reconcile_existing(
             runner=runner,
             task_gid=task_gid,
             branch=branch,
@@ -342,6 +351,18 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
             takeover=bool(args.takeover),
             pr=pr,
         )
+        if args.takeover:
+            if previous is None:
+                if expected_claim != "legacy-unclaimed" or not state_path(task_gid).exists():
+                    fail(
+                        "OWNER_CLAIM_CHANGED",
+                        "takeover expected claim does not match the current durable ownership generation",
+                    )
+            elif previous.get("token") != expected_claim:
+                fail(
+                    "OWNER_CLAIM_CHANGED",
+                    "takeover expected claim does not match the current durable ownership generation",
+                )
         if pr is not None:
             remote_head = remote_ref_sha(runner, repo, f"refs/heads/{branch}")
             if remote_head != pr["head"]:

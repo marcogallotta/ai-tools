@@ -21,13 +21,10 @@ SPEC.loader.exec_module(pr_lifecycle)
 
 HEAD = "a" * 40
 NEW_HEAD = "b" * 40
-BASE_SHA = "c" * 40
 NOW = datetime(2026, 8, 13, 8, 0, tzinfo=timezone.utc)
 
 
-def pr(*, head=HEAD, draft=False, state="open", merged=False, body=None):
-    if body is None:
-        body = f"Owning task: 1217443403986570\nExact source/base SHA: `{BASE_SHA}`"
+def pr(*, head=HEAD, draft=False, state="open", merged=False, body="Owning task: 1217443403986570"):
     return {
         "number": 31,
         "html_url": "https://github.com/marcogallotta/ai-tools/pull/31",
@@ -38,7 +35,7 @@ def pr(*, head=HEAD, draft=False, state="open", merged=False, body=None):
         "merged_at": NOW.isoformat() if merged else None,
         "body": body,
         "head": {"sha": head, "ref": "agent/test"},
-        "base": {"ref": "main", "sha": BASE_SHA},
+        "base": {"ref": "main", "sha": "c" * 40},
         "mergeable": True,
         "mergeable_state": "clean",
     }
@@ -441,35 +438,3 @@ def test_review_dispatch_configuration_notice_is_idempotent():
     second = lifecycle.dispatch_one(first, workspace=None, local_reviewer=None, notify=notices.append)
     assert len(notices) == 1
     assert sum("dish-human-notice:v1" in event[1] for event in gh.events if event[0] == "comment") == 1
-
-
-def test_local_implementation_handoff_carries_exclusive_assignment_identity():
-    gh = FakeGitHub()
-    gh.reviews = [
-        review(
-            body_tail=(
-                "LOCAL IMPLEMENTATION COMPLETION REQUIRED: run local generator\n"
-                "TESTS TO RUN: NONE."
-            )
-        )
-    ]
-    lifecycle = engine(gh)
-
-    result = lifecycle.dispatch_one(
-        lifecycle.inspect(gh.pr), workspace=None, local_reviewer=None
-    )
-
-    handoff = next(
-        event[1]
-        for event in gh.events
-        if event[0] == "comment" and "dish-local-handoff:v1" in event[1]
-    )
-    assert "Repository: `marcogallotta/ai-tools`" in handoff
-    assert "Asana task: `1217443403986570`" in handoff
-    assert "Authorized branch: `agent/test`" in handoff
-    assert "Base ref: `refs/heads/main`" in handoff
-    assert f"Base SHA: `{BASE_SHA}`" in handoff
-    assert "Existing PR: `#31`" in handoff
-    assert f"Expected PR head: `{HEAD}`" in handoff
-    assert "Matching Asana task identity on another branch/PR is not authority" in handoff
-    assert result.state == pr_lifecycle.LifecycleState.LOCAL_IMPLEMENTATION_REQUIRED

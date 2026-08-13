@@ -146,25 +146,28 @@ class Harness:
             child.extend(["--agent-id", agent])
 
         claim = ["claim", "--task", task, "--branch", branch, "--agent-id", agent]
+        claim_files = list((self.home / ".local/state/dish/worktrees/claims").glob(f"*/{task}.json"))
+        prior: dict[str, object] | None = None
+        if len(claim_files) == 1:
+            prior = json.loads(claim_files[0].read_text(encoding="utf-8"))
         if child[0] == "resume" and "--takeover" in child:
             claim.append("--takeover")
+            expected = str(prior["token"]) if prior is not None else "legacy-unclaimed"
+            claim.extend(["--expected-claim", expected])
         if child[0] == "adopt":
             expected = self._option(child, "--expected-head")
             assert expected is not None
             claim.extend(["--pr-number", "42", "--pr-head", expected, "--pr-lease-state", "none"])
-        else:
-            claim_files = list((self.home / ".local/state/dish/worktrees/claims").glob(f"*/{task}.json"))
-            if len(claim_files) == 1:
-                prior = json.loads(claim_files[0].read_text(encoding="utf-8"))
-                pr = prior.get("pr")
-                if isinstance(pr, dict):
-                    claim.extend([
-                        "--pr-number", str(pr["number"]),
-                        "--pr-head", str(pr["head"]),
-                        "--pr-lease-state", str(pr["lease_state"]),
-                    ])
-                    if pr.get("lease_id") is not None:
-                        claim.extend(["--pr-lease-id", str(pr["lease_id"])])
+        elif prior is not None:
+            pr = prior.get("pr")
+            if isinstance(pr, dict):
+                claim.extend([
+                    "--pr-number", str(pr["number"]),
+                    "--pr-head", str(pr["head"]),
+                    "--pr-lease-state", str(pr["lease_state"]),
+                ])
+                if pr.get("lease_id") is not None:
+                    claim.extend(["--pr-lease-id", str(pr["lease_id"])])
         claim.extend(["--", "python3", str(SCRIPT), *child])
         return self.raw_tool(*claim, check=check, env=env)
 
@@ -232,3 +235,4 @@ def payload(result: subprocess.CompletedProcess[str]) -> dict[str, object]:
 def assert_error(result: subprocess.CompletedProcess[str], code: str) -> None:
     assert result.returncode != 0
     assert f"ERROR {code}:" in result.stderr
+

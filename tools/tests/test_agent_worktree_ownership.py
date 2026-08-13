@@ -31,9 +31,30 @@ def test_claim_gate_and_concurrent_start_choose_one_owner(h: Harness) -> None:
     assert_error(direct, "OWNERSHIP_CLAIM_REQUIRED")
     for agent in ("a", "b"):
         h.agent_file(agent)
-    child = ["python3", "-c", "import time; time.sleep(.5)"]
-    ps = [subprocess.Popen(["python3", str(SCRIPT), "claim", "--task", "3001", "--branch", "agent/race", "--agent-id", a, "--", *child], cwd=h.primary, env=h.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE) for a in ("a", "b")]
-    results = [(p.returncode, *p.communicate(timeout=20)) for p in ps]
+    base = h.current_remote_main()
+    ps = []
+    for agent in ("a", "b"):
+        start_argv = [
+            "python3", str(SCRIPT), "start",
+            "--task", "3001", "--branch", "agent/race",
+            "--base-ref", "refs/heads/main", "--base", base,
+            "--agent-id", agent,
+        ]
+        child = [
+            "python3", "-c",
+            "import subprocess,time,sys; subprocess.check_call(sys.argv[1:]); time.sleep(.5)",
+            *start_argv,
+        ]
+        ps.append(
+            subprocess.Popen(
+                ["python3", str(SCRIPT), "claim", "--task", "3001", "--branch", "agent/race", "--agent-id", agent, "--", *child],
+                cwd=h.primary, env=h.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+        )
+    results = []
+    for process in ps:
+        stdout, stderr = process.communicate(timeout=20)
+        results.append((process.returncode, stdout, stderr))
     assert sum(code == 0 for code, _, _ in results) == 1
     assert "OWNERSHIP_CLAIMED" in next(err for code, _, err in results if code != 0)
 
@@ -93,10 +114,13 @@ def test_status_pr_visibility_and_cross_lineage_fail_closed(h: Harness) -> None:
 def test_canonical_handoff_is_single_shared_source_and_matches_cli() -> None:
     repo = Path(__file__).resolve().parents[2]
     body = (repo / "dish/docs/agents/templates/implementation-handoff.md").read_text()
-    pointer = (repo / "ci/implementation-handoff.md").read_text()
+    legacy = repo / "ci/implementation-handoff.md"
+    runbook = (repo / "ci/pr-lifecycle-dispatcher-runbook.md").read_text()
     for token in ("Repository:", "Asana task GID", "Authorized branch", "Base ref", "Base SHA", "Existing PR", "Expected PR head", "--expected-claim", "legacy-unclaimed"):
         assert token in body
-    assert "defines no independent policy or command surface" in pointer
+    assert not legacy.exists()
+    assert "dish/docs/agents/templates/implementation-handoff.md" in runbook
+    assert "ci/implementation-handoff.md" not in runbook
     for path in ("coordinator.md", "development-workflow.md", "implementation.md", "index.md"):
         assert "templates/implementation-handoff.md" in (repo / "dish/docs/agents" / path).read_text()
     cli = (repo / "tools/agent_worktree_lib/cli.py").read_text()

@@ -78,6 +78,8 @@ Use comments for meaningful chronology. After a comment changes current truth, f
 
 ## Canonical repository lifecycle
 
+Repository-changing Implementation/fix dispatch policy is defined once in the canonical handoff contract at [`templates/implementation-handoff.md`](templates/implementation-handoff.md). Development Workflow tooling and handoffs must consume that source rather than maintaining a parallel template.
+
 The normal repository lifecycle is:
 
 > implementation branch + commit -> GitHub pull request -> review of the exact PR head -> integration of that reviewed head

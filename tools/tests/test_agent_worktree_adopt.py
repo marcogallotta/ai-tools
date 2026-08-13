@@ -40,14 +40,21 @@ def test_concurrent_adopt_race_never_deletes_unrelated_branch(h: Harness) -> Non
     base = h.current_remote_main()
     head = h.remote_branch_commit("agent/adopt-race", "handoff", start=base)
 
-    def args(task: str) -> list[str]:
-        return [
+    def args(task: str, agent: str) -> list[str]:
+        h.agent_file(agent)
+        adopt_argv = [
             "python3", str(SCRIPT), "adopt", "--task", task, "--branch", "agent/adopt-race",
-            "--base-ref", "refs/heads/main", "--base", base, "--expected-head", head, "--json",
+            "--base-ref", "refs/heads/main", "--base", base, "--expected-head", head,
+            "--agent-id", agent, "--json",
+        ]
+        return [
+            "python3", str(SCRIPT), "claim", "--task", task, "--branch", "agent/adopt-race",
+            "--agent-id", agent, "--pr-number", "42", "--pr-head", head, "--pr-lease-state", "none",
+            "--", *adopt_argv,
         ]
 
-    p1 = subprocess.Popen(args("3001"), cwd=h.primary, env=h.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    p2 = subprocess.Popen(args("3002"), cwd=h.primary, env=h.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    p1 = subprocess.Popen(args("3001", "adopt-race-a"), cwd=h.primary, env=h.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    p2 = subprocess.Popen(args("3002", "adopt-race-b"), cwd=h.primary, env=h.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     o1, e1 = p1.communicate(timeout=30)
     o2, e2 = p2.communicate(timeout=30)
 
@@ -108,6 +115,6 @@ def test_adopt_refuses_moved_remote_without_local_mutation(h: Harness) -> None:
     old = h.remote_branch_commit("agent/moving-handoff", "first", start=base)
     h.remote_branch_commit("agent/moving-handoff", "second")
     result = adopt(h, "2001", "agent/moving-handoff", old, base=base, check=False)
-    assert_error(result, "EXPECTED_HEAD_MISMATCH")
+    assert_error(result, "PR_BRANCH_HEAD_MISMATCH")
     assert not h.state_path("2001").exists() and not h.wt("2001").exists()
     assert git(h.primary, "show-ref", "--verify", "refs/heads/agent/moving-handoff", check=False).returncode != 0
