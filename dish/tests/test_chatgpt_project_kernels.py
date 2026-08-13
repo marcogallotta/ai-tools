@@ -52,6 +52,19 @@ def test_current_edge_requires_exact_rule_classification():
  edge['changes']=[x for x in edge['changes'] if x['rule_id']!='review-action-handoff']
  with pytest.raises(kernels.KernelError,match='classification mismatch'): kernels._validate_current_edge_classification(bad,s)
 
+def test_classified_stable_rule_removal_is_representable_and_unknown_ids_still_fail():
+ m,s=kernels.load_canonical(); removed=copy.deepcopy(s)
+ removed['roles']['review']['rules']=[r for r in removed['roles']['review']['rules'] if r['id']!='review-formal-comment']
+ unclassified=copy.deepcopy(m); edge=next(x for x in unclassified['change_history'] if x['to_version']==unclassified['canonical_version'])
+ edge['changes']=[x for x in edge['changes'] if x['rule_id']!='review-formal-comment']
+ with pytest.raises(kernels.KernelError,match='classification mismatch'):
+  kernels.validate_change_history(unclassified,removed)
+ kernels.validate_change_history(copy.deepcopy(m),removed)
+ unknown=copy.deepcopy(m); edge=next(x for x in unknown['change_history'] if x['to_version']==unknown['canonical_version'])
+ edge['changes'].append(_change('never-existed-rule','review','breaking','review-write','lifecycle'))
+ with pytest.raises(kernels.KernelError,match='unknown rule'):
+  kernels.validate_change_history(unknown,removed)
+
 def test_generated_kernels_current_bound_and_within_budget():
  m,s=kernels.load_canonical(); results=kernels.render_all(check=True); assert len(results)==7
  for role,p in kernels.generated_paths(m,s).items():
