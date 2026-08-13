@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -26,10 +28,133 @@ from tests.support.postgresql.certification import (  # noqa: E402
     redacted_dsn,
 )
 
+CANONICAL_LOCAL_POSTGRESQL_DSN = (
+    "postgresql+psycopg://dish_test:0ddca88b81a8bf1a15d84caa78efd7b3"
+    "@localhost:5432/dish_test"
+)
+
+
+class LocalPostgreSQLUnavailable(RuntimeError):
+    pass
+
+
+def _without_pg_env() -> dict[str, str]:
+    return {key: value for key, value in os.environ.items() if not key.startswith("PG")}
+
+
+def _probe_canonical_local_postgresql() -> dict[str, object]:
+    try:
+        identity = probe_native_postgresql(CANONICAL_LOCAL_POSTGRESQL_DSN)
+        address = identity.server_address
+        if identity.database != "dish_test" or identity.server_port != 5432:
+            raise LocalPostgreSQLUnavailable(
+                f"canonical local identity mismatch: database={identity.database!r} "
+                f"port={identity.server_port!r}"
+            )
+        if address is None or not ipaddress.ip_address(address).is_loopback:
+            raise LocalPostgreSQLUnavailable(
+                f"canonical local identity is not loopback: address={address!r}"
+            )
+        return {**identity.as_dict(), "role": "dish_test"}
+    except LocalPostgreSQLUnavailable:
+        raise
+    except Exception as exc:
+        raise LocalPostgreSQLUnavailable(
+            f"canonical local target probe failed: {type(exc).__name__}: {exc}"
+        ) from exc
+
+
+def _require_canonical_local_server() -> None:
+    executable = shutil.which("pg_isready")
+    if executable is None:
+        raise LocalPostgreSQLUnavailable(
+            "canonical local PostgreSQL probe unavailable: pg_isready not found"
+        )
+    try:
+        result = subprocess.run(
+            [executable, "-h", "localhost", "-p", "5432", "-d", "postgres", "-t", "2"],
+            env=_without_pg_env(),
+            capture_output=True,
+            text=True,
+            timeout=4,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise LocalPostgreSQLUnavailable("canonical local PostgreSQL server probe timed out") from exc
+    if result.returncode:
+        detail = (result.stderr or result.stdout).strip() or f"pg_isready exit {result.returncode}"
+        raise LocalPostgreSQLUnavailable(
+            f"canonical local PostgreSQL server unavailable at localhost:5432: {detail}"
+        )
+
+
+def _provision_canonical_local_postgresql() -> None:
+    sudo, psql = shutil.which("sudo"), shutil.which("psql")
+    if sudo is None or psql is None:
+        missing = "sudo" if sudo is None else "psql"
+        raise LocalPostgreSQLUnavailable(
+            f"canonical local PostgreSQL provisioning unavailable: {missing} not found"
+        )
+    statements = (
+        "DROP DATABASE IF EXISTS dish_test;",
+        "DROP ROLE IF EXISTS dish_test;",
+        "CREATE ROLE dish_test LOGIN PASSWORD '0ddca88b81a8bf1a15d84caa78efd7b3' CREATEDB;",
+        "CREATE DATABASE dish_test OWNER dish_test;",
+    )
+    command = [
+        sudo, "-n", "-u", "postgres", "--", psql, "-X", "-w", "-p", "5432", "-d",
+        "postgres", "-v", "ON_ERROR_STOP=1", "-q",
+    ]
+    for statement in statements:
+        command.extend(("-c", statement))
+    try:
+        result = subprocess.run(
+            command,
+            env=_without_pg_env(),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise LocalPostgreSQLUnavailable("canonical local PostgreSQL provisioning timed out") from exc
+    if result.returncode:
+        detail = (result.stderr or result.stdout).strip() or f"exit {result.returncode}"
+        if "password is required" in detail.lower() or "not allowed to execute" in detail.lower():
+            raise LocalPostgreSQLUnavailable(
+                "noninteractive privilege unavailable for canonical local PostgreSQL provisioning: "
+                + detail
+            )
+        raise LocalPostgreSQLUnavailable(
+            f"canonical local PostgreSQL provisioning failed: {detail}"
+        )
+
+
+def ensure_canonical_local_postgresql() -> dict[str, object]:
+    try:
+        identity = _probe_canonical_local_postgresql()
+        source = "existing"
+    except LocalPostgreSQLUnavailable as initial:
+        try:
+            _require_canonical_local_server()
+            _provision_canonical_local_postgresql()
+            identity = _probe_canonical_local_postgresql()
+        except LocalPostgreSQLUnavailable as residual:
+            return {"status": "unavailable", "reason": str(residual), "initial_probe": str(initial)}
+        source = "provisioned"
+    return {
+        "status": "ready",
+        "source": source,
+        "dsn": CANONICAL_LOCAL_POSTGRESQL_DSN,
+        "identity": identity,
+    }
+
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dish-pg-native-certification")
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output", type=Path)
+    parser.add_argument("--ensure-local-postgresql", action="store_true")
+    parser.add_argument("--json", action="store_true")
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--dsn", default=None, help=argparse.SUPPRESS)
     parser.add_argument(
@@ -113,7 +238,23 @@ def _finalize(report: dict[str, Any]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    parser = _parser()
+    args = parser.parse_args(argv)
+    if args.ensure_local_postgresql:
+        if args.output is not None or args.dsn is not None or args.waive_skip or args.python != sys.executable:
+            parser.error("--ensure-local-postgresql cannot be combined with certification options")
+        result = ensure_canonical_local_postgresql()
+        if args.json:
+            print(json.dumps(result, sort_keys=True))
+        elif result["status"] == "ready":
+            print(f"READY canonical local PostgreSQL ({result['source']})")
+        else:
+            print(f"UNAVAILABLE canonical local PostgreSQL: {result['reason']}", file=sys.stderr)
+        return 0 if result["status"] == "ready" else 3
+    if args.json:
+        parser.error("--json requires --ensure-local-postgresql")
+    if args.output is None:
+        parser.error("--output is required for certification")
     try:
         waivers = _parse_waivers(args.waive_skip)
     except ValueError as exc:
