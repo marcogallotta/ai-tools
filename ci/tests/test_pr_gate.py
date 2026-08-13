@@ -22,7 +22,14 @@ def pr(*, draft: bool, head: str = HEAD):
     return {"state": "open", "draft": draft, "head": {"sha": head}}
 
 
-def statuses(*, sha: str = HEAD, ordinary: str | None = "success", specialized: bool = False):
+def statuses(
+    *,
+    sha: str = HEAD,
+    ordinary: str | None = "success",
+    run_id: int = 123,
+    updated_at: str = "2026-08-12T19:05:00Z",
+    specialized: bool = False,
+):
     values = []
     if specialized:
         values.append({"context": "Repository bundle publication", "state": "success"})
@@ -31,11 +38,49 @@ def statuses(*, sha: str = HEAD, ordinary: str | None = "success", specialized: 
             {
                 "context": pr_gate.REQUIRED_ORDINARY_CI_CONTEXT,
                 "state": ordinary,
-                "updated_at": "2026-08-12T19:00:00Z",
-                "target_url": "https://github.com/marcogallotta/ai-tools/actions/runs/123",
+                "updated_at": updated_at,
+                "target_url": f"https://github.com/marcogallotta/ai-tools/actions/runs/{run_id}",
             }
         )
     return {"sha": sha, "statuses": values}
+
+
+def run(
+    *,
+    run_id: int = 123,
+    attempt: int = 1,
+    started_at: str = "2026-08-12T19:00:00Z",
+    status: str = "completed",
+    conclusion: str | None = "success",
+    head: str = HEAD,
+    path: str = pr_gate.REQUIRED_ORDINARY_CI_WORKFLOW_PATH,
+):
+    return {
+        "id": run_id,
+        "name": "CI",
+        "path": path,
+        "event": "pull_request",
+        "head_sha": head,
+        "status": status,
+        "conclusion": conclusion,
+        "run_attempt": attempt,
+        "run_started_at": started_at,
+    }
+
+
+def runs(*values):
+    if not values:
+        values = (run(),)
+    return {"workflow_runs": list(values)}
+
+
+def evaluate(*, candidate_pr=None, combined=None, workflow_runs=None, reviewed_head=HEAD):
+    return pr_gate.evaluate_integration_gate(
+        candidate_pr or pr(draft=False),
+        reviewed_head=reviewed_head,
+        combined_status=combined or statuses(sha=reviewed_head),
+        workflow_runs=workflow_runs or runs(run(head=reviewed_head)),
+    )
 
 
 def test_draft_pr_is_not_review_discoverable_but_explicit_marco_override_is():
@@ -88,60 +133,161 @@ def test_each_review_ready_attempt_invalidates_prior_success_and_always_finalize
     assert "status_state=failure" in workflow
 
 
-@pytest.mark.parametrize("new_state", ["pending", "failure", "error"])
-def test_same_sha_new_attempt_supersedes_previous_success_and_refuses_integration(new_state):
+@pytest.mark.parametrize(
+    ("new_status", "new_conclusion"),
+    [("queued", None), ("in_progress", None), ("completed", "failure"), ("completed", "cancelled")],
+)
+def test_prior_same_sha_success_cannot_survive_newer_attempt_without_new_status(
+    new_status, new_conclusion
+):
+    combined = statuses(run_id=123, updated_at="2026-08-12T19:05:00Z")
+    workflow_runs = runs(
+        run(run_id=123, started_at="2026-08-12T19:00:00Z"),
+        run(
+            run_id=124,
+            started_at="2026-08-12T19:10:00Z",
+            status=new_status,
+            conclusion=new_conclusion,
+        ),
+    )
+    with pytest.raises(pr_gate.GateError, match="newest ordinary CI workflow attempt 124/1"):
+        evaluate(combined=combined, workflow_runs=workflow_runs)
+
+
+def test_same_run_rerun_requires_status_written_after_new_attempt_started():
+    combined = statuses(run_id=123, updated_at="2026-08-12T19:05:00Z")
+    workflow_runs = runs(
+        run(
+            run_id=123,
+            attempt=2,
+            started_at="2026-08-12T19:10:00Z",
+            status="completed",
+            conclusion="success",
+        )
+    )
+    with pytest.raises(pr_gate.GateError, match="status for the newest workflow attempt is absent or stale"):
+        evaluate(combined=combined, workflow_runs=workflow_runs)
+
+
+def test_same_run_rerun_accepts_fresh_success_from_new_attempt():
+    combined = statuses(run_id=123, updated_at="2026-08-12T19:15:00Z")
+    workflow_runs = runs(
+        run(
+            run_id=123,
+            attempt=2,
+            started_at="2026-08-12T19:10:00Z",
+            status="completed",
+            conclusion="success",
+        )
+    )
+    result = evaluate(combined=combined, workflow_runs=workflow_runs)
+    assert result["required_workflow_run_id"] == 123
+    assert result["required_workflow_run_attempt"] == 2
+
+
+def test_overlapping_older_attempt_finishing_late_does_not_override_newer_attempt_success():
     combined = {
         "sha": HEAD,
         "statuses": [
             {
                 "context": pr_gate.REQUIRED_ORDINARY_CI_CONTEXT,
                 "state": "success",
-                "updated_at": "2026-08-12T19:00:00Z",
-                "target_url": "https://github.com/marcogallotta/ai-tools/actions/runs/123",
+                "updated_at": "2026-08-12T19:11:00Z",
+                "target_url": "https://github.com/marcogallotta/ai-tools/actions/runs/124",
             },
             {
                 "context": pr_gate.REQUIRED_ORDINARY_CI_CONTEXT,
-                "state": new_state,
-                "updated_at": "2026-08-12T19:05:00Z",
-                "target_url": "https://github.com/marcogallotta/ai-tools/actions/runs/124",
+                "state": "failure",
+                "updated_at": "2026-08-12T19:20:00Z",
+                "target_url": "https://github.com/marcogallotta/ai-tools/actions/runs/123",
             },
         ],
     }
-    with pytest.raises(pr_gate.GateError, match=f"required ordinary CI status is {new_state}"):
-        pr_gate.evaluate_integration_gate(
-            pr(draft=False), reviewed_head=HEAD, combined_status=combined
-        )
+    workflow_runs = runs(
+        run(
+            run_id=123,
+            started_at="2026-08-12T19:00:00Z",
+            status="completed",
+            conclusion="failure",
+        ),
+        run(
+            run_id=124,
+            started_at="2026-08-12T19:10:00Z",
+            status="completed",
+            conclusion="success",
+        ),
+    )
+    result = evaluate(combined=combined, workflow_runs=workflow_runs)
+    assert result["required_workflow_run_id"] == 124
+    assert result["required_status_state"] == "success"
+
+
+@pytest.mark.parametrize("new_state", ["pending", "failure", "error"])
+def test_newest_successful_attempt_still_requires_its_terminal_success_status(new_state):
+    combined = statuses(
+        ordinary=new_state,
+        run_id=124,
+        updated_at="2026-08-12T19:15:00Z",
+    )
+    workflow_runs = runs(
+        run(run_id=124, started_at="2026-08-12T19:10:00Z", conclusion="success")
+    )
+    with pytest.raises(
+        pr_gate.GateError,
+        match=f"required ordinary CI status for newest workflow attempt is {new_state}",
+    ):
+        evaluate(combined=combined, workflow_runs=workflow_runs)
+
+
+def test_status_targeting_older_run_cannot_certify_newest_successful_attempt():
+    combined = statuses(run_id=123, updated_at="2026-08-12T19:15:00Z")
+    workflow_runs = runs(
+        run(run_id=123, started_at="2026-08-12T19:00:00Z"),
+        run(run_id=124, started_at="2026-08-12T19:10:00Z"),
+    )
+    with pytest.raises(pr_gate.GateError, match="status for the newest workflow attempt is absent or stale"):
+        evaluate(combined=combined, workflow_runs=workflow_runs)
 
 
 def test_mismatched_or_stale_check_sha_refuses_integration():
     with pytest.raises(pr_gate.GateError, match="not reviewed head"):
-        pr_gate.evaluate_integration_gate(
-            pr(draft=False), reviewed_head=HEAD, combined_status=statuses(sha=NEW_HEAD)
-        )
+        evaluate(combined=statuses(sha=NEW_HEAD))
 
 
 def test_specialized_green_workflow_cannot_replace_required_ordinary_ci():
     with pytest.raises(pr_gate.GateError, match="required ordinary CI status"):
-        pr_gate.evaluate_integration_gate(
-            pr(draft=False),
-            reviewed_head=HEAD,
-            combined_status=statuses(ordinary=None, specialized=True),
-        )
+        evaluate(combined=statuses(ordinary=None, specialized=True))
+
+
+def test_newer_specialized_workflow_run_cannot_replace_required_ordinary_ci_attempt():
+    workflow_runs = runs(
+        run(
+            run_id=123,
+            started_at="2026-08-12T19:00:00Z",
+            status="completed",
+            conclusion="failure",
+        ),
+        run(
+            run_id=999,
+            started_at="2026-08-12T19:20:00Z",
+            status="completed",
+            conclusion="success",
+            path=".github/workflows/repository-bundle.yml",
+        ),
+    )
+    with pytest.raises(pr_gate.GateError, match="newest ordinary CI workflow attempt 123/1 concluded failure"):
+        evaluate(workflow_runs=workflow_runs)
 
 
 def test_semantic_head_movement_does_not_transfer_review_or_evidence():
     with pytest.raises(pr_gate.GateError, match="PR head moved"):
-        pr_gate.evaluate_integration_gate(
-            pr(draft=False, head=NEW_HEAD),
-            reviewed_head=HEAD,
-            combined_status=statuses(sha=HEAD),
-        )
+        evaluate(candidate_pr=pr(draft=False, head=NEW_HEAD))
 
 
 def test_exact_reviewed_head_with_required_ordinary_ci_passes_gate():
-    result = pr_gate.evaluate_integration_gate(
-        pr(draft=False), reviewed_head=HEAD, combined_status=statuses()
-    )
+    result = evaluate()
     assert result["ok"] is True
     assert result["certified_sha"] == HEAD
     assert result["required_status_context"] == pr_gate.REQUIRED_ORDINARY_CI_CONTEXT
+    assert result["required_workflow_run_id"] == 123
+    assert result["required_workflow_run_attempt"] == 1
