@@ -73,7 +73,8 @@ jobs:
               'dish/tests/test_test_mock_boundary_contract.py',
           }
           rows = subprocess.check_output(['git', 'status', '--porcelain'], text=True).splitlines()
-          actual = {row[3:] for row in rows}
+          ignored_runtime = {'.ci/', '.test-artifacts/'}
+          actual = {row[3:] for row in rows if row[3:] not in ignored_runtime}
           if actual != expected:
               raise SystemExit(f'unexpected repair surface: {sorted(actual)} != {sorted(expected)}')
           print('repair surface verified:', ', '.join(sorted(actual)))
