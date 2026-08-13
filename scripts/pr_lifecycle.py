@@ -12,10 +12,11 @@ if str(SCRIPT_DIR) not in sys.path:
 from pr_lifecycle_support import *
 from pr_lifecycle_helpers import *
 from pr_lifecycle_engine_inspect import LifecycleInspectMixin
+from pr_lifecycle_external_resolution import LifecycleExternalResolutionMixin
 from pr_lifecycle_engine_actions import LifecycleActionsMixin
 from pr_lifecycle_authoring_actions import LifecycleAuthoringActionsMixin
 
-class LifecycleEngine(LifecycleInspectMixin, LifecycleAuthoringActionsMixin, LifecycleActionsMixin):
+class LifecycleEngine(LifecycleExternalResolutionMixin, LifecycleInspectMixin, LifecycleAuthoringActionsMixin, LifecycleActionsMixin):
     pass
 
 def _parse_specialist_triggers(value: str | None) -> dict[str, str]:
