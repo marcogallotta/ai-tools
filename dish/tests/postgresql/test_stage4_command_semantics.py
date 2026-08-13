@@ -24,6 +24,7 @@ from dish_pg.planner import (
     plan_command,
 )
 from dish_pg.read_model import PostgresReadModel
+from dish_pg.services import CoreAuthorityService, ImportedTaskSpec
 from dish_pg.shadow_worker import (
     _semantic_shadow_command,
     _semantic_shadow_request_id,
@@ -33,6 +34,7 @@ from dish_pg.workflow import RequestIdentityConflict
 from dish_tool.workflow_policy import WorkflowSnapshot, legal_actions
 from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
 from tests.support.postgresql.release import _prepare_candidate
+from tests.support.verification import TASK as PENDING_RESEARCH_TASK
 from tests.support.postgresql.command import (
     _add_verification_queue,
     _call,
@@ -613,9 +615,33 @@ def test_discard_requires_unchanged_creation_baseline_and_no_effect_or_step(work
 
 
 def test_hold_reject_supply_evidence_resumes_preconstruction_baseline(workflow_db) -> None:
-    factory, ids, context, task_id = workflow_db
+    factory, ids, context, _fixture_task_id = workflow_db
     author_run, admin_run = _next(ids), _next(ids)
     with session_scope(factory) as session:
+        title, body = PENDING_RESEARCH_TASK.split("\n", 1)
+        task_id = _next(ids)
+        CoreAuthorityService(
+            session, uuid_factory=lambda: _next(ids)
+        ).import_task_document(
+            generation_id=context["generation_id"],
+            import_run_id=context["import_run_id"],
+            contract_binding_id=context["binding_id"],
+            spec=ImportedTaskSpec(
+                task_id=task_id,
+                asana_task_gid="123456790",
+                title=title,
+                body=body,
+                identity_scheme="legacy-sha256-v1",
+                content_identity=hashlib.sha256(
+                    (title + "\0" + body).encode()
+                ).hexdigest(),
+                project_ids=(context["project_id"],),
+                section_id=context["section_id"],
+                completed=False,
+                observed_at=NOW,
+            ),
+        )
+
         _register_run(
             session, generation_id=context["generation_id"], run_id=author_run
         )
