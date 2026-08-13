@@ -47,8 +47,8 @@ The runner writes `dish-integration-certification-v1` evidence containing candid
 
 ## Actions cost reporting
 
-`scripts/actions_cost_report.py` queries completed workflow runs and all job attempts for a requested range, derives runtime from each job's `started_at`/`completed_at`, and applies repository-owned per-job minute rounding. Rates and the included monthly allowance are explicit in `ci/actions-billing.json`.
+`scripts/actions_cost_report.py` queries completed workflow runs and all job attempts for one complete UTC calendar month, derives runtime from each job's `started_at`/`completed_at`, and applies repository-owned per-job minute rounding. Rates and the included monthly allowance are explicit in `ci/actions-billing.json`.
 
-The reporter groups actual runtime, rounded billed minutes, and approximate overage cost by workflow and job. It also reports billed minutes consumed by cancelled jobs. Unknown runner labels fail closed rather than silently receiving a guessed rate.
+The reporter requires one complete UTC calendar month so the configured monthly allowance can be applied without pretending a partial range is a full billing window. Per-workflow and per-job dollar figures are labeled `gross_equivalent_cost_usd`: billed minutes multiplied by the configured runner rate before any allowance. At the report total only, included minutes are consumed in deterministic job-start order and `approximate_overage_cost_usd` prices only billed minutes beyond the configured allowance. The report also exposes included minutes consumed/remaining, overage billed minutes, and billed minutes consumed by cancelled jobs. Unknown runner labels and billable jobs outside the declared month fail closed rather than receiving guessed accounting.
 
 `ci/fixtures/actions-run-31697885898-jobs.json` is a reduced historical GitHub API fixture. That successful seven-job CI run had 1,074 seconds of summed job runtime but 23 billed minutes after per-job rounding; the regression test preserves that known incident-era example.
