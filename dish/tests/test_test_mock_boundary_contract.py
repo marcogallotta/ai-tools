@@ -5,6 +5,39 @@ from pathlib import Path
 
 
 REVIEWED_PRIVATE_FAULT_SEAMS = {
+    ("postgresql/test_scheduled_backup.py", "_regular_file"): (
+        "Device-boundary stat forgery for local/off-device same-filesystem detection."
+    ),
+    ("postgresql/test_scheduled_backup.py", "_directory"): (
+        "Device-boundary stat forgery for off-device root detection."
+    ),
+    ("postgresql/test_scheduled_backup.py", "_prepare_local_root"): (
+        "Local backup root preparation boundary."
+    ),
+    ("postgresql/test_scheduled_backup.py", "_prepare_off_device_root"): (
+        "Off-device backup root preparation boundary."
+    ),
+    ("postgresql/test_scheduled_backup.py", "_prepare_roots"): (
+        "Combined local/off-device root preparation boundary for health checks."
+    ),
+    ("postgresql/test_scheduled_backup.py", "_query_source_identity"): (
+        "Source database identity query boundary."
+    ),
+    ("postgresql/test_scheduled_backup.py", "_git_head"): (
+        "Source commit identity boundary."
+    ),
+    ("postgresql/test_scheduled_backup.py", "_tool_version"): (
+        "pg_dump/pg_restore tool version identity boundary."
+    ),
+    ("postgresql/test_scheduled_backup.py", "_run"): (
+        "External pg_dump/pg_restore subprocess execution boundary."
+    ),
+    ("postgresql/test_scheduled_backup.py", "_copy_off_device"): (
+        "Off-device copy failure boundary; verifies retention never runs before a successful copy."
+    ),
+    ("postgresql/test_scheduled_backup.py", "_prune_retention"): (
+        "Retention pruning boundary; verifies pruning never runs before a successful copy."
+    ),
     ("test_small_correction_lineage.py", "_validate_semantic_evidence"): (
         "Semantic-evidence verifier failure boundary."
     ),
