@@ -71,7 +71,7 @@ def run(
 def runs(*values):
     if not values:
         values = (run(),)
-    return {"workflow_runs": list(values)}
+    return {"workflow_runs": list(value)}
 
 
 def evaluate(*, candidate_pr=None, combined=None, workflow_runs=None, reviewed_head=HEAD):
@@ -98,13 +98,14 @@ def test_pr_workflow_candidate_identity_is_source_pr_head_sha():
     assert "github.event.pull_request.head.sha" in workflow
     assert "CI_CANDIDATE_SHA:" in workflow
     assert "if: github.event_name != 'pull_request' || github.event.pull_request.draft == false" in workflow
-    assert workflow.count("ref: ${{ env.CI_CANDIDATE_SHA }}") == 6
+    assert workflow.count("ref: ${{ env.CI_CANDIDATE_SHA }}") == 7
     assert "types: [opened, reopened, synchronize, ready_for_review]" in workflow
 
 
 def test_evidence_and_required_status_bind_to_candidate_sha_not_github_sha():
     workflow = WORKFLOW.read_text(encoding="utf-8")
     assert "required-ordinary-ci-${{ env.CI_CANDIDATE_SHA }}" in workflow
+    assert "preflight-${{ env.CI_CANDIDATE_SHA }}" in workflow
     assert "python-tests-${{ env.CI_CANDIDATE_SHA }}" in workflow
     assert "frontend-tooling-${{ env.CI_CANDIDATE_SHA }}" in workflow
     assert "native-postgresql-${{ env.CI_CANDIDATE_SHA }}" in workflow
@@ -115,7 +116,7 @@ def test_evidence_and_required_status_bind_to_candidate_sha_not_github_sha():
     assert "${{ github.sha }}" not in workflow
     assert "POSTGRES_DB: dish_ai_tools_ci_test" in workflow
     assert "/dish_ai_tools_ci_test" in workflow
-    assert workflow.count("uses: ./.github/actions/upload-test-evidence") == 5
+    assert workflow.count("uses: ./.github/actions/upload-test-evidence") == 6
 
 
 def test_each_review_ready_attempt_invalidates_prior_success_and_always_finalizes():
@@ -155,7 +156,7 @@ def test_prior_same_sha_success_cannot_survive_newer_attempt_without_new_status(
 
 
 def test_same_run_rerun_requires_status_written_after_new_attempt_started():
-    combined = statuses(run_id=123, updated_at="2026-08-12T19:05:00Z")
+    combined = statuses(run_id=123, updated_at="2026-08-12T19:15:00Z")
     workflow_runs = runs(
         run(
             run_id=123,
@@ -251,7 +252,7 @@ def test_status_targeting_older_run_cannot_certify_newest_successful_attempt():
 
 def test_mismatched_or_stale_check_sha_refuses_integration():
     with pytest.raises(pr_gate.GateError, match="not reviewed head"):
-        evaluate(combined=statuses(sha=NEW_HEAD))
+        evaluate(combined=statuses(sha=NEW_HEAD)i
 
 
 def test_specialized_green_workflow_cannot_replace_required_ordinary_ci():

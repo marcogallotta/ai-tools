@@ -258,6 +258,14 @@ def validate_policy(
         if kind == "test" and not row.get("domain_class_for_tests"):
             errors.append(f"{prefix}: test lacks domain class")
 
+        if "global-test-preflight-contract" in traits and "preflight-contract" not in traits:
+            errors.append(f"{prefix}: global test preflight contract must also be preflight-contract")
+        if "preflight-contract" in traits:
+            if not path.startswith("tests/") or not path.endswith(".py"):
+                errors.append(f"{prefix}: preflight-contract must be an exact Python test file")
+            if path.startswith("tests/postgresql/native/") or path.startswith("frontend/tests/browser/"):
+                errors.append(f"{prefix}: preflight-contract cannot require native PostgreSQL or browser execution")
+
         if "/migrations/versions/" in path:
             required = {
                 "SQLite database-boundary",

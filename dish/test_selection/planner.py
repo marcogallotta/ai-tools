@@ -107,6 +107,7 @@ class TestPlan:
     parallel_blockers: tuple[str, ...]
     conditional_reviews: tuple[ConditionalReview, ...]
     integration_checkpoint: bool
+    preflight_command: str
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -124,6 +125,7 @@ class TestPlan:
             "parallel_blockers": list(self.parallel_blockers),
             "conditional_reviews": [review.as_dict() for review in self.conditional_reviews],
             "integration_checkpoint": self.integration_checkpoint,
+            "preflight_command": self.preflight_command,
         }
 
     def to_json(self) -> str:
@@ -138,7 +140,7 @@ class TestPlan:
             lines.extend(f"  - {path}" for path in self.ignored_paths)
         lines.append("Classes: " + (", ".join(self.classes) or "none"))
         lines.append("Traits: " + (", ".join(self.traits) or "none"))
-        lines.append("")
+        lines.extend(["", "Preflight gate (must pass before required commands):", f"  {self.preflight_command}", ""])
         lines.append("Required commands:")
         lines.extend(f"  {index}. {command}" for index, command in enumerate(self.commands, start=1))
         if not self.commands:
@@ -203,6 +205,25 @@ def _ordered_lanes(lanes: set[str]) -> tuple[str, ...]:
     known = [lane for lane in LANE_ORDER if lane in lanes]
     unknown = sorted(lanes - set(LANE_ORDER) - FOCUSED_LANES)
     return tuple(known + unknown)
+
+
+def _preflight_command(
+    changed_paths: Iterable[str],
+    *,
+    add_lanes: Iterable[str],
+    integration_checkpoint: bool,
+    parallel_workers: int | None,
+) -> str:
+    parts = [".venv/bin/python", "scripts/dish-test-preflight"]
+    for path in sorted(set(changed_paths)):
+        parts.extend(["--path", path])
+    for lane in sorted(set(add_lanes)):
+        parts.extend(["--add-lane", lane])
+    if integration_checkpoint:
+        parts.append("--integration-checkpoint")
+    if parallel_workers is not None:
+        parts.extend(["--parallel-workers", str(parallel_workers)])
+    return " ".join(shlex.quote(part) for part in parts)
 
 
 def _commands(
@@ -308,6 +329,12 @@ def build_plan(
         parallel_blockers=parallel_blockers,
         conditional_reviews=tuple(reviews),
         integration_checkpoint=integration_checkpoint,
+        preflight_command=_preflight_command(
+            normalized,
+            add_lanes=requested_lanes,
+            integration_checkpoint=integration_checkpoint,
+            parallel_workers=parallel_workers,
+        ),
     )
 
 

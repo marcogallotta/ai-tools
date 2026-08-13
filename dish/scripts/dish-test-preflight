@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""Run deterministic Dish validation before expensive governed test lanes."""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from test_selection.model import ALLOWED_LANES, PolicyError  # noqa: E402
+from test_selection.planner import (  # noqa: E402
+    discover_git_paths,
+    load_git_policy,
+    normalize_explicit_paths,
+)
+from test_selection.preflight import run_preflight  # noqa: E402
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="dish-test-preflight")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--base", help="preflight all changes from this Git revision to the working tree")
+    source.add_argument("--staged", action="store_true", help="preflight only staged changes")
+    source.add_argument("--path", action="append", default=[], help="explicit changed path; repeatable")
+    parser.add_argument(
+        "--add-lane",
+        action="append",
+        default=[],
+        choices=sorted(ALLOWED_LANES),
+        help="agent-selected semantic escalation; repeatable",
+    )
+    parser.add_argument(
+        "--integration-checkpoint",
+        action="store_true",
+        help="report the ordinary full suite as a downstream integration requirement",
+    )
+    parser.add_argument("--parallel-workers", type=int)
+    parser.add_argument(
+        "--allow-empty",
+        action="store_true",
+        help="validate policy and pass when a Git diff contains no Dish-scoped paths",
+    )
+    parser.add_argument("--json", action="store_true", help="emit JSON only")
+    parser.add_argument(
+        "--json-output",
+        type=Path,
+        help="write stable JSON evidence while retaining human output on stdout",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    try:
+        fallback_policy = None
+        if args.path:
+            changed = normalize_explicit_paths(args.path)
+        else:
+            changed, _ignored = discover_git_paths(base=args.base, staged=args.staged)
+            fallback_policy = load_git_policy(ref=args.base or "HEAD")
+        if not changed and not args.allow_empty:
+            raise PolicyError("no Dish-scoped changed paths were found")
+        result = run_preflight(
+            changed,
+            fallback_policy=fallback_policy,
+            add_lanes=args.add_lane,
+            integration_checkpoint=args.integration_checkpoint,
+            parallel_workers=args.parallel_workers,
+        )
+    except PolicyError as exc:
+        print(f"dish-test-preflight: {exc}", file=sys.stderr)
+        return 2
+
+    if args.json_output is not None:
+        args.json_output.parent.mkdir(parents=True, exist_ok=True)
+        args.json_output.write_text(result.to_json(), encoding="utf-8")
+    sys.stdout.write(result.to_json() if args.json else result.to_text())
+    return 0 if result.passed else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

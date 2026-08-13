@@ -66,9 +66,51 @@ jobs:
             --repo-root "$GITHUB_WORKSPACE" \
             --json
 
+  preflight:
+    name: Cheap governed preflight
+    needs: bundle-metadata
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.CI_CANDIDATE_SHA }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ needs.bundle-metadata.outputs.python_version }}
+      - uses: ./.github/actions/setup-python-bundle
+        with:
+          github-token: ${{ github.token }}
+      - name: Run deterministic cheap preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .test-artifacts/preflight
+          case "$GITHUB_EVENT_NAME" in
+            pull_request) base="${{ github.event.pull_request.base.sha }}" ;;
+            push) base="${{ github.event.before }}" ;;
+            *) base="$(git rev-parse "$CI_CANDIDATE_SHA^")" ;;
+          esac
+          if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
+            base="$(git rev-parse "$CI_CANDIDATE_SHA^")"
+          fi
+          (
+            cd dish
+            .venv/bin/python scripts/dish-test-preflight \
+              --base "$base" \
+              --allow-empty \
+              --json-output ../.test-artifacts/preflight/result.json
+          ) 2>&1 | tee .test-artifacts/preflight/preflight.log
+      - name: Upload preflight evidence
+        if: always()
+        uses: ./.github/actions/upload-test-evidence
+        with:
+          name: preflight-${{ env.CI_CANDIDATE_SHA }}
+          path: .test-artifacts/preflight
+
   python-tests:
     name: Broad Python tests
-    needs: bundle-metadata
+    needs: [bundle-metadata, preflight]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -90,6 +132,7 @@ jobs:
             ci/tests/test_repository_bundle.py \
             ci/tests/test_pr_gate.py \
             ci/tests/test_ci_evidence_upload.py \
+            ci/tests/test_ci_preflight_gate.py \
             --junitxml=.test-artifacts/python/bundles.xml \
             2>&1 | tee .test-artifacts/python/bundles.log
       - name: Validate governed Dish test-selection map
@@ -127,7 +170,7 @@ jobs:
 
   frontend-tooling:
     name: Frontend and tooling
-    needs: bundle-metadata
+    needs: [bundle-metadata, preflight]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -160,7 +203,7 @@ jobs:
 
   native-postgresql:
     name: Native PostgreSQL
-    needs: bundle-metadata
+    needs: [bundle-metadata, preflight]
     runs-on: ubuntu-24.04
     services:
       postgres:
@@ -227,7 +270,7 @@ jobs:
 
   browser-acceptance:
     name: Browser acceptance
-    needs: bundle-metadata
+    needs: [bundle-metadata, preflight]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
@@ -274,7 +317,7 @@ jobs:
   exact-head-ordinary-ci:
     name: Exact-head ordinary CI gate
     if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    needs: [python-tests, frontend-tooling, native-postgresql, browser-acceptance]
+    needs: [preflight, python-tests, frontend-tooling, native-postgresql, browser-acceptance]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -288,6 +331,7 @@ jobs:
         id: outcome
         shell: bash
         env:
+          PREFLIGHT_RESULT: ${{ needs.preflight.result }}
           PYTHON_RESULT: ${{ needs.python-tests.result }}
           FRONTEND_RESULT: ${{ needs.frontend-tooling.result }}
           POSTGRESQL_RESULT: ${{ needs.native-postgresql.result }}
@@ -295,12 +339,13 @@ jobs:
         run: |
           set -euo pipefail
           state=success
-          for result in "$PYTHON_RESULT" "$FRONTEND_RESULT" "$POSTGRESQL_RESULT" "$BROWSER_RESULT"; do
+          for result in "$PREFLIGHT_RESULT" "$PYTHON_RESULT" "$FRONTEND_RESULT" "$POSTGRESQL_RESULT" "$BROWSER_RESULT"; do
             if [[ "$result" != "success" ]]; then
               state=failure
             fi
           done
           printf 'status_state=%s\n' "$state" >> "$GITHUB_OUTPUT"
+          printf 'preflight_result=%s\n' "$PREFLIGHT_RESULT" >> "$GITHUB_OUTPUT"
           printf 'python_result=%s\n' "$PYTHON_RESULT" >> "$GITHUB_OUTPUT"
           printf 'frontend_result=%s\n' "$FRONTEND_RESULT" >> "$GITHUB_OUTPUT"
           printf 'postgresql_result=%s\n' "$POSTGRESQL_RESULT" >> "$GITHUB_OUTPUT"
@@ -311,6 +356,7 @@ jobs:
         shell: bash
         env:
           STATUS_STATE: ${{ steps.outcome.outputs.status_state }}
+          PREFLIGHT_RESULT: ${{ steps.outcome.outputs.preflight_result }}
           PYTHON_RESULT: ${{ steps.outcome.outputs.python_result }}
           FRONTEND_RESULT: ${{ steps.outcome.outputs.frontend_result }}
           POSTGRESQL_RESULT: ${{ steps.outcome.outputs.postgresql_result }}
@@ -338,6 +384,7 @@ jobs:
               "required_status_context": os.environ["EXACT_HEAD_STATUS_CONTEXT"],
               "required_status_state": os.environ["STATUS_STATE"] or "failure",
               "required_lane_results": {
+                  "preflight": os.environ["PREFLIGHT_RESULT"],
                   "python-tests": os.environ["PYTHON_RESULT"],
                   "frontend-tooling": os.environ["FRONTEND_RESULT"],
                   "native-postgresql": os.environ["POSTGRESQL_RESULT"],

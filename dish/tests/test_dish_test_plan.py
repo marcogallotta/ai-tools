@@ -294,3 +294,17 @@ def test_changed_reviewed_file_keeps_planner_serial_and_reports_qualification_dr
         "tests/test_commands.py (changed since parallel review; requires explicit requalification)",
     )
     assert "changed since parallel review" in plan.to_text()
+
+
+def test_plan_front_loads_preflight_without_changing_downstream_commands() -> None:
+    plan = build_plan(["dish_tool/review_queue.py"], policy_path=POLICY)
+
+    assert plan.preflight_command == (
+        ".venv/bin/python scripts/dish-test-preflight --path dish_tool/review_queue.py"
+    )
+    assert plan.commands[0].startswith(".venv/bin/python -m pytest -q ")
+    assert plan.commands[-1] == ".venv/bin/python -m pytest --smoke"
+    text = plan.to_text()
+    assert text.index("Preflight gate (must pass before required commands):") < text.index(
+        "Required commands:"
+    )

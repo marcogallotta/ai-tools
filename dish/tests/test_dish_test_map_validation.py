@@ -78,3 +78,29 @@ def test_missing_owner_test_is_rejected(tmp_path: Path) -> None:
     result = validate_policy(repo_root=ROOT, parent_root=ROOT.parent, policy_path=changed)
 
     assert any("references missing file" in error for error in result.errors)
+
+
+def test_native_or_browser_test_cannot_be_declared_as_preflight_contract(tmp_path: Path) -> None:
+    fields, rows = _rows()
+    target = next(
+        row for row in rows if row["path"] == "tests/postgresql/native/test_stage_a_concurrency.py"
+    )
+    target["traits"] += "; preflight-contract"
+    changed = tmp_path / "native-preflight.csv"
+    _write_policy(changed, fields, rows)
+
+    result = validate_policy(repo_root=ROOT, parent_root=ROOT.parent, policy_path=changed)
+
+    assert any("preflight-contract cannot require native PostgreSQL or browser execution" in error for error in result.errors)
+
+
+def test_global_test_preflight_contract_must_be_explicitly_cheap(tmp_path: Path) -> None:
+    fields, rows = _rows()
+    target = next(row for row in rows if row["path"] == "tests/test_lease_authority.py")
+    target["traits"] += "; global-test-preflight-contract"
+    changed = tmp_path / "global-preflight.csv"
+    _write_policy(changed, fields, rows)
+
+    result = validate_policy(repo_root=ROOT, parent_root=ROOT.parent, policy_path=changed)
+
+    assert any("global test preflight contract must also be preflight-contract" in error for error in result.errors)
