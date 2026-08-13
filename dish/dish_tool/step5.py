@@ -266,7 +266,7 @@ def verification_lineage(
 ) -> dict[str, Any]:
     """Return candidate-producing run lineage and the current run's eligibility.
 
-    Eligibility mirrors ``assert_fresh_verifier``: any run previously recorded as
+    Task-wide eligibility is authoritative here: any run previously recorded as
     a constructor or material editor for the task is ineligible to verify it.
     """
     op = conn.execute(
