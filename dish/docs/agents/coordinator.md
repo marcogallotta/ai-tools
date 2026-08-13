@@ -145,6 +145,19 @@ If new commits appear after approval:
 - mechanical-only head movement requires an explicit exact-head mechanical recheck before integration;
 - if the classification is uncertain, route it as semantic work.
 
+### Publication-blocked implementation routing
+
+Treat the exact durable PR marker `State: LOCAL IMPLEMENTATION COMPLETION REQUIRED` under `## PUBLICATION BLOCKER — LOCAL BRANCH COMPLETION REQUIRED BEFORE REVIEW` as **incomplete implementation**, not local certification and not review-ready state. Local-agent capacity is scarce: route only the exact missing mechanical publication delta to a local Implementation-completion agent after confirming that the PR already contains the full standalone handoff required by `implementation.md`. Do not make Marco copy hidden agent instructions between hosts.
+
+The local completion route preserves the same PR and existing branch, forbids direct-`main` writes and reconstruction of partial/truncated governed files, and must return the new exact PR head after the focused delta/checks are pushed and the blocker state is updated or removed. A complete intended implementation that is already published but still lacks a laptop/native/browser/environment check is instead `LOCAL CERTIFICATION/TESTING ONLY`; do not classify it as a publication blocker.
+
+After local completion:
+
+- if no independent Review existed, route the new head through normal Review;
+- if any exact-head Review existed, do not transfer it to the new SHA—apply the standing semantic/mechanical head-movement rules first.
+
+A lifecycle dispatcher must be able to classify `LOCAL IMPLEMENTATION COMPLETION REQUIRED` directly from durable PR state without coordinator chat history.
+
 ## Branch/worktree and direct-commit policy
 
 Day-one rules for new work:

@@ -220,3 +220,77 @@ def test_role_composition_is_explicit_and_does_not_expand_authority() -> None:
     assert "explicitly assigned repository implementation" in workflow
     assert "No implicit role composition is permitted." in review
     assert "Review does not implement fixes" in review
+
+
+def _agent_contract(name: str) -> str:
+    return (DISH_ROOT / "docs" / "agents" / name).read_text(encoding="utf-8")
+
+
+def test_publication_fallback_distinguishes_local_certification_from_unpublished_implementation() -> None:
+    implementation = _agent_contract("implementation.md")
+    review = _agent_contract("review.md")
+    assert "A required implementation change that is not durably published" in implementation
+    assert "**publication blocker**, not missing local/environment certification" in implementation
+    assert "complete intended changed surface is already durably published" in implementation
+    assert "fully published implementation that only lacks" in review
+    assert "local certification, not a publication blocker" in review
+
+
+def test_publication_blocker_requires_complete_pr_handoff_before_human_notice_and_forbids_shortcuts() -> None:
+    implementation = _agent_contract("implementation.md")
+    assert "## PUBLICATION BLOCKER — LOCAL BRANCH COMPLETION REQUIRED BEFORE REVIEW" in implementation
+    assert "State: LOCAL IMPLEMENTATION COMPLETION REQUIRED" in implementation
+    for required in (
+        "exact PR URL/number, existing branch, and exact current PR head SHA",
+        "exact missing path and the exact smallest mechanical delta",
+        "why connector-native publication is unsafe or unavailable",
+        "evidence already completed and exactly what it proves",
+        "exact focused completion/check commands",
+        "explicit branch-ownership handoff",
+        "push the **existing PR branch**",
+        "return the new exact PR head SHA",
+    ):
+        assert required in implementation
+    assert "before notifying Marco" in implementation
+    assert "never reconstruct a governed file from partial/truncated content" in implementation
+    assert "never write directly to `main`" in implementation
+
+
+def test_local_publication_completion_is_same_branch_mechanical_only_and_returns_new_head() -> None:
+    implementation = _agent_contract("implementation.md")
+    for required in (
+        "continue on the same existing PR branch",
+        "apply only the unpublished mechanical delta",
+        "with no semantic broadening",
+        "run only the focused verification required for that missing delta",
+        "push the resulting new head to the existing PR branch",
+        "update/remove the blocker state",
+        "return the new exact PR head SHA",
+    ):
+        assert required in implementation
+
+
+def test_publication_completion_new_head_never_silently_inherits_prior_review() -> None:
+    implementation = _agent_contract("implementation.md")
+    review = _agent_contract("review.md")
+    assert "If local completion occurs before independent Review, the new head enters normal Review" in implementation
+    assert "If completion occurs after any exact-head review, that review does not transfer silently" in implementation
+    assert "the resulting new SHA does not inherit that review" in review
+    assert "semantic movement needs substantive re-review" in review
+    assert "mechanical-only movement needs an explicit exact-head mechanical recheck" in review
+
+
+def test_dispatcher_marker_is_durable_and_project_kernels_expose_direct_classification() -> None:
+    coordinator = _agent_contract("coordinator.md")
+    development_workflow = _agent_contract("development-workflow.md")
+    source = json.loads((DISH_ROOT / "docs" / "chatgpt-projects" / "source.json").read_text(encoding="utf-8"))
+    assert "Treat the exact durable PR marker `State: LOCAL IMPLEMENTATION COMPLETION REQUIRED`" in coordinator
+    assert "A lifecycle dispatcher must be able to classify `LOCAL IMPLEMENTATION COMPLETION REQUIRED` directly from durable PR state" in coordinator
+    assert "Lifecycle/dispatcher tooling must derive `LOCAL IMPLEMENTATION COMPLETION REQUIRED` directly from PR state" in development_workflow
+    coordinator_rules = "\n".join(rule["text"] for rule in source["roles"]["coordinator"]["rules"])
+    workflow_rules = "\n".join(rule["text"] for rule in source["roles"]["development-workflow"]["rules"])
+    implementation_rules = "\n".join(rule["text"] for rule in source["roles"]["implementation"]["rules"])
+    assert "LOCAL IMPLEMENTATION COMPLETION REQUIRED" in coordinator_rules
+    assert "PUBLICATION BLOCKER" in workflow_rules
+    assert "PUBLICATION BLOCKER" in implementation_rules
+    assert "never local certification" in implementation_rules

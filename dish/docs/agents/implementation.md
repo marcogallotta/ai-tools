@@ -92,6 +92,43 @@ Host tooling differs, but the artifact contract does not:
 
 Regardless of host, the coordinator/reviewer/integrator must be able to identify the same branch, commit, PR URL, and exact PR head SHA.
 
+## Publication blockers and local branch completion
+
+A required implementation change that is not durably published because the active host cannot safely write one required branch path is a **publication blocker**, not missing local/environment certification. `LOCAL TESTING / LOCAL CERTIFICATION REQUIRED BEFORE INTEGRATION` is reserved for implementation whose complete intended changed surface is already durably published and only lacks machine/environment evidence.
+
+For a publication blocker, implementation is incomplete. Keep the existing PR draft and, **before notifying Marco**, make the PR itself the complete takeover artifact with this exact heading:
+
+`## PUBLICATION BLOCKER — LOCAL BRANCH COMPLETION REQUIRED BEFORE REVIEW`
+
+Under that heading record at least:
+
+- `State: LOCAL IMPLEMENTATION COMPLETION REQUIRED`;
+- exact PR URL/number, existing branch, and exact current PR head SHA;
+- handoff class `LOCAL IMPLEMENTATION COMPLETION` and estimated handoff size (`SMALL`, `MODERATE`, or `SUBSTANTIAL`);
+- exact missing path and the exact smallest mechanical delta that remains unpublished;
+- why connector-native publication is unsafe or unavailable;
+- evidence already completed and exactly what it proves;
+- exact focused completion/check commands where stable and governed;
+- explicit branch-ownership handoff from the current Implementation agent to a local Implementation-completion agent;
+- the required successful end state: update/remove the blocker section, push the **existing PR branch**, and return the new exact PR head SHA.
+
+The PR must contain the complete agent-to-agent instructions; Marco must not be required to carry an undocumented second handoff in chat. After the durable PR update, the human-facing message is only the concise control-plane status/action, for example `PR #N — local finish required (SMALL). Draft. Action: give PR #N to a local Implementation agent; full handoff is on the PR.`
+
+A local Implementation-completion agent accepting this ownership handoff must:
+
+- continue on the same existing PR branch;
+- apply only the unpublished mechanical delta named in the blocker section, with no semantic broadening;
+- never write directly to `main`;
+- never reconstruct a governed file from partial/truncated content in order to simulate a missing append/patch transport;
+- run only the focused verification required for that missing delta;
+- push the resulting new head to the existing PR branch;
+- update/remove the blocker state so the PR no longer advertises incomplete publication;
+- return the new exact PR head SHA.
+
+The head change is real review identity movement. If local completion occurs before independent Review, the new head enters normal Review. If completion occurs after any exact-head review, that review does not transfer silently: classify the movement under the normal semantic/mechanical rules and perform substantive re-review or an explicit exact-head mechanical recheck as applicable.
+
+Do not solve a publication blocker by inventing a parallel ownership map, creating a second PR for the missing line, reconstructing truncated governed content, or treating a missing write transport as certification. A future server-side branch patch primitive may remove this failure mode, but it is tooling follow-up rather than a prerequisite for this fallback.
+
 ## Scope and authority
 
 Implement the smallest coherent change that satisfies the stated task.

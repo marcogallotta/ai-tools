@@ -130,6 +130,14 @@ A conflict-free rebase or purely mechanical migration renumber can qualify for t
 
 Parallel migration-number collisions are integration-order issues, not automatic semantic blockers. Do not force one unmerged PR to depend prospectively on another merely because both currently use the same migration number.
 
+### Publication completion and review identity
+
+`State: LOCAL IMPLEMENTATION COMPLETION REQUIRED` under the canonical `PUBLICATION BLOCKER` PR section means implementation publication is incomplete. Do not treat that state as local certification or as an ordinary review-ready candidate. The PR must contain the complete local Implementation-completion handoff before Marco is notified.
+
+If the missing branch publication is completed after any prior exact-head Review, the resulting new SHA does not inherit that review. Re-read the new head and apply the normal head-movement rules: semantic movement needs substantive re-review; genuinely mechanical-only movement needs an explicit exact-head mechanical recheck; uncertainty is semantic. If completion happened before Review, review the completed new head normally.
+
+By contrast, a fully published implementation that only lacks an established laptop/native/browser/environment check is local certification, not a publication blocker. Missing environment certification may remain separate from the semantic verdict exactly as defined above.
+
 ## Human review escalation
 
 Request human judgment only when agents cannot determine correctness from available authority/evidence or when the next step genuinely requires a human tradeoff, product judgment, risk acceptance, or other Marco-only decision.
