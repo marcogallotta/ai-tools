@@ -245,6 +245,7 @@ def main(argv: list[str] | None = None) -> int:
                 "executed": tests.get("executed", 0),
                 "skipped": tests.get("skipped", 0),
                 "failed": tests.get("failed", 0),
+                "failed_nodeids": tests.get("failed_nodeids", []),
                 "errors": tests.get("errors", 0),
                 "path": str(args.output),
                 "report_sha256": report["report_sha256"],

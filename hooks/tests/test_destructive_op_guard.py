@@ -4,7 +4,6 @@ rsync --delete, and ssh with a remote command.
 """
 import io
 import json
-import subprocess
 
 import pytest
 
@@ -97,6 +96,28 @@ class TestGitFalsePositiveRepros:
 
     def test_echo_of_git_commit_words_allowed(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(destructive_op_guard, 'echo "git commit"', monkeypatch, capsys)
+        assert_allowed(decision)
+
+    # Real repro: check_git's "add" scan matched the token anywhere in the
+    # command, not just git's own subcommand position, so any subcommand
+    # that happens to take a literal "add" argument (worktree/remote/
+    # submodule) false-triggered the "don't run git add alone" denial.
+    def test_git_worktree_add_allowed(self, destructive_op_guard, monkeypatch, capsys):
+        decision = run_hook(
+            destructive_op_guard, "git worktree add ../foo agent/some-branch", monkeypatch, capsys
+        )
+        assert_allowed(decision)
+
+    def test_git_remote_add_allowed(self, destructive_op_guard, monkeypatch, capsys):
+        decision = run_hook(
+            destructive_op_guard, "git remote add origin git@example.com:x/y.git", monkeypatch, capsys
+        )
+        assert_allowed(decision)
+
+    def test_git_submodule_add_allowed(self, destructive_op_guard, monkeypatch, capsys):
+        decision = run_hook(
+            destructive_op_guard, "git submodule add https://example.com/x.git", monkeypatch, capsys
+        )
         assert_allowed(decision)
 
 
@@ -258,6 +279,16 @@ class TestGitSubcommands:
         decision = run_hook(destructive_op_guard, "git add foo.py", monkeypatch, capsys)
         assert_denied(decision, "Don't run git add alone")
 
+    def test_git_dash_c_repo_add_still_denied(self, destructive_op_guard, monkeypatch, capsys):
+        decision = run_hook(destructive_op_guard, "git -C /some/repo add foo.py", monkeypatch, capsys)
+        assert_denied(decision, "Don't run git add alone")
+
+    def test_git_dash_c_repo_worktree_add_allowed(self, destructive_op_guard, monkeypatch, capsys):
+        decision = run_hook(
+            destructive_op_guard, "git -C /some/repo worktree add ../foo agent/x", monkeypatch, capsys
+        )
+        assert_allowed(decision)
+
 
 class TestPsql:
     def test_write_keyword_asked(self, destructive_op_guard, monkeypatch, capsys):
@@ -326,41 +357,6 @@ class TestMissingCommand:
         out = capsys.readouterr().out
         assert exit_code == 0
         assert out.strip() == ""
-
-
-def _git(cwd, *args):
-    subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True)
-
-
-@pytest.fixture
-def protected_repo(tmp_path, destructive_op_guard, monkeypatch):
-    """A real primary checkout plus a registered linked worktree, standing
-    in for ~/ai-tools and an owned agent worktree. destructive_op_guard's
-    PROTECTED_CHECKOUT_ROOT is repointed at the primary so the check exercises
-    real git-dir/common-dir/worktree-registry resolution end to end."""
-    primary = tmp_path / "primary"
-    primary.mkdir()
-    _git(primary, "init", "-q", "-b", "main")
-    _git(primary, "config", "user.email", "test@example.com")
-    _git(primary, "config", "user.name", "Test")
-    (primary / "README.md").write_text("x\n")
-    _git(primary, "add", "README.md")
-    _git(primary, "commit", "-q", "-m", "initial")
-
-    linked = tmp_path / "linked"
-    _git(primary, "worktree", "add", "-q", "-b", "agent/existing", str(linked), "main")
-
-    unrelated = tmp_path / "unrelated"
-    unrelated.mkdir()
-    _git(unrelated, "init", "-q", "-b", "main")
-    _git(unrelated, "config", "user.email", "test@example.com")
-    _git(unrelated, "config", "user.name", "Test")
-    (unrelated / "README.md").write_text("x\n")
-    _git(unrelated, "add", "README.md")
-    _git(unrelated, "commit", "-q", "-m", "initial")
-
-    monkeypatch.setattr(destructive_op_guard, "PROTECTED_CHECKOUT_ROOT", str(primary.resolve()))
-    return {"primary": primary, "linked": linked, "unrelated": unrelated}
 
 
 class TestProtectedCheckoutBranchIsolation:

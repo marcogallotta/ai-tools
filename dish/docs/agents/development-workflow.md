@@ -94,6 +94,18 @@ Invariants:
 - Integration consumes the exact reviewed/certified candidate;
 - direct-to-`main` is exceptional and requires explicit Marco authorization for the specific change.
 
+## PR authoring and review-ready state
+
+Use GitHub's native draft state as the canonical authoring gate:
+
+- `draft=true` = AUTHORING / NOT REVIEWABLE; early draft PR creation is allowed for durable identity;
+- before transition, Implementation finishes task-scoped evidence, updates durable PR context/evidence/limitations, and records the exact current head SHA;
+- the author explicitly marks the PR ready; `draft=false` = REVIEW-READY for ordinary discovery;
+- Coordinator/Review polling ignores drafts unless Marco explicitly requests early review;
+- semantic commits after review begins still invalidate prior exact-head review regardless of draft history.
+
+`scripts/pr_gate.py review-ready` is the repository-owned deterministic predicate for tooling/evals. Do not create a second label/state machine for review readiness.
+
 ## PR self-containment for forked review
 
 Review should be able to run independently of the Coordinator conversation.
@@ -111,17 +123,28 @@ Every implementation PR entering Review must identify its owning Asana task when
 
 Do not turn the PR body into a copy of the entire Asana task. The reviewer may fetch the current linked Asana task and repository authority as needed. Coordinator chat history is never required review context.
 
+## Publication fallback and durable local completion
+
+ChatGPT is the default heavy repository-work host only when the **complete intended changed surface** has a safe durable publication path. If substantive implementation/evidence is complete but one required branch edit cannot be safely published with the available connector, classify the residual state as `PUBLICATION BLOCKER`, never `LOCAL CERTIFICATION`. Local certification means the complete implementation is already published and only environment-bound evidence remains.
+
+The canonical durable state is the existing draft PR section `## PUBLICATION BLOCKER — LOCAL BRANCH COMPLETION REQUIRED BEFORE REVIEW` with `State: LOCAL IMPLEMENTATION COMPLETION REQUIRED`. Its standalone handoff must carry the exact PR/branch/current head, exact missing path and smallest mechanical delta, transport reason, completed evidence and what it proves, focused stable commands, explicit branch ownership transfer to local Implementation completion, and the requirement to push that same branch and return the new exact head. This PR update happens before any human notification; human chat contains only concise status/action and points back to the PR.
+
+The local agent is a narrow completion transport, not the default heavy implementation host. It may apply only the unpublished mechanical delta on the existing PR branch, may not broaden semantics, write `main`, reconstruct a governed file from partial/truncated content, or create parallel authority, and runs only focused verification for that delta. On success it updates/removes the blocker state and returns the new exact head.
+
+A completion head created before Review enters normal Review. A completion head created after Review invalidates the old exact-head identity; normal semantic/mechanical recheck rules decide the required review depth and no prior verdict transfers silently. Lifecycle/dispatcher tooling must derive `LOCAL IMPLEMENTATION COMPLETION REQUIRED` directly from PR state rather than coordinator conversation. A server-side expected-head branch patch primitive is a separate tooling improvement, not part of this fallback contract.
+
 ## Review forking and soft claims
 
 Review may be forked to dedicated Review agents so Coordinator can continue orchestration while reviews happen in parallel.
 
 Do not use GitHub assignee state as durable agent-review ownership. An agent may die, compact, disconnect, or never return; no such failure may permanently lock the PR.
 
-Before substantive forked review, the reviewer should inspect the current PR for an active claim on the exact current head. If none is active, post a signed PR comment such as:
+Before substantive forked review, the reviewer should inspect the current PR for an active structured claim on the exact current head. If none is active, post a signed PR comment containing:
 
-> `REVIEW CLAIMED — head <exact-sha> — stale after 60m without review activity.`
+> `<!-- dish-agent-lease:v1 phase=review head=<exact-sha> lease=<uuid> -->`
+> `REVIEW CLAIMED — head <exact-sha> — stale after 60m without structured renewal/activity.`
 
-The claim is an **advisory soft lease only**. It is not review authority and exists only to avoid accidental duplicate work.
+The marker generalizes to `phase=implementation`, `phase=fix`, and `phase=integration` where active-work visibility is useful. The lease is an **advisory soft lease only**. It is not role authority and exists only to avoid accidental duplicate work. Renew by posting the same lease UUID again; explicit release uses `dish-agent-lease-release:v1`.
 
 The claim is inactive when:
 
@@ -134,6 +157,18 @@ The claim is inactive when:
 Visible activity includes a submitted GitHub review, review-thread/comment activity, or an explicit claim-renewal/progress comment. Do not keep the claim alive merely because the agent process might still exist somewhere.
 
 A submitted GitHub review on the exact head supersedes the claim. Independent specialist reviews may intentionally coexist; the claim prevents accidental duplication, not deliberate multi-review.
+
+## Repository-owned PR lifecycle dispatcher
+
+Routine lifecycle observation belongs to one repository-owned dispatcher, `scripts/pr_lifecycle.py`, rather than to Marco, Coordinator chat, or multiple agents racing independent poll loops. The dispatcher is disposable process state: every restart reconstructs truth from GitHub PR metadata, formal reviews, structured lease comments, exact-head CI evidence, local-work markers, and linked Asana identity. It has no authoritative queue database.
+
+Its derived queue distinguishes authoring/implementation, review-ready, review-in-progress, changes-requested/fix, review-passed/evaluating-gates, local implementation completion, local certification, waiting CI/certification, Integration-ready, merging, merged, and closed/superseded. `VERDICT: MERGE` is a gate-evaluation transition, never terminal.
+
+Routing is deliberately bounded: cheap mechanical/focused/light Review may use a configured local reviewer; ordinary semantic Review prefers a published ChatGPT Review Workspace Agent; specialist/deep Review routes to the named specialist. Workspace Agent requests are idempotent per repository + PR + exact head + review class, but only a formal exact-head GitHub Review advances semantic state.
+
+After exact-head `BLOCK`, the existing implementation/fix ownership path consumes the durable queue transition and updates the same PR branch; Marco does not forward the review transcript. After exact-head `MERGE`, the dispatcher evaluates local work and Integration gates. It writes any required local handoff to the PR before a concise human action message. If all gates are green and explicit bounded Integration authority/capability is configured, it may mechanically merge the expected exact head and reports `MERGED` only after GitHub readback. Tool capability alone never grants that authority.
+
+Operational commands and marker formats are in [`../../../ci/pr-lifecycle-dispatcher-runbook.md`](../../../ci/pr-lifecycle-dispatcher-runbook.md).
 
 ## Review queue and takeover
 
@@ -176,7 +211,9 @@ The development workflow should make evidence bind to the exact candidate being 
 
 Maintain the repository-owned test-selection/planning authority rather than inventing disconnected GitHub-only path rules.
 
-Where PR-triggered checks exist, they must identify the exact candidate/head they certify. Until automation covers a guarantee, governed manual/native evidence remains valid when its exact candidate identity is recorded.
+Ordinary CI runs for review-ready PR candidates and explicitly derives candidate identity from `pull_request.head.sha`; `GITHUB_SHA` on `pull_request` is not treated as the review identity. Every test checkout and evidence artifact for exact-head certification uses that candidate SHA.
+
+Every review-ready ordinary-CI attempt first publishes `Dish / required ordinary CI` as `pending` on the exact candidate head before required lanes start, then an `always()` finalizer publishes terminal `success` only when every required lane succeeded or terminal `failure` otherwise. The attempt also writes `required-ordinary-ci-<candidate-sha>` metadata with the exact head, run/attempt identity, terminal status, and lane results. This prevents an older same-head success from surviving a newer pending/failed attempt. Integration fails closed on absence, pending/failure, stale/mismatched SHA, or a specialized-only green surface. `scripts/pr_gate.py integration` is the deterministic repository predicate for that gate.
 
 Development Workflow owns proactive CI health triage for current `main`, active work whose CI state is material to progress, and review-ready/review-critical PR candidates. This is part of the existing Development Workflow lifecycle, not a second CI lifecycle. Use event-driven discovery where available or a short-interval polling/check trigger suitable for this project's fast PR rate; day/week-scale polling is not sufficient. Persistent unexplained red CI must not sit unowned.
 
@@ -189,7 +226,7 @@ For every material failing GitHub Actions run:
 - treat missing or failed evidence upload as a Development Workflow defect, but continue inspecting the underlying run/log failure independently so an evidence-path failure cannot hide the actual defect indefinitely;
 - if the exact cause cannot yet be resolved, preserve the best available evidence, state what remains unknown, and assign the next diagnostic owner/action rather than leaving the red run unexplained and ownerless.
 
-Optimization work must not weaken native PostgreSQL, browser, process/restart, migration, or other real-boundary evidence merely to reduce latency.
+Until automation covers a separate guarantee, governed manual/native evidence remains valid when its exact candidate identity is recorded. Optimization work must not weaken native PostgreSQL, browser, process/restart, migration, or other real-boundary evidence merely to reduce latency.
 
 ## Agent lifecycle and compaction recovery
 
