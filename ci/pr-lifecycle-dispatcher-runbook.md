@@ -69,7 +69,7 @@ Lease rules:
 - stale 60 minutes after the most recent structured renewal/activity for that lease UUID;
 - a formal exact-head Review supersedes a `phase=review` lease;
 - merge/close invalidates every lease;
-- intentional specialist/deep parallel Review may use a separate lease;
+- domain-deep scrutiny stays inside the active Review lease; only genuinely different external-expert parallel Review/evidence may use a separate lease;
 - restart reconstructs active leases from PR comments.
 
 Explicit release is:
@@ -88,17 +88,16 @@ The default ordinary route is `substantive`. A durable explicit route may be pla
 <!-- dish-review-route:v1 head=<sha> class=<class> -->
 ```
 
-Classes are `light`, `focused`, `mechanical`, `substantive`, or `specialist:<name>`. A prior exact-head `BLOCK` whose return contract says `FOCUSED RECHECK` or `MECHANICAL CHECK ONLY` also supplies the bounded next review class after a new head appears. Ambiguous work defaults to `substantive`.
+Classes are `light`, `focused`, `mechanical`, `substantive`, or `domain:<name>`. `domain:<name>` means the ordinary Review Workspace Agent must deepen scrutiny for that domain inside the same formal Review workflow. Legacy durable `specialist:<name>` markers normalize to `domain:<name>` and do not select another generic AI reviewer. A prior exact-head `BLOCK` whose return contract says `FOCUSED RECHECK`, `MECHANICAL CHECK ONLY`, or `DOMAIN DEEP RECHECK` supplies the bounded next review class after a new head appears. Ambiguous work defaults to `substantive`.
 
 For `light`, `focused`, or `mechanical`, `DISH_LOCAL_REVIEW_COMMAND` may provide a bounded local reviewer. It receives the lifecycle JSON on standard input. The local adapter is never the default semantic reviewer.
 
 Ordinary substantive Review prefers a published ChatGPT Review Workspace Agent. Configure:
 
 - `DISH_WORKSPACE_AGENT_ACCESS_TOKEN` — Workspace Agent access token;
-- `DISH_REVIEW_API_TRIGGER_ID` — published Review API trigger ID;
-- `DISH_SPECIALIST_TRIGGER_IDS` — optional JSON mapping such as `{"postgresql":"agtch_..."}`.
+- `DISH_REVIEW_API_TRIGGER_ID` — published Review API trigger ID.
 
-The adapter calls the Workspace Agents trigger API with the exact PR URL/number, exact current head, review class, owning Asana task identity, and instruction to follow `dish/docs/agents/review.md`. Its `Idempotency-Key` is deterministically derived from repository + PR + exact head + review class. Agent-chat output is never review completion; only the formal exact-head GitHub `COMMENT` review with `VERDICT: MERGE` or `VERDICT: BLOCK` advances semantic Review state.
+The adapter calls that one Workspace Agents Review trigger for both ordinary substantive and domain-deep Review, with the exact PR URL/number, exact current head, review class, owning Asana task identity, and instruction to follow `dish/docs/agents/review.md`. Its `Idempotency-Key` is deterministically derived from repository + PR + exact head + review class. A domain class changes review depth, not reviewer identity. Agent-chat output is never review completion; only the single formal exact-head GitHub `COMMENT` review with `VERDICT: MERGE` or `VERDICT: BLOCK` advances semantic Review state.
 
 If the required token or published trigger is unavailable, the dispatcher reports that exact configuration boundary. It does not silently substitute Claude/Codex as the semantic reviewer.
 

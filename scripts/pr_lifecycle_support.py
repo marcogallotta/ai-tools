@@ -55,7 +55,7 @@ REVIEW_CLASS_RE = re.compile(r"(?im)^REVIEW CLASS:\s*(?P<value>[^\n]+?)\s*$")
 FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
 
 AFTER_FIX_RE = re.compile(
-    r"(?im)^(?:AFTER-FIX DISPOSITION:\s*)?(FOCUSED RECHECK|MECHANICAL CHECK ONLY|NEW SPECIALIST REVIEW|NORMAL MERGE REVIEW)\s*$"
+    r"(?im)^(?:AFTER-FIX DISPOSITION:\s*)?(FOCUSED RECHECK|MECHANICAL CHECK ONLY|DOMAIN DEEP RECHECK|NEW SPECIALIST REVIEW|NORMAL MERGE REVIEW)\s*$"
 )
 
 
@@ -347,13 +347,11 @@ class WorkspaceAgentDispatcher:
         *,
         access_token: str,
         review_trigger_id: str | None,
-        specialist_triggers: Mapping[str, str] | None = None,
         api_root: str = WORKSPACE_API_ROOT,
         http: JSONHTTPClient | None = None,
     ) -> None:
         self.access_token = access_token
         self.review_trigger_id = review_trigger_id
-        self.specialist_triggers = dict(specialist_triggers or {})
         self.api_root = api_root.rstrip("/")
         self.http = http or JSONHTTPClient()
 
@@ -363,9 +361,8 @@ class WorkspaceAgentDispatcher:
         return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
     def trigger_id_for(self, review_class: str) -> str | None:
-        if review_class.startswith("specialist:"):
-            specialist = review_class.split(":", 1)[1]
-            return self.specialist_triggers.get(specialist)
+        # domain:<name> (and legacy specialist:<name>) deepen scrutiny inside the same
+        # ordinary Review Workspace Agent; they never select a different trigger/reviewer.
         return self.review_trigger_id
 
     def dispatch(
@@ -382,16 +379,22 @@ class WorkspaceAgentDispatcher:
         if not self.access_token:
             raise LifecycleError("Workspace Agent access token is unavailable")
         if not trigger_id:
-            if review_class.startswith("specialist:"):
-                specialist = review_class.split(":", 1)[1]
-                raise LifecycleError(f"published Workspace Agent trigger is unavailable for specialist {specialist}")
             raise LifecycleError("published ChatGPT Review Workspace Agent trigger is unavailable")
         key = self.idempotency_key(repository, pr_number, head, review_class)
         task_identity = ", ".join(task_ids) if task_ids else "none linked"
+        domain_hint = ""
+        if review_class.startswith("domain:") or review_class.startswith("specialist:"):
+            domain_hint = (
+                f" This is domain-sensitive work in {review_class.split(':', 1)[1]}: deepen your own "
+                "scrutiny of that domain as part of this one formal Review rather than deferring to a "
+                "separate specialist reviewer; if a genuine evidence/tool/environment boundary applies "
+                "(e.g. native/isolated execution, production-only authority, TEST-only local certification, "
+                "or an actual external expert), say so explicitly and name the exact parallel handoff."
+            )
         prompt = (
             "Review the exact GitHub pull request as a Dish Review agent. "
             f"Repository: {repository}. PR: {pr_url} (#{pr_number}). "
-            f"Exact current head SHA: {head}. Review type: {review_class}. "
+            f"Exact current head SHA: {head}. Review type: {review_class}.{domain_hint} "
             f"Owning Asana task identity: {task_identity}. "
             "Read and follow the current repository dish/docs/agents/review.md contract. "
             "Re-read the PR head before submitting. The authoritative completion artifact must be a formal "
