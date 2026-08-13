@@ -153,6 +153,192 @@ class LeaseManager:
             )
         return row
 
+    def _assert_expired_actor_revival_safe(
+        self,
+        row,
+        principal: ServicePrincipal,
+        *,
+        now: datetime,
+        request_id: str | None = None,
+    ):
+        """Prove one expired actor lease may resume under the same durable run.
+
+        Expiry opens a takeover window; it does not itself revoke the run.  This
+        predicate is evaluated under the same SQLite writer transaction as the
+        revival update so a replacement lineage and a same-run revival cannot
+        both win.
+        """
+        if row is None:
+            raise DishRuleError(
+                "CONFLICT",
+                "operation has no current service lease to revive",
+                rule="service_lease_missing",
+            )
+        operation_id = str(row["operation_id"])
+        self.assert_not_revoked(operation_id, principal)
+        if row["lease_kind"] != "actor":
+            raise DishRuleError(
+                "CONFLICT",
+                "only an actor lease can be revived by the same run",
+                rule="service_lease_revival_kind_invalid",
+                details={"lease_kind": row["lease_kind"]},
+            )
+        if not self.is_owned_by(row, principal):
+            raise DishRuleError(
+                "AGENT_MISMATCH",
+                "service lease belongs to another client run",
+                rule="service_lease_owner_mismatch",
+                details={"owner_id": row["owner_id"], "run_id": row["run_id"]},
+            )
+        if not self.is_expired(row, at=now):
+            return row
+
+        operation = self._operation(operation_id)
+        if operation["status"] != "open" or operation["phase"] == "terminal":
+            raise DishRuleError(
+                "AGENT_MISMATCH",
+                "the durable operation was replaced or closed before lease revival",
+                rule="service_lease_revival_superseded",
+                details={
+                    "operation_id": operation_id,
+                    "status": operation["status"],
+                    "phase": operation["phase"],
+                },
+            )
+
+        later = self.conn.execute(
+            """SELECT lease_id,owner_id,run_id,actor_attempt_seq FROM service_leases
+                 WHERE operation_id=? AND lease_kind='actor' AND actor_attempt_seq>?
+                 ORDER BY actor_attempt_seq LIMIT 1""",
+            (operation_id, row["actor_attempt_seq"]),
+        ).fetchone()
+        replacement = self.conn.execute(
+            """SELECT 'succession' AS kind FROM operation_successions WHERE source_operation_id=?
+               UNION ALL
+               SELECT 'safe_reclaim' FROM safe_reclaims WHERE source_operation_id=?
+               LIMIT 1""",
+            (operation_id, operation_id),
+        ).fetchone()
+        abandonment = self.conn.execute(
+            """SELECT abandonment_id,status FROM abandonment_attempts
+                 WHERE source_operation_id=? ORDER BY created_at DESC LIMIT 1""",
+            (operation_id,),
+        ).fetchone()
+        if later is not None or replacement is not None or abandonment is not None:
+            details = {"operation_id": operation_id}
+            if later is not None:
+                details["later_lease_id"] = later["lease_id"]
+                details["later_run_id"] = later["run_id"]
+            if replacement is not None:
+                details["replacement_kind"] = replacement["kind"]
+            if abandonment is not None:
+                details["abandonment_id"] = abandonment["abandonment_id"]
+                details["abandonment_status"] = abandonment["status"]
+            raise DishRuleError(
+                "AGENT_MISMATCH",
+                "a replacement, abandonment, or later actor attempt superseded this run",
+                rule="service_lease_revival_superseded",
+                details=details,
+            )
+
+        claim = self.conn.execute(
+            "SELECT claim_id,command FROM operation_execution_claims WHERE operation_id=?",
+            (operation_id,),
+        ).fetchone()
+        executions = unresolved_operation_executions(self.conn, operation_id)
+        requests = self.conn.execute(
+            """SELECT request_id,command,status,resolved_at FROM service_requests
+                 WHERE operation_id=?
+                   AND (status='pending' OR (status='uncertain' AND resolved_at IS NULL))
+                   AND (? IS NULL OR request_id<>?)
+                 ORDER BY created_at""",
+            (operation_id, request_id, request_id),
+        ).fetchall()
+        proposals = self.conn.execute(
+            """SELECT proposal_id,status FROM semantic_proposals
+                 WHERE operation_id=? AND status IN ('pending','approved','claimed')
+                 ORDER BY created_at""",
+            (operation_id,),
+        ).fetchall()
+        recovery_pending = operation_recovery_pending(self.conn, operation_id)
+        if claim is not None or executions or requests or proposals or recovery_pending:
+            details = {"operation_id": operation_id}
+            if claim is not None:
+                details["execution_claim"] = {
+                    "claim_id": claim["claim_id"],
+                    "command": claim["command"],
+                }
+            if executions:
+                details["unresolved_executions"] = [dict(item) for item in executions]
+            if requests:
+                details["unresolved_requests"] = [dict(item) for item in requests]
+            if proposals:
+                details["incomplete_proposals"] = [dict(item) for item in proposals]
+            if recovery_pending:
+                details["operation_recovery_pending"] = True
+            raise DishRuleError(
+                "WRONG_STATE",
+                "expired lease cannot revive while consequential or recovery state is unresolved",
+                rule="service_lease_revival_recovery_required",
+                details=details,
+            )
+        return row
+
+    def revive_expired_actor(
+        self,
+        operation_id: str,
+        principal: ServicePrincipal,
+        *,
+        request_id: str | None = None,
+        manage_transaction: bool = True,
+        check_only: bool = False,
+    ):
+        """Atomically revive one expired actor lease for the exact same principal."""
+        now = self.now()
+        expiry = now + timedelta(seconds=self.ttl_seconds)
+        with _lease_transaction(
+            self.conn,
+            label="revive_expired_actor_lease",
+            manage_transaction=manage_transaction,
+        ):
+            row = self.active_for_operation(operation_id)
+            row = self._assert_expired_actor_revival_safe(
+                row, principal, now=now, request_id=request_id
+            )
+            if not self.is_expired(row, at=now) or check_only:
+                return row
+            cursor = self.conn.execute(
+                """UPDATE service_leases SET renewed_at=?, expires_at=?
+                     WHERE lease_id=? AND operation_id=? AND lease_kind='actor'
+                       AND released_at IS NULL AND owner_id=? AND run_id=?
+                       AND expires_at<=?""",
+                (
+                    _stamp(now),
+                    _stamp(expiry),
+                    row["lease_id"],
+                    operation_id,
+                    principal.owner_id,
+                    principal.run_id,
+                    _stamp(now),
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise DishRuleError(
+                    "CONFLICT",
+                    "service lease authority changed before same-run revival",
+                    rule="service_lease_conflict",
+                    details={"operation_id": operation_id, "lease_id": row["lease_id"]},
+                )
+            revived = self.active_for_operation(operation_id)
+            if revived is None or revived["lease_id"] != row["lease_id"]:
+                raise DishRuleError(
+                    "CONFLICT",
+                    "service lease authority changed during same-run revival",
+                    rule="service_lease_conflict",
+                    details={"operation_id": operation_id, "lease_id": row["lease_id"]},
+                )
+            return revived
+
     def _release_row(self, row, *, reason: str, now: datetime):
         cursor = self.conn.execute(
             """UPDATE service_leases
@@ -218,13 +404,6 @@ class LeaseManager:
             existing = self.active_for_operation(operation_id)
             if existing is not None:
                 if self.is_owned_by(existing, principal):
-                    if self.is_expired(existing, at=now):
-                        raise DishRuleError(
-                            "CONFLICT",
-                            "service lease expired and requires administrative recovery",
-                            rule="service_lease_expired",
-                            details={"operation_id": operation_id, "expires_at": existing["expires_at"]},
-                        )
                     existing_kind = existing["lease_kind"]
                     if existing_kind is not None and existing_kind != lease_kind:
                         raise DishRuleError(
@@ -252,6 +431,17 @@ class LeaseManager:
                                 "context_cycle_id": existing_cycle,
                                 "requested_context_cycle_id": context_cycle_id,
                             },
+                        )
+                    if self.is_expired(existing, at=now):
+                        if lease_kind == "actor":
+                            return self.revive_expired_actor(
+                                operation_id, principal, manage_transaction=False
+                            )
+                        raise DishRuleError(
+                            "CONFLICT",
+                            "service lease expired and requires administrative recovery",
+                            rule="service_lease_expired",
+                            details={"operation_id": operation_id, "expires_at": existing["expires_at"]},
                         )
                     return existing
                 expired = self.is_expired(existing, at=now)
@@ -365,6 +555,7 @@ class LeaseManager:
         operation_id: str,
         principal: ServicePrincipal,
         *,
+        request_id: str | None = None,
         manage_transaction: bool = True,
     ):
         now = self.now()
@@ -380,9 +571,20 @@ class LeaseManager:
                     rule="service_lease_operation_not_open",
                     details={"operation_id": operation_id, "status": op["status"]},
                 )
-            row = self._assert_owned_row(
-                self.active_for_operation(operation_id), principal, now=now
-            )
+            row = self.active_for_operation(operation_id)
+            if (
+                row is not None
+                and self.is_owned_by(row, principal)
+                and row["lease_kind"] == "actor"
+                and self.is_expired(row, at=now)
+            ):
+                return self.revive_expired_actor(
+                    operation_id,
+                    principal,
+                    request_id=request_id,
+                    manage_transaction=False,
+                )
+            row = self._assert_owned_row(row, principal, now=now)
             cursor = self.conn.execute(
                 """UPDATE service_leases SET renewed_at=?, expires_at=?
                      WHERE lease_id=? AND released_at IS NULL

@@ -419,6 +419,56 @@ def test_action_guidance_points_to_exact_returned_agent_action():
     )
 
 
+def test_action_guidance_distinguishes_same_run_revival_from_fresh_safe_reclaim():
+    same_run = action_agent_guidance(
+        {
+            "ok": True,
+            "command": "read",
+            "code": "OK",
+            "allowed_actions": ["renew-lease"],
+            "data": {
+                "legal_next_step": (
+                    "Resume this same durable run by renewing its expired actor lease; "
+                    "do not create a new run_id or require Marco/admin recovery."
+                ),
+                "agent_action": {
+                    "command": "renew-lease",
+                    "arguments": {
+                        "operation_id": "11111111-1111-4111-8111-111111111111"
+                    },
+                },
+            },
+        }
+    )
+    fresh_run = action_agent_guidance(
+        {
+            "ok": True,
+            "command": "read",
+            "code": "OK",
+            "allowed_actions": ["safe-reclaim"],
+            "data": {
+                "legal_next_step": "A fresh run may safe-reclaim the expired prior attempt.",
+                "agent_action": {
+                    "command": "safe-reclaim",
+                    "arguments": {
+                        "submission_id": "11111111-1111-4111-8111-111111111111",
+                        "lease_id": "22222222-2222-4222-8222-222222222222",
+                    },
+                },
+            },
+        }
+    )
+
+    same_text = " ".join(same_run["instructions"] )
+    fresh_text = " ".join(fresh_run["instructions"] )
+    assert "same durable run" in same_text
+    assert "Call renew-lease" in same_text
+    assert "Call safe-reclaim" not in same_text
+    assert "fresh run" in fresh_text
+    assert "Call safe-reclaim" in fresh_text
+    assert "Call renew-lease" not in fresh_text
+
+
 def test_missing_inspect_request_id_explains_possible_stale_action_schema():
     with pytest.raises(DishRuleError) as exc:
         validate_action_request(

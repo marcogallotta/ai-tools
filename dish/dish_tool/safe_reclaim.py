@@ -269,7 +269,7 @@ def safe_reclaim_eligibility(
         failures.append(
             _failure(
                 "safe_reclaim_same_run_forbidden",
-                "the same run must use recover-lease rather than safe reclaim",
+                "the same run must resume its existing durable run rather than safe reclaim",
                 previous_run_id=lease["run_id"],
             )
         )
