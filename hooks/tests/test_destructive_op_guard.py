@@ -98,6 +98,28 @@ class TestGitFalsePositiveRepros:
         decision = run_hook(destructive_op_guard, 'echo "git commit"', monkeypatch, capsys)
         assert_allowed(decision)
 
+    # Real repro: check_git's "add" scan matched the token anywhere in the
+    # command, not just git's own subcommand position, so any subcommand
+    # that happens to take a literal "add" argument (worktree/remote/
+    # submodule) false-triggered the "don't run git add alone" denial.
+    def test_git_worktree_add_allowed(self, destructive_op_guard, monkeypatch, capsys):
+        decision = run_hook(
+            destructive_op_guard, "git worktree add ../foo agent/some-branch", monkeypatch, capsys
+        )
+        assert_allowed(decision)
+
+    def test_git_remote_add_allowed(self, destructive_op_guard, monkeypatch, capsys):
+        decision = run_hook(
+            destructive_op_guard, "git remote add origin git@example.com:x/y.git", monkeypatch, capsys
+        )
+        assert_allowed(decision)
+
+    def test_git_submodule_add_allowed(self, destructive_op_guard, monkeypatch, capsys):
+        decision = run_hook(
+            destructive_op_guard, "git submodule add https://example.com/x.git", monkeypatch, capsys
+        )
+        assert_allowed(decision)
+
 
 class TestRm:
     def test_rm_tmp_target_allowed(self, destructive_op_guard, monkeypatch, capsys):
@@ -256,6 +278,16 @@ class TestGitSubcommands:
     def test_git_add_denied(self, destructive_op_guard, monkeypatch, capsys):
         decision = run_hook(destructive_op_guard, "git add foo.py", monkeypatch, capsys)
         assert_denied(decision, "Don't run git add alone")
+
+    def test_git_dash_c_repo_add_still_denied(self, destructive_op_guard, monkeypatch, capsys):
+        decision = run_hook(destructive_op_guard, "git -C /some/repo add foo.py", monkeypatch, capsys)
+        assert_denied(decision, "Don't run git add alone")
+
+    def test_git_dash_c_repo_worktree_add_allowed(self, destructive_op_guard, monkeypatch, capsys):
+        decision = run_hook(
+            destructive_op_guard, "git -C /some/repo worktree add ../foo agent/x", monkeypatch, capsys
+        )
+        assert_allowed(decision)
 
 
 class TestPsql:
