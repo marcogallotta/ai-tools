@@ -32,6 +32,8 @@ Before changing Dish code, follow root `CLAUDE.md` and start at `dish/docs/archi
 
 Do not silently substitute another base or assume unmerged parallel work has landed.
 
+Every repository-changing implementation/fix assignment uses the canonical handoff contract at [`templates/implementation-handoff.md`](templates/implementation-handoff.md). Treat its authorized branch and existing-PR/expected-head tuple as assignment identity alongside the repository and Asana task GID. Matching task identity on a different branch or PR never authorizes adopting or modifying that lineage. Local Claude Code/Codex work must acquire the matching `tools/agent-worktree claim` before touching task-owned worktree or branch state; replacement/fix/publication handoffs reconcile the same claim before takeover.
+
 Before returning an assigned implementation as no-op/already-fixed/not-reproducible, apply the inherited assigned-task dismissal gate to the owning task's notes and material history; current source/runtime health alone is not enough to erase a recorded historical defect. Before declaring a routine authorized implementation/publication action blocked, apply the inherited authorized-fallback gate and verify any state-changing fallback before reporting success.
 
 ## Branch and worktree ownership
