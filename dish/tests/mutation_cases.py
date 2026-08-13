@@ -384,12 +384,12 @@ STAGE_A_CASES = (
     MutationCase(
         mutation_id="stage-a-command-effect-verifier",
         target="dish_pg/command_effect_runtime.py",
-        before="if projection_types != expected.projection_event_types:",
+        before="if projection_types != expected_projection_types:",
         after="if False:",
         tests=(
             "tests/postgresql/test_command_effect_authority.py::test_execution_rejects_and_rolls_back_missing_projection_intent",
         ),
-        invariant="committed projection effects are checked against the authoritative command-effect specification",
+        invariant="committed projection effects are checked against the active pre-burn or post-burn projection contract",
     ),
 )
 

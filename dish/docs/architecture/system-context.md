@@ -35,7 +35,7 @@ from the public Action listener. The browser never connects to PostgreSQL or Asa
 
 ## Authority and data ownership
 
-Clients do not own durable workflow truth. The service coordinates current workflow authority and current Asana effects. PostgreSQL is the intended replacement canonical backend after cutover. Asana is transitional and is intended to disappear once frontend functionality and backend reliability make that safe.
+Clients do not own durable workflow truth. The service coordinates current workflow authority and current Asana effects. PostgreSQL is the intended replacement canonical backend after cutover. Asana is transitional; for the approved cutover contract the frozen final source boundary is its final involvement, and rollback burn disables further external projection rather than entering a long-lived read-only-Asana phase.
 
 ## Invariants
 

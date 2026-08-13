@@ -168,7 +168,7 @@ Before destructive schema work, an independent agent may perform a bounded depen
 
 If the retained schema is materially simplified before cutover, deliberately decide whether to: preserve selected shadow evidence; rebuild/reseed the dark-launch target; replace the active migration chain with a clean baseline; establish a new observation baseline before dark launch resumes. That is a code-quality/persistence decision, not itself the production authority cutover.
 
-#### Accepted CC5 package: post-burn worker readiness
+#### Historical CC5 package: post-burn worker readiness (superseded for live cutover admission)
 
 The accepted dependency proof for the producer-orphaned normalized worker-readiness subsystem is now represented by forward migration `0031_worker_readiness_consolidation`:
 
@@ -178,7 +178,7 @@ The accepted dependency proof for the producer-orphaned normalized worker-readin
 - preserve post-burn timing, fresh exact reconciliation, exact deployed worker identity/artifact, first-admission revalidation, tamper/failure/staleness handling, and generation/authority fencing;
 - fail closed on populated legacy readiness state. `scripts/dish-pg-export-typed-readiness` preserves those rows as Class-C evidence; populated dark-launch targets then require explicit rebuild/reseed at 0031.
 
-Remaining CC5 coupling is deliberate and narrow: historical v2 readiness digest columns stay nullable so recovery can reproduce stored v2 fingerprints; migration 0026 remains immutable migration history; the current report necessarily depends on runtime attestation, exact reconciliation, rollback-burn/activation state, and first-admission validation. Further source-import, workflow/Human Review/lease, first-admission, shadow/dark-launch, or unrelated schema consolidation is outside this package.
+The package above records the pre-clean-break consolidation history. The later no-Asana cutover decision supersedes its live post-burn requirement: readiness/reconciliation rows remain forensic, but first admission no longer depends on a worker report or Asana reconciliation. Historical v2 readiness digest columns and migration history remain preserved.
 
 ### CC6. Package and dependency boundaries
 

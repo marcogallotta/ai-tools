@@ -552,7 +552,7 @@ def _service_call(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                 row = service.record_runtime_release_attestation(
                     candidate_id=_uuid(args.candidate_id),
                     service_artifact_sha256=data["service_artifact_sha256"],
-                    projection_worker_artifact_sha256=data["projection_worker_artifact_sha256"],
+                    projection_worker_artifact_sha256=data.get("projection_worker_artifact_sha256"),
                     route_probe_sha256=data["route_probe_sha256"],
                     payload=data.get("payload", {}),
                     recorded_at=_time(data["recorded_at"]),
@@ -569,7 +569,7 @@ def _service_call(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                 data = _load(args.file)
                 if "expected_projection_events" in data:
                     raise ValueError(
-                        "expected_projection_events is derived from authoritative command semantics"
+                        "expected_projection_events is fixed at zero after rollback burn"
                     )
                 task_id = data.get("task_id")
                 row = service.plan_first_admission(

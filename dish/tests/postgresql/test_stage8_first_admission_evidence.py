@@ -47,11 +47,11 @@ from tests.support.postgresql.stage8_cutover_evidence_gates import (
     _record_runtime_and_worker_readiness,
     _prepare_fenced_recertified_cutover,
 )
-from tests.support.postgresql.stage8_cutover_evidence_gates import _case_test_admission_requires_post_burn_runtime_worker_and_first_request_evidence
+from tests.support.postgresql.stage8_cutover_evidence_gates import _case_test_admission_requires_post_burn_runtime_and_first_request_evidence
 
 
-def test_admission_requires_post_burn_runtime_worker_and_first_request_evidence(workflow_db) -> None:
-    return _case_test_admission_requires_post_burn_runtime_worker_and_first_request_evidence(workflow_db)
+def test_admission_requires_post_burn_runtime_and_first_request_evidence(workflow_db) -> None:
+    return _case_test_admission_requires_post_burn_runtime_and_first_request_evidence(workflow_db)
 
 def test_stage8_operator_cli_exposes_readiness_and_first_admission_commands() -> None:
     namespace = runpy.run_path(str(ROOT / "scripts" / "dish-pg-release"))

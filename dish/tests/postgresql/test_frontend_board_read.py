@@ -13,7 +13,9 @@ from dish_pg import models
 from dish_pg.database import session_scope
 from dish_pg.frontend_board_query import FrontendBoardQuery
 from dish_pg.services import CoreAuthorityService, ImportedTaskSpec
+from dish_pg.transition import ProjectionService
 from dish_pg import stage3_models as wf
+from dish_pg import stage5_models as tx
 from dish_pg.workflow import WorkflowAuthorityService
 from dish_service.frontend_board import (
     BoardCapacityExceeded,
@@ -224,6 +226,68 @@ def test_board_includes_isolated_and_paginates_without_consuming_retry(core_db) 
         assert _task_route(completed.task_id) not in returned
         assert _task_route(retired.task_id) not in returned
         assert _task_route(nonmember.task_id) not in returned
+
+
+def test_post_burn_projection_history_is_forensic_not_frontend_health(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(
+            session,
+            ids,
+            generation_status="active",
+            schema_head="0032_imported_operation_history",
+        )
+        task = _import_title(session, ids, context, title="Historical projection", asana_gid="1050")
+        projection = ProjectionService(session, uuid_factory=lambda: _next(ids))
+        epoch = projection.activate_epoch(
+            generation_id=context["generation_id"],
+            activation_reason="frontend historical projection test",
+            created_at=NOW - timedelta(hours=2),
+            external_effects_enabled=True,
+        )
+        projection_event_id = _next(ids)
+        session.add(
+            tx.ProjectionOutboxEvent(
+                projection_event_id=projection_event_id,
+                generation_id=context["generation_id"],
+                projection_epoch_id=epoch.projection_epoch_id,
+                source_route="service",
+                origin="live",
+                command_execution_id=None,
+                task_id=task.task_id,
+                event_type="update_task_document",
+                aggregate_sequence=1,
+                idempotency_key="1" * 64,
+                intent_payload={"historical": True},
+                intent_sha256="2" * 64,
+                state="pending",
+                claim_owner=None,
+                claim_token=None,
+                claim_expires_at=None,
+                outbox_revision=1,
+                created_at=NOW - timedelta(hours=1),
+                terminal_at=None,
+            )
+        )
+        session.flush()
+        registry = FrontendBoardQuery(session).bootstrap_registry()
+        before_burn = FrontendBoardQuery(session).active_cards(
+            registry=registry, projection_delay=timedelta(minutes=15), max_cards=10
+        )
+        assert next(card for card in before_burn if card.task_id == task.task_id).projection_abnormal
+
+        projection.set_external_effects_enabled(
+            projection_epoch_id=epoch.projection_epoch_id,
+            enabled=False,
+            reason="rollback burn",
+        )
+        after_burn = FrontendBoardQuery(session).active_cards(
+            registry=registry, projection_delay=timedelta(minutes=15), max_cards=10
+        )
+        assert not next(
+            card for card in after_burn if card.task_id == task.task_id
+        ).projection_abnormal
+        assert session.get(tx.ProjectionOutboxEvent, projection_event_id) is not None
 
 
 def test_import_placeholder_uses_canonical_workflow_role_section_name(core_db) -> None:

@@ -17,7 +17,39 @@ from sqlalchemy.orm import Session
 from . import models
 from . import stage3_models as wf
 from . import stage5_models as projection
+from . import stage6_models as release
 from .command_effects import CommandEffectSpec
+
+
+POST_BURN_CUTOVER_STATES = (
+    "rollback_burned",
+    "admission_open",
+    "first_admission_verified",
+    "completed",
+)
+
+
+def external_projection_required(session: Session, *, generation_id: uuid.UUID) -> bool:
+    """Return whether live commands still owe an external projection intent.
+
+    Rollback burn is the durable end boundary for Asana projection. After
+    that state is persisted, PostgreSQL command success must be self-contained
+    and must not create new external-projection debt.
+    """
+
+    retired = session.scalar(
+        select(release.CutoverRun.cutover_run_id)
+        .join(
+            release.ReleaseCandidate,
+            release.ReleaseCandidate.candidate_id == release.CutoverRun.candidate_id,
+        )
+        .where(
+            release.ReleaseCandidate.generation_id == generation_id,
+            release.CutoverRun.state.in_(POST_BURN_CUTOVER_STATES),
+        )
+        .limit(1)
+    )
+    return retired is None
 
 
 class CommandEffectMismatch(RuntimeError):
@@ -92,6 +124,7 @@ def assert_committed_command_effects(
     operation: wf.WorkflowOperation | None,
     expected: CommandEffectSpec,
     result_data: Mapping[str, Any],
+    projection_origin: str = "live",
 ) -> None:
     """Fail closed when one handler's durable effects drift from its specification."""
 
@@ -105,10 +138,15 @@ def assert_committed_command_effects(
             .order_by(projection.ProjectionOutboxEvent.aggregate_sequence)
         ).all()
     )
-    if projection_types != expected.projection_event_types:
+    expected_projection_types = expected.projection_event_types
+    if projection_origin == "live" and not external_projection_required(
+        session, generation_id=execution.generation_id
+    ):
+        expected_projection_types = ()
+    if projection_types != expected_projection_types:
         raise CommandEffectMismatch(
             f"{command_name} projection effects mismatch: "
-            f"expected {expected.projection_event_types!r}, observed {projection_types!r}"
+            f"expected {expected_projection_types!r}, observed {projection_types!r}"
         )
 
     if not expected.verify_mutation_effects:

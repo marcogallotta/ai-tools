@@ -47,7 +47,7 @@ Freeze and retain these exact identities before candidate creation:
 - final Asana task/project/section/registry observation identity;
 - Stage 2 import run and Stage 5 source-import batch;
 - closed shadow baseline;
-- active projection epoch and completed reconciliation run;
+- pre-burn active projection epoch and completed final reconciliation run;
 - Dish, Honest, protocol, OpenAPI, and routing releases;
 - PostgreSQL schema head `$DISH_PG_SCHEMA_HEAD`.
 
@@ -580,12 +580,16 @@ ordering is:
   checkpoint follows every verification;
 - activation follows verified fencing and the closure record while remaining covered by
   `closed_through_at`; rollback burn follows activation;
-- runtime attestation, worker readiness, and the first-admission plan follow rollback burn; the isolated
-  first-request gate follows all three while general mutation admission remains closed;
-- first-admission verification follows request admission, committed execution/outcome, audit,
-  terminal invocation obligation, applied outbox events, and completed reconciliation.
+- rollback burn disables external projection for the exact candidate generation while preserving
+  existing projection/reconciliation rows as forensic history;
+- post-burn runtime attestation and the first-admission plan follow rollback burn; the isolated
+  first-request gate follows both while general mutation admission remains closed;
+- first-admission verification follows the exact PostgreSQL request, immutable successful outcome,
+  committed execution, governed audit event, and terminal invocation-audit obligation.
 
-Backdated, future-dated, or impossible operator timestamps are rejected rather than normalized.
+No post-burn projection-worker readiness record, applied Asana projection event, or fresh Asana
+reconciliation is an admission prerequisite. Backdated, future-dated, or impossible operator
+timestamps are rejected rather than normalized.
 
 These commands are intentionally separate crash boundaries:
 
@@ -605,65 +609,44 @@ scripts/dish-pg-release cutover-burn-rollback CUTOVER_UUID \
 ```
 
 **Stop point:** after this commits, ordinary return to Asana/SQLite authority is prohibited. Recover
-PostgreSQL; do not remove the legacy fence or reverse-import Asana.
+PostgreSQL; do not remove the legacy fence or reverse-import Asana. The burn also flips the
+candidate projection epoch to `external_effects_enabled=false`. Do not re-enable it: the frozen
+final Asana source boundary is the end of Asana involvement. Existing projection outbox, mapping,
+drift, readiness, and reconciliation rows stay in place for forensic use.
 
-Rollback burn first fences concurrent writes and reruns all candidate, quiescence, manifest,
-writer-fence, and closure checks against fresh state. After confirming the burn row and closed
-admission control are durable, record the exact deployed
-runtime and route while admission is still closed:
+Rollback burn first reruns all candidate, quiescence, manifest, writer-fence, and closure checks
+against fresh state. After confirming the burn row, disabled external-projection mode, and closed
+admission control are durable, record the exact deployed PostgreSQL service and route while
+admission is still closed:
 
 ```sh
 scripts/dish-pg-release runtime-attestation-record CANDIDATE_UUID \
   --file /secure/evidence/runtime-attestation.json
 ```
 
-The runtime attestation payload must include the exact deployed `projection_worker_identity`; the
-service also re-observes the worker artifact path/digest before accepting readiness. Worker identity,
-release, candidate/epoch, and deployed artifact digest are server-derived for the readiness report,
-not operator-declared readiness fields.
-
-Run the projection worker's fixed `claim`, `exact_write`, and `restart` probes and complete a fresh,
-exact candidate-bound reconciliation of every active mapping after rollback burn. The readiness input
-contains only that reconciliation identity, the validator-owned fixed probe set with per-probe
-execution/evidence identities, and the completion time:
-
-```json
-{
-  "reconciliation_run_id": "UUID",
-  "probes": {
-    "claim": {"result": "pass", "execution_identity": "EXACT_ID", "evidence_identity": "EXACT_ID"},
-    "exact_write": {"result": "pass", "execution_identity": "EXACT_ID", "evidence_identity": "EXACT_ID"},
-    "restart": {"result": "pass", "execution_identity": "EXACT_ID", "evidence_identity": "EXACT_ID"}
-  },
-  "completed_at": "RFC3339_WITH_OFFSET"
-}
-```
-
-```sh
-scripts/dish-pg-release projection-worker-ready CANDIDATE_UUID \
-  --file /secure/evidence/projection-worker-readiness.json
-```
-
-The resulting `projection_worker_readiness` row is the immutable runtime-readiness report and carries
-its own report SHA-256. It is post-burn evidence and is intentionally outside the approval-time
-candidate-manifest fingerprint.
+The runtime attestation binds the exact candidate release identities, service artifact, route probe,
+`route_target=postgresql`, `mutation_admission=closed`, and
+`external_projection=disabled_post_burn`. A projection-worker artifact is not required. If an older
+operator bundle still supplies one, it is observed and retained only as historical evidence; it does
+not become a post-burn gate.
 
 Choose one bounded first production request before opening admission. The request must target an
 existing task in the candidate generation and use canonical `task_id`. Commands that require a
 pre-existing open operation are not eligible: candidate validation closes the operation corpus, so
 such a plan could not be executed after admission opens. `create` is also intentionally excluded
 because its newly allocated task identity cannot be prebound. The plan binds the request UUID,
-command, exact `command_arguments`, canonical task identity, and operator evidence. Do not supply
-an `expected_projection_events` field: the release service derives
-that count from authoritative command semantics and rejects operator-declared counts.
+command, exact `command_arguments`, canonical task identity, canonical request-payload SHA-256, and
+operator evidence. Post-burn expected external projection count is always zero; do not supply an
+`expected_projection_events` field.
 
 ```sh
 scripts/dish-pg-release first-admission-plan CUTOVER_UUID \
   --file /secure/evidence/first-admission-plan.json
 ```
 
-Only after all three immutable records exist, open the isolated first-request gate. This command does
-not open ordinary mutation admission; the control remains `closed`:
+Only after the runtime attestation and first-admission plan exist, open the isolated first-request
+gate. This command re-observes the exact service/route artifacts and disabled external-projection
+mode. It does not open ordinary mutation admission; the control remains `closed`:
 
 ```sh
 scripts/dish-pg-release cutover-open-admission CUTOVER_UUID \
@@ -682,30 +665,20 @@ export DISH_SERVICE_TOKEN_PROD='EXACT_SCOPED_TOKEN'
   --output /secure/evidence/first-admission-request.json
 ```
 
-The helper sends no retry. If the report says `delivery_state=unknown`, stop and reconcile the exact
-request UUID against PostgreSQL and service logs; never resubmit by guessing. Any unrelated new
-request remains rejected after reservation consumption until verification succeeds.
+The helper sends no retry. If the report says `delivery_state=unknown`, stop and resolve the exact
+request UUID against PostgreSQL request/outcome state and service logs; never resubmit by guessing.
+Any unrelated new request remains rejected after reservation consumption until verification
+succeeds.
 
-Fulfil or repair the exact request's invocation-audit obligation, then run the deployment's approved
-full-corpus fetcher and pure comparator and capture the reconciliation result:
+Fulfil or repair the exact request's invocation-audit obligation. Then verify the first request from
+PostgreSQL-native evidence: the persisted canonical request payload must hash to its reserved request
+SHA and match the plan, the immutable result payload must hash to its recorded outcome SHA, the
+outcome must be immutable success, the exact command execution must be committed for the planned
+task/command, the governed audit event must bind that execution/task, and the invocation obligation
+must be fulfilled or repaired. Successful post-burn live commands must create no new external
+projection intent.
 
-```sh
-export DISH_RECONCILIATION_FETCHER='DEPLOYMENT_MODULE:FETCH_CALLABLE'
-export DISH_RECONCILIATION_COMPARATOR='DEPLOYMENT_MODULE:COMPARE_CALLABLE'
-.venv/bin/python -m dish_pg.reconciliation_worker \
-  --database-url "$DISH_PG_URL" \
-  --generation-id GENERATION_UUID \
-  --corpus-identity EXACT_CORPUS_IDENTITY \
-  --fetcher "$DISH_RECONCILIATION_FETCHER" \
-  --comparator "$DISH_RECONCILIATION_COMPARATOR" \
-  --output /secure/evidence/post-first-request-reconciliation.json
-```
-
-The command exits nonzero unless the governed reconciliation run is complete and writes exact item
-and outcome counts. Complete a post-request reconciliation covering every active projection mapping.
-Confirm the immutable successful outcome, committed execution, governed audit, exact applied
-projection-event count and complete reconciliation, then record. The verification transition alone
-opens ordinary mutation admission:
+Record verification and completion:
 
 ```sh
 scripts/dish-pg-release cutover-verify-first-admission CUTOVER_UUID REQUEST_UUID \
@@ -718,10 +691,10 @@ scripts/dish-pg-release bundle CANDIDATE_UUID \
   --output /secure/evidence/cutover-final.json
 ```
 
-The projection worker may run readiness probes before admission, but it must process production
-outbox work only under the approved active epoch and release. A mismatched worker release, incomplete
-reconciliation, failed claim/write/restart probe, or readiness record created before rollback burn
-keeps admission closed.
+The verification transition alone opens ordinary mutation admission. After rollback burn, do not
+run projection-worker readiness or Asana reconciliation as a release/admission step. Historical
+rows remain available for incident reconstruction, but their pending/drift/failure state is not a
+post-cutover service-health or mutation-admission signal.
 
 ## 10. Abort and fence release before rollback burn
 
@@ -799,7 +772,7 @@ The repository package does not complete these actions:
 - deploy coherent target service, protocol, OpenAPI, routing, credentials, and worker releases;
 - enumerate and mechanically fence every old writer process, endpoint, credential, and scheduler;
 - obtain Marco's exact bundle-bound approval;
-- execute rollback burn, open mutation admission, enable projection, and validate the first live request;
+- execute rollback burn, confirm external projection is disabled, open isolated mutation admission, and validate the first live request from PostgreSQL-native evidence;
 - monitor early-cutover health and retain the final immutable evidence package.
 
 Any unresolved item keeps the migration in **Draft / not authorized for production cutover**.

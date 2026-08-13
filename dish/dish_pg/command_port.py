@@ -25,6 +25,7 @@ from .command_effects import effect_spec_for
 from .command_effect_runtime import (
     ProjectionAuthority,
     assert_committed_command_effects,
+    external_projection_required,
     record_projection_intent,
 )
 from .document_authority import (
@@ -445,6 +446,7 @@ class PostgresCommandPort:
                         preconstruction_hold=preconstruction_hold,
                     ),
                     result_data=data,
+                    projection_origin=self.projection_origin,
                 )
         except CanonicalDocumentError as exc:
             rule_error = CommandRuleError(
@@ -3583,7 +3585,11 @@ class PostgresCommandPort:
             )
         )
 
-    def _project(self, generation_id, execution_id, task_id, event_type, payload, at) -> str:
+    def _project(self, generation_id, execution_id, task_id, event_type, payload, at) -> str | None:
+        if self.projection_origin == "live" and not external_projection_required(
+            self.session, generation_id=generation_id
+        ):
+            return None
         return record_projection_intent(
             self.projection_recorder,
             generation_id=generation_id,

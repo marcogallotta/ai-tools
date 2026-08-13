@@ -40,8 +40,9 @@ does not duplicate them.
   in the legacy `task_gid` field.
 - PostgreSQL commits canonical state before downstream projection. Projection failure cannot turn a
   committed command into retry advice.
-- The current approved post-cutover baseline keeps Asana as a read-only projection/interface until
-  Marco changes that decision. Retiring Asana completely is under consideration but is not approved.
+- The frozen final Asana source boundary is the end of Asana involvement. Rollback burn disables
+  external Asana projection for the activated generation; there is no long-lived read-only-Asana
+  phase and no post-burn Asana reconciliation/admission dependency.
 - Transition history remains until Marco explicitly chooses its disposition after stabilization.
 
 Workflow, Human Review, authorization, safe reclaim, abandonment, replay, and projection semantics
@@ -116,10 +117,12 @@ The operator runbook may add checks but must not reorder these authority boundar
 9. Activate the exact PostgreSQL generation.
 10. Revalidate the candidate, source closure, fence, backup, deployment, and admission state.
 11. Commit rollback burn. Return to legacy authority is prohibited after this point.
-12. Record post-burn runtime/worker readiness and fresh reconciliation.
-13. Open admission only for the exact planned first request.
-14. Issue that request once; if delivery is unknown, reconcile its exact request identity.
-15. Verify its committed outcome, exact replay, audit, projection, and full reconciliation.
+12. Record post-burn PostgreSQL runtime/route attestation with external projection disabled.
+13. Bind the exact planned first request and open only its isolated reservation gate.
+14. Issue that request once; if delivery is unknown, resolve its exact PostgreSQL request identity.
+15. Verify its canonical request hash/replay, immutable successful outcome, committed execution,
+    governed audit event, and terminal invocation-audit obligation. No applied Asana projection event
+    or post-request Asana reconciliation is required.
 16. Open general admission and record cutover completion.
 
 Routing changes alone never transfer authority.
@@ -139,14 +142,17 @@ fails or its delivery is uncertain, remain in maintenance, determine its commit 
 PostgreSQL, and replay only the same request identity when legal.
 
 A destructive PostgreSQL restore creates a new authority generation, invalidates old capabilities
-and claims, requires reconciliation and fresh registered runs, and keeps admission closed until
-readiness passes. Asana observations cannot recreate erased PostgreSQL commands.
+and claims, requires fresh PostgreSQL authority/replay/audit validation and registered runs, and
+keeps admission closed until recovery readiness passes. Historical Asana observations or
+reconciliation rows cannot recreate erased PostgreSQL commands.
 
 ## Evidence retention
 
 - Permanent authority facts—request-ID tombstones, generations, admission state, writer fences, and
   irreversible boundaries—are never deleted.
-- Transition history remains until Marco explicitly decides otherwise.
+- Transition history remains until Marco explicitly decides otherwise. Historical projection,
+  projection-worker-readiness, and reconciliation rows are retained as forensic evidence; after
+  rollback burn they are not mutation-admission authority.
 - Cutover and stabilization reports remain through the stabilization period and a later explicit
   disposition decision.
 - One-shot tools may be removed after their event closes when no runtime or recovery consumer remains;
@@ -155,10 +161,11 @@ readiness passes. Asana observations cannot recreate erased PostgreSQL commands.
 ## After cutover
 
 - PostgreSQL owns authoritative reads and mutations.
-- Projection freshness is reported separately from command success and legal workflow state.
-- Legacy evidence remains read-only; legacy mutation paths remain fenced.
-- Monitor replay errors, stale writers, serialization/fence failures, unresolved projections,
-  reconciliation drift, schema/release disagreement, and backup health.
+- Legacy projection/reconciliation history remains read-only forensic evidence; legacy mutation
+  and projection paths remain fenced/disabled.
+- Monitor PostgreSQL replay/outcome integrity, invocation-audit obligations, stale writers,
+  serialization/fence failures, schema/release disagreement, and backup health. Historical Asana
+  projection debt or reconciliation drift is not a post-burn health/admission signal.
 - Remove one-shot transition tooling only after its event has closed and no consumer remains.
 - Review transition-history and stabilization-evidence retention only through an explicit Marco
   decision; never through automatic expiry.
