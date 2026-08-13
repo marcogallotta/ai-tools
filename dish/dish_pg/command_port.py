@@ -370,7 +370,11 @@ class PostgresCommandPort:
                 now=call.now,
                 ttl=timedelta(minutes=2),
             )
-            if operation is not None and call.command_name in {"prepare", "discard"}:
+            if operation is not None and call.command_name in {
+                "prepare",
+                "discard",
+                "hold-reject",
+            }:
                 operation = self._lock_operation_transition(operation.operation_id)
             if task is not None:
                 self.workflow.repo.capture_task_fence(
@@ -424,6 +428,7 @@ class PostgresCommandPort:
                     task=task,
                     operation=operation,
                 )
+                preconstruction_hold = bool(data.pop("_preconstruction_hold", False))
                 self.session.flush()
                 assert_committed_command_effects(
                     self.session,
@@ -437,6 +442,7 @@ class PostgresCommandPort:
                         call.command_name,
                         call.arguments,
                         verification_hold=bool(data.get("verification_hold")),
+                        preconstruction_hold=preconstruction_hold,
                     ),
                     result_data=data,
                 )
@@ -909,6 +915,16 @@ class PostgresCommandPort:
             return AuthoritativeSnapshot(generation_id=str(generation_id), task_id=None, fence=None, workflow=None, task_exists=False)
         view = self.reads.task_view(task.task_id)
         workflow_snapshot = None
+        hold_reject_cycle_exists = False
+        hold_reject_evidence_hold_exists = False
+        hold_reject_human_review_exists = False
+        hold_reject_baseline_matches = False
+        hold_reject_candidate_activation_exists = False
+        hold_reject_author_owner_id = None
+        hold_reject_author_run_id = None
+        hold_reject_author_lease_id = None
+        hold_reject_author_lease_expires_at = None
+        hold_reject_registered_agent_matches = False
         if operation is not None:
             workflow_snapshot = self.reads._workflow_snapshot(
                 generation_id=generation_id,
@@ -917,6 +933,88 @@ class PostgresCommandPort:
                 body=view.body,
                 operation=operation,
             )
+            hold_reject_cycle_exists = self.session.scalar(
+                select(wf.VerificationCycle.cycle_id)
+                .where(wf.VerificationCycle.operation_id == operation.operation_id)
+                .limit(1)
+            ) is not None
+            hold_reject_evidence_hold_exists = self.session.scalar(
+                select(wf.EvidenceHold.hold_id)
+                .where(wf.EvidenceHold.operation_id == operation.operation_id)
+                .limit(1)
+            ) is not None
+            hold_reject_human_review_exists = self.session.scalar(
+                select(wf.HumanReviewRequirement.requirement_id)
+                .where(wf.HumanReviewRequirement.operation_id == operation.operation_id)
+                .limit(1)
+            ) is not None
+            creation_fence = self.session.get(
+                wf.TaskExecutionFence, operation.creation_execution_id
+            )
+            if creation_fence is not None:
+                hold_reject_baseline_matches = bool(
+                    view.task_revision == creation_fence.expected_task_revision
+                    and view.membership_revision
+                    == creation_fence.expected_membership_revision
+                    and view.placement_revision
+                    == creation_fence.expected_placement_revision
+                    and view.completion_revision
+                    == creation_fence.expected_completion_revision
+                )
+            hold_reject_candidate_activation_exists = self.session.scalar(
+                select(models.ContentActivation.content_activation_id)
+                .join(
+                    wf.CommandExecution,
+                    wf.CommandExecution.execution_id
+                    == models.ContentActivation.command_execution_id,
+                )
+                .where(wf.CommandExecution.operation_id == operation.operation_id)
+                .limit(1)
+            ) is not None
+            authors = list(
+                self.session.scalars(
+                    select(wf.OperationActorFact)
+                    .where(
+                        wf.OperationActorFact.operation_id == operation.operation_id,
+                        wf.OperationActorFact.actor_role == "author",
+                    )
+                    .order_by(wf.OperationActorFact.recorded_at, wf.OperationActorFact.actor_fact_id)
+                    .limit(2)
+                )
+            )
+            if len(authors) == 1:
+                author = authors[0]
+                hold_reject_author_owner_id = author.owner_id
+                hold_reject_author_run_id = str(author.run_id)
+                run = self.session.get(wf.ServiceRun, author.run_id)
+                hold_reject_registered_agent_matches = bool(
+                    run is not None
+                    and run.generation_id == generation_id
+                    and run.status == "active"
+                    and run.owner_id == author.owner_id
+                    and run.agent == author.agent
+                )
+                leases = list(
+                    self.session.scalars(
+                        select(wf.ServiceLease)
+                        .where(
+                            wf.ServiceLease.operation_id == operation.operation_id,
+                            wf.ServiceLease.task_id == task.task_id,
+                            wf.ServiceLease.lease_kind == "actor",
+                            wf.ServiceLease.actor_role == "author",
+                            wf.ServiceLease.actor_attempt_sequence
+                            == author.actor_attempt_sequence,
+                            wf.ServiceLease.owner_id == author.owner_id,
+                            wf.ServiceLease.run_id == author.run_id,
+                            wf.ServiceLease.state == "active",
+                        )
+                        .order_by(wf.ServiceLease.issued_at.desc())
+                        .limit(2)
+                    )
+                )
+                if len(leases) == 1:
+                    hold_reject_author_lease_id = str(leases[0].lease_id)
+                    hold_reject_author_lease_expires_at = leases[0].expires_at
         return AuthoritativeSnapshot(
             generation_id=str(generation_id),
             task_id=str(task.task_id),
@@ -938,6 +1036,16 @@ class PostgresCommandPort:
             open_hold_id=self._open_id(wf.EvidenceHold, task.task_id),
             open_human_requirement_id=self._open_id(wf.HumanReviewRequirement, task.task_id),
             open_abandonment_id=self._open_abandonment_id(task.task_id),
+            hold_reject_cycle_exists=hold_reject_cycle_exists,
+            hold_reject_evidence_hold_exists=hold_reject_evidence_hold_exists,
+            hold_reject_human_review_exists=hold_reject_human_review_exists,
+            hold_reject_baseline_matches=hold_reject_baseline_matches,
+            hold_reject_candidate_activation_exists=hold_reject_candidate_activation_exists,
+            hold_reject_author_owner_id=hold_reject_author_owner_id,
+            hold_reject_author_run_id=hold_reject_author_run_id,
+            hold_reject_author_lease_id=hold_reject_author_lease_id,
+            hold_reject_author_lease_expires_at=hold_reject_author_lease_expires_at,
+            hold_reject_registered_agent_matches=hold_reject_registered_agent_matches,
         )
 
     def _unresolved_projection_attempt_id(self, task_id: uuid.UUID) -> str | None:
@@ -1054,6 +1162,7 @@ class PostgresCommandPort:
             "prepare": self._prepare,
             "inspect": self._inspect,
             "approve": self._approve,
+            "hold-reject": self._hold_reject,
             "reject": self._reject,
             "submit": self._submit,
             "renew-lease": self._renew_lease,
@@ -1981,6 +2090,74 @@ class PostgresCommandPort:
             "projection_event_id": projection_id,
         }
 
+    def _hold_reject(self, call, generation, _binding, execution, task, operation) -> dict[str, Any]:
+        assert task is not None and operation is not None
+        route = str(call.arguments.get("route", "")).replace("_", "-").strip()
+        if route != "evidence":
+            raise CommandRuleError(
+                "INVALID_REJECTION_ROUTE",
+                "hold-reject supports only the pre-construction evidence route",
+                http_status=400,
+            )
+        reason = str(call.arguments.get("reason", "")).strip()
+        if not reason:
+            raise CommandRuleError(
+                "REJECTION_REASON_REQUIRED",
+                "hold-reject requires a non-blank reason",
+                http_status=400,
+            )
+        resume_status = str(call.arguments.get("resume_status", "")).strip()
+        if resume_status != "pending-research":
+            raise CommandRuleError(
+                "INVALID_RESUME_STATUS",
+                "pre-construction Evidence holds must resume to pending-research",
+                http_status=400,
+            )
+        forbidden = sorted(
+            key
+            for key in (
+                "file_text",
+                "file_path",
+                "model",
+                "independence_attestation",
+                "reviewed_identity",
+                "correction",
+            )
+            if call.arguments.get(key) not in {None, ""}
+        )
+        if forbidden:
+            raise CommandRuleError(
+                "PRECONSTRUCTION_CANDIDATE_UNEXPECTED",
+                "hold-reject cannot carry candidate or Verification-only fields",
+                http_status=400,
+                data={"unexpected": forbidden},
+            )
+        self.workflow.repo.assert_task_fence(execution.execution_id)
+        self.workflow.repo.assert_operation_fence(execution.execution_id)
+        baseline_content_version_id = self._current_content_version_id(
+            generation.generation_id, task.task_id
+        )
+        hold = self.workflow.open_evidence_hold(
+            hold_id=self.uuid_factory(),
+            execution_id=execution.execution_id,
+            operation_id=operation.operation_id,
+            baseline_content_version_id=baseline_content_version_id,
+            reason=reason,
+            opened_at=call.now,
+            cycle_id=None,
+        )
+        operation.phase = "held_evidence"
+        operation.persisted_actions = ["supply-evidence"]
+        operation.operation_revision += 1
+        return {
+            "operation_id": str(operation.operation_id),
+            "route": "evidence",
+            "resume_status": "pending-research",
+            "hold_id": str(hold.hold_id),
+            "baseline_content_version_id": str(baseline_content_version_id),
+            "cycle_id": None,
+        }
+
     def _reject(self, call, generation, binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
         cycle = self._latest_cycle(operation.operation_id)
@@ -2606,22 +2783,44 @@ class PostgresCommandPort:
                 http_status=400,
             )
         candidate_file_text = call.arguments.get("file_text")
-        if call.arguments.get("file_path") and candidate_file_text is None:
-            raise CommandRuleError(
-                "MATERIAL_CONTENT_REQUIRED",
-                "shadow-safe hold resolution requires complete canonical file_text, not a filesystem path",
-                http_status=400,
-            )
         editor = call.arguments.get("editor")
         model = call.arguments.get("model")
-        if candidate_file_text is not None and (
-            editor not in {"claude", "gpt", "codex"} or not str(model or "").strip()
-        ):
-            raise CommandRuleError(
-                "MATERIAL_EDITOR_REQUIRED",
-                "material hold resolution requires editor and model",
-                http_status=400,
+        preconstruction_hold = hold.cycle_id is None
+        if preconstruction_hold:
+            if resume_status != "pending-research":
+                raise CommandRuleError(
+                    "INVALID_RESUME_STATUS",
+                    "pre-construction Evidence holds must resume to pending-research",
+                    http_status=400,
+                )
+            forbidden = sorted(
+                key
+                for key in ("file_text", "file_path", "editor", "model")
+                if call.arguments.get(key) not in {None, ""}
             )
+            if forbidden:
+                raise CommandRuleError(
+                    "PRECONSTRUCTION_CANDIDATE_UNEXPECTED",
+                    "pre-construction Evidence hold resolution cannot install candidate content",
+                    http_status=400,
+                    data={"unexpected": forbidden},
+                )
+        else:
+            if call.arguments.get("file_path") and candidate_file_text is None:
+                raise CommandRuleError(
+                    "MATERIAL_CONTENT_REQUIRED",
+                    "shadow-safe hold resolution requires complete canonical file_text, not a filesystem path",
+                    http_status=400,
+                )
+            if candidate_file_text is not None and (
+                editor not in {"claude", "gpt", "codex"}
+                or not str(model or "").strip()
+            ):
+                raise CommandRuleError(
+                    "MATERIAL_EDITOR_REQUIRED",
+                    "material hold resolution requires editor and model",
+                    http_status=400,
+                )
         self._assert_hold_resolution_target(
             call=call,
             generation_id=generation.generation_id,
@@ -2636,9 +2835,44 @@ class PostgresCommandPort:
             {
                 "detail": detail,
                 "resume_status": resume_status,
-                "material": candidate_file_text is not None,
+                "material": candidate_file_text is not None and not preconstruction_hold,
             }
         )
+        if preconstruction_hold:
+            baseline = self.session.get(
+                models.ContentVersion, hold.baseline_content_version_id
+            )
+            if baseline is None:
+                raise CommandRuleError(
+                    "HOLD_BASELINE_MISSING",
+                    "pre-construction Evidence hold baseline is missing",
+                )
+            parse_canonical_document(
+                title=baseline.title,
+                body=baseline.body,
+                expected_status="pending-research",
+            )
+            self.workflow.repo.assert_task_fence(execution.execution_id)
+            self.workflow.repo.assert_operation_fence(execution.execution_id)
+            self.workflow.supply_evidence(
+                hold_id=hold.hold_id,
+                execution_id=execution.execution_id,
+                evidence_payload=evidence_payload,
+                supplied_at=call.now,
+            )
+            operation.phase = "prepare_required"
+            operation.persisted_actions = ["prepare"]
+            operation.operation_revision += 1
+            return {
+                "hold_id": str(hold.hold_id),
+                "state": hold.state,
+                "resume_status": "pending-research",
+                "baseline_content_version_id": str(hold.baseline_content_version_id),
+                "cycle_id": None,
+                "projection_event_id": None,
+                "phase": "prepare_required",
+                "_preconstruction_hold": True,
+            }
         self.workflow.supply_evidence(
             hold_id=hold.hold_id,
             execution_id=execution.execution_id,

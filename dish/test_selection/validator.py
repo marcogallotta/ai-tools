@@ -73,6 +73,7 @@ SCOPED_ROOTS = {
     "docs",
 }
 EXCLUDED_PARTS = {".venv", ".pytest_cache", ".test-artifacts", "node_modules", "__pycache__"}
+EXCLUDED_SCOPED_PREFIXES = {("frontend", "dist")}
 PARENT_GUIDANCE = {"../AGENTS.md", "../CLAUDE.md", "../README.md"}
 POLICY_DATA_PATH = "test_selection/ownership.csv"
 
@@ -108,6 +109,11 @@ def _scoped_paths(repo: Path) -> set[str]:
                 continue
             rel_parts = path.relative_to(repo).parts
             if any(part in EXCLUDED_PARTS or part.startswith(".") for part in rel_parts):
+                continue
+            if any(
+                rel_parts[: len(prefix)] == prefix
+                for prefix in EXCLUDED_SCOPED_PREFIXES
+            ):
                 continue
             out.add(path.relative_to(repo).as_posix())
     for name in TOP_LEVEL_FILES:

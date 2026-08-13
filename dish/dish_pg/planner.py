@@ -42,6 +42,16 @@ class AuthoritativeSnapshot:
     open_hold_id: str | None = None
     open_human_requirement_id: str | None = None
     open_abandonment_id: str | None = None
+    hold_reject_cycle_exists: bool = False
+    hold_reject_evidence_hold_exists: bool = False
+    hold_reject_human_review_exists: bool = False
+    hold_reject_baseline_matches: bool = False
+    hold_reject_candidate_activation_exists: bool = False
+    hold_reject_author_owner_id: str | None = None
+    hold_reject_author_run_id: str | None = None
+    hold_reject_author_lease_id: str | None = None
+    hold_reject_author_lease_expires_at: datetime | None = None
+    hold_reject_registered_agent_matches: bool = False
 
 
 @dataclass(frozen=True)
@@ -101,6 +111,44 @@ def _principal_matches(definition: CommandDefinition, principal_class: str) -> b
     return False
 
 
+def _hold_reject_is_legal(
+    snapshot: AuthoritativeSnapshot,
+    intent: CanonicalCommandIntent,
+    *,
+    pinned_now: datetime,
+) -> bool:
+    """Authorize only the legacy pre-construction Evidence-hold occurrence.
+
+    This is intentionally not a shared workflow action.  ``hold-reject`` is an
+    internal semantic translation target, so its authority is the exact
+    pre-construction occurrence rather than every ``prepare_required`` state.
+    """
+
+    workflow = snapshot.workflow
+    if workflow is None:
+        return False
+    lease_expiry = snapshot.hold_reject_author_lease_expires_at
+    if lease_expiry is not None and lease_expiry.tzinfo is None and pinned_now.tzinfo is not None:
+        lease_expiry = lease_expiry.replace(tzinfo=pinned_now.tzinfo)
+    return bool(
+        workflow.operation_status == "open"
+        and workflow.operation_kind == "initial"
+        and workflow.operation_phase == "prepare_required"
+        and tuple(workflow.persisted_actions) == ("prepare",)
+        and not snapshot.hold_reject_cycle_exists
+        and not snapshot.hold_reject_evidence_hold_exists
+        and not snapshot.hold_reject_human_review_exists
+        and snapshot.hold_reject_baseline_matches
+        and not snapshot.hold_reject_candidate_activation_exists
+        and snapshot.hold_reject_author_owner_id == intent.owner_id
+        and snapshot.hold_reject_author_run_id == intent.run_id
+        and snapshot.hold_reject_author_lease_id is not None
+        and lease_expiry is not None
+        and lease_expiry > pinned_now
+        and snapshot.hold_reject_registered_agent_matches
+    )
+
+
 def plan_command(
     *,
     snapshot: AuthoritativeSnapshot,
@@ -109,8 +157,10 @@ def plan_command(
 ) -> CommandPlan:
     """Return a deterministic plan without persistence or external effects.
 
-    Workflow legality is delegated to ``workflow_policy.legal_actions``. This
-    planner never reconstructs a second action matrix.
+    Shared workflow actions are delegated to ``workflow_policy.legal_actions``.
+    A PG-internal command may additionally use an exact command-specific
+    predicate when exposing it through shared workflow legality would widen the
+    public/current action matrix.
     """
 
     definition = definition_for(intent.command_name)
@@ -159,6 +209,20 @@ def plan_command(
             audit_event_type="abandonment_fence_rejected",
             recovery_guidance={"abandonment_id": snapshot.open_abandonment_id},
         )
+    if intent.command_name == "hold-reject" and not _hold_reject_is_legal(
+        snapshot, intent, pinned_now=pinned_now
+    ):
+        assert snapshot.workflow is not None
+        return CommandPlan(
+            definition=definition,
+            legal=False,
+            result_code="ACTION_NOT_LEGAL",
+            fence=snapshot.fence,
+            audit_event_type="hold_reject_occurrence_rejected",
+            recovery_guidance={
+                "allowed_actions": tuple(legal_actions(snapshot.workflow)),
+            },
+        )
     if definition.workflow_action is not None:
         assert snapshot.workflow is not None
         allowed = tuple(legal_actions(snapshot.workflow))
@@ -182,7 +246,15 @@ def plan_command(
             fence=snapshot.fence,
             audit_event_type="projection_target_missing",
         )
-    effects = effect_spec_for(command, args)
+    effects = effect_spec_for(
+        command,
+        args,
+        preconstruction_hold=(
+            command == "supply-evidence"
+            and snapshot.hold_reject_evidence_hold_exists
+            and not snapshot.hold_reject_cycle_exists
+        ),
+    )
     mutations = tuple(
         PlannedMutation(
             kind,
