@@ -20,7 +20,7 @@ from tests.support.postgresql.core import core_db
 
 pytestmark = [pytest.mark.postgresql, pytest.mark.native_postgresql]
 ROOT = Path(__file__).resolve().parents[3]
-PREVIOUS_HEAD = "0037_release_identity_contract"
+PREVIOUS_HEAD = "0038_cutover_rehearsal_identity"
 
 
 def _source_commit() -> str:
