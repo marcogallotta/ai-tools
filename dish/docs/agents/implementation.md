@@ -30,6 +30,8 @@ Before changing Dish code, follow root `CLAUDE.md` and start at `dish/docs/archi
 
 Do not silently substitute another base or assume unmerged parallel work has landed.
 
+Before returning an assigned implementation as no-op/already-fixed/not-reproducible, apply the inherited assigned-task dismissal gate to the owning task's notes and material history; current source/runtime health alone is not enough to erase a recorded historical defect. Before declaring a routine authorized implementation/publication action blocked, apply the inherited authorized-fallback gate and verify any state-changing fallback before reporting success.
+
 ## Branch and worktree ownership
 
 New implementation work uses an owned branch. Do not commit directly to `main` by default.

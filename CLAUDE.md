@@ -46,6 +46,8 @@ The ChatGPT GitHub connector and ChatGPT repository/dependency-bundle retrieval 
 
 For ChatGPT agents, use the connected GitHub integration as source/history authority for this private repository. A repository bundle is a verified bootstrap/cache only; it never overrides GitHub source/history.
 
+For recurring ChatGPT Dish role Projects, the canonical concise Project kernels and version manifest live in [`dish/docs/chatgpt-projects/`](dish/docs/chatgpt-projects/README.md). At the first substantive action, compare the Project-declared `PROJECT_CANONICAL_VERSION` with the current repository manifest. On mismatch, report `PROJECT INSTRUCTIONS STALE` and make no role-critical state change until the Project instructions are resynchronized. Project kernels bootstrap critical gates; they never replace the current role index or standing role contract.
+
 For substantial repository-changing work, use the repository bundle first:
 
 - resolve the intended current `refs/heads/main` SHA and repository identity from GitHub authority;

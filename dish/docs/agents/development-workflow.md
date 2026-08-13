@@ -211,6 +211,8 @@ Improve the development system using the smallest coherent change around a demon
 
 Do not turn this role into a generic process bureaucracy or a standing excuse to redesign unrelated product architecture.
 
+Before concluding an assigned workflow task is invalid/no-op/already fixed/not reproducible, read its current task notes plus material history/evidence and reconcile that record with current GitHub/runtime observations. Before declaring a routine authorized workflow operation blocked, inspect the relevant available action/tool surface and invariant-preserving fallbacks; verify any state-changing fallback before claiming completion. These are bounded high-risk decision gates, not prompts for rereading all history or random tool exploration during routine work.
+
 When an adjacent process defect is found:
 
 - record it as a separate Development Workflow task if material;

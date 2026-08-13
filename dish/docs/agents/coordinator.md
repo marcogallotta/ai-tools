@@ -111,6 +111,8 @@ Rules:
 - keep coordinator-owned process, integration, and cross-lane work in `Dish — Coordinator`;
 - treat each adopted specialist project as the complete transient state for that lane and follow its standing role contract;
 - scan the relevant adopted projects before dispatch, overlap, replacement, blocker, or status decisions;
+- before dismissing an assigned/owned task as no-op, already fixed, invalid, or non-reproducible, read its current notes plus material history/evidence and reconcile them with live GitHub/runtime state;
+- before escalating a routine authorized operation to Marco as blocked, inspect the relevant available action/tool surface and invariant-preserving fallbacks, then verify any resulting write before claiming completion;
 - do not create a shared global execution mirror solely for coordinator visibility;
 - do not duplicate tasks or require synchronized duplicate lifecycle moves across projects. Multi-home only when one work item genuinely belongs in more than one area, not as a visibility substitute;
 - section placement is lifecycle state, task notes are the current takeover snapshot, and comments preserve meaningful chronology;
