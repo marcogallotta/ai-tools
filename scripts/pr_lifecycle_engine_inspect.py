@@ -1,0 +1,294 @@
+"""Lifecycle classification from durable GitHub/Asana state."""
+from __future__ import annotations
+
+from pr_lifecycle_support import *
+from pr_lifecycle_helpers import *
+from pr_lifecycle_helpers import (
+    _integration_order_reason, _lease_json, _mergeability_reason,
+    _pr_base, _pr_branch, _pr_number, _pr_title, _pr_url,
+    _reviewed_head, _utcnow,
+)
+
+class LifecycleInspectMixin:
+    def __init__(
+        self,
+        github: GitHubBackend,
+        *,
+        asana: AsanaBackend | None = None,
+        integration_authority: bool = False,
+        integration_capable: bool = True,
+        merge_method: str = "squash",
+        now: Callable[[], datetime] = _utcnow,
+    ) -> None:
+        self.github = github
+        self.asana = asana
+        self.integration_authority = integration_authority
+        self.integration_capable = integration_capable
+        self.merge_method = merge_method
+        self.now = now
+
+    def _asana_details(self, task_ids: list[str]) -> list[dict[str, Any]]:
+        if not self.asana:
+            return []
+        values: list[dict[str, Any]] = []
+        for gid in task_ids:
+            try:
+                values.append(self.asana.get_task(gid))
+            except LifecycleError as exc:
+                values.append({"gid": gid, "error": str(exc)})
+        return values
+
+    def inspect(self, pr: dict[str, Any]) -> PRLifecycle:
+        number = _pr_number(pr)
+        current = self.github.get_pr(number)
+        head = pr_gate.pr_head_sha(current)
+        state = pr_gate.pr_state(current)
+        merged = bool(current.get("merged") or current.get("merged_at"))
+        draft = pr_gate.pr_is_draft(current) if state == "open" else bool(current.get("draft", False))
+        task_ids = task_ids_from_pr(current)
+        base_kwargs = dict(
+            number=number,
+            url=_pr_url(current, self.github.repository),
+            title=_pr_title(current),
+            head=head,
+            branch=_pr_branch(current),
+            base=_pr_base(current),
+            draft=draft,
+            task_ids=task_ids,
+            asana=self._asana_details(task_ids),
+        )
+        if merged:
+            return PRLifecycle(
+                **base_kwargs,
+                state=LifecycleState.MERGED,
+                state_label=STATE_LABELS[LifecycleState.MERGED],
+            )
+        if state != "open":
+            return PRLifecycle(
+                **base_kwargs,
+                state=LifecycleState.CLOSED,
+                state_label=STATE_LABELS[LifecycleState.CLOSED],
+                residual_reason="PR is closed without authoritative merged state",
+            )
+
+        comments = self.github.get_comments(number)
+        reviews = self.github.get_reviews(number)
+        now = self.now()
+        leases = parse_leases(comments, current_head=head, reviews=reviews, pr_open=True, now=now)
+        active_by_phase: dict[str, list[Lease]] = {}
+        for lease in leases:
+            active_by_phase.setdefault(lease.phase, []).append(lease)
+        exact_review = pr_gate.latest_exact_head_review(reviews, reviewed_head=head)
+        review_class = review_class_for(current, reviews, comments, current_head=head)
+        lease_payload = [_lease_json(lease, now) for lease in leases]
+
+        if draft:
+            return PRLifecycle(
+                **base_kwargs,
+                state=LifecycleState.AUTHORING,
+                state_label=STATE_LABELS[LifecycleState.AUTHORING],
+                review_class=review_class,
+                active_leases=lease_payload,
+                residual_reason=(
+                    "draft PR; ordinary Review discovery is excluded"
+                    + ("; implementation lease active" if active_by_phase.get("implementation") else "")
+                ),
+            )
+
+        if exact_review is None:
+            if active_by_phase.get("review"):
+                return PRLifecycle(
+                    **base_kwargs,
+                    state=LifecycleState.REVIEW_IN_PROGRESS,
+                    state_label=STATE_LABELS[LifecycleState.REVIEW_IN_PROGRESS],
+                    review_class=review_class,
+                    active_leases=lease_payload,
+                    residual_reason="active exact-head review lease; formal exact-head review not yet submitted",
+                )
+            return PRLifecycle(
+                **base_kwargs,
+                state=LifecycleState.REVIEW_READY,
+                state_label=STATE_LABELS[LifecycleState.REVIEW_READY],
+                review_class=review_class,
+                active_leases=lease_payload,
+                residual_reason="no authoritative formal review exists for the exact current head",
+            )
+
+        verdict = str(exact_review.get("verdict"))
+        reviewed_head = _reviewed_head(exact_review)
+        if verdict == "BLOCK":
+            return PRLifecycle(
+                **base_kwargs,
+                state=LifecycleState.CHANGES_REQUESTED,
+                state_label=STATE_LABELS[LifecycleState.CHANGES_REQUESTED],
+                review_class=review_class,
+                review_verdict=verdict,
+                reviewed_head=reviewed_head,
+                active_leases=lease_payload,
+                residual_reason=(
+                    "exact-head formal review blocks integration"
+                    + ("; fix lease active" if active_by_phase.get("fix") or active_by_phase.get("implementation") else "; no active fix lease")
+                ),
+            )
+
+        if verdict != "MERGE":
+            return PRLifecycle(
+                **base_kwargs,
+                state=LifecycleState.REVIEW_READY,
+                state_label=STATE_LABELS[LifecycleState.REVIEW_READY],
+                review_class=review_class,
+                active_leases=lease_payload,
+                residual_reason="formal review did not contain an authoritative exact-head verdict",
+            )
+
+        local_work = local_work_from_review(exact_review, comments, head=head)
+        local_payload = [asdict(item) for item in local_work]
+        pending_impl = next((item for item in local_work if item.kind == "implementation" and not item.completed), None)
+        if pending_impl:
+            return PRLifecycle(
+                **base_kwargs,
+                state=LifecycleState.LOCAL_IMPLEMENTATION_REQUIRED,
+                state_label=STATE_LABELS[LifecycleState.LOCAL_IMPLEMENTATION_REQUIRED],
+                review_class=review_class,
+                review_verdict=verdict,
+                reviewed_head=reviewed_head,
+                active_leases=lease_payload,
+                local_work=local_payload,
+                residual_reason=pending_impl.instruction,
+                human_action=pending_impl.instruction if pending_impl.handoff_present else None,
+            )
+        pending_cert = next((item for item in local_work if item.kind == "certification" and not item.completed), None)
+        if pending_cert:
+            return PRLifecycle(
+                **base_kwargs,
+                state=LifecycleState.LOCAL_CERTIFICATION_REQUIRED,
+                state_label=STATE_LABELS[LifecycleState.LOCAL_CERTIFICATION_REQUIRED],
+                review_class=review_class,
+                review_verdict=verdict,
+                reviewed_head=reviewed_head,
+                active_leases=lease_payload,
+                local_work=local_payload,
+                residual_reason=pending_cert.instruction,
+                human_action=pending_cert.instruction if pending_cert.handoff_present else None,
+            )
+
+        body = str(exact_review.get("body") or "")
+        if TESTS_TO_RUN_RE.search(body) is None:
+            return PRLifecycle(
+                **base_kwargs,
+                state=LifecycleState.REVIEW_PASSED,
+                state_label=STATE_LABELS[LifecycleState.REVIEW_PASSED],
+                review_class=review_class,
+                review_verdict=verdict,
+                reviewed_head=reviewed_head,
+                active_leases=lease_payload,
+                local_work=local_payload,
+                residual_reason="exact-head MERGE review is missing required TESTS TO RUN line",
+            )
+
+        ordering = _integration_order_reason(exact_review, current)
+        if ordering:
+            return PRLifecycle(
+                **base_kwargs,
+                state=LifecycleState.REVIEW_PASSED,
+                state_label=STATE_LABELS[LifecycleState.REVIEW_PASSED],
+                review_class=review_class,
+                review_verdict=verdict,
+                reviewed_head=reviewed_head,
+                active_leases=lease_payload,
+                local_work=local_payload,
+                residual_reason=f"integration ordering/dependency remains: {ordering}",
+            )
+        mergeability = _mergeability_reason(current)
+        if mergeability:
+            return PRLifecycle(
+                **base_kwargs,
+                state=LifecycleState.REVIEW_PASSED,
+                state_label=STATE_LABELS[LifecycleState.REVIEW_PASSED],
+                review_class=review_class,
+                review_verdict=verdict,
+                reviewed_head=reviewed_head,
+                active_leases=lease_payload,
+                local_work=local_payload,
+                residual_reason=mergeability,
+            )
+
+        try:
+            combined = self.github.get_combined_status(head)
+            runs = self.github.get_workflow_runs(head)
+            gate = pr_gate.evaluate_integration_gate(
+                current,
+                reviewed_head=head,
+                combined_status=combined,
+                workflow_runs=runs,
+            )
+        except (pr_gate.GateError, LifecycleError) as exc:
+            return PRLifecycle(
+                **base_kwargs,
+                state=LifecycleState.WAITING_CI,
+                state_label=STATE_LABELS[LifecycleState.WAITING_CI],
+                review_class=review_class,
+                review_verdict=verdict,
+                reviewed_head=reviewed_head,
+                active_leases=lease_payload,
+                local_work=local_payload,
+                residual_reason=str(exc),
+            )
+
+        integration_leases = active_by_phase.get("integration", [])
+        if integration_leases:
+            return PRLifecycle(
+                **base_kwargs,
+                state=LifecycleState.MERGING,
+                state_label=STATE_LABELS[LifecycleState.MERGING],
+                review_class=review_class,
+                review_verdict=verdict,
+                reviewed_head=reviewed_head,
+                active_leases=lease_payload,
+                local_work=local_payload,
+                gate=gate,
+                residual_reason="active exact-head Integration lease",
+            )
+        if not self.integration_authority:
+            return PRLifecycle(
+                **base_kwargs,
+                state=LifecycleState.INTEGRATION_READY,
+                state_label=STATE_LABELS[LifecycleState.INTEGRATION_READY],
+                review_class=review_class,
+                review_verdict=verdict,
+                reviewed_head=reviewed_head,
+                active_leases=lease_payload,
+                local_work=local_payload,
+                gate=gate,
+                residual_reason="bounded Integration authority is not explicitly enabled for this dispatcher",
+                human_action="authorize an Integration-capable workflow or run Integration separately",
+            )
+        if not self.integration_capable:
+            return PRLifecycle(
+                **base_kwargs,
+                state=LifecycleState.INTEGRATION_READY,
+                state_label=STATE_LABELS[LifecycleState.INTEGRATION_READY],
+                review_class=review_class,
+                review_verdict=verdict,
+                reviewed_head=reviewed_head,
+                active_leases=lease_payload,
+                local_work=local_payload,
+                gate=gate,
+                residual_reason="Integration merge capability is unavailable on this host",
+                human_action="run an authorized Integration host with GitHub merge capability",
+            )
+        return PRLifecycle(
+            **base_kwargs,
+            state=LifecycleState.INTEGRATION_READY,
+            state_label=STATE_LABELS[LifecycleState.INTEGRATION_READY],
+            review_class=review_class,
+            review_verdict=verdict,
+            reviewed_head=reviewed_head,
+            active_leases=lease_payload,
+            local_work=local_payload,
+            gate=gate,
+            residual_reason="all exact-head gates are green; bounded Integration may proceed",
+        )
+
+    def status(self, *, include_closed: bool = False) -> list[PRLifecycle]:
+        return [self.inspect(pr) for pr in self.github.list_prs(include_closed=include_closed)]

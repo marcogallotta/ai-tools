@@ -70,13 +70,14 @@ A review-claim issue comment never satisfies this completion gate. If Dish later
 
 Review may be forked away from the coordinator so review and orchestration can proceed in parallel. Avoid using GitHub assignee state as agent-review ownership: a dead agent must not leave a durable lock.
 
-Before substantive review, a forked reviewer should inspect current PR comments/reviews for an active claim on the exact current head. If none is active, post a short claim comment such as:
+Before substantive review, a forked reviewer should inspect current PR comments/reviews for an active structured claim on the exact current head. If none is active, post a short claim comment containing the machine-readable lease marker:
 
-> `REVIEW CLAIMED — head <exact-sha> — stale after 60m without review activity.`
+> `<!-- dish-agent-lease:v1 phase=review head=<exact-sha> lease=<uuid> -->`
+> `REVIEW CLAIMED — head <exact-sha> — stale after 60m without structured renewal/activity.`
 
-Sign the comment with the normal Dish agent attribution footer.
+Sign the comment with the normal Dish agent attribution footer. A renewal repeats the marker with the same lease UUID in a new PR comment; explicit release uses `<!-- dish-agent-lease-release:v1 lease=<uuid> -->`. The dispatcher may add `owner=` or `class=` fields.
 
-The claim is an **advisory soft lease**, not review authority. It exists only to avoid wasting agents on accidental duplicate review.
+The claim is an **advisory soft lease**, not review authority. It exists only to avoid wasting agents on accidental duplicate review. Structured exact-head comments, not GitHub assignees or process/session state, are the machine-readable active-work signal.
 
 A claim is no longer active when any of these is true:
 
@@ -89,6 +90,17 @@ A claim is no longer active when any of these is true:
 Visible review activity includes a submitted review, review-thread/comment activity, or an explicit claim-renewal/progress comment. Do not keep a claim alive merely because the agent process may still exist somewhere.
 
 When a submitted GitHub review exists for the exact head, that review state supersedes the claim. A second reviewer may still be deliberately assigned for a specialist or independent review; the soft claim only prevents accidental duplication.
+
+## Dispatcher review routing
+
+The repository lifecycle dispatcher is the routine Review router. It does not acquire semantic Review authority merely by classifying work.
+
+- `light`, `focused`, and `mechanical` work may use a configured bounded local reviewer when scope is deterministically constrained;
+- ordinary substantive Review should prefer the published ChatGPT Review Workspace Agent when configured;
+- `specialist:<name>` / deep Review routes to the matching specialist;
+- Claude/Codex are not the default semantic Review path merely because they are available locally.
+
+A durable explicit route may use `REVIEW CLASS: <class>` in the PR body or `<!-- dish-review-route:v1 head=<sha> class=<class> -->` in a PR comment. Ambiguous work is substantive. The Workspace Agent dispatch is exact-head and idempotent; its API/chat completion is not authoritative. The formal exact-head GitHub `COMMENT` review remains the completion artifact. Operational configuration is in [`../../../ci/pr-lifecycle-dispatcher-runbook.md`](../../../ci/pr-lifecycle-dispatcher-runbook.md).
 
 ## Review depth
 
@@ -218,4 +230,4 @@ Reopen broader review only when the fix materially changes the previously accept
 
 State `VERDICT: MERGE` clearly, identify the exact approved/reviewed PR head SHA, provide the coordinator handoff, and give `TESTS TO RUN` exactly as required above. Never ask Marco to rerun evidence already supplied by the implementation agent.
 
-Do not issue `MERGE` as an integration instruction and do not tell Marco to merge directly.
+Do not issue `MERGE` as an integration instruction and do not tell Marco to merge directly. `VERDICT: MERGE` is not terminal queue state: the dispatcher next re-reads the exact head and evaluates local-work, CI/certification, ordering, mergeability, and Integration authority/capability. When local work remains, the durable PR handoff must be complete before Marco is notified. When every gate is green and the active workflow has explicit bounded Integration authority, the mechanical Integration contract may be composed immediately; that composition does not give Review semantic Implementation authority.

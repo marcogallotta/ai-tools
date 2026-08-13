@@ -13,6 +13,7 @@ from typing import Any
 REQUIRED_ORDINARY_CI_CONTEXT = "Dish / required ordinary CI"
 REQUIRED_ORDINARY_CI_WORKFLOW_PATH = ".github/workflows/ci.yml"
 _RUN_TARGET_RE = re.compile(r"/actions/runs/(?P<run_id>[0-9]+)(?:/|$)")
+_VERDICT_RE = re.compile(r"(?im)^\s*VERDICT:\s*(MERGE|BLOCK)\s*$")
 
 
 class GateError(ValueError):
@@ -50,6 +51,21 @@ def _head_sha(pr: dict[str, Any]) -> str:
     raise GateError("PR JSON is missing head.sha/headRefOid")
 
 
+def pr_state(pr: dict[str, Any]) -> str:
+    """Return normalized GitHub PR state for shared lifecycle consumers."""
+    return _state(pr)
+
+
+def pr_is_draft(pr: dict[str, Any]) -> bool:
+    """Return GitHub draft state, failing closed when the field is absent."""
+    return _draft(pr)
+
+
+def pr_head_sha(pr: dict[str, Any]) -> str:
+    """Return the exact source PR head SHA used as Review/Integration identity."""
+    return _head_sha(pr)
+
+
 def is_review_discoverable(pr: dict[str, Any], *, allow_draft: bool = False) -> bool:
     """Return whether a PR belongs in ordinary Review discovery."""
     if _state(pr) != "open":
@@ -57,6 +73,44 @@ def is_review_discoverable(pr: dict[str, Any], *, allow_draft: bool = False) -> 
     if _draft(pr) and not allow_draft:
         return False
     return True
+
+
+def review_verdict(body: Any) -> str | None:
+    """Extract the canonical textual agent-review verdict from a review body."""
+    if not isinstance(body, str):
+        return None
+    match = _VERDICT_RE.search(body)
+    return match.group(1) if match else None
+
+
+def latest_exact_head_review(
+    reviews: list[dict[str, Any]], *, reviewed_head: str
+) -> dict[str, Any] | None:
+    """Return the newest formal COMMENT review with a verdict on one exact head."""
+    candidates: list[tuple[str, int, dict[str, Any]]] = []
+    for review in reviews:
+        if not isinstance(review, dict):
+            continue
+        if str(review.get("commit_id") or review.get("commitId") or "") != reviewed_head:
+            continue
+        state = str(review.get("state", "")).upper()
+        if state not in {"COMMENTED", "COMMENT"}:
+            continue
+        verdict = review_verdict(review.get("body"))
+        if verdict is None:
+            continue
+        submitted = str(review.get("submitted_at") or review.get("submittedAt") or "")
+        review_id = review.get("id")
+        try:
+            numeric_id = int(review_id)
+        except (TypeError, ValueError):
+            numeric_id = 0
+        normalized = dict(review)
+        normalized["verdict"] = verdict
+        candidates.append((submitted, numeric_id, normalized))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: (item[0], item[1]))[2]
 
 
 def _timestamp(value: Any, *, label: str) -> datetime:
@@ -154,9 +208,6 @@ def _required_status_for_attempt(
             status.get("updated_at") or status.get("created_at"),
             label="required ordinary CI status timestamp",
         )
-        # A GitHub Actions rerun reuses the workflow run ID. Requiring the status
-        # write to be strictly newer than this attempt's start prevents an older
-        # same-run success from certifying the rerun if the rerun never publishes.
         if status_time <= attempt_started_at:
             continue
         candidates.append((status_time, status))
