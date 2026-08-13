@@ -75,7 +75,8 @@ def test_resolved_external_record_reenters_gate_evaluation():
 
     state = base.engine(gh).inspect(gh.pr)
 
-    assert state.state == pr_lifecycle.LifecycleState.WAITING_CI
+    assert state.state == pr_lifecycle.LifecycleState.CHANGES_REQUESTED
+    assert state.gate["diagnosis"] == pr_lifecycle.pr_gate.GateDiagnosis.FAILED_REQUIRED_CI.value
     assert state.external_dependency is None
 
 
@@ -102,5 +103,6 @@ def test_malformed_external_record_fails_closed_without_external_ownership():
 
     state = base.engine(gh).inspect(gh.pr)
 
-    assert state.state == pr_lifecycle.LifecycleState.WAITING_CI
+    assert state.state == pr_lifecycle.LifecycleState.CHANGES_REQUESTED
+    assert state.gate["diagnosis"] == pr_lifecycle.pr_gate.GateDiagnosis.FAILED_REQUIRED_CI.value
     assert "external dependency marker invalid" in state.residual_reason

@@ -76,14 +76,6 @@ class LifecycleInspectMixin:
 
         return record, status_reason
 
-    @staticmethod
-    def _failed_required_ci_identity(exc: pr_gate.GateError) -> str | None:
-        message = str(exc).lower()
-        failed_run = "newest ordinary ci workflow attempt" in message and "concluded" in message and "expected 'success'" in message
-        failed_status = "required ordinary ci status for newest workflow attempt is" in message and "expected 'success'" in message
-        if failed_run or failed_status:
-            return pr_gate.REQUIRED_ORDINARY_CI_CONTEXT
-        return None
 
     def inspect(self, pr: dict[str, Any]) -> PRLifecycle:
         number = _pr_number(pr)
@@ -263,62 +255,134 @@ class LifecycleInspectMixin:
         try:
             combined = self.github.get_combined_status(head)
             runs = self.github.get_workflow_runs(head)
-            gate = pr_gate.evaluate_integration_gate(
+        except LifecycleError as exc:
+            gate = {
+                "diagnosis": pr_gate.GateDiagnosis.INFRASTRUCTURE_ERROR.value,
+                "current_head": head,
+                "reviewed_head": reviewed_head,
+                "required_status_context": pr_gate.REQUIRED_ORDINARY_CI_CONTEXT,
+                "reason": str(exc),
+            }
+            return PRLifecycle(
+                **base_kwargs,
+                state=LifecycleState.REVIEW_PASSED,
+                state_label=STATE_LABELS[LifecycleState.REVIEW_PASSED],
+                review_class=review_class,
+                review_verdict=verdict,
+                reviewed_head=reviewed_head,
+                active_leases=lease_payload,
+                local_work=local_payload,
+                gate=gate,
+                residual_reason=f"Integration evidence read failed: {exc}",
+            )
+
+        try:
+            diagnosis = pr_gate.diagnose_integration_gate(
                 current,
-                reviewed_head=head,
+                reviewed_head=reviewed_head,
                 combined_status=combined,
                 workflow_runs=runs,
             )
         except pr_gate.GateError as exc:
-            failed_check = self._failed_required_ci_identity(exc)
-            marker_note = None
-            if failed_check:
-                dependency, marker_note = self._external_dependency_for_failed_check(
-                    comments, check_identity=failed_check
+            diagnosis = {
+                "diagnosis": pr_gate.GateDiagnosis.EVIDENCE_MISSING_OR_STALE.value,
+                "current_head": head,
+                "reviewed_head": reviewed_head,
+                "required_status_context": pr_gate.REQUIRED_ORDINARY_CI_CONTEXT,
+                "reason": str(exc),
+            }
+
+        diagnosis_state = diagnosis["diagnosis"]
+        if diagnosis_state == pr_gate.GateDiagnosis.PENDING.value:
+            return PRLifecycle(
+                **base_kwargs,
+                state=LifecycleState.WAITING_CI,
+                state_label=STATE_LABELS[LifecycleState.WAITING_CI],
+                review_class=review_class,
+                review_verdict=verdict,
+                reviewed_head=reviewed_head,
+                active_leases=lease_payload,
+                local_work=local_payload,
+                gate=diagnosis,
+                residual_reason=str(diagnosis["reason"]),
+            )
+
+        if diagnosis_state == pr_gate.GateDiagnosis.FAILED_REQUIRED_CI.value:
+            dependency, marker_note = self._external_dependency_for_failed_check(
+                comments, check_identity=pr_gate.REQUIRED_ORDINARY_CI_CONTEXT
+            )
+            if dependency is not None:
+                reason = dependency.reason or str(diagnosis["reason"])
+                if marker_note:
+                    reason = f"{reason}; {marker_note}"
+                return PRLifecycle(
+                    **base_kwargs,
+                    state=LifecycleState.WAITING_EXTERNAL_DEPENDENCY,
+                    state_label=STATE_LABELS[LifecycleState.WAITING_EXTERNAL_DEPENDENCY],
+                    review_class=review_class,
+                    review_verdict=verdict,
+                    reviewed_head=reviewed_head,
+                    active_leases=lease_payload,
+                    local_work=local_payload,
+                    gate=diagnosis,
+                    external_dependency=dependency.json(),
+                    residual_reason=reason,
+                    human_action=external_dependency_human_action(dependency),
                 )
-                if dependency is not None:
-                    reason = dependency.reason or str(exc)
-                    if marker_note:
-                        reason = f"{reason}; {marker_note}"
-                    return PRLifecycle(
-                        **base_kwargs,
-                        state=LifecycleState.WAITING_EXTERNAL_DEPENDENCY,
-                        state_label=STATE_LABELS[LifecycleState.WAITING_EXTERNAL_DEPENDENCY],
-                        review_class=review_class,
-                        review_verdict=verdict,
-                        reviewed_head=reviewed_head,
-                        active_leases=lease_payload,
-                        local_work=local_payload,
-                        external_dependency=dependency.json(),
-                        residual_reason=reason,
-                        human_action=external_dependency_human_action(dependency),
-                    )
-            residual = str(exc)
+            residual = (
+                "exact-head required ordinary CI failed; failure remains owned by this PR "
+                "and returns to Implementation/fix"
+            )
             if marker_note:
                 residual = f"{residual}; {marker_note}"
             return PRLifecycle(
                 **base_kwargs,
-                state=LifecycleState.WAITING_CI,
-                state_label=STATE_LABELS[LifecycleState.WAITING_CI],
+                state=LifecycleState.CHANGES_REQUESTED,
+                state_label=STATE_LABELS[LifecycleState.CHANGES_REQUESTED],
                 review_class=review_class,
                 review_verdict=verdict,
                 reviewed_head=reviewed_head,
                 active_leases=lease_payload,
                 local_work=local_payload,
+                gate=diagnosis,
                 residual_reason=residual,
             )
-        except LifecycleError as exc:
+
+        if diagnosis_state == pr_gate.GateDiagnosis.HEAD_MOVED.value:
             return PRLifecycle(
                 **base_kwargs,
-                state=LifecycleState.WAITING_CI,
-                state_label=STATE_LABELS[LifecycleState.WAITING_CI],
+                state=LifecycleState.REVIEW_READY,
+                state_label=STATE_LABELS[LifecycleState.REVIEW_READY],
+                review_class=review_class,
+                active_leases=lease_payload,
+                local_work=local_payload,
+                gate=diagnosis,
+                residual_reason=str(diagnosis["reason"]),
+            )
+
+        if diagnosis_state in {
+            pr_gate.GateDiagnosis.EVIDENCE_MISSING_OR_STALE.value,
+            pr_gate.GateDiagnosis.INFRASTRUCTURE_ERROR.value,
+        }:
+            return PRLifecycle(
+                **base_kwargs,
+                state=LifecycleState.REVIEW_PASSED,
+                state_label=STATE_LABELS[LifecycleState.REVIEW_PASSED],
                 review_class=review_class,
                 review_verdict=verdict,
                 reviewed_head=reviewed_head,
                 active_leases=lease_payload,
                 local_work=local_payload,
-                residual_reason=str(exc),
+                gate=diagnosis,
+                residual_reason=f"Integration evidence unavailable/stale: {diagnosis['reason']}",
             )
+
+        gate = pr_gate.evaluate_integration_gate(
+            current,
+            reviewed_head=reviewed_head,
+            combined_status=combined,
+            workflow_runs=runs,
+        )
 
         integration_leases = active_by_phase.get("integration", [])
         if integration_leases:

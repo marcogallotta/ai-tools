@@ -277,14 +277,6 @@ def test_agent_prose_or_stale_review_never_advances_to_merged():
     assert engine(gh, authority=True).inspect(gh.pr).state == pr_lifecycle.LifecycleState.REVIEW_READY
 
 
-def test_missing_ci_after_merge_review_waits_instead_of_reporting_integration_ready():
-    gh = FakeGitHub()
-    gh.reviews = [review()]
-    gh.combined_status = {"sha": HEAD, "statuses": []}
-    state = engine(gh, authority=True).inspect(gh.pr)
-    assert state.state == pr_lifecycle.LifecycleState.WAITING_CI
-    assert "required ordinary CI status" in state.residual_reason
-
 
 def test_green_gates_without_integration_authority_exposes_exact_residual_boundary():
     gh = FakeGitHub()

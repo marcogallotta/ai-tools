@@ -22,6 +22,32 @@ HEAD = base.HEAD
 NEW_HEAD = base.NEW_HEAD
 
 
+class ExternalGitHub(base.FakeGitHub):
+    def __init__(self, candidate=None):
+        super().__init__(candidate)
+        self.other_prs = {}
+
+    def get_pr(self, number):
+        if number == self.pr["number"]:
+            return deepcopy(self.pr)
+        if number in self.other_prs:
+            return deepcopy(self.other_prs[number])
+        raise pr_lifecycle.LifecycleError(f"PR #{number} unavailable")
+
+
+def external_dependency_comment():
+    return {
+        "id": 80,
+        "body": (
+            f"<!-- dish-external-dependency:v1 action=blocked task=1217449623846547 pr=77 "
+            f"check=Dish%20%2F%20required%20ordinary%20CI main={'d' * 40} "
+            "evidence=task%3A1217449623846547 reason=baseline%20failure -->"
+        ),
+        "created_at": base.NOW.isoformat(),
+        "updated_at": base.NOW.isoformat(),
+    }
+
+
 class FakeFixer:
     def __init__(self, gh):
         self.command = "fake-fixer"
@@ -125,3 +151,54 @@ def test_head_movement_invalidates_old_block_and_fix_route():
     assert not [lease for lease in result.active_leases if lease["phase"] == "fix"]
     assert len(workspace.calls) == 1
     assert workspace.calls[0]["head"] == NEW_HEAD
+
+
+def test_pr_owned_exact_head_ci_failure_dispatches_fix_without_rewriting_review_verdict():
+    gh = base.FakeGitHub()
+    gh.reviews = [base.review(verdict="MERGE")]
+    gh.workflow_runs = base.runs(conclusion="failure")
+    fixer = FakeFixer(gh)
+    lifecycle = base.engine(gh)
+
+    initial = lifecycle.inspect(gh.pr)
+    assert initial.state == pr_lifecycle.LifecycleState.CHANGES_REQUESTED
+    assert initial.review_verdict == "MERGE"
+    assert initial.gate["diagnosis"] == pr_lifecycle.pr_gate.GateDiagnosis.FAILED_REQUIRED_CI.value
+
+    result = lifecycle.dispatch_one(
+        initial,
+        workspace=None,
+        local_reviewer=None,
+        implementation_fixer=fixer,
+    )
+
+    assert len(fixer.calls) == 1
+    context = fixer.calls[0]
+    assert context["formal_block_review"] is None
+    assert context["pr_owned_ci_failure"]["diagnosis"] == "FAILED_REQUIRED_CI"
+    assert result.state == pr_lifecycle.LifecycleState.CHANGES_REQUESTED
+    assert any(lease["phase"] == "fix" for lease in result.active_leases)
+
+
+def test_external_exact_head_ci_failure_never_dispatches_blocked_pr_fixer():
+    gh = ExternalGitHub()
+    gh.reviews = [base.review(verdict="MERGE")]
+    gh.workflow_runs = base.runs(conclusion="failure")
+    owner = base.pr()
+    owner["number"] = 77
+    gh.other_prs[77] = owner
+    gh.comments = [external_dependency_comment()]
+    fixer = FakeFixer(gh)
+    lifecycle = base.engine(gh)
+
+    initial = lifecycle.inspect(gh.pr)
+    assert initial.state == pr_lifecycle.LifecycleState.WAITING_EXTERNAL_DEPENDENCY
+    result = lifecycle.dispatch_one(
+        initial,
+        workspace=None,
+        local_reviewer=None,
+        implementation_fixer=fixer,
+    )
+
+    assert result.state == pr_lifecycle.LifecycleState.WAITING_EXTERNAL_DEPENDENCY
+    assert fixer.calls == []

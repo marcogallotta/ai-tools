@@ -44,7 +44,9 @@ The JSON schema is `dish-pr-lifecycle-status-v1`. The state engine distinguishes
 - `merged`;
 - `closed_superseded`.
 
-`VERDICT: MERGE` is not terminal. It starts gate evaluation.
+`VERDICT: MERGE` is not terminal. It starts Integration gate evaluation. Ordinary Review does not wait for ordinary CI and does not require a pre-review sync to moved `main` unless that movement creates a known semantic dependency that invalidates the review question.
+
+`scripts/pr_gate.py` diagnoses the exact reviewed head as `PASS`, `PENDING`, `FAILED_REQUIRED_CI`, `EVIDENCE_MISSING_OR_STALE`, `HEAD_MOVED`, or (for transport/read failures distinguished by the lifecycle adapter) `INFRASTRUCTURE_ERROR`. Only `PENDING` is `WAITING CI / CERTIFICATION`. Missing/stale evidence remains fail-closed while accurately staying in gate evaluation; it is not described as CI still running. Failed required CI is either PR-owned and returned to Implementation/fix, or externally owned only when a valid durable external-dependency record proves that ownership.
 
 ## Structured advisory leases
 
@@ -99,13 +101,13 @@ If the required token or published trigger is unavailable, the dispatcher report
 
 ## BLOCK -> implementation/fix routing
 
-A formal exact-head `VERDICT: BLOCK` is not only a status classification. `dispatch` routes it to the configured existing implementation/fix consumer. Configure that consumer with:
+A formal exact-head `VERDICT: BLOCK` is not only a status classification. A `FAILED_REQUIRED_CI` diagnosis without a valid active external-dependency record is also PR-owned implementation/fix work even when the exact-head semantic Review verdict remains `MERGE`. `dispatch` routes either condition to the configured existing implementation/fix consumer. Configure that consumer with:
 
 ```sh
 DISH_IMPLEMENTATION_FIX_COMMAND='<existing implementation/fix launcher>'
 ```
 
-or `--implementation-fixer`. The command receives `dish-pr-fix-dispatch-v1` JSON on standard input containing the exact PR URL/number, branch, blocked head SHA, owning task IDs, the authoritative formal BLOCK review, and the current lifecycle snapshot. The consumer must follow `dish/docs/agents/implementation.md`, update the existing PR branch, and re-read GitHub before semantic work.
+or `--implementation-fixer`. The command receives `dish-pr-fix-dispatch-v1` JSON on standard input containing the exact PR URL/number, branch, blocked head SHA, owning task IDs, the current lifecycle snapshot, and either the authoritative formal BLOCK review or the structured PR-owned CI diagnosis. The consumer must follow `dish/docs/agents/implementation.md`, update the existing PR branch, and re-read GitHub before semantic work. A CI-driven semantic fix changes head identity and therefore requires substantive Review on the new head.
 
 Before launching the consumer, the dispatcher writes an exact-head `phase=fix` lease. A fresh `phase=fix` or `phase=implementation` lease on the current blocked head prevents duplicate dispatch. A head move immediately invalidates the old review and lease; the dispatcher never launches a fix consumer for a BLOCK that is no longer on the current head. If the configured command fails synchronously, the dispatcher releases its lease so recovery is not deadlocked.
 
