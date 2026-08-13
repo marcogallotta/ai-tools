@@ -51,9 +51,9 @@ A runner is therefore part of the trusted eval boundary: it must instrument the 
 
 ## Acceptance and rollout policy
 
-The repository keeps the complete approved matrix — 29 scenarios / 34 role-expanded cases — as deterministic harness coverage. `prepare-eval` emits all 34 cases, and action-bearing cases keep their machine-verifiable observation requirements.
+The repository keeps the complete approved matrix — 32 scenarios / 37 role-expanded cases — as deterministic harness coverage. `prepare-eval` emits all 37 cases, and action-bearing cases keep their machine-verifiable observation requirements.
 
-The **complete live 34-case run is an automated/periodic regression target, not a mandatory manual merge gate**. Absence of an authorized fresh-Project runner or full live result bundle does not by itself make a repository change unreviewable or require manual recreation of the matrix.
+The **complete live 37-case run is an automated/periodic regression target, not a mandatory manual merge gate**. Absence of an authorized fresh-Project runner or full live result bundle does not by itself make a repository change unreviewable or require manual recreation of the matrix.
 
 Repository changes land on governed repository evidence and exact-head review requirements. When an automated live runner is available, use the full matrix for periodic regression and record failures as concrete follow-up defects.
 

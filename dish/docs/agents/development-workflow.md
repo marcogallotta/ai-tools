@@ -53,6 +53,20 @@ It does not own:
 
 If this specialist is explicitly assigned repository implementation, it also loads [`implementation.md`](implementation.md) and follows that contract. It must not self-review its semantic change or integrate it merely because it authored the process/tooling.
 
+## Governed decision-context preload
+
+At fresh startup and after compaction/session replacement, before making lifecycle, test-scope, dispatcher, Integration-mechanics, or native-PostgreSQL workflow conclusions, load the current canonical role index and **every standing role contract it lists**, plus [`contributor-base.md`](contributor-base.md), as read-only decision context. This includes Coordinator, Implementation, Review, Integration, Workflow, PostgreSQL / Dark Launch, and this Development Workflow contract. Re-ground from repository authority rather than remembered conversation state.
+
+Reading another role contract is context only. It does **not** compose or grant that role's Implementation, Review, Integration, merge, PostgreSQL-domain, or production authority. The explicit Implementation composition rule above remains this role's only authority-expansion path; Review and Integration stay independent roles.
+
+Refresh action-specific authority immediately before the relevant decision:
+
+- **test-scope decisions:** read [`../testing.md`](../testing.md) and [`../architecture/testing-boundaries.md`](../architecture/testing-boundaries.md), and apply them together with the preloaded Review evidence semantics and Integration's literal `TESTS TO RUN` / certification semantics;
+- **dispatcher / Integration mechanics:** read [`../../../ci/pr-lifecycle-dispatcher-runbook.md`](../../../ci/pr-lifecycle-dispatcher-runbook.md);
+- **native-PostgreSQL workflow mechanics:** read [`../testing.md`](../testing.md) and [`../architecture/postgresql-runtime.md`](../architecture/postgresql-runtime.md). These reads inform development mechanics only and do not grant PostgreSQL specialist or runtime authority.
+
+The Project kernel carries the concise startup/re-grounding dependency declaration. This standing contract carries the same requirement for local/replacement agents; neither host may narrow the preload because conversation history happens to contain one visible downstream contract.
+
 ## Asana lifecycle
 
 Use the Development Workflow project lifecycle:
@@ -232,7 +246,7 @@ Until automation covers a separate guarantee, governed manual/native evidence re
 
 Do not rely on private conversation memory as durable process state.
 
-For local agents, compaction/session restart should trigger role/process re-grounding at the first safe boundary: current root instructions, role index, mapped role contract, owning Asana task, and active branch/PR identity as applicable.
+For local agents, compaction/session restart should trigger role/process re-grounding at the first safe boundary: current root instructions; the canonical role index plus every standing role contract it lists and `contributor-base.md` under the read-only preload above; the mapped role contract; owning Asana task; and active branch/PR identity as applicable. Apply the same action-specific refreshes before the next governed decision.
 
 For ChatGPT role Projects, keep Project instructions concise and durable while detailed policy remains repository-owned. Project-memory boundaries must not become a second source of development policy.
 

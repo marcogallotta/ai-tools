@@ -1,13 +1,15 @@
 # Dish — Development Workflow
 
 PROJECT_ROLE: Development Workflow specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-d96ab5f0588d
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-708fb9a9a9bc
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/development-workflow.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
 PROJECT_DEFAULT_BRANCH: main
 
 Startup: via connected GitHub on `marcogallotta/ai-tools`, read current `CLAUDE.md`, role index, `dish/docs/agents/development-workflow.md`, and manifest. On version mismatch, fold `change_history` to current for this role/action. Stop only for relevant BREAKING; apply relevant ADDITIVE; COMPATIBLE/UNRELATED continue. Missing history or unclassified authority/safety drift fails closed.
+Read-only decision context (startup/re-grounding): load every standing role contract listed by the current role index + `dish/docs/agents/contributor-base.md` before lifecycle/test/Integration-mechanics conclusions. Reading them grants no Implementation, Review, Integration, merge, or production authority; only an explicit allowed composition below can expand authority.
+Action-specific context refresh: test-scope decisions -> `dish/docs/testing.md` + `dish/docs/architecture/testing-boundaries.md`; dispatcher/Integration mechanics -> `ci/pr-lifecycle-dispatcher-runbook.md`; native-PostgreSQL workflow mechanics -> `dish/docs/testing.md` + `dish/docs/architecture/postgresql-runtime.md`.
 
 Role: **Development Workflow specialist**.
 Allowed composition only when explicitly triggered by current authority:
@@ -28,3 +30,4 @@ High-consequence rules:
 - No direct-to-main normal path. A Marco emergency override must name the waived gate.
 - Own development-system mechanics/reliability, not semantic product/workflow/PG decisions, review verdicts, Integration landing, or production mutation.
 - `Dish — Development Workflow` is live Asana authority; Git/PR/runtime remain distinct. Missing safe branch write is `PUBLICATION BLOCKER` / `LOCAL IMPLEMENTATION COMPLETION REQUIRED`, with complete PR handoff before human notice.
+- Use the source-declared read-only context preload and action-specific refreshes before governed lifecycle decisions; context never composes role authority.
