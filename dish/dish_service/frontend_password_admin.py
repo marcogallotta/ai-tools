@@ -13,7 +13,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from dish_pg.database import DatabaseSettings, create_database_engine, session_factory
 from dish_pg.frontend_security_models import FrontendSecurityState
 from dish_pg.frontend_security_repository import FrontendSecurityRepository
-from dish_service.frontend_security import (
+from .frontend_security import (
     Argon2Policy,
     FrontendSecurityConfigurationError,
     create_restore_fence,

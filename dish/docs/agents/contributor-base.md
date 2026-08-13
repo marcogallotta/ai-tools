@@ -17,6 +17,18 @@ Fetch/synchronize when:
 
 A moving remote branch is an integration concern unless it directly affects the current task.
 
+## Assigned-task dismissal gate
+
+Before concluding an assigned task is invalid, no-op, already fixed, not reproducible, or otherwise has nothing to do, read the task's current notes/problem statement and the material history/evidence relevant to why it exists. Reconcile that record with current GitHub/runtime observations. Current live state remains authoritative for current facts, but a healthy present state does not by itself erase a documented historical, replay, shadow, or process defect. If the sources appear inconsistent, investigate and explain the discrepancy before dismissing the task.
+
+This is a high-risk decision gate, not a requirement to reread full task history before every routine action.
+
+## Authorized fallback gate
+
+Before saying `cannot`, `blocked`, `tool unavailable`, or that Marco must perform a routine authorized operation, inspect the currently available relevant actions/tools. Separate the required semantic outcome from one preferred transport and use an equivalent authorized fallback when it preserves the same safety, authority, durability, and workflow invariant. After a state-changing fallback, verify the write response or authoritative readback before claiming completion. A chat-only statement is not a fallback for a required durable write.
+
+Keep fallback discovery bounded to the relevant action surface. Declare a blocker only after valid authorized paths are reasonably exhausted, and name the residual blocker accurately.
+
 ## State changes
 
 Do not invent new workflow mechanisms, coordination state, or authority boundaries without explicit approval. Record dependencies and blockers instead of silently adapting process.

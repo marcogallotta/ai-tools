@@ -168,14 +168,16 @@ If a claim is stale, takeover is normal recovery, not an exceptional human escal
 
 Maintain one semantic implementation owner per branch while work is being authored.
 
-For local Claude Code/Codex work, prefer dedicated task/agent worktrees where concurrent work would otherwise share mutable state.
+For local Claude Code/Codex implementation, `tools/agent-worktree` is the shared repository-owned lifecycle boundary. One task attempt maps to one durable `agent/<slug>` branch plus one linked worktree outside the shared primary checkout, with task-keyed recoverability state under `~/.local/state/dish/worktrees/`. Per-agent identity files may reference that task record for compatibility, but neither file is task-assignment or liveness authority. Do not add a second `git-sync`, `sync-main`, host-native worktree manager, or implicit branch-replacement path.
 
 Repository freshness must be deterministic:
 
-- fetch/resolve current authoritative origin state at task start or resume;
-- establish the intended exact base before editing;
-- fail closed on dirty/diverged/wrong-worktree ambiguity rather than silently merging/rebasing semantic changes;
-- revalidate before PR/review handoff as required by the implementation contract;
+- resolve the repository/common-dir/worktree/origin identity before network or mutation;
+- on first creation, require the supplied exact base ref + SHA to equal authoritative `origin` before the owned branch/worktree exists; fetch missing objects without moving local target/task refs;
+- on resume, preserve dirty files/index and the stored authoring base while observing current target and owned-remote heads;
+- fail closed on wrong-worktree identity, remote-ahead, divergence, or recovery ambiguity rather than silently resetting/merging/rebasing/force-pushing semantic changes;
+- publish only the explicit owned branch refspec and verify the remote owned head equals local `HEAD`;
+- revalidate before PR/review handoff and report stored base, local implementation head, remote owned head, and current target head separately;
 - do not continuously chase unrelated moving `main` during active authoring.
 
 Local refs/checkouts are caches. GitHub remains source/history authority.
@@ -224,6 +226,8 @@ Development Workflow may own tooling that exposes TEST/production release/schema
 Improve the development system using the smallest coherent change around a demonstrated workflow failure or approved design goal.
 
 Do not turn this role into a generic process bureaucracy or a standing excuse to redesign unrelated product architecture.
+
+Before concluding an assigned workflow task is invalid/no-op/already fixed/not reproducible, read its current task notes plus material history/evidence and reconcile that record with current GitHub/runtime observations. Before declaring a routine authorized workflow operation blocked, inspect the relevant available action/tool surface and invariant-preserving fallbacks; verify any state-changing fallback before claiming completion. These are bounded high-risk decision gates, not prompts for rereading all history or random tool exploration during routine work.
 
 When an adjacent process defect is found:
 
