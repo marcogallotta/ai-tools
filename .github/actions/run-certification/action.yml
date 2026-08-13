@@ -1,0 +1,130 @@
+name: Run selected Integration certification groups
+description: Conditionally prepare and execute selected exact-head certification groups in one hosted job.
+inputs:
+  execution-spec:
+    description: Path to dish-certification-execution-spec-v1 JSON in the checkout.
+    required: true
+  github-token:
+    description: Token with read access to the canonical Python dependency Release when Python setup is selected.
+    required: false
+    default: ''
+  run-id:
+    description: Actions run ID recorded in combined certification evidence.
+    required: true
+  run-attempt:
+    description: Actions run attempt recorded in combined certification evidence.
+    required: true
+  evidence-path:
+    description: Output path for dish-integration-certification-v1 evidence.
+    required: false
+    default: .test-artifacts/integration-certification/evidence.json
+runs:
+  using: composite
+  steps:
+    - name: Derive selected runtime requirements
+      id: runtime
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 scripts/integration_certification.py requirements \
+          --spec "${{ inputs.execution-spec }}" \
+          --github-output "$GITHUB_OUTPUT"
+
+    - name: Resolve canonical Python version
+      id: python-bundle
+      if: steps.runtime.outputs.python == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 scripts/dependency_bundle.py expected \
+          --repo-root "$GITHUB_WORKSPACE" \
+          --github-output "$GITHUB_OUTPUT"
+
+    - name: Setup Python only when selected groups require it
+      if: steps.runtime.outputs.python == 'true'
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ steps.python-bundle.outputs.python_version }}
+
+    - name: Require dependency-bundle token only for Python groups
+      if: steps.runtime.outputs.python == 'true'
+      shell: bash
+      env:
+        CERTIFICATION_GITHUB_TOKEN: ${{ inputs.github-token }}
+      run: |
+        set -euo pipefail
+        test -n "$CERTIFICATION_GITHUB_TOKEN" || {
+          echo "github-token is required when selected groups need Python dependencies" >&2
+          exit 2
+        }
+
+    - name: Recreate Python environments only when selected
+      if: steps.runtime.outputs.python == 'true'
+      uses: ./.github/actions/setup-python-bundle
+      with:
+        github-token: ${{ inputs.github-token }}
+
+    - name: Setup Node only when selected groups require it
+      if: steps.runtime.outputs.node == 'true'
+      uses: actions/setup-node@v6
+      with:
+        node-version: '22'
+
+    - name: Start isolated PostgreSQL only when selected
+      if: steps.runtime.outputs.postgresql == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        container="dish-certification-pg-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+        docker rm -f "$container" >/dev/null 2>&1 || true
+        docker run -d --rm \
+          --name "$container" \
+          -e POSTGRES_DB=dish_ai_tools_ci_test \
+          -e POSTGRES_USER=ai_tools_ci \
+          -e POSTGRES_PASSWORD=ci-only-password \
+          -p 5432:5432 \
+          postgres:17.10 >/dev/null
+        echo "CERTIFICATION_POSTGRES_CONTAINER=$container" >> "$GITHUB_ENV"
+        ready=false
+        for _ in $(seq 1 30); do
+          if docker exec "$container" pg_isready -U ai_tools_ci -d dish_ai_tools_ci_test >/dev/null 2>&1; then
+            ready=true
+            break
+          fi
+          sleep 2
+        done
+        test "$ready" = true || {
+          docker logs "$container" >&2 || true
+          exit 1
+        }
+        echo "DISH_TEST_POSTGRESQL_DSN=postgresql+psycopg://ai_tools_ci:ci-only-password@127.0.0.1:5432/dish_ai_tools_ci_test" >> "$GITHUB_ENV"
+
+    - name: Install Chromium only when browser acceptance is selected
+      if: steps.runtime.outputs.chromium == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p .test-artifacts/integration-certification/setup
+        dish/.venv/bin/python -m playwright install --with-deps chromium \
+          2>&1 | tee .test-artifacts/integration-certification/setup/chromium.log
+
+    - name: Execute selected groups with fail-fast Integration semantics
+      id: certification
+      shell: bash
+      run: |
+        set -o pipefail
+        python3 scripts/integration_certification.py run \
+          --spec "${{ inputs.execution-spec }}" \
+          --run-id "${{ inputs.run-id }}" \
+          --run-attempt "${{ inputs.run-attempt }}" \
+          --repo-root "$GITHUB_WORKSPACE" \
+          --evidence "${{ inputs.evidence-path }}"
+
+    - name: Stop dynamic PostgreSQL
+      if: always() && steps.runtime.outputs.postgresql == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [[ -n "${CERTIFICATION_POSTGRES_CONTAINER:-}" ]]; then
+          docker rm -f "$CERTIFICATION_POSTGRES_CONTAINER" >/dev/null 2>&1 || true
+        fi
