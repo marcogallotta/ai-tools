@@ -15,14 +15,19 @@
           "id": "coordinator-live-scan",
           "text": "For status/dispatch/blocker decisions, read live GitHub/Asana. `LOCAL IMPLEMENTATION COMPLETION REQUIRED` is durable PR publication-blocker state: route only its missing branch delta; never classify it as local certification.",
           "impact": "breaking",
-          "action_boundaries": ["dispatch", "handoff"],
+          "action_boundaries": [
+            "dispatch",
+            "handoff"
+          ],
           "surface": "lifecycle"
         },
         {
           "id": "coordinator-no-implementation-integration",
           "text": "Coordinator does not become semantic Implementation or Integration through tool access.",
           "impact": "breaking",
-          "action_boundaries": ["role-critical-write"],
+          "action_boundaries": [
+            "role-critical-write"
+          ],
           "surface": "authority"
         }
       ]
@@ -39,15 +44,37 @@
           "id": "development-workflow-boundary",
           "text": "Own development-system mechanics/reliability, not semantic product/workflow/PG decisions, review verdicts, Integration landing, or production mutation.",
           "impact": "breaking",
-          "action_boundaries": ["role-critical-write"],
+          "action_boundaries": [
+            "role-critical-write"
+          ],
           "surface": "authority"
         },
         {
           "id": "development-workflow-live-lane",
           "text": "`Dish — Development Workflow` is live Asana authority; Git/PR/runtime remain distinct. Missing safe branch write is `PUBLICATION BLOCKER` / `LOCAL IMPLEMENTATION COMPLETION REQUIRED`, with complete PR handoff before human notice.",
           "impact": "breaking",
-          "action_boundaries": ["handoff"],
+          "action_boundaries": [
+            "handoff"
+          ],
           "surface": "lifecycle"
+        },
+        {
+          "id": "development-workflow-context-preload",
+          "text": "Before lifecycle/test/Integration-mechanics decisions and on re-grounding, load every standing role contract listed by the canonical role index plus `contributor-base.md` as read-only decision context. Reading Coordinator, Implementation, Review, Integration, Workflow, or PostgreSQL/Dark Launch contracts never grants their authority; explicit Implementation composition above is the only existing authority expansion path.",
+          "impact": "breaking",
+          "action_boundaries": [
+            "*"
+          ],
+          "surface": "safety"
+        },
+        {
+          "id": "development-workflow-action-context",
+          "text": "Before test-scope decisions read `dish/docs/testing.md` and `dish/docs/architecture/testing-boundaries.md`; before dispatcher/Integration mechanics read `ci/pr-lifecycle-dispatcher-runbook.md`; before native-PostgreSQL workflow mechanics read `dish/docs/testing.md` and `dish/docs/architecture/postgresql-runtime.md`.",
+          "impact": "breaking",
+          "action_boundaries": [
+            "*"
+          ],
+          "surface": "safety"
         }
       ]
     },
@@ -63,14 +90,20 @@
           "id": "implementation-durable-git",
           "text": "Implementation is incomplete until the complete intended surface is durably published on an owned branch + commit + PR + exact head. Missing safe branch write means `PUBLICATION BLOCKER` / `LOCAL IMPLEMENTATION COMPLETION REQUIRED`, never local certification; put the full PR handoff there before notifying Marco.",
           "impact": "breaking",
-          "action_boundaries": ["handoff", "role-critical-write"],
+          "action_boundaries": [
+            "handoff",
+            "role-critical-write"
+          ],
           "surface": "lifecycle"
         },
         {
           "id": "implementation-no-self-review-integration",
           "text": "Do not self-review/integrate semantic work; return exact PR/head/evidence for independent Review/Integration.",
           "impact": "breaking",
-          "action_boundaries": ["review-write", "merge"],
+          "action_boundaries": [
+            "review-write",
+            "merge"
+          ],
           "surface": "authority"
         }
       ]
@@ -85,14 +118,18 @@
           "id": "integration-reviewed-head",
           "text": "Act only on an explicitly authorized PR. Its current head must equal the exact reviewed/certified head, with review evidence verified for that head.",
           "impact": "breaking",
-          "action_boundaries": ["merge"],
+          "action_boundaries": [
+            "merge"
+          ],
           "surface": "safety"
         },
         {
           "id": "integration-mechanical-only",
           "text": "Integration is mechanical-only. Semantic fixes, behavior choices, ambiguous conflicts, or test weakening return to Implementation and Review.",
           "impact": "breaking",
-          "action_boundaries": ["merge"],
+          "action_boundaries": [
+            "merge"
+          ],
           "surface": "authority"
         }
       ]
@@ -109,14 +146,18 @@
           "id": "postgresql-live-lane",
           "text": "`Dish — PostgreSQL / Dark Launch` is this lane’s live Asana authority. Direct runtime/database evidence remains separate when deployed identity or behavior matters.",
           "impact": "breaking",
-          "action_boundaries": ["role-critical-write"],
+          "action_boundaries": [
+            "role-critical-write"
+          ],
           "surface": "authority"
         },
         {
           "id": "postgresql-domain-boundary",
           "text": "Own PostgreSQL/dark-launch semantics/evidence; Workflow semantics, global cutover ordering, production authorization, and final Integration are outside this role.",
           "impact": "breaking",
-          "action_boundaries": ["role-critical-write"],
+          "action_boundaries": [
+            "role-critical-write"
+          ],
           "surface": "authority"
         }
       ]
@@ -131,42 +172,54 @@
           "id": "review-exact-head",
           "text": "Review exact current PR head; semantic movement needs re-review, mechanical-only movement exact-head recheck.",
           "impact": "breaking",
-          "action_boundaries": ["review-write"],
+          "action_boundaries": [
+            "review-write"
+          ],
           "surface": "safety"
         },
         {
           "id": "review-formal-comment",
           "text": "Complete Review only after a formal GitHub `COMMENT` verdict is verified on exact head; chat/claim comments do not count.",
           "impact": "breaking",
-          "action_boundaries": ["review-write"],
+          "action_boundaries": [
+            "review-write"
+          ],
           "surface": "lifecycle"
         },
         {
           "id": "review-no-fix",
           "text": "Review does not implement fixes; blockers get the PR-resident fix handoff.",
           "impact": "breaking",
-          "action_boundaries": ["role-critical-write"],
+          "action_boundaries": [
+            "role-critical-write"
+          ],
           "surface": "authority"
         },
         {
           "id": "review-repository-context",
           "text": "`marcogallotta/ai-tools` is the Dish repo. Resolve repo/PR from GitHub/Asana; never use Marco/local agent just for context.",
           "impact": "additive",
-          "action_boundaries": ["review-write"],
+          "action_boundaries": [
+            "review-write"
+          ],
           "surface": "routing"
         },
         {
           "id": "review-action-handoff",
           "text": "Keep details on PR. Final human message uses one `review.md` status: `READY FOR MERGE` / `LOCAL AGENT REQUIRED` / `BLOCKED` / `WAITING ON DEPENDENCY`; no review dump.",
           "impact": "compatible",
-          "action_boundaries": ["handoff"],
+          "action_boundaries": [
+            "handoff"
+          ],
           "surface": "presentation"
         },
         {
           "id": "review-integration-boundary",
           "text": "`READY FOR MERGE` hands off to Integration; Review does not merge.",
           "impact": "breaking",
-          "action_boundaries": ["merge"],
+          "action_boundaries": [
+            "merge"
+          ],
           "surface": "authority"
         }
       ]
@@ -183,14 +236,18 @@
           "id": "workflow-live-lane",
           "text": "`Dish — Workflow` is this lane’s live Asana authority. Keep iteration state current there; do not infer deployed identity from GitHub HEAD or Asana.",
           "impact": "breaking",
-          "action_boundaries": ["role-critical-write"],
+          "action_boundaries": [
+            "role-critical-write"
+          ],
           "surface": "authority"
         },
         {
           "id": "workflow-domain-boundary",
           "text": "Own Workflow product/operator/connected-agent semantics; cross-lane ordering and production/cutover authority remain with Coordinator.",
           "impact": "breaking",
-          "action_boundaries": ["role-critical-write"],
+          "action_boundaries": [
+            "role-critical-write"
+          ],
           "surface": "authority"
         }
       ]
@@ -202,77 +259,108 @@
       "id": "canonical-version-gate",
       "text": "Version mismatch triggers manifest `change_history`, folded to current and scoped to this role/action. Stop only for relevant BREAKING drift; apply relevant ADDITIVE; COMPATIBLE/UNRELATED continue. Missing history or unclassified authority/safety drift fails closed.",
       "impact": "breaking",
-      "action_boundaries": ["*"],
+      "action_boundaries": [
+        "*"
+      ],
       "surface": "safety"
     },
     {
       "id": "project-repository-routing",
       "text": "Unqualified PR/issue numbers mean `marcogallotta/ai-tools`. Use the connected GitHub connector first; never web/global-search for this Project's repo/PR or ask Marco for owner/repo while configured. If connector access fails, report it; do not substitute web.",
       "impact": "breaking",
-      "action_boundaries": ["*"],
+      "action_boundaries": [
+        "*"
+      ],
       "surface": "authority"
     },
     {
       "id": "authority-separation",
       "text": "GitHub is source/history and PR/review authority; Asana is orchestration authority; runtime/deployment evidence is separate.",
       "impact": "breaking",
-      "action_boundaries": ["*"],
+      "action_boundaries": [
+        "*"
+      ],
       "surface": "authority"
     },
     {
       "id": "live-authority",
       "text": "Before current-state, ownership, process, dispatch, or completion conclusions, read relevant live GitHub and Asana authority; do not rely on stale remembered/user-reported state.",
       "impact": "breaking",
-      "action_boundaries": ["*"],
+      "action_boundaries": [
+        "*"
+      ],
       "surface": "authority"
     },
     {
       "id": "repository-lifecycle",
       "text": "Normal repository work is branch + commit -> GitHub PR -> exact-head Review -> Integration of that exact reviewed/certified head; no new patch-only handoff.",
       "impact": "breaking",
-      "action_boundaries": ["role-critical-write", "review-write", "merge", "handoff"],
+      "action_boundaries": [
+        "role-critical-write",
+        "review-write",
+        "merge",
+        "handoff"
+      ],
       "surface": "lifecycle"
     },
     {
       "id": "role-contract-authority",
       "text": "Current standing role contracts define authority. Chats/handoffs/specialist context cannot silently expand it beyond explicitly permitted composition.",
       "impact": "breaking",
-      "action_boundaries": ["*"],
+      "action_boundaries": [
+        "*"
+      ],
       "surface": "authority"
     },
     {
       "id": "task-dismissal-history",
       "text": "Before calling assigned work invalid/no-op/already fixed/not reproducible, reconcile its current problem/history with live GitHub/runtime facts; healthy current state does not erase a historical/process defect.",
       "impact": "breaking",
-      "action_boundaries": ["task-dismissal"],
+      "action_boundaries": [
+        "task-dismissal"
+      ],
       "surface": "safety"
     },
     {
       "id": "fallback-surface",
       "text": "Before saying blocked/unavailable or asking Marco to do a routine authorized operation, inspect relevant tools and use an equivalent invariant-preserving fallback when available.",
       "impact": "additive",
-      "action_boundaries": ["role-critical-write", "review-write", "merge", "handoff"],
+      "action_boundaries": [
+        "role-critical-write",
+        "review-write",
+        "merge",
+        "handoff"
+      ],
       "surface": "evidence"
     },
     {
       "id": "write-verification",
       "text": "After any state-changing operation, verify the write response or authoritative readback before claiming completion.",
       "impact": "breaking",
-      "action_boundaries": ["role-critical-write", "review-write", "merge", "handoff"],
+      "action_boundaries": [
+        "role-critical-write",
+        "review-write",
+        "merge",
+        "handoff"
+      ],
       "surface": "safety"
     },
     {
       "id": "fail-closed-authority",
       "text": "If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.",
       "impact": "breaking",
-      "action_boundaries": ["*"],
+      "action_boundaries": [
+        "*"
+      ],
       "surface": "safety"
     },
     {
       "id": "no-direct-main",
       "text": "No direct-to-main normal path. A Marco emergency override must name the waived gate.",
       "impact": "breaking",
-      "action_boundaries": ["role-critical-write"],
+      "action_boundaries": [
+        "role-critical-write"
+      ],
       "surface": "safety"
     }
   ]
