@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/marcogallotta/ai-tools/ci/schemas/full-regression-evidence-v1.schema.json",
+  "title": "Dish full regression evidence v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "main_sha",
+    "run_id",
+    "run_attempt",
+    "event",
+    "started_at",
+    "completed_at",
+    "total_duration_seconds",
+    "estimated_billed_minutes",
+    "overall_result",
+    "lane_results",
+    "failures",
+    "triage"
+  ],
+  "properties": {
+    "schema": {"const": "dish-full-regression-v1"},
+    "main_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "previous_main_sha": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      ]
+    },
+    "commit_range": {"type": ["string", "null"]},
+    "run_id": {"type": "string", "minLength": 1},
+    "run_attempt": {"type": "string", "minLength": 1},
+    "event": {"enum": ["schedule", "workflow_dispatch"]},
+    "total_duration_seconds": {"type": "number", "minimum": 0},
+    "estimated_billed_minutes": {"type": "integer", "minimum": 1},
+    "overall_result": {"enum": ["passed", "failed"]},
+    "lane_results": {
+      "type": "object",
+      "required": [
+        "python-control-plane",
+        "frontend-static-tooling",
+        "native-postgresql",
+        "browser-acceptance"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "python-control-plane": {"$ref": "#/$defs/result"},
+        "frontend-static-tooling": {"$ref": "#/$defs/result"},
+        "native-postgresql": {"$ref": "#/$defs/result"},
+        "browser-acceptance": {"$ref": "#/$defs/result"}
+      }
+    },
+    "failures": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "schema",
+          "failure_id",
+          "kind",
+          "component",
+          "source",
+          "invariant",
+          "failure_kind"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "schema": {"const": "dish-full-regression-failure-v1"},
+          "failure_id": {"type": "string", "minLength": 1},
+          "kind": {"enum": ["lane", "phase"]},
+          "component": {"type": "string", "minLength": 1},
+          "source": {"type": "string", "minLength": 1},
+          "invariant": {"type": "string", "minLength": 1},
+          "failure_kind": {"type": "string", "minLength": 1},
+          "detail": {"type": ["string", "null"]}
+        }
+      }
+    },
+    "triage": {
+      "type": "object",
+      "required": ["classification_schema", "required_failure_ids", "complete"],
+      "properties": {
+        "classification_schema": {"const": "dish-full-regression-triage-v1"},
+        "required_failure_ids": {"type": "array", "items": {"type": "string"}},
+        "complete": {"type": "boolean"}
+      }
+    }
+  },
+  "$defs": {
+    "result": {
+      "type": "object",
+      "required": ["status", "duration_seconds", "exit_code", "failure_ids", "failure_kind"],
+      "properties": {
+        "status": {"enum": ["passed", "failed"]},
+        "duration_seconds": {"type": "number", "minimum": 0},
+        "exit_code": {"type": ["integer", "null"]},
+        "failure_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "failure_kind": {"type": ["string", "null"]}
+      }
+    }
+  }
+}
