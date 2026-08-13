@@ -38,25 +38,20 @@ handles agent identity separately (see root `CLAUDE.md`). Do not extend this mec
     "task_gid": "1234567890",
     "state_path": "/home/user/.local/state/dish/worktrees/1234567890.json",
     "worktree": "/home/user/.local/share/dish/worktrees/ai-tools/1234567890",
-    "branch": "agent/example-task"
+    "branch": "agent/example-task",
+    "claim_id": "<exclusive task claim UUID>",
+    "pr_number": 123
   }
 }
 ```
 
-`active_worktree` is optional compatibility/recovery metadata written by `tools/agent-worktree`; older records without it remain valid. The task-keyed worktree record is the local lifecycle record. Neither record is authoritative task assignment, and `active_worktree` must not be interpreted as a heartbeat or proof that its recorded agent is still running.
+`active_worktree` is optional compatibility/recovery metadata written by `tools/agent-worktree`; older records without it remain valid. The task-keyed worktree record is the local lifecycle record and now carries the exclusive local owner claim for its exact assignment. Neither file creates task assignment authority: the explicit implementation handoff and live orchestration/GitHub authority still decide which task/branch/PR lineage may be worked. `active_worktree` is not a heartbeat or proof that its recorded agent is still running.
 
-## Staleness: not yet solved
+## Staleness and owner recovery
 
-There is deliberately no `last_alive`/check-in field yet. A field that only updates when an agent
-remembers to rewrite it is not a real freshness signal, and filesystem mtime is no better — both
-are only as fresh as the last explicit write, and nothing currently writes one automatically mid
--session. Treat every record here as "true as of `assigned_at`," nothing more; do not infer whether
-the registering instance is still running from this file alone.
+There is deliberately no `last_alive`/check-in field. Filesystem mtime, silence, and advisory PR lease age are not reliable liveness signals and must not automatically revoke an owner. This avoids a timeout race that could authorize two agents at once.
 
-The planned real fix is a `PostToolUse` hook (supported by both Claude Code and Codex, configured
-per-host — `.claude` hooks vs `.codex/hooks.json`) that touches the file automatically on tool use,
-so staleness can eventually be judged from real activity instead of an unenforced promise. Not yet
-built. Until it is, do not document or rely on a check-in/refresh behavior that doesn't exist.
+`tools/agent-worktree` instead gives each newly acquired local task assignment an opaque `claim_id`. A second agent cannot resume, publish, verify, bind the PR, or enter that claimed worktree as the owner. When orchestration has explicitly established a handoff or that the prior owner is abandoned/stale, the replacement performs `resume --takeover --expected-claim <current-claim>`. The task lock serializes the compare-and-set; if the claim changed, recovery fails without changing ownership. Legacy task state without a claim is recoverable only through the explicit `legacy-unclaimed` sentinel. This is ownership fencing, not liveness detection.
 
 ## Where `agent_id` comes from, per host
 
