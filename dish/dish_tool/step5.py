@@ -218,6 +218,46 @@ def claim_prepared_stage_successor(
     return row
 
 
+def verifier_eligibility(
+    conn: sqlite3.Connection,
+    operation_id: str,
+    *,
+    run_id: str | None = None,
+) -> dict[str, Any]:
+    """Return task-wide verifier eligibility for one candidate run identity."""
+    op = conn.execute(
+        "SELECT task_gid FROM operations WHERE operation_id = ?", (operation_id,)
+    ).fetchone()
+    if op is None:
+        raise DishRuleError(
+            "NOT_FOUND", f"operation not found: {operation_id}",
+            rule="operation_not_found",
+        )
+    clean_run = str(run_id or "").strip() or None
+    prior = None
+    if clean_run is not None:
+        prior = conn.execute(
+            """SELECT role FROM operation_actor_facts
+                 WHERE task_gid = ? AND run_id = ?
+                   AND role IN ('constructor','material_editor')
+                 ORDER BY created_at, fact_id
+                 LIMIT 1""",
+            (op["task_gid"], clean_run),
+        ).fetchone()
+    return {
+        "run_id": clean_run,
+        "eligible": None if clean_run is None else prior is None,
+        "rule": (
+            "run_id_unavailable"
+            if clean_run is None
+            else "verifier_not_independent"
+            if prior is not None
+            else None
+        ),
+        "prior_role": None if prior is None else prior["role"],
+    }
+
+
 def verification_lineage(
     conn: sqlite3.Connection,
     operation_id: str,
@@ -246,22 +286,11 @@ def verification_lineage(
         (op["task_gid"],),
     ).fetchall()
     lineage = [{key: row[key] for key in row.keys()} for row in rows]
-    clean_run = str(current_run_id or "").strip() or None
-    conflict = None
-    if clean_run is not None:
-        conflict = next((row for row in rows if row["run_id"] == clean_run), None)
     return {
         "candidate_runs": lineage,
-        "current_run": {
-            "run_id": clean_run,
-            "eligible": None if clean_run is None else conflict is None,
-            "rule": (
-                "run_id_unavailable" if clean_run is None
-                else "verifier_not_independent" if conflict is not None
-                else None
-            ),
-            "prior_role": None if conflict is None else conflict["role"],
-        },
+        "current_run": verifier_eligibility(
+            conn, operation_id, run_id=current_run_id
+        ),
     }
 
 

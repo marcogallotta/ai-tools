@@ -26,7 +26,7 @@ from .lifecycle import assert_transition, ready, require_status
 from .releases import resolve_verification_protocol
 from .task_document import TaskState, parse_task_document, validate_task_document, finding_payload
 from .task_store import read_complete_task, write_exact_content
-from .step5 import verification_lineage
+from .step5 import verification_lineage, verifier_eligibility
 
 
 def _operation_and_cycle(
@@ -367,6 +367,15 @@ def verification_read(
     clean_attestation = validate_independence_attestation(independence_attestation)
     identity = VerifierIdentity(agent, run_id, clean_attestation)
     identity.validate(editor_agent=op["editor_agent"], researcher_agent=op["researcher_agent"], constructor_run_id=None)
+    eligibility = verifier_eligibility(conn, operation_id, run_id=run_id)
+    if eligibility["eligible"] is False:
+        raise DishRuleError(
+            "AGENT_MISMATCH",
+            "verifier run is already part of the candidate lineage",
+            rule="verifier_not_independent",
+            details={"prior_role": eligibility["prior_role"]},
+        )
+    # Preserve the existing operation-scoped verifier fence as a secondary guard.
     assert_fresh_verifier(conn, operation_id=operation_id, agent=agent, run_id=run_id, independence_attestation=clean_attestation)
     live = read_complete_task(backend, task_gid=op["task_gid"], project_gid=COOKING_PROJECT_GID)
     registry = SectionRegistry.from_sections(backend.list_sections(COOKING_PROJECT_GID))
