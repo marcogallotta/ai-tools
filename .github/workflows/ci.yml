@@ -89,6 +89,7 @@ jobs:
             ci/tests/test_dependency_bundle.py \
             ci/tests/test_repository_bundle.py \
             ci/tests/test_pr_gate.py \
+            ci/tests/test_ci_evidence_upload.py \
             --junitxml=.test-artifacts/python/bundles.xml \
             2>&1 | tee .test-artifacts/python/bundles.log
       - name: Validate governed Dish test-selection map
@@ -119,12 +120,10 @@ jobs:
             2>&1 | tee .test-artifacts/python/tools.log
       - name: Upload Python test evidence
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: ./.github/actions/upload-test-evidence
         with:
           name: python-tests-${{ env.CI_CANDIDATE_SHA }}
           path: .test-artifacts
-          include-hidden-files: true
-          if-no-files-found: warn
 
   frontend-tooling:
     name: Frontend and tooling
@@ -152,14 +151,12 @@ jobs:
             2>&1 | tee .test-artifacts/frontend-tooling/check-static.log
       - name: Upload frontend/tooling evidence
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: ./.github/actions/upload-test-evidence
         with:
           name: frontend-tooling-${{ env.CI_CANDIDATE_SHA }}
           path: |
             .test-artifacts
             dish/frontend/dist
-          include-hidden-files: true
-          if-no-files-found: warn
 
   native-postgresql:
     name: Native PostgreSQL
@@ -169,18 +166,18 @@ jobs:
       postgres:
         image: postgres:17.10
         env:
-          POSTGRES_DB: dish_ai_tools_test
+          POSTGRES_DB: dish_ai_tools_ci_test
           POSTGRES_USER: ai_tools_ci
           POSTGRES_PASSWORD: ci-only-password
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U ai_tools_ci -d dish_ai_tools_test"
+          --health-cmd "pg_isready -U ai_tools_ci -d dish_ai_tools_ci_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
     env:
-      DISH_TEST_POSTGRESQL_DSN: postgresql+psycopg://ai_tools_ci:ci-only-password@127.0.0.1:5432/dish_ai_tools_test
+      DISH_TEST_POSTGRESQL_DSN: postgresql+psycopg://ai_tools_ci:ci-only-password@127.0.0.1:5432/dish_ai_tools_ci_test
     steps:
       - uses: actions/checkout@v6
         with:
@@ -204,7 +201,10 @@ jobs:
           parsed = urlparse(os.environ["DISH_TEST_POSTGRESQL_DSN"])
           assert parsed.hostname in {"127.0.0.1", "localhost"}, parsed.hostname
           assert parsed.username == "ai_tools_ci", parsed.username
-          assert parsed.path == "/dish_ai_tools_test", parsed.path
+          database = parsed.path.removeprefix("/")
+          assert database == "dish_ai_tools_ci_test", database
+          assert database.startswith("dish_") and database.endswith("_test"), database
+          assert "prod" not in database.lower() and "production" not in database.lower(), database
           print("CI PostgreSQL target guard passed")
           PY
       - name: Run governed native PostgreSQL certification
@@ -220,12 +220,10 @@ jobs:
             2>&1 | tee .test-artifacts/native-postgresql/native-certification.log
       - name: Upload native PostgreSQL evidence
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: ./.github/actions/upload-test-evidence
         with:
           name: native-postgresql-${{ env.CI_CANDIDATE_SHA }}
           path: .test-artifacts
-          include-hidden-files: true
-          if-no-files-found: warn
 
   browser-acceptance:
     name: Browser acceptance
@@ -265,15 +263,13 @@ jobs:
             2>&1 | tee .test-artifacts/browser/stage7-acceptance.log
       - name: Upload browser evidence
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: ./.github/actions/upload-test-evidence
         with:
           name: browser-acceptance-${{ env.CI_CANDIDATE_SHA }}
           path: |
             .test-artifacts
             dish/.test-artifacts
             dish/frontend/screenshots
-          include-hidden-files: true
-          if-no-files-found: warn
 
   exact-head-ordinary-ci:
     name: Exact-head ordinary CI gate
@@ -352,12 +348,10 @@ jobs:
           PY
       - name: Upload required ordinary CI evidence
         if: always()
-        uses: actions/upload-artifact@v7
+        uses: ./.github/actions/upload-test-evidence
         with:
           name: required-ordinary-ci-${{ env.CI_CANDIDATE_SHA }}
           path: .test-artifacts/ci-candidate/identity.json
-          include-hidden-files: true
-          if-no-files-found: warn
       - name: Publish terminal exact-head ordinary CI status
         if: always() && github.event_name == 'pull_request'
         shell: bash

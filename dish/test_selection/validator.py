@@ -73,25 +73,9 @@ SCOPED_ROOTS = {
     "docs",
 }
 EXCLUDED_PARTS = {".venv", ".pytest_cache", ".test-artifacts", "node_modules", "__pycache__"}
+EXCLUDED_SCOPED_PREFIXES = {("frontend", "dist")}
 PARENT_GUIDANCE = {"../AGENTS.md", "../CLAUDE.md", "../README.md"}
 POLICY_DATA_PATH = "test_selection/ownership.csv"
-GENERATED_FRONTEND_ROOT = "frontend/dist/"
-
-
-def _expected_generated_frontend_paths(repo: Path) -> set[str]:
-    """Derive production frontend outputs without requiring a build to have run."""
-    source = repo / "frontend" / "src"
-    out: set[str] = set()
-    if source.is_dir():
-        for path in source.rglob("*"):
-            if not path.is_file():
-                continue
-            rel = path.relative_to(source).as_posix()
-            if rel.startswith(("js/prototype/", "js/review/")) or rel == "styles/review.css":
-                continue
-            out.add(f"{GENERATED_FRONTEND_ROOT}{rel}")
-    out.add(f"{GENERATED_FRONTEND_ROOT}build.json")
-    return out
 
 
 @dataclass(frozen=True)
@@ -123,13 +107,15 @@ def _scoped_paths(repo: Path) -> set[str]:
         for path in root.rglob("*"):
             if not path.is_file():
                 continue
-            rel = path.relative_to(repo).as_posix()
             rel_parts = path.relative_to(repo).parts
             if any(part in EXCLUDED_PARTS or part.startswith(".") for part in rel_parts):
                 continue
-            if rel.startswith(GENERATED_FRONTEND_ROOT):
+            if any(
+                rel_parts[: len(prefix)] == prefix
+                for prefix in EXCLUDED_SCOPED_PREFIXES
+            ):
                 continue
-            out.add(rel)
+            out.add(path.relative_to(repo).as_posix())
     for name in TOP_LEVEL_FILES:
         if (repo / name).is_file():
             out.add(name)
@@ -204,37 +190,14 @@ def validate_policy(
     if duplicates:
         errors.append(f"duplicate mapped paths: {sorted(duplicates)}")
 
-    generated_mapped = {
-        row.get("path", "")
-        for row in rows
-        if row.get("kind") == "generated-frontend" and row.get("path")
-    }
-    mapped_repo = {
-        row.get("path", "")
-        for row in rows
-        if row.get("path")
-        and not row.get("path", "").startswith("../")
-        and row.get("kind") != "generated-frontend"
-    }
+    mapped_repo = {path for path in paths if path and not path.startswith("../")}
     expected_repo = _scoped_paths(repo)
-    expected_generated = _expected_generated_frontend_paths(repo)
     missing_map = sorted(expected_repo - mapped_repo)
     stale_map = sorted(mapped_repo - expected_repo)
-    missing_generated = sorted(expected_generated - generated_mapped)
-    stale_generated = sorted(generated_mapped - expected_generated)
     if missing_map:
         errors.append(f"unclassified in-scope repository paths ({len(missing_map)}): {missing_map[:30]}")
     if stale_map:
         errors.append(f"mapped paths outside current scope or deleted ({len(stale_map)}): {stale_map[:30]}")
-    if missing_generated:
-        errors.append(
-            f"unclassified generated frontend outputs ({len(missing_generated)}): {missing_generated[:30]}"
-        )
-    if stale_generated:
-        errors.append(
-            f"mapped generated frontend outputs not produced by the build ({len(stale_generated)}): "
-            f"{stale_generated[:30]}"
-        )
 
     mapped_parent = {path for path in paths if path.startswith("../")}
     if mapped_parent != PARENT_GUIDANCE:
@@ -255,7 +218,7 @@ def validate_policy(
         if not path:
             errors.append(f"{prefix}: empty path")
             continue
-        if kind != "generated-frontend" and not _file_exists(repo, parent, path):
+        if not _file_exists(repo, parent, path):
             errors.append(f"{prefix}: mapped path does not exist")
         if primary_class not in CLASS_NAMES:
             errors.append(f"{prefix}: invalid primary_class {primary_class!r}")

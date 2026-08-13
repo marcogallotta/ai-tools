@@ -25,6 +25,7 @@ def effect_spec_for(
     arguments: Mapping[str, Any],
     *,
     verification_hold: bool = False,
+    preconstruction_hold: bool = False,
 ) -> CommandEffectSpec:
     args = dict(arguments)
     if command_name == "create":
@@ -75,6 +76,12 @@ def effect_spec_for(
                 "advance_operation",
             ),
             ("update_task_document",),
+            verify_mutation_effects=True,
+        )
+    if command_name == "hold-reject":
+        return CommandEffectSpec(
+            ("open_evidence_hold", "advance_operation"),
+            (),
             verify_mutation_effects=True,
         )
     if command_name == "reject":
@@ -141,6 +148,8 @@ def effect_spec_for(
             ("update_task_document",),
         )
     if command_name == "supply-evidence":
+        if preconstruction_hold:
+            return CommandEffectSpec(("supply_hold_evidence", "advance_operation"))
         return CommandEffectSpec(
             ("supply_hold_evidence", "activate_resumed_content_version"),
             ("update_task_document",),

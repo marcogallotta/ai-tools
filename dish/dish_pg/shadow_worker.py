@@ -1150,6 +1150,60 @@ def _translate_prepare_candidate(
     return translated
 
 
+def _semantic_shadow_command(
+    envelope: tx.ShadowEnvelope, arguments: Mapping[str, Any]
+) -> str:
+    """Translate only a source-proven legacy pre-construction Evidence reject."""
+    if envelope.command_name != "reject":
+        return envelope.command_name
+    route = str(arguments.get("route") or "").replace("_", "-").strip()
+    resume_status = str(arguments.get("resume_status") or "").strip()
+    if route != "evidence" or resume_status != "pending-research":
+        return "reject"
+    source_operation_id = str(
+        arguments.get("submission_id") or arguments.get("operation_id") or ""
+    ).strip()
+    if not source_operation_id:
+        return "reject"
+    snapshot = envelope.source_pre_state
+    if _capture_schema(envelope) < 3 or not isinstance(snapshot, Mapping):
+        return "reject"
+    selected = snapshot.get("selected_tables")
+    if not isinstance(selected, list) or "operations" not in {
+        str(item) for item in selected
+    }:
+        return "reject"
+    operations = [
+        row
+        for row in _snapshot_rows(snapshot, "operations")
+        if str(row.get("operation_id") or "") == source_operation_id
+    ]
+    if len(operations) != 1:
+        return "reject"
+    operation = operations[0]
+    if (
+        str(operation.get("status") or "") == "open"
+        and str(operation.get("operation_kind") or "") == "initial"
+        and str(operation.get("phase") or "") == "prepare_required"
+        and operation.get("content_write_completed_at") in {None, ""}
+    ):
+        return "hold-reject"
+    return "reject"
+
+
+def _semantic_shadow_request_id(
+    envelope: tx.ShadowEnvelope, *, target_command_name: str
+) -> uuid.UUID:
+    label = (
+        "request:hold-reject-v1"
+        if envelope.command_name == "reject" and target_command_name == "hold-reject"
+        else "request"
+    )
+    return _shadow_uuid(
+        envelope, label=label, value=envelope.source_request_identity
+    )
+
+
 def _result_payload(result: CommandResult) -> dict[str, Any]:
     return {
         "ok": result.ok,
@@ -1364,8 +1418,14 @@ def _target_authority_state(
                 wf.ServiceRequestOutcome.request_id == request_id
             )
         )
+        comparison_command = None if request is None else request.command_name
+        if (
+            envelope.command_name == "reject"
+            and comparison_command == "hold-reject"
+        ):
+            comparison_command = "reject"
         domains["requests"] = [] if request is None else [{
-            "command": request.command_name,
+            "command": comparison_command,
             "status": "completed" if outcome is not None else "pending",
         }]
 
@@ -1378,9 +1438,12 @@ def _target_response_payload(
     port: PostgresCommandPort,
     arguments: Mapping[str, Any],
     result: CommandResult,
+    source_command_name: str | None = None,
 ) -> dict[str, Any]:
     """Enrich the raw target response with shared lifecycle/action facts."""
     payload = _result_payload(result)
+    if source_command_name == "reject" and result.command == "hold-reject":
+        payload["command"] = "reject"
     data = dict(payload.get("data") or {})
     task = None
     operation = None
@@ -1459,8 +1522,9 @@ class CommandPortShadowEvaluator:
         target_run_id = _shadow_uuid(
             envelope, label="run", value=f"{owner_id}:{source_run_identity}"
         )
-        target_request_id = _shadow_uuid(
-            envelope, label="request", value=envelope.source_request_identity
+        target_command_name = _semantic_shadow_command(envelope, arguments)
+        target_request_id = _semantic_shadow_request_id(
+            envelope, target_command_name=target_command_name
         )
         port = PostgresCommandPort(
             session, cursor_secret=self.cursor_secret, projection_origin="shadow"
@@ -1490,7 +1554,7 @@ class CommandPortShadowEvaluator:
         )
         result = port.execute(
             CommandCall(
-                command_name=envelope.command_name,
+                command_name=target_command_name,
                 arguments=translated_arguments,
                 owner_id=owner_id,
                 principal_class=str(principal.get("principal_class") or "agent"),
@@ -1512,7 +1576,11 @@ class CommandPortShadowEvaluator:
         )
         return ShadowEvaluation(
             response=_target_response_payload(
-                session, port=port, arguments=translated_arguments, result=result
+                session,
+                port=port,
+                arguments=translated_arguments,
+                result=result,
+                source_command_name=envelope.command_name,
             ),
             pre_state=pre_state,
             post_state=post_state,

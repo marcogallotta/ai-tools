@@ -188,6 +188,7 @@ def assert_committed_command_effects(
     expected_phase = {
         "prepare": "await_verification",
         "approve": "await_submission",
+        "hold-reject": "held_evidence",
         "reject": (
             "held_human"
             if result_data.get("verification_hold")
