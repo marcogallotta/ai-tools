@@ -31,6 +31,25 @@
       "allowed_compositions": [
         "When explicitly assigned repository implementation, additionally load `implementation.md`; its lifecycle applies, with no self-review or Integration of the semantic change."
       ],
+      "context_dependencies": {
+        "preload": {
+          "role_index_contracts": true,
+          "additional": ["dish/docs/agents/contributor-base.md"]
+        },
+        "action_specific": {
+          "test-scope decisions": [
+            "dish/docs/testing.md",
+            "dish/docs/architecture/testing-boundaries.md"
+          ],
+          "dispatcher/Integration mechanics": [
+            "ci/pr-lifecycle-dispatcher-runbook.md"
+          ],
+          "native-PostgreSQL workflow mechanics": [
+            "dish/docs/testing.md",
+            "dish/docs/architecture/postgresql-runtime.md"
+          ]
+        }
+      },
       "contract": "dish/docs/agents/development-workflow.md",
       "default_role": "Development Workflow specialist",
       "project_name": "Dish — Development Workflow",
@@ -48,6 +67,13 @@
           "impact": "breaking",
           "action_boundaries": ["handoff"],
           "surface": "lifecycle"
+        },
+        {
+          "id": "development-workflow-context-preload",
+          "text": "Use the source-declared read-only context preload and action-specific refreshes before governed lifecycle decisions; context never composes role authority.",
+          "impact": "breaking",
+          "action_boundaries": ["role-critical-write", "handoff"],
+          "surface": "safety"
         }
       ]
     },
