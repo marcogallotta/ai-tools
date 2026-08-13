@@ -15,7 +15,7 @@ def adopt(h: Harness, task: str, branch: str, expected_head: str, *, base: str |
 
 def test_adopt_refuses_existing_state_and_checked_out_branch(h: Harness) -> None:
     h.start(task="2002", branch="agent/already-owned")
-    assert_error(adopt(h, "2002", "agent/anything", h.base, check=False), "ADOPTION_STATE_EXISTS")
+    assert_error(adopt(h, "2002", "agent/anything", h.base, check=False), "OWNERSHIP_AMBIGUOUS")
 
     base = h.current_remote_main()
     head = h.remote_branch_commit("agent/checked-out", "handoff", start=base)
