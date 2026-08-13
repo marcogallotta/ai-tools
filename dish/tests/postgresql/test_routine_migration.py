@@ -71,15 +71,17 @@ def test_environment_identity_rules_fail_closed() -> None:
     assert caught.value.rule == "production_confirmation_mismatch"
 
 
-@pytest.mark.parametrize("dirty_kind", ["tracked", "untracked"])
+@pytest.mark.parametrize("dirty_kind", ["unstaged", "staged", "untracked"])
 def test_dirty_checkout_fails_before_migration_entrypoint(
     tmp_path, monkeypatch, dirty_kind
 ) -> None:
     repo, tracked = _clean_repo(tmp_path)
-    if dirty_kind == "tracked":
-        tracked.write_text("dirty\n", encoding="utf-8")
-    else:
+    if dirty_kind == "untracked":
         (repo / "untracked.txt").write_text("dirty\n", encoding="utf-8")
+    else:
+        tracked.write_text("dirty\n", encoding="utf-8")
+        if dirty_kind == "staged":
+            _git(repo, "add", "tracked.txt")
 
     namespace = runpy.run_path(str(SCRIPT), run_name="dish_pg_migrate_test")
     launcher_main = namespace["main"]
