@@ -98,6 +98,23 @@ def test_dish_tool_does_not_depend_on_dish_service():
     assert offenders == {}
 
 
+def test_dish_tool_does_not_depend_on_service_frontend_family():
+    offenders: list[tuple[str, str]] = []
+    for path in (ROOT / "dish_tool").rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                targets = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                targets = [node.module]
+            else:
+                continue
+            for target in targets:
+                if target == "dish_service.frontend" or target.startswith("dish_service.frontend_"):
+                    offenders.append((str(path.relative_to(ROOT)), target))
+    assert offenders == []
+
+
 def test_numbered_workflow_dependencies_point_to_earlier_stages_only():
     graph = _graph()
     numbered = {f"dish_tool.step{number}" for number in range(5, 10)}

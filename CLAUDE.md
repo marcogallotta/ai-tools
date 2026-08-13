@@ -31,7 +31,9 @@ Execution environment and repository transport are **agent-host-specific**. A Di
 
 ### Claude Code and Codex
 
-Claude Code and Codex use their live checkout plus their host-native Git/tooling and environment. Create or use the repository-local environment with the current interpreter as needed:
+Claude Code and Codex use their live checkout plus their host-native Git/tooling and environment. For implementation/fix work, use the repository-owned `tools/agent-worktree` lifecycle rather than creating a competing branch/worktree or synchronizing the operator `main` checkout. First creation requires the coordinator-supplied exact base ref + SHA to still match `origin`; resume observes current origin state without automatically resetting, merging, rebasing, or chasing a moved `main`. Enter the returned owned path directly or use `tools/agent-worktree exec --task <gid> -- <agent-command>`.
+
+Create or use the repository-local environment with the current interpreter as needed:
 
 ```sh
 cd dish
@@ -45,6 +47,8 @@ The ChatGPT GitHub connector and ChatGPT repository/dependency-bundle retrieval 
 ### ChatGPT agents
 
 For ChatGPT agents, use the connected GitHub integration as source/history authority for this private repository. A repository bundle is a verified bootstrap/cache only; it never overrides GitHub source/history.
+
+For recurring ChatGPT Dish role Projects, the canonical concise Project kernels and version manifest live in [`dish/docs/chatgpt-projects/`](dish/docs/chatgpt-projects/README.md). At the first substantive action, compare the Project-declared `PROJECT_CANONICAL_VERSION` with the current repository manifest. On mismatch, report `PROJECT INSTRUCTIONS STALE` and make no role-critical state change until the Project instructions are resynchronized. Project kernels bootstrap critical gates; they never replace the current role index or standing role contract.
 
 For substantial repository-changing work, use the repository bundle first:
 
