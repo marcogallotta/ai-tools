@@ -54,12 +54,12 @@ def _lanes(path: Path, failed: str | None = None) -> None:
         )
 
 
-def _miss() -> dict:
+def _miss(*, failure_id: str = "lane:browser-acceptance:test-browser:deadbeefdeadbeef", invariant: str = "authenticated refresh preserves session") -> dict:
     return {
         "schema": fr.TRIAGE_SCHEMA,
         "full_regression_run_id": "42",
         "main_sha": SHA,
-        "failure_id": "lane:browser-acceptance",
+        "failure_id": failure_id,
         "classification": "related regression",
         "analysis": "responsible change regressed a browser invariant",
         "responsible_change": {"pr_number": 123, "head_sha": RESPONSIBLE_SHA},
@@ -68,7 +68,7 @@ def _miss() -> dict:
             "run_id": "9001",
             "candidate_sha": RESPONSIBLE_SHA,
         },
-        "failing_invariant": "authenticated refresh preserves session",
+        "failing_invariant": invariant,
         "failing_lane": "browser-acceptance",
         "selector_miss": True,
         "required_selector_correction": {
@@ -127,7 +127,10 @@ def test_evidence_records_exact_range_all_lanes_failure_and_timing(tmp_path: Pat
     assert set(evidence["lane_results"]) == set(fr.LANES)
     assert evidence["overall_result"] == "failed"
     assert evidence["estimated_billed_minutes"] >= 2
-    assert evidence["triage"]["required_failure_ids"] == ["lane:browser-acceptance"]
+    required = evidence["triage"]["required_failure_ids"]
+    assert len(required) == 1
+    assert required[0].startswith("lane:browser-acceptance:lane-command:")
+    assert evidence["lane_results"]["browser-acceptance"]["failure_ids"] == required
 
 
 def test_missing_required_lane_fails_closed(tmp_path: Path):
@@ -138,6 +141,7 @@ def test_missing_required_lane_fails_closed(tmp_path: Path):
     evidence = fr.finalize_run(output_dir=tmp_path, evidence_path=tmp_path / "evidence.json")
     failure = next(item for item in evidence["failures"] if item["component"] == "browser-acceptance")
     assert failure["failure_kind"] == "missing_result"
+    assert failure["invariant"] == "required lane result exists"
 
 
 def test_triage_has_exact_three_classes_and_selector_miss_exact_head_binding():
@@ -166,17 +170,68 @@ def test_selector_miss_binds_missed_lane_and_requires_policy_plus_regression():
     )["valid"] is True
 
 
-def test_every_failure_requires_exactly_one_valid_triage(tmp_path: Path):
+def test_multiple_failures_in_one_lane_are_independently_triageable(tmp_path: Path):
     _state(tmp_path)
     _lanes(tmp_path, failed="browser-acceptance")
+    junit = tmp_path / "browser.xml"
+    junit.write_text(
+        """<testsuite tests="2" failures="1" errors="1">
+        <testcase classname="browser.auth" name="test_refresh"><failure message="session lost"/></testcase>
+        <testcase classname="browser.detail" name="test_history"><error message="fixture unavailable"/></testcase>
+        </testsuite>"""
+    )
+    failures = fr.collect_junit_failures(
+        output_dir=tmp_path, lane="browser-acceptance", source="acceptance-pytest",
+        junit_path=junit, command_exit=1,
+    )
     evidence = fr.finalize_run(output_dir=tmp_path, evidence_path=tmp_path / "evidence.json")
+    assert len(failures) == 2
+    assert len({item["failure_id"] for item in failures}) == 2
+    assert set(evidence["lane_results"]["browser-acceptance"]["failure_ids"]) == {
+        item["failure_id"] for item in failures
+    }
+    assert not any(
+        item["source"] == "lane-command" and item["component"] == "browser-acceptance"
+        for item in evidence["failures"]
+    )
+
+    first, second = sorted(failures, key=lambda item: item["invariant"])
     triage = tmp_path / "triage"
     triage.mkdir()
+    related = _miss(failure_id=first["failure_id"], invariant=first["invariant"])
+    baseline = {
+        "schema": fr.TRIAGE_SCHEMA,
+        "full_regression_run_id": "42",
+        "main_sha": SHA,
+        "failure_id": second["failure_id"],
+        "classification": "unrelated baseline",
+        "analysis": "failure reproduced before the responsible range",
+    }
+    (triage / "related.json").write_text(json.dumps(related))
     assert fr.check_triage_coverage(evidence=evidence, triage_dir=triage)["complete"] is False
-    (triage / "browser.json").write_text(json.dumps(_miss()))
-    assert fr.check_triage_coverage(evidence=evidence, triage_dir=triage)["complete"] is True
+    (triage / "baseline.json").write_text(json.dumps(baseline))
+    coverage = fr.check_triage_coverage(evidence=evidence, triage_dir=triage)
+    assert coverage["complete"] is True
+    assert set(coverage["classified_failure_ids"]) == {first["failure_id"], second["failure_id"]}
 
 
-def test_evidence_schema_requires_all_four_lanes():
+def test_triage_related_failure_must_match_evidence_lane_and_invariant(tmp_path: Path):
+    _state(tmp_path)
+    _lanes(tmp_path, failed="browser-acceptance")
+    failure = fr.record_failure(
+        output_dir=tmp_path, kind="lane", component="browser-acceptance",
+        source="browser-harness", invariant="fixture board renders", failure_kind="assertion_failure",
+    )
+    evidence = fr.finalize_run(output_dir=tmp_path, evidence_path=tmp_path / "evidence.json")
+    record = _miss(failure_id=failure["failure_id"], invariant="wrong invariant")
+    with pytest.raises(fr.ContractError, match="failing_invariant does not match"):
+        fr.validate_triage_record(record, evidence)
+
+
+def test_evidence_schema_requires_all_four_lanes_and_distinct_failure_contract():
     schema = json.loads(EVIDENCE_SCHEMA.read_text())
     assert set(schema["properties"]["lane_results"]["required"]) == set(fr.LANES)
+    result = schema["$defs"]["result"]
+    assert "failure_ids" in result["required"] and "failure_id" not in result["properties"]
+    failure = schema["properties"]["failures"]["items"]
+    assert {"source", "invariant"}.issubset(failure["required"])

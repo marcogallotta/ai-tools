@@ -54,12 +54,25 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["failure_id", "kind", "component", "failure_kind"],
+        "required": [
+          "schema",
+          "failure_id",
+          "kind",
+          "component",
+          "source",
+          "invariant",
+          "failure_kind"
+        ],
+        "additionalProperties": false,
         "properties": {
+          "schema": {"const": "dish-full-regression-failure-v1"},
           "failure_id": {"type": "string", "minLength": 1},
           "kind": {"enum": ["lane", "phase"]},
           "component": {"type": "string", "minLength": 1},
-          "failure_kind": {"type": "string", "minLength": 1}
+          "source": {"type": "string", "minLength": 1},
+          "invariant": {"type": "string", "minLength": 1},
+          "failure_kind": {"type": "string", "minLength": 1},
+          "detail": {"type": ["string", "null"]}
         }
       }
     },
@@ -76,12 +89,16 @@
   "$defs": {
     "result": {
       "type": "object",
-      "required": ["status", "duration_seconds", "exit_code", "failure_id", "failure_kind"],
+      "required": ["status", "duration_seconds", "exit_code", "failure_ids", "failure_kind"],
       "properties": {
         "status": {"enum": ["passed", "failed"]},
         "duration_seconds": {"type": "number", "minimum": 0},
         "exit_code": {"type": ["integer", "null"]},
-        "failure_id": {"type": ["string", "null"]},
+        "failure_ids": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
         "failure_kind": {"type": ["string", "null"]}
       }
     }

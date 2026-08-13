@@ -8,6 +8,7 @@ an all-groups diagnostic run and validates the durable triage feedback contract.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -18,11 +19,13 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
+from xml.etree import ElementTree
 
 EVIDENCE_SCHEMA = "dish-full-regression-v1"
 TRIAGE_SCHEMA = "dish-full-regression-triage-v1"
 RUN_STATE_SCHEMA = "dish-full-regression-run-state-v1"
 COMPONENT_SCHEMA = "dish-full-regression-component-v1"
+FAILURE_SCHEMA = "dish-full-regression-failure-v1"
 
 LANES = (
     "python-control-plane",
@@ -179,6 +182,187 @@ def _component_path(output_dir: Path, kind: str, name: str) -> Path:
     return output_dir / "components" / f"{kind}-{safe_name}.json"
 
 
+def _failure_identity(*, kind: str, component: str, source: str, invariant: str) -> str:
+    source_slug = re.sub(r"[^a-z0-9_.-]+", "-", source.lower()).strip("-") or "unknown"
+    digest = hashlib.sha256(
+        "\0".join((kind, component, source, invariant)).encode("utf-8")
+    ).hexdigest()[:16]
+    return f"{kind}:{component}:{source_slug}:{digest}"
+
+
+def record_failure(
+    *,
+    output_dir: Path,
+    kind: str,
+    component: str,
+    source: str,
+    invariant: str,
+    failure_kind: str,
+    detail: str | None = None,
+) -> dict[str, Any]:
+    if kind not in {"lane", "phase"}:
+        raise ContractError(f"unsupported failure kind: {kind}")
+    if not component.strip() or not source.strip() or not invariant.strip() or not failure_kind.strip():
+        raise ContractError("failure component/source/invariant/failure_kind are required")
+    failure_id = _failure_identity(
+        kind=kind, component=component, source=source, invariant=invariant
+    )
+    payload = {
+        "schema": FAILURE_SCHEMA,
+        "failure_id": failure_id,
+        "kind": kind,
+        "component": component,
+        "source": source,
+        "invariant": invariant,
+        "failure_kind": failure_kind,
+        "detail": detail,
+    }
+    path = output_dir / "failures" / f"{hashlib.sha256(failure_id.encode()).hexdigest()[:20]}.json"
+    if path.exists():
+        existing = _read_json(path)
+        if existing != payload:
+            raise ContractError(f"conflicting duplicate failure identity: {failure_id}")
+        return existing
+    _write_json(path, payload)
+    return payload
+
+
+def collect_junit_failures(
+    *,
+    output_dir: Path,
+    lane: str,
+    source: str,
+    junit_path: Path,
+    command_exit: int,
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    parse_error: str | None = None
+    try:
+        root = ElementTree.parse(junit_path).getroot()
+    except (OSError, ElementTree.ParseError) as exc:
+        root = None
+        parse_error = str(exc)
+    if root is not None:
+        for testcase in root.iter("testcase"):
+            classname = testcase.attrib.get("classname", "").strip()
+            name = testcase.attrib.get("name", "").strip() or "unnamed-test"
+            invariant = f"{classname}::{name}" if classname else name
+            for tag, failure_kind in (("failure", "test_failure"), ("error", "test_error")):
+                problem = testcase.find(tag)
+                if problem is None:
+                    continue
+                detail = (problem.attrib.get("message") or (problem.text or "")).strip() or None
+                records.append(
+                    record_failure(
+                        output_dir=output_dir,
+                        kind="lane",
+                        component=lane,
+                        source=source,
+                        invariant=invariant,
+                        failure_kind=failure_kind,
+                        detail=detail,
+                    )
+                )
+    if command_exit != 0 and not records:
+        detail = f"command exited with status {command_exit}"
+        if parse_error:
+            detail += f"; JUnit unavailable: {parse_error}"
+        records.append(
+            record_failure(
+                output_dir=output_dir,
+                kind="lane",
+                component=lane,
+                source=source,
+                invariant=f"{source} command",
+                failure_kind="command_failed",
+                detail=detail,
+            )
+        )
+    return records
+
+
+def collect_native_report_failures(
+    *,
+    output_dir: Path,
+    lane: str,
+    source: str,
+    report_path: Path,
+    command_exit: int,
+) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    try:
+        report = _read_json(report_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        report = None
+        parse_error = str(exc)
+    else:
+        parse_error = None
+    if isinstance(report, Mapping):
+        tests = report.get("tests") if isinstance(report.get("tests"), Mapping) else {}
+        for key, failure_kind in (("failed_nodeids", "test_failure"), ("error_nodeids", "test_error")):
+            for nodeid in tests.get(key, []) or []:
+                records.append(
+                    record_failure(
+                        output_dir=output_dir, kind="lane", component=lane, source=source,
+                        invariant=str(nodeid), failure_kind=failure_kind,
+                    )
+                )
+        environment_error = str(report.get("environment_error", "")).strip()
+        if environment_error:
+            records.append(
+                record_failure(
+                    output_dir=output_dir, kind="lane", component=lane, source=source,
+                    invariant="native PostgreSQL environment availability",
+                    failure_kind="environment_unavailable", detail=environment_error,
+                )
+            )
+        for key, failure_kind in (("inventory_missing", "inventory_missing"), ("inventory_unexpected", "inventory_unexpected"), ("unwaived_skips", "unwaived_skip")):
+            for value in report.get(key, []) or []:
+                records.append(
+                    record_failure(
+                        output_dir=output_dir, kind="lane", component=lane, source=source,
+                        invariant=f"{key}:{value}", failure_kind=failure_kind,
+                    )
+                )
+        if report.get("identity_matches_fixture") is False:
+            records.append(
+                record_failure(
+                    output_dir=output_dir, kind="lane", component=lane, source=source,
+                    invariant="native PostgreSQL identity matches pytest fixture",
+                    failure_kind="identity_mismatch",
+                )
+            )
+    if command_exit != 0 and not records:
+        detail = f"command exited with status {command_exit}"
+        if parse_error:
+            detail += f"; native report unavailable: {parse_error}"
+        records.append(
+            record_failure(
+                output_dir=output_dir, kind="lane", component=lane, source=source,
+                invariant=f"{source} command", failure_kind="command_failed", detail=detail,
+            )
+        )
+    return records
+
+
+def _load_failures(output_dir: Path) -> list[dict[str, Any]]:
+    failures_dir = output_dir / "failures"
+    if not failures_dir.exists():
+        return []
+    records: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for path in sorted(failures_dir.glob("*.json")):
+        payload = _read_json(path)
+        if payload.get("schema") != FAILURE_SCHEMA:
+            raise ContractError(f"unexpected failure schema in {path}")
+        failure_id = str(payload.get("failure_id", ""))
+        if failure_id in seen:
+            raise ContractError(f"duplicate failure identity in evidence inputs: {failure_id}")
+        seen.add(failure_id)
+        records.append(payload)
+    return records
+
+
 def record_component(
     *,
     output_dir: Path,
@@ -320,6 +504,7 @@ def finalize_run(*, output_dir: Path, evidence_path: Path) -> dict[str, Any]:
         raise ContractError("run-state schema mismatch")
 
     components = _load_components(output_dir)
+    detailed_failures = _load_failures(output_dir)
     by_lane = {
         component["name"]: component
         for component in components
@@ -329,71 +514,77 @@ def finalize_run(*, output_dir: Path, evidence_path: Path) -> dict[str, Any]:
     failures: list[dict[str, Any]] = []
     lane_results: dict[str, Any] = {}
 
+    detailed_by_lane: dict[str, list[dict[str, Any]]] = {lane: [] for lane in LANES}
+    for failure in detailed_failures:
+        if failure.get("kind") != "lane" or failure.get("component") not in LANES:
+            raise ContractError(
+                f"detailed failure must belong to a governed lane: {failure.get('failure_id')}"
+            )
+        detailed_by_lane[str(failure["component"])].append(failure)
+
     for lane in LANES:
         component = by_lane.get(lane)
-        failure_id = f"lane:{lane}"
+        lane_failures = detailed_by_lane[lane]
         if component is None:
-            lane_results[lane] = {
-                "status": "failed",
-                "duration_seconds": 0.0,
-                "exit_code": None,
-                "failure_id": failure_id,
-                "failure_kind": "missing_result",
-            }
-            failures.append(
-                {
-                    "failure_id": failure_id,
-                    "kind": "lane",
-                    "component": lane,
-                    "failure_kind": "missing_result",
-                    "detail": "required lane produced no result",
-                }
+            failure = record_failure(
+                output_dir=output_dir, kind="lane", component=lane, source="lane-result",
+                invariant="required lane result exists", failure_kind="missing_result",
+                detail="required lane produced no result",
             )
+            lane_failures = [failure]
+            lane_results[lane] = {
+                "status": "failed", "duration_seconds": 0.0, "exit_code": None,
+                "failure_ids": [failure["failure_id"]], "failure_kind": "missing_result",
+            }
+            failures.extend(lane_failures)
             continue
+        if component["status"] == "failed" and not lane_failures:
+            lane_failures = [
+                record_failure(
+                    output_dir=output_dir, kind="lane", component=lane, source="lane-command",
+                    invariant="lane command",
+                    failure_kind=component.get("failure_kind") or "command_failed",
+                    detail=component.get("detail"),
+                )
+            ]
+        if component["status"] == "passed" and lane_failures:
+            raise ContractError(f"passed lane {lane} cannot contain detailed failures")
         lane_results[lane] = {
             "status": component["status"],
             "duration_seconds": component["duration_seconds"],
             "exit_code": component["exit_code"],
-            "failure_id": failure_id if component["status"] == "failed" else None,
+            "failure_ids": [failure["failure_id"] for failure in lane_failures],
             "failure_kind": component.get("failure_kind"),
         }
-        if component["status"] == "failed":
-            failures.append(
-                {
-                    "failure_id": failure_id,
-                    "kind": "lane",
-                    "component": lane,
-                    "failure_kind": component.get("failure_kind") or "command_failed",
-                    "detail": component.get("detail"),
-                }
-            )
+        failures.extend(lane_failures)
 
     phase_results: dict[str, Any] = {}
     for component in phases:
-        failure_id = f"phase:{component['name']}"
+        phase_failures: list[dict[str, Any]] = []
+        if component["status"] == "failed":
+            phase_failures = [
+                record_failure(
+                    output_dir=output_dir, kind="phase", component=component["name"],
+                    source="phase", invariant=f"setup phase {component['name']}",
+                    failure_kind=component.get("failure_kind") or "phase_failed",
+                    detail=component.get("detail"),
+                )
+            ]
+            failures.extend(phase_failures)
         phase_results[component["name"]] = {
             "status": component["status"],
             "duration_seconds": component["duration_seconds"],
             "exit_code": component["exit_code"],
-            "failure_id": failure_id if component["status"] == "failed" else None,
+            "failure_ids": [failure["failure_id"] for failure in phase_failures],
             "failure_kind": component.get("failure_kind"),
         }
-        if component["status"] == "failed":
-            failures.append(
-                {
-                    "failure_id": failure_id,
-                    "kind": "phase",
-                    "component": component["name"],
-                    "failure_kind": component.get("failure_kind") or "phase_failed",
-                    "detail": component.get("detail"),
-                }
-            )
 
     completed_epoch = time.time()
     started_epoch = float(state["started_at_epoch"])
     total_duration = max(0.0, completed_epoch - started_epoch)
     estimated_billed_minutes = max(1, math.ceil(total_duration / 60.0))
     overall_result = "failed" if failures else "passed"
+    failures = sorted(failures, key=lambda item: item["failure_id"])
     payload = {
         "schema": EVIDENCE_SCHEMA,
         "workflow": "Full regression",
@@ -425,7 +616,7 @@ def finalize_run(*, output_dir: Path, evidence_path: Path) -> dict[str, Any]:
             "contract": "command-adapter-v1",
             "note": (
                 "full regression owns evidence/continuation semantics; concrete lane commands may "
-                "be replaced by the shared certification runner without changing this schema"
+                "be replaced by the shared certification runner while preserving distinct failure records"
             ),
         },
     }
@@ -460,6 +651,14 @@ def validate_triage_record(
         required = set(evidence.get("triage", {}).get("required_failure_ids", []))
         if failure_id not in required:
             raise ContractError(f"triage failure_id is not required by evidence: {failure_id}")
+        evidence_failure = next(
+            (item for item in evidence.get("failures", []) if item.get("failure_id") == failure_id),
+            None,
+        )
+        if not isinstance(evidence_failure, Mapping):
+            raise ContractError(f"evidence missing failure record for required ID: {failure_id}")
+    else:
+        evidence_failure = None
 
     if classification != "related regression":
         if record.get("selector_miss") is True:
@@ -487,10 +686,19 @@ def validate_triage_record(
     if certification_sha != responsible_sha:
         raise ContractError("certification.candidate_sha must equal responsible_change.head_sha")
 
-    if not str(record.get("failing_invariant", "")).strip():
+    failing_invariant = str(record.get("failing_invariant", "")).strip()
+    if not failing_invariant:
         raise ContractError("related regression requires failing_invariant")
-    if not str(record.get("failing_lane", "")).strip():
+    failing_lane = str(record.get("failing_lane", "")).strip()
+    if not failing_lane:
         raise ContractError("related regression requires failing_lane")
+    if evidence_failure is not None:
+        if evidence_failure.get("kind") != "lane":
+            raise ContractError("related regression must reference a lane failure")
+        if failing_lane != str(evidence_failure.get("component", "")):
+            raise ContractError("triage failing_lane does not match evidence failure component")
+        if failing_invariant != str(evidence_failure.get("invariant", "")):
+            raise ContractError("triage failing_invariant does not match evidence failure invariant")
     if not isinstance(record.get("selector_miss"), bool):
         raise ContractError("related regression requires boolean selector_miss")
 
@@ -611,6 +819,28 @@ def _parser() -> argparse.ArgumentParser:
         run.add_argument("--output-dir", type=Path, required=True)
         run.add_argument("command_argv", nargs=argparse.REMAINDER)
 
+    failure = sub.add_parser("record-failure", help="record one independently triageable lane failure")
+    failure.add_argument("--output-dir", type=Path, required=True)
+    failure.add_argument("--lane", choices=LANES, required=True)
+    failure.add_argument("--source", required=True)
+    failure.add_argument("--invariant", required=True)
+    failure.add_argument("--failure-kind", required=True)
+    failure.add_argument("--detail")
+
+    junit = sub.add_parser("collect-junit", help="record every failed/error testcase from JUnit")
+    junit.add_argument("--output-dir", type=Path, required=True)
+    junit.add_argument("--lane", choices=LANES, required=True)
+    junit.add_argument("--source", required=True)
+    junit.add_argument("--junit", type=Path, required=True)
+    junit.add_argument("--command-exit", type=int, required=True)
+
+    native = sub.add_parser("collect-native-report", help="record native PostgreSQL report failures")
+    native.add_argument("--output-dir", type=Path, required=True)
+    native.add_argument("--lane", choices=LANES, required=True)
+    native.add_argument("--source", required=True)
+    native.add_argument("--report", type=Path, required=True)
+    native.add_argument("--command-exit", type=int, required=True)
+
     record = sub.add_parser("record-phase", help="record a GitHub Action setup outcome")
     record.add_argument("--phase", required=True)
     record.add_argument("--outcome", required=True)
@@ -695,6 +925,31 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(payload, sort_keys=True))
             # Diagnostic full regression never fails fast.  Terminal enforcement happens after
             # every required group has had a chance to run and evidence has been uploaded.
+            return 0
+
+        if args.command == "record-failure":
+            payload = record_failure(
+                output_dir=args.output_dir, kind="lane", component=args.lane,
+                source=args.source, invariant=args.invariant, failure_kind=args.failure_kind,
+                detail=args.detail,
+            )
+            print(json.dumps(payload, sort_keys=True))
+            return 0
+
+        if args.command == "collect-junit":
+            payload = collect_junit_failures(
+                output_dir=args.output_dir, lane=args.lane, source=args.source,
+                junit_path=args.junit, command_exit=args.command_exit,
+            )
+            print(json.dumps({"failures": payload}, sort_keys=True))
+            return 0
+
+        if args.command == "collect-native-report":
+            payload = collect_native_report_failures(
+                output_dir=args.output_dir, lane=args.lane, source=args.source,
+                report_path=args.report, command_exit=args.command_exit,
+            )
+            print(json.dumps({"failures": payload}, sort_keys=True))
             return 0
 
         if args.command == "record-phase":

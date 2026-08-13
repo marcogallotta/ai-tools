@@ -38,7 +38,14 @@
       }
     },
     "failing_invariant": {"type": "string", "minLength": 1},
-    "failing_lane": {"type": "string", "minLength": 1},
+    "failing_lane": {
+      "enum": [
+        "python-control-plane",
+        "frontend-static-tooling",
+        "native-postgresql",
+        "browser-acceptance"
+      ]
+    },
     "selector_miss": {"type": "boolean"},
     "required_selector_correction": {
       "type": "object",
@@ -60,7 +67,14 @@
           "properties": {
             "test_path": {"type": "string", "minLength": 1},
             "changed_path_class": {"type": "string", "minLength": 1},
-            "expected_lane": {"type": "string", "minLength": 1}
+            "expected_lane": {
+              "enum": [
+                "python-control-plane",
+                "frontend-static-tooling",
+                "native-postgresql",
+                "browser-acceptance"
+              ]
+            }
           }
         }
       }

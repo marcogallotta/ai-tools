@@ -23,9 +23,13 @@ The full-regression workflow deliberately differs from Integration certification
 
 The uploaded `full-regression-<main-sha>` artifact contains `evidence.json` with schema `dish-full-regression-v1`. It records exact `main` SHA, prior completed full-regression SHA/run and Git range, run identity, all lane results, setup phase results, failures, elapsed timings, and approximate one-job billed minutes. The repository schema is `ci/schemas/full-regression-evidence-v1.schema.json`.
 
+Lane status/timing remains aggregate execution evidence, but failure identity is **below the lane**. Structured runner outputs are harvested into one durable failure record per distinct failing/error invariant. Pytest and Node test suites use JUnit collection; native PostgreSQL certification uses its structured report; named non-structured boundaries record an explicit source/invariant failure. If a failed lane produces no finer record, finalization emits one `lane-command` fallback failure so a failure can never disappear from triage. Each failure record carries a stable `failure_id`, lane/component, source, invariant, failure kind, and optional detail. Multiple failures in one lane therefore remain independently classifiable.
+
+The detailed-failure collector is part of the runner adapter seam: Agent C's shared runner may replace concrete commands, but it must preserve or emit the same distinct-failure records before finalization. It must not collapse a set of known failing tests/invariants back to one lane-level classification.
+
 ## Failure classification contract
 
-Every `failure_id` in `evidence.json` requires exactly one durable triage record using schema `dish-full-regression-triage-v1` (`ci/schemas/full-regression-triage-v1.schema.json`). The only allowed classifications are:
+Every distinct `failure_id` in `evidence.json` requires exactly one durable triage record using schema `dish-full-regression-triage-v1` (`ci/schemas/full-regression-triage-v1.schema.json`). Coverage is over the complete distinct failure set, not over failed lanes. Two failures in the same lane may therefore have different classifications, responsible PRs, and selector-miss dispositions. For a related regression, `failing_lane` and `failing_invariant` must match the referenced evidence failure exactly. The only allowed classifications are:
 
 - **related regression** — the failing invariant was introduced or exposed by a change in the relevant `main` range. Record the responsible PR/head and the responsible exact-head certification plan/run.
 - **unrelated baseline** — the failure pre-existed the responsible range or is otherwise demonstrably unrelated to those changes. The analysis must state the baseline evidence used to establish that conclusion.

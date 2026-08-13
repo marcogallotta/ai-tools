@@ -176,13 +176,43 @@ jobs:
               set +e
               mkdir -p .test-artifacts/full-regression/junit
               rc=0
+
+              ci_rc=0
               dish/.venv/bin/python -m pytest -q ci/tests \
-                --junitxml=.test-artifacts/full-regression/junit/ci.xml || rc=1
-              (cd dish && .venv/bin/python scripts/dish-test-plan --validate) || rc=1
+                --junitxml=.test-artifacts/full-regression/junit/ci.xml || ci_rc=$?
+              python3 scripts/full_regression.py collect-junit \
+                --output-dir "$FULL_REGRESSION_OUTPUT" --lane python-control-plane \
+                --source ci-tests --junit .test-artifacts/full-regression/junit/ci.xml \
+                --command-exit "$ci_rc"
+              [ "$ci_rc" -eq 0 ] || rc=1
+
+              plan_rc=0
+              (cd dish && .venv/bin/python scripts/dish-test-plan --validate) || plan_rc=$?
+              if [ "$plan_rc" -ne 0 ]; then
+                python3 scripts/full_regression.py record-failure \
+                  --output-dir "$FULL_REGRESSION_OUTPUT" --lane python-control-plane \
+                  --source dish-test-plan --invariant "governed test-plan validation" \
+                  --failure-kind command_failed --detail "command exited with status $plan_rc"
+                rc=1
+              fi
+
+              dish_rc=0
               (cd dish && .venv/bin/python -m pytest -q tests \
-                --junitxml=../.test-artifacts/full-regression/junit/dish.xml) || rc=1
+                --junitxml=../.test-artifacts/full-regression/junit/dish.xml) || dish_rc=$?
+              python3 scripts/full_regression.py collect-junit \
+                --output-dir "$FULL_REGRESSION_OUTPUT" --lane python-control-plane \
+                --source dish-tests --junit .test-artifacts/full-regression/junit/dish.xml \
+                --command-exit "$dish_rc"
+              [ "$dish_rc" -eq 0 ] || rc=1
+
+              tools_rc=0
               tools/.venv/bin/python -m pytest -q tools/tests \
-                --junitxml=.test-artifacts/full-regression/junit/tools.xml || rc=1
+                --junitxml=.test-artifacts/full-regression/junit/tools.xml || tools_rc=$?
+              python3 scripts/full_regression.py collect-junit \
+                --output-dir "$FULL_REGRESSION_OUTPUT" --lane python-control-plane \
+                --source tools-tests --junit .test-artifacts/full-regression/junit/tools.xml \
+                --command-exit "$tools_rc"
+              [ "$tools_rc" -eq 0 ] || rc=1
               exit "$rc"
             '
 
@@ -193,7 +223,41 @@ jobs:
           python3 scripts/full_regression.py run-lane \
             --output-dir "$FULL_REGRESSION_OUTPUT" \
             --lane frontend-static-tooling -- \
-            npm --prefix dish/frontend run check:static
+            bash -lc '
+              set +e
+              mkdir -p .test-artifacts/full-regression/junit
+              rc=0
+              run_named() {
+                source="$1"
+                invariant="$2"
+                shift 2
+                "$@"
+                command_rc=$?
+                if [ "$command_rc" -ne 0 ]; then
+                  python3 scripts/full_regression.py record-failure \
+                    --output-dir "$FULL_REGRESSION_OUTPUT" --lane frontend-static-tooling \
+                    --source "$source" --invariant "$invariant" \
+                    --failure-kind command_failed --detail "command exited with status $command_rc"
+                  rc=1
+                fi
+              }
+              run_named format-check "frontend formatting contract" npm --prefix dish/frontend run format:check
+              run_named lint "frontend lint contract" npm --prefix dish/frontend run lint
+              run_named openapi-check "frontend OpenAPI contract" bash -lc "cd dish/frontend && node tools/check-openapi.mjs"
+              run_named generated-client-check "generated frontend client is current" bash -lc "cd dish/frontend && node tools/generate-client.mjs --check"
+
+              unit_rc=0
+              (cd dish/frontend && node --test --test-reporter=junit \
+                --test-reporter-destination=../../.test-artifacts/full-regression/junit/frontend-unit.xml \
+                tests/unit/*.test.mjs) || unit_rc=$?
+              python3 scripts/full_regression.py collect-junit \
+                --output-dir "$FULL_REGRESSION_OUTPUT" --lane frontend-static-tooling \
+                --source frontend-unit --junit .test-artifacts/full-regression/junit/frontend-unit.xml \
+                --command-exit "$unit_rc"
+              [ "$unit_rc" -eq 0 ] || rc=1
+              run_named frontend-build "frontend production build" npm --prefix dish/frontend run build
+              exit "$rc"
+            '
 
       - name: Start isolated PostgreSQL for native group
         if: always() && steps.decision.outputs.should_run == 'true'
@@ -229,12 +293,21 @@ jobs:
           python3 scripts/full_regression.py run-lane \
             --output-dir "$FULL_REGRESSION_OUTPUT" \
             --lane native-postgresql -- \
-            dish/.venv/bin/python dish/scripts/dish-pg-native-certification \
-              --output .test-artifacts/full-regression/native-postgresql-report.json \
-              --waive-skip 'tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_database_disconnect_rolls_back_then_recovers_once=no runner wires DISH_SECTION1_COMPOSE_JSON to the shared TEST PostgreSQL target; revisit before setting external_effects_enabled=true' \
-              --waive-skip 'tests/postgresql/native/test_process_failure_command.py::test_command_process_disconnect_before_commit_fails_closed_and_recovers=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure' \
-              --waive-skip 'tests/postgresql/native/test_process_failure_disconnect.py::test_projection_worker_fails_clearly_across_postgresql_disconnect=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure' \
-              --waive-skip 'tests/postgresql/native/test_process_failure_disconnect.py::test_reconciliation_worker_writes_nothing_while_postgresql_is_down=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure'
+            bash -lc '
+              set +e
+              report=.test-artifacts/full-regression/native-postgresql-report.json
+              dish/.venv/bin/python dish/scripts/dish-pg-native-certification \
+                --output "$report" \
+                --waive-skip "tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_database_disconnect_rolls_back_then_recovers_once=no runner wires DISH_SECTION1_COMPOSE_JSON to the shared TEST PostgreSQL target; revisit before setting external_effects_enabled=true" \
+                --waive-skip "tests/postgresql/native/test_process_failure_command.py::test_command_process_disconnect_before_commit_fails_closed_and_recovers=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure" \
+                --waive-skip "tests/postgresql/native/test_process_failure_disconnect.py::test_projection_worker_fails_clearly_across_postgresql_disconnect=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure" \
+                --waive-skip "tests/postgresql/native/test_process_failure_disconnect.py::test_reconciliation_worker_writes_nothing_while_postgresql_is_down=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure"
+              native_rc=$?
+              python3 scripts/full_regression.py collect-native-report \
+                --output-dir "$FULL_REGRESSION_OUTPUT" --lane native-postgresql \
+                --source native-certification --report "$report" --command-exit "$native_rc"
+              exit "$native_rc"
+            '
 
       - name: Stop isolated PostgreSQL
         if: always() && steps.decision.outputs.should_run == 'true'
@@ -260,9 +333,38 @@ jobs:
             --lane browser-acceptance -- \
             bash -lc '
               set +e
+              mkdir -p .test-artifacts/full-regression/junit
               rc=0
-              npm --prefix dish/frontend run test:browser || rc=1
-              npm --prefix dish/frontend run test:acceptance || rc=1
+
+              browser_rc=0
+              npm --prefix dish/frontend run test:browser || browser_rc=$?
+              if [ "$browser_rc" -ne 0 ]; then
+                python3 scripts/full_regression.py record-failure \
+                  --output-dir "$FULL_REGRESSION_OUTPUT" --lane browser-acceptance \
+                  --source browser-harness --invariant "frontend browser harness" \
+                  --failure-kind command_failed --detail "command exited with status $browser_rc"
+                rc=1
+              fi
+
+              build_rc=0
+              npm --prefix dish/frontend run build || build_rc=$?
+              if [ "$build_rc" -ne 0 ]; then
+                python3 scripts/full_regression.py record-failure \
+                  --output-dir "$FULL_REGRESSION_OUTPUT" --lane browser-acceptance \
+                  --source acceptance-build --invariant "browser acceptance build" \
+                  --failure-kind command_failed --detail "command exited with status $build_rc"
+                rc=1
+              fi
+
+              acceptance_rc=0
+              (cd dish/frontend && ../.venv/bin/python -m pytest -q tests/browser \
+                --junitxml=../../.test-artifacts/full-regression/junit/browser-acceptance.xml) || acceptance_rc=$?
+              python3 scripts/full_regression.py collect-junit \
+                --output-dir "$FULL_REGRESSION_OUTPUT" --lane browser-acceptance \
+                --source browser-acceptance-pytest \
+                --junit .test-artifacts/full-regression/junit/browser-acceptance.xml \
+                --command-exit "$acceptance_rc"
+              [ "$acceptance_rc" -eq 0 ] || rc=1
               exit "$rc"
             '
 
@@ -288,7 +390,10 @@ jobs:
               print()
               print('Failures requiring durable triage:')
               for failure in payload['failures']:
-                  print(f"- `{failure['failure_id']}` ({failure['failure_kind']})")
+                  print(
+                      f"- `{failure['failure_id']}` [{failure['component']}] "
+                      f"{failure['invariant']} ({failure['failure_kind']})"
+                  )
           PY
 
       - name: Upload durable full-regression evidence
