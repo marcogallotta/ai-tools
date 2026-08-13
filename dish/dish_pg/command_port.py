@@ -1037,7 +1037,7 @@ class PostgresCommandPort:
             unresolved_projection_attempt_id=self._unresolved_projection_attempt_id(task.task_id),
             open_hold_id=self._open_id(wf.EvidenceHold, task.task_id),
             open_human_requirement_id=self._open_id(wf.HumanReviewRequirement, task.task_id),
-            open_abandonment_id=self._open_abandonment_id(task.task_id),
+            open_abandonment_id=self._open_abandonment_id(generation_id, task.task_id),
             hold_reject_cycle_exists=hold_reject_cycle_exists,
             hold_reject_evidence_hold_exists=hold_reject_evidence_hold_exists,
             hold_reject_human_review_exists=hold_reject_human_review_exists,
@@ -1064,9 +1064,12 @@ class PostgresCommandPort:
         value = self.session.scalar(select(identity).where(model.task_id == task_id, model.state == state))
         return str(value) if value else None
 
-    def _open_abandonment_id(self, task_id: uuid.UUID) -> str | None:
+    def _open_abandonment_id(
+        self, generation_id: uuid.UUID, task_id: uuid.UUID
+    ) -> str | None:
         value = self.session.scalar(
             select(wf.AbandonmentAttempt.abandonment_id).where(
+                wf.AbandonmentAttempt.generation_id == generation_id,
                 wf.AbandonmentAttempt.task_id == task_id,
                 wf.AbandonmentAttempt.state.in_(("preparing", "published", "blocked", "reconciling")),
             )
@@ -2536,6 +2539,11 @@ class PostgresCommandPort:
         attempt = self.session.get(wf.AbandonmentAttempt, uuid.UUID(str(attempt_id)))
         if attempt is None or attempt.task_id != task.task_id or attempt.state != "blocked":
             raise CommandRuleError("BLOCKED_ABANDONMENT_REQUIRED", "no exact blocked abandonment")
+        if attempt.generation_id != execution.generation_id:
+            raise CommandRuleError(
+                "ABANDONMENT_GENERATION_MISMATCH",
+                "abandonment belongs to a different authority generation",
+            )
         source = self.session.get(wf.WorkflowOperation, attempt.source_operation_id)
         if source is None:
             raise CommandRuleError("SOURCE_OPERATION_REQUIRED", "abandonment source operation is missing")
@@ -3412,6 +3420,14 @@ class PostgresCommandPort:
         return inspection, actor
 
     def _publish_abandonment_successor(self, attempt: wf.AbandonmentAttempt, source: wf.WorkflowOperation, execution: wf.CommandExecution, published_at: datetime) -> wf.WorkflowOperation:
+        if (
+            attempt.generation_id != execution.generation_id
+            or source.generation_id != attempt.generation_id
+        ):
+            raise CommandRuleError(
+                "ABANDONMENT_GENERATION_MISMATCH",
+                "abandonment succession cannot cross authority generations",
+            )
         head = self.session.get(models.TaskAuthorityHead, (attempt.generation_id, attempt.task_id))
         placement = self.session.get(models.CurrentTaskSectionPlacement, (attempt.generation_id, attempt.task_id))
         if head is None or placement is None or head.current_content_activation_id != attempt.baseline_content_activation_id or placement.latest_event_id != attempt.baseline_placement_event_id:
