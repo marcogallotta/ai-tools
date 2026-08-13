@@ -152,16 +152,15 @@ def command_adopt(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]
         if remote_head != expected_head:
             fail("ADOPT_HEAD_MISMATCH", f"remote {branch} is at {remote_head}, not the supplied expected head {expected_head}")
 
-        if branch_exists(runner, repo.source_top, branch):
+        branch_already_local = branch_exists(runner, repo.source_top, branch)
+        if branch_already_local:
             local_head = runner.sha(repo.source_top, f"refs/heads/{branch}")
             if local_head != expected_head:
                 fail("ADOPT_LOCAL_BRANCH_MISMATCH", f"local branch {branch} already exists at {local_head}, not the supplied expected head {expected_head}")
-        else:
-            ensure_commit_object(runner, repo, expected_head)
-            made = runner.run(repo.source_top, "branch", branch, expected_head, check=False)
-            if made.returncode != 0:
-                fail("ADOPT_BRANCH_CREATE_FAILED", f"could not create local branch {branch} at {expected_head}: {made.stderr.strip()}")
 
+        # Resolve every remaining precondition before creating any local branch,
+        # so a failure here never leaves an untracked branch with no task state.
+        ensure_commit_object(runner, repo, expected_head)
         remote_base = remote_ref_sha(runner, repo, base_ref)
         assert remote_base is not None
         ensure_commit_object(runner, repo, remote_base)
@@ -170,58 +169,72 @@ def command_adopt(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]
             fail("ADOPT_BASE_UNRESOLVED", f"could not compute merge-base of {expected_head} and {base_ref} {remote_base}")
         base_sha = require_full_sha(merge_base.stdout.strip(), "computed adoption base SHA")
 
-        candidate.parent.mkdir(parents=True, exist_ok=True)
-        reason = f"Dish task {task_gid}; agent {agent_id} (adopted)"
-        add = runner.run(
-            repo.source_top,
-            "worktree",
-            "add",
-            "--lock",
-            "--reason",
-            reason,
-            str(candidate),
-            branch,
-            check=False,
-        )
-        if add.returncode != 0:
-            fail("WORKTREE_CREATE_FAILED", f"git worktree add failed without recovery mutation: {add.stderr.strip()}")
+        created_branch = False
+        if not branch_already_local:
+            made = runner.run(repo.source_top, "branch", branch, expected_head, check=False)
+            if made.returncode != 0:
+                fail("ADOPT_BRANCH_CREATE_FAILED", f"could not create local branch {branch} at {expected_head}: {made.stderr.strip()}")
+            created_branch = True
 
-        git_dir = runner.path(candidate, "--git-dir")
-        provisional = {
-            "schema_version": SCHEMA_VERSION,
-            "repository": {"full_name": EXPECTED_REPOSITORY, "origin_id": repo.origin_id},
-            "task_gid": task_gid,
-            "branch": branch,
-            "worktree_path": str(candidate),
-            "git_common_dir": str(repo.common_dir),
-            "git_dir": str(git_dir),
-            "base_ref": base_ref,
-            "base_sha": base_sha,
-            "owner": {"agent_id": agent_id, "host": socket.gethostname()},
-            "created_at": now_utc(),
-            "last_verified_at": now_utc(),
-            "local_head": expected_head,
-            "published_head": expected_head,
-            "remote_owned_head": expected_head,
-            "remote_relation": "equal",
-            "remote_checked_at": now_utc(),
-            "target_current_head": remote_base,
-            "target_checked_at": now_utc(),
-            "pr_url": None,
-            "pr_head": None,
-            "lifecycle": "active",
-            "disposition": None,
-            "adopted": True,
-            "adopted_at": now_utc(),
-        }
-        identity = verify_owned_worktree(runner, repo, provisional)
-        if identity.head != expected_head:
-            fail("WORKTREE_CREATE_VERIFY_FAILED", f"adopted worktree HEAD {identity.head} != exact expected head {expected_head}")
-        provisional["last_verified_at"] = now_utc()
-        provisional["local_head"] = identity.head
-        atomic_write_json(state_file, provisional)
-        set_agent_reference(agent_id, provisional)
-        return payload_from_state("adopt", provisional, identity, relation="equal", remote_head=expected_head, target_head=remote_base)
+        try:
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+            reason = f"Dish task {task_gid}; agent {agent_id} (adopted)"
+            add = runner.run(
+                repo.source_top,
+                "worktree",
+                "add",
+                "--lock",
+                "--reason",
+                reason,
+                str(candidate),
+                branch,
+                check=False,
+            )
+            if add.returncode != 0:
+                fail("WORKTREE_CREATE_FAILED", f"git worktree add failed without recovery mutation: {add.stderr.strip()}")
+
+            git_dir = runner.path(candidate, "--git-dir")
+            provisional = {
+                "schema_version": SCHEMA_VERSION,
+                "repository": {"full_name": EXPECTED_REPOSITORY, "origin_id": repo.origin_id},
+                "task_gid": task_gid,
+                "branch": branch,
+                "worktree_path": str(candidate),
+                "git_common_dir": str(repo.common_dir),
+                "git_dir": str(git_dir),
+                "base_ref": base_ref,
+                "base_sha": base_sha,
+                "owner": {"agent_id": agent_id, "host": socket.gethostname()},
+                "created_at": now_utc(),
+                "last_verified_at": now_utc(),
+                "local_head": expected_head,
+                "published_head": expected_head,
+                "remote_owned_head": expected_head,
+                "remote_relation": "equal",
+                "remote_checked_at": now_utc(),
+                "target_current_head": remote_base,
+                "target_checked_at": now_utc(),
+                "pr_url": None,
+                "pr_head": None,
+                "lifecycle": "active",
+                "disposition": None,
+                "adopted": True,
+                "adopted_at": now_utc(),
+            }
+            identity = verify_owned_worktree(runner, repo, provisional)
+            if identity.head != expected_head:
+                fail("WORKTREE_CREATE_VERIFY_FAILED", f"adopted worktree HEAD {identity.head} != exact expected head {expected_head}")
+            provisional["last_verified_at"] = now_utc()
+            provisional["local_head"] = identity.head
+            atomic_write_json(state_file, provisional)
+            set_agent_reference(agent_id, provisional)
+            return payload_from_state("adopt", provisional, identity, relation="equal", remote_head=expected_head, target_head=remote_base)
+        except AgentWorktreeError:
+            # Only roll back the branch this invocation created; a pre-existing
+            # matching local branch is never removed.
+            if created_branch:
+                runner.run(repo.source_top, "branch", "-D", branch, check=False)
+            raise
 
 
 def resume_locked(

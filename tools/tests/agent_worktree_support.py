@@ -112,6 +112,22 @@ class Harness:
             args.extend(["--agent-id", agent])
         return self.tool(*args, check=check)
 
+    def adopt(
+        self,
+        task: str = "2001",
+        branch: str = "agent/adopted",
+        expected_head: str | None = None,
+        base_ref: str = "refs/heads/main",
+        agent: str = "claude-1",
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[str]:
+        args = [
+            "adopt", "--task", task, "--branch", branch,
+            "--expected-head", expected_head or self.current_remote_main(),
+            "--base-ref", base_ref, "--agent-id", agent, "--json",
+        ]
+        return self.tool(*args, check=check)
+
     def state_path(self, task: str = "1001") -> Path:
         return self.home / ".local/state/dish/worktrees" / f"{task}.json"
 
