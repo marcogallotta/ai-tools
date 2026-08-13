@@ -31,6 +31,7 @@ GitHub authentication comes from `GITHUB_TOKEN` or `GH_TOKEN`. `ASANA_ACCESS_TOK
 The JSON schema is `dish-pr-lifecycle-status-v1`. The state engine distinguishes:
 
 - `authoring_implementation_in_progress`;
+- `implementation_continuation_required`;
 - `review_ready`;
 - `review_in_progress`;
 - `changes_requested_fix_in_progress`;
@@ -38,12 +39,17 @@ The JSON schema is `dish-pr-lifecycle-status-v1`. The state engine distinguishes
 - `local_implementation_completion_required`;
 - `local_certification_required`;
 - `waiting_ci_certification`;
+- `waiting_external_dependency`;
 - `integration_ready`;
 - `merging_integration_in_progress`;
 - `merged`;
 - `closed_superseded`.
 
-`VERDICT: MERGE` is not terminal. It starts gate evaluation.
+A draft PR that explicitly carries `IMPLEMENTATION EVIDENCE PENDING: <evidence>` is `IMPLEMENTATION CONTINUATION REQUIRED`, not Review/Integration/local certification. The dispatcher reuses the existing Implementation/fix consumer. If no current `phase=implementation`/`fix` owner is active, it first writes a durable `dish-implementation-continuation:v1` handoff on the same PR, then claims `phase=implementation` and dispatches the exact existing branch/task/head plus named evidence. That comment is the explicit replacement-owner handoff when the prior Implementation agent is unavailable. The only human-facing message for this state is `PR #N still needs Implementation to finish <evidence>.`
+
+`VERDICT: MERGE` is not terminal. It starts Integration gate evaluation. Ordinary Review does not wait for ordinary CI and does not require a pre-review sync to moved `main` unless that movement creates a known semantic dependency that invalidates the review question.
+
+`scripts/pr_gate.py` diagnoses the exact reviewed head as `PASS`, `PENDING`, `FAILED_REQUIRED_CI`, `EVIDENCE_MISSING_OR_STALE`, `HEAD_MOVED`, or (for transport/read failures distinguished by the lifecycle adapter) `INFRASTRUCTURE_ERROR`. Only `PENDING` is `WAITING CI / CERTIFICATION`. Missing/stale evidence remains fail-closed while accurately staying in gate evaluation; it is not described as CI still running. Failed required CI is either PR-owned and returned to Implementation/fix, or externally owned only when a valid durable external-dependency record proves that ownership.
 
 ## Structured advisory leases
 
@@ -98,17 +104,30 @@ If the required token or published trigger is unavailable, the dispatcher report
 
 ## BLOCK -> implementation/fix routing
 
-A formal exact-head `VERDICT: BLOCK` is not only a status classification. `dispatch` routes it to the configured existing implementation/fix consumer. Configure that consumer with:
+A formal exact-head `VERDICT: BLOCK` is not only a status classification. A `FAILED_REQUIRED_CI` diagnosis without a valid active external-dependency record is also PR-owned implementation/fix work even when the exact-head semantic Review verdict remains `MERGE`. `dispatch` routes either condition to the configured existing implementation/fix consumer. Configure that consumer with:
 
 ```sh
 DISH_IMPLEMENTATION_FIX_COMMAND='<existing implementation/fix launcher>'
 ```
 
-or `--implementation-fixer`. The command receives `dish-pr-fix-dispatch-v1` JSON on standard input containing the exact PR URL/number, branch, blocked head SHA, owning task IDs, the authoritative formal BLOCK review, and the current lifecycle snapshot. The consumer must follow `dish/docs/agents/implementation.md`, update the existing PR branch, and re-read GitHub before semantic work.
+or `--implementation-fixer`. The command receives `dish-pr-fix-dispatch-v1` JSON on standard input containing the exact PR URL/number, branch, blocked head SHA, owning task IDs, the current lifecycle snapshot, and either the authoritative formal BLOCK review or the structured PR-owned CI diagnosis. The consumer must follow `dish/docs/agents/implementation.md`, update the existing PR branch, and re-read GitHub before semantic work. A CI-driven semantic fix changes head identity and therefore requires substantive Review on the new head.
 
 Before launching the consumer, the dispatcher writes an exact-head `phase=fix` lease. A fresh `phase=fix` or `phase=implementation` lease on the current blocked head prevents duplicate dispatch. A head move immediately invalidates the old review and lease; the dispatcher never launches a fix consumer for a BLOCK that is no longer on the current head. If the configured command fails synchronously, the dispatcher releases its lease so recovery is not deadlocked.
 
 Missing implementation/fix consumer configuration is a deployment boundary, not a request for Marco to forward the review transcript. The durable BLOCK review remains on GitHub until the consumer is configured/recovered.
+
+
+## External dependency blockers
+
+A failed exact-head required check may enter `WAITING ON EXTERNAL DEPENDENCY` only when the PR carries a valid durable dependency record matching that exact check. The marker is a GitHub PR comment and is restart-reconstructable:
+
+```text
+<!-- dish-external-dependency:v1 action=blocked task=<16-digit-gid> pr=<owner-pr> check=<percent-encoded-check> main=<40-char-main-sha> evidence=<percent-encoded-reference> reason=<percent-encoded-reason> -->
+```
+
+`pr=` is optional when no code PR owns the fix. `task=`, `check=`, `main=`, and `evidence=` are mandatory. Values that may contain spaces are percent-encoded. Malformed records never authorize external ownership. Records are ordered deterministically by comment timestamp, numeric comment id, then marker order; the newest valid record wins. Resolution/supersession uses the same full identity with `action=resolved`, or is observed from a merged owner PR / completed owner task when that authority is available. A closed-unmerged owner PR remains blocked explicitly.
+
+While externally blocked the dispatcher does not launch Implementation/fix or local-certification work for the blocked PR and does not merge it. Human output is only the concise owner/check status. Once the owner resolves, the target PR returns to exact-head evidence evaluation; it does not inherit or skip CI/Review.
 
 ## Local work after Review MERGE
 

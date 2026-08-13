@@ -70,7 +70,7 @@ For new work:
 7. verify every recorded SHA is current, then explicitly mark the PR **ready for review**;
 8. verify GitHub now reports `draft=false`; only then return it for ordinary review discovery.
 
-`draft=true` means **AUTHORING / NOT REVIEWABLE**. The PR may exist and receive implementation commits while evidence is still in progress, but ordinary Coordinator/Review discovery must ignore it. Marco may explicitly request an exceptional early review of a draft; that is an override, not a change to the normal state machine.
+`draft=true` means **AUTHORING / NOT REVIEWABLE**. The PR may exist and receive implementation commits while evidence is still in progress, but ordinary Coordinator/Review discovery must ignore it. While a draft is specifically waiting on unfinished task-scoped authoring evidence, keep one concise durable line in the PR description: `IMPLEMENTATION EVIDENCE PENDING: <exact evidence>`. Remove or replace that line as the evidence is completed. Pending ordinary CI after the ready-for-review transition is Integration evidence, not unfinished authoring evidence. Marco may explicitly request an exceptional early review of a draft; that is an override, not a change to the normal state machine.
 
 The ready-for-review transition is the author's explicit handoff from AUTHORING to REVIEW-READY. PR-triggered ordinary CI starts from this review-ready state and may complete while review proceeds; any CI still pending at the transition must be named as pending integration evidence rather than claimed as passed.
 
