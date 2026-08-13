@@ -1,0 +1,8 @@
+{
+  "schema": "dish-github-actions-billing-config-v1",
+  "included_minutes_per_month": 2000,
+  "job_rounding": "ceil_each_started_job_minute",
+  "rates_usd_per_billed_minute": {
+    "ubuntu-24.04": 0.006
+  }
+}
