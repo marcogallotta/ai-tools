@@ -345,6 +345,102 @@ def test_authoritative_sections_and_registry_bound_pagination(workflow_db) -> No
             )
 
 
+def test_canonical_section_id_lists_tasks_without_section_gid(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port = _port(session, ids)
+        result = port.execute(
+            _call(
+                "section-tasks",
+                run_id=_next(ids),
+                arguments={"section_id": str(context["section_id"])},
+            )
+        )
+
+    assert result.ok
+    assert [item["dish_id"] for item in result.data["tasks"]] == [str(task_id)]
+    assert result.data["tasks"][0]["section_id"] == str(context["section_id"])
+    assert result.data["tasks"][0]["task_gid"] == "123456789"
+
+
+def test_read_resolves_canonical_dish_id_without_task_gid(workflow_db) -> None:
+    factory, ids, _context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port = _port(session, ids)
+        result = port.execute(
+            _call("read", run_id=_next(ids), arguments={"dish_id": str(task_id)})
+        )
+
+    assert result.ok
+    assert result.data["dish_id"] == str(task_id)
+    assert result.data["identity_binding"] == {
+        "dish_id": str(task_id),
+        "task_gid": "123456789",
+    }
+
+
+def test_unknown_canonical_read_and_section_ids_fail_locally(workflow_db) -> None:
+    factory, ids, _context, _task_id = workflow_db
+    unknown_dish = uuid.UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+    unknown_section = uuid.UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+    with session_scope(factory) as session:
+        port = _port(session, ids)
+        read_result = port.execute(
+            _call("read", run_id=_next(ids), arguments={"dish_id": str(unknown_dish)})
+        )
+        section_result = port.execute(
+            _call(
+                "section-tasks",
+                run_id=_next(ids),
+                arguments={"section_id": str(unknown_section)},
+            )
+        )
+
+    assert read_result.ok is False
+    assert (read_result.code, read_result.http_status) == ("DISH_NOT_FOUND", 404)
+    assert read_result.data == {"dish_reference": str(unknown_dish)}
+    assert section_result.ok is False
+    assert (section_result.code, section_result.http_status) == ("SECTION_NOT_FOUND", 404)
+    assert section_result.data == {"section_reference": str(unknown_section)}
+
+
+def test_start_resolves_canonical_dish_id_without_task_gid(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        result = port.execute(
+            _call(
+                "start",
+                run_id=run_id,
+                request_id=_next(ids),
+                arguments={"dish_id": str(task_id), "kind": "initial", "agent": "claude"},
+            )
+        )
+
+    assert result.ok, (result.code, result.http_status, result.data)
+    assert result.data["operation_id"]
+
+
+def test_legacy_task_gid_alias_resolves_locally_for_start(workflow_db) -> None:
+    factory, ids, context, _task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        result = port.execute(
+            _call(
+                "start",
+                run_id=run_id,
+                request_id=_next(ids),
+                arguments={"task_gid": "123456789", "kind": "initial", "agent": "claude"},
+            )
+        )
+
+    assert result.ok, (result.code, result.http_status, result.data)
+
+
 def test_create_commits_one_authoritative_bundle_and_exact_replay(workflow_db) -> None:
     factory, ids, context, _task_id = workflow_db
     run_id, request_id = _next(ids), _next(ids)
@@ -360,9 +456,11 @@ def test_create_commits_one_authoritative_bundle_and_exact_replay(workflow_db) -
         first = port.execute(call)
         replay = port.execute(call)
         created = session.scalar(
-            select(models.DishTask).where(models.DishTask.task_id == uuid.UUID(first.data["task_id"]))
+            select(models.DishTask).where(models.DishTask.task_id == uuid.UUID(first.data["dish_id"]))
         )
         assert first.ok and created.creation_route == "create"
+        assert first.data["dish_id"] == first.data["task_id"]
+        assert first.data["section_id"] == str(context["section_id"])
         assert replay.ok and replay.request_replayed is True
         assert session.scalar(
             select(func.count()).select_from(models.DishTask).where(models.DishTask.creation_route == "create")

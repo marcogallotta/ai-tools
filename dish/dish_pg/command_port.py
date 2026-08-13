@@ -254,7 +254,16 @@ class PostgresCommandPort:
                 {"retained": False},
             )
         if definition.profile == "Q":
-            return self._execute_read(call)
+            try:
+                return self._execute_read(call)
+            except CommandRuleError as exc:
+                return CommandResult(
+                    False,
+                    call.command_name,
+                    exc.code,
+                    exc.http_status,
+                    dict(exc.data),
+                )
         if call.request_id is None:
             raise CommandRuleError(
                 "REQUEST_ID_REQUIRED", "mutation requires request_id", http_status=400
@@ -527,13 +536,31 @@ class PostgresCommandPort:
             reference = call.arguments.get("section_id") or call.arguments.get("section_gid")
             if reference is None:
                 raise CommandRuleError("SECTION_REQUIRED", "section reference is required", http_status=400)
+            try:
+                self.reads.resolve_section(str(reference))
+            except ReadModelError as exc:
+                raise CommandRuleError(
+                    "SECTION_NOT_FOUND",
+                    str(exc),
+                    http_status=404,
+                    data={"section_reference": str(reference)},
+                ) from exc
             page = self.reads.section_tasks(
                 section_reference=str(reference),
                 cursor=call.arguments.get("cursor"),
                 page_size=int(call.arguments.get("page_size", 50)),
             )
             data = {
-                "tasks": [asdict(item) | {"task_id": str(item.task_id), "section_id": str(item.section_id)} for item in page.items],
+                "tasks": [
+                    asdict(item)
+                    | {
+                        "dish_id": str(item.task_id),
+                        "task_id": str(item.task_id),
+                        "task_gid": item.external_task_id,
+                        "section_id": str(item.section_id),
+                    }
+                    for item in page.items
+                ],
                 "next_cursor": page.next_cursor,
                 "registry_version_id": str(page.registry_version_id),
                 "registry_revision": page.registry_revision,
@@ -555,18 +582,43 @@ class PostgresCommandPort:
                 )
             data = self._holds()
         elif call.command_name == "read":
-            reference = call.arguments.get("task_id") or call.arguments.get("task_gid")
+            reference = (
+                call.arguments.get("dish_id")
+                or call.arguments.get("task_id")
+                or call.arguments.get("task_gid")
+            )
             if reference is None:
                 raise CommandRuleError("TASK_REQUIRED", "task reference is required", http_status=400)
-            view = self.reads.task_view(str(reference))
+            try:
+                task = self.reads.resolve_task(str(reference))
+            except ReadModelError as exc:
+                raise CommandRuleError(
+                    "DISH_NOT_FOUND",
+                    str(exc),
+                    http_status=404,
+                    data={"dish_reference": str(reference)},
+                ) from exc
+            view = self.reads.task_view(task.task_id)
+            task_gid = self.session.scalar(
+                select(models.TaskExternalAlias.external_id).where(
+                    models.TaskExternalAlias.task_id == view.task_id,
+                    models.TaskExternalAlias.external_system == "asana",
+                    models.TaskExternalAlias.state == "active",
+                )
+            )
             freshness = dict(view.projection_freshness)
             freshness = dict(self.projection_recorder.task_freshness(view.task_id))
             data = asdict(view) | {
+                "dish_id": str(view.task_id),
                 "task_id": str(view.task_id),
                 "content_version_id": str(view.content_version_id),
                 "section_id": str(view.section_id),
                 "operation_id": str(view.operation_id) if view.operation_id else None,
                 "projection_freshness": freshness,
+                "identity_binding": {
+                    "dish_id": str(view.task_id),
+                    "task_gid": task_gid,
+                },
             }
         else:
             raise CommandRuleError("NOT_A_QUERY", "command is not a read query")
@@ -813,7 +865,11 @@ class PostgresCommandPort:
             if operation is None:
                 raise CommandRuleError("OPERATION_NOT_FOUND", "unknown workflow operation", http_status=404)
         task = None
-        task_ref = call.arguments.get("task_id") or call.arguments.get("task_gid")
+        task_ref = (
+            call.arguments.get("dish_id")
+            or call.arguments.get("task_id")
+            or call.arguments.get("task_gid")
+        )
         if not task_ref:
             dish_ref = call.arguments.get("dish")
             if dish_ref:
@@ -1504,7 +1560,13 @@ class PostgresCommandPort:
         execution.task_id = task_id
         self.session.flush()
         projection_id = self._project(generation.generation_id, execution.execution_id, task_id, "create_task", {"title": title}, call.now)
-        return {"task_id": str(task_id), "content_version_id": str(version_id), "projection_event_id": projection_id}
+        return {
+            "dish_id": str(task_id),
+            "task_id": str(task_id),
+            "content_version_id": str(version_id),
+            "section_id": str(section.section_id),
+            "projection_event_id": projection_id,
+        }
 
     def _start(self, call, generation, binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None

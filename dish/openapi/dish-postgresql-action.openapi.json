@@ -1,6 +1,34 @@
 {
   "components": {
     "schemas": {
+      "CreateResultEnvelope": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResultEnvelope"
+          },
+          {
+            "properties": {
+              "data": {
+                "additionalProperties": true,
+                "properties": {
+                  "dish_id": {
+                    "format": "uuid",
+                    "maxLength": 36,
+                    "minLength": 36,
+                    "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "dish_id"
+                ],
+                "type": "object"
+              }
+            },
+            "type": "object"
+          }
+        ]
+      },
       "ResultEnvelope": {
         "additionalProperties": false,
         "properties": {
@@ -75,18 +103,133 @@
                 "additionalProperties": false,
                 "properties": {
                   "arguments": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "discriminator": {
+                      "propertyName": "correction"
+                    },
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "agent": {
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ],
+                            "type": "string"
+                          },
+                          "correction": {
+                            "const": "none",
+                            "description": "Approve the exact inspected candidate without supplying file_text.",
+                            "enum": [
+                              "none"
+                            ],
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "provenance_complete": {
+                            "type": "boolean"
+                          },
+                          "reviewed_identity": {
+                            "type": "string"
+                          },
+                          "semantic_review_complete": {
+                            "type": "boolean"
+                          },
+                          "submission_id": {
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "submission_id",
+                          "agent",
+                          "model",
+                          "correction",
+                          "reviewed_identity",
+                          "semantic_review_complete",
+                          "provenance_complete"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "agent": {
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ],
+                            "type": "string"
+                          },
+                          "correction": {
+                            "const": "small",
+                            "description": "Apply and approve a complete Small corrected candidate supplied as file_text.",
+                            "enum": [
+                              "small"
+                            ],
+                            "type": "string"
+                          },
+                          "file_text": {
+                            "type": "string"
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "provenance_complete": {
+                            "type": "boolean"
+                          },
+                          "reviewed_identity": {
+                            "type": "string"
+                          },
+                          "semantic_review_complete": {
+                            "type": "boolean"
+                          },
+                          "submission_id": {
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "submission_id",
+                          "agent",
+                          "model",
+                          "correction",
+                          "file_text",
+                          "reviewed_identity",
+                          "semantic_review_complete",
+                          "provenance_complete"
+                        ],
+                        "type": "object"
+                      }
+                    ]
                   },
                   "client": {
                     "additionalProperties": false,
                     "properties": {
                       "request_id": {
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
                         "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "type": "string"
                       },
                       "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
                         "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "type": "string"
                       }
                     },
@@ -142,18 +285,43 @@
                 "additionalProperties": false,
                 "properties": {
                   "arguments": {
-                    "additionalProperties": true,
+                    "additionalProperties": false,
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "agent",
+                      "title"
+                    ],
                     "type": "object"
                   },
                   "client": {
                     "additionalProperties": false,
                     "properties": {
                       "request_id": {
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
                         "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "type": "string"
                       },
                       "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
                         "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "type": "string"
                       }
                     },
@@ -179,7 +347,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ResultEnvelope"
+                  "$ref": "#/components/schemas/CreateResultEnvelope"
                 }
               }
             },
@@ -209,18 +377,47 @@
                 "additionalProperties": false,
                 "properties": {
                   "arguments": {
-                    "additionalProperties": true,
+                    "additionalProperties": false,
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      },
+                      "submission_id": {
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "submission_id",
+                      "agent"
+                    ],
                     "type": "object"
                   },
                   "client": {
                     "additionalProperties": false,
                     "properties": {
                       "request_id": {
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
                         "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "type": "string"
                       },
                       "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
                         "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "type": "string"
                       }
                     },
@@ -276,18 +473,74 @@
                 "additionalProperties": false,
                 "properties": {
                   "arguments": {
-                    "additionalProperties": true,
+                    "additionalProperties": false,
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      },
+                      "file_text": {
+                        "type": "string"
+                      },
+                      "governed_change_fields": {
+                        "description": "Use only to explicitly attest an append-only `Human \u2014 Marco:` Decision that Marco actually stated in conversation. This records agent-attributed provenance; it does not authorize any other governed-field mutation.",
+                        "items": {
+                          "enum": [
+                            "Decisions"
+                          ],
+                          "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": true
+                      },
+                      "material_classification": {
+                        "description": "Required only when a post-signoff change candidate changes the canonical body. It classifies that exact body diff from the signed baseline. The caller may propose non-material, but Dish forces material when a protocol-defined material path changed; material opens Verification, while an accepted non-material diff preserves the exact prior signoff.",
+                        "enum": [
+                          "material",
+                          "non-material"
+                        ],
+                        "type": "string"
+                      },
+                      "model": {
+                        "type": "string"
+                      },
+                      "submission_id": {
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "submission_id",
+                      "agent",
+                      "model",
+                      "file_text"
+                    ],
                     "type": "object"
                   },
                   "client": {
                     "additionalProperties": false,
                     "properties": {
                       "request_id": {
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
                         "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "type": "string"
                       },
                       "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
                         "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "type": "string"
                       }
                     },
@@ -343,14 +596,68 @@
                 "additionalProperties": false,
                 "properties": {
                   "arguments": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "agent": {
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ],
+                            "type": "string"
+                          },
+                          "dish_id": {
+                            "description": "Canonical Dish UUID. Use this to resolve a Marco-supplied `dish <uuid>` handoff deterministically; never rediscover that Dish by browsing sections or matching titles.",
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "dish_id",
+                          "agent"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "agent": {
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ],
+                            "type": "string"
+                          },
+                          "task_gid": {
+                            "description": "Exact task GID. Use this only when already returned by Dish.",
+                            "maxLength": 19,
+                            "pattern": "^[1-9][0-9]*$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "task_gid",
+                          "agent"
+                        ],
+                        "type": "object"
+                      }
+                    ]
                   },
                   "client": {
                     "additionalProperties": false,
                     "properties": {
                       "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
                         "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "type": "string"
                       }
                     },
@@ -405,18 +712,289 @@
                 "additionalProperties": false,
                 "properties": {
                   "arguments": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "discriminator": {
+                      "propertyName": "route"
+                    },
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "agent": {
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ],
+                            "type": "string"
+                          },
+                          "file_text": {
+                            "type": "string"
+                          },
+                          "governed_change_fields": {
+                            "description": "On a Large-correction retry, name only governed fields Dish asked the agent to confirm as intentionally changed. Naming Decisions also attests that an append-only `Human \u2014 Marco:` entry reflects something Marco actually stated; it does not authorize another governed field.",
+                            "items": {
+                              "enum": [
+                                "Dish candidate",
+                                "Purpose",
+                                "Role",
+                                "Priors",
+                                "Locks",
+                                "Exemptions",
+                                "Research emphasis",
+                                "Destination section",
+                                "Decisions",
+                                "Researched by"
+                              ],
+                              "type": "string"
+                            },
+                            "type": "array",
+                            "uniqueItems": true
+                          },
+                          "model": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "route": {
+                            "const": "large",
+                            "description": "Select the large rejection route.",
+                            "enum": [
+                              "large"
+                            ],
+                            "type": "string"
+                          },
+                          "submission_id": {
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "submission_id",
+                          "agent",
+                          "reason",
+                          "route",
+                          "model",
+                          "file_text"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "agent": {
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ],
+                            "type": "string"
+                          },
+                          "blocker_actual": {
+                            "type": "number"
+                          },
+                          "blocker_basis": {
+                            "type": "string"
+                          },
+                          "blocker_delta": {
+                            "type": "number"
+                          },
+                          "blocker_limit": {
+                            "type": "number"
+                          },
+                          "blocker_metric": {
+                            "type": "string"
+                          },
+                          "blocker_unit": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "resume_status": {
+                            "enum": [
+                              "pending-research",
+                              "pending-verification"
+                            ],
+                            "type": "string"
+                          },
+                          "route": {
+                            "const": "evidence",
+                            "description": "Select the evidence rejection route.",
+                            "enum": [
+                              "evidence"
+                            ],
+                            "type": "string"
+                          },
+                          "submission_id": {
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "submission_id",
+                          "agent",
+                          "reason",
+                          "route",
+                          "resume_status"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "properties": {
+                          "agent": {
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ],
+                            "type": "string"
+                          },
+                          "blocker_actual": {
+                            "type": "number"
+                          },
+                          "blocker_basis": {
+                            "type": "string"
+                          },
+                          "blocker_delta": {
+                            "type": "number"
+                          },
+                          "blocker_limit": {
+                            "type": "number"
+                          },
+                          "blocker_metric": {
+                            "type": "string"
+                          },
+                          "blocker_unit": {
+                            "type": "string"
+                          },
+                          "human_review_basis": {
+                            "description": "The specific unresolved choice, waiver, classification, or authority that remains for Marco.",
+                            "type": "string"
+                          },
+                          "human_review_confirmed": {
+                            "description": "Set true only after completing Dish's Human Review escalation preflight.",
+                            "type": "boolean"
+                          },
+                          "human_review_options": {
+                            "description": "Concrete human choices for this Human Review, ordered best-first. The first item is always the agent's recommended route. Include plausible alternatives; Dish always gives Marco a free-text Other choice in the admin UI. If an option authorizes an Exemptions change, before/after must be the complete exact field values. Nutrition waivers use the canonical tags [nutrition-kcal], [nutrition-protein], or [nutrition-fat] in the after value, not prose substitutes.",
+                            "items": {
+                              "additionalProperties": false,
+                              "properties": {
+                                "authorization": {
+                                  "additionalProperties": false,
+                                  "properties": {
+                                    "after": {
+                                      "type": "string"
+                                    },
+                                    "before": {
+                                      "type": "string"
+                                    },
+                                    "field": {
+                                      "enum": [
+                                        "Dish candidate",
+                                        "Purpose",
+                                        "Role",
+                                        "Priors",
+                                        "Locks",
+                                        "Exemptions",
+                                        "Research emphasis",
+                                        "Destination section",
+                                        "Researched by"
+                                      ],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "field",
+                                    "before",
+                                    "after"
+                                  ],
+                                  "type": "object"
+                                },
+                                "decision": {
+                                  "type": "string"
+                                },
+                                "label": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "label",
+                                "decision"
+                              ],
+                              "type": "object"
+                            },
+                            "maxItems": 6,
+                            "minItems": 1,
+                            "type": "array"
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "repairs_considered": {
+                            "description": "Specific plausible repairs considered and why they do not resolve the issue within existing authority.",
+                            "type": "string"
+                          },
+                          "resume_status": {
+                            "enum": [
+                              "pending-research",
+                              "pending-verification"
+                            ],
+                            "type": "string"
+                          },
+                          "route": {
+                            "const": "human-review",
+                            "description": "Select the human-review rejection route.",
+                            "enum": [
+                              "human-review"
+                            ],
+                            "type": "string"
+                          },
+                          "submission_id": {
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "submission_id",
+                          "agent",
+                          "reason",
+                          "route",
+                          "resume_status",
+                          "human_review_options"
+                        ],
+                        "type": "object"
+                      }
+                    ]
                   },
                   "client": {
                     "additionalProperties": false,
                     "properties": {
                       "request_id": {
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
                         "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "type": "string"
                       },
                       "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
                         "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "type": "string"
                       }
                     },
@@ -472,18 +1050,38 @@
                 "additionalProperties": false,
                 "properties": {
                   "arguments": {
-                    "additionalProperties": true,
+                    "additionalProperties": false,
+                    "properties": {
+                      "operation_id": {
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "operation_id"
+                    ],
                     "type": "object"
                   },
                   "client": {
                     "additionalProperties": false,
                     "properties": {
                       "request_id": {
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
                         "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "type": "string"
                       },
                       "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
                         "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "type": "string"
                       }
                     },
@@ -539,14 +1137,59 @@
                 "additionalProperties": false,
                 "properties": {
                   "arguments": {
-                    "additionalProperties": true,
+                    "additionalProperties": false,
+                    "oneOf": [
+                      {
+                        "required": [
+                          "section_id"
+                        ]
+                      },
+                      {
+                        "required": [
+                          "section_gid"
+                        ]
+                      }
+                    ],
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      },
+                      "cursor": {
+                        "description": "Opaque next_cursor returned by a prior section-tasks call. Omit for the first page; repeat the call with the returned next_cursor to fetch the next page. A null next_cursor means there are no more tasks.",
+                        "type": "string"
+                      },
+                      "section_gid": {
+                        "maxLength": 19,
+                        "pattern": "^[1-9][0-9]*$",
+                        "type": "string"
+                      },
+                      "section_id": {
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "agent"
+                    ],
                     "type": "object"
                   },
                   "client": {
                     "additionalProperties": false,
                     "properties": {
                       "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
                         "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "type": "string"
                       }
                     },
@@ -601,14 +1244,31 @@
                 "additionalProperties": false,
                 "properties": {
                   "arguments": {
-                    "additionalProperties": true,
+                    "additionalProperties": false,
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "agent"
+                    ],
                     "type": "object"
                   },
                   "client": {
                     "additionalProperties": false,
                     "properties": {
                       "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
                         "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "type": "string"
                       }
                     },
@@ -663,18 +1323,290 @@
                 "additionalProperties": false,
                 "properties": {
                   "arguments": {
-                    "additionalProperties": true,
-                    "type": "object"
+                    "discriminator": {
+                      "propertyName": "kind"
+                    },
+                    "oneOf": [
+                      {
+                        "additionalProperties": false,
+                        "oneOf": [
+                          {
+                            "required": [
+                              "dish_id"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "task_gid"
+                            ]
+                          }
+                        ],
+                        "properties": {
+                          "agent": {
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ],
+                            "type": "string"
+                          },
+                          "dish_id": {
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "type": "string"
+                          },
+                          "intent_basis": {
+                            "description": "Explicit basis for the fresh confirmed Planning call. user_requested means Marco requested Planning for this exact task.",
+                            "enum": [
+                              "user_requested",
+                              "agent_override"
+                            ],
+                            "type": "string"
+                          },
+                          "intent_challenge_id": {
+                            "description": "Durable challenge returned by the first Planning start call. Omit it on the first call and use it only on the fresh confirmed call.",
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "type": "string"
+                          },
+                          "kind": {
+                            "const": "planning",
+                            "description": "Start Planning from a bare Cooking task through the required two-call intent-confirmation gate. The first call always returns a durable challenge.",
+                            "type": "string"
+                          },
+                          "override_reason": {
+                            "description": "Required non-blank explanation only when intent_basis=agent_override.",
+                            "type": "string"
+                          },
+                          "prepared_operation_id": {
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "type": "string"
+                          },
+                          "task_gid": {
+                            "maxLength": 19,
+                            "pattern": "^[1-9][0-9]*$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "agent",
+                          "kind"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "oneOf": [
+                          {
+                            "required": [
+                              "dish_id"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "task_gid"
+                            ]
+                          }
+                        ],
+                        "properties": {
+                          "agent": {
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ],
+                            "type": "string"
+                          },
+                          "dish_id": {
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "type": "string"
+                          },
+                          "kind": {
+                            "const": "initial",
+                            "description": "Start the first Research construction after Planning. For a planning-to-research handoff, use kind=initial; do not start Planning again.",
+                            "type": "string"
+                          },
+                          "prepared_operation_id": {
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "type": "string"
+                          },
+                          "task_gid": {
+                            "maxLength": 19,
+                            "pattern": "^[1-9][0-9]*$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "agent",
+                          "kind"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "oneOf": [
+                          {
+                            "required": [
+                              "dish_id"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "task_gid"
+                            ]
+                          }
+                        ],
+                        "properties": {
+                          "agent": {
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ],
+                            "type": "string"
+                          },
+                          "change_level": {
+                            "enum": [
+                              "small",
+                              "large"
+                            ],
+                            "type": "string"
+                          },
+                          "change_reason": {
+                            "type": "string"
+                          },
+                          "dish_id": {
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "type": "string"
+                          },
+                          "kind": {
+                            "const": "change",
+                            "description": "Start a post-signoff change operation.",
+                            "type": "string"
+                          },
+                          "prepared_operation_id": {
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "type": "string"
+                          },
+                          "task_gid": {
+                            "maxLength": 19,
+                            "pattern": "^[1-9][0-9]*$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "agent",
+                          "kind",
+                          "change_level",
+                          "change_reason"
+                        ],
+                        "type": "object"
+                      },
+                      {
+                        "additionalProperties": false,
+                        "oneOf": [
+                          {
+                            "required": [
+                              "dish_id"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "task_gid"
+                            ]
+                          }
+                        ],
+                        "properties": {
+                          "agent": {
+                            "enum": [
+                              "claude",
+                              "gpt",
+                              "codex"
+                            ],
+                            "type": "string"
+                          },
+                          "dish_id": {
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "type": "string"
+                          },
+                          "independence_attestation": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "const": "verification",
+                            "description": "Start independent Verification after Research.",
+                            "type": "string"
+                          },
+                          "target_cycle_id": {
+                            "description": "Omit for an ordinary Verification start. Supply only as part of the exact operation/cycle pair returned by Dish for an abandonment continuation; never invent or infer this value.",
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "type": "string"
+                          },
+                          "target_operation_id": {
+                            "description": "Omit for an ordinary Verification start. Supply only as part of the exact operation/cycle pair returned by Dish for an abandonment continuation; never copy submission_id into this field.",
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                            "type": "string"
+                          },
+                          "task_gid": {
+                            "maxLength": 19,
+                            "pattern": "^[1-9][0-9]*$",
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "agent",
+                          "kind",
+                          "independence_attestation"
+                        ],
+                        "type": "object"
+                      }
+                    ]
                   },
                   "client": {
                     "additionalProperties": false,
                     "properties": {
                       "request_id": {
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
                         "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "type": "string"
                       },
                       "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
                         "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "type": "string"
                       }
                     },
@@ -730,18 +1662,38 @@
                 "additionalProperties": false,
                 "properties": {
                   "arguments": {
-                    "additionalProperties": true,
+                    "additionalProperties": false,
+                    "properties": {
+                      "submission_id": {
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "submission_id"
+                    ],
                     "type": "object"
                   },
                   "client": {
                     "additionalProperties": false,
                     "properties": {
                       "request_id": {
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
                         "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "type": "string"
                       },
                       "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
                         "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
                         "type": "string"
                       }
                     },
