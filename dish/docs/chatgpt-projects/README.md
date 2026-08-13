@@ -42,6 +42,16 @@ The behavior-v2 runner protocol separates the assistant's declared outcome/actio
 
 A runner is therefore part of the trusted eval boundary: it must instrument the fresh ChatGPT Project interaction and report tool observations independently of assistant prose. The repository harness can validate the recorded trace and link/readback invariants; it cannot cryptographically prove that an external runner fabricated no events.
 
+## Acceptance and rollout policy
+
+The repository keeps the complete approved matrix — 15 scenarios / 19 role-expanded cases — as deterministic harness coverage. `prepare-eval` intentionally continues to emit all 19 cases, and action-bearing cases keep their machine-verifiable observation requirements.
+
+The **complete live 19-case run is an automated/periodic regression target, not a mandatory manual merge gate**. Absence of an authorized fresh-Project runner or a full live result bundle does not by itself make a repository change unreviewable or require a human to create and operate 19 Project chats. Do not substitute a manual full-matrix ceremony for missing automation.
+
+Repository changes land on their governed repository evidence and exact-head review requirements. When an automated live runner is available, use the full 19-case matrix for periodic regression and record failures as concrete follow-up defects rather than requiring manual repetition for every repository change.
+
+If a real ChatGPT Project rollout boundary genuinely needs live smoke validation, keep it deliberately small: at most one representative decision-only case and one representative action-bearing case on a safe/disposable test surface. The purpose is to confirm Project wiring and tool-observation instrumentation, **not** to claim exhaustive model-behavior certification. Such a smoke must be explicitly justified by the rollout risk; it is not a standing requirement for every kernel change.
+
 ## OpenAI product assumptions
 
 Verified against the official OpenAI Projects documentation on 2026-08-12:
