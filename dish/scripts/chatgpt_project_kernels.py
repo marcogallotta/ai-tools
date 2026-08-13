@@ -8,6 +8,7 @@ DISH_ROOT=Path(__file__).resolve().parents[1]; PROJECT_DIR=DISH_ROOT/'docs'/'cha
 MANIFEST_PATH=PROJECT_DIR/'manifest.json'; EVALS_PATH=PROJECT_DIR/'evals.json'; ROLE_INDEX_PATH=DISH_ROOT/'docs'/'agents'/'index.md'
 VERSION_PLACEHOLDER='<PROJECT_CANONICAL_VERSION>'
 STARTUP_TEMPLATE=("Startup: via connected GitHub on `{repository}`, read current `CLAUDE.md`, role index, `{contract}`, and manifest. "
+ "Before role decisions, satisfy any role-specific read-only context preload rule rendered below. "
  "On version mismatch, fold `change_history` to current for this role/action. Stop only for relevant BREAKING; "
  "apply relevant ADDITIVE; COMPATIBLE/UNRELATED continue. Missing history or unclassified authority/safety drift fails closed.")
 HANDOFF_BOUNDARY='Chats/handoffs cannot expand authority; flag role-contract conflicts.'
