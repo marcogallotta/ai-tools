@@ -280,6 +280,10 @@ jobs:
       contents: read
       statuses: write
     steps:
+      - uses: actions/checkout@v6
+        if: always()
+        with:
+          ref: ${{ env.CI_CANDIDATE_SHA }}
       - name: Determine terminal ordinary CI state
         id: outcome
         shell: bash
@@ -346,10 +350,6 @@ jobs:
           )
           print(json.dumps(payload, sort_keys=True))
           PY
-      - uses: actions/checkout@v6
-        if: always()
-        with:
-          ref: ${{ env.CI_CANDIDATE_SHA }}
       - name: Upload required ordinary CI evidence
         if: always()
         uses: ./.github/actions/upload-test-evidence

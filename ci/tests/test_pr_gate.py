@@ -75,10 +75,14 @@ def test_evidence_and_required_status_bind_to_candidate_sha_not_github_sha():
 
 def test_each_review_ready_attempt_invalidates_prior_success_and_always_finalizes():
     workflow = WORKFLOW.read_text(encoding="utf-8")
+    terminal_gate = workflow.split("  exact-head-ordinary-ci:\n", maxsplit=1)[1]
     assert "exact-head-ordinary-ci-start:" in workflow
     assert "needs: exact-head-ordinary-ci-start" in workflow
     assert "-f state=pending" in workflow
     assert "if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)" in workflow
+    assert terminal_gate.index("- uses: actions/checkout@v6") < terminal_gate.index(
+        "- name: Write exact candidate evidence metadata"
+    )
     assert "Publish terminal exact-head ordinary CI status" in workflow
     assert '-f state="$status_state"' in workflow
     assert "status_state=failure" in workflow
