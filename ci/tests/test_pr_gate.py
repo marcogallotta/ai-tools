@@ -71,7 +71,7 @@ def run(
 def runs(*values):
     if not values:
         values = (run(),)
-    return {"workflow_runs": list(value)}
+    return {"workflow_runs": list(values)}
 
 
 def evaluate(*, candidate_pr=None, combined=None, workflow_runs=None, reviewed_head=HEAD):
@@ -156,7 +156,7 @@ def test_prior_same_sha_success_cannot_survive_newer_attempt_without_new_status(
 
 
 def test_same_run_rerun_requires_status_written_after_new_attempt_started():
-    combined = statuses(run_id=123, updated_at="2026-08-12T19:15:00Z")
+    combined = statuses(run_id=123, updated_at="2026-08-12T19:05:00Z")
     workflow_runs = runs(
         run(
             run_id=123,
@@ -252,7 +252,7 @@ def test_status_targeting_older_run_cannot_certify_newest_successful_attempt():
 
 def test_mismatched_or_stale_check_sha_refuses_integration():
     with pytest.raises(pr_gate.GateError, match="not reviewed head"):
-        evaluate(combined=statuses(sha=NEW_HEAD)i
+        evaluate(combined=statuses(sha=NEW_HEAD))
 
 
 def test_specialized_green_workflow_cannot_replace_required_ordinary_ci():
