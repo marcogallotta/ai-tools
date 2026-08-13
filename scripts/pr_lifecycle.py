@@ -97,18 +97,6 @@ class LifecycleEngine(
         )
         lifecycle.human_action = None
         return lifecycle
-def _parse_specialist_triggers(value: str | None) -> dict[str, str]:
-    if not value:
-        return {}
-    try:
-        parsed = json.loads(value)
-    except json.JSONDecodeError as exc:
-        raise LifecycleError(f"DISH_SPECIALIST_TRIGGER_IDS must be JSON: {exc}") from exc
-    if not isinstance(parsed, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in parsed.items()):
-        raise LifecycleError("DISH_SPECIALIST_TRIGGER_IDS must be a JSON object of specialist->trigger ID")
-    return parsed
-
-
 def _build_engine(
     args: argparse.Namespace,
 ) -> tuple[LifecycleEngine, WorkspaceAgentDispatcher | None, LocalReviewDispatcher, ImplementationFixDispatcher]:
@@ -128,13 +116,11 @@ def _build_engine(
     )
     workspace_token = args.workspace_token or os.getenv("DISH_WORKSPACE_AGENT_ACCESS_TOKEN")
     review_trigger = args.review_trigger_id or os.getenv("DISH_REVIEW_API_TRIGGER_ID")
-    specialist = _parse_specialist_triggers(os.getenv("DISH_SPECIALIST_TRIGGER_IDS"))
     workspace = None
-    if workspace_token or review_trigger or specialist:
+    if workspace_token or review_trigger:
         workspace = WorkspaceAgentDispatcher(
             access_token=workspace_token or "",
             review_trigger_id=review_trigger,
-            specialist_triggers=specialist,
             api_root=args.workspace_api_root,
         )
     local = LocalReviewDispatcher(args.local_reviewer or os.getenv("DISH_LOCAL_REVIEW_COMMAND"))

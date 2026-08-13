@@ -346,8 +346,8 @@ def review_class_for(
                 return "focused"
             if value == "MECHANICAL CHECK ONLY":
                 return "mechanical"
-            if value == "NEW SPECIALIST REVIEW":
-                return "specialist:unspecified"
+            if value in {"DOMAIN DEEP RECHECK", "NEW SPECIALIST REVIEW"}:
+                return "domain:unspecified"
             if value == "NORMAL MERGE REVIEW":
                 return "substantive"
     return "substantive"
@@ -365,8 +365,12 @@ def _normalize_review_class(value: str) -> str:
     normalized = aliases.get(normalized, normalized)
     if normalized in {"light", "focused", "mechanical", "substantive"}:
         return normalized
-    if normalized.startswith("specialist:") and normalized.split(":", 1)[1]:
+    if normalized.startswith("domain:") and normalized.split(":", 1)[1]:
         return normalized
+    # legacy marker: a domain label alone never justifies a second AI-reviewer
+    # dependency, so specialist:<name> normalizes to the same in-workflow depth hint.
+    if normalized.startswith("specialist:") and normalized.split(":", 1)[1]:
+        return "domain:" + normalized.split(":", 1)[1]
     return "substantive"
 
 

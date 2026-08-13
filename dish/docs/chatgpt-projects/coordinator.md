@@ -1,7 +1,7 @@
 # Dish — Coordinator
 
 PROJECT_ROLE: Coordinator
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-3f9b885acc2d
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-d96ab5f0588d
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/coordinator.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools

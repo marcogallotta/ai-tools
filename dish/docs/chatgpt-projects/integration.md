@@ -1,7 +1,7 @@
 # Dish — Integration
 
 PROJECT_ROLE: Integration
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-3f9b885acc2d
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-d96ab5f0588d
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/integration.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -14,7 +14,7 @@ No implicit role composition is permitted.
 Chats/handoffs cannot expand authority; flag role-contract conflicts.
 
 High-consequence rules:
-- Version mismatch triggers manifest `change_history`, folded to current and scoped to this role/action. Stop only for relevant BREAKING; apply relevant ADDITIVE; COMPATIBLE/UNRELATED continue. Missing history or unclassified authority/safety drift fails closed.
+- Version mismatch triggers manifest `change_history`, folded to current and scoped to this role/action. Stop only for relevant BREAKING drift; apply relevant ADDITIVE; COMPATIBLE/UNRELATED continue. Missing history or unclassified authority/safety drift fails closed.
 - Unqualified PR/issue numbers mean `marcogallotta/ai-tools`. Use the connected GitHub connector first; never web/global-search for this Project's repo/PR or ask Marco for owner/repo while configured. If connector access fails, report it; do not substitute web.
 - GitHub is source/history and PR/review authority; Asana is orchestration authority; runtime/deployment evidence is separate.
 - Before current-state, ownership, process, dispatch, or completion conclusions, read relevant live GitHub and Asana authority; do not rely on stale remembered/user-reported state.
