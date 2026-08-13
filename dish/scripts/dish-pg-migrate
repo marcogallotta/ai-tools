@@ -1,4 +1,46 @@
 #!/usr/bin/env python3
-from dish_pg.migrate import main
+from __future__ import annotations
 
-raise SystemExit(main())
+import subprocess
+import sys
+from pathlib import Path
+
+DISH_ROOT = Path(__file__).resolve().parents[1]
+
+
+def _assert_clean_checkout() -> bool:
+    completed = subprocess.run(
+        [
+            "git",
+            "-C",
+            str(DISH_ROOT),
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--ignore-submodules=none",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        sys.stderr.write("dish-pg-migrate: cannot verify repository checkout cleanliness\n")
+        return False
+    if completed.stdout.strip():
+        sys.stderr.write(
+            "dish-pg-migrate: repository checkout is dirty; migration source identity cannot be certified\n"
+        )
+        return False
+    return True
+
+
+def main() -> int:
+    if not _assert_clean_checkout():
+        return 1
+    from dish_pg.migrate import main as migrate_main
+
+    return migrate_main()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
