@@ -728,6 +728,7 @@ tests/test_backup_validation_and_reporting.py,test,1,5,isolated-test; sqlite-bou
 tests/test_batch_apply.py,test,1,4,isolated-test,,,none,,exact changed test/module,,
 tests/test_cancellation_retry_intent.py,test,1,4,isolated-test,,,none,,exact changed test/module,,
 tests/test_change_start_intent.py,test,1,4,isolated-test,,,none,,exact changed test/module,,
+tests/test_chatgpt_project_kernel_routing_observations.py,test,1,4,isolated-test,,,none,,exact changed test/module,,
 tests/test_chatgpt_project_kernels.py,test,1,4,isolated-test,,,none,,exact changed test/module,,
 tests/test_commands.py,test,1,4,isolated-test,,,none,,exact changed test/module,,
 tests/test_committed_success_boundaries.py,test,1,4,isolated-test,,,none,,exact changed test/module,,
