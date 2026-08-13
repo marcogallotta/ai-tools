@@ -41,6 +41,42 @@ REVIEWED_PRIVATE_FAULT_SEAMS = {
     ("postgresql/test_process_failure_execution_boundaries.py", "_start_child"): (
         "Exact subprocess-spawn boundary used to prove DSNs remain environment-only."
     ),
+    ("postgresql/test_backup_restore_rehearsal_tooling.py", "_git_head"): (
+        "Repository-head identity boundary for backup and restore rehearsal evidence."
+    ),
+    ("postgresql/test_backup_restore_rehearsal_tooling.py", "_tool_version"): (
+        "PostgreSQL tool-version identity boundary for rehearsal evidence."
+    ),
+    ("postgresql/test_backup_restore_rehearsal_tooling.py", "_query_identity"): (
+        "Database-query identity boundary for rehearsal evidence."
+    ),
+    ("postgresql/test_backup_restore_rehearsal_tooling.py", "_fingerprint"): (
+        "Backup fingerprint generation boundary."
+    ),
+    ("postgresql/test_backup_restore_rehearsal_tooling.py", "_compare"): (
+        "Backup comparison boundary."
+    ),
+    ("postgresql/test_backup_restore_rehearsal_tooling.py", "_run"): (
+        "External rehearsal command execution boundary."
+    ),
+    ("postgresql/test_backup_restore_rehearsal_tooling.py", "_copy_off_device"): (
+        "Off-device backup copy boundary."
+    ),
+    ("postgresql/test_cutover_activation_rehearsal.py", "_find_compose_command"): (
+        "External Docker Compose discovery boundary."
+    ),
+    ("postgresql/test_dark_launch_shadow_worker.py", "_translate_workflow_identifiers"): (
+        "Shadow workflow-identity translation boundary."
+    ),
+    ("postgresql/test_dark_launch_shadow_worker.py", "_ensure_shadow_run"): (
+        "Shadow-run creation boundary."
+    ),
+    ("postgresql/test_dark_launch_shadow_worker.py", "_target_authority_state"): (
+        "Shadow target authority-state capture boundary."
+    ),
+    ("postgresql/test_dark_launch_shadow_worker.py", "_target_response_payload"): (
+        "Shadow target response-payload capture boundary."
+    ),
     ("postgresql/test_production_shaped_rehearsal.py", "_source_identity"): (
         "Received-source identity boundary for isolated orchestration tests."
     ),
@@ -80,6 +116,15 @@ REVIEWED_PRIVATE_FAULT_SEAMS = {
     ),
     ("test_admin_round1b.py", "_commit_kill_revocation"): (
         "Durable kill-revocation commit boundary for crash/replay tests."
+    ),
+    ("test_admin_human_rendering.py", "_utc_now"): (
+        "Administrative rendering clock boundary."
+    ),
+    ("test_admin_human_rendering.py", "_localize"): (
+        "Administrative rendering timezone-localization boundary."
+    ),
+    ("test_shadow_capture.py", "_execute_locked"): (
+        "Shadow-spool locked execution boundary."
     ),
 }
 
