@@ -6,7 +6,7 @@ on:
       - agent/pr31-focused-recheck-d21c335
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   focused:
@@ -22,6 +22,30 @@ jobs:
       - uses: ./.github/actions/setup-python-bundle
         with:
           github-token: ${{ github.token }}
+      - name: Classify activation test and commit candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('dish/test_selection/ownership.csv')
+          text = path.read_text(encoding='utf-8')
+          anchor = 'tests/postgresql/test_scheduled_backup.py,test,1,5,isolated-test; operator-runner; recovery-filesystem; scheduler,,,none,,exact changed test/module,,\n'
+          row = 'tests/postgresql/test_scheduled_backup_activation.py,test,1,5,isolated-test; operator-runner; recovery-filesystem; scheduler,,,none,,exact changed test/module,,\n'
+          if row not in text:
+              if anchor not in text:
+                  raise SystemExit('scheduled backup ownership anchor missing')
+              text = text.replace(anchor, anchor + row, 1)
+              path.write_text(text, encoding='utf-8')
+          PY
+          test "$(git diff --name-only)" = "dish/test_selection/ownership.csv"
+          test "$(git diff --numstat | awk '{print $1 ":" $2}')" = "1:0"
+          git config user.name "Dish Agent"
+          git config user.email "dish-agent@users.noreply.github.com"
+          git add dish/test_selection/ownership.csv
+          git commit -m "Classify backup activation test"
+          echo "CANDIDATE_HEAD=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - name: Focused scheduled-backup and governed selector tests
         shell: bash
         run: |
@@ -53,6 +77,8 @@ jobs:
           for unit in network-online.target timers.target basic.target sysinit.target shutdown.target; do
             printf '[Unit]\nDescription=stub\n' > "$root/etc/systemd/system/$unit"
           done
+          printf 'root:x:0:0:root:/root:/bin/sh\nmarco:x:1000:1000:Marco:/home/marco:/bin/sh\n' > "$root/etc/passwd"
+          printf 'root:x:0:\nmarco:x:1000:\n' > "$root/etc/group"
           install -m 0755 /usr/bin/install "$root/usr/bin/install"
           install -m 0755 /usr/bin/true "$root/usr/bin/true"
           install -m 0755 /usr/bin/true "$root/home/marco/ai-tools/dish/.venv/bin/python"
@@ -61,4 +87,15 @@ jobs:
             dish-postgres-backup.service dish-postgres-backup.timer
       - name: Diff hygiene
         shell: bash
-        run: git diff --check 9a9ca2684bbcf23c3f8cec1f1e2149f714383a1c d21c335844b6cc8ef49a78d80f9c7ef42aa6d9a6
+        run: |
+          set -euo pipefail
+          git diff --check 9a9ca2684bbcf23c3f8cec1f1e2149f714383a1c "$CANDIDATE_HEAD"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_HEAD"
+      - name: Publish exact tested candidate to PR branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          remote_head="$(git ls-remote origin refs/heads/agent/scheduled-postgresql-backups | awk '{print $1}')"
+          test "$remote_head" = "d21c335844b6cc8ef49a78d80f9c7ef42aa6d9a6"
+          git push origin HEAD:refs/heads/agent/scheduled-postgresql-backups
+          echo "Published $CANDIDATE_HEAD"
