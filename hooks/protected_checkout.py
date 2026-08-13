@@ -128,6 +128,44 @@ def _env_location_overrides(pairs):
     return extra_env, ambiguous
 
 
+def _command_environment(pairs):
+    """Resolve visible command-prefix assignments for Git probe subprocesses."""
+    environment = {}
+    ambiguous_names = set()
+    for text, active in pairs:
+        match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", text)
+        if match is None:
+            continue
+        name, value = match.group(1), match.group(2)
+        resolved = _reject_shell_expansion(value, active, chars_to_check="$`")
+        if resolved is None:
+            ambiguous_names.add(name)
+        else:
+            environment[name] = resolved
+    return environment, ambiguous_names
+
+
+def _alias_environment_is_ambiguous(global_args, ambiguous_names, subcommand):
+    if any(name.startswith("GIT_CONFIG_") for name in ambiguous_names):
+        return True
+    candidates = []
+    index = 0
+    while index < len(global_args):
+        argument = global_args[index]
+        if argument == "--config-env" and index + 1 < len(global_args):
+            candidates.append(global_args[index + 1])
+            index += 2
+            continue
+        if argument.startswith("--config-env="):
+            candidates.append(argument.partition("=")[2])
+        index += 1
+    prefix = f"alias.{subcommand}="
+    return any(
+        candidate.startswith(prefix) and candidate[len(prefix) :] in ambiguous_names
+        for candidate in candidates
+    )
+
+
 def _resolve_git_invocation(pairs, git_idx):
     """Return location/global args, subcommand index, and ambiguities."""
     location_args = []
@@ -191,8 +229,19 @@ def _branch_change_kind(args, subcommand):
             if after:
                 return None
             args = before
-        if any(arg in ("-b", "-B") for arg in args):
+        if any(arg in ("-b", "-B") for arg in args) or any(
+            re.match(r"^-[^-]*[bB].+", arg) for arg in args
+        ):
             return "checkout -b/-B (create + switch branch)"
+        if any(arg == "--orphan" or arg.startswith("--orphan=") for arg in args):
+            return "checkout --orphan (create + switch branch)"
+        if any(
+            arg == "--detach"
+            or arg.startswith("--detach=")
+            or (arg.startswith("-") and not arg.startswith("--") and "d" in arg[1:])
+            for arg in args
+        ):
+            return "checkout --detach (detach HEAD)"
         if any(arg in ("-h", "--help") for arg in args):
             return None
         if any(not arg.startswith("-") for arg in args):
@@ -288,7 +337,10 @@ def _classify_git(pairs, git_idx, cwd, protected_root, depth, seen_aliases):
         return None
     subcommand = basename_token(pairs[sub_idx][0])
     args = [token for token, _active in pairs[sub_idx + 1 :]]
-    extra_env, env_ambiguous = _env_location_overrides(pairs[: git_idx + 1])
+    prefix_pairs = pairs[:git_idx]
+    command_env, ambiguous_env_names = _command_environment(prefix_pairs)
+    location_env, env_ambiguous = _env_location_overrides(prefix_pairs)
+    extra_env = {**command_env, **location_env}
 
     if subcommand in ("checkout", "switch"):
         kind = _branch_change_kind(args, subcommand)
@@ -304,7 +356,10 @@ def _classify_git(pairs, git_idx, cwd, protected_root, depth, seen_aliases):
     if depth >= 6 or subcommand in seen_aliases:
         return None
     identity = _resolve_repo_identity(location_args, extra_env, cwd)
-    if alias_config_ambiguous and _is_protected_primary(identity, protected_root):
+    alias_env_ambiguous = _alias_environment_is_ambiguous(
+        global_args, ambiguous_env_names, subcommand
+    )
+    if (alias_config_ambiguous or alias_env_ambiguous) and _is_protected_primary(identity, protected_root):
         return _deny_alias_ambiguous(subcommand)
     alias = _alias_value(global_args, extra_env, cwd, subcommand)
     if alias is None:
