@@ -106,6 +106,15 @@ def _validate_current_edge_classification(m,s):
 def validate_change_history(m,s):
  h=m.get('change_history'); roles=set(s['roles']); ids={x['id'] for r in roles for x in effective_rules(s,r)}
  if not isinstance(h,list) or not h: raise KernelError('manifest.change_history must be non-empty')
+ for edge in h:
+  prior=edge.get('from_rule_fingerprints') if isinstance(edge,dict) else None
+  if not isinstance(prior,dict): continue
+  shared=prior.get('_shared')
+  if isinstance(shared,dict): ids.update(map(str,shared))
+  role_maps=prior.get('_roles')
+  if isinstance(role_maps,dict):
+   for fingerprints in role_maps.values():
+    if isinstance(fingerprints,dict): ids.update(map(str,fingerprints))
  seen=set()
  for e in h:
   a=str(e.get('from_version','')).strip(); b=str(e.get('to_version','')).strip(); ch=e.get('changes')
