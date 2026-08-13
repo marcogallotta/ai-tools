@@ -51,6 +51,12 @@ Day-one branch rules:
 
 Marco may explicitly authorize an emergency direct-to-`main` commit. That override must be stated explicitly for the specific change; it is not a standing shortcut and does not silently waive required validation or review evidence unless Marco says so.
 
+## Durable active-work signal
+
+When a PR exists and implementation/fix work is actively owned, agents may publish the structured exact-head advisory lease `<!-- dish-agent-lease:v1 phase=implementation head=<sha> lease=<uuid> -->` or `phase=fix`. Renew it with the same UUID when visible progress needs to keep the lease fresh; release it explicitly when yielding. A head change or 60 minutes without structured renewal/activity makes it inactive. The lease is visibility only and never source-authority or branch-ownership authority.
+
+After the PR becomes review-ready, the repository lifecycle dispatcher owns routine lifecycle observation. Implementation should not require Marco to poll or forward Review results. An exact-head formal `VERDICT: BLOCK` is the durable transition back to the existing PR's fix owner; a new semantic commit creates a new review identity. Operational marker details are in [`../../../ci/pr-lifecycle-dispatcher-runbook.md`](../../../ci/pr-lifecycle-dispatcher-runbook.md).
+
 ## Canonical PR workflow
 
 For new work:

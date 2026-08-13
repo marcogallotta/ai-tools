@@ -124,6 +124,10 @@ Rules:
 
 Ordinary review discovery must filter out GitHub draft PRs. `draft=true` means implementation is still AUTHORING even when the PR already exists; do not dispatch it for ordinary review. `draft=false` is the explicit REVIEW-READY transition. Marco may explicitly request an exceptional early review of a draft. `scripts/pr_gate.py review-ready` encodes the same predicate for machine use.
 
+The repository lifecycle dispatcher owns routine PR polling, exact-head state classification, Review dispatch, local-work handoff, and authorized mechanical Integration continuation. Coordinator should consume its durable state/output for cross-lane ordering or genuine decisions rather than manually forwarding agent transcripts between roles. Routine transitions remain silent; Marco is notified only for a real local action/decision or useful terminal result.
+
+If the dispatcher is unavailable or reports a configuration/capability boundary, record that exact residual boundary; do not recreate a second ad hoc queue in coordinator chat.
+
 For each returned implementation PR:
 
 1. identify the PR URL, owned branch, implementation/base commit, and current PR head SHA;

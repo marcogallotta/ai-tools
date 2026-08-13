@@ -129,11 +129,12 @@ Review may be forked to dedicated Review agents so Coordinator can continue orch
 
 Do not use GitHub assignee state as durable agent-review ownership. An agent may die, compact, disconnect, or never return; no such failure may permanently lock the PR.
 
-Before substantive forked review, the reviewer should inspect the current PR for an active claim on the exact current head. If none is active, post a signed PR comment such as:
+Before substantive forked review, the reviewer should inspect the current PR for an active structured claim on the exact current head. If none is active, post a signed PR comment containing:
 
-> `REVIEW CLAIMED — head <exact-sha> — stale after 60m without review activity.`
+> `<!-- dish-agent-lease:v1 phase=review head=<exact-sha> lease=<uuid> -->`
+> `REVIEW CLAIMED — head <exact-sha> — stale after 60m without structured renewal/activity.`
 
-The claim is an **advisory soft lease only**. It is not review authority and exists only to avoid accidental duplicate work.
+The marker generalizes to `phase=implementation`, `phase=fix`, and `phase=integration` where active-work visibility is useful. The lease is an **advisory soft lease only**. It is not role authority and exists only to avoid accidental duplicate work. Renew by posting the same lease UUID again; explicit release uses `dish-agent-lease-release:v1`.
 
 The claim is inactive when:
 
@@ -146,6 +147,18 @@ The claim is inactive when:
 Visible activity includes a submitted GitHub review, review-thread/comment activity, or an explicit claim-renewal/progress comment. Do not keep the claim alive merely because the agent process might still exist somewhere.
 
 A submitted GitHub review on the exact head supersedes the claim. Independent specialist reviews may intentionally coexist; the claim prevents accidental duplication, not deliberate multi-review.
+
+## Repository-owned PR lifecycle dispatcher
+
+Routine lifecycle observation belongs to one repository-owned dispatcher, `scripts/pr_lifecycle.py`, rather than to Marco, Coordinator chat, or multiple agents racing independent poll loops. The dispatcher is disposable process state: every restart reconstructs truth from GitHub PR metadata, formal reviews, structured lease comments, exact-head CI evidence, local-work markers, and linked Asana identity. It has no authoritative queue database.
+
+Its derived queue distinguishes authoring/implementation, review-ready, review-in-progress, changes-requested/fix, review-passed/evaluating-gates, local implementation completion, local certification, waiting CI/certification, Integration-ready, merging, merged, and closed/superseded. `VERDICT: MERGE` is a gate-evaluation transition, never terminal.
+
+Routing is deliberately bounded: cheap mechanical/focused/light Review may use a configured local reviewer; ordinary semantic Review prefers a published ChatGPT Review Workspace Agent; specialist/deep Review routes to the named specialist. Workspace Agent requests are idempotent per repository + PR + exact head + review class, but only a formal exact-head GitHub Review advances semantic state.
+
+After exact-head `BLOCK`, the existing implementation/fix ownership path consumes the durable queue transition and updates the same PR branch; Marco does not forward the review transcript. After exact-head `MERGE`, the dispatcher evaluates local work and Integration gates. It writes any required local handoff to the PR before a concise human action message. If all gates are green and explicit bounded Integration authority/capability is configured, it may mechanically merge the expected exact head and reports `MERGED` only after GitHub readback. Tool capability alone never grants that authority.
+
+Operational commands and marker formats are in [`../../../ci/pr-lifecycle-dispatcher-runbook.md`](../../../ci/pr-lifecycle-dispatcher-runbook.md).
 
 ## Review queue and takeover
 

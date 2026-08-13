@@ -21,7 +21,7 @@ A normal integration handoff identifies at least:
 - `TESTS TO RUN` or equivalent existing certification evidence;
 - any known mechanical integration dependency.
 
-The handoff is explicit authorization to integrate that reviewed candidate. Do not discover a reviewed-looking PR and decide independently to land it.
+The handoff is explicit authorization to integrate that reviewed candidate. Do not discover a reviewed-looking PR and decide independently to land it. The repository lifecycle dispatcher may act without a separate chat handoff only when its active workflow is explicitly configured for `bounded-reviewed-head` Integration composition under the Development Workflow contract. That standing configuration is the handoff authority for the narrow mechanical path; GitHub write capability alone is never authorization.
 
 Before any merge/integration action, resolve the PR from GitHub and verify that its current head SHA is exactly the supplied reviewed head SHA. If it moved, stop and apply the new-head rules below.
 
@@ -113,6 +113,14 @@ Stop and hand back whenever integration requires a semantic decision, including:
 - weakening tests or policy to permit the candidate to land.
 
 Implementation fixes belong to the implementation/fix role. Semantic acceptance belongs to review/coordinator authority.
+
+## Dispatcher-composed Integration
+
+After a formal exact-head `VERDICT: MERGE`, the dispatcher may compose this role only after re-evaluating the current head, required local work, exact-head ordinary CI/certification, ordering, and mergeability. It records a structured `phase=integration` exact-head advisory lease while landing.
+
+This composition remains mechanical Integration. It does not give Review or the dispatcher permission to author semantic fixes, choose behavior, weaken evidence, or resolve a semantic conflict. If any such work is required, return to Implementation and then exact-head Review.
+
+When authorized/capable, merge with expected-head protection and re-read GitHub. A merge API success/prose response is insufficient; `MERGED` may be reported only after authoritative PR readback. If all gates are green but the active host lacks explicit authority or merge capability, report `INTEGRATION READY` and the exact residual reason instead of asking Marco to act as a generic message bus. See [`../../../ci/pr-lifecycle-dispatcher-runbook.md`](../../../ci/pr-lifecycle-dispatcher-runbook.md).
 
 ## Merge/promotion rules
 
