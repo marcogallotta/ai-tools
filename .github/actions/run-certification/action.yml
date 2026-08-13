@@ -1,8 +1,11 @@
 name: Run selected Integration certification groups
-description: Conditionally prepare and execute selected exact-head certification groups in one hosted job.
+description: Conditionally prepare and execute groups selected by the repository certification planner in one hosted job.
 inputs:
-  execution-spec:
-    description: Path to dish-certification-execution-spec-v1 JSON in the checkout.
+  plan:
+    description: Path to repository-certification-plan-v1 JSON produced by scripts/integration_certification_plan.py.
+    required: true
+  commands:
+    description: Path to dish-certification-command-map-v1 JSON containing argv commands for selected groups only.
     required: true
   github-token:
     description: Token with read access to the canonical Python dependency Release when Python setup is selected.
@@ -27,7 +30,7 @@ runs:
       run: |
         set -euo pipefail
         python3 scripts/integration_certification.py requirements \
-          --spec "${{ inputs.execution-spec }}" \
+          --plan "${{ inputs.plan }}" \
           --github-output "$GITHUB_OUTPUT"
 
     - name: Resolve canonical Python version
@@ -114,7 +117,8 @@ runs:
       run: |
         set -o pipefail
         python3 scripts/integration_certification.py run \
-          --spec "${{ inputs.execution-spec }}" \
+          --plan "${{ inputs.plan }}" \
+          --commands "${{ inputs.commands }}" \
           --run-id "${{ inputs.run-id }}" \
           --run-attempt "${{ inputs.run-attempt }}" \
           --repo-root "$GITHUB_WORKSPACE" \
