@@ -1183,33 +1183,6 @@ class GovernedAuditEvent(Base):
     )
 
 
-class CausalityEdge(Base):
-    __tablename__ = "causality_edges"
-
-    causality_edge_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
-    generation_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("authority_generations.generation_id", ondelete="RESTRICT"), nullable=False
-    )
-    request_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid, ForeignKey("service_requests.request_id", ondelete="RESTRICT"), nullable=False
-    )
-    command_execution_id: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid, ForeignKey("command_executions.execution_id", ondelete="RESTRICT")
-    )
-    cause_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    cause_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    effect_type: Mapped[str] = mapped_column(String(64), nullable=False)
-    effect_id: Mapped[str] = mapped_column(String(128), nullable=False)
-    recorded_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-    __table_args__ = (
-        UniqueConstraint(
-            "generation_id", "cause_type", "cause_id", "effect_type", "effect_id",
-            name="uq_causality_edge_identity",
-        ),
-    )
-
-
 class InvocationAuditObligation(Base):
     __tablename__ = "invocation_audit_obligations"
 
@@ -1291,7 +1264,6 @@ STAGE3_IMMUTABLE_TABLE_NAMES = (
     "human_review_decisions",
     "operation_succession_edges",
     "governed_audit_events",
-    "causality_edges",
     "invocation_audit_repairs",
 )
 
@@ -1324,7 +1296,6 @@ STAGE3_TABLE_NAMES = (
     "abandonment_attempts",
     "operation_succession_edges",
     "governed_audit_events",
-    "causality_edges",
     "invocation_audit_obligations",
     "invocation_audit_repairs",
 )
