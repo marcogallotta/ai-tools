@@ -1,11 +1,11 @@
 # Dish — Review
 
 PROJECT_ROLE: Review
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-57da079ecc11
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-0769d89e6018
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/review.md
 
-Startup: before substantive work, read current `CLAUDE.md`, `dish/docs/agents/index.md`, `dish/docs/agents/review.md`, and the manifest from GitHub authority. Compare its `canonical_version` with `dish-chatgpt-projects-v2-57da079ecc11`. If different, report `PROJECT INSTRUCTIONS STALE` with both versions and make no role-critical state change until resynchronized.
+Startup: before substantive work, read current `CLAUDE.md`, `dish/docs/agents/index.md`, `dish/docs/agents/review.md`, and the manifest from GitHub authority. Compare its `canonical_version` with `dish-chatgpt-projects-v2-0769d89e6018`. If different, report `PROJECT INSTRUCTIONS STALE` with both versions and make no role-critical state change until resynchronized.
 
 Role: **Review**.
 No implicit role composition is permitted.

@@ -51,18 +51,28 @@ Day-one branch rules:
 
 Marco may explicitly authorize an emergency direct-to-`main` commit. That override must be stated explicitly for the specific change; it is not a standing shortcut and does not silently waive required validation or review evidence unless Marco says so.
 
+## Durable active-work signal
+
+When a PR exists and implementation/fix work is actively owned, agents may publish the structured exact-head advisory lease `<!-- dish-agent-lease:v1 phase=implementation head=<sha> lease=<uuid> -->` or `phase=fix`. Renew it with the same UUID when visible progress needs to keep the lease fresh; release it explicitly when yielding. A head change or 60 minutes without structured renewal/activity makes it inactive. The lease is visibility only and never source-authority or branch-ownership authority.
+
+After the PR becomes review-ready, the repository lifecycle dispatcher owns routine lifecycle observation. Implementation should not require Marco to poll or forward Review results. An exact-head formal `VERDICT: BLOCK` is the durable transition back to the existing PR's fix owner; a new semantic commit creates a new review identity. Operational marker details are in [`../../../ci/pr-lifecycle-dispatcher-runbook.md`](../../../ci/pr-lifecycle-dispatcher-runbook.md).
+
 ## Canonical PR workflow
 
 For new work:
 
 1. create or take ownership of the implementation branch from the exact supplied base;
 2. make the smallest coherent change that satisfies the task;
-3. run the applicable evidence for the complete changed-path set;
-4. commit the intended files with a concise commit message;
-5. push/publish the branch to GitHub;
-6. open a **draft pull request** against the intended base branch unless the handoff explicitly requires a ready-for-review PR;
-7. verify the PR's current head SHA from GitHub;
-8. return the PR URL, branch name, implementation commit SHA, and PR head SHA together with the evidence and semantic summary.
+3. commit/publish coherent work on the owned branch;
+4. open a **draft pull request** early when useful for durable Git/PR identity;
+5. finish the applicable task-scoped evidence for the complete changed-path set while the PR remains draft;
+6. update the PR description with final implementation evidence/limitations and the exact current head SHA;
+7. verify every recorded SHA is current, then explicitly mark the PR **ready for review**;
+8. verify GitHub now reports `draft=false`; only then return it for ordinary review discovery.
+
+`draft=true` means **AUTHORING / NOT REVIEWABLE**. The PR may exist and receive implementation commits while evidence is still in progress, but ordinary Coordinator/Review discovery must ignore it. Marco may explicitly request an exceptional early review of a draft; that is an override, not a change to the normal state machine.
+
+The ready-for-review transition is the author's explicit handoff from AUTHORING to REVIEW-READY. PR-triggered ordinary CI starts from this review-ready state and may complete while review proceeds; any CI still pending at the transition must be named as pending integration evidence rather than claimed as passed.
 
 The PR is the review surface. Do not create a patch file or patch-only handoff for new work.
 
@@ -91,6 +101,43 @@ Host tooling differs, but the artifact contract does not:
 - **Claude Code/Codex:** use the live checkout plus the repository-owned `tools/agent-worktree` lifecycle for local branch/worktree freshness, ownership, publication, and handoff verification, then open/update the GitHub PR.
 
 Regardless of host, the coordinator/reviewer/integrator must be able to identify the same branch, commit, PR URL, and exact PR head SHA.
+
+## Publication blockers and local branch completion
+
+A required implementation change that is not durably published because the active host cannot safely write one required branch path is a **publication blocker**, not missing local/environment certification. `LOCAL TESTING / LOCAL CERTIFICATION REQUIRED BEFORE INTEGRATION` is reserved for implementation whose complete intended changed surface is already durably published and only lacks machine/environment evidence.
+
+For a publication blocker, implementation is incomplete. Keep the existing PR draft and, **before notifying Marco**, make the PR itself the complete takeover artifact with this exact heading:
+
+`## PUBLICATION BLOCKER — LOCAL BRANCH COMPLETION REQUIRED BEFORE REVIEW`
+
+Under that heading record at least:
+
+- `State: LOCAL IMPLEMENTATION COMPLETION REQUIRED`;
+- exact PR URL/number, existing branch, and exact current PR head SHA;
+- handoff class `LOCAL IMPLEMENTATION COMPLETION` and estimated handoff size (`SMALL`, `MODERATE`, or `SUBSTANTIAL`);
+- exact missing path and the exact smallest mechanical delta that remains unpublished;
+- why connector-native publication is unsafe or unavailable;
+- evidence already completed and exactly what it proves;
+- exact focused completion/check commands where stable and governed;
+- explicit branch-ownership handoff from the current Implementation agent to a local Implementation-completion agent;
+- the required successful end state: update/remove the blocker section, push the **existing PR branch**, and return the new exact PR head SHA.
+
+The PR must contain the complete agent-to-agent instructions; Marco must not be required to carry an undocumented second handoff in chat. After the durable PR update, the human-facing message is only the concise control-plane status/action, for example `PR #N — local finish required (SMALL). Draft. Action: give PR #N to a local Implementation agent; full handoff is on the PR.`
+
+A local Implementation-completion agent accepting this ownership handoff must:
+
+- continue on the same existing PR branch;
+- apply only the unpublished mechanical delta named in the blocker section, with no semantic broadening;
+- never write directly to `main`;
+- never reconstruct a governed file from partial/truncated content in order to simulate a missing append/patch transport;
+- run only the focused verification required for that missing delta;
+- push the resulting new head to the existing PR branch;
+- update/remove the blocker state so the PR no longer advertises incomplete publication;
+- return the new exact PR head SHA.
+
+The head change is real review identity movement. If local completion occurs before independent Review, the new head enters normal Review. If completion occurs after any exact-head review, that review does not transfer silently: classify the movement under the normal semantic/mechanical rules and perform substantive re-review or an explicit exact-head mechanical recheck as applicable.
+
+Do not solve a publication blocker by inventing a parallel ownership map, creating a second PR for the missing line, reconstructing truncated governed content, or treating a missing write transport as certification. A future server-side branch patch primitive may remove this failure mode, but it is tooling follow-up rather than a prerequisite for this fallback.
 
 ## Scope and authority
 
@@ -160,7 +207,7 @@ Do not claim tests that did not run.
 
 A venv is not part of the handoff by default. Build/use the environment according to root `CLAUDE.md`. If a required environment-specific guarantee cannot be exercised, state the exact missing certification.
 
-Until PR-triggered CI is integrated for this workflow, `checks` means the existing manual certification/test evidence applicable to the change. Do not imply that a green GitHub Checks surface exists when the evidence was run manually. Future CI should certify the exact PR head SHA.
+Ordinary PR CI is exact-head evidence: on `pull_request`, candidate identity is the source PR head SHA, not the synthetic merge `GITHUB_SHA`. Required ordinary CI must test that exact source head and publish the repository-defined exact-head status/evidence for it. Manual/native evidence remains valid only for guarantees not automated by CI and must record the exact candidate SHA.
 
 Do not rerun large suites merely to produce volume when existing focused evidence plus governed lanes establish the changed behavior, but follow repository requirements for completed change blocks.
 

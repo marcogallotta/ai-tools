@@ -235,6 +235,11 @@ REQUIRED_EVAL_IDS = {
     "allowed-specialist-implementation-composition", "forbidden-implicit-role-expansion",
     "task-history-before-no-op", "valid-action-fallback", "no-valid-fallback",
     "cross-role-context-bleed",
+    "publication-fully-published-local-certification",
+    "publication-unsafe-governed-path-blocker",
+    "publication-blocker-forbids-unsafe-shortcuts",
+    "publication-completion-invalidates-prior-review",
+    "publication-handoff-before-human-notification",
 }
 ORACLE_FIELDS = {
     "expected", "failure", "expected_outcome", "required_actions", "forbidden_actions",

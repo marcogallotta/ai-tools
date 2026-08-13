@@ -122,6 +122,12 @@ Rules:
 
 ## PR intake and review routing
 
+Ordinary review discovery must filter out GitHub draft PRs. `draft=true` means implementation is still AUTHORING even when the PR already exists; do not dispatch it for ordinary review. `draft=false` is the explicit REVIEW-READY transition. Marco may explicitly request an exceptional early review of a draft. `scripts/pr_gate.py review-ready` encodes the same predicate for machine use.
+
+The repository lifecycle dispatcher owns routine PR polling, exact-head state classification, Review dispatch, local-work handoff, and authorized mechanical Integration continuation. Coordinator should consume its durable state/output for cross-lane ordering or genuine decisions rather than manually forwarding agent transcripts between roles. Routine transitions remain silent; Marco is notified only for a real local action/decision or useful terminal result.
+
+If the dispatcher is unavailable or reports a configuration/capability boundary, record that exact residual boundary; do not recreate a second ad hoc queue in coordinator chat.
+
 For each returned implementation PR:
 
 1. identify the PR URL, owned branch, implementation/base commit, and current PR head SHA;
@@ -144,6 +150,19 @@ If new commits appear after approval:
 - semantic changes require re-review of the new head;
 - mechanical-only head movement requires an explicit exact-head mechanical recheck before integration;
 - if the classification is uncertain, route it as semantic work.
+
+### Publication-blocked implementation routing
+
+Treat the exact durable PR marker `State: LOCAL IMPLEMENTATION COMPLETION REQUIRED` under `## PUBLICATION BLOCKER — LOCAL BRANCH COMPLETION REQUIRED BEFORE REVIEW` as **incomplete implementation**, not local certification and not review-ready state. Local-agent capacity is scarce: route only the exact missing mechanical publication delta to a local Implementation-completion agent after confirming that the PR already contains the full standalone handoff required by `implementation.md`. Do not make Marco copy hidden agent instructions between hosts.
+
+The local completion route preserves the same PR and existing branch, forbids direct-`main` writes and reconstruction of partial/truncated governed files, and must return the new exact PR head after the focused delta/checks are pushed and the blocker state is updated or removed. A complete intended implementation that is already published but still lacks a laptop/native/browser/environment check is instead `LOCAL CERTIFICATION/TESTING ONLY`; do not classify it as a publication blocker.
+
+After local completion:
+
+- if no independent Review existed, route the new head through normal Review;
+- if any exact-head Review existed, do not transfer it to the new SHA—apply the standing semantic/mechanical head-movement rules first.
+
+A lifecycle dispatcher must be able to classify `LOCAL IMPLEMENTATION COMPLETION REQUIRED` directly from durable PR state without coordinator chat history.
 
 ## Branch/worktree and direct-commit policy
 
@@ -216,7 +235,7 @@ Marco runs only evidence the agent could not provide:
 
 Do not ask Marco to rerun focused/unit/PGlite/static tests already passed by the agent.
 
-Until PR-triggered CI exists, `checks` means the existing manual certification/test evidence. Future CI should certify the exact PR head SHA.
+Ordinary PR CI must certify the exact source PR head SHA, not the synthetic pull-request merge SHA. Integration requires the exact-head `Dish / required ordinary CI` success status for the reviewed SHA; specialized/empty green workflows are insufficient. Additional manual/local certification, when genuinely required, must also record the exact candidate SHA.
 
 Whenever giving a `MERGE` verdict, immediately include:
 
