@@ -44,6 +44,9 @@ NOW = datetime(2026, 8, 1, 20, 0, tzinfo=timezone.utc)
 
 def test_stage3_schema_adds_named_authorities_but_not_projection() -> None:
     assert set(wf.STAGE3_TABLE_NAMES).issubset(models.Base.metadata.tables)
+    assert "causality_edges" not in wf.STAGE3_TABLE_NAMES
+    assert "causality_edges" not in wf.STAGE3_IMMUTABLE_TABLE_NAMES
+    assert "causality_edges" not in models.Base.metadata.tables
     required = {
         "service_requests",
         "service_request_outcomes",

@@ -91,10 +91,58 @@ def test_empty_sqlite_upgrade_uses_frozen_history_through_head(tmp_path: Path) -
             table
             for revision in FROZEN_REVISIONS
             for table in FROZEN_TABLE_NAMES[revision]
-        }
+        } - {"causality_edges"}
         assert expected.issubset(actual)
+        assert "causality_edges" not in actual
         with engine.connect() as connection:
             assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == ALEMBIC_HEAD
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.database_boundary
+def test_causality_edge_retirement_refuses_unexpected_forensic_evidence(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "causality-edge-forensic-evidence.sqlite3"
+    config = _config(path)
+    command.upgrade(config, "0038_cutover_rehearsal_identity")
+    engine = create_engine(f"sqlite+pysqlite:///{path}", future=True)
+    edge_id = "1" * 32
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    """INSERT INTO causality_edges(
+                           causality_edge_id,generation_id,request_id,command_execution_id,
+                           cause_type,cause_id,effect_type,effect_id,recorded_at
+                       ) VALUES (
+                           :edge_id,:generation_id,:request_id,NULL,
+                           'request','unexpected','effect','unexpected',:recorded_at
+                       )"""
+                ),
+                {
+                    "edge_id": edge_id,
+                    "generation_id": "2" * 32,
+                    "request_id": "3" * 32,
+                    "recorded_at": "2026-08-12 20:00:00",
+                },
+            )
+
+        with pytest.raises(
+            RuntimeError,
+            match="refusing to drop non-empty causality_edges",
+        ):
+            command.upgrade(config, "head")
+
+        with engine.connect() as connection:
+            assert inspect(connection).has_table("causality_edges")
+            assert connection.execute(
+                text("SELECT causality_edge_id FROM causality_edges")
+            ).scalar_one() == edge_id
+            assert connection.execute(
+                text("SELECT version_num FROM alembic_version")
+            ).scalar_one() == "0038_cutover_rehearsal_identity"
     finally:
         engine.dispose()
 
