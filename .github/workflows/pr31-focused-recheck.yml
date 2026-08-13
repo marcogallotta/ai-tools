@@ -1,0 +1,64 @@
+name: PR31 focused recheck
+
+on:
+  push:
+    branches:
+      - agent/pr31-focused-recheck-d21c335
+
+permissions:
+  contents: read
+
+jobs:
+  focused:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: d21c335844b6cc8ef49a78d80f9c7ef42aa6d9a6
+          fetch-depth: 0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: ./.github/actions/setup-python-bundle
+        with:
+          github-token: ${{ github.token }}
+      - name: Focused scheduled-backup and governed selector tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dish
+          .venv/bin/python -m pytest -q \
+            tests/postgresql/test_scheduled_backup.py \
+            tests/postgresql/test_scheduled_backup_activation.py \
+            tests/test_dish_test_map_validation.py \
+            tests/test_dish_test_plan.py
+          .venv/bin/python scripts/dish-test-plan --base 9a9ca2684bbcf23c3f8cec1f1e2149f714383a1c
+      - name: Verify systemd units in synthetic root
+        shell: bash
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/systemd-root"
+          mkdir -p \
+            "$root/etc/systemd/system" \
+            "$root/usr/bin" \
+            "$root/home/marco/ai-tools/dish/.venv/bin" \
+            "$root/home/marco/.config/dish-service"
+          cp dish/deploy/systemd/dish-postgres-backup.service "$root/etc/systemd/system/"
+          cp dish/deploy/systemd/dish-postgres-backup.timer "$root/etc/systemd/system/"
+          cat > "$root/etc/systemd/system/dish-postgres-prod.service" <<'UNIT'
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/bin/true
+          UNIT
+          for unit in network-online.target timers.target basic.target sysinit.target shutdown.target; do
+            printf '[Unit]\nDescription=stub\n' > "$root/etc/systemd/system/$unit"
+          done
+          install -m 0755 /usr/bin/install "$root/usr/bin/install"
+          install -m 0755 /usr/bin/true "$root/usr/bin/true"
+          install -m 0755 /usr/bin/true "$root/home/marco/ai-tools/dish/.venv/bin/python"
+          : > "$root/home/marco/.config/dish-service/postgres-backup.env"
+          systemd-analyze verify --root="$root" \
+            dish-postgres-backup.service dish-postgres-backup.timer
+      - name: Diff hygiene
+        shell: bash
+        run: git diff --check 9a9ca2684bbcf23c3f8cec1f1e2149f714383a1c d21c335844b6cc8ef49a78d80f9c7ef42aa6d9a6
