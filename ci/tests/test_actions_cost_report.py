@@ -5,6 +5,7 @@ import json
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -100,14 +101,91 @@ def test_allowance_accounting_requires_one_complete_utc_month() -> None:
         module.build_report([_job(seconds=1)], config=config, since=SINCE, until="2026-09-30T23:59:59Z")
 
 
-def test_billable_job_outside_declared_month_fails_closed() -> None:
+def test_month_boundaries_attribute_jobs_by_job_start() -> None:
     module = _module()
     config = module.load_billing_config(CONFIG_PATH)
-    job = _job(seconds=30)
-    job["started_at"] = "2026-09-01T00:00:00Z"
-    job["completed_at"] = "2026-09-01T00:00:30Z"
-    with pytest.raises(module.CostReportError, match="outside billing month 2026-08"):
-        _report(module, [job], config)
+    jobs = []
+    for job_id, started_at in enumerate(
+        [
+            "2026-07-31T23:59:59Z",
+            "2026-08-01T00:00:00Z",
+            "2026-08-31T23:59:59Z",
+            "2026-09-01T00:00:00Z",
+        ],
+        start=1,
+    ):
+        job = _job(seconds=1, job_id=job_id)
+        started = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+        job["started_at"] = started_at
+        job["completed_at"] = (started + timedelta(seconds=1)).isoformat().replace(
+            "+00:00", "Z"
+        )
+        jobs.append(job)
+
+    report = _report(module, jobs, config)
+
+    assert report["totals"]["jobs"] == 2
+    assert report["totals"]["runtime_seconds"] == 2
+    assert report["totals"]["billed_minutes"] == 2
+    assert report["totals"]["gross_equivalent_cost_usd"] == 0.012
+
+
+def test_pre_month_run_collects_in_month_job_and_excludes_next_month_job() -> None:
+    module = _module()
+    config = module.load_billing_config(CONFIG_PATH)
+    client = module.GitHubClient(repo="marcogallotta/ai-tools", token="test-token")
+    requested_urls = []
+
+    in_month = _job(seconds=60, job_id=10)
+    in_month["started_at"] = "2026-08-01T00:00:00Z"
+    in_month["completed_at"] = "2026-08-01T00:01:00Z"
+    next_month = _job(seconds=60, job_id=11)
+    next_month["started_at"] = "2026-09-01T00:00:00Z"
+    next_month["completed_at"] = "2026-09-01T00:01:00Z"
+
+    def fake_get_json(url):
+        requested_urls.append(url)
+        if "/jobs?" in url:
+            return {"jobs": [in_month, next_month]}
+        return {
+            "total_count": 1,
+            "workflow_runs": [{"id": 123, "created_at": "2026-07-31T23:59:59Z"}],
+        }
+
+    client._get_json = fake_get_json
+    runs = client.runs_for_billing_month(since=SINCE, until=UNTIL)
+    jobs = [job for run in runs for job in client.jobs_for_run(run["id"])]
+    report = _report(module, jobs, config)
+
+    assert [run["id"] for run in runs] == [123]
+    assert report["totals"]["jobs"] == 1
+    assert report["totals"]["billed_minutes"] == 1
+    runs_query = parse_qs(urlparse(requested_urls[0]).query)
+    assert runs_query["created"] == [
+        "2026-06-27T00:00:00Z..2026-08-31T23:59:59Z"
+    ]
+    assert "status" not in runs_query
+
+
+def test_run_collection_splits_searches_over_github_cap() -> None:
+    module = _module()
+    client = module.GitHubClient(repo="marcogallotta/ai-tools", token="test-token")
+    requested_urls = []
+
+    def fake_get_json(url):
+        requested_urls.append(url)
+        created = parse_qs(urlparse(url).query)["created"][0]
+        if created == "2026-08-01T00:00:00Z..2026-08-01T00:00:01Z":
+            return {"total_count": 1001, "workflow_runs": []}
+        run_id = 1 if created.endswith("00:00:00Z") else 2
+        return {"total_count": 1, "workflow_runs": [{"id": run_id}]}
+
+    client._get_json = fake_get_json
+    start = datetime(2026, 8, 1, tzinfo=timezone.utc)
+    runs = client._runs_created_between(start, start + timedelta(seconds=2))
+
+    assert sorted(run["id"] for run in runs) == [1, 2]
+    assert len(requested_urls) == 3
 
 
 def test_cancelled_minutes_deduplicate_and_unknown_runner_fails_closed() -> None:
