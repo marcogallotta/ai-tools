@@ -149,6 +149,7 @@ def test_listener_failure_stops_and_closes_both_servers():
     assert private.closed is True
     assert action.closed is True
 
+
 @pytest.mark.smoke
 def test_postgresql_startup_failure_exit_classification() -> None:
     from dish_tool.errors import DishRuleError
@@ -158,6 +159,12 @@ def test_postgresql_startup_failure_exit_classification() -> None:
         "BACKEND_REJECTED",
         "stale schema",
         rule="postgresql_runtime_schema_mismatch",
+        retryable=False,
+    )
+    wrong_identity = DishRuleError(
+        "BACKEND_REJECTED",
+        "wrong database identity",
+        rule="postgresql_runtime_identity_mismatch",
         retryable=False,
     )
     unavailable = DishRuleError(
@@ -174,5 +181,6 @@ def test_postgresql_startup_failure_exit_classification() -> None:
     )
 
     assert startup_exit_status(stale) == 78
+    assert startup_exit_status(wrong_identity) == 78
     assert startup_exit_status(unavailable) == 1
     assert startup_exit_status(legacy) == 1
