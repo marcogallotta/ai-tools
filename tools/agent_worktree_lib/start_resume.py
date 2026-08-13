@@ -31,8 +31,9 @@ def _rollback_local_adoption(
     candidate: Path,
     branch: str,
     expected_head: str,
+    owns_branch: bool,
 ) -> str | None:
-    """Best-effort removal of only the worktree/ref this adopt attempt could create."""
+    """Best-effort removal of only the worktree/ref this adopt attempt provably created."""
     errors: list[str] = []
     ref = f"refs/heads/{branch}"
     record = find_worktree_record(worktree_records(runner, repo.source_top), candidate)
@@ -48,7 +49,7 @@ def _rollback_local_adoption(
                 if remove.returncode != 0:
                     errors.append(f"worktree remove failed: {remove.stderr.strip()}")
 
-    if branch_exists(runner, repo.source_top, branch):
+    if owns_branch and branch_exists(runner, repo.source_top, branch):
         checked = _checked_out_path(runner, repo.source_top, branch)
         if checked is not None:
             errors.append(f"local branch remained checked out at {checked}")
@@ -128,6 +129,20 @@ def command_adopt(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]
 
         candidate.parent.mkdir(parents=True, exist_ok=True)
         reason = f"Dish task {task_gid}; adopted remote branch; agent {agent_id or 'unrecorded'}"
+
+        # Atomic create-if-absent: old-value is the all-zero SHA, git's sentinel for "ref must
+        # not already exist". Success here is definitive proof that this call, and no concurrent
+        # local creator, created the branch ref — rollback below must never touch a branch it
+        # cannot prove it created this way.
+        create_ref = runner.run(
+            repo.source_top, "update-ref", remote_ref, expected_head, "0" * 40, check=False,
+        )
+        if create_ref.returncode != 0:
+            fail(
+                "BRANCH_CREATE_RACE",
+                f"local branch ref creation for handoff failed, likely raced by another local creator: {create_ref.stderr.strip()}",
+            )
+
         add = runner.run(
             repo.source_top,
             "worktree",
@@ -135,15 +150,13 @@ def command_adopt(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]
             "--lock",
             "--reason",
             reason,
-            "-b",
-            branch,
             str(candidate),
-            expected_head,
+            branch,
             check=False,
         )
         if add.returncode != 0:
             rollback_error = _rollback_local_adoption(
-                runner, repo=repo, candidate=candidate, branch=branch, expected_head=expected_head
+                runner, repo=repo, candidate=candidate, branch=branch, expected_head=expected_head, owns_branch=True
             )
             if rollback_error:
                 fail(
@@ -189,7 +202,7 @@ def command_adopt(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]
             provisional["target_current_head"] = current_target
         except AgentWorktreeError as exc:
             rollback_error = _rollback_local_adoption(
-                runner, repo=repo, candidate=candidate, branch=branch, expected_head=expected_head
+                runner, repo=repo, candidate=candidate, branch=branch, expected_head=expected_head, owns_branch=True
             )
             if rollback_error:
                 fail(
