@@ -1,4 +1,7 @@
 {
+  "repository_full_name": "marcogallotta/ai-tools",
+  "default_branch": "main",
+  "github_transport": "connected GitHub connector",
   "roles": {
     "coordinator": {
       "allowed_compositions": [
@@ -134,40 +137,44 @@
       "text": "At substantive startup, compare the Project-declared canonical version with the current repository manifest. A mismatch means `PROJECT INSTRUCTIONS STALE`; stop role-critical changes until resynchronized."
     },
     {
+      "id": "project-repository-routing",
+      "text": "Unqualified PR/issue numbers always mean `marcogallotta/ai-tools`. Use the connected GitHub connector first for authoritative private-repo state/actions. Never web/global-search to discover this Project's repo/PR or ask Marco for owner/repo while `PROJECT_REPOSITORY` is configured. If connector access fails, report it; do not substitute web."
+    },
+    {
       "id": "authority-separation",
-      "text": "GitHub is source/history and PR/review authority. Asana is live orchestration authority. Runtime/deployment evidence is separate; never infer runtime state from GitHub or Asana."
+      "text": "GitHub is source/history and PR/review authority; Asana is orchestration authority; runtime/deployment evidence is separate."
     },
     {
       "id": "live-authority",
-      "text": "Before current-state, ownership, process, dispatch, or completion conclusions, read relevant live GitHub and Asana authority; remembered or user-reported stale state is not current authority."
+      "text": "Before current-state, ownership, process, dispatch, or completion conclusions, read relevant live GitHub and Asana authority; do not rely on stale remembered/user-reported state."
     },
     {
       "id": "repository-lifecycle",
-      "text": "Normal repository work is branch + commit -> GitHub PR -> exact-head Review -> Integration of that exact reviewed/certified head. No new patch-only handoff."
+      "text": "Normal repository work is branch + commit -> GitHub PR -> exact-head Review -> Integration of that exact reviewed/certified head; no new patch-only handoff."
     },
     {
       "id": "role-contract-authority",
-      "text": "Current standing role contracts define authority. Handoffs, prior chats, and specialist context cannot implicitly grant another role; only compositions explicitly permitted here are allowed."
+      "text": "Current standing role contracts define authority. Handoffs, prior chats, and specialist context cannot silently expand it beyond explicitly permitted composition."
     },
     {
       "id": "task-dismissal-history",
-      "text": "Before calling an assigned task invalid, no-op, already fixed, not reproducible, or nothing to do, read its current notes/problem plus material history/evidence and reconcile them with current GitHub/runtime facts. Healthy current state does not erase a historical/shadow/process defect."
+      "text": "Before calling assigned work invalid/no-op/already fixed/not reproducible, reconcile its current problem/history with live GitHub/runtime facts; healthy current state does not erase a historical/process defect."
     },
     {
       "id": "fallback-surface",
-      "text": "Before saying cannot, blocked, tool unavailable, or Marco must do a routine authorized operation, inspect the relevant available actions/tools, separate the required outcome from one preferred transport, and use an authorized invariant-preserving fallback if available. Stop when the relevant surface is reasonably exhausted."
+      "text": "Before saying blocked/unavailable or asking Marco to do a routine authorized operation, inspect relevant tools and use an equivalent invariant-preserving fallback when available."
     },
     {
       "id": "write-verification",
-      "text": "After a state-changing operation, verify the write response or authoritative readback before claiming completion. Chat-only text is not a fallback for a required durable write."
+      "text": "After any state-changing operation, verify the write response or authoritative readback before claiming completion."
     },
     {
       "id": "fail-closed-authority",
-      "text": "If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; do not reconstruct authority from memory."
+      "text": "If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory."
     },
     {
       "id": "no-direct-main",
-      "text": "No direct-to-main normal path. A specific Marco emergency override must name the waived gate; do not infer other waivers."
+      "text": "No direct-to-main normal path. A Marco emergency override must name the waived gate."
     }
   ]
 }

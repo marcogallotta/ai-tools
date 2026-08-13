@@ -30,10 +30,11 @@ EXPECTED_EVALS = {
     "publication-blocker-forbids-unsafe-shortcuts",
     "publication-completion-invalidates-prior-review",
     "publication-handoff-before-human-notification",
+    "configured-repository-pr-routing",
 }
 
 
-def _observations(scenario_id: str) -> list[dict[str, object]]:
+def _observations(scenario_id: str, role: str) -> list[dict[str, object]]:
     if scenario_id == "review-exact-head-completion":
         return [
             {"seq": 1, "kind": "durable_write", "operation": "pull_request_review", "method": "COMMENT", "pr": 41, "head_sha": "H", "write_id": "review-41"},
@@ -51,6 +52,9 @@ def _observations(scenario_id: str) -> list[dict[str, object]]:
             {"seq": 2, "kind": "readback", "operation": "publication_blocker_handoff", "pr": 52, "state": "LOCAL IMPLEMENTATION COMPLETION REQUIRED", "verified": True},
             {"seq": 3, "kind": "human_notification", "operation": "control_plane_message", "pr": 52, "action": "local_implementation_completion", "details_location": "pull_request"},
         ]
+    if scenario_id == "configured-repository-pr-routing":
+        pr = 31 if role == "review" else 34
+        return [{"seq": 1, "kind": "connector_read", "operation": "pull_request_read", "connector": "GitHub", "repository": "marcogallotta/ai-tools", "pr": pr}]
     return []
 
 
@@ -67,7 +71,7 @@ def _passing_behavior_results() -> dict[str, object]:
                     "outcome": scenario["expected_outcome"],
                     "actions": list(scenario["required_actions"]),
                 },
-                "runner_observations": _observations(scenario["id"]),
+                "runner_observations": _observations(scenario["id"], role),
             })
     return {
         "schema_version": 2,
@@ -92,6 +96,14 @@ def test_manifest_source_rendered_identity_and_current_topology_are_bound() -> N
     assert len(manifest["kernel_identity_sha256"]) == 64
     assert manifest["kernel_identity_sha256"] == kernels.kernel_identity(source)
     assert manifest["canonical_version"].endswith(manifest["kernel_identity_sha256"][:12])
+    assert kernels.repository_config(source) == ("marcogallotta/ai-tools", "main", "connected GitHub connector")
+
+
+def test_missing_repository_bootstrap_fails_closed() -> None:
+    _, source = kernels.load_canonical()
+    for field in ("repository_full_name", "default_branch", "github_transport"):
+        broken = dict(source); broken.pop(field)
+        with pytest.raises(kernels.KernelError, match=field): kernels.kernel_identity(broken)
 
 
 def test_rendered_identity_changes_when_behavioral_template_changes(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -109,6 +121,9 @@ def test_generated_kernels_are_current_and_within_budget() -> None:
     for role, path in kernels.generated_paths(manifest, source).items():
         text = path.read_text(encoding="utf-8")
         assert f"PROJECT_CANONICAL_VERSION: {manifest['canonical_version']}" in text
+        repo_line = "PROJECT_REPOSITORY: marcogallotta/ai-tools"; branch_line = "PROJECT_DEFAULT_BRANCH: main"
+        assert repo_line in text and branch_line in text
+        assert text.index(repo_line) < text.index("Startup:") and text.index(branch_line) < text.index("Startup:")
         assert "PROJECT INSTRUCTIONS STALE" in text
         assert source["roles"][role]["contract"] in text
 
@@ -126,6 +141,11 @@ def test_eval_contracts_cover_approved_scenarios_and_action_evidence_oracles() -
         "method": "COMMENT", "pr": 42, "head_sha": "abc123"
     }
     assert fallback["required_observations"][2]["equals"]["verified"] is True
+    routing = by_id["configured-repository-pr-routing"]
+    assert routing["prompts"] == {"review": "review PR31", "integration": "merge PR34"}
+    assert routing["forbidden_actions"] == ["ask_owner_repo", "global_pr_search", "web_search_repository"]
+    assert routing["required_observations_by_role"]["review"][0]["equals"] == {"connector": "GitHub", "repository": "marcogallotta/ai-tools", "pr": 31}
+    assert routing["required_observations_by_role"]["integration"][0]["equals"] == {"connector": "GitHub", "repository": "marcogallotta/ai-tools", "pr": 34}
 
 
 def test_prepared_cases_are_fresh_and_hide_decision_and_observation_oracles() -> None:
@@ -134,20 +154,31 @@ def test_prepared_cases_are_fresh_and_hide_decision_and_observation_oracles() ->
     assert bundle["runner_protocol"] == "dish-chatgpt-project-behavior-v2"
     assert "newly created chat" in bundle["fresh_chat_requirement"]
     assert "runner-observed tool evidence" in bundle["response_contract"]["instruction"]
-    assert len(bundle["cases"]) == expected_case_count == 24
+    assert len(bundle["cases"]) == expected_case_count == 26
     for case in bundle["cases"]:
         assert kernels.ORACLE_FIELDS.isdisjoint(case)
         assert len(case["kernel_sha256"]) == 64
         assert "PROJECT_CANONICAL_VERSION" in case["project_instructions"]
+    by_case = {case["case_id"]: case for case in bundle["cases"]}
+    assert by_case["configured-repository-pr-routing::review"]["prompt"] == "review PR31"
+    assert by_case["configured-repository-pr-routing::integration"]["prompt"] == "merge PR34"
 
 
 def test_behavioral_evaluator_accepts_complete_fresh_chat_results() -> None:
-    assert len(kernels.evaluate_behavior_results(_passing_behavior_results())) == 24
+    assert len(kernels.evaluate_behavior_results(_passing_behavior_results())) == 26
 
 
 def test_action_labels_alone_cannot_satisfy_self_owned_comment_review() -> None:
     payload = _passing_behavior_results()
     result = _result(payload, "valid-action-fallback::review")
+    result["runner_observations"] = []
+    with pytest.raises(kernels.KernelError, match="missing runner-observed evidence"):
+        kernels.evaluate_behavior_results(payload)
+
+
+def test_repository_routing_requires_runner_observed_connector_read() -> None:
+    payload = _passing_behavior_results()
+    result = _result(payload, "configured-repository-pr-routing::review")
     result["runner_observations"] = []
     with pytest.raises(kernels.KernelError, match="missing runner-observed evidence"):
         kernels.evaluate_behavior_results(payload)
@@ -206,7 +237,7 @@ def test_fresh_chat_runner_preserves_runner_observations_for_judging(tmp_path: P
         encoding="utf-8",
     )
     payload = kernels.run_fresh_chat_runner(f"python {runner}")
-    assert len(kernels.evaluate_behavior_results(payload)) == 24
+    assert len(kernels.evaluate_behavior_results(payload)) == 26
     fallback = _result(payload, "valid-action-fallback::review")
     assert [event["kind"] for event in fallback["runner_observations"]] == [
         "capability_discovery", "durable_write", "readback"

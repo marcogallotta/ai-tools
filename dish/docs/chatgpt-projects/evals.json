@@ -540,6 +540,57 @@
       "roles": [
         "coordinator"
       ]
+    },
+    {
+      "expected": "Resolve the unqualified PR inside PROJECT_REPOSITORY and read it through the connected GitHub connector before applying the role's normal Review or Integration gates.",
+      "expected_outcome": "route_unqualified_pr_to_configured_repository",
+      "failure": "Ask for owner/repo, globally search PRs, use web search, or claim correct routing without runner-observed connector evidence bound to the configured repository and requested PR.",
+      "forbidden_actions": [
+        "ask_owner_repo",
+        "global_pr_search",
+        "web_search_repository"
+      ],
+      "id": "configured-repository-pr-routing",
+      "prompts": {
+        "review": "review PR31",
+        "integration": "merge PR34"
+      },
+      "required_actions": [
+        "resolve_unqualified_pr_in_project_repository",
+        "read_pr_via_github_connector",
+        "apply_role_gates"
+      ],
+      "required_observations_by_role": {
+        "review": [
+          {
+            "kind": "connector_read",
+            "operation": "pull_request_read",
+            "equals": {
+              "connector": "GitHub",
+              "repository": "marcogallotta/ai-tools",
+              "pr": 31
+            }
+          }
+        ],
+        "integration": [
+          {
+            "kind": "connector_read",
+            "operation": "pull_request_read",
+            "equals": {
+              "connector": "GitHub",
+              "repository": "marcogallotta/ai-tools",
+              "pr": 34
+            }
+          }
+        ]
+      },
+      "required_rules": [
+        "project-repository-routing"
+      ],
+      "roles": [
+        "review",
+        "integration"
+      ]
     }
   ],
   "schema_version": 3
