@@ -77,10 +77,14 @@ for its retained product paths:
   identity.
 
 The retained PostgreSQL connected inventory is `create`, `sections`, `section-tasks`, `read`,
-`inspect`, `start`, `prepare`, `approve`, `reject`, `submit`, and `renew-lease`. `proposals`,
-`apply-proposal`, and `safe-reclaim` are deliberately retired from the PostgreSQL Action contract;
-they do not fall through to a legacy backend when PostgreSQL is serving the Action. Their explicit
-disposition is executable in `dish_pg.command_contract.CONNECTED_COMMAND_DISPOSITIONS`.
+`proposals`, `apply-proposal`, `safe-reclaim`, `inspect`, `start`, `prepare`, `approve`, `reject`,
+`submit`, and `renew-lease`. `proposals` lists exact PostgreSQL-native semantic proposals whose
+governed changes have durable authorization; `apply-proposal` installs only the exact stored,
+revalidated candidate and opens fresh Verification; and `safe-reclaim` performs different-run
+recovery only from a mechanically clean inactive PostgreSQL frontier by fencing the source and
+publishing an exact linked successor. None of these commands falls through to a legacy backend.
+Their retained disposition is executable in
+`dish_pg.command_contract.CONNECTED_COMMAND_DISPOSITIONS`.
 
 Canonical and legacy-alias resolution on these PostgreSQL paths is database-local. It must not load
 an Asana credential, construct an Asana client, or make an Asana network request. The shared HTTP

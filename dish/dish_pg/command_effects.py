@@ -26,6 +26,7 @@ def effect_spec_for(
     *,
     verification_hold: bool = False,
     preconstruction_hold: bool = False,
+    semantic_proposal_queued: bool = False,
 ) -> CommandEffectSpec:
     args = dict(arguments)
     if command_name == "create":
@@ -33,10 +34,17 @@ def effect_spec_for(
             ("create_task", "activate_initial_document", "place_research_queue"),
             ("create_task",),
         )
-    if command_name == "start" and args.get("kind") == "planning" and not args.get(
-        "intent_challenge_id"
+    if (
+        command_name == "start"
+        and args.get("kind") == "planning"
+        and not args.get("intent_challenge_id")
+        and not args.get("prepared_operation_id")
     ):
         return CommandEffectSpec(("issue_planning_challenge",))
+    if command_name == "start" and args.get("prepared_operation_id"):
+        return CommandEffectSpec(
+            ("claim_prepared_operation", "append_actor_fact", "issue_actor_lease")
+        )
     if command_name == "start":
         return CommandEffectSpec(("open_operation", "append_actor_fact", "issue_actor_lease"))
     if command_name == "inspect":
@@ -87,6 +95,16 @@ def effect_spec_for(
     if command_name == "reject":
         route = str(args.get("route", "large")).replace("_", "-")
         if route == "large":
+            if semantic_proposal_queued:
+                return CommandEffectSpec(
+                    (
+                        "reject_verification_cycle",
+                        "open_human_review",
+                        "advance_operation",
+                    ),
+                    (),
+                    verify_mutation_effects=True,
+                )
             mutations = [
                 "reject_verification_cycle",
                 "activate_corrected_content_version",
@@ -120,6 +138,21 @@ def effect_spec_for(
             ),
             ("update_task_document",),
             verify_mutation_effects=True,
+        )
+    if command_name == "apply-proposal":
+        return CommandEffectSpec(
+            (
+                "activate_corrected_content_version",
+                "record_verification_correction",
+                "open_verification_cycle",
+                "advance_operation",
+            ),
+            ("update_task_document",),
+            verify_mutation_effects=True,
+        )
+    if command_name == "safe-reclaim":
+        return CommandEffectSpec(
+            ("fence_source_run", "publish_exact_successor"),
         )
     if command_name == "submit":
         return CommandEffectSpec(

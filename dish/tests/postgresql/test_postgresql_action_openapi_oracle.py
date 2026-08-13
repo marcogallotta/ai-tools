@@ -118,13 +118,10 @@ def test_postgresql_action_identity_fields_are_canonical_with_local_gid_aliases(
     assert read_schema["oneOf"][0]["required"] == ["dish_id", "agent"]
 
 
-def test_postgresql_action_retirement_disposition_is_explicit() -> None:
-    assert POSTGRESQL_ACTION_RETIRED_COMMANDS == (
-        "proposals",
-        "apply-proposal",
-        "safe-reclaim",
-    )
+def test_postgresql_connected_recovery_commands_are_retained() -> None:
+    assert POSTGRESQL_ACTION_RETIRED_COMMANDS == ()
     for command in ACTION_COMMANDS:
         assert CONNECTED_COMMAND_DISPOSITIONS[command] == "retained"
-    for command in POSTGRESQL_ACTION_RETIRED_COMMANDS:
-        assert CONNECTED_COMMAND_DISPOSITIONS[command] == "retired-from-postgresql-action"
+    for command in ("proposals", "apply-proposal", "safe-reclaim"):
+        assert command in ACTION_COMMANDS
+        assert CONNECTED_COMMAND_DISPOSITIONS[command] == "retained"

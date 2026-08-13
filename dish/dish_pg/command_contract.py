@@ -14,6 +14,9 @@ from dish_service.command_spec import (
     CREATE_COMMAND,
     INSPECT_COMMAND,
     PREPARE_COMMAND,
+    PROPOSALS_COMMAND,
+    APPLY_PROPOSAL_COMMAND,
+    SAFE_RECLAIM_COMMAND,
     READ_COMMAND,
     REJECT_COMMAND,
     RENEW_LEASE_COMMAND,
@@ -77,6 +80,9 @@ COMMAND_DEFINITIONS = {
         _current_action(SECTIONS_COMMAND, "Q", task_required=False, operation_required=False),
         _current_action(SECTION_TASKS_COMMAND, "Q", task_required=False, operation_required=False),
         _current_action(READ_COMMAND, "Q", task_required=True, operation_required=False),
+        _current_action(PROPOSALS_COMMAND, "Q", task_required=False, operation_required=False),
+        _current_action(APPLY_PROPOSAL_COMMAND, "L", task_required=True, operation_required=True),
+        _current_action(SAFE_RECLAIM_COMMAND, "R", task_required=True, operation_required=True),
         CommandDefinition("attention", "Q", "admin", False, False, False),
         CommandDefinition("holds", "Q", "admin", False, False, False),
         _current_action(INSPECT_COMMAND, "E", task_required=True, operation_required=True),
@@ -132,24 +138,15 @@ RETIRED_COMMANDS = tuple(
     name for name, definition in COMMAND_DEFINITIONS.items() if not definition.retained
 )
 
-# These commands remain part of the legacy connected-agent product but are deliberately
-# not part of the retained no-Asana PostgreSQL Action contract.  Keeping the disposition
-# executable prevents a future reader from mistaking omission for unfinished parity.
+# Connected commands remain retained on the PostgreSQL-native no-Asana surface.
+# The executable disposition inventory prevents accidental capability retirement
+# while allowing future authority to record an intentional replacement explicitly.
 CONNECTED_COMMAND_DISPOSITIONS: dict[str, str] = {
-    command: ("retained" if command in ACTION_COMMANDS else "retired-from-postgresql-action")
-    for command in CONNECTED_ACTION_COMMANDS
+    command: "retained" for command in CONNECTED_ACTION_COMMANDS
 }
-POSTGRESQL_ACTION_RETIRED_COMMANDS = tuple(
-    command
-    for command, disposition in CONNECTED_COMMAND_DISPOSITIONS.items()
-    if disposition == "retired-from-postgresql-action"
-)
-if POSTGRESQL_ACTION_RETIRED_COMMANDS != (
-    "proposals",
-    "apply-proposal",
-    "safe-reclaim",
-):
-    raise ValueError("PostgreSQL connected-command retirement inventory drifted")
+POSTGRESQL_ACTION_RETIRED_COMMANDS: tuple[str, ...] = ()
+if tuple(ACTION_COMMANDS) != tuple(CONNECTED_ACTION_COMMANDS):
+    raise ValueError("PostgreSQL connected-command retention inventory drifted")
 
 
 def _add_canonical_identity_alias(

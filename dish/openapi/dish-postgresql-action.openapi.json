@@ -41,6 +41,9 @@
               "sections",
               "section-tasks",
               "read",
+              "proposals",
+              "apply-proposal",
+              "safe-reclaim",
               "inspect",
               "start",
               "prepare",
@@ -92,6 +95,106 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/v1/action/apply-proposal": {
+      "post": {
+        "description": "Replay-bound authoritative mutation; exact request identity is durable.",
+        "operationId": "dish_postgresql_apply_proposal",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      },
+                      "model": {
+                        "type": "string"
+                      },
+                      "proposal_id": {
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "proposal_id",
+                      "agent",
+                      "model"
+                    ],
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id",
+                      "request_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical Dish result envelope"
+          },
+          "401": {
+            "description": "Bearer authentication failed before body parsing"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run PostgreSQL-backed dish apply-proposal",
+        "x-openai-isConsequential": true
+      }
+    },
     "/v1/action/approve": {
       "post": {
         "description": "Replay-bound authoritative mutation; exact request identity is durable.",
@@ -583,6 +686,85 @@
         ],
         "summary": "Run PostgreSQL-backed dish prepare",
         "x-openai-isConsequential": true
+      }
+    },
+    "/v1/action/proposals": {
+      "post": {
+        "description": "Consistent authoritative query; request_id is not accepted.",
+        "operationId": "dish_postgresql_proposals",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "agent"
+                    ],
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical Dish result envelope"
+          },
+          "401": {
+            "description": "Bearer authentication failed before body parsing"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run PostgreSQL-backed dish proposals",
+        "x-openai-isConsequential": false
       }
     },
     "/v1/action/read": {
@@ -1123,6 +1305,110 @@
           }
         ],
         "summary": "Run PostgreSQL-backed dish renew-lease",
+        "x-openai-isConsequential": true
+      }
+    },
+    "/v1/action/safe-reclaim": {
+      "post": {
+        "description": "Replay-bound authoritative mutation; exact request identity is durable.",
+        "operationId": "dish_postgresql_safe_reclaim",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      },
+                      "lease_id": {
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      },
+                      "submission_id": {
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "submission_id",
+                      "lease_id",
+                      "agent"
+                    ],
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "request_id": {
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id",
+                      "request_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical Dish result envelope"
+          },
+          "401": {
+            "description": "Bearer authentication failed before body parsing"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run PostgreSQL-backed dish safe-reclaim",
         "x-openai-isConsequential": true
       }
     },

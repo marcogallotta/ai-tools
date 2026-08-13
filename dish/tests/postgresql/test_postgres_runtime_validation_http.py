@@ -280,14 +280,14 @@ def test_postgresql_runtime_exposes_only_implemented_action_commands(
         action_public_base_url="https://dish-pg-test.example.invalid/test",
     )
     assert service.supports_http_route("agent", "recover") is True
-    assert service.supports_http_route("agent", "proposals") is False
-    assert service.supports_http_route("agent", "apply-proposal") is False
-    assert service.supports_http_route("agent", "safe-reclaim") is False
+    assert service.supports_http_route("agent", "proposals") is True
+    assert service.supports_http_route("agent", "apply-proposal") is True
+    assert service.supports_http_route("agent", "safe-reclaim") is True
     assert service.supports_http_route("action", "sections") is True
     assert service.supports_http_route("action", "renew-lease") is True
-    assert service.supports_http_route("action", "proposals") is False
-    assert service.supports_http_route("action", "apply-proposal") is False
-    assert service.supports_http_route("action", "safe-reclaim") is False
+    assert service.supports_http_route("action", "proposals") is True
+    assert service.supports_http_route("action", "apply-proposal") is True
+    assert service.supports_http_route("action", "safe-reclaim") is True
 
     with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="action") as server:
         thread = start_server_thread(server, name="postgres-action-http")
@@ -322,9 +322,9 @@ def test_postgresql_runtime_exposes_only_implemented_action_commands(
     assert openapi["servers"] == [{"url": "https://dish-pg-test.example.invalid/test"}]
     assert "/v1/action/sections" in openapi["paths"]
     assert "/v1/action/renew-lease" in openapi["paths"]
-    assert "/v1/action/proposals" not in openapi["paths"]
-    assert "/v1/action/apply-proposal" not in openapi["paths"]
-    assert "/v1/action/safe-reclaim" not in openapi["paths"]
+    assert "/v1/action/proposals" in openapi["paths"]
+    assert "/v1/action/apply-proposal" in openapi["paths"]
+    assert "/v1/action/safe-reclaim" in openapi["paths"]
 
 
 def test_postgresql_action_canonical_ids_work_without_asana_identity(
@@ -364,68 +364,36 @@ def test_postgresql_action_canonical_ids_work_without_asana_identity(
         base = f"http://127.0.0.1:{server.server_address[1]}"
         try:
             read_status, read_result = _post_json(
-                f"{base}/v1/action/read",
-                token="postgres-action-token",
-                body={
-                    "client": {"run_id": str(run_id)},
-                    "arguments": {"dish_id": str(task_id), "agent": "gpt"},
-                },
+                f"{base}/v1/action/read", token="postgres-action-token",
+                body={"client": {"run_id": str(run_id)}, "arguments": {"dish_id": str(task_id), "agent": "gpt"}},
             )
             section_status, section_result = _post_json(
-                f"{base}/v1/action/section-tasks",
-                token="postgres-action-token",
-                body={
-                    "client": {"run_id": str(run_id)},
-                    "arguments": {
-                        "section_id": str(context["section_id"]),
-                        "agent": "gpt",
-                    },
-                },
+                f"{base}/v1/action/section-tasks", token="postgres-action-token",
+                body={"client": {"run_id": str(run_id)}, "arguments": {"section_id": str(context["section_id"]), "agent": "gpt"}},
             )
             alias_read_status, alias_read_result = _post_json(
-                f"{base}/v1/action/read",
-                token="postgres-action-token",
-                body={
-                    "client": {"run_id": str(run_id)},
-                    "arguments": {"task_gid": "123456789", "agent": "gpt"},
-                },
+                f"{base}/v1/action/read", token="postgres-action-token",
+                body={"client": {"run_id": str(run_id)}, "arguments": {"task_gid": "123456789", "agent": "gpt"}},
             )
             alias_section_status, alias_section_result = _post_json(
-                f"{base}/v1/action/section-tasks",
+                f"{base}/v1/action/section-tasks", token="postgres-action-token",
+                body={"client": {"run_id": str(run_id)}, "arguments": {"section_gid": "1217084805070731", "agent": "gpt"}},
+            )
+            proposals_status, proposals_result = _post_json(
+                f"{base}/v1/action/proposals",
                 token="postgres-action-token",
                 body={
                     "client": {"run_id": str(run_id)},
-                    "arguments": {
-                        "section_gid": "1217084805070731",
-                        "agent": "gpt",
-                    },
+                    "arguments": {"agent": "gpt"},
                 },
             )
             start_status, start_result = _post_json(
-                f"{base}/v1/action/start",
-                token="postgres-action-token",
-                body={
-                    "client": {
-                        "run_id": str(run_id),
-                        "request_id": str(_next(ids)),
-                    },
-                    "arguments": {
-                        "dish_id": str(task_id),
-                        "agent": "gpt",
-                        "kind": "initial",
-                    },
-                },
+                f"{base}/v1/action/start", token="postgres-action-token",
+                body={"client": {"run_id": str(run_id), "request_id": str(_next(ids))}, "arguments": {"dish_id": str(task_id), "agent": "gpt", "kind": "initial"}},
             )
             create_status, create_result = _post_json(
-                f"{base}/v1/action/create",
-                token="postgres-action-token",
-                body={
-                    "client": {
-                        "run_id": str(run_id),
-                        "request_id": str(_next(ids)),
-                    },
-                    "arguments": {"agent": "gpt", "title": "Canonical create"},
-                },
+                f"{base}/v1/action/create", token="postgres-action-token",
+                body={"client": {"run_id": str(run_id), "request_id": str(_next(ids))}, "arguments": {"agent": "gpt", "title": "Canonical create"}},
             )
         finally:
             stop_server(server, thread)
@@ -438,11 +406,15 @@ def test_postgresql_action_canonical_ids_work_without_asana_identity(
     assert alias_read_result["data"]["dish_id"] == str(task_id)
     assert alias_section_status == 200
     assert alias_section_result["data"]["tasks"][0]["dish_id"] == str(task_id)
-    assert start_status == 200
-    assert start_result["ok"] is True
-    assert create_status == 200
-    assert create_result["ok"] is True
-    assert create_result["data"]["dish_id"]
+    assert proposals_status == 200
+    assert proposals_result["data"]["count"] == 0
+    assert proposals_result["data"]["proposals"] == []
+    assert proposals_result["data"]["instruction"] == (
+        "Claim and apply an approved PostgreSQL proposal exactly as stored; "
+        "do not reconstruct or edit its candidate."
+    )
+    assert start_status == 200 and start_result["ok"] is True
+    assert create_status == 200 and create_result["ok"] is True
     assert create_result["data"]["dish_id"] == create_result["data"]["task_id"]
 
 
