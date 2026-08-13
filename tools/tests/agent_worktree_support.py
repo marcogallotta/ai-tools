@@ -100,11 +100,73 @@ class Harness:
         path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
         return path
 
-    def tool(self, *args: str, check: bool = True, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    @staticmethod
+    def _option(args: tuple[str, ...] | list[str], name: str) -> str | None:
+        try:
+            index = list(args).index(name)
+        except ValueError:
+            return None
+        if index + 1 >= len(args):
+            return None
+        return str(args[index + 1])
+
+    def raw_tool(self, *args: str, check: bool = True, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
         actual_env = self.env.copy()
         if env:
             actual_env.update(env)
         return run(["python3", str(SCRIPT), *args], cwd=self.primary, env=actual_env, check=check)
+
+    def tool(self, *args: str, check: bool = True, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+        if not args or args[0] not in {"start", "adopt", "resume", "publish", "verify-handoff", "cleanup", "exec"}:
+            return self.raw_tool(*args, check=check, env=env)
+
+        child = list(args)
+        task = self._option(child, "--task")
+        if task is None:
+            raise AssertionError(f"writer command is missing --task: {child}")
+        branch = self._option(child, "--branch")
+        state: dict[str, object] | None = None
+        if branch is None and self.state_path(task).exists():
+            state = self.state(task)
+            branch = str(state["branch"])
+        if branch is None:
+            raise AssertionError(f"could not resolve branch for claimed writer command: {child}")
+
+        agent = self._option(child, "--agent-id")
+        if agent is None and state is not None:
+            owner = state.get("owner")
+            if isinstance(owner, dict) and owner.get("agent_id") is not None:
+                agent = str(owner["agent_id"])
+        if agent is None:
+            agent = "fixture-agent"
+        agent_path = self.home / ".local/state/dish/agents" / f"{agent}.json"
+        if not agent_path.exists():
+            self.agent_file(agent)
+        if child[0] in {"start", "adopt", "resume"} and "--agent-id" not in child:
+            child.extend(["--agent-id", agent])
+
+        claim = ["claim", "--task", task, "--branch", branch, "--agent-id", agent]
+        if child[0] == "resume" and "--takeover" in child:
+            claim.append("--takeover")
+        if child[0] == "adopt":
+            expected = self._option(child, "--expected-head")
+            assert expected is not None
+            claim.extend(["--pr-number", "42", "--pr-head", expected, "--pr-lease-state", "none"])
+        else:
+            claim_files = list((self.home / ".local/state/dish/worktrees/claims").glob(f"*/{task}.json"))
+            if len(claim_files) == 1:
+                prior = json.loads(claim_files[0].read_text(encoding="utf-8"))
+                pr = prior.get("pr")
+                if isinstance(pr, dict):
+                    claim.extend([
+                        "--pr-number", str(pr["number"]),
+                        "--pr-head", str(pr["head"]),
+                        "--pr-lease-state", str(pr["lease_state"]),
+                    ])
+                    if pr.get("lease_id") is not None:
+                        claim.extend(["--pr-lease-id", str(pr["lease_id"])])
+        claim.extend(["--", "python3", str(SCRIPT), *child])
+        return self.raw_tool(*claim, check=check, env=env)
 
     def start(self, task: str = "1001", branch: str = "agent/fixture", base: str | None = None, agent: str | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
         args = ["start", "--task", task, "--branch", branch, "--base-ref", "refs/heads/main", "--base", base or self.current_remote_main(), "--json"]
@@ -170,4 +232,3 @@ def payload(result: subprocess.CompletedProcess[str]) -> dict[str, object]:
 def assert_error(result: subprocess.CompletedProcess[str], code: str) -> None:
     assert result.returncode != 0
     assert f"ERROR {code}:" in result.stderr
-
