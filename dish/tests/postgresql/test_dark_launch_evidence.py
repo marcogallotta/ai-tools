@@ -14,7 +14,7 @@ from dish_pg.shadow_evidence import (
     canonical_transition,
     compare_evidence,
 )
-from tests.support.postgresql.workflow import NOW
+from tests.support.postgresql.workflow import NOW, workflow_db
 
 
 def _source_snapshot(*, phase: str | None) -> dict:
