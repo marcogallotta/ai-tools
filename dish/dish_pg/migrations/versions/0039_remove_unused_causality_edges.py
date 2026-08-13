@@ -29,14 +29,41 @@ def _install_postgresql_immutability() -> None:
     )
 
 
-def upgrade() -> None:
-    bind = op.get_bind()
-    if not op.get_context().as_sql:
-        unexpected = bind.execute(sa.text("SELECT 1 FROM causality_edges LIMIT 1")).first()
-        if unexpected is not None:
+def _assert_causality_edges_empty() -> None:
+    context = op.get_context()
+    if context.as_sql:
+        if context.dialect.name != "postgresql":
             raise RuntimeError(
-                "refusing to drop non-empty causality_edges; unexpected forensic evidence requires review"
+                "causality edge retirement refuses offline rendering for non-PostgreSQL "
+                "dialects because the forensic preflight cannot be enforced there"
             )
+        op.execute(
+            sa.text(
+                """
+                DO $$
+                BEGIN
+                    IF EXISTS (SELECT 1 FROM causality_edges) THEN
+                        RAISE EXCEPTION
+                            'refusing to drop non-empty causality_edges; unexpected forensic evidence requires review';
+                    END IF;
+                END
+                $$
+                """
+            )
+        )
+        return
+
+    unexpected = op.get_bind().execute(
+        sa.text("SELECT 1 FROM causality_edges LIMIT 1")
+    ).first()
+    if unexpected is not None:
+        raise RuntimeError(
+            "refusing to drop non-empty causality_edges; unexpected forensic evidence requires review"
+        )
+
+
+def upgrade() -> None:
+    _assert_causality_edges_empty()
     op.drop_table("causality_edges")
 
 

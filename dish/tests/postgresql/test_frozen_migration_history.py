@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import io
 from pathlib import Path
 
 import pytest
@@ -38,6 +39,16 @@ EXPECTED_DIGESTS = {
 def _config(path: Path) -> Config:
     config = Config(str(ROOT / "alembic.ini"))
     config.set_main_option("sqlalchemy.url", f"sqlite+pysqlite:///{path}")
+    return config
+
+
+def _offline_postgresql_config(buffer: io.StringIO) -> Config:
+    config = Config(str(ROOT / "alembic.ini"))
+    config.set_main_option(
+        "sqlalchemy.url",
+        "postgresql+psycopg://offline:offline@localhost/offline",
+    )
+    config.attributes["output_buffer"] = buffer
     return config
 
 
@@ -98,6 +109,22 @@ def test_empty_sqlite_upgrade_uses_frozen_history_through_head(tmp_path: Path) -
             assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == ALEMBIC_HEAD
     finally:
         engine.dispose()
+
+
+def test_causality_edge_retirement_offline_sql_guards_before_drop() -> None:
+    buffer = io.StringIO()
+    command.upgrade(
+        _offline_postgresql_config(buffer),
+        "0038_cutover_rehearsal_identity:0039_remove_unused_causality_edges",
+        sql=True,
+    )
+    sql = buffer.getvalue()
+
+    guard_position = sql.index("DO $$")
+    assert "EXISTS (SELECT 1 FROM causality_edges)" in sql
+    assert "refusing to drop non-empty causality_edges" in sql
+    drop_position = sql.index("DROP TABLE causality_edges")
+    assert guard_position < drop_position
 
 
 @pytest.mark.database_boundary
