@@ -91,9 +91,7 @@ Active conditions remain until resolved, while inactive informational notices
 may be dismissed. The last safe view remains visible whenever continued display
 is safe.
 
-Healthy projection is omitted. Delay, failure, drift, uncertainty, or
-unavailability is shown only as non-authoritative abnormal projection
-information. Projection never changes workflow legality.
+Healthy active projection is omitted. While an external-projection epoch is enabled, delay, failure, drift, uncertainty, or unavailability is shown only as non-authoritative abnormal projection information. After rollback burn disables external projection, retained projection/drift/reconciliation rows are forensic history and do not produce task-health warnings. Projection never changes workflow legality.
 
 ## Login and session experience
 

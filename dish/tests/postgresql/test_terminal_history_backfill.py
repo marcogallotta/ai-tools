@@ -632,7 +632,7 @@ def test_0036_preexisting_import_fails_closed_until_exact_revocations_reconciled
     engine.dispose()
 
     command.upgrade(config, "head")
-    assert ALEMBIC_HEAD == "0039_remove_unused_causality_edges"
+    assert ALEMBIC_HEAD == "0040_no_asana_post_burn"
 
     engine = create_engine(f"sqlite+pysqlite:///{database}", future=True)
     factory = sessionmaker(

@@ -93,6 +93,54 @@ def test_candidate_admission_accepts_only_explicit_open_control(workflow_db) -> 
         assert admission.replayed is False
 
 
+def test_post_burn_live_command_commits_without_external_projection_debt(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    open_verified_first_admission(factory, ids, context, task_id)
+
+    with session_scope(factory) as session:
+        epoch = session.scalar(
+            select(tx.ProjectionEpoch).where(
+                tx.ProjectionEpoch.generation_id == context["generation_id"],
+                tx.ProjectionEpoch.status == "active",
+            )
+        )
+        assert epoch is not None and epoch.external_effects_enabled is False
+        baseline_live_events = session.scalar(
+            select(func.count()).select_from(tx.ProjectionOutboxEvent).where(
+                tx.ProjectionOutboxEvent.generation_id == context["generation_id"],
+                tx.ProjectionOutboxEvent.origin == "live",
+            )
+        )
+        run_id = _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = PostgresCommandPort(
+            session,
+            cursor_secret=SECRET,
+            uuid_factory=lambda: _next(ids),
+            lease_duration=timedelta(minutes=10),
+        )
+        result = port.execute(
+            CommandCall(
+                command_name="create",
+                arguments={"title": "Post-burn PostgreSQL-only create"},
+                owner_id="owner-1",
+                principal_class="agent",
+                run_id=run_id,
+                request_id=_next(ids),
+                now=NOW + timedelta(minutes=20),
+            )
+        )
+
+        assert result.ok
+        assert result.data["projection_event_id"] is None
+        assert session.scalar(
+            select(func.count()).select_from(tx.ProjectionOutboxEvent).where(
+                tx.ProjectionOutboxEvent.generation_id == context["generation_id"],
+                tx.ProjectionOutboxEvent.origin == "live",
+            )
+        ) == baseline_live_events
+
+
 def test_sqlite_guard_rejects_candidate_request_when_control_row_is_missing(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
     with pytest.raises(IntegrityError, match="mutation admission is closed"):

@@ -61,7 +61,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0039_remove_unused_causality_edges"
+ALEMBIC_HEAD = "0040_no_asana_post_burn"
 
 
 class ReleaseCandidateService(
@@ -1090,6 +1090,22 @@ class ReleaseCandidateService(
             field="evaluation_time", floor_field="candidate created_at",
         )
         checks: list[AcceptanceCheck] = []
+        post_burn_run = self.session.scalar(
+            select(rel.CutoverRun)
+            .where(
+                rel.CutoverRun.candidate_id == candidate_id,
+                rel.CutoverRun.state.in_(
+                    ("rollback_burned", "admission_open", "first_admission_verified", "completed")
+                ),
+            )
+            .order_by(rel.CutoverRun.started_at.desc())
+            .limit(1)
+        )
+        rollback_burned_at = None
+        if post_burn_run is not None:
+            rollback_burned_at = self._cutover_checkpoint_time(
+                post_burn_run.cutover_run_id, "rollback_burned"
+            )
 
         def add(code: str, passed: bool, **details: Any) -> None:
             checks.append(AcceptanceCheck(code, bool(passed), details))
@@ -1172,12 +1188,26 @@ class ReleaseCandidateService(
         )
 
         epoch = self.session.get(tx.ProjectionEpoch, candidate.projection_epoch_id)
-        add(
-            "projection_epoch_ready",
+        epoch_ready = (
             epoch is not None
             and epoch.generation_id == candidate.generation_id
-            and epoch.status == "active",
+            and (
+                (post_burn_run is None and epoch.status == "active")
+                or (
+                    post_burn_run is not None
+                    and epoch.status == "active"
+                    and not epoch.external_effects_enabled
+                )
+            )
+        )
+        add(
+            "projection_epoch_ready",
+            epoch_ready,
             status=None if epoch is None else epoch.status,
+            external_effects_enabled=(
+                None if epoch is None else bool(epoch.external_effects_enabled)
+            ),
+            post_burn=post_burn_run is not None,
         )
 
         registry = self.session.get(models.ActiveSectionRegistry, candidate.generation_id)
@@ -1373,15 +1403,35 @@ class ReleaseCandidateService(
         reconciliation = validate_reconciliation(
             self.session, candidate=candidate, as_of=evaluation_time
         )
+        post_burn_live_events = 0
+        if rollback_burned_at is not None:
+            post_burn_live_events = self._count(
+                tx.ProjectionOutboxEvent,
+                tx.ProjectionOutboxEvent.generation_id == candidate.generation_id,
+                tx.ProjectionOutboxEvent.origin == "live",
+                tx.ProjectionOutboxEvent.created_at >= rollback_burned_at,
+            )
+        projection_passed = (
+            not any(projection_counts.values()) and reconciliation.passed
+            if post_burn_run is None
+            else epoch_ready and post_burn_live_events == 0
+        )
         add(
             "projection_ready",
-            not any(projection_counts.values()) and reconciliation.passed,
+            projection_passed,
             **projection_counts,
             **reconciliation.details,
+            post_burn=post_burn_run is not None,
+            post_burn_live_projection_events=post_burn_live_events,
+            historical_projection_rows_forensic_only=post_burn_run is not None,
         )
         quiescent_counts = {
             **{f"authority_{key}": value for key, value in open_counts.items()},
-            **{f"projection_{key}": value for key, value in projection_counts.items()},
+            **(
+                {}
+                if post_burn_run is not None
+                else {f"projection_{key}": value for key, value in projection_counts.items()}
+            ),
         }
         add(
             "quiescent_cutover_authority",
@@ -1734,6 +1784,7 @@ class ReleaseCandidateService(
                 "readiness_id": str(worker.readiness_id),
                 "sha256": worker.report_sha256,
                 "reconciliation_run_id": str(worker.reconciliation_run_id),
+                "forensic_only": True,
             }
             manifest["first_admission_plan"] = None if plan is None else {
                 "plan_id": str(plan.plan_id),

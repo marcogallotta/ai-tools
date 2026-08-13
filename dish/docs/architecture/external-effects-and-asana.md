@@ -14,7 +14,7 @@ Current anchors include `dish_tool/task_store.py`, `dish_tool/backend.py`, curre
 
 ## Actors, processes, and stores
 
-Dish currently reads and mutates Asana tasks. PostgreSQL target work records projection intents and uses projection/reconciliation mechanisms. Shadow-origin work is isolated from live effects.
+Before cutover, Dish reads and mutates Asana tasks and PostgreSQL target work records projection intents plus reconciliation evidence. Rollback burn is the end of Asana involvement for the activated generation: external projection is disabled and subsequent live PostgreSQL commands do not enqueue Asana projection intents. Shadow-origin work remains isolated from live effects.
 
 ## Authority and data ownership
 
@@ -27,6 +27,7 @@ Asana currently owns live task content/placement/completion as observed by the p
 - Unknown/uncertain outcomes are not blindly retried as definitely-not-applied.
 - Shadow-origin work never dispatches live external effects.
 - Projection/reconciliation evidence cannot silently replace backend authority.
+- After rollback burn, successful live PostgreSQL commands owe no external projection intent; historical projection/reconciliation rows are forensic evidence only and cannot gate admission or frontend health.
 
 ## Process and transaction boundaries
 
@@ -43,13 +44,13 @@ Not every read-only or idempotent interaction requires the same reread pattern; 
 
 ## Normal flow
 
-Persist enough intent to recover safely, perform the external operation, observe what actually happened when needed, settle the durable outcome, and reconcile drift/uncertainty.
+While external projection is enabled, persist enough intent to recover safely, perform the external operation, observe what actually happened when needed, settle the durable outcome, and reconcile drift/uncertainty. After rollback burn, canonical PostgreSQL command success is self-contained: no new live Asana intent is created and no Asana observation/reconciliation is required to establish that success.
 
 For pre-cutover population confidence, placement is interpreted in context rather than treated as a global synchronization invariant. Marco may legitimately move resting tasks through the ordinary external Cooking lifecycle, including later archival/history placement. A read-only population audit therefore classifies those resting/manual lifecycle differences separately from real drift. Placement becomes an inconsistency when it contradicts an active Dish operation's required/expected placement or another actual workflow invariant.
 
 ## Failure, replay, recovery, and concurrency
 
-Recovery continues the original effect identity. Fencing prevents stale workers from settling another attempt. Reconciliation handles discrepancies without granting external state canonical backend authority.
+Pre-burn recovery continues the original effect identity. Fencing prevents stale workers from settling another attempt. Reconciliation handles discrepancies without granting external state canonical backend authority. Post-burn recovery uses PostgreSQL request/replay/audit authority; retained external-effect history may explain prior events but does not resume or recreate Asana projection.
 
 ## Change routing
 
@@ -57,7 +58,7 @@ New effect types must define how success, absence, and uncertainty are establish
 
 ## Proving tests
 
-Current evidence includes Asana lifecycle/effect recovery tests plus PostgreSQL projection attempt, process-failure, and reconciliation tests.
+Current evidence includes pre-burn Asana lifecycle/effect recovery and PostgreSQL projection/reconciliation tests, plus post-burn regressions proving live commands create no new projection debt and historical projection state is not frontend health authority.
 
 ## Current debt and temporary compatibility
 

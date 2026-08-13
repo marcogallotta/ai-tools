@@ -154,6 +154,7 @@ def test_worker_readiness_requires_bound_reconciliation_to_be_completed_first(wo
                 "route_target": "postgresql",
                 "health": "pass",
                 "mutation_admission": "closed",
+                "external_projection": "disabled_post_burn",
                 "projection_worker_identity": "projection-worker@chronology",
                 "service_artifact_path": service_path,
                 "projection_worker_artifact_path": worker_path,
@@ -246,7 +247,7 @@ def test_writer_fence_verification_requires_exact_persisted_observation(workflow
     "failure_mode",
     ["missing", "tampered", "wrong-worker", "wrong-artifact", "failed", "stale"],
 )
-def test_first_admission_revalidates_post_burn_worker_readiness(
+def test_first_admission_ignores_post_burn_worker_readiness_forensics(
     workflow_db, failure_mode: str
 ) -> None:
     factory, ids, context, task_id = workflow_db
@@ -270,10 +271,8 @@ def test_first_admission_revalidates_post_burn_worker_readiness(
             reconciliation=reconciliation,
             recorded_at=NOW + timedelta(minutes=6),
         )
-        opened_at = NOW + timedelta(minutes=7)
+        opened_at = NOW + timedelta(minutes=67 if failure_mode == "stale" else 7)
         if failure_mode != "stale":
-            # Simulate storage corruption after proving the normal write path is immutable.
-            # First-admission validation is still required to fail closed on persisted bad state.
             session.execute(text("DROP TRIGGER IF EXISTS projection_worker_readiness_immutable_update"))
             session.execute(text("DROP TRIGGER IF EXISTS projection_worker_readiness_immutable_delete"))
         if failure_mode == "missing":
@@ -281,13 +280,11 @@ def test_first_admission_revalidates_post_burn_worker_readiness(
                 text("DELETE FROM projection_worker_readiness WHERE readiness_id=:readiness_id"),
                 {"readiness_id": readiness.readiness_id.hex},
             )
-            session.expire_all()
         elif failure_mode == "tampered":
             session.execute(
                 text("UPDATE projection_worker_readiness SET report_sha256=:digest WHERE readiness_id=:readiness_id"),
                 {"digest": "f" * 64, "readiness_id": readiness.readiness_id.hex},
             )
-            session.expire_all()
         elif failure_mode in {"wrong-worker", "wrong-artifact", "failed"}:
             if failure_mode == "wrong-worker":
                 readiness.worker_identity = "projection-worker@wrong-release-process"
@@ -296,24 +293,21 @@ def test_first_admission_revalidates_post_burn_worker_readiness(
             else:
                 readiness.claim_probe_result = "fail"
             _rehash(readiness)
-            values = {
-                "worker_identity": readiness.worker_identity,
-                "artifact": readiness.deployed_artifact_sha256,
-                "claim": readiness.claim_probe_result,
-                "digest": readiness.report_sha256,
-                "readiness_id": readiness.readiness_id.hex,
-            }
             session.execute(
                 text(
                     "UPDATE projection_worker_readiness SET worker_identity=:worker_identity, "
                     "deployed_artifact_sha256=:artifact, claim_probe_result=:claim, "
                     "report_sha256=:digest WHERE readiness_id=:readiness_id"
                 ),
-                values,
+                {
+                    "worker_identity": readiness.worker_identity,
+                    "artifact": readiness.deployed_artifact_sha256,
+                    "claim": readiness.claim_probe_result,
+                    "digest": readiness.report_sha256,
+                    "readiness_id": readiness.readiness_id.hex,
+                },
             )
-            session.expire_all()
-        elif failure_mode == "stale":
-            opened_at = NOW + timedelta(minutes=67)
+        session.expire_all()
         _plan_first_admission(
             session,
             ids,
@@ -324,19 +318,15 @@ def test_first_admission_revalidates_post_burn_worker_readiness(
             recorded_at=NOW + timedelta(minutes=6),
         )
 
-        expected = (
-            "requires runtime attestation, projection-worker readiness"
-            if failure_mode == "missing"
-            else "missing, tampered, mismatched, failed, or stale"
+        control = service.open_mutation_admission(
+            cutover_run_id=cutover_run_id,
+            opened_at=opened_at,
         )
-        with pytest.raises(ReleaseAuthorityError, match=expected):
-            service.open_mutation_admission(
-                cutover_run_id=cutover_run_id,
-                opened_at=opened_at,
-            )
+        assert control.state == "closed"
 
 
-def test_worker_artifact_substitution_blocks_first_admission(workflow_db) -> None:
+
+def test_worker_artifact_substitution_is_forensic_after_burn(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
     with session_scope(factory) as session:
         service, candidate_id, cutover_run_id = _burn_rollback(
@@ -370,8 +360,8 @@ def test_worker_artifact_substitution_blocks_first_admission(workflow_db) -> Non
         Path(runtime.payload["projection_worker_artifact_path"]).write_bytes(
             b"substituted-worker-runtime\n"
         )
-        with pytest.raises(ReleaseAuthorityError, match="digest does not match"):
-            service.open_mutation_admission(
-                cutover_run_id=cutover_run_id,
-                opened_at=NOW + timedelta(minutes=7),
-            )
+        control = service.open_mutation_admission(
+            cutover_run_id=cutover_run_id,
+            opened_at=NOW + timedelta(minutes=7),
+        )
+        assert control.state == "closed"

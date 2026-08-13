@@ -238,7 +238,7 @@ def test_postgresql_runtime_arguments_can_come_from_test_environment(
     values = {
         "DISH_PG_DATABASE_URL": "postgresql+psycopg://user:pass@localhost/dish_agent_test",
         "DISH_PG_EXPECTED_DATABASE_NAME": "dish_agent_test",
-        "DISH_PG_EXPECTED_SCHEMA_HEAD": "0039_remove_unused_causality_edges",
+        "DISH_PG_EXPECTED_SCHEMA_HEAD": "0040_no_asana_post_burn",
         "DISH_PG_EXPECTED_RELEASE": "dish@test",
         "DISH_PG_EXPECTED_GENERATION_ID": "00000000-0000-4000-8000-000000000123",
         "DISH_PG_CURSOR_SECRET": "a-long-enough-test-cursor-secret",

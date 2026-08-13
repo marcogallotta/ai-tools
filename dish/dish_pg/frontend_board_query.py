@@ -401,31 +401,42 @@ class FrontendBoardQuery:
                 )
             ),
             "succession_active": active_succession,
-            "projection_abnormal": or_(
+            "projection_abnormal": and_(
                 exists(
                     select(literal(1))
-                    .select_from(projection.ProjectionDriftEvent)
+                    .select_from(projection.ProjectionEpoch)
                     .where(
-                        projection.ProjectionDriftEvent.generation_id == generation_id,
-                        projection.ProjectionDriftEvent.task_id == task_id,
-                        projection.ProjectionDriftEvent.state == "open",
+                        projection.ProjectionEpoch.generation_id == generation_id,
+                        projection.ProjectionEpoch.status == "active",
+                        projection.ProjectionEpoch.external_effects_enabled.is_(True),
                     )
                 ),
-                exists(
-                    select(literal(1))
-                    .select_from(projection.ProjectionOutboxEvent)
-                    .where(
-                        projection.ProjectionOutboxEvent.generation_id == generation_id,
-                        projection.ProjectionOutboxEvent.task_id == task_id,
-                        projection.ProjectionOutboxEvent.origin == "live",
-                        or_(
-                            projection.ProjectionOutboxEvent.state.in_(("blocked", "uncertain")),
-                            and_(
-                                projection.ProjectionOutboxEvent.state.in_(("pending", "claimed")),
-                                projection.ProjectionOutboxEvent.created_at <= projection_cutoff,
+                or_(
+                    exists(
+                        select(literal(1))
+                        .select_from(projection.ProjectionDriftEvent)
+                        .where(
+                            projection.ProjectionDriftEvent.generation_id == generation_id,
+                            projection.ProjectionDriftEvent.task_id == task_id,
+                            projection.ProjectionDriftEvent.state == "open",
+                        )
+                    ),
+                    exists(
+                        select(literal(1))
+                        .select_from(projection.ProjectionOutboxEvent)
+                        .where(
+                            projection.ProjectionOutboxEvent.generation_id == generation_id,
+                            projection.ProjectionOutboxEvent.task_id == task_id,
+                            projection.ProjectionOutboxEvent.origin == "live",
+                            or_(
+                                projection.ProjectionOutboxEvent.state.in_(("blocked", "uncertain")),
+                                and_(
+                                    projection.ProjectionOutboxEvent.state.in_(("pending", "claimed")),
+                                    projection.ProjectionOutboxEvent.created_at <= projection_cutoff,
+                                ),
                             ),
-                        ),
-                    )
+                        )
+                    ),
                 ),
             ),
         }

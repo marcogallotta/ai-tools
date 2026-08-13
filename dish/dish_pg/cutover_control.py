@@ -23,14 +23,12 @@ from . import stage5_models as tx
 from . import stage6_models as rel
 from .candidate_manifest import revalidate_candidate_manifest
 from .command_contract import definition_for
-from .command_effects import expected_projection_count
 from .cutover_chronology import _require_at_or_after, _utc_comparable
 from .release_artifacts import observe_release_artifact
 from .release_validation import (
     WORKER_READINESS_REPORT_CONTRACT,
     normalize_worker_readiness_probes,
     validate_reconciliation,
-    validate_worker_readiness,
     validate_writer_fence_observation,
     worker_readiness_report_sha256,
 )
@@ -812,6 +810,23 @@ class CutoverControlAuthority:
         if batch is None:
             raise ReleaseAuthorityError("release candidate import batch is missing")
 
+        from .transition import ProjectionService
+
+        projection_epoch = self.session.get(tx.ProjectionEpoch, candidate.projection_epoch_id)
+        if (
+            projection_epoch is None
+            or projection_epoch.generation_id != candidate.generation_id
+            or projection_epoch.status != "active"
+        ):
+            raise ReleaseAuthorityError(
+                "rollback burn requires the candidate projection epoch to be active before external projection is disabled"
+            )
+        ProjectionService(self.session, uuid_factory=self.uuid_factory).set_external_effects_enabled(
+            projection_epoch_id=candidate.projection_epoch_id,
+            enabled=False,
+            reason="rollback burn ends external Asana projection",
+        )
+
         row = models.AuthorityActivation(
             activation_id=self.uuid_factory(),
             generation_id=candidate.generation_id,
@@ -849,6 +864,8 @@ class CutoverControlAuthority:
                 "fresh_candidate_checks": evaluation.as_dict(),
                 "fresh_manifest_revalidation_id": str(revalidation.revalidation_id),
                 "writer_fence_ids": [str(fence.fence_id) for fence in fences],
+                "external_projection_mode": "disabled_post_burn",
+                "projection_epoch_id": str(candidate.projection_epoch_id),
             },
             burned_at,
         )
@@ -859,10 +876,10 @@ class CutoverControlAuthority:
         *,
         candidate_id: uuid.UUID,
         service_artifact_sha256: str,
-        projection_worker_artifact_sha256: str,
         route_probe_sha256: str,
         payload: Mapping[str, Any],
         recorded_at: datetime,
+        projection_worker_artifact_sha256: str | None = None,
     ) -> rel.RuntimeReleaseAttestation:
         candidate = self._candidate(candidate_id)
         contract = self._require_candidate_release_identity(candidate)
@@ -890,6 +907,15 @@ class CutoverControlAuthority:
             raise ReleaseAuthorityError(
                 "runtime attestation requires the exact candidate after durable rollback burn"
             )
+        epoch = self.session.get(tx.ProjectionEpoch, candidate.projection_epoch_id)
+        if (
+            epoch is None
+            or epoch.status != "active"
+            or epoch.external_effects_enabled
+        ):
+            raise ReleaseAuthorityError(
+                "runtime attestation requires the candidate external projection epoch to be disabled post-burn"
+            )
         burned_at = self._cutover_checkpoint_time(cutover.cutover_run_id, "rollback_burned")
         _require_at_or_after(
             recorded_at,
@@ -898,20 +924,17 @@ class CutoverControlAuthority:
             floor_field="rollback burn",
         )
         self._require_not_future(recorded_at, "recorded_at")
-        if not all(
-            _is_sha256(value)
-            for value in (
-                service_artifact_sha256,
-                projection_worker_artifact_sha256,
-                route_probe_sha256,
+        if not _is_sha256(service_artifact_sha256) or not _is_sha256(route_probe_sha256):
+            raise ReleaseAuthorityError(
+                "runtime attestation service and route artifact identities must be SHA-256 digests"
             )
+        if projection_worker_artifact_sha256 is not None and not _is_sha256(
+            projection_worker_artifact_sha256
         ):
-            raise ReleaseAuthorityError("runtime attestation artifact identities must be SHA-256 digests")
+            raise ReleaseAuthorityError(
+                "historical projection-worker artifact identity must be a SHA-256 digest when supplied"
+            )
         body = dict(payload)
-        _require_nonblank(
-            body.get("projection_worker_identity"),
-            "runtime attestation projection_worker_identity",
-        )
         expected = {
             "dish_release": candidate.dish_release,
             "honest_release": candidate.honest_release,
@@ -923,23 +946,22 @@ class CutoverControlAuthority:
             "route_target": "postgresql",
             "health": "pass",
             "mutation_admission": "closed",
+            "external_projection": "disabled_post_burn",
         }
         if any(body.get(key) != value for key, value in expected.items()):
-            raise ReleaseAuthorityError("runtime attestation does not match the exact candidate release and closed route")
-        artifact_paths = {
-            "service_artifact_sha256": body.get("service_artifact_path"),
-            "projection_worker_artifact_sha256": body.get("projection_worker_artifact_path"),
-            "route_probe_sha256": body.get("route_probe_path"),
-        }
-        for digest_field, artifact_path in artifact_paths.items():
-            observe_release_artifact(
-                artifact_path=artifact_path,
-                expected_sha256={
-                    "service_artifact_sha256": service_artifact_sha256,
-                    "projection_worker_artifact_sha256": projection_worker_artifact_sha256,
-                    "route_probe_sha256": route_probe_sha256,
-                }[digest_field],
+            raise ReleaseAuthorityError(
+                "runtime attestation does not match the exact PostgreSQL release, closed route, and disabled external-projection mode"
             )
+        artifact_paths = {
+            service_artifact_sha256: body.get("service_artifact_path"),
+            route_probe_sha256: body.get("route_probe_path"),
+        }
+        if projection_worker_artifact_sha256 is not None:
+            artifact_paths[projection_worker_artifact_sha256] = body.get(
+                "projection_worker_artifact_path"
+            )
+        for digest, artifact_path in artifact_paths.items():
+            observe_release_artifact(artifact_path=artifact_path, expected_sha256=digest)
         identity = {
             "candidate_id": str(candidate_id),
             "service_artifact_sha256": service_artifact_sha256,
@@ -1222,7 +1244,7 @@ class CutoverControlAuthority:
             arguments=arguments,
             task_id=task_id,
         )
-        expected_projection_events = expected_projection_count(normalized_command, arguments)
+        expected_projection_events = 0
         canonical_request_payload = {
             "command": normalized_command,
             "arguments": arguments,
@@ -1338,13 +1360,10 @@ class CutoverControlAuthority:
                 rel.RuntimeReleaseAttestation.candidate_id == candidate.candidate_id
             )
         )
-        worker = self.session.scalar(
-            select(rel.ProjectionWorkerReadiness).where(
-                rel.ProjectionWorkerReadiness.candidate_id == candidate.candidate_id
-            )
-        )
         plan = self.session.scalar(
-            select(rel.FirstAdmissionPlan).where(rel.FirstAdmissionPlan.cutover_run_id == cutover_run_id)
+            select(rel.FirstAdmissionPlan).where(
+                rel.FirstAdmissionPlan.cutover_run_id == cutover_run_id
+            )
         )
         reservation = self.session.scalar(
             select(reservations.FirstRequestReservation).where(
@@ -1353,36 +1372,36 @@ class CutoverControlAuthority:
                 reservations.FirstRequestReservation.generation_id == candidate.generation_id,
             )
         )
-        if runtime is None or worker is None or plan is None or reservation is None:
+        epoch = self.session.get(tx.ProjectionEpoch, candidate.projection_epoch_id)
+        if runtime is None or plan is None or reservation is None:
             raise ReleaseAuthorityError(
-                "first-request admission requires runtime attestation, projection-worker readiness, "
-                "first-admission plan, and reservation"
+                "first-request admission requires PostgreSQL runtime attestation, first-admission plan, and reservation"
+            )
+        if (
+            epoch is None
+            or epoch.status != "active"
+            or epoch.external_effects_enabled
+        ):
+            raise ReleaseAuthorityError(
+                "first-request admission requires durable post-burn external-projection disablement"
             )
         if reservation.state != "reserved":
             raise ReleaseAuthorityError("first-request reservation is not available for admission")
-        if worker.projection_epoch_id != candidate.projection_epoch_id:
-            raise ReleaseAuthorityError("projection-worker readiness is for the wrong epoch")
         runtime_paths = {
             runtime.service_artifact_sha256: runtime.payload.get("service_artifact_path"),
-            runtime.projection_worker_artifact_sha256: runtime.payload.get("projection_worker_artifact_path"),
             runtime.route_probe_sha256: runtime.payload.get("route_probe_path"),
         }
         for digest, path in runtime_paths.items():
             observe_release_artifact(artifact_path=path, expected_sha256=digest)
-        readiness_details = validate_worker_readiness(
-            self.session,
-            candidate=candidate,
-            row=worker,
-            runtime=runtime,
-            as_of=opened_at,
-        )
         if (
-            _utc_comparable(runtime.recorded_at) > _utc_comparable(opened_at)
-            or _utc_comparable(worker.completed_at) > _utc_comparable(opened_at)
+            runtime.payload.get("external_projection") != "disabled_post_burn"
+            or _utc_comparable(runtime.recorded_at) > _utc_comparable(opened_at)
             or _utc_comparable(plan.recorded_at) > _utc_comparable(opened_at)
             or _utc_comparable(reservation.reserved_at) > _utc_comparable(opened_at)
         ):
-            raise ReleaseAuthorityError("first-request admission evidence must be durable before the gate opens")
+            raise ReleaseAuthorityError(
+                "first-request PostgreSQL admission evidence must be durable before the gate opens"
+            )
         self._advance_cutover(run, "admission_open")
         self._checkpoint(
             run,
@@ -1391,8 +1410,7 @@ class CutoverControlAuthority:
                 "generation_id": str(candidate.generation_id),
                 "admission_control_state": control.state,
                 "runtime_attestation_id": str(runtime.attestation_id),
-                "projection_worker_readiness_id": str(worker.readiness_id),
-                "worker_readiness_report": readiness_details,
+                "external_projection_mode": "disabled_post_burn",
                 "first_admission_plan_id": str(plan.plan_id),
                 "first_request_reservation_id": str(reservation.reservation_id),
             },
@@ -1430,7 +1448,9 @@ class CutoverControlAuthority:
             cutover_run_id, "first_request_admission_opened"
         )
         plan = self.session.scalar(
-            select(rel.FirstAdmissionPlan).where(rel.FirstAdmissionPlan.cutover_run_id == cutover_run_id)
+            select(rel.FirstAdmissionPlan).where(
+                rel.FirstAdmissionPlan.cutover_run_id == cutover_run_id
+            )
         )
         request = self.session.get(wf.ServiceRequest, request_id)
         outcome = self.session.scalar(
@@ -1447,30 +1467,6 @@ class CutoverControlAuthority:
                 wf.InvocationAuditObligation.request_id == request_id
             )
         )
-        projection_events = self.session.scalars(
-            select(tx.ProjectionOutboxEvent).where(
-                tx.ProjectionOutboxEvent.command_execution_id == (execution.execution_id if execution else None)
-            )
-        ).all() if execution is not None else []
-        reconciliation_validation = validate_reconciliation(
-            self.session, candidate=candidate, as_of=verified_at
-        )
-        reconciliation = reconciliation_validation.run
-        reconciliation_items = (
-            self.session.scalars(
-                select(tx.ProjectionReconciliationItem).where(
-                    tx.ProjectionReconciliationItem.reconciliation_run_id
-                    == reconciliation.reconciliation_run_id
-                )
-            ).all()
-            if reconciliation is not None
-            else []
-        )
-        reconciled_mapping_ids = {
-            item.mapping_id
-            for item in reconciliation_items
-            if item.mapping_id is not None and item.outcome in {"matched", "reprojected"}
-        }
         planned_operation_id: uuid.UUID | None = None
         if plan is not None:
             raw_planned_operation_id = plan.payload.get("operation_id")
@@ -1486,18 +1482,43 @@ class CutoverControlAuthority:
             execution.terminal_at if execution is not None else None,
             audit.occurred_at if audit is not None else None,
             obligation.terminal_at if obligation is not None else None,
-            reconciliation.completed_at if reconciliation is not None else None,
-            *[event.terminal_at for event in projection_events],
-            *[item.recorded_at for item in reconciliation_items],
         ]
         chronology_valid = all(
             value is not None
             and _utc_comparable(verified_at) >= _utc_comparable(value)
             for value in evidence_times
         )
+        request_payload_valid = (
+            request is not None
+            and request.canonical_payload_sha256 == sha256_json(request.canonical_payload)
+            and plan is not None
+            and request.canonical_payload_sha256
+            == plan.payload.get("canonical_payload_sha256")
+        )
+        outcome_payload_valid = (
+            outcome is not None
+            and outcome.result_sha256 == sha256_json(outcome.result_payload)
+        )
+        audit_chain_valid = (
+            request is not None
+            and outcome is not None
+            and execution is not None
+            and audit is not None
+            and obligation is not None
+            and plan is not None
+            and audit.generation_id == candidate.generation_id
+            and audit.command_execution_id == execution.execution_id
+            and audit.task_id == plan.task_id
+            and obligation.generation_id == candidate.generation_id
+            and obligation.outcome_id == outcome.outcome_id
+            and obligation.command_execution_id == execution.execution_id
+        )
         self._require_not_future(verified_at, "verified_at")
         if (
             not chronology_valid
+            or not request_payload_valid
+            or not outcome_payload_valid
+            or not audit_chain_valid
             or control is None
             or control.state != "closed"
             or control.opened_at is not None
@@ -1506,6 +1527,7 @@ class CutoverControlAuthority:
             or reservation.request_id != request_id
             or plan is None
             or plan.request_id != request_id
+            or plan.expected_projection_events != 0
             or request is None
             or request.generation_id != candidate.generation_id
             or _utc_comparable(request.admitted_at) < _utc_comparable(first_request_gate_at)
@@ -1519,23 +1541,12 @@ class CutoverControlAuthority:
             or execution.status != "committed"
             or execution.command_name != plan.command_name
             or execution.task_id != plan.task_id
-            or audit is None
-            or audit.command_execution_id != execution.execution_id
-            or audit.task_id != plan.task_id
             or obligation is None
-            or obligation.command_execution_id != execution.execution_id
             or obligation.state not in {"fulfilled", "repaired"}
             or obligation.terminal_at is None
-            or len(projection_events) != plan.expected_projection_events
-            or any(event.state != "applied" for event in projection_events)
-            or reconciliation is None
-            or not reconciliation_validation.passed
-            or request is None
-            or _utc_comparable(reconciliation.started_at)
-            < _utc_comparable(request.admitted_at)
         ):
             raise ReleaseAuthorityError(
-                "first admission lacks exact committed execution, audit, projection, and reconciliation evidence"
+                "first admission lacks exact PostgreSQL request replay, committed execution, and audit evidence"
             )
         self._advance_cutover(run, "first_admission_verified")
         self.session.flush()
@@ -1551,16 +1562,15 @@ class CutoverControlAuthority:
                 "mutation_admission_state": control.state,
                 "mutation_admission_revision": control.control_revision,
                 "request_id": str(request_id),
+                "request_payload_sha256": request.canonical_payload_sha256,
                 "outcome_id": str(outcome.outcome_id),
+                "outcome_payload_sha256": outcome.result_sha256,
                 "execution_id": str(execution.execution_id),
                 "task_id": str(plan.task_id),
                 "operation_id": None if planned_operation_id is None else str(planned_operation_id),
                 "audit_event_id": str(audit.audit_event_id),
                 "invocation_obligation_id": str(obligation.obligation_id),
-                "projection_event_ids": [str(event.projection_event_id) for event in projection_events],
-                "reconciliation_run_id": str(reconciliation.reconciliation_run_id),
-                "reconciled_mapping_ids": sorted(str(value) for value in reconciled_mapping_ids),
-                "reconciliation_validation": reconciliation_validation.details,
+                "external_projection_mode": "disabled_post_burn",
             },
             verified_at,
         )
