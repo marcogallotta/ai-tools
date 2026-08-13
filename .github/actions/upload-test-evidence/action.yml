@@ -1,0 +1,19 @@
+name: Upload required test evidence
+description: Upload CI test evidence, including hidden artifact roots, and fail closed when no evidence exists.
+inputs:
+  name:
+    description: Artifact name.
+    required: true
+  path:
+    description: Newline-delimited evidence paths accepted by actions/upload-artifact.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Upload evidence
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ inputs.name }}
+        path: ${{ inputs.path }}
+        include-hidden-files: true
+        if-no-files-found: error

@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from test_selection.validator import validate_policy
+from test_selection.validator import _scoped_paths, validate_policy
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +28,22 @@ def test_current_head_map_is_structurally_valid() -> None:
 
     assert result.errors == ()
     assert result.row_count == result.expected_repo_paths + 3
+
+
+
+
+def test_generated_frontend_dist_is_outside_selection_authority(tmp_path: Path) -> None:
+    source = tmp_path / "frontend" / "src" / "app.js"
+    generated = tmp_path / "frontend" / "dist" / "app.js"
+    source.parent.mkdir(parents=True)
+    generated.parent.mkdir(parents=True)
+    source.write_text("source", encoding="utf-8")
+    generated.write_text("generated", encoding="utf-8")
+
+    scoped = _scoped_paths(tmp_path)
+
+    assert "frontend/src/app.js" in scoped
+    assert "frontend/dist/app.js" not in scoped
 
 
 def test_missing_current_path_is_rejected(tmp_path: Path) -> None:
