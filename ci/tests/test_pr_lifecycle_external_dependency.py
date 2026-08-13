@@ -75,8 +75,12 @@ def test_resolved_external_record_reenters_gate_evaluation():
 
     state = base.engine(gh).inspect(gh.pr)
 
-    assert state.state == pr_lifecycle.LifecycleState.CHANGES_REQUESTED
-    assert state.gate["diagnosis"] == pr_lifecycle.pr_gate.GateDiagnosis.FAILED_REQUIRED_CI.value
+    assert state.state == pr_lifecycle.LifecycleState.REVIEW_PASSED
+    assert (
+        state.gate["diagnosis"]
+        == pr_lifecycle.pr_gate.GateDiagnosis.EVIDENCE_MISSING_OR_STALE.value
+    )
+    assert "refresh/re-run" in state.residual_reason
     assert state.external_dependency is None
 
 
