@@ -4,7 +4,6 @@ rsync --delete, and ssh with a remote command.
 """
 import io
 import json
-import subprocess
 
 import pytest
 
@@ -326,41 +325,6 @@ class TestMissingCommand:
         out = capsys.readouterr().out
         assert exit_code == 0
         assert out.strip() == ""
-
-
-def _git(cwd, *args):
-    subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True)
-
-
-@pytest.fixture
-def protected_repo(tmp_path, destructive_op_guard, monkeypatch):
-    """A real primary checkout plus a registered linked worktree, standing
-    in for ~/ai-tools and an owned agent worktree. destructive_op_guard's
-    PROTECTED_CHECKOUT_ROOT is repointed at the primary so the check exercises
-    real git-dir/common-dir/worktree-registry resolution end to end."""
-    primary = tmp_path / "primary"
-    primary.mkdir()
-    _git(primary, "init", "-q", "-b", "main")
-    _git(primary, "config", "user.email", "test@example.com")
-    _git(primary, "config", "user.name", "Test")
-    (primary / "README.md").write_text("x\n")
-    _git(primary, "add", "README.md")
-    _git(primary, "commit", "-q", "-m", "initial")
-
-    linked = tmp_path / "linked"
-    _git(primary, "worktree", "add", "-q", "-b", "agent/existing", str(linked), "main")
-
-    unrelated = tmp_path / "unrelated"
-    unrelated.mkdir()
-    _git(unrelated, "init", "-q", "-b", "main")
-    _git(unrelated, "config", "user.email", "test@example.com")
-    _git(unrelated, "config", "user.name", "Test")
-    (unrelated / "README.md").write_text("x\n")
-    _git(unrelated, "add", "README.md")
-    _git(unrelated, "commit", "-q", "-m", "initial")
-
-    monkeypatch.setattr(destructive_op_guard, "PROTECTED_CHECKOUT_ROOT", str(primary.resolve()))
-    return {"primary": primary, "linked": linked, "unrelated": unrelated}
 
 
 class TestProtectedCheckoutBranchIsolation:
