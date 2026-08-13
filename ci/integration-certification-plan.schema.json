@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/marcogallotta/ai-tools/ci/integration-certification-plan.schema.json",
+  "title": "Repository integration certification plan",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "identity",
+    "changed_paths",
+    "classifications",
+    "dish_selector",
+    "semantic_additions",
+    "selected_lanes",
+    "selected_groups",
+    "force_full",
+    "force_full_reasons",
+    "policy_identity"
+  ],
+  "properties": {
+    "format": {"const": "repository-certification-plan-v1"},
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["candidate_sha", "base_sha", "merge_base_sha"],
+      "properties": {
+        "candidate_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "base_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "merge_base_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      }
+    },
+    "changed_paths": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1},
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "classifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "scope", "classification"],
+        "properties": {
+          "path": {"type": "string"},
+          "scope": {"enum": ["dish", "repository"]},
+          "classification": {"type": "string"}
+        }
+      }
+    },
+    "dish_selector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "format",
+        "changed_paths",
+        "classes",
+        "traits",
+        "focused_tests",
+        "lanes",
+        "conditional_reviews"
+      ],
+      "properties": {
+        "format": {"const": "dish-test-plan-v1"},
+        "changed_paths": {"type": "array", "items": {"type": "string"}},
+        "classes": {"type": "array", "items": {"type": "string"}},
+        "traits": {"type": "array", "items": {"type": "string"}},
+        "focused_tests": {"type": "array", "items": {"type": "string"}},
+        "lanes": {"type": "array", "items": {"type": "string"}},
+        "conditional_reviews": {"type": "array", "items": {"type": "object"}}
+      }
+    },
+    "semantic_additions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["review_complete", "lanes"],
+      "properties": {
+        "review_complete": {"type": "boolean"},
+        "lanes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+      }
+    },
+    "selected_lanes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "selected_groups": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "python-control-plane",
+          "frontend-static",
+          "native-postgresql",
+          "browser-acceptance"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "force_full": {"type": "boolean"},
+    "force_full_reasons": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "policy_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "combined_sha256", "sources"],
+      "properties": {
+        "format": {"const": "repository-certification-policy-identity-v1"},
+        "combined_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": {"type": "string"},
+              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+            }
+          }
+        }
+      }
+    }
+  }
+}
