@@ -1,5 +1,5 @@
 {
-  "canonical_version": "dish-chatgpt-projects-v2-57da079ecc11",
+  "canonical_version": "dish-chatgpt-projects-v2-b6a326f98ad4",
   "generated_role_files": {
     "coordinator": "coordinator.md",
     "development-workflow": "development-workflow.md",
@@ -9,10 +9,10 @@
     "review": "review.md",
     "workflow": "workflow.md"
   },
-  "kernel_identity_sha256": "57da079ecc111d3a3feb55692504f835317ca25d740a65a20c572eddfef16fbc",
+  "kernel_identity_sha256": "b6a326f98ad45dfeb978aa5db4dc0ed5c976916408bb963e8c16008682438e78",
   "max_kernel_chars": 3500,
   "schema_version": 1,
   "source_file": "source.json",
-  "source_sha256": "7d30413c347634300529f00cbf402ec6ae4fa567b33301d2e31bbbc3d24af921",
+  "source_sha256": "48dee4baf377e33a31ceb07a10e39b7c6a33c6dea8c9669bd7c325e46d6b08a1",
   "version_namespace": "dish-chatgpt-projects-v2"
 }

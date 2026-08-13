@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Dish PostgreSQL production backup every six hours
+
+[Timer]
+OnCalendar=*-*-* 00/6:00:00 UTC
+AccuracySec=1min
+Persistent=true
+Unit=dish-postgres-backup.service
+
+[Install]
+WantedBy=timers.target

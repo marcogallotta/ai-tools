@@ -21,7 +21,7 @@ A normal integration handoff identifies at least:
 - `TESTS TO RUN` or equivalent existing certification evidence;
 - any known mechanical integration dependency.
 
-The handoff is explicit authorization to integrate that reviewed candidate. Do not discover a reviewed-looking PR and decide independently to land it.
+The handoff is explicit authorization to integrate that reviewed candidate. Do not discover a reviewed-looking PR and decide independently to land it. The repository lifecycle dispatcher may act without a separate chat handoff only when its active workflow is explicitly configured for `bounded-reviewed-head` Integration composition under the Development Workflow contract. That standing configuration is the handoff authority for the narrow mechanical path; GitHub write capability alone is never authorization.
 
 Before any merge/integration action, resolve the PR from GitHub and verify that its current head SHA is exactly the supplied reviewed head SHA. If it moved, stop and apply the new-head rules below.
 
@@ -75,9 +75,11 @@ Do not rely on a stale approval attached only to the PR number or branch name. I
 
 Run the exact `TESTS TO RUN` from the coordinator/reviewer handoff when integration still requires local/environment-specific certification. Do not replace the requested command with a weaker substitute and do not claim evidence that did not run.
 
-Until PR-triggered CI is integrated for this workflow, `checks` means the existing manual certification/test evidence required by repository policy and the review handoff. A green or empty GitHub Checks surface is not a substitute for that evidence.
+For ordinary PR CI, fail closed unless the exact reviewed PR head has the repository-owned status context `Dish / required ordinary CI` in `success` state. That status is posted directly to the source PR head only after Broad Python, Frontend/tooling, native PostgreSQL, and browser acceptance jobs all succeed on that same checked-out candidate. A green/empty specialized workflow, including repository-bundle publication, is not a substitute.
 
-Future CI should certify the exact PR head SHA, and integration must verify that exact-head certification before merge.
+Use `scripts/pr_gate.py integration` (or an equivalent check with the same invariants) against current PR metadata, the exact reviewed head SHA, the combined commit-status payload for that exact SHA, and the current `pull_request` Actions workflow-runs payload. The gate binds acceptance to the newest `.github/workflows/ci.yml` attempt for the reviewed head, requires that attempt itself to be completed successfully, and requires the accepted status to target that run. GitHub reruns reuse a workflow run ID, so the accepted status must also have been written strictly after the newest attempt's `run_started_at`; an older same-run success cannot certify a rerun that never publishes. Attempt start identity, not commit-status recency, selects the newest attempt, so an overlapping older run cannot make Integration accept stale success. The gate must also refuse integration when the PR head moved, the status payload is for another SHA, the required context is absent/pending/failed, or the PR is back in draft.
+
+Artifact names and the `required-ordinary-ci-<candidate-sha>` identity manifest are diagnostic/audit evidence bound to the candidate; do not reinterpret the workflow's synthetic `GITHUB_SHA` as the source PR head. Any additional manual/local certification required by the PR must likewise name the exact candidate SHA.
 
 If a required test fails because the reviewed candidate is wrong, return the failure to the coordinator/implementation path; do not implement a semantic fix under the Integration role.
 
@@ -111,6 +113,14 @@ Stop and hand back whenever integration requires a semantic decision, including:
 - weakening tests or policy to permit the candidate to land.
 
 Implementation fixes belong to the implementation/fix role. Semantic acceptance belongs to review/coordinator authority.
+
+## Dispatcher-composed Integration
+
+After a formal exact-head `VERDICT: MERGE`, the dispatcher may compose this role only after re-evaluating the current head, required local work, exact-head ordinary CI/certification, ordering, and mergeability. It records a structured `phase=integration` exact-head advisory lease while landing.
+
+This composition remains mechanical Integration. It does not give Review or the dispatcher permission to author semantic fixes, choose behavior, weaken evidence, or resolve a semantic conflict. If any such work is required, return to Implementation and then exact-head Review.
+
+When authorized/capable, merge with expected-head protection and re-read GitHub. A merge API success/prose response is insufficient; `MERGED` may be reported only after authoritative PR readback. If all gates are green but the active host lacks explicit authority or merge capability, report `INTEGRATION READY` and the exact residual reason instead of asking Marco to act as a generic message bus. See [`../../../ci/pr-lifecycle-dispatcher-runbook.md`](../../../ci/pr-lifecycle-dispatcher-runbook.md).
 
 ## Merge/promotion rules
 

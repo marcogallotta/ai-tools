@@ -1,215 +1,134 @@
 # Review agent
 
-This is the standing contract for Dish PR reviewers and specialist reviewers. Review handoffs should contain only the exact PR URL, base/head identity, review type, task intent, narrow specialist question where applicable, existing evidence, and known integration notes.
+This is the standing contract for Dish PR reviewers and specialist reviewers. Incoming review handoffs contain only the exact PR/base/head identity, review type, task intent, narrow specialist question where applicable, existing evidence, and known integration notes. Final human notifications use the action-only contract below; substantive evidence stays on the PR.
 
 New work follows one lifecycle:
 
 > implementation branch + commit -> GitHub pull request -> review of the exact PR head -> integration of that reviewed head
 
-GitHub PR is the review surface. The exact PR head SHA is the review identity. Asana may record orchestration/status and PR links, but it is not the code-review artifact.
+GitHub PR is the review surface and the exact PR head SHA is the review identity. Asana may record orchestration/status and PR links, but it is not the code-review artifact. Review never acquires Implementation or Integration authority merely because a tool is available.
 
-## Review objective
+## Review objective and depth
 
-For an ordinary merge review, answer:
+For an ordinary merge review, answer whether this exact PR head introduces or preserves a sufficiently serious defect that should prevent integration. Classify findings as `BLOCKER`, `FOLLOW-UP`, or `OBSERVATION`; do not block for style, naming, speculative refactors, unrelated debt, or safe-to-defer maintainability work. Stop once the merge question can be answered confidently.
 
-> Is there a sufficiently serious defect introduced or preserved by this exact PR head that we should not integrate it yet?
+Ordinary PRs get bounded high-signal review. Use a narrow specialist review only when correctness depends on a high-consequence invariant such as authority/canonical identity/replay, PostgreSQL concurrency/locking, destructive migration/recovery, security/trust/external effects, or irreversible release/cutover identity/fencing. PR size alone is not an escalation trigger.
 
-Your result is a **review verdict**, not an instruction to Marco to merge. The coordinator owns current live coordination state, parallel-work dependencies, integration ordering, and missing certification; the Integration role owns the final approved-head integration when assigned.
+## Review discovery and identity
 
-Classify findings:
-
-- `BLOCKER` — materially unsafe or wrong to integrate;
-- `FOLLOW-UP` — real issue safe to defer;
-- `OBSERVATION` — uncertain, minor, or non-blocking.
-
-Do not block for style, naming, speculative refactors, unrelated debt, or maintainability work that is safe to defer.
-
-Stop once the merge question can be answered confidently.
-
-## PR identity and review state
+Ordinary discovery considers only open PRs with GitHub `draft=false`. A draft PR is AUTHORING / NOT REVIEWABLE unless Marco explicitly requests exceptional early review. The native GitHub draft state is canonical; do not add a parallel review-ready label.
 
 Before reviewing:
 
-1. resolve the supplied PR in GitHub;
-2. record the base branch/base SHA when available;
-3. record the current PR head branch and exact head SHA;
-4. inspect the PR description for the owning Asana task and implementation evidence/context;
-5. fetch the linked Asana task when task intent, decisions, dependencies, or live orchestration state matter;
-6. inspect the PR diff and relevant repository authority/evidence for that exact head;
-7. make review comments on the PR rather than returning a detached patch review.
+1. resolve the supplied PR in GitHub and record base/head identity;
+2. inspect the PR description for owning Asana task and implementation evidence;
+3. fetch the linked Asana task when intent, decisions, dependencies, or live orchestration matter;
+4. inspect the exact-head diff plus relevant repository authority/evidence;
+5. put review comments/findings on the PR, not in a detached handoff.
 
-A reviewer must not depend on coordinator chat history. The durable takeover context is the PR, its linked Asana task, current repository authority, and existing GitHub review discussion. If the PR omits the owning Asana task when one exists or lacks enough implementation context to identify the intended change, request that durable context rather than reconstructing it from private conversation.
+A reviewer must not depend on coordinator chat history. For Dish, the canonical repository is `marcogallotta/ai-tools`; a fresh repo-operating Review session resolves repository and PR context through connected GitHub/Asana authority rather than asking Marco to restate repository identity or launch a local agent merely to recover context. If the PR omits its owning task or enough durable implementation context, request that context on the PR. If the target PR remains ambiguous after inspecting available authority, fail closed with the concise `BLOCKED` final format and name the one missing identifier/action.
 
-An approval applies to one exact PR head SHA. When the review surface supports anchoring a submitted review to a commit, anchor it to that head SHA. The return contract must always state the exact reviewed head SHA even if GitHub's branch-protection settings do not automatically dismiss stale approvals.
-
-Do not treat `PR URL + branch name` alone as sufficient identity; the head SHA must match.
+Do not treat PR URL + branch name as sufficient identity: the exact head SHA must match. Any new commit changes review identity. Semantic movement requires substantive re-review; genuinely mechanical-only movement requires an explicit exact-head mechanical recheck proving semantics unchanged and reviewed behavior preserved; unclear movement is semantic. Do not approve an obsolete head merely because its diff looks plausible.
 
 ## Durable GitHub review submission
 
-A review is not complete until the verdict is durably submitted as a formal GitHub pull-request review for the exact reviewed head SHA. A chat-only verdict, detached handoff, or review-claim issue comment is incomplete and must not be treated as repository review state.
+A review is incomplete until a formal GitHub pull-request review is submitted and verified for the exact reviewed head. A chat verdict or claim comment is not repository review state.
 
-Dish agents currently act through the same GitHub account that owns agent-authored PRs. GitHub therefore does not permit those agents to use `APPROVE` or `REQUEST_CHANGES` on their own PRs. Under the current Dish workflow, **every completed agent review must use a formal `COMMENT` review** as the canonical transport; do not treat `APPROVE`/`REQUEST_CHANGES` as the normal agent-review path.
+Dish agents currently share the GitHub account that owns agent-authored PRs, so completed agent reviews use a formal `COMMENT` review rather than `APPROVE` or `REQUEST_CHANGES`. Before the final human notification:
 
-Before returning any verdict:
+1. submit a `COMMENT` review anchored to the exact head;
+2. include `VERDICT: MERGE` or `VERDICT: BLOCK`;
+3. include material findings and exact reviewed head SHA;
+4. include normal Dish agent attribution;
+5. verify the review exists on the PR and is anchored to that exact head.
 
-1. submit a GitHub pull-request `COMMENT` review anchored to the exact reviewed head SHA;
-2. include the explicit textual `VERDICT: MERGE` or `VERDICT: BLOCK`;
-3. include the material findings and the exact reviewed head SHA in that review;
-4. include the normal Dish agent attribution;
-5. verify that the submitted review exists on the PR and is anchored to the exact reviewed head before returning the coordinator handoff.
+The PR, not the final chat message, carries exact head/base identity, review reasoning, test/check output or missing-certification details, findings, implementation notes affecting disposition, dependencies, and after-fix review disposition.
 
-A review-claim issue comment never satisfies this completion gate. If Dish later adopts distinct GitHub reviewer identities that can submit stateful approvals/change requests, Development Workflow may revise this transport rule deliberately; until then formal `COMMENT` review is authoritative agent-review submission.
+## Review claims and dispatcher routing
 
-## Forked review claims
+Forked review claims are advisory soft leases only. Before substantive forked review, inspect current PR comments/reviews for an active structured claim on the exact head. A new claim uses:
 
-Review may be forked away from the coordinator so review and orchestration can proceed in parallel. Avoid using GitHub assignee state as agent-review ownership: a dead agent must not leave a durable lock.
+> `<!-- dish-agent-lease:v1 phase=review head=<exact-sha> lease=<uuid> -->`
+> `REVIEW CLAIMED — head <exact-sha> — stale after 60m without structured renewal/activity.`
 
-Before substantive review, a forked reviewer should inspect current PR comments/reviews for an active claim on the exact current head. If none is active, post a short claim comment such as:
+Sign it with normal agent attribution. Renewal repeats the marker with the same lease UUID; explicit release uses `<!-- dish-agent-lease-release:v1 lease=<uuid> -->`. The claim expires on head change, explicit release/reassignment, 60 minutes without visible review activity, or deliberate parallel/deep review. A submitted exact-head review supersedes the claim. GitHub assignees or process/session state are not review ownership.
 
-> `REVIEW CLAIMED — head <exact-sha> — stale after 60m without review activity.`
+The repository lifecycle dispatcher is the routine Review router, not semantic Review authority. `light`, `focused`, and `mechanical` work may use a configured bounded local reviewer when deterministically constrained; ordinary substantive Review should prefer the configured ChatGPT Review Workspace Agent; `specialist:<name>` routes to that specialist. Claude/Codex are not default semantic Review merely because they are local. Durable route markers may use `REVIEW CLASS: <class>` or `<!-- dish-review-route:v1 head=<sha> class=<class> -->`. The formal exact-head GitHub `COMMENT` review remains the completion artifact.
 
-Sign the comment with the normal Dish agent attribution footer.
+## Evidence and integration gates
 
-The claim is an **advisory soft lease**, not review authority. It exists only to avoid wasting agents on accidental duplicate review.
+Treat implementation-agent test evidence as evidence; rerun only for a concrete review reason. Match evidence to the real boundary: SQLite/PGlite does not certify native PostgreSQL behavior and unit tests do not certify browser/process behavior. Missing native/environment certification is not itself proof of a defect.
 
-A claim is no longer active when any of these is true:
+Ordinary CI must certify the exact source PR head SHA. A specialized workflow or synthetic `pull_request` merge SHA is not exact-head certification. Missing/pending ordinary CI is integration evidence state, not permission to weaken review identity.
 
-- the PR head SHA changes;
-- the claimant explicitly releases it;
-- 60 minutes pass with no visible review activity from the claimant on the PR;
-- the coordinator explicitly reassigns or takes over the review;
-- intentional parallel/deep review is requested.
+`State: LOCAL IMPLEMENTATION COMPLETION REQUIRED` under the canonical publication-blocker PR section means implementation publication is incomplete, not local certification and not ordinary review-ready state. If local completion changes the head after Review, the resulting new SHA does not inherit that review: semantic movement needs substantive re-review; genuinely mechanical-only movement needs an explicit exact-head mechanical recheck; uncertainty is semantic. A fully published implementation that only lacks an established laptop/native/browser/environment check is local certification, not a publication blocker.
 
-Visible review activity includes a submitted review, review-thread/comment activity, or an explicit claim-renewal/progress comment. Do not keep a claim alive merely because the agent process may still exist somewhere.
+Parallel migration-number collisions are integration-order issues, not automatic semantic blockers. Do not force prospective dependency merely because two unmerged PRs currently use the same migration number.
 
-When a submitted GitHub review exists for the exact head, that review state supersedes the claim. A second reviewer may still be deliberately assigned for a specialist or independent review; the soft claim only prevents accidental duplication.
+## Human escalation
 
-## Review depth
+Request human judgment only for a genuine human tradeoff, product judgment, risk acceptance, or other Marco-only decision that agents cannot resolve from current authority/evidence. Do not escalate merely because a question is difficult, a test is missing, or another agent can perform the next step.
 
-Use the repository ownership classes/traits and the actual semantic delta.
+Put the complete decision packet on the PR: exact decision, minimum evidence, concrete options/tradeoffs, and recommendation when defensible. The final human notification remains action-only and uses `BLOCKED` with one exact action. Keep implementation fixes and mechanically answerable questions in the agent workflow.
 
-Ordinary PRs get bounded high-signal review.
+## Final human handoff
 
-A targeted specialist review is appropriate when correctness depends on a high-consequence invariant such as:
+The human notification contains only current status, exact next action, and the one-sentence reason/blocker allowed by the chosen format. It must match exactly one of these shapes, with no preamble, epilogue, verdict dump, SHA list, test log, findings list, implementation narrative, or review reasoning:
 
-- authority/canonical identity/replay;
-- PostgreSQL concurrency or locking;
-- destructive migration/recovery;
-- security/trust/external effects;
-- irreversible release/cutover identity or fencing.
+```text
+READY FOR MERGE
 
-Specialist review is **narrow**. Answer the exact invariant question in the handoff; do not turn it into a whole-repository audit.
+PR #X is ready for merge.
+Reason: Review passed, no local work required.
+```
 
-PR size alone is not an escalation trigger.
+```text
+LOCAL AGENT REQUIRED
 
-## Evidence and checks
+PR #X requires local agent.
 
-Treat implementation-agent test evidence as evidence. Do not rerun it without a concrete reason.
+Action:
+<exact command/task for local agent>
 
-Request or identify additional execution only when needed to resolve the review question. Match evidence to the real boundary; do not substitute PGlite/SQLite for a native PostgreSQL guarantee or unit tests for browser/process behavior.
+Effort:
+Small / Medium / Large
+```
 
-No venv is supplied by default. Ask only if genuinely necessary.
+```text
+BLOCKED
 
-Missing native/environment certification is not itself proof of a defect. State the exact missing certification separately from the semantic verdict.
+PR #X blocked.
 
-Until PR-triggered CI exists for this workflow, `checks` means the existing manual certification/test evidence for the exact candidate. Do not infer exact-head CI certification from a generic GitHub Checks surface. Future CI should run on and certify the exact PR head SHA.
+Action:
+<what needs to happen>
 
-## New commits, rebases, and parallel work
+Reason:
+<one sentence>
+```
 
-Review the exact current PR head against its intended base.
+```text
+WAITING ON DEPENDENCY
 
-If meaningful review requires a newer authoritative base first, say so on the **first line** and do not approve an obsolete head merely because its diff looks plausible.
+PR #X waiting on:
+<dependency>
 
-Any new commit changes the PR head SHA and therefore changes the review identity.
+Owner:
+<task/PR>
+```
 
-- **Semantic change:** substantive re-review is required on the new head before integration.
-- **Mechanical-only change:** a full semantic review need not be repeated, but an explicit mechanical recheck must verify the new exact head, confirm no semantic change occurred, confirm the reviewed behavior remains present, and record that new head as the reviewed candidate.
-- **Unclear change:** treat it as semantic and re-review.
+Status rules:
 
-A conflict-free rebase or purely mechanical migration renumber can qualify for the mechanical-only path only when the diff proves semantics are unchanged. If conflict resolution required a real code/schema/product decision, it is semantic work and must return to the author/implementation path.
+- `READY FOR MERGE`: durable `VERDICT: MERGE`; formal review verified on exact current head; no local/environment work remains; current GitHub/Asana authority exposes no unresolved integration gate/dependency. This hands off to the existing Integration lifecycle. **Review does not merge or integrate the PR.**
+- `LOCAL AGENT REQUIRED`: only when the exact remaining step genuinely requires a local-only tool/environment boundary. Never consume a local agent merely because Review found a fix, a preferred GitHub action is unavailable, or repository context was initially missing. Provide one exact command/task and `Small`, `Medium`, or `Large` effort.
+- `BLOCKED`: exact head cannot receive `VERDICT: MERGE` and the next action is not specifically a local-agent run. Put the detailed blocker/fix handoff on the PR; chat gives one next operation and one-sentence reason.
+- `WAITING ON DEPENDENCY`: no action on this PR is appropriate until a named task, PR, CI/certification result, or other durable dependency changes. Name it and its owning task/PR.
 
-Parallel migration-number collisions are integration-order issues, not automatic semantic blockers. Do not force one unmerged PR to depend prospectively on another merely because both currently use the same migration number.
+If `VERDICT: MERGE` exists but an integration gate, certification, or dependency remains, do not ask Marco to interpret the review; select the applicable local/dependency status. `VERDICT: MERGE` is not terminal queue state: the dispatcher re-reads the exact head and evaluates local work, CI/certification, ordering, mergeability, and Integration authority/capability. When every gate is green and the active workflow has explicit bounded Integration authority, it may compose the mechanical Integration contract; that does not grant Review Integration authority. The human message remains `READY FOR MERGE`.
 
-## Human review escalation
+This routing changes communication/state-transition behavior only. It does not expand Review authority, permit Review to implement fixes, or transfer Integration authority.
 
-Request human judgment only when agents cannot determine correctness from available authority/evidence or when the next step genuinely requires a human tradeoff, product judgment, risk acceptance, or other Marco-only decision.
+## Blocker fixes and recheck
 
-Do not request a human merely because a question is difficult, a test is missing, or another agent could resolve it.
+If a fix is required, put the blocker and complete standalone fix-agent handoff on the PR: blocked PR/branch/head, failure mechanism, required change, scope/non-goals, invariants, expected evidence, and required new head SHA. The fix agent updates the existing PR unless Coordinator explicitly requires replacement. Record exactly one after-fix disposition: `FOCUSED RECHECK`, `MECHANICAL CHECK ONLY`, `NEW SPECIALIST REVIEW`, or `NORMAL MERGE REVIEW`.
 
-Every human-review request must contain:
-
-- the **exact decision needed**;
-- the minimum relevant context and evidence;
-- concrete options and the material tradeoff/consequence of each;
-- the agent's recommended option when one is defensible.
-
-Keep implementation fixes and mechanically answerable review questions in the agent workflow rather than turning them into human orchestration work.
-
-## Audit findings
-
-An audit finding applies to the audited baseline. It does not automatically block a newer pending PR.
-
-Block the pending PR only when the finding is confirmed against that exact PR head/current base or directly demonstrable from it. Otherwise record post-merge verification/follow-up and keep the merge path moving.
-
-## Migration from patch review
-
-- New work is reviewed on a GitHub PR; do not request or create a new patch-only review handoff.
-- Existing patch-based work already in flight may complete under the legacy path or be converted into a PR.
-- Once converted, the PR head SHA becomes the active review identity; the old patch hash remains provenance only.
-
-## Required return
-
-Return:
-
-1. `VERDICT: MERGE` or `VERDICT: BLOCK`;
-2. PR URL and head branch;
-3. exact reviewed PR head SHA and relevant base identity;
-4. PR review state/action taken for that exact head;
-5. `BLOCKER` findings with concrete failure mechanism;
-6. useful `FOLLOW-UP`/`OBSERVATION` findings only when they matter;
-7. known integration/rebase/migration-order dependencies;
-8. whether another deep review is actually required;
-9. a concise **COORDINATOR HANDOFF** containing only facts needed for final disposition;
-10. an exact testing line for Marco:
-   - `TESTS TO RUN: <exact command(s)>` for genuinely missing local/environment-specific certification; or
-   - `TESTS TO RUN: NONE.`
-
-Do not merely say that native PostgreSQL, browser, or other environment certification is missing: provide the exact established command when one is required. Do not invent a command or test node.
-
-Do **not** tell Marco to merge directly. `VERDICT: MERGE` means the exact reviewed PR head is acceptable within the review scope; the coordinator/integrator may still require a mechanical update, integration-order adjustment, targeted fix, or missing certification before integration.
-
-### If a fix is required
-
-Comment the blocker on the PR and return a **complete standalone ready-to-forward fix-agent handoff** containing:
-
-- exact PR URL, branch, and blocked head SHA;
-- first-line base/rebase instruction when needed;
-- blocker and failure mechanism;
-- required change;
-- scope/non-goals;
-- relevant invariants;
-- evidence expected;
-- return contract requiring the new PR head SHA.
-
-The implementation/fix agent should update the existing PR unless the coordinator explicitly requires a replacement PR.
-
-Then state the after-fix disposition as exactly one of:
-
-- `FOCUSED RECHECK`
-- `MECHANICAL CHECK ONLY`
-- `NEW SPECIALIST REVIEW`
-- `NORMAL MERGE REVIEW`
-
-If your instructions change later, reissue the entire replacement handoff; never provide an addendum that requires Marco to combine messages.
-
-### After a blocker fix
-
-If a prior review already established the surrounding design and isolated a concrete blocker, the next review should normally be a **focused recheck of that blocker on the new exact PR head**, not a fresh broad review.
-
-Reopen broader review only when the fix materially changes the previously accepted design or exposes a new concrete merge-critical uncertainty.
-
-### If verdict is merge
-
-State `VERDICT: MERGE` clearly, identify the exact approved/reviewed PR head SHA, provide the coordinator handoff, and give `TESTS TO RUN` exactly as required above. Never ask Marco to rerun evidence already supplied by the implementation agent.
-
-Do not issue `MERGE` as an integration instruction and do not tell Marco to merge directly.
+After an isolated blocker fix, normally perform a focused recheck on the new exact head rather than a fresh broad review. Reopen broader review only when the fix materially changes the previously accepted design or exposes a new merge-critical uncertainty.

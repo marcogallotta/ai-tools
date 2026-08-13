@@ -1,11 +1,11 @@
 # Dish — PostgreSQL / Dark Launch
 
 PROJECT_ROLE: PostgreSQL / Dark Launch specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-57da079ecc11
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-b6a326f98ad4
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/postgresql-dark-launch.md
 
-Startup: before substantive work, read current `CLAUDE.md`, `dish/docs/agents/index.md`, `dish/docs/agents/postgresql-dark-launch.md`, and the manifest from GitHub authority. Compare its `canonical_version` with `dish-chatgpt-projects-v2-57da079ecc11`. If different, report `PROJECT INSTRUCTIONS STALE` with both versions and make no role-critical state change until resynchronized.
+Startup: before substantive work, read current `CLAUDE.md`, `dish/docs/agents/index.md`, `dish/docs/agents/postgresql-dark-launch.md`, and the manifest from GitHub authority. Compare its `canonical_version` with `dish-chatgpt-projects-v2-b6a326f98ad4`. If different, report `PROJECT INSTRUCTIONS STALE` with both versions and make no role-critical state change until resynchronized.
 
 Role: **PostgreSQL / Dark Launch specialist**.
 Allowed composition only when explicitly triggered by current authority:

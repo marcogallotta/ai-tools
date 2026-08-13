@@ -10,11 +10,11 @@
       "rules": [
         {
           "id": "coordinator-live-scan",
-          "text": "For status, dispatch, overlap, replacement, blocker, or process decisions, inspect relevant live GitHub and adopted Asana lanes; do not reconstruct state from conversation memory."
+          "text": "For status/dispatch/blocker decisions, read live GitHub/Asana. `LOCAL IMPLEMENTATION COMPLETION REQUIRED` is durable PR publication-blocker state: route only its missing branch delta; never classify it as local certification."
         },
         {
           "id": "coordinator-no-implementation-integration",
-          "text": "Coordinator does not become semantic Implementation or Integration merely because it can access those actions."
+          "text": "Coordinator does not become semantic Implementation or Integration through tool access."
         }
       ]
     },
@@ -32,7 +32,7 @@
         },
         {
           "id": "development-workflow-live-lane",
-          "text": "`Dish \u2014 Development Workflow` is this lane\u2019s live Asana authority; Git/PR identity and runtime evidence remain distinct."
+          "text": "`Dish \u2014 Development Workflow` is live Asana authority; Git/PR/runtime remain distinct. Missing safe branch write is `PUBLICATION BLOCKER` / `LOCAL IMPLEMENTATION COMPLETION REQUIRED`, with complete PR handoff before human notice."
         }
       ]
     },
@@ -46,11 +46,11 @@
       "rules": [
         {
           "id": "implementation-durable-git",
-          "text": "Implementation is incomplete without owned branch + commit + GitHub PR + exact current PR head SHA. Open draft unless the handoff explicitly requires ready-for-review."
+          "text": "Implementation is incomplete until the complete intended surface is durably published on an owned branch + commit + PR + exact head. Missing safe branch write means `PUBLICATION BLOCKER` / `LOCAL IMPLEMENTATION COMPLETION REQUIRED`, never local certification; put the full PR handoff there before notifying Marco."
         },
         {
           "id": "implementation-no-self-review-integration",
-          "text": "Do not review or integrate your own semantic implementation; return exact PR/head and evidence for independent Review and Integration."
+          "text": "Do not self-review/integrate semantic work; return exact PR/head/evidence for independent Review/Integration."
         }
       ]
     },
@@ -96,15 +96,27 @@
       "rules": [
         {
           "id": "review-exact-head",
-          "text": "Review the exact current PR head SHA. Head movement changes review identity: semantic movement needs substantive re-review; mechanical-only movement needs exact-head mechanical recheck."
+          "text": "Review exact current PR head; semantic movement needs re-review, mechanical-only movement exact-head recheck."
         },
         {
           "id": "review-formal-comment",
-          "text": "Review is incomplete until a formal GitHub `COMMENT` PR review with `VERDICT: MERGE` or `VERDICT: BLOCK` is anchored to the exact reviewed head SHA and verified to exist there. Chat verdicts/claim comments do not count."
+          "text": "Complete Review only after a formal GitHub `COMMENT` verdict is verified on exact head; chat/claim comments do not count."
         },
         {
           "id": "review-no-fix",
-          "text": "Review does not implement fixes; blockers produce the standalone fix handoff required by current `review.md`."
+          "text": "Review does not implement fixes; blockers get the PR-resident fix handoff."
+        },
+        {
+          "id": "review-repository-context",
+          "text": "`marcogallotta/ai-tools` is the Dish repo. Resolve repo/PR from GitHub/Asana; never use Marco/local agent just for context."
+        },
+        {
+          "id": "review-action-handoff",
+          "text": "Keep details on PR. Final human message uses one `review.md` status: `READY FOR MERGE` / `LOCAL AGENT REQUIRED` / `BLOCKED` / `WAITING ON DEPENDENCY`; no review dump."
+        },
+        {
+          "id": "review-integration-boundary",
+          "text": "`READY FOR MERGE` hands off to Integration; Review does not merge."
         }
       ]
     },

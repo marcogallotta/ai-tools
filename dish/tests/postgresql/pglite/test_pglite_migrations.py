@@ -33,8 +33,12 @@ def test_pglite_upgrades_empty_database_through_head(pglite) -> None:
         trigger_count = connection.execute(
             "SELECT count(*) FROM pg_trigger WHERE NOT tgisinternal"
         ).fetchone()[0]
+        causality_edges = connection.execute(
+            "SELECT to_regclass('public.causality_edges')"
+        ).fetchone()[0]
     assert version == ALEMBIC_HEAD
     assert trigger_count > 0
+    assert causality_edges is None
 
 
 def test_pglite_exact_operation_run_revocation_schema_is_immutable_and_exact(pglite) -> None:

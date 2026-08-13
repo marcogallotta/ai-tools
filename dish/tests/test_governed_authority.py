@@ -92,3 +92,157 @@ def test_attributed_decision_prefix_does_not_bypass_authorization_without_attest
         operation_id=operation_id,
         agent_attested_decisions=("Human — Marco: Use chicken.",),
     ) == ()
+
+
+def test_prior_operation_constructor_cannot_verify_later_change_and_reporting_agrees(tmp_path):
+    from tests.support.readiness import _approve_and_submit
+
+    app, backend, initial_operation_id, _ = make_app(tmp_path)
+    _approve_and_submit(app, initial_operation_id, run="initial-review")
+
+    changed = app.execute(
+        "start",
+        agent="codex",
+        task_gid="t",
+        kind="change",
+        change_level="small",
+        change_reason="gentler handling",
+        run_id="change-editor",
+    )
+    candidate = tmp_path / "later-change.txt"
+    candidate.write_text(
+        f"{backend.title}\n{backend.notes}".replace(
+            "1. Cook it.", "1. Cook it gently."
+        )
+    )
+    prepared = app.execute(
+        "prepare",
+        agent="codex",
+        model="gpt-5.6-sol",
+        submission_id=changed["submission_id"],
+        file_path=str(candidate),
+        material_classification="material",
+    )
+    assert prepared["ok"]
+
+    app.invocation_run_id = "constructor-run"
+    inspected = app.execute(
+        "inspect", agent="gpt", submission_id=changed["submission_id"]
+    )
+    assert inspected["ok"]
+    assert inspected["data"]["verification_lineage"]["current_run"] == {
+        "run_id": "constructor-run",
+        "eligible": False,
+        "rule": "verifier_not_independent",
+        "prior_role": "constructor",
+    }
+
+    blocked = app.execute(
+        "start",
+        agent="gpt",
+        task_gid="t",
+        kind="verification",
+        run_id="constructor-run",
+        independence_attestation="independent",
+    )
+    assert blocked["code"] == "AGENT_MISMATCH"
+    assert blocked["errors"][0] == {
+        "rule": "verifier_not_independent",
+        "prior_role": "constructor",
+    }
+
+    fresh = app.execute(
+        "start",
+        agent="claude",
+        task_gid="t",
+        kind="verification",
+        run_id="fresh-later-verifier",
+        independence_attestation="independent",
+    )
+    assert fresh["ok"]
+
+
+def test_prior_material_editor_cannot_verify_later_change_and_reporting_agrees(tmp_path):
+    from tests.support.readiness import _approve_and_submit
+
+    app, backend, initial_operation_id, _ = make_app(tmp_path)
+    _approve_and_submit(app, initial_operation_id, run="initial-review")
+
+    first_change = app.execute(
+        "start",
+        agent="codex",
+        task_gid="t",
+        kind="change",
+        change_level="small",
+        change_reason="gentler handling",
+        run_id="prior-editor",
+    )
+    first_candidate = tmp_path / "first-change.txt"
+    first_candidate.write_text(
+        f"{backend.title}\n{backend.notes}".replace(
+            "1. Cook it.", "1. Cook it gently."
+        )
+    )
+    first_prepared = app.execute(
+        "prepare",
+        agent="codex",
+        model="gpt-5.6-sol",
+        submission_id=first_change["submission_id"],
+        file_path=str(first_candidate),
+        material_classification="material",
+    )
+    assert first_prepared["ok"]
+    _approve_and_submit(
+        app, first_change["submission_id"], run="first-change-review"
+    )
+
+    later_change = app.execute(
+        "start",
+        agent="gpt",
+        task_gid="t",
+        kind="change",
+        change_level="small",
+        change_reason="brief handling",
+        run_id="later-editor",
+    )
+    later_candidate = tmp_path / "later-change-editor.txt"
+    later_candidate.write_text(
+        f"{backend.title}\n{backend.notes}".replace(
+            "1. Cook it gently.", "1. Cook it briefly."
+        )
+    )
+    later_prepared = app.execute(
+        "prepare",
+        agent="gpt",
+        model="gpt-5.6-sol",
+        submission_id=later_change["submission_id"],
+        file_path=str(later_candidate),
+        material_classification="material",
+    )
+    assert later_prepared["ok"]
+
+    app.invocation_run_id = "prior-editor"
+    inspected = app.execute(
+        "inspect", agent="codex", submission_id=later_change["submission_id"]
+    )
+    assert inspected["ok"]
+    assert inspected["data"]["verification_lineage"]["current_run"] == {
+        "run_id": "prior-editor",
+        "eligible": False,
+        "rule": "verifier_not_independent",
+        "prior_role": "material_editor",
+    }
+
+    blocked = app.execute(
+        "start",
+        agent="codex",
+        task_gid="t",
+        kind="verification",
+        run_id="prior-editor",
+        independence_attestation="independent",
+    )
+    assert blocked["code"] == "AGENT_MISMATCH"
+    assert blocked["errors"][0] == {
+        "rule": "verifier_not_independent",
+        "prior_role": "material_editor",
+    }

@@ -10,7 +10,7 @@ def test_ci_routes_all_required_lane_evidence_through_fail_closed_action():
     workflow = WORKFLOW.read_text(encoding="utf-8")
     action = ACTION.read_text(encoding="utf-8")
 
-    assert workflow.count("uses: ./.github/actions/upload-test-evidence") == 4
+    assert workflow.count("uses: ./.github/actions/upload-test-evidence") == 5
     assert "uses: actions/upload-artifact@" not in workflow
     assert "ci/tests/test_ci_evidence_upload.py" in workflow
 
