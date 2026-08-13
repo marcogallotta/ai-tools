@@ -53,15 +53,66 @@ def test_policy_data_change_does_not_force_full_suite_by_itself() -> None:
     assert plan.conditional_reviews
 
 
-def test_integration_checkpoint_adds_full_suite() -> None:
+def test_integration_checkpoint_does_not_broaden_selector_required_lanes() -> None:
     plan = build_plan(
         ["dish_tool/review_queue.py"],
         policy_path=POLICY,
         integration_checkpoint=True,
     )
 
+    assert plan.integration_checkpoint is True
+    assert "ordinary full suite" not in plan.lanes
+    assert ".venv/bin/python -m pytest" not in plan.commands
+
+
+def test_ordinary_python_selection_stays_focused() -> None:
+    plan = build_plan(["dish_service/config.py"], policy_path=POLICY)
+
+    assert {"focused ordinary", "smoke"}.issubset(set(plan.lanes))
+    assert "frontend static/tooling" not in plan.lanes
+    assert "browser acceptance" not in plan.lanes
+    assert "native PostgreSQL certification" not in plan.lanes
+    assert "ordinary full suite" not in plan.lanes
+
+
+def test_high_consequence_selector_control_change_still_fails_closed_to_full_suite() -> None:
+    plan = build_plan(["test_selection/planner.py"], policy_path=POLICY)
+
     assert "ordinary full suite" in plan.lanes
     assert plan.commands[-1] == ".venv/bin/python -m pytest"
+
+
+def test_frontend_static_tooling_is_independently_selectable() -> None:
+    plan = build_plan(["frontend/tools/lint.mjs"], policy_path=POLICY)
+
+    assert "frontend static/tooling" in plan.lanes
+    assert "browser acceptance" not in plan.lanes
+    assert "npm --prefix frontend run check:static" in plan.commands
+    assert "npm --prefix frontend run test:acceptance" not in plan.commands
+
+
+def test_browser_relevant_service_contract_selects_browser_without_static_lane() -> None:
+    plan = build_plan(["dish_service/frontend_http.py"], policy_path=POLICY)
+
+    assert "browser acceptance" in plan.lanes
+    assert "frontend static/tooling" not in plan.lanes
+    assert "npm --prefix frontend run test:acceptance" in plan.commands
+
+
+def test_frontend_runtime_source_selects_static_and_browser_boundaries() -> None:
+    plan = build_plan(["frontend/src/js/features/auth/session.js"], policy_path=POLICY)
+
+    assert {"frontend static/tooling", "browser acceptance"}.issubset(set(plan.lanes))
+    assert "npm --prefix frontend run check:static" in plan.commands
+    assert "npm --prefix frontend run test:acceptance" in plan.commands
+
+
+def test_native_postgresql_runtime_mapping_is_not_only_advisory() -> None:
+    plan = build_plan(["dish_pg/repositories.py"], policy_path=POLICY)
+
+    assert "native PostgreSQL certification" in plan.lanes
+    assert any("dish-pg-native-certification" in command for command in plan.commands)
+    assert "ordinary full suite" not in plan.lanes
 
 
 def test_agent_can_add_a_semantic_escalation_lane() -> None:

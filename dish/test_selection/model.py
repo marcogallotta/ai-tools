@@ -19,6 +19,7 @@ CLASS_NAMES = {
     "8": "Release, cutover, dark launch, and import",
 }
 
+
 ALLOWED_LANES = {
     "PGlite primary",
     "PGlite quarantine",
@@ -33,7 +34,8 @@ ALLOWED_LANES = {
     "focused recovery/persistence",
     "focused release/import/dark-launch",
     "focused schema/model/migration",
-    "frontend check",
+    "browser acceptance",
+    "frontend static/tooling",
     "native PostgreSQL certification",
     "ordinary full suite",
     "smoke",
@@ -47,6 +49,7 @@ class PolicyError(RuntimeError):
 
 def split_field(value: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in (value or "").split(";") if part.strip())
+
 
 
 @dataclass(frozen=True)
