@@ -449,9 +449,11 @@ def _observation_matches(observation: dict[str, Any], pattern: dict[str, Any]) -
 
 def _validate_observed_evidence(case_id: str, oracle: dict[str, Any], observations: Any) -> None:
     patterns = oracle["required_observations"]
-    if not patterns:
-        return
-    if not isinstance(observations, list) or not observations:
+    if observations is None:
+        observations = []
+    if not isinstance(observations, list):
+        raise KernelError(f"behavior result {case_id} runner_observations must be a list")
+    if patterns and not observations:
         raise KernelError(f"behavior eval failed for {case_id}: missing runner-observed evidence")
     normalized: list[dict[str, Any]] = []
     seqs: list[int] = []
@@ -466,6 +468,15 @@ def _validate_observed_evidence(case_id: str, oracle: dict[str, Any], observatio
     if len(set(seqs)) != len(seqs):
         raise KernelError(f"behavior result {case_id} observation seq values must be unique")
     normalized.sort(key=lambda item: int(item["seq"]))
+    forbidden_operations = oracle["forbidden_actions"]
+    for observation in normalized:
+        operation = str(observation.get("operation", "")).strip()
+        if operation in forbidden_operations:
+            raise KernelError(
+                f"behavior eval failed for {case_id}: runner observed forbidden operation {operation!r}"
+            )
+    if not patterns:
+        return
     matched: list[dict[str, Any]] = []
     search_start = 0
     for pattern in patterns:
