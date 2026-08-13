@@ -10,7 +10,7 @@ import copy
 import hashlib
 import json
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any, Callable, Mapping
 
@@ -55,6 +55,12 @@ from .repositories import (
 from .transition import ProjectionService
 from dish_tool.dish_urls import dish_uuid_from_url
 from dish_tool.errors import DishRuleError
+from dish_tool.governed_diff import (
+    agent_attested_decision_appends,
+    canonical_diff,
+    governed_changes_requiring_authorization,
+    validate_semantic_proposal,
+)
 from dish_tool.task_urls import task_gid_from_url
 from .workflow import (
     ContentionLost,
@@ -108,6 +114,40 @@ class CommandResult:
     data: Mapping[str, Any]
     retryable: bool = False
     request_replayed: bool = False
+
+
+_SEMANTIC_PROPOSAL_PREFIX = "dish-pg-semantic-proposal-v1:"
+_SAFE_RECLAIM_REASON_PREFIX = "safe-reclaim:"
+
+
+def _json_safe(value: Any) -> Any:
+    """Normalize typed canonical values to their durable JSON representation."""
+
+    return json.loads(json.dumps(value, ensure_ascii=False, sort_keys=True))
+
+
+def _semantic_proposal_text(payload: Mapping[str, Any]) -> str:
+    return _SEMANTIC_PROPOSAL_PREFIX + json.dumps(
+        _json_safe(dict(payload)), ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+
+
+def _decode_semantic_proposal_text(value: str) -> dict[str, Any] | None:
+    if not value.startswith(_SEMANTIC_PROPOSAL_PREFIX):
+        return None
+    try:
+        decoded = json.loads(value[len(_SEMANTIC_PROPOSAL_PREFIX) :])
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise CommandRuleError(
+            "SEMANTIC_PROPOSAL_INTEGRITY_FAILED",
+            "stored PostgreSQL semantic proposal metadata is not valid JSON",
+        ) from exc
+    if not isinstance(decoded, dict) or decoded.get("version") != 1:
+        raise CommandRuleError(
+            "SEMANTIC_PROPOSAL_INTEGRITY_FAILED",
+            "stored PostgreSQL semantic proposal metadata has an unsupported version",
+        )
+    return decoded
 
 
 def _task_reference_from_dish(value: str) -> str | None:
@@ -255,7 +295,16 @@ class PostgresCommandPort:
                 {"retained": False},
             )
         if definition.profile == "Q":
-            return self._execute_read(call)
+            try:
+                return self._execute_read(call)
+            except CommandRuleError as exc:
+                return CommandResult(
+                    False,
+                    call.command_name,
+                    exc.code,
+                    exc.http_status,
+                    dict(exc.data),
+                )
         if call.request_id is None:
             raise CommandRuleError(
                 "REQUEST_ID_REQUIRED", "mutation requires request_id", http_status=400
@@ -315,6 +364,7 @@ class PostgresCommandPort:
                 call.command_name == "start"
                 and call.arguments.get("kind") == "planning"
                 and not call.arguments.get("intent_challenge_id")
+                and not call.arguments.get("prepared_operation_id")
             ):
                 if task is None:
                     raise CommandRuleError("TASK_REQUIRED", "planning start requires a task")
@@ -375,6 +425,8 @@ class PostgresCommandPort:
                 "prepare",
                 "discard",
                 "hold-reject",
+                "safe-reclaim",
+                "apply-proposal",
             }:
                 operation = self._lock_operation_transition(operation.operation_id)
             if task is not None:
@@ -444,6 +496,9 @@ class PostgresCommandPort:
                         call.arguments,
                         verification_hold=bool(data.get("verification_hold")),
                         preconstruction_hold=preconstruction_hold,
+                        semantic_proposal_queued=bool(
+                            data.get("semantic_proposal_queued")
+                        ),
                     ),
                     result_data=data,
                     projection_origin=self.projection_origin,
@@ -529,17 +584,37 @@ class PostgresCommandPort:
             reference = call.arguments.get("section_id") or call.arguments.get("section_gid")
             if reference is None:
                 raise CommandRuleError("SECTION_REQUIRED", "section reference is required", http_status=400)
+            try:
+                self.reads.resolve_section(str(reference))
+            except ReadModelError as exc:
+                raise CommandRuleError(
+                    "SECTION_NOT_FOUND",
+                    str(exc),
+                    http_status=404,
+                    data={"section_reference": str(reference)},
+                ) from exc
             page = self.reads.section_tasks(
                 section_reference=str(reference),
                 cursor=call.arguments.get("cursor"),
                 page_size=int(call.arguments.get("page_size", 50)),
             )
             data = {
-                "tasks": [asdict(item) | {"task_id": str(item.task_id), "section_id": str(item.section_id)} for item in page.items],
+                "tasks": [
+                    asdict(item)
+                    | {
+                        "dish_id": str(item.task_id),
+                        "task_id": str(item.task_id),
+                        "task_gid": item.external_task_id,
+                        "section_id": str(item.section_id),
+                    }
+                    for item in page.items
+                ],
                 "next_cursor": page.next_cursor,
                 "registry_version_id": str(page.registry_version_id),
                 "registry_revision": page.registry_revision,
             }
+        elif call.command_name == "proposals":
+            data = self._proposals()
         elif call.command_name == "attention":
             if call.principal_class != "admin":
                 raise CommandRuleError(
@@ -557,23 +632,416 @@ class PostgresCommandPort:
                 )
             data = self._holds()
         elif call.command_name == "read":
-            reference = call.arguments.get("task_id") or call.arguments.get("task_gid")
+            reference = (
+                call.arguments.get("dish_id")
+                or call.arguments.get("task_id")
+                or call.arguments.get("task_gid")
+            )
             if reference is None:
                 raise CommandRuleError("TASK_REQUIRED", "task reference is required", http_status=400)
-            view = self.reads.task_view(str(reference))
+            try:
+                task = self.reads.resolve_task(str(reference))
+            except ReadModelError as exc:
+                raise CommandRuleError(
+                    "DISH_NOT_FOUND",
+                    str(exc),
+                    http_status=404,
+                    data={"dish_reference": str(reference)},
+                ) from exc
+            view = self.reads.task_view(task.task_id)
+            task_gid = self.session.scalar(
+                select(models.TaskExternalAlias.external_id).where(
+                    models.TaskExternalAlias.task_id == view.task_id,
+                    models.TaskExternalAlias.external_system == "asana",
+                    models.TaskExternalAlias.state == "active",
+                )
+            )
             freshness = dict(view.projection_freshness)
             freshness = dict(self.projection_recorder.task_freshness(view.task_id))
             data = asdict(view) | {
+                "dish_id": str(view.task_id),
                 "task_id": str(view.task_id),
                 "content_version_id": str(view.content_version_id),
                 "section_id": str(view.section_id),
                 "operation_id": str(view.operation_id) if view.operation_id else None,
                 "projection_freshness": freshness,
+                "identity_binding": {
+                    "dish_id": str(view.task_id),
+                    "task_gid": task_gid,
+                },
             }
         else:
             raise CommandRuleError("NOT_A_QUERY", "command is not a read query")
         return CommandResult(True, call.command_name, "OK", 200, data)
 
+
+    def _semantic_proposal_requirement(
+        self, proposal_id: str | uuid.UUID, *, lock: bool = False
+    ) -> wf.HumanReviewRequirement:
+        try:
+            proposal_uuid = uuid.UUID(str(proposal_id))
+        except ValueError as exc:
+            raise CommandRuleError(
+                "INVALID_PROPOSAL_ID",
+                "semantic proposal identifier must be a UUID",
+                http_status=400,
+            ) from exc
+        statement = select(wf.HumanReviewRequirement).where(
+            wf.HumanReviewRequirement.requirement_id == proposal_uuid
+        )
+        if lock and self.session.get_bind().dialect.name == "postgresql":
+            statement = statement.with_for_update()
+        requirement = self.session.scalar(
+            statement.execution_options(populate_existing=True)
+        )
+        if requirement is None or requirement.state != "open":
+            raise CommandRuleError(
+                "SEMANTIC_PROPOSAL_NOT_FOUND",
+                "semantic proposal is missing, closed, or stale",
+                http_status=404,
+            )
+        if _decode_semantic_proposal_text(requirement.question) is None:
+            raise CommandRuleError(
+                "SEMANTIC_PROPOSAL_NOT_FOUND",
+                "the requested Human Review row is not a semantic proposal",
+                http_status=404,
+            )
+        return requirement
+
+    def _semantic_proposal_payload(
+        self, requirement: wf.HumanReviewRequirement
+    ) -> dict[str, Any]:
+        payload = _decode_semantic_proposal_text(requirement.question)
+        if payload is None:
+            raise CommandRuleError(
+                "SEMANTIC_PROPOSAL_INTEGRITY_FAILED",
+                "stored requirement is not a PostgreSQL semantic proposal",
+            )
+        if payload.get("proposal_id") != str(requirement.requirement_id):
+            raise CommandRuleError(
+                "SEMANTIC_PROPOSAL_INTEGRITY_FAILED",
+                "stored proposal identity does not match its durable requirement row",
+            )
+        return payload
+
+    def _semantic_proposal_bundle(
+        self,
+        *,
+        proposal_id: uuid.UUID,
+        before: Any,
+        after: Any,
+        reason: str,
+        source_cycle_id: uuid.UUID,
+        governed_change_fields: Any,
+    ) -> dict[str, Any] | None:
+        declared = {
+            str(value)
+            for value in (governed_change_fields or ())
+            if str(value).strip()
+        }
+        if not declared:
+            return None
+        try:
+            validate_semantic_proposal(before, after)
+            attested = (
+                agent_attested_decision_appends(before, after)
+                if "Decisions" in declared
+                else ()
+            )
+            required = governed_changes_requiring_authorization(
+                before,
+                after,
+                agent_attested_decisions=attested,
+            )
+        except DishRuleError as exc:
+            raise CommandRuleError(
+                str(exc.code),
+                str(exc),
+                http_status=409,
+                data=dict(getattr(exc, "details", {}) or {}),
+            ) from exc
+        if not required:
+            return None
+        required_fields = {change.field for change in required}
+        if not required_fields.issubset(declared):
+            raise CommandRuleError(
+                "GOVERNED_CHANGE_FIELDS_INCOMPLETE",
+                "governed_change_fields must name every governed field changed by the semantic proposal",
+                http_status=409,
+                data={"missing_fields": sorted(required_fields - declared)},
+            )
+        linked = canonical_diff(before, after)
+        rendered = after.render().splitlines()
+        candidate_title = rendered[0]
+        candidate_body = "\n".join(rendered[1:]) + "\n"
+        candidate_identity = hashlib.sha256(
+            (candidate_title + "\0" + candidate_body).encode()
+        ).hexdigest()
+        return {
+            "version": 1,
+            "proposal_id": str(proposal_id),
+            "proposal_class": "large",
+            "source_cycle_id": str(source_cycle_id),
+            "reason": reason,
+            "candidate": {
+                "title": candidate_title,
+                "body": candidate_body,
+                "identity": candidate_identity,
+            },
+            "agent_attested_decisions": list(attested),
+            "required_authorizations": [
+                {
+                    "field": change.field,
+                    "before": _json_safe(change.before),
+                    "after": _json_safe(change.after),
+                }
+                for change in required
+            ],
+            "linked_changes": [
+                {"path": path, "before": old, "after": new}
+                for path, (old, new) in sorted(linked.items())
+            ],
+        }
+
+    def _validate_semantic_proposal_requirement(
+        self,
+        requirement: wf.HumanReviewRequirement,
+        *,
+        require_current: bool = True,
+    ) -> tuple[dict[str, Any], Any, list[dict[str, Any]]]:
+        payload = self._semantic_proposal_payload(requirement)
+        operation = self.session.get(wf.WorkflowOperation, requirement.operation_id)
+        baseline = self.session.get(
+            models.ContentVersion, requirement.baseline_content_version_id
+        )
+        if (
+            operation is None
+            or baseline is None
+            or operation.generation_id != requirement.generation_id
+            or operation.task_id != requirement.task_id
+            or operation.lifecycle != "open"
+            or operation.phase != "held_human"
+        ):
+            raise CommandRuleError(
+                "SEMANTIC_PROPOSAL_STALE",
+                "proposal no longer belongs to the exact open PostgreSQL workflow occurrence",
+            )
+        if requirement.cycle_id is None or payload.get("source_cycle_id") != str(
+            requirement.cycle_id
+        ):
+            raise CommandRuleError(
+                "SEMANTIC_PROPOSAL_INTEGRITY_FAILED",
+                "proposal source cycle identity is incomplete",
+            )
+        if require_current and self._current_content_version_id(
+            requirement.generation_id, requirement.task_id
+        ) != requirement.baseline_content_version_id:
+            raise CommandRuleError(
+                "SEMANTIC_PROPOSAL_STALE",
+                "proposal baseline is no longer the current canonical Dish content",
+            )
+        candidate = payload.get("candidate")
+        if not isinstance(candidate, dict):
+            raise CommandRuleError(
+                "SEMANTIC_PROPOSAL_INTEGRITY_FAILED",
+                "proposal candidate bundle is missing",
+            )
+        title = candidate.get("title")
+        body = candidate.get("body")
+        identity = candidate.get("identity")
+        if not isinstance(title, str) or not isinstance(body, str) or not isinstance(identity, str):
+            raise CommandRuleError(
+                "SEMANTIC_PROPOSAL_INTEGRITY_FAILED",
+                "proposal candidate bundle is malformed",
+            )
+        observed_identity = hashlib.sha256((title + "\0" + body).encode()).hexdigest()
+        if observed_identity != identity:
+            raise CommandRuleError(
+                "SEMANTIC_PROPOSAL_INTEGRITY_FAILED",
+                "proposal candidate identity does not match the stored bytes",
+            )
+        before_parts = parse_canonical_document(
+            title=baseline.title,
+            body=baseline.body,
+            expected_status="pending-verification",
+        )
+        candidate_parts = parse_canonical_document(
+            title=title,
+            body=body,
+            expected_status="pending-verification",
+        )
+        try:
+            validate_semantic_proposal(before_parts.document, candidate_parts.document)
+            attested = tuple(payload.get("agent_attested_decisions") or ())
+            required = governed_changes_requiring_authorization(
+                before_parts.document,
+                candidate_parts.document,
+                agent_attested_decisions=attested,
+            )
+        except DishRuleError as exc:
+            raise CommandRuleError(
+                "SEMANTIC_PROPOSAL_INTEGRITY_FAILED",
+                str(exc),
+                data=dict(getattr(exc, "details", {}) or {}),
+            ) from exc
+        expected_required = [
+            {
+                "field": change.field,
+                "before": _json_safe(change.before),
+                "after": _json_safe(change.after),
+            }
+            for change in required
+        ]
+        stored_required = payload.get("required_authorizations")
+        if _json_safe(stored_required) != _json_safe(expected_required) or not expected_required:
+            raise CommandRuleError(
+                "SEMANTIC_PROPOSAL_INTEGRITY_FAILED",
+                "proposal authorization bundle does not match the exact candidate diff",
+            )
+        expected_linked = [
+            {"path": path, "before": old, "after": new}
+            for path, (old, new) in sorted(
+                canonical_diff(before_parts.document, candidate_parts.document).items()
+            )
+        ]
+        if _json_safe(payload.get("linked_changes")) != _json_safe(expected_linked):
+            raise CommandRuleError(
+                "SEMANTIC_PROPOSAL_INTEGRITY_FAILED",
+                "proposal linked-change bundle does not match the exact candidate diff",
+            )
+        return payload, candidate_parts, expected_required
+
+    def _available_semantic_proposal_grants(
+        self,
+        requirement: wf.HumanReviewRequirement,
+        required: list[dict[str, Any]],
+    ) -> list[tuple[wf.MarcoAuthorizationGrant, wf.MarcoAuthorizationState]]:
+        rows = list(
+            self.session.execute(
+                select(wf.MarcoAuthorizationGrant, wf.MarcoAuthorizationState)
+                .join(
+                    wf.MarcoAuthorizationState,
+                    wf.MarcoAuthorizationState.grant_id
+                    == wf.MarcoAuthorizationGrant.grant_id,
+                )
+                .where(
+                    wf.MarcoAuthorizationGrant.generation_id
+                    == requirement.generation_id,
+                    wf.MarcoAuthorizationGrant.task_id == requirement.task_id,
+                    wf.MarcoAuthorizationState.state == "available",
+                )
+            ).all()
+        )
+        available = [
+            row
+            for row in rows
+            if row[0].operation_id in {None, requirement.operation_id}
+        ]
+        available.sort(key=lambda row: row[0].operation_id is None)
+        matched: list[
+            tuple[wf.MarcoAuthorizationGrant, wf.MarcoAuthorizationState]
+        ] = []
+        used: set[uuid.UUID] = set()
+        for change in required:
+            found = None
+            for grant, state in available:
+                if grant.grant_id in used:
+                    continue
+                if (
+                    grant.field_name == change["field"]
+                    and _json_safe(grant.before_value) == _json_safe(change["before"])
+                    and _json_safe(grant.after_value) == _json_safe(change["after"])
+                ):
+                    found = (grant, state)
+                    break
+            if found is None:
+                return []
+            used.add(found[0].grant_id)
+            matched.append(found)
+        return matched
+
+    def _semantic_proposal_status(
+        self, operation: wf.WorkflowOperation
+    ) -> tuple[str | None, bool]:
+        requirement = self.session.scalar(
+            select(wf.HumanReviewRequirement)
+            .where(
+                wf.HumanReviewRequirement.operation_id == operation.operation_id,
+                wf.HumanReviewRequirement.state == "open",
+            )
+            .order_by(
+                wf.HumanReviewRequirement.opened_at.desc(),
+                wf.HumanReviewRequirement.requirement_id.desc(),
+            )
+            .limit(1)
+        )
+        if requirement is None or not requirement.question.startswith(
+            _SEMANTIC_PROPOSAL_PREFIX
+        ):
+            return None, False
+        try:
+            _payload, _candidate, required = self._validate_semantic_proposal_requirement(
+                requirement
+            )
+        except CommandRuleError:
+            return "pending", False
+        grants = self._available_semantic_proposal_grants(requirement, required)
+        return ("approved", True) if grants else ("pending", False)
+
+    def _proposals(self) -> Mapping[str, Any]:
+        generation_id = self.reads.active_generation().generation_id
+        requirements = list(
+            self.session.scalars(
+                select(wf.HumanReviewRequirement)
+                .where(
+                    wf.HumanReviewRequirement.generation_id == generation_id,
+                    wf.HumanReviewRequirement.state == "open",
+                )
+                .order_by(
+                    wf.HumanReviewRequirement.opened_at,
+                    wf.HumanReviewRequirement.requirement_id,
+                )
+            )
+        )
+        rows: list[dict[str, Any]] = []
+        for requirement in requirements:
+            if not requirement.question.startswith(_SEMANTIC_PROPOSAL_PREFIX):
+                continue
+            try:
+                payload, _candidate, required = self._validate_semantic_proposal_requirement(
+                    requirement
+                )
+            except CommandRuleError:
+                continue
+            grants = self._available_semantic_proposal_grants(requirement, required)
+            if not grants:
+                continue
+            rows.append(
+                {
+                    "proposal_id": str(requirement.requirement_id),
+                    "dish_id": str(requirement.task_id),
+                    "task_id": str(requirement.task_id),
+                    "operation_id": str(requirement.operation_id),
+                    "cycle_id": str(requirement.cycle_id),
+                    "candidate_identity": payload["candidate"]["identity"],
+                    "reason": payload.get("reason"),
+                    "required_authorizations": required,
+                    "agent_action": {
+                        "command": "apply-proposal",
+                        "arguments": {
+                            "proposal_id": str(requirement.requirement_id)
+                        },
+                    },
+                }
+            )
+        return {
+            "count": len(rows),
+            "proposals": rows,
+            "instruction": (
+                "Claim and apply an approved PostgreSQL proposal exactly as stored; "
+                "do not reconstruct or edit its candidate."
+            ),
+        }
 
     def _attention(self) -> Mapping[str, Any]:
         """Return a conservative, read-only global workflow attention view."""
@@ -798,7 +1266,42 @@ class PostgresCommandPort:
             call.command_name == "start"
             and str(call.arguments.get("kind", "")) == "verification"
         )
+        prepared_start = (
+            call.command_name == "start"
+            and call.arguments.get("prepared_operation_id") is not None
+        )
         operation = None
+        task = None
+        if call.command_name == "apply-proposal":
+            requirement = self._semantic_proposal_requirement(
+                str(call.arguments.get("proposal_id") or "")
+            )
+            operation = self.session.get(
+                wf.WorkflowOperation, requirement.operation_id
+            )
+            task = self.session.get(models.DishTask, requirement.task_id)
+            if operation is None or task is None:
+                raise CommandRuleError(
+                    "SEMANTIC_PROPOSAL_STALE",
+                    "proposal workflow authority is incomplete",
+                )
+        elif prepared_start:
+            try:
+                prepared_id = uuid.UUID(str(call.arguments["prepared_operation_id"]))
+            except ValueError as exc:
+                raise CommandRuleError(
+                    "INVALID_OPERATION_ID",
+                    "prepared operation identifier must be a UUID",
+                    http_status=400,
+                ) from exc
+            operation = self.session.get(wf.WorkflowOperation, prepared_id)
+            if operation is None:
+                raise CommandRuleError(
+                    "PREPARED_OPERATION_NOT_FOUND",
+                    "prepared successor operation is missing",
+                    http_status=404,
+                )
+            task = self.session.get(models.DishTask, operation.task_id)
         operation_ref = call.arguments.get("operation_id") or call.arguments.get("submission_id")
         if verification_start and operation_ref is not None:
             raise CommandRuleError(
@@ -814,8 +1317,11 @@ class PostgresCommandPort:
                 raise CommandRuleError("INVALID_OPERATION_ID", "operation identifier must be a UUID", http_status=400) from exc
             if operation is None:
                 raise CommandRuleError("OPERATION_NOT_FOUND", "unknown workflow operation", http_status=404)
-        task = None
-        task_ref = call.arguments.get("task_id") or call.arguments.get("task_gid")
+        task_ref = (
+            call.arguments.get("dish_id")
+            or call.arguments.get("task_id")
+            or call.arguments.get("task_gid")
+        )
         if not task_ref:
             dish_ref = call.arguments.get("dish")
             if dish_ref:
@@ -825,7 +1331,7 @@ class PostgresCommandPort:
                 task = self.reads.resolve_task(str(task_ref))
             except ReadModelError as exc:
                 raise CommandRuleError("TASK_NOT_FOUND", str(exc), http_status=404) from exc
-        elif operation is not None:
+        elif operation is not None and task is None:
             task = self.session.get(models.DishTask, operation.task_id)
         if definition.task_required and task is None:
             raise CommandRuleError("TASK_REQUIRED", "command requires a task", http_status=400)
@@ -935,6 +1441,15 @@ class PostgresCommandPort:
                 body=view.body,
                 operation=operation,
             )
+            proposal_status, proposal_actionable = self._semantic_proposal_status(
+                operation
+            )
+            if proposal_status is not None:
+                workflow_snapshot = replace(
+                    workflow_snapshot,
+                    semantic_proposal_status=proposal_status,
+                    semantic_proposal_actionable=proposal_actionable,
+                )
             hold_reject_cycle_exists = self.session.scalar(
                 select(wf.VerificationCycle.cycle_id)
                 .where(wf.VerificationCycle.operation_id == operation.operation_id)
@@ -1163,6 +1678,8 @@ class PostgresCommandPort:
     ) -> dict[str, Any]:
         handlers = {
             "create": self._create,
+            "apply-proposal": self._apply_semantic_proposal,
+            "safe-reclaim": self._safe_reclaim,
             "start": self._start,
             "prepare": self._prepare,
             "inspect": self._inspect,
@@ -1509,7 +2026,13 @@ class PostgresCommandPort:
         execution.task_id = task_id
         self.session.flush()
         projection_id = self._project(generation.generation_id, execution.execution_id, task_id, "create_task", {"title": title}, call.now)
-        return {"task_id": str(task_id), "content_version_id": str(version_id), "projection_event_id": projection_id}
+        return {
+            "dish_id": str(task_id),
+            "task_id": str(task_id),
+            "content_version_id": str(version_id),
+            "section_id": str(section.section_id),
+            "projection_event_id": projection_id,
+        }
 
     def _start(self, call, generation, binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None
@@ -1532,6 +2055,91 @@ class PostgresCommandPort:
             )
 
         challenge_id = call.arguments.get("intent_challenge_id")
+        prepared_operation_id = call.arguments.get("prepared_operation_id")
+        if prepared_operation_id is not None:
+            if kind == "verification":
+                raise CommandRuleError(
+                    "PREPARED_OPERATION_FORBIDDEN",
+                    "Verification successors use target_operation_id/target_cycle_id, not prepared_operation_id",
+                    http_status=400,
+                )
+            if (
+                operation is None
+                or operation.operation_id != uuid.UUID(str(prepared_operation_id))
+                or operation.lifecycle != "open"
+                or operation.phase != "prepare_required"
+                or operation.kind != kind
+            ):
+                raise CommandRuleError(
+                    "PREPARED_OPERATION_STALE",
+                    "start requires the exact open prepared successor for this kind",
+                )
+            edge = self.session.scalar(
+                select(wf.OperationSuccessionEdge).where(
+                    wf.OperationSuccessionEdge.successor_operation_id
+                    == operation.operation_id
+                )
+            )
+            attempt = (
+                self.session.get(wf.AbandonmentAttempt, edge.abandonment_id)
+                if edge is not None
+                else None
+            )
+            if (
+                edge is None
+                or edge.claim_mode != "operation"
+                or attempt is None
+                or attempt.state != "completed"
+            ):
+                raise CommandRuleError(
+                    "PREPARED_OPERATION_STALE",
+                    "prepared successor has no completed durable succession authority",
+                )
+            self._assert_reclaim_successor_claimable(operation=operation, call=call)
+            if self.session.scalar(
+                select(wf.ServiceLease.lease_id)
+                .where(
+                    wf.ServiceLease.task_id == task.task_id,
+                    wf.ServiceLease.state == "active",
+                )
+                .limit(1)
+            ) is not None:
+                raise CommandRuleError(
+                    "ACTIVE_LEASE_EXISTS",
+                    "prepared successor cannot be claimed while another actor lease is active",
+                )
+            sequence = self._next_actor_attempt_sequence(task.task_id)
+            actor_fact = self.workflow.create_actor_fact(
+                actor_fact_id=self.uuid_factory(),
+                execution_id=execution.execution_id,
+                operation_id=operation.operation_id,
+                run_id=call.run_id,
+                owner_id=call.owner_id,
+                actor_role="author",
+                agent=agent,
+                actor_attempt_sequence=sequence,
+                recorded_at=call.now,
+            )
+            lease = self.workflow.acquire_actor_lease(
+                lease_id=self.uuid_factory(),
+                execution_id=execution.execution_id,
+                operation_id=operation.operation_id,
+                run_id=call.run_id,
+                owner_id=call.owner_id,
+                actor_role=actor_fact.actor_role,
+                actor_attempt_sequence=sequence,
+                issued_at=call.now,
+                expires_at=call.now + self.lease_duration,
+            )
+            operation.persisted_actions = ["prepare"]
+            operation.operation_revision += 1
+            return {
+                "operation_id": str(operation.operation_id),
+                "lease_id": str(lease.lease_id),
+                "phase": operation.phase,
+                "claimed_prepared_successor": True,
+            }
+
         if kind == "planning" and challenge_id:
             self._validate_planning_intent_basis(call, initial=False)
             self._validate_planning_agent(
@@ -1577,6 +2185,7 @@ class PostgresCommandPort:
                 )
             cycle = self._latest_cycle(operation.operation_id)
             self._assert_cycle_is_current(generation.generation_id, task.task_id, cycle)
+            self._assert_reclaim_successor_claimable(operation=operation, call=call)
             target_cycle = call.arguments.get("target_cycle_id")
             if target_cycle is not None:
                 try:
@@ -2229,68 +2838,106 @@ class PostgresCommandPort:
                     "LARGE_CORRECTION_REQUIRED",
                     "large rejection must create a distinct canonical candidate",
                 )
-            target_parts = corrected
-            if verification_hold:
-                target_parts = held_document(
-                    corrected.document,
-                    target="pending-human-review",
-                    detail=(
-                        "Three consecutive Verification rounds ended without a "
-                        f"signable task: {reason}"
-                    ),
-                )
-            version_id = self._activate_document(
-                generation_id=generation.generation_id,
-                task_id=task.task_id,
-                binding_id=binding.binding_id,
-                execution_id=execution.execution_id,
-                title=target_parts.title,
-                body=target_parts.body,
-                predecessor_content_version_id=reviewed.content_version_id,
-                at=call.now,
+            proposal_payload = self._semantic_proposal_bundle(
+                proposal_id=uuid.UUID(int=0),
+                before=reviewed_parts.document,
+                after=corrected.document,
+                reason=reason,
+                source_cycle_id=cycle.cycle_id,
+                governed_change_fields=call.arguments.get("governed_change_fields"),
             )
-            self.session.add(
-                wf.VerificationCorrection(
-                    correction_id=self.uuid_factory(),
-                    cycle_id=cycle.cycle_id,
-                    source_content_version_id=cycle.reviewed_content_version_id,
-                    corrected_content_version_id=version_id,
-                    correction_class="large",
-                    reason=reason,
-                    command_execution_id=execution.execution_id,
-                    recorded_at=call.now,
-                )
-            )
-            self.session.flush()
-            next_cycle = None
-            if verification_hold:
-                operation.phase = "held_human"
-                operation.persisted_actions = ["resolved", "reopen"]
-            else:
-                next_cycle = self.workflow.open_verification_cycle(
-                    cycle_id=self.uuid_factory(),
+            if proposal_payload is not None:
+                proposal_id = self.uuid_factory()
+                proposal_payload["proposal_id"] = str(proposal_id)
+                cycle.outcome = "rejected"
+                verification_hold = False
+                requirement = self.workflow.open_human_review(
+                    requirement_id=proposal_id,
                     execution_id=execution.execution_id,
                     operation_id=operation.operation_id,
-                    reviewed_content_version_id=version_id,
-                    created_at=call.now,
+                    route="human_review",
+                    question=_semantic_proposal_text(proposal_payload),
+                    baseline_content_version_id=reviewed.content_version_id,
+                    opened_at=call.now,
+                    cycle_id=cycle.cycle_id,
                 )
-                operation.phase = "await_verification"
-                operation.persisted_actions = ["inspect"]
-            projection_id = self._project(
-                generation.generation_id,
-                execution.execution_id,
-                task.task_id,
-                "update_task_document",
-                {"content_version_id": str(version_id)},
-                call.now,
-            )
-            result = {
-                "route": "large",
-                "corrected_content_version_id": str(version_id),
-                "new_cycle_id": str(next_cycle.cycle_id) if next_cycle else None,
-                "verification_hold": verification_hold,
-                "projection_event_id": projection_id,
-            }
+                operation.phase = "held_human"
+                operation.persisted_actions = []
+                result = {
+                    "route": "large",
+                    "semantic_proposal_queued": True,
+                    "proposal_id": str(requirement.requirement_id),
+                    "candidate_identity": proposal_payload["candidate"]["identity"],
+                    "required_authorizations": proposal_payload[
+                        "required_authorizations"
+                    ],
+                    "new_cycle_id": None,
+                    "verification_hold": False,
+                    "projection_event_id": None,
+                }
+            else:
+                target_parts = corrected
+                if verification_hold:
+                    target_parts = held_document(
+                        corrected.document,
+                        target="pending-human-review",
+                        detail=(
+                            "Three consecutive Verification rounds ended without a "
+                            f"signable task: {reason}"
+                        ),
+                    )
+                version_id = self._activate_document(
+                    generation_id=generation.generation_id,
+                    task_id=task.task_id,
+                    binding_id=binding.binding_id,
+                    execution_id=execution.execution_id,
+                    title=target_parts.title,
+                    body=target_parts.body,
+                    predecessor_content_version_id=reviewed.content_version_id,
+                    at=call.now,
+                )
+                self.session.add(
+                    wf.VerificationCorrection(
+                        correction_id=self.uuid_factory(),
+                        cycle_id=cycle.cycle_id,
+                        source_content_version_id=cycle.reviewed_content_version_id,
+                        corrected_content_version_id=version_id,
+                        correction_class="large",
+                        reason=reason,
+                        command_execution_id=execution.execution_id,
+                        recorded_at=call.now,
+                    )
+                )
+                self.session.flush()
+                next_cycle = None
+                if verification_hold:
+                    operation.phase = "held_human"
+                    operation.persisted_actions = ["resolved", "reopen"]
+                else:
+                    next_cycle = self.workflow.open_verification_cycle(
+                        cycle_id=self.uuid_factory(),
+                        execution_id=execution.execution_id,
+                        operation_id=operation.operation_id,
+                        reviewed_content_version_id=version_id,
+                        created_at=call.now,
+                    )
+                    operation.phase = "await_verification"
+                    operation.persisted_actions = ["inspect"]
+                projection_id = self._project(
+                    generation.generation_id,
+                    execution.execution_id,
+                    task.task_id,
+                    "update_task_document",
+                    {"content_version_id": str(version_id)},
+                    call.now,
+                )
+                result = {
+                    "route": "large",
+                    "corrected_content_version_id": str(version_id),
+                    "new_cycle_id": str(next_cycle.cycle_id) if next_cycle else None,
+                    "verification_hold": verification_hold,
+                    "projection_event_id": projection_id,
+                }
         else:
             target_status = (
                 "pending-evidence" if route == "evidence" else "pending-human-review"
@@ -2359,6 +3006,148 @@ class PostgresCommandPort:
         )
         operation.operation_revision += 1
         return result
+
+    def _apply_semantic_proposal(
+        self, call, generation, binding, execution, task, operation
+    ) -> dict[str, Any]:
+        assert task is not None and operation is not None
+        proposal_id = call.arguments.get("proposal_id")
+        if proposal_id is None:
+            raise CommandRuleError(
+                "PROPOSAL_ID_REQUIRED",
+                "apply-proposal requires proposal_id",
+                http_status=400,
+            )
+        requirement = self._semantic_proposal_requirement(
+            str(proposal_id), lock=True
+        )
+        if (
+            requirement.generation_id != generation.generation_id
+            or requirement.task_id != task.task_id
+            or requirement.operation_id != operation.operation_id
+        ):
+            raise CommandRuleError(
+                "SEMANTIC_PROPOSAL_STALE",
+                "proposal no longer matches the exact task and operation",
+            )
+        payload, candidate, required = self._validate_semantic_proposal_requirement(
+            requirement
+        )
+        grants = self._available_semantic_proposal_grants(requirement, required)
+        if len(grants) != len(required):
+            raise CommandRuleError(
+                "GOVERNED_AUTHORIZATION_REQUIRED",
+                "proposal is not yet authorized for every exact governed change",
+                data={"required_authorizations": required},
+            )
+        reservations: list[tuple[uuid.UUID, uuid.UUID]] = []
+        for grant, _state in grants:
+            token = self.uuid_factory()
+            self.workflow.reserve_marco_authorization(
+                grant_id=grant.grant_id,
+                reservation_token=token,
+                execution_id=execution.execution_id,
+                reserved_at=call.now,
+            )
+            reservations.append((grant.grant_id, token))
+
+        candidate_version_id = self._activate_document(
+            generation_id=generation.generation_id,
+            task_id=task.task_id,
+            binding_id=binding.binding_id,
+            execution_id=execution.execution_id,
+            title=candidate.title,
+            body=candidate.body,
+            predecessor_content_version_id=requirement.baseline_content_version_id,
+            at=call.now,
+        )
+        source_cycle = self.session.get(wf.VerificationCycle, requirement.cycle_id)
+        if (
+            source_cycle is None
+            or source_cycle.operation_id != operation.operation_id
+            or source_cycle.lifecycle != "rejected"
+        ):
+            raise CommandRuleError(
+                "SEMANTIC_PROPOSAL_STALE",
+                "proposal source Verification cycle is no longer the rejected source occurrence",
+            )
+        self.session.add(
+            wf.VerificationCorrection(
+                correction_id=self.uuid_factory(),
+                cycle_id=source_cycle.cycle_id,
+                source_content_version_id=requirement.baseline_content_version_id,
+                corrected_content_version_id=candidate_version_id,
+                correction_class="large",
+                reason=str(payload.get("reason") or "approved semantic proposal"),
+                command_execution_id=execution.execution_id,
+                recorded_at=call.now,
+            )
+        )
+        next_cycle = self.workflow.open_verification_cycle(
+            cycle_id=self.uuid_factory(),
+            execution_id=execution.execution_id,
+            operation_id=operation.operation_id,
+            reviewed_content_version_id=candidate_version_id,
+            created_at=call.now,
+        )
+        requirement.state = "decided"
+        requirement.terminal_at = call.now
+        operation.phase = "await_verification"
+        operation.persisted_actions = ["inspect"]
+        operation.operation_revision += 1
+        projection_id = self._project(
+            generation.generation_id,
+            execution.execution_id,
+            task.task_id,
+            "update_task_document",
+            {"content_version_id": str(candidate_version_id)},
+            call.now,
+        )
+        for grant_id, token in reservations:
+            self.workflow.consume_marco_authorization(
+                grant_id=grant_id,
+                reservation_token=token,
+                execution_id=execution.execution_id,
+                bound_result_id=candidate_version_id,
+                consumed_at=call.now,
+            )
+        self.session.add(
+            wf.GovernedAuditEvent(
+                audit_event_id=self.uuid_factory(),
+                generation_id=generation.generation_id,
+                request_id=execution.request_id,
+                command_execution_id=execution.execution_id,
+                task_id=task.task_id,
+                operation_id=operation.operation_id,
+                event_type="semantic_proposal_applied",
+                actor=call.owner_id,
+                payload={
+                    "proposal_id": str(requirement.requirement_id),
+                    "candidate_content_version_id": str(candidate_version_id),
+                    "candidate_identity": payload["candidate"]["identity"],
+                    "source_cycle_id": str(source_cycle.cycle_id),
+                    "new_cycle_id": str(next_cycle.cycle_id),
+                    "agent": call.arguments.get("agent"),
+                    "model": call.arguments.get("model"),
+                    "authorization_grant_ids": [
+                        str(grant_id) for grant_id, _token in reservations
+                    ],
+                },
+                occurred_at=call.now,
+            )
+        )
+        return {
+            "proposal_id": str(requirement.requirement_id),
+            "dish_id": str(task.task_id),
+            "operation_id": str(operation.operation_id),
+            "corrected_content_version_id": str(candidate_version_id),
+            "candidate_identity": payload["candidate"]["identity"],
+            "new_cycle_id": str(next_cycle.cycle_id),
+            "projection_event_id": projection_id,
+            "authorization_grant_ids": [
+                str(grant_id) for grant_id, _token in reservations
+            ],
+        }
 
     def _submit(self, call, generation, _binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
@@ -2509,6 +3298,423 @@ class PostgresCommandPort:
         operation.terminal_at = call.now
         operation.operation_revision += 1
         return {"operation_id": str(operation.operation_id), "originating_request_id": str(operation.creation_request_id), "originating_execution_id": str(operation.creation_execution_id), "lifecycle": operation.lifecycle}
+
+    def _assert_reclaim_successor_claimable(
+        self, *, operation: wf.WorkflowOperation, call: CommandCall
+    ) -> None:
+        edge = self.session.scalar(
+            select(wf.OperationSuccessionEdge).where(
+                wf.OperationSuccessionEdge.successor_operation_id
+                == operation.operation_id
+            )
+        )
+        if edge is None:
+            return
+        attempt = self.session.get(wf.AbandonmentAttempt, edge.abandonment_id)
+        if (
+            attempt is not None
+            and attempt.reason.startswith(_SAFE_RECLAIM_REASON_PREFIX)
+            and attempt.source_owner_id == call.owner_id
+            and attempt.source_run_id == call.run_id
+        ):
+            raise CommandRuleError(
+                "SAFE_RECLAIM_SOURCE_RUN_FORBIDDEN",
+                "the reclaimed source owner/run is permanently barred from claiming its successor",
+            )
+
+    def _copy_available_marco_authorizations(
+        self,
+        *,
+        source_operation_id: uuid.UUID,
+        successor_operation_id: uuid.UUID,
+        task_id: uuid.UUID,
+        generation_id: uuid.UUID,
+        copied_at: datetime,
+    ) -> list[str]:
+        rows = list(
+            self.session.execute(
+                select(wf.MarcoAuthorizationGrant, wf.MarcoAuthorizationState)
+                .join(
+                    wf.MarcoAuthorizationState,
+                    wf.MarcoAuthorizationState.grant_id
+                    == wf.MarcoAuthorizationGrant.grant_id,
+                )
+                .where(
+                    wf.MarcoAuthorizationGrant.generation_id == generation_id,
+                    wf.MarcoAuthorizationGrant.task_id == task_id,
+                    wf.MarcoAuthorizationGrant.operation_id == source_operation_id,
+                    wf.MarcoAuthorizationState.state == "available",
+                )
+            ).all()
+        )
+        copied: list[str] = []
+        for grant, _state in rows:
+            new_id = self.uuid_factory()
+            self.session.add(
+                wf.MarcoAuthorizationGrant(
+                    grant_id=new_id,
+                    generation_id=generation_id,
+                    task_id=task_id,
+                    operation_id=successor_operation_id,
+                    field_name=grant.field_name,
+                    before_value=_json_safe(grant.before_value),
+                    after_value=_json_safe(grant.after_value),
+                    reason=grant.reason,
+                    actor=grant.actor,
+                    run_id=grant.run_id,
+                    request_id=grant.request_id,
+                    command_execution_id=grant.command_execution_id,
+                    granted_at=grant.granted_at,
+                )
+            )
+            self.session.add(
+                wf.MarcoAuthorizationState(
+                    grant_id=new_id,
+                    state="available",
+                    reservation_token=None,
+                    reservation_request_id=None,
+                    consumed_result_id=None,
+                    authorization_revision=1,
+                    updated_at=copied_at,
+                )
+            )
+            copied.append(str(new_id))
+        self.session.flush()
+        return copied
+
+    def _safe_reclaim(
+        self, call, generation, _binding, execution, task, operation
+    ) -> dict[str, Any]:
+        assert task is not None and operation is not None
+        if operation.generation_id != generation.generation_id or operation.lifecycle != "open":
+            raise CommandRuleError(
+                "OPEN_OPERATION_REQUIRED",
+                "safe-reclaim requires the exact open source operation",
+            )
+        lease_id = call.arguments.get("lease_id")
+        if not lease_id:
+            raise CommandRuleError(
+                "SOURCE_LEASE_REQUIRED",
+                "safe-reclaim requires the exact prior actor lease",
+                http_status=400,
+            )
+        try:
+            lease_uuid = uuid.UUID(str(lease_id))
+        except ValueError as exc:
+            raise CommandRuleError(
+                "INVALID_LEASE_ID", "lease identifier must be a UUID", http_status=400
+            ) from exc
+        lease = self.session.get(wf.ServiceLease, lease_uuid)
+        if (
+            lease is None
+            or lease.generation_id != generation.generation_id
+            or lease.task_id != task.task_id
+            or lease.operation_id != operation.operation_id
+            or lease.lease_kind != "actor"
+            or lease.run_id is None
+            or lease.actor_attempt_sequence is None
+        ):
+            raise CommandRuleError(
+                "SOURCE_LEASE_REQUIRED",
+                "safe-reclaim requires the exact prior PostgreSQL actor lease for this operation",
+            )
+        if lease.run_id == call.run_id:
+            raise CommandRuleError(
+                "SAFE_RECLAIM_REQUIRES_DIFFERENT_RUN",
+                "same-run recovery must use renew/recover lease; safe-reclaim is only for a different run",
+            )
+        lease_expiry = lease.expires_at
+        if lease_expiry.tzinfo is None and call.now.tzinfo is not None:
+            lease_expiry = lease_expiry.replace(tzinfo=call.now.tzinfo)
+        if lease.state == "active" and lease_expiry > call.now:
+            raise CommandRuleError(
+                "SOURCE_LEASE_STILL_ACTIVE",
+                "safe-reclaim requires the exact source lease to be released or expired",
+            )
+
+        later_attempt = self.session.scalar(
+            select(wf.ServiceLease.lease_id)
+            .where(
+                wf.ServiceLease.task_id == task.task_id,
+                wf.ServiceLease.lease_kind == "actor",
+                wf.ServiceLease.actor_attempt_sequence
+                > lease.actor_attempt_sequence,
+            )
+            .limit(1)
+        )
+        if later_attempt is not None:
+            raise CommandRuleError(
+                "SAFE_RECLAIM_LATER_ATTEMPT_EXISTS",
+                "a later actor attempt already exists; the source lease is no longer the reclaimable frontier",
+            )
+        if self.session.scalar(
+            select(wf.OperationSuccessionEdge.succession_id)
+            .where(
+                wf.OperationSuccessionEdge.source_operation_id
+                == operation.operation_id
+            )
+            .limit(1)
+        ) is not None:
+            raise CommandRuleError(
+                "SAFE_RECLAIM_ALREADY_SUCCEEDED",
+                "the source operation already has a durable successor",
+            )
+        if self.session.scalar(
+            select(wf.AbandonmentAttempt.abandonment_id)
+            .where(
+                wf.AbandonmentAttempt.generation_id == generation.generation_id,
+                wf.AbandonmentAttempt.task_id == task.task_id,
+                wf.AbandonmentAttempt.state.in_(
+                    ("preparing", "published", "blocked", "reconciling")
+                ),
+            )
+            .limit(1)
+        ) is not None:
+            raise CommandRuleError(
+                "ABANDONMENT_FENCE_ACTIVE",
+                "an abandonment/reclaim transition is already active for this Dish",
+            )
+        proposal_requirement = self.session.scalar(
+            select(wf.HumanReviewRequirement)
+            .where(
+                wf.HumanReviewRequirement.operation_id == operation.operation_id,
+                wf.HumanReviewRequirement.state == "open",
+            )
+            .limit(1)
+        )
+        if (
+            proposal_requirement is not None
+            and proposal_requirement.question.startswith(_SEMANTIC_PROPOSAL_PREFIX)
+        ):
+            raise CommandRuleError(
+                "SEMANTIC_PROPOSAL_ACTIVE",
+                "safe-reclaim cannot cross an unresolved governed semantic proposal",
+            )
+        unresolved_execution = self.session.scalar(
+            select(wf.CommandExecution.execution_id)
+            .where(
+                wf.CommandExecution.operation_id == operation.operation_id,
+                wf.CommandExecution.execution_id != execution.execution_id,
+                wf.CommandExecution.status.in_(("pending", "claimed", "uncertain")),
+            )
+            .limit(1)
+        )
+        if unresolved_execution is not None:
+            raise CommandRuleError(
+                "SAFE_RECLAIM_EXECUTION_UNRESOLVED",
+                "the source operation still has unresolved command execution authority",
+            )
+        unresolved_projection = self.session.scalar(
+            select(projection.ProjectionAttempt.attempt_id)
+            .join(
+                projection.ProjectionOutboxEvent,
+                projection.ProjectionOutboxEvent.projection_event_id
+                == projection.ProjectionAttempt.projection_event_id,
+            )
+            .join(
+                wf.CommandExecution,
+                wf.CommandExecution.execution_id
+                == projection.ProjectionOutboxEvent.command_execution_id,
+            )
+            .where(
+                wf.CommandExecution.operation_id == operation.operation_id,
+                projection.ProjectionAttempt.state.in_(
+                    ("dispatched", "uncertain", "blocked")
+                ),
+            )
+            .limit(1)
+        )
+        if unresolved_projection is not None:
+            raise CommandRuleError(
+                "SAFE_RECLAIM_EXTERNAL_EFFECT_UNRESOLVED",
+                "the source operation has unresolved PostgreSQL projection/effect evidence",
+            )
+        try:
+            self.workflow.repo.assert_operation_run_not_revoked(
+                generation_id=generation.generation_id,
+                operation_id=operation.operation_id,
+                owner_id=call.owner_id,
+                run_id=call.run_id,
+                lock_operation=False,
+            )
+        except WorkflowAuthorityError as exc:
+            raise CommandRuleError(
+                "SAFE_RECLAIM_RUN_REVOKED", str(exc)
+            ) from exc
+
+        source_cycle: wf.VerificationCycle | None = None
+        if operation.phase == "prepare_required":
+            if operation.kind not in {"planning", "initial", "change"}:
+                raise CommandRuleError(
+                    "SAFE_RECLAIM_STAGE_UNSUPPORTED",
+                    "only connected Planning/Research clean-frontier operations are reclaimable before prepare",
+                )
+            creation_fence = self.session.get(
+                wf.TaskExecutionFence, operation.creation_execution_id
+            )
+            head = self.session.get(
+                models.TaskAuthorityHead, (generation.generation_id, task.task_id)
+            )
+            placement = self.session.get(
+                models.CurrentTaskSectionPlacement,
+                (generation.generation_id, task.task_id),
+            )
+            if creation_fence is None or head is None or placement is None:
+                raise CommandRuleError(
+                    "SAFE_RECLAIM_BASELINE_MISSING",
+                    "clean-frontier PostgreSQL baseline evidence is incomplete",
+                )
+            baseline_matches = (
+                head.task_revision == creation_fence.expected_task_revision
+                and head.membership_revision
+                == creation_fence.expected_membership_revision
+                and head.placement_revision
+                == creation_fence.expected_placement_revision
+                and head.completion_revision
+                == creation_fence.expected_completion_revision
+            )
+            progressed_step = self.session.scalar(
+                select(wf.OperationStep.step_id)
+                .where(wf.OperationStep.operation_id == operation.operation_id)
+                .limit(1)
+            )
+            if not baseline_matches or progressed_step is not None:
+                raise CommandRuleError(
+                    "SAFE_RECLAIM_NOT_CLEAN_FRONTIER",
+                    "Planning/Research source has progressed or its canonical PostgreSQL baseline drifted",
+                )
+        elif operation.phase == "await_verification":
+            source_cycle = self._latest_cycle(operation.operation_id)
+            self._assert_cycle_is_current(
+                generation.generation_id, task.task_id, source_cycle
+            )
+            if (
+                lease.actor_role != "verification"
+                or lease.verification_cycle_id != source_cycle.cycle_id
+            ):
+                raise CommandRuleError(
+                    "SAFE_RECLAIM_VERIFICATION_LEASE_MISMATCH",
+                    "Verification reclaim requires the exact source cycle lease",
+                )
+            active_registry = self.session.get(
+                models.ActiveSectionRegistry, generation.generation_id
+            )
+            placement = self.session.get(
+                models.CurrentTaskSectionPlacement,
+                (generation.generation_id, task.task_id),
+            )
+            verification_section_id = (
+                self.session.scalar(
+                    select(models.SectionRegistryEntry.section_id).where(
+                        models.SectionRegistryEntry.registry_version_id
+                        == active_registry.registry_version_id,
+                        models.SectionRegistryEntry.workflow_role
+                        == "verification_queue",
+                    )
+                )
+                if active_registry is not None
+                else None
+            )
+            if (
+                placement is None
+                or verification_section_id is None
+                or placement.section_id != verification_section_id
+            ):
+                raise CommandRuleError(
+                    "SAFE_RECLAIM_NOT_CLEAN_FRONTIER",
+                    "Verification source is no longer at the exact PostgreSQL Verification Queue frontier",
+                )
+        else:
+            raise CommandRuleError(
+                "SAFE_RECLAIM_NOT_CLEAN_FRONTIER",
+                "safe-reclaim is allowed only at a clean pre-prepare or awaiting-Verification frontier",
+            )
+
+        attempt = self.workflow.begin_abandonment(
+            abandonment_id=self.uuid_factory(),
+            execution_id=execution.execution_id,
+            source_operation_id=operation.operation_id,
+            source_lease_id=lease.lease_id,
+            reason=(
+                f"{_SAFE_RECLAIM_REASON_PREFIX} different-run recovery from "
+                f"{lease.owner_id}/{lease.run_id} to {call.owner_id}/{call.run_id}"
+            ),
+            created_at=call.now,
+            source_cycle_id=source_cycle.cycle_id if source_cycle else None,
+        )
+        source_operation_id = operation.operation_id
+        operation.lifecycle = "abandoned"
+        operation.terminal_outcome = "safe_reclaimed"
+        operation.terminal_at = call.now
+        operation.operation_revision += 1
+        if source_cycle is not None:
+            source_cycle.lifecycle = "abandoned"
+            source_cycle.outcome = "safe_reclaimed"
+            source_cycle.terminal_at = call.now
+        if lease.state == "active":
+            self._terminalize_lease(
+                lease,
+                "expired",
+                execution,
+                call.now,
+                "safe-reclaim fenced expired source lease",
+            )
+
+        successor = self._publish_abandonment_successor(
+            attempt, operation, execution, call.now
+        )
+        successor.persisted_actions = (
+            ["inspect"] if source_cycle is not None else ["prepare"]
+        )
+        copied_grants = self._copy_available_marco_authorizations(
+            source_operation_id=source_operation_id,
+            successor_operation_id=successor.operation_id,
+            task_id=task.task_id,
+            generation_id=generation.generation_id,
+            copied_at=call.now,
+        )
+        edge = self.session.scalar(
+            select(wf.OperationSuccessionEdge).where(
+                wf.OperationSuccessionEdge.abandonment_id == attempt.abandonment_id
+            )
+        )
+        if edge is None:
+            raise CommandRuleError(
+                "SAFE_RECLAIM_SUCCESSOR_EVIDENCE_MISSING",
+                "safe-reclaim successor edge was not durably published",
+            )
+        agent = str(call.arguments.get("agent", "")).strip()
+        if source_cycle is None:
+            action_arguments: dict[str, Any] = {
+                "dish_id": str(task.task_id),
+                "agent": agent,
+                "kind": operation.kind,
+                "prepared_operation_id": str(successor.operation_id),
+            }
+        else:
+            if edge.prepared_cycle_id is None:
+                raise CommandRuleError(
+                    "SAFE_RECLAIM_SUCCESSOR_EVIDENCE_MISSING",
+                    "Verification successor is missing its prepared cycle",
+                )
+            action_arguments = {
+                "dish_id": str(task.task_id),
+                "agent": agent,
+                "kind": "verification",
+                "target_operation_id": str(successor.operation_id),
+                "target_cycle_id": str(edge.prepared_cycle_id),
+            }
+        return {
+            "dish_id": str(task.task_id),
+            "source_operation_id": str(source_operation_id),
+            "source_lease_id": str(lease.lease_id),
+            "successor_operation_id": str(successor.operation_id),
+            "prepared_cycle_id": (
+                str(edge.prepared_cycle_id) if edge.prepared_cycle_id else None
+            ),
+            "copied_authorization_grant_ids": copied_grants,
+            "agent_action": {"command": "start", "arguments": action_arguments},
+        }
 
     def _abandon(self, call, generation, _binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None

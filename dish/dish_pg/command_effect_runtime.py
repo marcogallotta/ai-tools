@@ -165,7 +165,7 @@ def assert_committed_command_effects(
     ) is not None:
         observed.add(
             "activate_corrected_content_version"
-            if command_name in {"approve", "reject"}
+            if command_name in {"approve", "reject", "apply-proposal"}
             else "activate_content_version"
         )
     if session.scalar(
@@ -230,6 +230,7 @@ def assert_committed_command_effects(
         "reject": (
             "held_human"
             if result_data.get("verification_hold")
+            or result_data.get("semantic_proposal_queued")
             else {
                 "large": "await_verification",
                 "evidence": "held_evidence",
@@ -237,6 +238,7 @@ def assert_committed_command_effects(
                 "human_review": "held_human",
             }.get(str(arguments.get("route", "large")), "held_human")
         ),
+        "apply-proposal": "await_verification",
     }[command_name]
     if operation.phase == expected_phase:
         observed.add("advance_operation")
