@@ -53,7 +53,7 @@ def test_pr_workflow_candidate_identity_is_source_pr_head_sha():
     assert "github.event.pull_request.head.sha" in workflow
     assert "CI_CANDIDATE_SHA:" in workflow
     assert "if: github.event_name != 'pull_request' || github.event.pull_request.draft == false" in workflow
-    assert workflow.count("ref: ${{ env.CI_CANDIDATE_SHA }}") == 5
+    assert workflow.count("ref: ${{ env.CI_CANDIDATE_SHA }}") == 6
     assert "types: [opened, reopened, synchronize, ready_for_review]" in workflow
 
 
