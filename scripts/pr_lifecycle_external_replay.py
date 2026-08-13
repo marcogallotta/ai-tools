@@ -2,7 +2,7 @@ from dataclasses import replace
 import pr_lifecycle_helpers_base as b
 from pr_lifecycle_support import *
 def _id(r): return (r.task_gid,r.owner_pr,r.check,r.main_sha,r.evidence)
-def parse_external_dependency(comments):
+def replay_external_dependency(comments):
  r=[]
  for c in comments:
   for i,f in enumerate(b._marker_fields(str(c.get("body") or ""),EXTERNAL_DEPENDENCY_MARKER)):
@@ -10,8 +10,9 @@ def parse_external_dependency(comments):
    x=b.parse_external_dependency([{**c,"body":f"<!-- {EXTERNAL_DEPENDENCY_MARKER} {m} -->"}])
    if x is None: raise LifecycleError("external dependency marker could not be parsed")
    r.append(replace(x,marker_index=i))
- a=None
+ a=z=None
  for x in sorted(r,key=lambda x:(x.timestamp,x.comment_id,x.marker_index)):
-  if x.action=="blocked": a=x
-  elif a is not None and _id(x)==_id(a): a=None
- return a
+  if x.action=="blocked": a,z=x,None
+  elif a is not None and _id(x)==_id(a): a,z=None,x
+ return a,z
+def parse_external_dependency(comments): return replay_external_dependency(comments)[0]
