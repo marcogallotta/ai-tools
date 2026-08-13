@@ -61,7 +61,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0038_cutover_rehearsal_identity"
+ALEMBIC_HEAD = "0039_remove_unused_causality_edges"
 
 
 class ReleaseCandidateService(
