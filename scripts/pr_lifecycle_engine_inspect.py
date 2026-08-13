@@ -122,6 +122,15 @@ class LifecycleInspectMixin:
         lease_payload = [_lease_json(lease, now) for lease in leases]
 
         if draft:
+            pending_evidence = pending_authoring_evidence(current)
+            if pending_evidence:
+                return implementation_continuation_lifecycle(
+                    base_kwargs=base_kwargs,
+                    evidence=pending_evidence,
+                    review_class=review_class,
+                    lease_payload=lease_payload,
+                    implementation_active=bool(active_by_phase.get("implementation")),
+                )
             return PRLifecycle(
                 **base_kwargs,
                 state=LifecycleState.AUTHORING,

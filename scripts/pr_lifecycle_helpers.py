@@ -140,6 +140,31 @@ def external_dependency_human_action(record: ExternalDependency) -> str:
     return f"Waiting on {owner}: {record.check}. No action for Marco."
 
 
+def pending_authoring_evidence(pr: Mapping[str, Any]) -> str | None:
+    """Return explicitly unfinished task-scoped authoring evidence from a draft PR."""
+    match = AUTHORING_EVIDENCE_PENDING_RE.search(str(pr.get("body") or ""))
+    if match is None:
+        return None
+    value = match.group("value").strip()
+    return value or None
+
+
+def _continuation_key(head: str, evidence: str) -> str:
+    return hashlib.sha256(f"{head}:{evidence}".encode("utf-8")).hexdigest()[:20]
+
+
+def _continuation_handoff_present(
+    comments: Iterable[Mapping[str, Any]], *, head: str, evidence: str
+) -> bool:
+    key = _continuation_key(head, evidence)
+    for comment in comments:
+        for fields in _marker_fields(
+            str(comment.get("body") or ""), IMPLEMENTATION_CONTINUATION_MARKER
+        ):
+            if fields.get("head") == head and fields.get("key") == key:
+                return True
+    return False
+
 def parse_leases(
     comments: Iterable[Mapping[str, Any]],
     *,
@@ -380,3 +405,27 @@ def _reviewed_head(review: Mapping[str, Any] | None) -> str | None:
     if not review:
         return None
     return str(review.get("commit_id") or "") or None
+
+
+def implementation_continuation_lifecycle(
+    *,
+    base_kwargs: Mapping[str, Any],
+    evidence: str,
+    review_class: str | None,
+    lease_payload: list[dict[str, Any]],
+    implementation_active: bool,
+) -> PRLifecycle:
+    number = int(base_kwargs["number"])
+    return PRLifecycle(
+        **base_kwargs,
+        state=LifecycleState.IMPLEMENTATION_CONTINUATION_REQUIRED,
+        state_label=STATE_LABELS[LifecycleState.IMPLEMENTATION_CONTINUATION_REQUIRED],
+        authoring_evidence=evidence,
+        review_class=review_class,
+        active_leases=lease_payload,
+        residual_reason=(
+            f"draft PR has unfinished task-scoped authoring evidence: {evidence}"
+            + ("; implementation lease active" if implementation_active else "; no active implementation lease")
+        ),
+        human_action=f"PR #{number} still needs Implementation to finish {evidence}.",
+    )

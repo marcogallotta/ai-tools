@@ -31,6 +31,7 @@ GitHub authentication comes from `GITHUB_TOKEN` or `GH_TOKEN`. `ASANA_ACCESS_TOK
 The JSON schema is `dish-pr-lifecycle-status-v1`. The state engine distinguishes:
 
 - `authoring_implementation_in_progress`;
+- `implementation_continuation_required`;
 - `review_ready`;
 - `review_in_progress`;
 - `changes_requested_fix_in_progress`;
@@ -43,6 +44,8 @@ The JSON schema is `dish-pr-lifecycle-status-v1`. The state engine distinguishes
 - `merging_integration_in_progress`;
 - `merged`;
 - `closed_superseded`.
+
+A draft PR that explicitly carries `IMPLEMENTATION EVIDENCE PENDING: <evidence>` is `IMPLEMENTATION CONTINUATION REQUIRED`, not Review/Integration/local certification. The dispatcher reuses the existing Implementation/fix consumer. If no current `phase=implementation`/`fix` owner is active, it first writes a durable `dish-implementation-continuation:v1` handoff on the same PR, then claims `phase=implementation` and dispatches the exact existing branch/task/head plus named evidence. That comment is the explicit replacement-owner handoff when the prior Implementation agent is unavailable. The only human-facing message for this state is `PR #N still needs Implementation to finish <evidence>.`
 
 `VERDICT: MERGE` is not terminal. It starts Integration gate evaluation. Ordinary Review does not wait for ordinary CI and does not require a pre-review sync to moved `main` unless that movement creates a known semantic dependency that invalidates the review question.
 

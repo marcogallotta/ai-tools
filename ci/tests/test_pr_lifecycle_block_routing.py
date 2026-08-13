@@ -202,3 +202,80 @@ def test_external_exact_head_ci_failure_never_dispatches_blocked_pr_fixer():
 
     assert result.state == pr_lifecycle.LifecycleState.WAITING_EXTERNAL_DEPENDENCY
     assert fixer.calls == []
+
+def _draft_with_pending_evidence():
+    return base.pr(
+        draft=True,
+        body=(
+            "Owning task: 1217450869324199\n"
+            "Focused evidence: complete.\n"
+            "IMPLEMENTATION EVIDENCE PENDING: required smoke"
+        ),
+    )
+
+
+def test_draft_missing_authoring_evidence_dispatches_implementation_continuation_after_handoff():
+    gh = base.FakeGitHub(_draft_with_pending_evidence())
+    fixer = FakeFixer(gh)
+    lifecycle = base.engine(gh)
+
+    result = lifecycle.dispatch_one(
+        lifecycle.inspect(gh.pr),
+        workspace=None,
+        local_reviewer=None,
+        implementation_fixer=fixer,
+    )
+
+    assert len(fixer.calls) == 1
+    context = fixer.calls[0]
+    assert context["schema"] == "dish-pr-implementation-continuation-v1"
+    assert context["branch"] == "agent/test"
+    assert context["head"] == HEAD
+    assert context["unfinished_authoring_evidence"] == "required smoke"
+    handoff_index = next(
+        i for i, event in enumerate(gh.events)
+        if event[0] == "comment" and "dish-implementation-continuation:v1" in event[1]
+    )
+    lease_index = next(
+        i for i, event in enumerate(gh.events)
+        if event[0] == "comment" and "phase=implementation" in event[1]
+    )
+    dispatch_index = next(i for i, event in enumerate(gh.events) if event[0] == "fix-dispatch")
+    assert handoff_index < lease_index < dispatch_index
+    assert result.state == pr_lifecycle.LifecycleState.IMPLEMENTATION_CONTINUATION_REQUIRED
+    assert any(lease["phase"] == "implementation" for lease in result.active_leases)
+    assert not any("dish-local-handoff:v1" in event[1] for event in gh.events if event[0] == "comment")
+
+
+def test_active_implementation_owner_prevents_duplicate_draft_continuation_dispatch():
+    gh = base.FakeGitHub(_draft_with_pending_evidence())
+    gh.comments = [base.lease_comment(phase="implementation")]
+    fixer = FakeFixer(gh)
+    lifecycle = base.engine(gh)
+
+    result = lifecycle.dispatch_one(
+        lifecycle.inspect(gh.pr),
+        workspace=None,
+        local_reviewer=None,
+        implementation_fixer=fixer,
+    )
+
+    assert result.state == pr_lifecycle.LifecycleState.IMPLEMENTATION_CONTINUATION_REQUIRED
+    assert fixer.calls == []
+
+
+def test_missing_continuation_consumer_uses_only_required_human_message():
+    gh = base.FakeGitHub(_draft_with_pending_evidence())
+    notices = []
+    lifecycle = base.engine(gh)
+
+    result = lifecycle.dispatch_one(
+        lifecycle.inspect(gh.pr),
+        workspace=None,
+        local_reviewer=None,
+        implementation_fixer=None,
+        notify=notices.append,
+    )
+
+    assert result.state == pr_lifecycle.LifecycleState.IMPLEMENTATION_CONTINUATION_REQUIRED
+    assert notices == ["PR #31 still needs Implementation to finish required smoke."]
