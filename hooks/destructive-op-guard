@@ -202,6 +202,36 @@ def check_protected_checkout(segments, cwd):
     return deny(reason) if reason else None
 
 
+# Global git flags that consume a following argument (e.g. `-C <path>`),
+# as opposed to `--flag=value` forms which stay a single token. Mirrors
+# protected_checkout.py's GIT_LOCATION_VALUE_OPTS/GIT_CONFIG_VALUE_OPTS.
+GIT_GLOBAL_VALUE_FLAGS = {"-C", "-c", "--config-env", "--git-dir", "--work-tree"}
+
+
+# Resolve git's actual subcommand (e.g. "add", "commit") rather than
+# scanning the whole token list for a matching word. `git worktree add`,
+# `git remote add`, and `git submodule add` all contain the token "add"
+# without being `git add` - checks must match the subcommand position, not
+# mere presence. Skips global flags (`-C <path>`, `-c k=v`, `--git-dir=...`)
+# between "git" and the subcommand.
+def git_subcommand(tokens):
+    for i, t in enumerate(tokens):
+        if not is_word(t, "git"):
+            continue
+        j = i + 1
+        while j < len(tokens):
+            tok = tokens[j]
+            if tok in GIT_GLOBAL_VALUE_FLAGS:
+                j += 2
+                continue
+            if tok.startswith("-"):
+                j += 1
+                continue
+            return basename_token(tok)
+        return None
+    return None
+
+
 def check_git(segments):
     # git-commit wrapper (atomic stage+commit) - but not --help/-h, which is
     # read-only. A bare "git-commit" with no following token is left alone,
@@ -219,12 +249,13 @@ def check_git(segments):
 
     # destructive git subcommands. Each is its own pass over every segment,
     # checked in this order, mirroring the original's sequence of exit-on-
-    # first-match ifs over the whole (unsegmented) command.
+    # first-match ifs over the whole (unsegmented) command. Matched against
+    # the resolved subcommand position, not mere token presence, so e.g.
+    # `git worktree add` or `git remote add` don't collide with `git add`.
     for seg in segments:
         tokens = tokenize(seg)
-        if not any(is_word(t, "git") for t in tokens):
-            continue
-        if any(t in ("commit", "push", "clean", "checkout", "restore", "mv") for t in tokens):
+        sub = git_subcommand(tokens)
+        if sub in ("commit", "push", "clean", "checkout", "restore", "mv"):
             return ask(
                 "[destructive-op-guard] Destructive git operation "
                 "(commit/push/checkout/restore/clean/mv) requires explicit approval."
@@ -232,16 +263,14 @@ def check_git(segments):
 
     for seg in segments:
         tokens = tokenize(seg)
-        if not any(is_word(t, "git") for t in tokens):
+        if git_subcommand(tokens) != "reset":
             continue
-        if "reset" in tokens and "--hard" in tokens:
+        if "--hard" in tokens:
             return ask("[destructive-op-guard] Destructive git operation (reset --hard) requires explicit approval.")
 
     for seg in segments:
         tokens = tokenize(seg)
-        if not any(is_word(t, "git") for t in tokens):
-            continue
-        if "add" in tokens:
+        if git_subcommand(tokens) == "add":
             return deny(
                 "[destructive-op-guard] Don't run git add alone — it leaves staged changes that can "
                 "collide with another session's commit. Use: ~/.claude/bin/git-commit <files> -m 'message'. "
