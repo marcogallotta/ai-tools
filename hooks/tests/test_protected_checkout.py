@@ -212,6 +212,53 @@ def test_recursive_command_environment_alias_forms_remain_allowed_outside_primar
         assert classify(classifier_module, protected_repo, command, cwd="unrelated") is None
 
 
+def test_config_env_is_preserved_through_shell_alias_expansion(
+    classifier_module, protected_repo
+):
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            str(protected_repo["primary"]),
+            "config",
+            "alias.first",
+            "!git second",
+        ],
+        check=True,
+    )
+    commands = (
+        "MUTATOR='checkout -b shell-chain' "
+        "git --config-env=alias.second=MUTATOR first",
+        "git -c alias.second='checkout -b shell-chain' first",
+    )
+    for command in commands:
+        assert "Refusing 'checkout'" in classify(classifier_module, protected_repo, command)
+
+
+def test_invocation_config_shell_alias_remains_allowed_outside_primary(
+    classifier_module, protected_repo
+):
+    commands = (
+        "MUTATOR='checkout -b shell-chain' "
+        "git --config-env=alias.second=MUTATOR first",
+        "git -c alias.second='checkout -b shell-chain' first",
+    )
+    for location in ("linked", "unrelated"):
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(protected_repo[location]),
+                "config",
+                "alias.first",
+                "!git second",
+            ],
+            check=True,
+        )
+        for command in commands:
+            assert classify(classifier_module, protected_repo, command, cwd=location) is None
+
+
 def test_command_environment_alias_forms_remain_allowed_outside_primary(
     classifier_module, protected_repo
 ):

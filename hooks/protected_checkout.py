@@ -166,6 +166,42 @@ def _alias_environment_is_ambiguous(global_args, ambiguous_names, subcommand):
     )
 
 
+def _config_environment(global_args, extra_env):
+    """Materialize invocation config inherited by Git shell aliases."""
+    environment = dict(extra_env)
+    try:
+        count = int(environment.get("GIT_CONFIG_COUNT", "0"))
+    except ValueError:
+        return environment
+    entries = []
+    index = 0
+    while index < len(global_args):
+        argument = global_args[index]
+        if argument in GIT_CONFIG_VALUE_OPTS and index + 1 < len(global_args):
+            candidate = global_args[index + 1]
+            index += 2
+        elif any(argument.startswith(option + "=") for option in GIT_CONFIG_VALUE_OPTS):
+            _flag, _, candidate = argument.partition("=")
+            index += 1
+        else:
+            index += 1
+            continue
+        key, separator, value = candidate.partition("=")
+        if not separator:
+            continue
+        if argument == "--config-env" or argument.startswith("--config-env="):
+            if value not in environment:
+                continue
+            value = environment[value]
+        entries.append((key, value))
+    for offset, (key, value) in enumerate(entries):
+        environment[f"GIT_CONFIG_KEY_{count + offset}"] = key
+        environment[f"GIT_CONFIG_VALUE_{count + offset}"] = value
+    if entries:
+        environment["GIT_CONFIG_COUNT"] = str(count + len(entries))
+    return environment
+
+
 def _resolve_git_invocation(pairs, git_idx):
     """Return location/global args, subcommand index, and ambiguities."""
     location_args = []
@@ -368,13 +404,14 @@ def _classify_git(
         return None
     alias_cwd = identity[0] if identity is not None else cwd
     if alias.startswith("!"):
+        shell_env = _config_environment(global_args, extra_env)
         return _classify_command(
             alias[1:],
             alias_cwd,
             protected_root,
             depth + 1,
             seen_aliases | {subcommand},
-            extra_env,
+            shell_env,
         )
     try:
         expanded = shlex.split(alias, posix=True) + args
