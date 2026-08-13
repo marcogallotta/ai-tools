@@ -2,6 +2,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 import pytest
 from alembic import command
 from alembic.config import Config
@@ -9,7 +10,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 from dish_pg import models
 from dish_pg import stage3_models as wf
-from dish_pg.command_port import PostgresCommandPort
+from dish_pg.command_port import CommandRuleError, PostgresCommandPort
 from dish_pg.database import session_scope
 from dish_pg.read_model import PostgresReadModel
 from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
@@ -26,6 +27,123 @@ from tests.support.postgresql.command import (
     _verification_ready,
 )
 
+
+def test_retired_generation_abandonment_cannot_fence_reconcile_or_seed_successor(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        run_id = _next(ids)
+        admin_run = _next(ids)
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=admin_run,
+            owner="Marco",
+            agent="claude",
+        )
+        port = _port(session, ids)
+        started = _start_initial(port, ids, task_id=task_id, run_id=run_id)
+        source = session.get(
+            wf.WorkflowOperation, uuid.UUID(started.data["operation_id"])
+        )
+        source.phase = "held_evidence"
+        session.flush()
+        abandoned = port.execute(
+            _call(
+                "abandon-operation",
+                run_id=admin_run,
+                request_id=_next(ids),
+                owner="Marco",
+                principal="admin",
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                    "lease_id": started.data["lease_id"],
+                    "reason": "generation-isolation regression",
+                },
+            )
+        )
+        assert abandoned.ok and abandoned.data["state"] == "blocked"
+        abandonment_id = uuid.UUID(abandoned.data["abandonment_id"])
+
+        predecessor = session.get(
+            models.AuthorityGeneration, context["generation_id"]
+        )
+        predecessor.status = "retired"
+        predecessor.retired_at = NOW
+        session.flush()
+        successor_generation_id = _next(ids)
+        session.add(
+            models.AuthorityGeneration(
+                generation_id=successor_generation_id,
+                predecessor_generation_id=context["generation_id"],
+                creation_reason="destructive_restore",
+                external_restore_control_id=f"restore-{successor_generation_id}",
+                schema_head=predecessor.schema_head,
+                dish_release=predecessor.dish_release,
+                status="active",
+                created_at=NOW,
+                retired_at=None,
+            )
+        )
+        session.flush()
+        successor_port = PostgresCommandPort(
+            session,
+            cursor_secret=b"stage-4-cursor-secret-32-bytes!!",
+            uuid_factory=lambda: _next(ids),
+        )
+
+        task = session.get(models.DishTask, task_id)
+        assert successor_port._open_abandonment_id(
+            successor_generation_id, task_id
+        ) is None
+        assert successor_port._open_abandonment_id(
+            context["generation_id"], task_id
+        ) == str(abandonment_id)
+
+        successor_execution = SimpleNamespace(
+            generation_id=successor_generation_id,
+            execution_id=_next(ids),
+        )
+        with pytest.raises(CommandRuleError) as exc_info:
+            successor_port._reconcile_abandonment(
+                _call(
+                    "reconcile-abandonment",
+                    run_id=admin_run,
+                    owner="Marco",
+                    principal="admin",
+                    arguments={
+                        "task_id": str(task_id),
+                        "abandonment_id": str(abandonment_id),
+                    },
+                ),
+                None,
+                None,
+                successor_execution,
+                task,
+                None,
+            )
+        assert exc_info.value.code == "ABANDONMENT_GENERATION_MISMATCH"
+
+        attempt = session.get(wf.AbandonmentAttempt, abandonment_id)
+        assert attempt.state == "blocked"
+        assert attempt.successor_operation_id is None
+        assert session.scalar(
+            select(wf.OperationSuccessionEdge.succession_id).where(
+                wf.OperationSuccessionEdge.abandonment_id == abandonment_id
+            )
+        ) is None
+
+        retired_source = session.get(
+            wf.WorkflowOperation, attempt.source_operation_id
+        )
+        with pytest.raises(CommandRuleError) as publish_exc_info:
+            successor_port._publish_abandonment_successor(
+                attempt, retired_source, successor_execution, NOW
+            )
+        assert publish_exc_info.value.code == "ABANDONMENT_GENERATION_MISMATCH"
 
 
 def test_abandonment_publishes_route_preserving_successor_once(workflow_db) -> None:
