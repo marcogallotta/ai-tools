@@ -41,6 +41,42 @@ REVIEWED_PRIVATE_FAULT_SEAMS = {
     ("postgresql/test_process_failure_execution_boundaries.py", "_start_child"): (
         "Exact subprocess-spawn boundary used to prove DSNs remain environment-only."
     ),
+    ("postgresql/test_backup_restore_rehearsal_tooling.py", "_git_head"): (
+        "Repository-head identity boundary for backup and restore rehearsal evidence."
+    ),
+    ("postgresql/test_backup_restore_rehearsal_tooling.py", "_tool_version"): (
+        "PostgreSQL tool-version identity boundary for rehearsal evidence."
+    ),
+    ("postgresql/test_backup_restore_rehearsal_tooling.py", "_query_identity"): (
+        "Database-query identity boundary for rehearsal evidence."
+    ),
+    ("postgresql/test_backup_restore_rehearsal_tooling.py", "_fingerprint"): (
+        "Backup fingerprint generation boundary."
+    ),
+    ("postgresql/test_backup_restore_rehearsal_tooling.py", "_compare"): (
+        "Backup comparison boundary."
+    ),
+    ("postgresql/test_backup_restore_rehearsal_tooling.py", "_run"): (
+        "External rehearsal command execution boundary."
+    ),
+    ("postgresql/test_backup_restore_rehearsal_tooling.py", "_copy_off_device"): (
+        "Off-device backup copy boundary."
+    ),
+    ("postgresql/test_cutover_activation_rehearsal.py", "_find_compose_command"): (
+        "External Docker Compose discovery boundary."
+    ),
+    ("postgresql/test_dark_launch_shadow_worker.py", "_translate_workflow_identifiers"): (
+        "Shadow workflow-identity translation boundary."
+    ),
+    ("postgresql/test_dark_launch_shadow_worker.py", "_ensure_shadow_run"): (
+        "Shadow-run creation boundary."
+    ),
+    ("postgresql/test_dark_launch_shadow_worker.py", "_target_authority_state"): (
+        "Shadow target authority-state capture boundary."
+    ),
+    ("postgresql/test_dark_launch_shadow_worker.py", "_target_response_payload"): (
+        "Shadow target response-payload capture boundary."
+    ),
     ("postgresql/test_production_shaped_rehearsal.py", "_source_identity"): (
         "Received-source identity boundary for isolated orchestration tests."
     ),
@@ -81,50 +117,14 @@ REVIEWED_PRIVATE_FAULT_SEAMS = {
     ("test_admin_round1b.py", "_commit_kill_revocation"): (
         "Durable kill-revocation commit boundary for crash/replay tests."
     ),
-    ("postgresql/test_backup_restore_rehearsal_tooling.py", "_git_head"): (
-        "Repository identity probe boundary in isolated backup/restore rehearsal tests."
-    ),
-    ("postgresql/test_backup_restore_rehearsal_tooling.py", "_tool_version"): (
-        "External PostgreSQL tool-version probe boundary."
-    ),
-    ("postgresql/test_backup_restore_rehearsal_tooling.py", "_query_identity"): (
-        "Database identity-query boundary for isolated rehearsal fixtures."
-    ),
-    ("postgresql/test_backup_restore_rehearsal_tooling.py", "_fingerprint"): (
-        "Backup/restore fingerprint computation boundary."
-    ),
-    ("postgresql/test_backup_restore_rehearsal_tooling.py", "_compare"): (
-        "Restored-state comparison boundary."
-    ),
-    ("postgresql/test_backup_restore_rehearsal_tooling.py", "_run"): (
-        "External backup/restore command execution boundary."
-    ),
-    ("postgresql/test_backup_restore_rehearsal_tooling.py", "_copy_off_device"): (
-        "Off-device backup copy boundary."
-    ),
-    ("postgresql/test_cutover_activation_rehearsal.py", "_find_compose_command"): (
-        "External Docker Compose discovery boundary for activation rehearsal."
-    ),
-    ("postgresql/test_dark_launch_shadow_worker.py", "_translate_workflow_identifiers"): (
-        "Shadow-only identifier translation boundary."
-    ),
-    ("postgresql/test_dark_launch_shadow_worker.py", "_ensure_shadow_run"): (
-        "Shadow-run persistence setup boundary."
-    ),
-    ("postgresql/test_dark_launch_shadow_worker.py", "_target_authority_state"): (
-        "Read-only target authority snapshot boundary."
-    ),
-    ("postgresql/test_dark_launch_shadow_worker.py", "_target_response_payload"): (
-        "Read-only target response projection boundary."
-    ),
     ("test_admin_human_rendering.py", "_utc_now"): (
-        "Clock boundary for deterministic operator rendering."
+        "Administrative rendering clock boundary."
     ),
     ("test_admin_human_rendering.py", "_localize"): (
-        "Timezone-localization boundary for deterministic operator rendering."
+        "Administrative rendering timezone-localization boundary."
     ),
     ("test_shadow_capture.py", "_execute_locked"): (
-        "Underlying locked-command execution boundary while testing capture isolation."
+        "Shadow-spool locked execution boundary."
     ),
 }
 

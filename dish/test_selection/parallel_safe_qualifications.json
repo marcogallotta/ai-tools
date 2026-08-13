@@ -249,7 +249,7 @@
     },
     "tests/test_commands.py": {
       "active_evidence": {
-        "id": "48f7a14d123889a3fffd0eb1c539554713f4c9fb80d96ef2326321d05ec89b44",
+        "id": "70bc46c75bc62d1400008da724859c66351679bdbd5726e81820ac4d4000c515",
         "kind": "file"
       },
       "history": [
@@ -2522,6 +2522,767 @@
           ],
           "shared_sha256": "fdf52b14dcad64af98b7a60242e07b79983f1437af3f47d81dc603af1d4fe4f0",
           "started_at": "2026-08-13T06:48:25.499923+00:00",
+          "static_review": {
+            "findings": [],
+            "tool": "tests.flake_runner.scan_flake_risks"
+          },
+          "witness_sha256": {
+            "tests/test_batch_apply.py": "0e37cfd7c8f93bb212c294f5f913fc481135487e59749fccb09b9dde4c265110",
+            "tests/test_dish_planning_authority_labels.py": "4a51d825dc34bce96bccd4268b66cd84d451502c5331ad83b4f0fe2228232340",
+            "tests/test_dish_tool_critical_input_safety.py": "2f7f1098ec77fca6fbe9ab2f124159a94a0b88d5683c7cbc31a88d1a4c48e6ab",
+            "tests/test_dish_tool_step2_canonical.py": "9eb3e6cf675e87d5563333260a7c949181255ec705da4dd6b9bb8ba1c383305d",
+            "tests/test_material_change_authority_matrix.py": "5fa2a1be36c1cf2638b10977eb5c49d2565cb866950e12c0e5a5116ba0f5f074",
+            "tests/test_mutation_tooling.py": "3d169601de8cb93925560770834ddf750e43e170ff86d8e91fcdfc81d6fc843c",
+            "tests/test_pagination.py": "22f64d30651261d3fae44accc024d0c987d2f966b14a972bafbd8a8c1c8bfb5e"
+          }
+        },
+        {
+          "environment": {
+            "cpu_count": 12,
+            "execnet_version": "2.1.2",
+            "git_head": "cc6c967e32b0d287eefa6515e641072aa71107ac",
+            "git_status": "",
+            "platform": "Linux-7.0.0-28-generic-x86_64-with-glibc2.39",
+            "pytest_version": "9.1.1",
+            "python_executable": "/tmp/dish-clear-latent-broad/dish/.venv/bin/python",
+            "python_version": "3.12.3",
+            "requirements_test_sha256": "0c6d93e63d059c0a9fa17ce57a98640d329ac7da1307a24cb615742db2dee6b0",
+            "xdist_version": "3.8.0"
+          },
+          "environment_identity": "a7534930e5392eb503ea52b37bff451df61f15ab8d611b2854b0da632a250f16",
+          "evidence_id": "70bc46c75bc62d1400008da724859c66351679bdbd5726e81820ac4d4000c515",
+          "exercise_files": [
+            "tests/test_commands.py",
+            "tests/test_batch_apply.py",
+            "tests/test_dish_planning_authority_labels.py",
+            "tests/test_dish_tool_critical_input_safety.py",
+            "tests/test_dish_tool_step2_canonical.py",
+            "tests/test_material_change_authority_matrix.py",
+            "tests/test_mutation_tooling.py",
+            "tests/test_pagination.py"
+          ],
+          "file_sha256": {
+            "tests/test_commands.py": "7b54dc519fcdf6a2aeeee0e3809cf281f6a2bb8e6893618b15fd1c99ddcec6ac"
+          },
+          "files": [
+            "tests/test_commands.py"
+          ],
+          "kind": "file",
+          "note": "Requalify after shared fixture/helper drift exposed by Broad Python; task 1217444736413184",
+          "parallel": {
+            "2": [
+              {
+                "errors": 0,
+                "failed": 0,
+                "file_results": {
+                  "tests/test_batch_apply.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 15,
+                    "skipped": 0,
+                    "tests": 15
+                  },
+                  "tests/test_dish_planning_authority_labels.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 14,
+                    "skipped": 0,
+                    "tests": 14
+                  },
+                  "tests/test_dish_tool_critical_input_safety.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 51,
+                    "skipped": 0,
+                    "tests": 51
+                  },
+                  "tests/test_dish_tool_step2_canonical.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 27,
+                    "skipped": 0,
+                    "tests": 27
+                  },
+                  "tests/test_material_change_authority_matrix.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 29,
+                    "skipped": 0,
+                    "tests": 29
+                  },
+                  "tests/test_mutation_tooling.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_pagination.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 67,
+                    "skipped": 0,
+                    "tests": 67
+                  }
+                },
+                "passed": 221,
+                "repeat": 1,
+                "returncode": 0,
+                "skipped": 0,
+                "tests": 221,
+                "wall_seconds": 4.997,
+                "workers": 2
+              },
+              {
+                "errors": 0,
+                "failed": 0,
+                "file_results": {
+                  "tests/test_batch_apply.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 15,
+                    "skipped": 0,
+                    "tests": 15
+                  },
+                  "tests/test_dish_planning_authority_labels.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 14,
+                    "skipped": 0,
+                    "tests": 14
+                  },
+                  "tests/test_dish_tool_critical_input_safety.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 51,
+                    "skipped": 0,
+                    "tests": 51
+                  },
+                  "tests/test_dish_tool_step2_canonical.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 27,
+                    "skipped": 0,
+                    "tests": 27
+                  },
+                  "tests/test_material_change_authority_matrix.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 29,
+                    "skipped": 0,
+                    "tests": 29
+                  },
+                  "tests/test_mutation_tooling.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_pagination.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 67,
+                    "skipped": 0,
+                    "tests": 67
+                  }
+                },
+                "passed": 221,
+                "repeat": 2,
+                "returncode": 0,
+                "skipped": 0,
+                "tests": 221,
+                "wall_seconds": 5.993,
+                "workers": 2
+              },
+              {
+                "errors": 0,
+                "failed": 0,
+                "file_results": {
+                  "tests/test_batch_apply.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 15,
+                    "skipped": 0,
+                    "tests": 15
+                  },
+                  "tests/test_dish_planning_authority_labels.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 14,
+                    "skipped": 0,
+                    "tests": 14
+                  },
+                  "tests/test_dish_tool_critical_input_safety.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 51,
+                    "skipped": 0,
+                    "tests": 51
+                  },
+                  "tests/test_dish_tool_step2_canonical.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 27,
+                    "skipped": 0,
+                    "tests": 27
+                  },
+                  "tests/test_material_change_authority_matrix.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 29,
+                    "skipped": 0,
+                    "tests": 29
+                  },
+                  "tests/test_mutation_tooling.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_pagination.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 67,
+                    "skipped": 0,
+                    "tests": 67
+                  }
+                },
+                "passed": 221,
+                "repeat": 3,
+                "returncode": 0,
+                "skipped": 0,
+                "tests": 221,
+                "wall_seconds": 6.175,
+                "workers": 2
+              }
+            ],
+            "4": [
+              {
+                "errors": 0,
+                "failed": 0,
+                "file_results": {
+                  "tests/test_batch_apply.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 15,
+                    "skipped": 0,
+                    "tests": 15
+                  },
+                  "tests/test_dish_planning_authority_labels.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 14,
+                    "skipped": 0,
+                    "tests": 14
+                  },
+                  "tests/test_dish_tool_critical_input_safety.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 51,
+                    "skipped": 0,
+                    "tests": 51
+                  },
+                  "tests/test_dish_tool_step2_canonical.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 27,
+                    "skipped": 0,
+                    "tests": 27
+                  },
+                  "tests/test_material_change_authority_matrix.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 29,
+                    "skipped": 0,
+                    "tests": 29
+                  },
+                  "tests/test_mutation_tooling.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_pagination.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 67,
+                    "skipped": 0,
+                    "tests": 67
+                  }
+                },
+                "passed": 221,
+                "repeat": 1,
+                "returncode": 0,
+                "skipped": 0,
+                "tests": 221,
+                "wall_seconds": 6.194,
+                "workers": 4
+              },
+              {
+                "errors": 0,
+                "failed": 0,
+                "file_results": {
+                  "tests/test_batch_apply.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 15,
+                    "skipped": 0,
+                    "tests": 15
+                  },
+                  "tests/test_dish_planning_authority_labels.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 14,
+                    "skipped": 0,
+                    "tests": 14
+                  },
+                  "tests/test_dish_tool_critical_input_safety.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 51,
+                    "skipped": 0,
+                    "tests": 51
+                  },
+                  "tests/test_dish_tool_step2_canonical.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 27,
+                    "skipped": 0,
+                    "tests": 27
+                  },
+                  "tests/test_material_change_authority_matrix.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 29,
+                    "skipped": 0,
+                    "tests": 29
+                  },
+                  "tests/test_mutation_tooling.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_pagination.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 67,
+                    "skipped": 0,
+                    "tests": 67
+                  }
+                },
+                "passed": 221,
+                "repeat": 2,
+                "returncode": 0,
+                "skipped": 0,
+                "tests": 221,
+                "wall_seconds": 6.732,
+                "workers": 4
+              },
+              {
+                "errors": 0,
+                "failed": 0,
+                "file_results": {
+                  "tests/test_batch_apply.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 15,
+                    "skipped": 0,
+                    "tests": 15
+                  },
+                  "tests/test_dish_planning_authority_labels.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 14,
+                    "skipped": 0,
+                    "tests": 14
+                  },
+                  "tests/test_dish_tool_critical_input_safety.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 51,
+                    "skipped": 0,
+                    "tests": 51
+                  },
+                  "tests/test_dish_tool_step2_canonical.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 27,
+                    "skipped": 0,
+                    "tests": 27
+                  },
+                  "tests/test_material_change_authority_matrix.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 29,
+                    "skipped": 0,
+                    "tests": 29
+                  },
+                  "tests/test_mutation_tooling.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_pagination.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 67,
+                    "skipped": 0,
+                    "tests": 67
+                  }
+                },
+                "passed": 221,
+                "repeat": 3,
+                "returncode": 0,
+                "skipped": 0,
+                "tests": 221,
+                "wall_seconds": 5.803,
+                "workers": 4
+              }
+            ],
+            "8": [
+              {
+                "errors": 0,
+                "failed": 0,
+                "file_results": {
+                  "tests/test_batch_apply.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 15,
+                    "skipped": 0,
+                    "tests": 15
+                  },
+                  "tests/test_dish_planning_authority_labels.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 14,
+                    "skipped": 0,
+                    "tests": 14
+                  },
+                  "tests/test_dish_tool_critical_input_safety.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 51,
+                    "skipped": 0,
+                    "tests": 51
+                  },
+                  "tests/test_dish_tool_step2_canonical.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 27,
+                    "skipped": 0,
+                    "tests": 27
+                  },
+                  "tests/test_material_change_authority_matrix.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 29,
+                    "skipped": 0,
+                    "tests": 29
+                  },
+                  "tests/test_mutation_tooling.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_pagination.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 67,
+                    "skipped": 0,
+                    "tests": 67
+                  }
+                },
+                "passed": 221,
+                "repeat": 1,
+                "returncode": 0,
+                "skipped": 0,
+                "tests": 221,
+                "wall_seconds": 6.753,
+                "workers": 8
+              },
+              {
+                "errors": 0,
+                "failed": 0,
+                "file_results": {
+                  "tests/test_batch_apply.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 15,
+                    "skipped": 0,
+                    "tests": 15
+                  },
+                  "tests/test_dish_planning_authority_labels.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 14,
+                    "skipped": 0,
+                    "tests": 14
+                  },
+                  "tests/test_dish_tool_critical_input_safety.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 51,
+                    "skipped": 0,
+                    "tests": 51
+                  },
+                  "tests/test_dish_tool_step2_canonical.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 27,
+                    "skipped": 0,
+                    "tests": 27
+                  },
+                  "tests/test_material_change_authority_matrix.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 29,
+                    "skipped": 0,
+                    "tests": 29
+                  },
+                  "tests/test_mutation_tooling.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_pagination.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 67,
+                    "skipped": 0,
+                    "tests": 67
+                  }
+                },
+                "passed": 221,
+                "repeat": 2,
+                "returncode": 0,
+                "skipped": 0,
+                "tests": 221,
+                "wall_seconds": 7.292,
+                "workers": 8
+              },
+              {
+                "errors": 0,
+                "failed": 0,
+                "file_results": {
+                  "tests/test_batch_apply.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_commands.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 15,
+                    "skipped": 0,
+                    "tests": 15
+                  },
+                  "tests/test_dish_planning_authority_labels.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 14,
+                    "skipped": 0,
+                    "tests": 14
+                  },
+                  "tests/test_dish_tool_critical_input_safety.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 51,
+                    "skipped": 0,
+                    "tests": 51
+                  },
+                  "tests/test_dish_tool_step2_canonical.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 27,
+                    "skipped": 0,
+                    "tests": 27
+                  },
+                  "tests/test_material_change_authority_matrix.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 29,
+                    "skipped": 0,
+                    "tests": 29
+                  },
+                  "tests/test_mutation_tooling.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 9,
+                    "skipped": 0,
+                    "tests": 9
+                  },
+                  "tests/test_pagination.py": {
+                    "errors": 0,
+                    "failed": 0,
+                    "passed": 67,
+                    "skipped": 0,
+                    "tests": 67
+                  }
+                },
+                "passed": 221,
+                "repeat": 3,
+                "returncode": 0,
+                "skipped": 0,
+                "tests": 221,
+                "wall_seconds": 7.428,
+                "workers": 8
+              }
+            ]
+          },
+          "pytest_args": [
+            "-p",
+            "no:randomly",
+            "--dist",
+            "loadfile"
+          ],
+          "qualified_at": "2026-08-13T07:15:08.819142+00:00",
+          "reviewer": "Dish Agent: Implementation | Codex",
+          "serial": [
+            {
+              "errors": 0,
+              "failed": 0,
+              "file_results": {
+                "tests/test_batch_apply.py": {
+                  "errors": 0,
+                  "failed": 0,
+                  "passed": 9,
+                  "skipped": 0,
+                  "tests": 9
+                },
+                "tests/test_commands.py": {
+                  "errors": 0,
+                  "failed": 0,
+                  "passed": 15,
+                  "skipped": 0,
+                  "tests": 15
+                },
+                "tests/test_dish_planning_authority_labels.py": {
+                  "errors": 0,
+                  "failed": 0,
+                  "passed": 14,
+                  "skipped": 0,
+                  "tests": 14
+                },
+                "tests/test_dish_tool_critical_input_safety.py": {
+                  "errors": 0,
+                  "failed": 0,
+                  "passed": 51,
+                  "skipped": 0,
+                  "tests": 51
+                },
+                "tests/test_dish_tool_step2_canonical.py": {
+                  "errors": 0,
+                  "failed": 0,
+                  "passed": 27,
+                  "skipped": 0,
+                  "tests": 27
+                },
+                "tests/test_material_change_authority_matrix.py": {
+                  "errors": 0,
+                  "failed": 0,
+                  "passed": 29,
+                  "skipped": 0,
+                  "tests": 29
+                },
+                "tests/test_mutation_tooling.py": {
+                  "errors": 0,
+                  "failed": 0,
+                  "passed": 9,
+                  "skipped": 0,
+                  "tests": 9
+                },
+                "tests/test_pagination.py": {
+                  "errors": 0,
+                  "failed": 0,
+                  "passed": 67,
+                  "skipped": 0,
+                  "tests": 67
+                }
+              },
+              "passed": 221,
+              "repeat": 1,
+              "returncode": 0,
+              "skipped": 0,
+              "tests": 221,
+              "wall_seconds": 4.744,
+              "workers": null
+            }
+          ],
+          "shared_scope": [
+            "tests/conftest.py",
+            "tests/support"
+          ],
+          "shared_sha256": "fdf52b14dcad64af98b7a60242e07b79983f1437af3f47d81dc603af1d4fe4f0",
+          "started_at": "2026-08-13T07:13:36.184446+00:00",
           "static_review": {
             "findings": [],
             "tool": "tests.flake_runner.scan_flake_risks"
