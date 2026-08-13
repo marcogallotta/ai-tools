@@ -1,0 +1,95 @@
+{
+  "source": {
+    "repository": "marcogallotta/ai-tools",
+    "workflow": "CI",
+    "run_id": 31697885898,
+    "run_attempt": 1,
+    "observed_at": "2026-08-13T12:09:07Z"
+  },
+  "jobs": [
+    {
+      "id": 94439752860,
+      "run_id": 31697885898,
+      "run_attempt": 1,
+      "workflow_name": "CI",
+      "name": "Begin exact-head ordinary CI gate",
+      "started_at": "2026-08-13T11:58:34Z",
+      "completed_at": "2026-08-13T11:58:38Z",
+      "conclusion": "success",
+      "labels": ["ubuntu-24.04"],
+      "runner_id": 1000001171
+    },
+    {
+      "id": 94439781029,
+      "run_id": 31697885898,
+      "run_attempt": 1,
+      "workflow_name": "CI",
+      "name": "Dependency bundle metadata",
+      "started_at": "2026-08-13T11:58:40Z",
+      "completed_at": "2026-08-13T11:58:45Z",
+      "conclusion": "success",
+      "labels": ["ubuntu-24.04"],
+      "runner_id": 1000001172
+    },
+    {
+      "id": 94439806421,
+      "run_id": 31697885898,
+      "run_attempt": 1,
+      "workflow_name": "CI",
+      "name": "Browser acceptance",
+      "started_at": "2026-08-13T11:58:49Z",
+      "completed_at": "2026-08-13T12:01:33Z",
+      "conclusion": "success",
+      "labels": ["ubuntu-24.04"],
+      "runner_id": 1000001174
+    },
+    {
+      "id": 94439806453,
+      "run_id": 31697885898,
+      "run_attempt": 1,
+      "workflow_name": "CI",
+      "name": "Native PostgreSQL",
+      "started_at": "2026-08-13T11:58:47Z",
+      "completed_at": "2026-08-13T12:02:53Z",
+      "conclusion": "success",
+      "labels": ["ubuntu-24.04"],
+      "runner_id": 1000001173
+    },
+    {
+      "id": 94439806521,
+      "run_id": 31697885898,
+      "run_attempt": 1,
+      "workflow_name": "CI",
+      "name": "Broad Python tests",
+      "started_at": "2026-08-13T11:58:48Z",
+      "completed_at": "2026-08-13T12:08:53Z",
+      "conclusion": "success",
+      "labels": ["ubuntu-24.04"],
+      "runner_id": 1000001175
+    },
+    {
+      "id": 94439806523,
+      "run_id": 31697885898,
+      "run_attempt": 1,
+      "workflow_name": "CI",
+      "name": "Frontend and tooling",
+      "started_at": "2026-08-13T11:58:47Z",
+      "completed_at": "2026-08-13T11:59:26Z",
+      "conclusion": "success",
+      "labels": ["ubuntu-24.04"],
+      "runner_id": 1000001176
+    },
+    {
+      "id": 94442285184,
+      "run_id": 31697885898,
+      "run_attempt": 1,
+      "workflow_name": "CI",
+      "name": "Exact-head ordinary CI gate",
+      "started_at": "2026-08-13T12:08:56Z",
+      "completed_at": "2026-08-13T12:09:07Z",
+      "conclusion": "success",
+      "labels": ["ubuntu-24.04"],
+      "runner_id": 1000001185
+    }
+  ]
+}
