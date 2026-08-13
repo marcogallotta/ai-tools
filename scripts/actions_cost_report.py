@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Report repository GitHub Actions runtime, rounded billed minutes, and approximate cost."""
+"""Report GitHub Actions runtime, rounded billed minutes, and allowance-aware cost."""
 from __future__ import annotations
 
 import argparse
@@ -8,7 +8,7 @@ import math
 import os
 import sys
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 from urllib.error import HTTPError, URLError
@@ -63,6 +63,9 @@ def load_billing_config(path: Path) -> dict[str, object]:
         raise CostReportError(f"cannot read billing config {path}: {exc}") from exc
     if not isinstance(config, dict) or config.get("schema") != CONFIG_SCHEMA:
         raise CostReportError(f"billing config schema must be {CONFIG_SCHEMA!r}")
+    included = config.get("included_minutes_per_month")
+    if isinstance(included, bool) or not isinstance(included, int) or included < 0:
+        raise CostReportError("included_minutes_per_month must be a non-negative integer")
     rates = config.get("rates_usd_per_billed_minute")
     if not isinstance(rates, dict) or not rates:
         raise CostReportError("billing config must define rates_usd_per_billed_minute")
@@ -70,6 +73,28 @@ def load_billing_config(path: Path) -> dict[str, object]:
         if not isinstance(label, str) or not isinstance(rate, (int, float)) or rate < 0:
             raise CostReportError("billing rates must map runner labels to non-negative numbers")
     return config
+
+
+def _monthly_window(since: str | None, until: str | None) -> tuple[datetime, datetime, str]:
+    if since is None or until is None:
+        raise CostReportError(
+            "allowance-aware cost requires a complete UTC calendar month period"
+        )
+    start = _parse_timestamp(since, field="since")
+    inclusive_end = _parse_timestamp(until, field="until")
+    canonical_start = datetime(start.year, start.month, 1, tzinfo=timezone.utc)
+    if start != canonical_start:
+        raise CostReportError("since must be the first instant of a UTC calendar month")
+    if start.month == 12:
+        next_month = datetime(start.year + 1, 1, 1, tzinfo=timezone.utc)
+    else:
+        next_month = datetime(start.year, start.month + 1, 1, tzinfo=timezone.utc)
+    canonical_end = next_month - timedelta(seconds=1)
+    if inclusive_end != canonical_end:
+        raise CostReportError(
+            "until must be the final second of the same UTC calendar month as since"
+        )
+    return start, next_month, f"{start.year:04d}-{start.month:02d}"
 
 
 def _rate_for_job(job: Mapping[str, object], config: Mapping[str, object]) -> tuple[str | None, float]:
@@ -95,25 +120,35 @@ def build_report(
     since: str | None = None,
     until: str | None = None,
 ) -> dict[str, object]:
+    period_start, period_end, billing_month = _monthly_window(since, until)
+    included_minutes = config.get("included_minutes_per_month")
+    if (
+        isinstance(included_minutes, bool)
+        or not isinstance(included_minutes, int)
+        or included_minutes < 0
+    ):
+        raise CostReportError("included_minutes_per_month must be a non-negative integer")
+
     by_workflow: dict[str, dict[str, object]] = {}
     total_runtime = 0
     total_billed = 0
-    total_cost = 0.0
+    total_gross_cost = 0.0
     total_jobs = 0
     cancelled_billed = 0
+    billable_records: list[tuple[datetime, str, int, float]] = []
 
     workflow_acc: dict[str, dict[str, object]] = defaultdict(
         lambda: {
             "jobs": 0,
             "runtime_seconds": 0,
             "billed_minutes": 0,
-            "approximate_cost_usd": 0.0,
+            "gross_equivalent_cost_usd": 0.0,
             "by_job": defaultdict(
                 lambda: {
                     "jobs": 0,
                     "runtime_seconds": 0,
                     "billed_minutes": 0,
-                    "approximate_cost_usd": 0.0,
+                    "gross_equivalent_cost_usd": 0.0,
                 }
             ),
         }
@@ -130,12 +165,20 @@ def build_report(
         seconds = runtime_seconds(job)
         minutes = billed_minutes(job)
         _, rate = _rate_for_job(job, config)
-        cost = minutes * rate
+        gross_cost = minutes * rate
+
+        if minutes:
+            started = _parse_timestamp(job.get("started_at"), field="started_at")
+            if not period_start <= started < period_end:
+                raise CostReportError(
+                    f"billable job {job_id} started outside billing month {billing_month}"
+                )
+            billable_records.append((started, str(job_id), minutes, rate))
 
         total_jobs += 1
         total_runtime += seconds
         total_billed += minutes
-        total_cost += cost
+        total_gross_cost += gross_cost
         if job.get("conclusion") == "cancelled":
             cancelled_billed += minutes
 
@@ -143,14 +186,28 @@ def build_report(
         workflow_entry["jobs"] = int(workflow_entry["jobs"]) + 1
         workflow_entry["runtime_seconds"] = int(workflow_entry["runtime_seconds"]) + seconds
         workflow_entry["billed_minutes"] = int(workflow_entry["billed_minutes"]) + minutes
-        workflow_entry["approximate_cost_usd"] = float(workflow_entry["approximate_cost_usd"]) + cost
+        workflow_entry["gross_equivalent_cost_usd"] = (
+            float(workflow_entry["gross_equivalent_cost_usd"]) + gross_cost
+        )
         jobs_entry = workflow_entry["by_job"]
         assert isinstance(jobs_entry, defaultdict)
         job_entry = jobs_entry[name]
         job_entry["jobs"] += 1
         job_entry["runtime_seconds"] += seconds
         job_entry["billed_minutes"] += minutes
-        job_entry["approximate_cost_usd"] += cost
+        job_entry["gross_equivalent_cost_usd"] += gross_cost
+
+    remaining_included = included_minutes
+    overage_billed = 0
+    overage_cost = 0.0
+    for _, _, minutes, rate in sorted(
+        billable_records, key=lambda item: (item[0], item[1])
+    ):
+        included_for_job = min(remaining_included, minutes)
+        remaining_included -= included_for_job
+        overage_for_job = minutes - included_for_job
+        overage_billed += overage_for_job
+        overage_cost += overage_for_job * rate
 
     for workflow in sorted(workflow_acc):
         entry = workflow_acc[workflow]
@@ -159,19 +216,29 @@ def build_report(
         entry["by_job"] = {
             job_name: {
                 **job_data,
-                "approximate_cost_usd": round(job_data["approximate_cost_usd"], 6),
+                "gross_equivalent_cost_usd": round(
+                    job_data["gross_equivalent_cost_usd"], 6
+                ),
             }
             for job_name, job_data in sorted(jobs_entry.items())
         }
-        entry["approximate_cost_usd"] = round(float(entry["approximate_cost_usd"]), 6)
+        entry["gross_equivalent_cost_usd"] = round(
+            float(entry["gross_equivalent_cost_usd"]), 6
+        )
         by_workflow[workflow] = entry
 
+    included_consumed = min(total_billed, included_minutes)
     return {
         "schema": REPORT_SCHEMA,
-        "period": {"since": since, "until": until},
+        "period": {
+            "billing_month_utc": billing_month,
+            "since": since,
+            "until": until,
+        },
         "billing_config": {
             "job_rounding": config.get("job_rounding"),
-            "included_minutes_per_month": config.get("included_minutes_per_month"),
+            "included_minutes_per_month": included_minutes,
+            "allowance_allocation": "chronological_job_start_utc",
             "rates_usd_per_billed_minute": config.get("rates_usd_per_billed_minute"),
         },
         "totals": {
@@ -179,7 +246,11 @@ def build_report(
             "runtime_seconds": total_runtime,
             "billed_minutes": total_billed,
             "cancelled_billed_minutes": cancelled_billed,
-            "approximate_cost_usd": round(total_cost, 6),
+            "included_minutes_consumed": included_consumed,
+            "remaining_included_minutes": max(included_minutes - total_billed, 0),
+            "overage_billed_minutes": overage_billed,
+            "gross_equivalent_cost_usd": round(total_gross_cost, 6),
+            "approximate_overage_cost_usd": round(overage_cost, 6),
         },
         "by_workflow": by_workflow,
     }
@@ -257,8 +328,16 @@ class GitHubClient:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="actions_cost_report")
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY"))
-    parser.add_argument("--since", required=True, help="inclusive ISO date/time accepted by GitHub created filter")
-    parser.add_argument("--until", required=True, help="inclusive ISO date/time accepted by GitHub created filter")
+    parser.add_argument(
+        "--since",
+        required=True,
+        help="first instant of a UTC calendar month, e.g. 2026-08-01T00:00:00Z",
+    )
+    parser.add_argument(
+        "--until",
+        required=True,
+        help="final second of the same UTC calendar month, e.g. 2026-08-31T23:59:59Z",
+    )
     parser.add_argument(
         "--config",
         type=Path,
