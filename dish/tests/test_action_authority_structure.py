@@ -56,6 +56,34 @@ def test_persistence_helper_is_named_as_candidate_not_authority():
     assert "def legal_operation_actions(" not in source
 
 
+def test_inspect_operation_does_not_expose_phase_candidates_as_legal_actions():
+    source = (ROOT / "dish_tool" / "step5.py").read_text(encoding="utf-8")
+    tree = ast.parse(source, filename="dish_tool/step5.py")
+    inspect_function = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "inspect_operation"
+    )
+
+    calls = {
+        node.func.id
+        for node in ast.walk(inspect_function)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert "phase_candidate_actions" not in calls
+
+    legal_fields = {
+        key.value
+        for node in ast.walk(inspect_function)
+        if isinstance(node, ast.Dict)
+        for key in node.keys
+        if isinstance(key, ast.Constant)
+        and isinstance(key.value, str)
+        and key.value.startswith("legal_")
+    }
+    assert legal_fields == set()
+
+
 def test_production_uses_authoritative_transaction_and_workflow_primitives():
     root = Path(__file__).resolve().parents[1]
     production = list((root / "dish_tool").glob("*.py")) + list((root / "dish_service").glob("*.py"))
