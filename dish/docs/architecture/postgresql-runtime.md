@@ -30,6 +30,7 @@ Authority transfer is explicit and one-way for the activated generation. Importe
 - Forward candidate-authority manifests use contract v3: they bind the exact approval-time reconciliation run and exclude all post-burn worker-readiness state. Historical v2 fingerprints keep their original stored semantics.
 - Supplemental terminal-history application and candidate validation serialize on the active generation. Primary-only v3 manifest fingerprints retain their original bytes; when supplemental terminal history exists, the v3 builder extension folds a deterministic digest of supplemental ImportRun/source/primary linkage and exact imported terminal operations, verification cycles, and leases into `import_completion_sha256`.
 - Post-burn projection-worker readiness is one immutable `projection_worker_readiness` report with validator-owned `claim`, `exact_write`, and `restart` probes, exact worker/artifact identity, exact fresh reconciliation identity, and a report SHA-256 revalidated at first admission.
+- PostgreSQL-backed service promotion is schema-gated: for each explicit TEST or PROD target, the exact release/source commit and repository `ALEMBIC_HEAD` must be bound to durable migration evidence, and that target must be re-read at the exact expected head before its corresponding service is restarted/promoted. TEST evidence never proves PROD. Migration failure blocks promotion; startup validation remains fail closed and never performs DDL.
 
 ## Process and transaction boundaries
 
@@ -62,5 +63,6 @@ Legacy and PostgreSQL implementations overlap during migration. The migration ch
 ## Related documents
 
 - [Dark launch](dark-launch.md)
+- [Routine release migration gate](../postgresql-routine-migration.md)
 - [Request replay and idempotency](request-replay-and-idempotency.md)
 - [External effects and Asana](external-effects-and-asana.md)

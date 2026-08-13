@@ -22,6 +22,7 @@ from .frontend_settings import FrontendRuntimeSettings
 from .process_lock import DatabaseProcessLock
 from .sd_notify import notify as sd_notify
 from dish_tool.errors import DishRuleError
+from dish_tool.startup_exit import startup_exit_status
 
 LOG = logging.getLogger("dish.service")
 
@@ -297,6 +298,7 @@ def _postgresql_runtime_config(args) -> ServiceConfig:
 
 def _run_postgresql_test_runtime(args) -> int:
     from dish_pg.postgres_service import PostgresRuntimeService
+    from dish_pg.release import ALEMBIC_HEAD
 
     config = _postgresql_runtime_config(args)
     expected_database = str(_required_postgresql_runtime_argument(args, "expected_database"))
@@ -318,14 +320,26 @@ def _run_postgresql_test_runtime(args) -> int:
             "PostgreSQL cursor secret must contain at least 24 bytes",
             rule="postgresql_runtime_cursor_secret_weak",
         )
+    expected_schema_head = str(
+        _required_postgresql_runtime_argument(args, "expected_schema_head")
+    )
+    if expected_schema_head != ALEMBIC_HEAD:
+        raise DishRuleError(
+            "BACKEND_REJECTED",
+            "configured PostgreSQL schema head does not match this release's ALEMBIC_HEAD",
+            rule="postgresql_runtime_schema_configuration_mismatch",
+            retryable=False,
+            details={
+                "configured_schema_head": expected_schema_head,
+                "release_schema_head": ALEMBIC_HEAD,
+            },
+        )
     service = PostgresRuntimeService(
         config,
         database_url=str(_required_postgresql_runtime_argument(args, "database_url")),
         cursor_secret=cursor_secret,
         expected_database=expected_database,
-        expected_schema_head=str(
-            _required_postgresql_runtime_argument(args, "expected_schema_head")
-        ),
+        expected_schema_head=expected_schema_head,
         expected_release=str(_required_postgresql_runtime_argument(args, "expected_release")),
         expected_generation_id=_required_postgresql_runtime_argument(
             args, "expected_generation_id"
@@ -373,7 +387,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             exc.rule or "dish_rule_error",
             exc,
         )
-        return 1
+        return startup_exit_status(exc)
 
 
 if __name__ == "__main__":

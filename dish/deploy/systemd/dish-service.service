@@ -10,6 +10,7 @@ WorkingDirectory=/home/marco/ai-tools/dish
 EnvironmentFile=/home/marco/.config/dish-service/service.env
 ExecStart=/home/marco/ai-tools/dish/dish-service
 Restart=on-failure
+RestartPreventExitStatus=78
 RestartSec=5
 TimeoutStopSec=10min
 NoNewPrivileges=true

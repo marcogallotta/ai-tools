@@ -1,0 +1,4 @@
+#!/usr/bin/env python3
+from dish_pg.migrate import main
+
+raise SystemExit(main())

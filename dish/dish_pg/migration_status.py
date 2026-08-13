@@ -1,8 +1,8 @@
-"""Fast pre-flight check: does a PostgreSQL target's applied Alembic head match
-the code's current ALEMBIC_HEAD? Intended for a service's ExecStartPre gate, so
-a service refuses to start against a stale schema instead of starting cleanly
-and failing later, silently, on whichever code path first touches a missing
-column or table.
+"""Fast fail-closed PostgreSQL startup check against the exact ALEMBIC_HEAD.
+
+The shadow worker runs this inside its main process before it touches runtime
+state. Deterministic schema drift therefore remains a startup refusal while the
+service manager can distinguish it from transient database unavailability.
 
 This checks only the Alembic version marker, not row content — unlike
 `dish_pg.operations_evidence.fingerprint_database`, which hashes every row of
@@ -19,6 +19,8 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine
+
+from dish_tool.startup_exit import NON_RETRYABLE_STARTUP_EXIT_STATUS
 
 from .release import ALEMBIC_HEAD
 
@@ -52,8 +54,8 @@ def check_migration_head(database_url: str) -> str:
     if current_heads != (ALEMBIC_HEAD,):
         raise MigrationStatusError(
             f"database is at {current_heads!r}, code expects {ALEMBIC_HEAD!r}; "
-            "run `alembic upgrade head` against this database before starting "
-            "any service that depends on the current schema"
+            "run the reviewed `dish-pg-migrate --check/--apply` release gate "
+            "for this exact environment and source before starting any dependent service"
         )
     return ALEMBIC_HEAD
 
@@ -66,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
         head = check_migration_head(args.database_url)
     except MigrationStatusError as exc:
         sys.stderr.write(f"dish-pg-migration-status: {exc}\n")
-        return 1
+        return NON_RETRYABLE_STARTUP_EXIT_STATUS
     sys.stdout.write(f"dish-pg-migration-status: ok, database is at {head}\n")
     return 0
 

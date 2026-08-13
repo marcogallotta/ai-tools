@@ -1,8 +1,8 @@
-"""dish_pg.migration_status: the fail-closed ExecStartPre schema-head gate.
+"""dish_pg.migration_status: the fail-closed main-process schema-head gate.
 
-Exercises the check against a real PostgreSQL target, both matching and
-stale, so the gate that's wired into dish-shadow-worker.service's
-ExecStartPre is proven to actually block on drift rather than silently pass.
+Exercises the check against a real PostgreSQL target, both matching and stale.
+The shadow worker invokes this before runtime state so deterministic drift can
+exit non-retryably without moving schema mutation into service startup.
 
 Staleness is simulated by writing an earlier value directly into
 alembic_version rather than running a real downgrade: 0035's own downgrade()
@@ -43,7 +43,7 @@ def test_check_migration_head_passes_when_database_is_at_alembic_head(core_db) -
 def test_check_migration_head_raises_when_database_is_stale(core_db) -> None:
     dsn = postgresql_dsn()
     _rewrite_version_marker(dsn, "0034_cc5_schema_repair")
-    with pytest.raises(MigrationStatusError, match="run `alembic upgrade head`"):
+    with pytest.raises(MigrationStatusError, match="dish-pg-migrate --check/--apply"):
         check_migration_head(dsn)
 
 
@@ -51,10 +51,10 @@ def test_main_exits_nonzero_and_prints_actionable_message_on_drift(core_db, caps
     dsn = postgresql_dsn()
     _rewrite_version_marker(dsn, "0034_cc5_schema_repair")
     exit_code = main(["--database-url", dsn])
-    assert exit_code == 1
+    assert exit_code == 78
     captured = capsys.readouterr()
     assert migration_status.ALEMBIC_HEAD in captured.err
-    assert "alembic upgrade head" in captured.err
+    assert "dish-pg-migrate --check/--apply" in captured.err
 
 
 def test_main_exits_zero_when_up_to_date(core_db) -> None:

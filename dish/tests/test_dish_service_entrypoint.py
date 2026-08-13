@@ -148,3 +148,31 @@ def test_listener_failure_stops_and_closes_both_servers():
     assert service_main._run_servers(private, action) == 1
     assert private.closed is True
     assert action.closed is True
+
+@pytest.mark.smoke
+def test_postgresql_startup_failure_exit_classification() -> None:
+    from dish_tool.errors import DishRuleError
+    from dish_tool.startup_exit import startup_exit_status
+
+    stale = DishRuleError(
+        "BACKEND_REJECTED",
+        "stale schema",
+        rule="postgresql_runtime_schema_mismatch",
+        retryable=False,
+    )
+    unavailable = DishRuleError(
+        "BACKEND_REJECTED",
+        "database unavailable",
+        rule="postgresql_authority_unavailable",
+        retryable=True,
+    )
+    legacy = DishRuleError(
+        "WRONG_STATE",
+        "lock held",
+        rule="service_process_lock_held",
+        retryable=False,
+    )
+
+    assert startup_exit_status(stale) == 78
+    assert startup_exit_status(unavailable) == 1
+    assert startup_exit_status(legacy) == 1
