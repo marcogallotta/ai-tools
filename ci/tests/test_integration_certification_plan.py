@@ -175,6 +175,35 @@ def test_known_certification_authority_changes_force_full(path: str):
     assert plan["selected_groups"] == ALL_GROUPS
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "scripts/integration_certification_runner.py",
+        "scripts/review_gate_v2.py",
+        "ci/schemas/integration-certification-evidence-v2.schema.json",
+        "ci/selector/control-plane-v2.json",
+    ],
+)
+def test_new_certification_authority_names_force_full(path: str):
+    plan = build([path])
+    assert plan["force_full"] is True
+    assert plan["selected_groups"] == ALL_GROUPS
+    assert any("authority-namespace-change" in reason for reason in plan["force_full_reasons"])
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "scripts/actions_cost_report.py",
+        "ci/metrics/minute-model.md",
+    ],
+)
+def test_ordinary_repo_control_files_remain_narrow_when_deterministic(path: str):
+    plan = build([path])
+    assert plan["force_full"] is False
+    assert plan["selected_groups"] == ["python-control-plane"]
+
+
 def test_unclassified_dish_path_fails_closed_to_full_certification():
     plan = build(["dish/new_unmapped_surface.py"])
     assert plan["classifications"] == [
