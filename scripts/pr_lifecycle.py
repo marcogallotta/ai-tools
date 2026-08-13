@@ -13,8 +13,9 @@ from pr_lifecycle_support import *
 from pr_lifecycle_helpers import *
 from pr_lifecycle_engine_inspect import LifecycleInspectMixin
 from pr_lifecycle_engine_actions import LifecycleActionsMixin
+from pr_lifecycle_integration_certification import LocalIntegrationCertificationMixin
 
-class LifecycleEngine(LifecycleInspectMixin, LifecycleActionsMixin):
+class LifecycleEngine(LocalIntegrationCertificationMixin, LifecycleInspectMixin, LifecycleActionsMixin):
     pass
 
 def _parse_specialist_triggers(value: str | None) -> dict[str, str]:
@@ -61,6 +62,10 @@ def _build_engine(
     fixer = ImplementationFixDispatcher(
         args.implementation_fixer or os.getenv("DISH_IMPLEMENTATION_FIX_COMMAND")
     )
+    certifier = ImplementationFixDispatcher(
+        args.local_integration_certifier or os.getenv("DISH_LOCAL_INTEGRATION_CERTIFICATION_COMMAND")
+    )
+    engine.local_integration_certifier = certifier
     return engine, workspace, local, fixer
 
 
@@ -126,6 +131,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--implementation-fixer",
         help="existing implementation/fix consumer command; receives exact-head BLOCK dispatch JSON on stdin",
+    )
+    parser.add_argument(
+        "--local-integration-certifier",
+        help="local Integration consumer; receives complete exact-head certification handoff JSON on stdin",
     )
     parser.add_argument("--integration-authority", action="store_true", help="explicitly compose bounded Integration after exact-head MERGE")
     parser.add_argument("--no-merge-capability", action="store_true", help="declare that this host cannot perform GitHub merge")
