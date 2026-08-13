@@ -69,6 +69,25 @@ def test_adopt_local_branch_mismatch_rejected_without_touching_it(h: Harness) ->
     assert not h.state_path("2005").exists()
 
 
+def test_adopt_post_worktree_verify_failure_leaves_no_worktree_branch_or_state(h: Harness) -> None:
+    # A same-named tag outranks refs/heads/<name> in Git's ref-resolution order,
+    # so "git worktree add <path> <branch>" resolves the tag instead of the
+    # branch and checks out under a disambiguated "heads/<branch>" name -- a
+    # genuine way for the worktree to be created successfully and then fail
+    # verification (BRANCH_MISMATCH), without any monkeypatching.
+    h.agent_file("claude-1")
+    sha = h.remote_branch_commit("agent/adopted-tag-shadow", "text", start=h.current_remote_main())
+    git(h.primary, "tag", "agent/adopted-tag-shadow", h.current_remote_main())
+
+    result = h.adopt(task="2007", branch="agent/adopted-tag-shadow", expected_head=sha, check=False)
+    assert_error(result, "BRANCH_MISMATCH")
+    assert git(h.primary, "show-ref", "--verify", "--quiet", "refs/heads/agent/adopted-tag-shadow", check=False).returncode != 0
+    porcelain = git_out(h.primary, "worktree", "list", "--porcelain")
+    assert str(h.wt("2007")) not in porcelain
+    assert not h.wt("2007").exists()
+    assert not h.state_path("2007").exists()
+
+
 def test_adopt_failed_base_precondition_leaves_no_branch_worktree_or_state(h: Harness) -> None:
     h.agent_file("claude-1")
     sha = h.remote_branch_commit("agent/adopted-bad-base", "text", start=h.current_remote_main())

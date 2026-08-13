@@ -176,6 +176,7 @@ def command_adopt(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]
                 fail("ADOPT_BRANCH_CREATE_FAILED", f"could not create local branch {branch} at {expected_head}: {made.stderr.strip()}")
             created_branch = True
 
+        worktree_created = False
         try:
             candidate.parent.mkdir(parents=True, exist_ok=True)
             reason = f"Dish task {task_gid}; agent {agent_id} (adopted)"
@@ -192,6 +193,7 @@ def command_adopt(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]
             )
             if add.returncode != 0:
                 fail("WORKTREE_CREATE_FAILED", f"git worktree add failed without recovery mutation: {add.stderr.strip()}")
+            worktree_created = True
 
             git_dir = runner.path(candidate, "--git-dir")
             provisional = {
@@ -230,8 +232,11 @@ def command_adopt(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]
             set_agent_reference(agent_id, provisional)
             return payload_from_state("adopt", provisional, identity, relation="equal", remote_head=expected_head, target_head=remote_base)
         except AgentWorktreeError:
-            # Only roll back the branch this invocation created; a pre-existing
+            # Only roll back state this invocation created; a pre-existing
             # matching local branch is never removed.
+            if worktree_created:
+                runner.run(repo.source_top, "worktree", "unlock", str(candidate), check=False)
+                runner.run(repo.source_top, "worktree", "remove", "--force", str(candidate), check=False)
             if created_branch:
                 runner.run(repo.source_top, "branch", "-D", branch, check=False)
             raise
