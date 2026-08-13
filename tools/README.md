@@ -116,6 +116,11 @@ Sourcing sections remain available. Governed mutations must go through `dish` or
   explicit main refusal/main immutability, candidate replacement of `tools/git-commit`, active
   post-commit hooks, malicious local `core.fsmonitor` configuration before the first status call,
   leading-dash paths, and type-change-only patches.
+- `test_agent_worktree_*.py` (with `agent_worktree_support.py`) cover the shared local-agent lifecycle with throwaway bare origin +
+  primary + linked-worktree fixtures: exact-base creation/fetch without moving local refs,
+  collisions/concurrent start/interrupted creation recovery, clean/dirty resume, identity mismatch,
+  remote ahead/divergence, explicit owned-branch publication/handoff, takeover, conservative cleanup,
+  hostile Git environment/configuration, and exact worktree entry.
 
 The suite runs in `tools/.venv` (it has `pytest` installed alongside the SDK, per
 `requirements.txt`), so no separate test venv is needed:
@@ -123,3 +128,101 @@ The suite runs in `tools/.venv` (it has `pytest` installed alongside the SDK, pe
 ```sh
 .venv/bin/python -m pytest tests
 ```
+
+## `tools/agent-worktree`
+
+`agent-worktree` is the stdlib-only, host-independent lifecycle boundary for local Claude Code/Codex
+implementation work in this repository. It combines task-owned linked-worktree/branch management with
+origin freshness; there is intentionally no separate `git-sync`/`sync-main` workflow.
+
+The tool must be invoked from the real `marcogallotta/ai-tools` primary or linked checkout. It binds
+the resolved Git executable, verifies exact top-level/git-dir/common-dir/worktree-registry identity,
+normalizes the `origin` repository identity, and refuses repository/config redirection such as
+`GIT_DIR`, `GIT_WORK_TREE`, alternate index/ref namespaces, `GIT_CONFIG_*`, or `url.*.insteadOf`.
+Normal SSH/credential configuration remains available for private-GitHub authentication. Hooks and
+fsmonitor are disabled for the tool's own Git subprocesses.
+
+Task state is written atomically under:
+
+```text
+~/.local/state/dish/worktrees/<task_gid>.json
+```
+
+The linked worktree defaults to
+`~/.local/share/dish/worktrees/ai-tools/<task_gid>/`, configurable with `DISH_WORKTREE_ROOT`, and is
+created locked. If `--agent-id` is supplied, the already-existing
+`~/.local/state/dish/agents/<agent_id>.json` record is preserved and gains an `active_worktree`
+reference to the task record.
+
+### Start and enter
+
+The orchestrator supplies the exact intended base. First creation requires that exact pair to still
+match authoritative origin; a moved target is a stale handoff, not permission to choose a newer
+base automatically.
+
+```sh
+tools/agent-worktree start \
+  --task <task_gid> \
+  --branch agent/<short-task-slug> \
+  --base-ref refs/heads/main \
+  --base <exact-40-char-sha> \
+  --agent-id <local-agent-id>
+
+tools/agent-worktree exec --task <task_gid> -- <agent-command>
+```
+
+`start` serializes first creation with a task-scoped local lock. It refuses branch/path/task-state
+collisions, an owned branch checked out elsewhere, an existing remote owned branch without matching
+state, detached ownership, and stale/missing/ambiguous origin evidence. If the exact base object is
+missing locally, it uses a no-destination `fetch --no-write-fetch-head` shape and proves the object
+exists without moving local `main` or another task branch.
+
+### Resume and status
+
+```sh
+tools/agent-worktree resume --task <task_gid> --agent-id <local-agent-id>
+tools/agent-worktree resume --task <task_gid> --agent-id <replacement-id> --takeover
+tools/agent-worktree status --task <task_gid>
+```
+
+Resume re-verifies the task record against the actual worktree/common-dir/git-dir/registry branch and
+HEAD, then observes origin at that explicit boundary. Dirty files/index are preserved. The tool never
+automatically resets, checks out, merges, or rebases the owned branch. A target `main` movement after
+creation is reported only. Local-ahead owned work is normal; remote-ahead or divergent owned branches
+fail closed for explicit recovery. `--takeover` is only a provenance update after an explicit
+orchestration handoff; it does not infer that the previous agent died.
+
+`status` is local/read-only and does not contact origin.
+
+### Publish and handoff
+
+```sh
+tools/agent-worktree publish --task <task_gid>
+tools/agent-worktree verify-handoff --task <task_gid>
+```
+
+Publish pushes only
+`refs/heads/<owned-branch>:refs/heads/<owned-branch>` to the verified origin URL, without force or
+implicit push-target inference, then requires the remote owned head to equal local `HEAD`.
+`verify-handoff` refuses dirty or unpublished/mismatched state and reports the stored authoring base,
+local implementation head, remote owned head, and current target head separately. A moved target is
+not an automatic rebase instruction.
+
+### Cleanup
+
+After GitHub/Asana authority has already established disposition:
+
+```sh
+tools/agent-worktree cleanup --task <task_gid> --disposition merged
+tools/agent-worktree cleanup --task <task_gid> --disposition closed
+tools/agent-worktree cleanup --task <task_gid> --disposition abandoned
+tools/agent-worktree cleanup --task <task_gid> --disposition superseded
+```
+
+Cleanup refuses dirty state, remote-ahead/divergent ambiguity, and any local implementation head that
+would become unrecoverable. It unlocks only immediately before a non-force `git worktree remove`,
+retains the local branch as a recovery pointer, and retains the task record with its historical
+disposition. The tool never treats the supplied disposition flag as proof of PR/task state; the
+caller is responsible for establishing that state from current GitHub/Asana authority first.
+
+All non-`exec` commands accept `--json` for machine-readable output.

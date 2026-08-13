@@ -1,0 +1,173 @@
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
+
+TOOLS_DIR = Path(__file__).resolve().parents[1]
+SCRIPT = TOOLS_DIR / "agent-worktree"
+GIT = shutil.which("git") or "git"
+CANONICAL_ORIGIN = "git@github.com:marcogallotta/ai-tools.git"
+
+
+def run(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
+    completed = subprocess.run(cmd, cwd=cwd, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+    if check and completed.returncode != 0:
+        raise AssertionError(f"command failed {completed.returncode}: {cmd}\nstdout={completed.stdout}\nstderr={completed.stderr}")
+    return completed
+
+
+def git(cwd: Path, *args: str, env: dict[str, str] | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
+    return run([GIT, "-C", str(cwd), *args], env=env, check=check)
+
+
+def git_out(cwd: Path, *args: str, env: dict[str, str] | None = None) -> str:
+    return git(cwd, *args, env=env).stdout.strip()
+
+
+class Harness:
+    def __init__(self, root: Path):
+        self.root = root
+        self.origin = root / "origin.git"
+        self.seed = root / "seed"
+        self.primary = root / "primary"
+        self.home = root / "home"
+        self.worktree_root = root / "worktrees"
+        self.ssh = root / "fake-ssh"
+        run([GIT, "init", "--bare", str(self.origin)])
+        run([GIT, "init", "-b", "main", str(self.seed)])
+        self._identity(self.seed)
+        (self.seed / "tracked.txt").write_text("base\n", encoding="utf-8")
+        git(self.seed, "add", "tracked.txt")
+        git(self.seed, "commit", "-m", "base")
+        git(self.seed, "remote", "add", "origin", str(self.origin))
+        git(self.seed, "push", "-u", "origin", "main")
+        run([GIT, f"--git-dir={self.origin}", "symbolic-ref", "HEAD", "refs/heads/main"])
+        run([GIT, "clone", "-b", "main", str(self.origin), str(self.primary)])
+        self._identity(self.primary)
+        git(self.primary, "remote", "set-url", "origin", CANONICAL_ORIGIN)
+        self.ssh.write_text(
+            "#!/usr/bin/env python3\n"
+            "import os, shlex, sys\n"
+            "cmd = sys.argv[-1]\n"
+            "parts = shlex.split(cmd)\n"
+            "if not parts or parts[0] not in ('git-upload-pack', 'git-receive-pack'):\n"
+            "    raise SystemExit(f'unexpected ssh command: {cmd}')\n"
+            "os.execvp(parts[0], [parts[0], os.environ['TEST_BARE_ORIGIN']])\n",
+            encoding="utf-8",
+        )
+        self.ssh.chmod(0o755)
+        self.home.mkdir()
+        self.worktree_root.mkdir()
+        self.env = os.environ.copy()
+        for key in list(self.env):
+            if key in {
+                "GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR", "GIT_INDEX_FILE", "GIT_NAMESPACE",
+                "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_CEILING_DIRECTORIES",
+                "GIT_DISCOVERY_ACROSS_FILESYSTEM", "GIT_EXEC_PATH", "GIT_EXTERNAL_DIFF", "GIT_SHALLOW_FILE",
+                "GIT_IMPLICIT_WORK_TREE",
+            } or key.startswith("GIT_CONFIG_"):
+                self.env.pop(key, None)
+        self.env.update(
+            HOME=str(self.home),
+            DISH_WORKTREE_ROOT=str(self.worktree_root),
+            GIT_SSH_COMMAND=str(self.ssh),
+            GIT_SSH_VARIANT="ssh",
+            TEST_BARE_ORIGIN=str(self.origin),
+        )
+
+    @staticmethod
+    def _identity(repo: Path) -> None:
+        git(repo, "config", "user.name", "Fixture")
+        git(repo, "config", "user.email", "fixture@example.invalid")
+
+    @property
+    def base(self) -> str:
+        return git_out(self.primary, "rev-parse", "HEAD")
+
+    def current_remote_main(self) -> str:
+        return git_out(self.origin, "rev-parse", "refs/heads/main")
+
+    def agent_file(self, agent: str, **extra: object) -> Path:
+        path = self.home / ".local/state/dish/agents" / f"{agent}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload: dict[str, object] = {"agent_id": agent, "role": "implementation", "workspace": "legacy", "notes": "keep"}
+        payload.update(extra)
+        path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+        return path
+
+    def tool(self, *args: str, check: bool = True, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+        actual_env = self.env.copy()
+        if env:
+            actual_env.update(env)
+        return run(["python3", str(SCRIPT), *args], cwd=self.primary, env=actual_env, check=check)
+
+    def start(self, task: str = "1001", branch: str = "agent/fixture", base: str | None = None, agent: str | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
+        args = ["start", "--task", task, "--branch", branch, "--base-ref", "refs/heads/main", "--base", base or self.current_remote_main(), "--json"]
+        if agent:
+            args.extend(["--agent-id", agent])
+        return self.tool(*args, check=check)
+
+    def state_path(self, task: str = "1001") -> Path:
+        return self.home / ".local/state/dish/worktrees" / f"{task}.json"
+
+    def state(self, task: str = "1001") -> dict[str, object]:
+        return json.loads(self.state_path(task).read_text(encoding="utf-8"))
+
+    def wt(self, task: str = "1001") -> Path:
+        return self.worktree_root / task
+
+    def commit_local(self, task: str = "1001", text: str = "local") -> str:
+        wt = self.wt(task)
+        self._identity(wt)
+        with (wt / "tracked.txt").open("a", encoding="utf-8") as handle:
+            handle.write(text + "\n")
+        git(wt, "add", "tracked.txt")
+        git(wt, "commit", "-m", text)
+        return git_out(wt, "rev-parse", "HEAD")
+
+    def advance_main(self, text: str = "main advance") -> str:
+        # Seed uses the bare path directly and remains the remote-main author fixture.
+        git(self.seed, "fetch", "origin", "main")
+        git(self.seed, "reset", "--hard", "origin/main")
+        with (self.seed / "tracked.txt").open("a", encoding="utf-8") as handle:
+            handle.write(text + "\n")
+        git(self.seed, "add", "tracked.txt")
+        git(self.seed, "commit", "-m", text)
+        git(self.seed, "push", "origin", "main")
+        return git_out(self.seed, "rev-parse", "HEAD")
+
+    def remote_branch_commit(self, branch: str, text: str, *, start: str | None = None) -> str:
+        clone = self.root / f"remote-author-{len(list(self.root.glob('remote-author-*')))}"
+        run([GIT, "clone", str(self.origin), str(clone)])
+        self._identity(clone)
+        if start:
+            git(clone, "checkout", "--detach", start)
+            git(clone, "switch", "-c", branch)
+        else:
+            git(clone, "checkout", branch)
+        p = clone / f"remote-{text.replace(' ', '-')}.txt"
+        p.write_text(text + "\n", encoding="utf-8")
+        git(clone, "add", p.name)
+        git(clone, "commit", "-m", text)
+        git(clone, "push", "origin", f"HEAD:refs/heads/{branch}")
+        return git_out(clone, "rev-parse", "HEAD")
+
+
+@pytest.fixture
+def h(tmp_path: Path) -> Harness:
+    return Harness(tmp_path)
+
+
+def payload(result: subprocess.CompletedProcess[str]) -> dict[str, object]:
+    return json.loads(result.stdout)
+
+
+def assert_error(result: subprocess.CompletedProcess[str], code: str) -> None:
+    assert result.returncode != 0
+    assert f"ERROR {code}:" in result.stderr
+
