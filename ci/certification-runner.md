@@ -1,54 +1,69 @@
 # Single-job certification runner primitives
 
-These primitives are intentionally below selector and Integration policy. They do not decide which certification groups a change requires, alter live workflow triggers, or replace exact-head gate authority.
+These primitives sit below repository selection policy. They do not decide which lanes/groups a change requires, alter live workflow triggers, or replace exact-head Integration gate authority.
 
-## Execution spec
+## Planner contract
 
-`scripts/integration_certification.py` consumes `dish-certification-execution-spec-v1` JSON. The upstream planner/control plane supplies the exact candidate SHA, SHA-256 digest of its durable plan, and commands for only the groups it selected:
+`scripts/integration_certification.py` consumes the landed `repository-certification-plan-v1` contract produced by `scripts/integration_certification_plan.py`. It consumes that planner's `selected_groups` contract and does not implement path/lane selection policy.
+
+The convergence/control-plane layer supplies two files:
+
+1. the durable planner JSON; and
+2. a `dish-certification-command-map-v1` object containing safe argv arrays for the groups selected by that exact plan.
+
+Example command map:
 
 ```json
 {
-  "schema": "dish-certification-execution-spec-v1",
-  "candidate_sha": "<40-hex commit>",
-  "plan_digest": "<64-hex sha256>",
-  "required_groups": {
+  "format": "dish-certification-command-map-v1",
+  "commands": {
     "python-control-plane": [
-      {"name": "focused evidence", "argv": ["dish/.venv/bin/python", "-m", "pytest", "..."]}
+      {
+        "name": "focused evidence",
+        "argv": ["dish/.venv/bin/python", "-m", "pytest", "tests/example.py", "-q"]
+      }
     ]
   }
 }
 ```
 
-Allowed groups, in execution order, are:
-
-1. `python-control-plane`
-2. `frontend-static`
-3. `native-postgresql`
-4. `browser-acceptance`
-
-Commands are argv arrays, not shell strings. Unknown groups or malformed selected groups fail closed. Selection and command composition remain upstream policy; the runner only executes the supplied boundary commands.
+Unknown groups, commands for unselected groups, missing commands for selected groups, shell strings, malformed argv, and planner/group-order mismatches fail closed.
 
 ## Conditional runtime setup
 
-`.github/actions/run-certification/action.yml` derives setup from the selected groups and keeps all heavy setup conditional:
+`.github/actions/run-certification/action.yml` is a reusable composite action for the later one-hosted-job convergence workflow. It derives setup only from planner-selected groups:
 
 - Python + canonical dependency bundle: Python/control-plane, native PostgreSQL, or browser acceptance;
 - Node: frontend static or browser acceptance;
 - isolated PostgreSQL 17.10: native PostgreSQL only;
-- maintained Chromium: browser acceptance only.
+- Chromium: browser acceptance only.
 
-The action is a composite action, not a hosted job. It is inert until a workflow explicitly invokes it, so this primitive does not add a separate preflight job or change current CI dispatch.
+The action itself declares no `jobs:` or `runs-on:` and therefore does not create a separately billed hosted job.
 
 ## Execution and evidence
 
-Integration execution is deterministic and fail-fast. When a selected group fails, later selected groups are recorded `not_run_due_to_prior_failure`; unselected groups are always recorded `not_selected`.
+Execution follows the planner execution-group order and fails fast for Integration certification. After the first required failure, later selected groups are recorded `not_run_due_to_prior_failure`; unselected groups are recorded `not_selected`.
 
-The runner writes `dish-integration-certification-v1` evidence containing candidate SHA, run ID/attempt, plan digest, required groups, deterministic execution order, every group result, per-group elapsed seconds, total elapsed seconds, and terminal outcome. Successful selected groups are `passed`; the first failing selected group is `failed`.
+The runner computes `plan_digest` as SHA-256 of canonical JSON (`sort_keys=True`, compact separators, one trailing newline) and writes `dish-integration-certification-v1` evidence containing:
 
-## Actions cost reporting
+- exact candidate SHA from planner identity;
+- Actions run ID and attempt;
+- plan digest;
+- required groups and deterministic execution order;
+- every group result;
+- per-group and total elapsed seconds;
+- terminal passed/failed outcome.
 
-`scripts/actions_cost_report.py` queries completed workflow runs and all job attempts for a requested range, derives runtime from each job's `started_at`/`completed_at`, and applies repository-owned per-job minute rounding. Rates and the included monthly allowance are explicit in `ci/actions-billing.json`.
+`ci/integration-certification-evidence.schema.json` defines the combined evidence shape.
 
-The reporter groups actual runtime, rounded billed minutes, and approximate overage cost by workflow and job. It also reports billed minutes consumed by cancelled jobs. Unknown runner labels fail closed rather than silently receiving a guessed rate.
+## Actions cost telemetry
 
-`ci/fixtures/actions-run-31697885898-jobs.json` is a reduced historical GitHub API fixture. That successful seven-job CI run had 1,074 seconds of summed job runtime but 23 billed minutes after per-job rounding; the regression test preserves that known incident-era example.
+`scripts/actions_cost_report.py` queries completed Actions runs/jobs for a requested period and applies repository-owned per-job rounded billing (`ceil` each started job to a whole minute). The explicit Linux rate and included monthly allowance live in `ci/actions-billing.json`.
+
+Telemetry separates:
+
+- `gross_equivalent_cost_usd`: billed minutes × configured rate before allowance;
+- `overage_billed_minutes`: only minutes beyond the configured monthly allowance;
+- `approximate_overage_cost_usd`: only excess-minute cost.
+
+Allowance attribution is deterministic by job start time then job ID. Cross-month reports fail closed. A partial-month report must provide `--monthly-billed-before-period` so earlier allowance consumption is explicit. Unknown runner labels fail closed. Cancelled started jobs retain billed-minute attribution.

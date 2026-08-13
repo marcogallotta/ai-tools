@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "dish-integration-certification-v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "candidate_sha",
+    "run_id",
+    "run_attempt",
+    "plan_digest",
+    "required_groups",
+    "execution_order",
+    "group_results",
+    "elapsed_seconds",
+    "outcome"
+  ],
+  "properties": {
+    "format": {"const": "dish-integration-certification-v1"},
+    "candidate_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "run_id": {"type": "string", "minLength": 1},
+    "run_attempt": {"type": "integer", "minimum": 1},
+    "plan_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "required_groups": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "python-control-plane",
+          "frontend-static",
+          "native-postgresql",
+          "browser-acceptance"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "execution_order": {
+      "const": [
+        "python-control-plane",
+        "frontend-static",
+        "native-postgresql",
+        "browser-acceptance"
+      ]
+    },
+    "group_results": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "python-control-plane",
+        "frontend-static",
+        "native-postgresql",
+        "browser-acceptance"
+      ],
+      "properties": {
+        "python-control-plane": {"$ref": "#/$defs/groupResult"},
+        "frontend-static": {"$ref": "#/$defs/groupResult"},
+        "native-postgresql": {"$ref": "#/$defs/groupResult"},
+        "browser-acceptance": {"$ref": "#/$defs/groupResult"}
+      }
+    },
+    "elapsed_seconds": {"type": "number", "minimum": 0},
+    "outcome": {"enum": ["passed", "failed"]}
+  },
+  "$defs": {
+    "groupResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["result", "elapsed_seconds"],
+      "properties": {
+        "result": {
+          "enum": [
+            "passed",
+            "failed",
+            "not_selected",
+            "not_run_due_to_prior_failure"
+          ]
+        },
+        "elapsed_seconds": {"type": "number", "minimum": 0}
+      }
+    }
+  }
+}
