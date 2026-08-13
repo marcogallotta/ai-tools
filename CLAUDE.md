@@ -8,6 +8,8 @@ For Dish work, role routing lives in [`dish/docs/agents/index.md`](dish/docs/age
 
 If you are told to assume, act as, or hand work to a named Dish role, read that index first and then the mapped standing role contract before acting. Do not infer role policy from a nearby file or repeat stable role rules in task handoffs.
 
+Every request in this repository is routed through `dish/docs/agents/index.md` first, with no exception for phrasing or path. Read the index, evaluate the request against the role table, and select the single role matching the current task shape. Read that role's standing contract before acting. Assume only one role at a time. Switch roles only when Marco changes the requested task or the applicable standing contract explicitly requires a handoff; a role switch does not itself authorize additional actions. If no listed role matches, follow the index's unlisted-role fallback.
+
 Standing role contracts contain stable policy so task handoffs can stay short and contain only the task-specific delta. If a handoff conflicts with a standing role contract, flag the conflict rather than silently choosing a new policy.
 
 For exact-reviewed-PR-head integration, local integration certification, commit/promotion to `main`, push verification, or integration-worktree cleanup, follow the dedicated Integration agent contract in `dish/docs/agents/integration.md`. Implementation/fix agents do not inherit final integration authority merely because they produced the implementation.
