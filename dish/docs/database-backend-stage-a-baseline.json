@@ -73,7 +73,7 @@
   ],
   "governing_source_sha256": {
     "dish_pg/release.py": "e3351bf502dc26eedec1ed743232df44d377dc32c63fc099da039083777d7516",
-    "dish_service/admin_cli.py": "395db286f70567519cb3a92e1d81495e0cae9f73ac698b2b124902c40f54a251",
+    "dish_service/admin_cli.py": "7b970a0805788284cf86b489e078d7b77ce610443695c0d07b295d9426b1e7fe",
     "dish_service/application.py": "e2bd6d9e5a86422780c559f74a5acf1591aaa98232b26b857dc7bdb92aa674ac",
     "dish_service/backup_creation.py": "6dbd2519aeb8a306ad5d78a61b318addba5ba47b051698c8f031dbf7b906a4bd",
     "dish_service/command_spec.py": "2b72bcf7afecd1b07c785f6cf243ff75589054b32155cb82dbad987a937d5824",
@@ -90,7 +90,7 @@
     "scripts/dish-pg-acceptance": "d7b30b7f45a9ff38b1106aa868065449bea879f71ce30f2428b1333aa0ec43d4",
     "scripts/dish-pg-stage-a-baseline": "ef030edc5685c16082a537db5c53425f3572fc6cf8b2a79f9182bd07a77c530e"
   },
-  "last_rebaseline_reason": "Refresh governed baseline after reviewed operator prompts, prepared Change continuation, and active hold selection",
+  "last_rebaseline_reason": "Refresh governed Stage A source hash after reviewed admin CLI operator UX changes",
   "notes": [
     "The baseline records current source authority only; PostgreSQL is not production authority.",
     "Changes to governed source hashes or acceptance rules require explicit baseline review; ordinary test-file changes do not.",
