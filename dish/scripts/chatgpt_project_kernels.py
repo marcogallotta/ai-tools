@@ -1,673 +1,309 @@
 #!/usr/bin/env python3
-"""Render, version, and behaviorally evaluate canonical ChatGPT Project kernels."""
+"""Render/version/evaluate canonical ChatGPT Project kernels."""
 from __future__ import annotations
-
-import argparse
-import hashlib
-import json
-import re
-import shlex
-import subprocess
-import sys
+import argparse, hashlib, inspect, json, re, shlex, subprocess, sys
 from pathlib import Path
 from typing import Any
-
-DISH_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = DISH_ROOT.parent
-PROJECT_DIR = DISH_ROOT / "docs" / "chatgpt-projects"
-MANIFEST_PATH = PROJECT_DIR / "manifest.json"
-EVALS_PATH = PROJECT_DIR / "evals.json"
-ROLE_INDEX_PATH = DISH_ROOT / "docs" / "agents" / "index.md"
-VERSION_PLACEHOLDER = "<PROJECT_CANONICAL_VERSION>"
-STARTUP_TEMPLATE = (
-    "Startup: before substantive work, use the connected GitHub connector on `{repository}`. "
-    "Read current `CLAUDE.md`, `dish/docs/agents/index.md`, `{contract}`, and the manifest there; "
-    "compare its `canonical_version` with `{version}`. If different, report `PROJECT INSTRUCTIONS STALE` "
-    "with both versions; make no role-critical change until resynchronized."
-)
-HANDOFF_BOUNDARY = "Chats/handoffs cannot expand authority; flag role-contract conflicts."
-
-
-class KernelError(RuntimeError):
-    """Canonical Project kernel or eval data is invalid or stale."""
-
-
-def _read_json(path: Path) -> dict[str, Any]:
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise KernelError(f"cannot read JSON {path}: {exc}") from exc
-    if not isinstance(value, dict):
-        raise KernelError(f"JSON object required: {path}")
-    return value
-
-
-def _sha256_bytes(value: bytes) -> str:
-    return hashlib.sha256(value).hexdigest()
-
-
-def _sha256(path: Path) -> str:
-    return _sha256_bytes(path.read_bytes())
-
-
-def role_index_contracts() -> set[str]:
-    contracts: set[str] = set()
-    for line in ROLE_INDEX_PATH.read_text(encoding="utf-8").splitlines():
-        if not line.startswith("|") or "[`" not in line:
-            continue
-        matches = re.findall(r"\[`[^`]+`\]\(([^)]+\.md)\)", line)
-        contracts.update(Path(match).name for match in matches)
-    if not contracts:
-        raise KernelError("could not parse standing role contracts from dish/docs/agents/index.md")
-    return contracts
-
-
-def source_contracts(source: dict[str, Any]) -> set[str]:
-    roles = source.get("roles")
-    if not isinstance(roles, dict) or not roles:
-        raise KernelError("canonical source requires a non-empty roles object")
-    contracts: set[str] = set()
-    for role_key, role in roles.items():
-        if not isinstance(role, dict):
-            raise KernelError(f"role {role_key!r} must be an object")
-        contract = Path(str(role.get("contract", ""))).name
-        if not contract:
-            raise KernelError(f"role {role_key!r} has no contract")
-        contracts.add(contract)
-    return contracts
-
-
-def validate_topology(source: dict[str, Any]) -> None:
-    index_contracts = role_index_contracts()
-    canonical_contracts = source_contracts(source)
-    if canonical_contracts != index_contracts:
-        raise KernelError(
-            "ChatGPT Project topology differs from the current standing role index; "
-            f"index={sorted(index_contracts)!r} source={sorted(canonical_contracts)!r}"
-        )
-
-
-def _rules(value: Any, label: str) -> list[dict[str, str]]:
-    if not isinstance(value, list):
-        raise KernelError(f"{label} must be a list")
-    result: list[dict[str, str]] = []
-    seen: set[str] = set()
-    for item in value:
-        if not isinstance(item, dict):
-            raise KernelError(f"{label} entries must be objects")
-        rule_id = str(item.get("id", "")).strip()
-        text = str(item.get("text", "")).strip()
-        if not rule_id or not text:
-            raise KernelError(f"{label} rule requires id and text")
-        if rule_id in seen:
-            raise KernelError(f"duplicate {label} rule id: {rule_id}")
-        seen.add(rule_id)
-        result.append({"id": rule_id, "text": text})
-    return result
-
-
-def repository_config(source: dict[str, Any]) -> tuple[str, str, str]:
-    repository = str(source.get("repository_full_name", "")).strip()
-    default_branch = str(source.get("default_branch", "")).strip()
-    transport = str(source.get("github_transport", "")).strip()
-    if not repository or repository.count("/") != 1:
-        raise KernelError("canonical source requires repository_full_name in owner/name form")
-    if not default_branch:
-        raise KernelError("canonical source requires default_branch")
-    if not transport:
-        raise KernelError("canonical source requires github_transport")
-    return repository, default_branch, transport
-
-
-def effective_rules(source: dict[str, Any], role_key: str) -> list[dict[str, str]]:
-    role = source["roles"][role_key]
-    shared = _rules(source.get("shared_rules"), "shared_rules")
-    specific = _rules(role.get("rules"), f"roles.{role_key}.rules")
-    ids = [rule["id"] for rule in shared + specific]
-    duplicates = sorted({rule_id for rule_id in ids if ids.count(rule_id) > 1})
-    if duplicates:
-        raise KernelError(f"duplicate effective rule ids for {role_key}: {duplicates}")
-    return shared + specific
-
-
-def render_role_with_version(source: dict[str, Any], role_key: str, version: str) -> str:
-    role = source["roles"][role_key]
-    contract = role["contract"]
-    project_name = role["project_name"]
-    default_role = role["default_role"]
-    compositions = role.get("allowed_compositions", [])
-    if not isinstance(compositions, list):
-        raise KernelError(f"roles.{role_key}.allowed_compositions must be a list")
-    repository, default_branch, transport = repository_config(source)
-    lines = [
-        f"# {project_name}",
-        "",
-        f"PROJECT_ROLE: {default_role}",
-        f"PROJECT_CANONICAL_VERSION: {version}",
-        "CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json",
-        f"ROLE_CONTRACT: {contract}",
-        f"PROJECT_REPOSITORY: {repository}",
-        f"PROJECT_DEFAULT_BRANCH: {default_branch}",
-        "",
-        STARTUP_TEMPLATE.format(contract=contract, version=version, repository=repository),
-        "",
-        f"Role: **{default_role}**.",
-    ]
-    if compositions:
-        lines.append("Allowed composition only when explicitly triggered by current authority:")
-        lines.extend(f"- {item}" for item in compositions)
-    else:
-        lines.append("No implicit role composition is permitted.")
-    lines.extend([HANDOFF_BOUNDARY, "", "High-consequence rules:"])
-    lines.extend(f"- {rule['text']}" for rule in effective_rules(source, role_key))
-    lines.append("")
-    return "\n".join(lines)
-
-
-def kernel_identity(source: dict[str, Any]) -> str:
-    payload = bytearray()
-    for role_key in sorted(source["roles"]):
-        payload.extend(role_key.encode("utf-8"))
-        payload.extend(b"\0")
-        payload.extend(render_role_with_version(source, role_key, VERSION_PLACEHOLDER).encode("utf-8"))
-        payload.extend(b"\0")
-    return _sha256_bytes(bytes(payload))
-
-
-def load_canonical() -> tuple[dict[str, Any], dict[str, Any]]:
-    manifest = _read_json(MANIFEST_PATH)
-    source_path = PROJECT_DIR / str(manifest.get("source_file", ""))
-    if not source_path.is_file():
-        raise KernelError(f"canonical source missing: {source_path}")
-    source_digest = _sha256(source_path)
-    if manifest.get("source_sha256") != source_digest:
-        raise KernelError(
-            "canonical source hash mismatch; update manifest before rendering: "
-            f"{manifest.get('source_sha256')!r} != {source_digest!r}"
-        )
-    source = _read_json(source_path)
-    if source.get("schema_version") != manifest.get("schema_version"):
-        raise KernelError("manifest/source schema version mismatch")
-    rendered_identity = kernel_identity(source)
-    if manifest.get("kernel_identity_sha256") != rendered_identity:
-        raise KernelError(
-            "rendered kernel identity mismatch; every behaviorally meaningful rendering change "
-            "must update manifest/version: "
-            f"{manifest.get('kernel_identity_sha256')!r} != {rendered_identity!r}"
-        )
-    namespace = str(manifest.get("version_namespace", ""))
-    expected_version = f"{namespace}-{rendered_identity[:12]}"
-    if manifest.get("canonical_version") != expected_version:
-        raise KernelError(
-            "canonical_version must bind the version namespace to the rendered kernel identity: "
-            f"expected {expected_version!r}"
-        )
-    return manifest, source
-
-
-def render_role(manifest: dict[str, Any], source: dict[str, Any], role_key: str) -> str:
-    return render_role_with_version(source, role_key, str(manifest["canonical_version"]))
-
-
-def generated_paths(manifest: dict[str, Any], source: dict[str, Any]) -> dict[str, Path]:
-    configured = manifest.get("generated_role_files")
-    if not isinstance(configured, dict):
-        raise KernelError("manifest.generated_role_files must be an object")
-    if set(configured) != set(source["roles"]):
-        raise KernelError("generated_role_files keys must exactly match canonical roles")
-    return {role_key: PROJECT_DIR / str(configured[role_key]) for role_key in source["roles"]}
-
-
-def render_all(*, check: bool) -> list[tuple[str, int]]:
-    manifest, source = load_canonical()
-    validate_topology(source)
-    max_chars = int(manifest.get("max_kernel_chars", 0))
-    if max_chars <= 0:
-        raise KernelError("manifest.max_kernel_chars must be positive")
-    results: list[tuple[str, int]] = []
-    for role_key, path in generated_paths(manifest, source).items():
-        text = render_role(manifest, source, role_key)
-        if len(text) > max_chars:
-            raise KernelError(f"{path.relative_to(REPO_ROOT)} is {len(text)} chars; max is {max_chars}")
-        if check:
-            if not path.is_file():
-                raise KernelError(f"generated kernel missing: {path.relative_to(REPO_ROOT)}")
-            if path.read_text(encoding="utf-8") != text:
-                raise KernelError(f"generated kernel stale: {path.relative_to(REPO_ROOT)}")
-        else:
-            path.write_text(text, encoding="utf-8")
-        results.append((role_key, len(text)))
-    return results
-
-
-REQUIRED_EVAL_IDS = {
-    "stale-project-version", "live-authority-over-stale-memory", "review-exact-head-completion",
-    "coordinator-pr-intake-automatic-review", "reviewed-head-movement-classification",
-    "implementation-rejects-patch-only-completion", "integration-rejects-head-mismatch",
-    "current-template-lookup", "handoff-conflicts-with-role-authority",
-    "allowed-specialist-implementation-composition", "forbidden-implicit-role-expansion",
-    "task-history-before-no-op", "valid-action-fallback", "no-valid-fallback",
-    "cross-role-context-bleed",
-    "publication-fully-published-local-certification",
-    "publication-unsafe-governed-path-blocker",
-    "publication-blocker-forbids-unsafe-shortcuts",
-    "publication-completion-invalidates-prior-review",
-    "publication-handoff-before-human-notification",
-    "configured-repository-pr-routing",
-}
-ORACLE_FIELDS = {
-    "expected", "failure", "expected_outcome", "required_actions", "forbidden_actions",
-    "required_observations", "required_observations_by_role",
-    "require_ordered_observations", "observation_link_field",
-}
-
-
-def _eval_payload() -> dict[str, Any]:
-    payload = _read_json(EVALS_PATH)
-    if payload.get("schema_version") != 3:
-        raise KernelError("evals.schema_version must be 3")
-    if payload.get("runner_protocol") != "dish-chatgpt-project-behavior-v2":
-        raise KernelError("evals.runner_protocol must be dish-chatgpt-project-behavior-v2")
-    if not isinstance(payload.get("scenarios"), list):
-        raise KernelError("evals.scenarios must be a list")
-    return payload
-
-
-def _evals() -> list[dict[str, Any]]:
-    return _eval_payload()["scenarios"]
-
-
-def _validate_observation_pattern(value: Any, scenario_id: str) -> None:
-    if not isinstance(value, dict):
-        raise KernelError(f"eval {scenario_id} observation patterns must be objects")
-    for field in ("kind", "operation"):
-        if not str(value.get(field, "")).strip():
-            raise KernelError(f"eval {scenario_id} observation pattern requires {field}")
-    for matcher in ("equals", "contains"):
-        candidate = value.get(matcher, {})
-        if not isinstance(candidate, dict):
-            raise KernelError(f"eval {scenario_id} observation {matcher} must be an object")
-
-
-def validate_eval_contracts() -> list[str]:
-    _, source = load_canonical()
-    validate_topology(source)
-    seen: set[str] = set()
-    for scenario in _evals():
-        if not isinstance(scenario, dict):
-            raise KernelError("eval scenario must be an object")
-        scenario_id = str(scenario.get("id", "")).strip()
-        if not scenario_id or scenario_id in seen:
-            raise KernelError(f"missing or duplicate eval id: {scenario_id!r}")
-        seen.add(scenario_id)
-        roles = scenario.get("roles")
-        required_rules = scenario.get("required_rules")
-        required_actions = scenario.get("required_actions")
-        forbidden_actions = scenario.get("forbidden_actions")
-        if not isinstance(roles, list) or not roles:
-            raise KernelError(f"eval {scenario_id} requires roles")
-        if not isinstance(required_rules, list) or not required_rules:
-            raise KernelError(f"eval {scenario_id} requires required_rules")
-        if not isinstance(required_actions, list) or not required_actions:
-            raise KernelError(f"eval {scenario_id} requires required_actions")
-        if not isinstance(forbidden_actions, list) or not forbidden_actions:
-            raise KernelError(f"eval {scenario_id} requires forbidden_actions")
-        if set(required_actions) & set(forbidden_actions):
-            raise KernelError(f"eval {scenario_id} has actions that are both required and forbidden")
-        for role_key in roles:
-            if role_key not in source["roles"]:
-                raise KernelError(f"eval {scenario_id} references unknown role {role_key!r}")
-            rules = {rule["id"] for rule in effective_rules(source, role_key)}
-            missing = sorted(set(required_rules) - rules)
-            if missing:
-                raise KernelError(f"eval {scenario_id} lacks rules for {role_key}: {missing}")
-        for field in ("expected", "failure", "expected_outcome"):
-            if not str(scenario.get(field, "")).strip():
-                raise KernelError(f"eval {scenario_id} requires {field}")
-        prompts = scenario.get("prompts")
-        if prompts is None:
-            if not str(scenario.get("prompt", "")).strip():
-                raise KernelError(f"eval {scenario_id} requires prompt or prompts")
-        elif not isinstance(prompts, dict) or set(prompts) != set(roles) or any(not str(prompts[r]).strip() for r in roles):
-            raise KernelError(f"eval {scenario_id} prompts must exactly match roles with non-empty values")
-        required_observations = scenario.get("required_observations", [])
-        if not isinstance(required_observations, list):
-            raise KernelError(f"eval {scenario_id} required_observations must be a list")
-        by_role = scenario.get("required_observations_by_role", {})
-        if not isinstance(by_role, dict) or not set(by_role).issubset(set(roles)):
-            raise KernelError(f"eval {scenario_id} required_observations_by_role must reference scenario roles")
-        for pattern in required_observations:
-            _validate_observation_pattern(pattern, scenario_id)
-        for role_key, patterns in by_role.items():
-            if not isinstance(patterns, list): raise KernelError(f"eval {scenario_id} observations for {role_key} must be a list")
-            for pattern in patterns: _validate_observation_pattern(pattern, scenario_id)
-        for role_key in roles:
-            role_observations = by_role.get(role_key, required_observations)
-            if scenario.get("require_ordered_observations") and not role_observations:
-                raise KernelError(f"eval {scenario_id} cannot order absent observations for {role_key}")
-            if scenario.get("observation_link_field") and len(role_observations) < 2:
-                raise KernelError(f"eval {scenario_id} observation_link_field requires multiple observations for {role_key}")
-    missing = sorted(REQUIRED_EVAL_IDS - seen)
-    extras = sorted(seen - REQUIRED_EVAL_IDS)
-    if missing or extras:
-        raise KernelError(f"eval scenario set mismatch: missing={missing} extras={extras}")
-    return sorted(seen)
-
-
-def _action_vocabulary(scenarios: list[dict[str, Any]]) -> list[str]:
-    return sorted({str(v) for s in scenarios for k in ("required_actions", "forbidden_actions") for v in s[k]})
-
-
-def _outcome_vocabulary(scenarios: list[dict[str, Any]]) -> list[str]:
-    return sorted({str(s["expected_outcome"]) for s in scenarios})
-
-
-def prepare_eval_bundle() -> dict[str, Any]:
-    manifest, source = load_canonical()
-    validate_eval_contracts()
-    scenarios = _evals()
-    cases: list[dict[str, Any]] = []
-    for scenario in scenarios:
-        for role_key in scenario["roles"]:
-            kernel = render_role(manifest, source, role_key)
-            case = {
-                "case_id": f"{scenario['id']}::{role_key}",
-                "scenario_id": scenario["id"],
-                "role": role_key,
-                "project_name": source["roles"][role_key]["project_name"],
-                "kernel_sha256": _sha256_bytes(kernel.encode("utf-8")),
-                "project_instructions": kernel,
-                "prompt": str(scenario.get("prompts", {}).get(role_key, scenario.get("prompt", ""))),
-            }
-            if ORACLE_FIELDS & set(case):
-                raise KernelError(f"prepared eval case exposes hidden oracle fields: {sorted(ORACLE_FIELDS & set(case))}")
-            cases.append(case)
-    return {
-        "schema_version": 2,
-        "runner_protocol": "dish-chatgpt-project-behavior-v2",
-        "canonical_version": manifest["canonical_version"],
-        "fresh_chat_requirement": (
-            "Run every case in a newly created chat inside the named ChatGPT Project; "
-            "do not reuse a chat or carry prior-case conversation context."
-        ),
-        "response_contract": {
-            "instruction": (
-                "Capture the assistant response separately from runner-observed tool evidence. "
-                "Assistant-authored claims that an action occurred are not observations. The runner must "
-                "record actual capability discovery, durable writes, and authoritative readbacks from its tool layer."
-            ),
-            "assistant_response_shape": {"outcome": "<outcome>", "actions": ["<action-code>"]},
-            "outcome_vocabulary": _outcome_vocabulary(scenarios),
-            "action_vocabulary": _action_vocabulary(scenarios),
-            "runner_observation_shape": {
-                "seq": "<positive integer>", "kind": "<event kind>", "operation": "<tool operation>",
-                "method": "<optional transport>", "pr": "<optional PR number>",
-                "connector": "<optional connector name>", "repository": "<optional owner/name>",
-                "head_sha": "<optional exact head>", "write_id": "<optional durable write identity>",
-                "verified": "<optional boolean>", "available_methods": ["<optional method>"],
-                "unavailable_methods": ["<optional method>"],
-            },
-        },
-        "cases": cases,
-    }
-
-
-def _case_oracles() -> dict[str, dict[str, Any]]:
-    result: dict[str, dict[str, Any]] = {}
-    for scenario in _evals():
-        for role_key in scenario["roles"]:
-            result[f"{scenario['id']}::{role_key}"] = {
-                "expected_outcome": str(scenario["expected_outcome"]),
-                "required_actions": {str(v) for v in scenario["required_actions"]},
-                "forbidden_actions": {str(v) for v in scenario["forbidden_actions"]},
-                "required_observations": list(scenario.get("required_observations_by_role", {}).get(role_key, scenario.get("required_observations", []))),
-                "require_ordered_observations": bool(scenario.get("require_ordered_observations", False)),
-                "observation_link_field": str(scenario.get("observation_link_field", "")).strip(),
-            }
-    return result
-
-
-def _contains(actual: Any, expected: Any) -> bool:
-    if isinstance(actual, list):
-        return expected in actual
-    if isinstance(actual, str):
-        return str(expected) in actual
-    return actual == expected
-
-
-def _observation_matches(observation: dict[str, Any], pattern: dict[str, Any]) -> bool:
-    if observation.get("kind") != pattern.get("kind") or observation.get("operation") != pattern.get("operation"):
-        return False
-    for field, expected in pattern.get("equals", {}).items():
-        if observation.get(field) != expected:
-            return False
-    for field, expected in pattern.get("contains", {}).items():
-        if not _contains(observation.get(field), expected):
-            return False
-    return True
-
-
-def _validate_observed_evidence(case_id: str, oracle: dict[str, Any], observations: Any) -> None:
-    patterns = oracle["required_observations"]
-    if observations is None:
-        observations = []
-    if not isinstance(observations, list):
-        raise KernelError(f"behavior result {case_id} runner_observations must be a list")
-    if patterns and not observations:
-        raise KernelError(f"behavior eval failed for {case_id}: missing runner-observed evidence")
-    normalized: list[dict[str, Any]] = []
-    seqs: list[int] = []
-    for value in observations:
-        if not isinstance(value, dict):
-            raise KernelError(f"behavior result {case_id} runner observations must be objects")
-        seq = value.get("seq")
-        if not isinstance(seq, int) or isinstance(seq, bool) or seq <= 0:
-            raise KernelError(f"behavior result {case_id} observation seq must be a positive integer")
-        normalized.append(value)
-        seqs.append(seq)
-    if len(set(seqs)) != len(seqs):
-        raise KernelError(f"behavior result {case_id} observation seq values must be unique")
-    normalized.sort(key=lambda item: int(item["seq"]))
-    forbidden_operations = oracle["forbidden_actions"]
-    for observation in normalized:
-        operation = str(observation.get("operation", "")).strip()
-        if operation in forbidden_operations:
-            raise KernelError(
-                f"behavior eval failed for {case_id}: runner observed forbidden operation {operation!r}"
-            )
-    if not patterns:
-        return
-    matched: list[dict[str, Any]] = []
-    search_start = 0
-    for pattern in patterns:
-        found_index = None
-        candidate_range = range(search_start, len(normalized)) if oracle["require_ordered_observations"] else range(len(normalized))
-        for idx in candidate_range:
-            if _observation_matches(normalized[idx], pattern):
-                found_index = idx
-                break
-        if found_index is None:
-            raise KernelError(f"behavior eval failed for {case_id}: missing required runner observation {pattern!r}")
-        matched.append(normalized[found_index])
-        if oracle["require_ordered_observations"]:
-            search_start = found_index + 1
-    link_field = oracle["observation_link_field"]
-    if link_field:
-        link_values = [obs.get(link_field) for obs in matched if obs.get(link_field) not in (None, "")]
-        if len(link_values) < 2 or len(set(map(str, link_values))) != 1:
-            raise KernelError(
-                f"behavior eval failed for {case_id}: required observations do not share {link_field}"
-            )
-
-
-def evaluate_behavior_results(payload: dict[str, Any]) -> list[str]:
-    manifest, _ = load_canonical()
-    validate_eval_contracts()
-    if payload.get("schema_version") != 2:
-        raise KernelError("behavior results schema_version must be 2")
-    if payload.get("runner_protocol") != "dish-chatgpt-project-behavior-v2":
-        raise KernelError("behavior results runner_protocol must be dish-chatgpt-project-behavior-v2")
-    if payload.get("canonical_version") != manifest["canonical_version"]:
-        raise KernelError(
-            "behavior results were not produced against the current Project kernel version: "
-            f"{payload.get('canonical_version')!r} != {manifest['canonical_version']!r}"
-        )
-    results = payload.get("results")
-    if not isinstance(results, list):
-        raise KernelError("behavior results require a results list")
-    oracles = _case_oracles()
-    by_case: dict[str, dict[str, Any]] = {}
-    chat_ids: set[str] = set()
-    vocabulary = set(_action_vocabulary(_evals()))
-    for result in results:
-        if not isinstance(result, dict):
-            raise KernelError("behavior result entries must be objects")
-        case_id = str(result.get("case_id", "")).strip()
-        fresh_chat_id = str(result.get("fresh_chat_id", "")).strip()
-        if case_id not in oracles or case_id in by_case:
-            raise KernelError(f"unknown or duplicate behavior result case: {case_id!r}")
-        if not fresh_chat_id or fresh_chat_id in chat_ids:
-            raise KernelError(f"missing or reused fresh_chat_id for {case_id}: {fresh_chat_id!r}")
-        chat_ids.add(fresh_chat_id)
-        response = result.get("assistant_response")
-        if not isinstance(response, dict):
-            raise KernelError(f"behavior result {case_id} assistant_response must be an object")
-        outcome = str(response.get("outcome", "")).strip()
-        actions_value = response.get("actions")
-        if not isinstance(actions_value, list) or not actions_value:
-            raise KernelError(f"behavior result {case_id} requires non-empty actions")
-        actions = {str(value).strip() for value in actions_value if str(value).strip()}
-        unknown_actions = sorted(actions - vocabulary)
-        if unknown_actions:
-            raise KernelError(f"behavior result {case_id} uses unknown actions: {unknown_actions}")
-        oracle = oracles[case_id]
-        missing_actions = sorted(oracle["required_actions"] - actions)
-        forbidden_actions = sorted(oracle["forbidden_actions"] & actions)
-        if outcome != oracle["expected_outcome"] or missing_actions or forbidden_actions:
-            raise KernelError(
-                f"behavior eval failed for {case_id}: outcome={outcome!r} expected={oracle['expected_outcome']!r} "
-                f"missing_actions={missing_actions} forbidden_actions={forbidden_actions}"
-            )
-        _validate_observed_evidence(case_id, oracle, result.get("runner_observations"))
-        by_case[case_id] = result
-    missing_cases = sorted(set(oracles) - set(by_case))
-    if missing_cases:
-        raise KernelError(f"behavior results missing fresh-chat cases: {missing_cases}")
-    return sorted(by_case)
-
-
-def run_fresh_chat_runner(command: str) -> dict[str, Any]:
-    argv = shlex.split(command)
-    if not argv:
-        raise KernelError("runner command is empty")
-    bundle = prepare_eval_bundle()
-    results: list[dict[str, Any]] = []
-    for case in bundle["cases"]:
-        runner_input = dict(case)
-        runner_input["fresh_chat_requirement"] = bundle["fresh_chat_requirement"]
-        runner_input["response_contract"] = bundle["response_contract"]
-        completed = subprocess.run(argv, input=json.dumps(runner_input, sort_keys=True), text=True, capture_output=True, check=False)
-        if completed.returncode != 0:
-            raise KernelError(
-                f"fresh-chat runner failed for {case['case_id']} with exit {completed.returncode}: {completed.stderr.strip()}"
-            )
-        try:
-            runner_output = json.loads(completed.stdout)
-        except json.JSONDecodeError as exc:
-            raise KernelError(f"fresh-chat runner returned invalid JSON for {case['case_id']}") from exc
-        if not isinstance(runner_output, dict):
-            raise KernelError(f"fresh-chat runner output must be an object for {case['case_id']}")
-        results.append({
-            "case_id": case["case_id"],
-            "fresh_chat_id": runner_output.get("fresh_chat_id"),
-            "assistant_response": runner_output.get("assistant_response"),
-            "runner_observations": runner_output.get("runner_observations", []),
-        })
-    return {
-        "schema_version": 2,
-        "runner_protocol": "dish-chatgpt-project-behavior-v2",
-        "canonical_version": bundle["canonical_version"],
-        "results": results,
-    }
-
-
-def version_status(project_version: str) -> tuple[bool, str]:
-    manifest, _ = load_canonical()
-    canonical = str(manifest["canonical_version"])
-    if project_version == canonical:
-        return True, f"PROJECT INSTRUCTIONS CURRENT — {canonical}"
-    return False, (
-        "PROJECT INSTRUCTIONS STALE — "
-        f"project={project_version} repository={canonical}; resynchronize from canonical role kernel"
-    )
-
-
-def command_check() -> None:
-    manifest, source = load_canonical()
-    validate_topology(source)
-    render_results = render_all(check=True)
-    eval_contracts = validate_eval_contracts()
-    print(f"canonical_version={manifest['canonical_version']}")
-    print(f"kernel_identity_sha256={manifest['kernel_identity_sha256']}")
-    for role_key, count in render_results:
-        print(f"PASS kernel {role_key}: {count} chars")
-    for scenario_id in eval_contracts:
-        print(f"PASS eval-contract {scenario_id}")
-
-
-def _write_json(path: Path, payload: dict[str, Any]) -> None:
-    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-
-
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
-    sub = parser.add_subparsers(dest="command", required=True)
-    render = sub.add_parser("render", help="render canonical role kernels")
-    render.add_argument("--check", action="store_true", help="fail instead of writing if generated files differ")
-    sub.add_parser("check", help="validate manifest, topology, generated kernels, and eval contracts")
-    prepare = sub.add_parser("prepare-eval", help="write fresh-chat behavioral eval cases without hidden oracles")
-    prepare.add_argument("--output", required=True, type=Path)
-    evaluate = sub.add_parser("eval", help="run or judge fresh-chat behavioral adherence evals")
-    source = evaluate.add_mutually_exclusive_group(required=True)
-    source.add_argument("--results", type=Path, help="judge recorded fresh-chat result bundle")
-    source.add_argument("--runner-command", help="invoke this command once per case; each invocation must create a fresh chat")
-    evaluate.add_argument("--save-results", type=Path, help="save runner-produced results before judging")
-    version = sub.add_parser("version", help="compare a Project-declared canonical version to repository authority")
-    version.add_argument("--project-version", required=True)
-    return parser
-
-
-def main() -> int:
-    args = _parser().parse_args()
-    try:
-        if args.command == "render":
-            for role_key, count in render_all(check=args.check):
-                print(f"PASS {role_key}: {count} chars")
-        elif args.command == "check":
-            command_check()
-        elif args.command == "prepare-eval":
-            _write_json(args.output, prepare_eval_bundle())
-            print(f"WROTE {args.output}")
-        elif args.command == "eval":
-            if args.results is not None:
-                if args.save_results is not None:
-                    raise KernelError("--save-results is valid only with --runner-command")
-                payload = _read_json(args.results)
-            else:
-                payload = run_fresh_chat_runner(args.runner_command)
-                if args.save_results is not None:
-                    _write_json(args.save_results, payload)
-            for case_id in evaluate_behavior_results(payload):
-                print(f"PASS behavior {case_id}")
-        elif args.command == "version":
-            current, message = version_status(args.project_version)
-            print(message)
-            return 0 if current else 3
-    except KernelError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 2
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+DISH_ROOT=Path(__file__).resolve().parents[1]; PROJECT_DIR=DISH_ROOT/'docs'/'chatgpt-projects'
+MANIFEST_PATH=PROJECT_DIR/'manifest.json'; EVALS_PATH=PROJECT_DIR/'evals.json'; ROLE_INDEX_PATH=DISH_ROOT/'docs'/'agents'/'index.md'
+VERSION_PLACEHOLDER='<PROJECT_CANONICAL_VERSION>'
+STARTUP_TEMPLATE=("Startup: via connected GitHub on `{repository}`, read current `CLAUDE.md`, role index, `{contract}`, and manifest. "
+ "On version mismatch, fold `change_history` to current for this role/action. Stop only for relevant BREAKING; "
+ "apply relevant ADDITIVE; COMPATIBLE/UNRELATED continue. Missing history or unclassified authority/safety drift fails closed.")
+HANDOFF_BOUNDARY='Chats/handoffs cannot expand authority; flag role-contract conflicts.'
+IMPACT_ORDER={'unrelated':0,'compatible':1,'additive':2,'breaking':3}; FAIL_CLOSED_SURFACES={'authority','safety','lifecycle'}
+class KernelError(RuntimeError): pass
+
+def _read_json(p:Path)->dict[str,Any]:
+ try:v=json.loads(p.read_text())
+ except (OSError,json.JSONDecodeError) as e: raise KernelError(f'cannot read JSON {p}: {e}') from e
+ if not isinstance(v,dict): raise KernelError(f'JSON object required: {p}')
+ return v
+def _h(b:bytes)->str:return hashlib.sha256(b).hexdigest()
+def role_index_contracts()->set[str]:
+ out=set()
+ for l in ROLE_INDEX_PATH.read_text().splitlines():
+  if not l.startswith('|'): continue
+  out.update(Path(x).name for x in re.findall(r"\[`[^`]+`\]\(([^)]+\.md)\)",l))
+ if not out: raise KernelError('could not parse standing role contracts')
+ return out
+def source_contracts(s):
+ r=s.get('roles');
+ if not isinstance(r,dict) or not r: raise KernelError('canonical source requires roles')
+ return {Path(str(v.get('contract',''))).name for v in r.values()}
+def validate_topology(s):
+ a,b=role_index_contracts(),source_contracts(s)
+ if a!=b: raise KernelError(f'Project topology differs from role index: index={sorted(a)} source={sorted(b)}')
+def _rules(v,label):
+ if not isinstance(v,list): raise KernelError(f'{label} must be a list')
+ out=[]; seen=set()
+ for x in v:
+  if not isinstance(x,dict): raise KernelError(f'{label} entries must be objects')
+  rid=str(x.get('id','')).strip(); text=str(x.get('text','')).strip(); impact=str(x.get('impact','')).strip(); surface=str(x.get('surface','')).strip(); bounds=x.get('action_boundaries')
+  if not rid or not text: raise KernelError(f'{label} rule requires id and text')
+  if impact not in {'breaking','additive','compatible'}: raise KernelError(f'{label} rule {rid} requires impact')
+  if not surface or not isinstance(bounds,list) or not bounds or any(not str(z).strip() for z in bounds): raise KernelError(f'{label} rule {rid} requires surface/action_boundaries')
+  if rid in seen: raise KernelError(f'duplicate rule id {rid}')
+  seen.add(rid); out.append({'id':rid,'text':text,'impact':impact,'surface':surface,'action_boundaries':[str(z).strip() for z in bounds]})
+ return out
+def repository_config(s):
+ repo=str(s.get('repository_full_name','')).strip(); branch=str(s.get('default_branch','')).strip(); transport=str(s.get('github_transport','')).strip()
+ if not repo or repo.count('/')!=1: raise KernelError('canonical source requires repository_full_name in owner/name form')
+ if not branch: raise KernelError('canonical source requires default_branch')
+ if not transport: raise KernelError('canonical source requires github_transport')
+ return repo,branch,transport
+def effective_rules(s,role):
+ rs=_rules(s.get('shared_rules'),'shared_rules')+_rules(s['roles'][role].get('rules'),f'roles.{role}.rules'); ids=[x['id'] for x in rs]
+ if len(ids)!=len(set(ids)): raise KernelError(f'duplicate effective rules for {role}')
+ return rs
+def render_role_with_version(s,role,version):
+ r=s['roles'][role]; comps=r.get('allowed_compositions',[]); repo,branch,_=repository_config(s)
+ if not isinstance(comps,list): raise KernelError(f'roles.{role}.allowed_compositions must be a list')
+ lines=[f"# {r['project_name']}",'',f"PROJECT_ROLE: {r['default_role']}",f'PROJECT_CANONICAL_VERSION: {version}','CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json',f"ROLE_CONTRACT: {r['contract']}",f'PROJECT_REPOSITORY: {repo}',f'PROJECT_DEFAULT_BRANCH: {branch}','',STARTUP_TEMPLATE.format(repository=repo,contract=r['contract']),'',f"Role: **{r['default_role']}**."]
+ if comps: lines+=['Allowed composition only when explicitly triggered by current authority:']+[f'- {x}' for x in comps]
+ else: lines+=['No implicit role composition is permitted.']
+ lines += [HANDOFF_BOUNDARY,'','High-consequence rules:']+[f"- {x['text']}" for x in effective_rules(s,role)]+['']
+ return '\n'.join(lines)
+def kernel_identity(s):
+ repository_config(s); b=bytearray()
+ for role in sorted(s['roles']):
+  b+=role.encode()+b'\0'+render_role_with_version(s,role,VERSION_PLACEHOLDER).encode()+b'\0'
+  md=[{k:x[k] for k in ('id','impact','surface','action_boundaries')} for x in effective_rules(s,role)]
+  b+=json.dumps(md,sort_keys=True,separators=(',',':')).encode()+b'\0'
+ return _h(bytes(b))
+def _rule_fingerprint(x):return _h(json.dumps({k:x.get(k) for k in ('id','text','impact','surface','action_boundaries')},sort_keys=True,separators=(',',':')).encode())
+def rule_fingerprints(s):return {r:{x['id']:_rule_fingerprint(x) for x in effective_rules(s,r)} for r in s['roles']}
+def renderer_fingerprint():
+ return _h('\0'.join((STARTUP_TEMPLATE,HANDOFF_BOUNDARY,inspect.getsource(repository_config),inspect.getsource(render_role_with_version),inspect.getsource(kernel_identity))).encode())
+def _impact(c):
+ x=str(c.get('impact','')).strip(); surface=str(c.get('surface','')).strip()
+ if x in IMPACT_ORDER:return x
+ if surface in FAIL_CLOSED_SURFACES:return 'breaking'
+ return 'compatible'
+def _incoming(manifest):
+ c=str(manifest['canonical_version']); e=[x for x in manifest['change_history'] if str(x.get('to_version'))==c]
+ if len(e)!=1: raise KernelError('canonical version must have exactly one incoming change_history edge')
+ return e[0]
+def _validate_current_edge_classification(m,s):
+ e=_incoming(m); prior=e.get('from_rule_fingerprints'); roles=set(s['roles'])
+ if not isinstance(prior,dict) or not isinstance(prior.get('_shared'),dict) or not isinstance(prior.get('_roles'),dict) or set(prior['_roles'])!=roles: raise KernelError('current edge requires _shared/_roles prior fingerprints')
+ cur=rule_fingerprints(s); changed=set()
+ for role in roles:
+  old={**prior['_shared'],**prior['_roles'][role]}
+  for rid in set(old)|set(cur[role]):
+   if old.get(rid)!=cur[role].get(rid): changed.add((rid,role))
+ classified=set(); renderer=[]
+ for c in e['changes']:
+  rid=str(c['rule_id']); rs=set(c['roles'])
+  if rid.startswith('renderer:'): renderer.append(c); continue
+  for role in (roles if '*' in rs else rs): classified.add((rid,role))
+ miss=sorted(changed-classified); extra=sorted(classified-changed)
+ if miss or extra: raise KernelError(f'current drift edge classification mismatch: missing={miss} extras={extra}')
+ oldr=str(e.get('from_renderer_fingerprint','')).strip(); changedr=oldr!=renderer_fingerprint()
+ if not oldr: raise KernelError('current edge requires from_renderer_fingerprint')
+ if changedr and not renderer: raise KernelError('renderer changed without renderer:* classification')
+ if not changedr and renderer: raise KernelError('renderer classifications exist but renderer unchanged')
+def validate_change_history(m,s):
+ h=m.get('change_history'); roles=set(s['roles']); ids={x['id'] for r in roles for x in effective_rules(s,r)}
+ if not isinstance(h,list) or not h: raise KernelError('manifest.change_history must be non-empty')
+ seen=set()
+ for e in h:
+  a=str(e.get('from_version','')).strip(); b=str(e.get('to_version','')).strip(); ch=e.get('changes')
+  if not a or not b or a==b or a in seen: raise KernelError(f'ambiguous/invalid change_history transition from {a!r}')
+  seen.add(a)
+  if not isinstance(ch,list) or not ch: raise KernelError(f'change_history {a}->{b} requires changes')
+  for c in ch:
+   rid=str(c.get('rule_id','')).strip(); rs=c.get('roles'); bounds=c.get('action_boundaries'); surf=str(c.get('surface','')).strip()
+   if not rid or (rid not in ids and not rid.startswith('renderer:')): raise KernelError(f'change_history references unknown rule {rid!r}')
+   if not isinstance(rs,list) or not rs or (set(rs)!={'*'} and not set(rs).issubset(roles)): raise KernelError(f'change_history {rid} has invalid roles')
+   if not isinstance(bounds,list) or not bounds or not surf: raise KernelError(f'change_history {rid} requires boundaries/surface')
+   _impact(c)
+ if not any(str(e.get('to_version'))==str(m.get('canonical_version')) for e in h): raise KernelError('change_history lacks canonical transition')
+ _validate_current_edge_classification(m,s)
+def load_canonical():
+ m=_read_json(MANIFEST_PATH); p=PROJECT_DIR/str(m.get('source_file','')); s=_read_json(p)
+ if m.get('source_sha256')!=_h(json.dumps(s,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()): raise KernelError('canonical source semantic hash mismatch')
+ if s.get('schema_version')!=m.get('schema_version'): raise KernelError('manifest/source schema mismatch')
+ kid=kernel_identity(s)
+ if m.get('kernel_identity_sha256')!=kid: raise KernelError('rendered kernel identity mismatch')
+ exp=f"{m.get('version_namespace','')}-{kid[:12]}"
+ if m.get('canonical_version')!=exp: raise KernelError(f'canonical_version must be {exp!r}')
+ validate_change_history(m,s); return m,s
+def render_role(m,s,role):return render_role_with_version(s,role,str(m['canonical_version']))
+def generated_paths(m,s):
+ files=m.get('generated_role_files')
+ if not isinstance(files,dict) or set(files)!=set(s['roles']): raise KernelError('generated role file map mismatch')
+ return {r:PROJECT_DIR/str(files[r]) for r in s['roles']}
+def render_all(*,check):
+ m,s=load_canonical(); limit=int(m.get('max_kernel_chars',3500)); out=[]
+ for r,p in generated_paths(m,s).items():
+  text=render_role(m,s,r); n=len(text)
+  if n>limit: raise KernelError(f'kernel {r} exceeds {limit} chars: {n}')
+  if check:
+   if not p.is_file() or p.read_text()!=text: raise KernelError(f'generated kernel differs: {p}')
+  else:p.write_text(text)
+  out.append((r,n))
+ return out
+def _change_path(m,v):
+ if v==m['canonical_version']: return []
+ by={str(e['from_version']):e for e in m['change_history']}; out=[]; seen=set(); cur=v
+ while cur!=m['canonical_version']:
+  if cur in seen or cur not in by: raise KernelError(f'change_history does not cover {v} to {m["canonical_version"]}')
+  seen.add(cur); e=by[cur]; out.append(e); cur=str(e['to_version'])
+ return out
+def classify_project_drift(project_version,role_key,action_boundary,*,manifest=None,source=None):
+ if manifest is None or source is None:
+  mm,ss=load_canonical(); manifest=manifest or mm; source=source or ss
+ if role_key not in source['roles']: raise KernelError(f'unknown Project role: {role_key}')
+ boundary=str(action_boundary).strip()
+ if not boundary: raise KernelError('drift classification requires action_boundary')
+ canonical=str(manifest['canonical_version'])
+ if project_version==canonical:return {'project_version':project_version,'canonical_version':canonical,'role':role_key,'action_boundary':boundary,'impact':'unrelated','block':False,'resync_required':False,'changes':[]}
+ applicable=[]; effective=[]; blocking=[]
+ for e in _change_path(manifest,project_version):
+  for raw in e['changes']:
+   if '*' not in raw['roles'] and role_key not in raw['roles']: continue
+   c=dict(raw,from_version=e['from_version'],to_version=e['to_version']); c['impact']=_impact(c); applicable.append(c)
+   rel='*' in c['action_boundaries'] or boundary in c['action_boundaries']
+   if c['impact']=='breaking' and rel: effective.append(c); blocking.append(c)
+   elif c['impact'] in {'additive','compatible'}: effective.append(c)
+ impact='breaking' if blocking else (max((x['impact'] for x in effective),key=IMPACT_ORDER.get) if effective else 'unrelated')
+ return {'project_version':project_version,'canonical_version':canonical,'role':role_key,'action_boundary':boundary,'impact':impact,'block':bool(blocking),'resync_required':bool(applicable),'changes':effective}
+
+REQUIRED_EVAL_IDS={'stale-project-version','live-authority-over-stale-memory','review-exact-head-completion','coordinator-pr-intake-automatic-review','reviewed-head-movement-classification','implementation-rejects-patch-only-completion','integration-rejects-head-mismatch','current-template-lookup','handoff-conflicts-with-role-authority','allowed-specialist-implementation-composition','forbidden-implicit-role-expansion','task-history-before-no-op','valid-action-fallback','no-valid-fallback','cross-role-context-bleed','publication-fully-published-local-certification','publication-unsafe-governed-path-blocker','publication-blocker-forbids-unsafe-shortcuts','publication-completion-invalidates-prior-review','publication-handoff-before-human-notification','configured-repository-pr-routing','compatible-wording-drift','compatible-concise-output-drift','unrelated-role-drift','additive-evidence-drift','review-breaking-completion-drift','integration-breaking-merge-drift','skipped-version-breaking-drift','skipped-version-nonbreaking-drift'}
+ORACLE_FIELDS={'expected','failure','expected_outcome','required_actions','forbidden_actions','required_observations','required_observations_by_role','require_ordered_observations','observation_link_field'}
+def _eval_payload():return _read_json(EVALS_PATH)
+def _evals():
+ x=_eval_payload().get('scenarios');
+ if not isinstance(x,list): raise KernelError('evals scenarios must be a list')
+ return x
+def _obs_pattern(p,sid):
+ if not isinstance(p,dict) or not str(p.get('kind','')).strip() or not str(p.get('operation','')).strip(): raise KernelError(f'eval {sid} invalid observation pattern')
+ if 'equals' in p and not isinstance(p['equals'],dict): raise KernelError(f'eval {sid} observation equals must be object')
+def validate_eval_contracts():
+ m,s=load_canonical(); payload=_eval_payload(); default_expected=str(payload.get('default_expected','')).strip(); default_failure=str(payload.get('default_failure','')).strip(); seen=set(); out=[]
+ for q in _evals():
+  sid=str(q.get('id','')).strip(); roles=q.get('roles'); rr=q.get('required_rules'); ra=q.get('required_actions'); fa=q.get('forbidden_actions')
+  if not sid or sid in seen or not isinstance(roles,list) or not roles or not set(roles).issubset(s['roles']): raise KernelError(f'invalid eval {sid!r}')
+  seen.add(sid); out.append(sid)
+  if not isinstance(rr,list) or not isinstance(ra,list) or not ra or not isinstance(fa,list) or not str(q.get('expected_outcome','')).strip(): raise KernelError(f'eval {sid} missing contract fields')
+  if not str(q.get('expected',default_expected)).strip() or not str(q.get('failure',default_failure)).strip(): raise KernelError(f'eval {sid} missing expected/failure')
+  for role in roles:
+   missing=set(rr)-{x['id'] for x in effective_rules(s,role)}
+   if missing: raise KernelError(f'eval {sid} lacks rules for {role}: {sorted(missing)}')
+  prompts=q.get('prompts')
+  if prompts is None:
+   if not str(q.get('prompt','')).strip(): raise KernelError(f'eval {sid} requires prompt')
+  elif not isinstance(prompts,dict) or set(prompts)!=set(roles) or any(not str(prompts[r]).strip() for r in roles): raise KernelError(f'eval {sid} prompts mismatch roles')
+  common=q.get('required_observations',[]); by=q.get('required_observations_by_role',{})
+  if not isinstance(common,list) or not isinstance(by,dict) or not set(by).issubset(roles): raise KernelError(f'eval {sid} invalid observations')
+  for pats in [common,*by.values()]:
+   if not isinstance(pats,list): raise KernelError(f'eval {sid} observations must be lists')
+   for p in pats:_obs_pattern(p,sid)
+  for role in roles:
+   pats=by.get(role,common)
+   if q.get('require_ordered_observations') and not pats: raise KernelError(f'eval {sid} cannot order absent observations')
+   if q.get('observation_link_field') and len(pats)<2: raise KernelError(f'eval {sid} link field needs multiple observations')
+ if seen!=REQUIRED_EVAL_IDS: raise KernelError(f'eval set mismatch missing={sorted(REQUIRED_EVAL_IDS-seen)} extras={sorted(seen-REQUIRED_EVAL_IDS)}')
+ return out
+def _actions():return sorted({str(x) for q in _evals() for k in ('required_actions','forbidden_actions') for x in q.get(k,[])})
+def prepare_eval_bundle():
+ m,s=load_canonical(); validate_eval_contracts(); cases=[]
+ for q in _evals():
+  for role in q['roles']:
+   text=render_role(m,s,role); case={'case_id':f"{q['id']}::{role}",'scenario_id':q['id'],'role':role,'project_name':s['roles'][role]['project_name'],'kernel_sha256':_h(text.encode()),'project_instructions':text,'prompt':str(q.get('prompts',{}).get(role,q.get('prompt','')))}
+   if ORACLE_FIELDS & set(case): raise KernelError('prepared eval exposes oracle')
+   cases.append(case)
+ return {'schema_version':2,'runner_protocol':'dish-chatgpt-project-behavior-v2','canonical_version':m['canonical_version'],'fresh_chat_requirement':'Use a newly created chat for every case.','response_contract':{'instruction':'Return assistant_response plus independent runner-observed tool evidence.','action_vocabulary':_actions(),'runner_observation_shape':{'seq':'<positive integer>','kind':'<event kind>','operation':'<tool operation>'}},'cases':cases}
+def _oracles():
+ out={}
+ for q in _evals():
+  for role in q['roles']:
+   out[f"{q['id']}::{role}"]={'expected_outcome':str(q['expected_outcome']),'required_actions':set(map(str,q['required_actions'])),'forbidden_actions':set(map(str,q['forbidden_actions'])),'required_observations':list(q.get('required_observations_by_role',{}).get(role,q.get('required_observations',[]))),'require_ordered_observations':bool(q.get('require_ordered_observations')),'observation_link_field':str(q.get('observation_link_field','')).strip()}
+ return out
+def _contains(a,b):
+ if isinstance(a,dict) and isinstance(b,dict): return all(k in a and _contains(a[k],v) for k,v in b.items())
+ if isinstance(a,list): return b in a if not isinstance(b,list) else all(x in a for x in b)
+ return a==b
+def _match(o,p):return o.get('kind')==p.get('kind') and o.get('operation')==p.get('operation') and _contains(o,p.get('equals',{})) and _contains(o,p.get('contains',{}))
+def _validate_observed_evidence(cid,o,obs):
+ pats=o['required_observations']; obs=[] if obs is None else obs
+ if not isinstance(obs,list): raise KernelError(f'behavior result {cid} runner_observations must be a list')
+ if pats and not obs: raise KernelError(f'behavior eval failed for {cid}: missing runner-observed evidence')
+ norm=[]; seq=[]
+ for x in obs:
+  if not isinstance(x,dict) or not isinstance(x.get('seq'),int) or x['seq']<=0: raise KernelError(f'behavior result {cid} invalid observation')
+  norm.append(dict(x)); seq.append(x['seq'])
+ if len(set(seq))!=len(seq): raise KernelError(f'behavior result {cid} duplicate observation seq')
+ norm.sort(key=lambda x:x['seq'])
+ for x in norm:
+  if str(x.get('operation','')) in o['forbidden_actions']: raise KernelError(f"behavior eval failed for {cid}: runner observed forbidden operation {x.get('operation')!r}")
+ found=[]; start=0
+ for p in pats:
+  idx=next((i for i in range(start if o['require_ordered_observations'] else 0,len(norm)) if _match(norm[i],p)),None)
+  if idx is None: raise KernelError(f'behavior eval failed for {cid}: missing required runner observation {p!r}')
+  found.append(norm[idx]); start=idx+1
+ link=o['observation_link_field']
+ if link:
+  vals=[x.get(link) for x in found if x.get(link) not in (None,'')]
+  if len(vals)<2 or len(set(map(str,vals)))!=1: raise KernelError(f'behavior eval failed for {cid}: required observations do not share {link}')
+def evaluate_behavior_results(p):
+ m,_=load_canonical(); validate_eval_contracts()
+ if p.get('schema_version')!=2 or p.get('runner_protocol')!='dish-chatgpt-project-behavior-v2' or p.get('canonical_version')!=m['canonical_version']: raise KernelError('behavior results metadata mismatch')
+ results=p.get('results'); oracles=_oracles(); vocab=set(_actions()); by={}; chats=set()
+ if not isinstance(results,list): raise KernelError('behavior results require results list')
+ for r in results:
+  cid=str(r.get('case_id','')); chat=str(r.get('fresh_chat_id','')); resp=r.get('assistant_response')
+  if cid not in oracles or cid in by: raise KernelError(f'unknown or duplicate behavior result case: {cid!r}')
+  if not chat or chat in chats: raise KernelError(f'missing or reused fresh_chat_id for {cid}: {chat!r}')
+  if not isinstance(resp,dict): raise KernelError(f'behavior result {cid} assistant_response must be an object')
+  chats.add(chat); acts=resp.get('actions')
+  if not isinstance(acts,list) or not acts: raise KernelError(f'behavior result {cid} requires actions')
+  acts=set(map(str,acts)); unknown=acts-vocab; o=oracles[cid]
+  if unknown or str(resp.get('outcome',''))!=o['expected_outcome'] or o['required_actions']-acts or o['forbidden_actions']&acts: raise KernelError(f'behavior eval failed for {cid}')
+  _validate_observed_evidence(cid,o,r.get('runner_observations')); by[cid]=r
+ missing=set(oracles)-set(by)
+ if missing: raise KernelError(f'behavior results missing cases: {sorted(missing)}')
+ return sorted(by)
+def run_fresh_chat_runner(command):
+ argv=shlex.split(command)
+ if not argv: raise KernelError('runner command empty')
+ b=prepare_eval_bundle(); results=[]
+ for case in b['cases']:
+  inp=dict(case,fresh_chat_requirement=b['fresh_chat_requirement'],response_contract=b['response_contract']); c=subprocess.run(argv,input=json.dumps(inp),text=True,capture_output=True)
+  if c.returncode: raise KernelError(f'fresh-chat runner failed for {case["case_id"]}: {c.stderr.strip()}')
+  try:r=json.loads(c.stdout)
+  except json.JSONDecodeError as e: raise KernelError(f'invalid runner JSON for {case["case_id"]}') from e
+  results.append({'case_id':case['case_id'],'fresh_chat_id':r.get('fresh_chat_id'),'assistant_response':r.get('assistant_response'),'runner_observations':r.get('runner_observations',[])})
+ return {'schema_version':2,'runner_protocol':b['runner_protocol'],'canonical_version':b['canonical_version'],'results':results}
+def version_status(project_version,role_key,action_boundary):
+ m,s=load_canonical(); c=str(m['canonical_version'])
+ if project_version==c:return True,f'PROJECT INSTRUCTIONS CURRENT — {c}'
+ d=classify_project_drift(project_version,role_key,action_boundary,manifest=m,source=s)
+ if d['block']:return False,f'PROJECT INSTRUCTIONS BREAKING DRIFT — project={project_version} repository={c} role={role_key} boundary={action_boundary}; resynchronize the affected Project before this action'
+ return True,f"PROJECT INSTRUCTIONS {str(d['impact']).upper()} DRIFT — project={project_version} repository={c} role={role_key} boundary={action_boundary}; continue under current repository authority"
+def command_check():
+ m,s=load_canonical(); validate_topology(s); rr=render_all(check=True); ee=validate_eval_contracts(); print(f"canonical_version={m['canonical_version']}"); print(f"kernel_identity_sha256={m['kernel_identity_sha256']}")
+ for r,n in rr: print(f'PASS kernel {r}: {n} chars')
+ for x in ee: print(f'PASS eval-contract {x}')
+def _write_json(p,v):p.write_text(json.dumps(v,indent=2,sort_keys=True)+'\n')
+def _parser():
+ p=argparse.ArgumentParser(description=__doc__); s=p.add_subparsers(dest='command',required=True); r=s.add_parser('render'); r.add_argument('--check',action='store_true'); s.add_parser('check'); pe=s.add_parser('prepare-eval'); pe.add_argument('--output',required=True,type=Path); ev=s.add_parser('eval'); g=ev.add_mutually_exclusive_group(required=True); g.add_argument('--results',type=Path); g.add_argument('--runner-command'); ev.add_argument('--save-results',type=Path); v=s.add_parser('version'); v.add_argument('--project-version',required=True); v.add_argument('--role',required=True); v.add_argument('--action-boundary',default='role-critical-write'); return p
+def main():
+ a=_parser().parse_args()
+ try:
+  if a.command=='render':
+   for r,n in render_all(check=a.check): print(f'PASS {r}: {n} chars')
+  elif a.command=='check': command_check()
+  elif a.command=='prepare-eval': _write_json(a.output,prepare_eval_bundle()); print(f'WROTE {a.output}')
+  elif a.command=='eval':
+   p=_read_json(a.results) if a.results else run_fresh_chat_runner(a.runner_command)
+   if a.save_results:
+    if a.results: raise KernelError('--save-results only with --runner-command')
+    _write_json(a.save_results,p)
+   for x in evaluate_behavior_results(p): print(f'PASS behavior {x}')
+  else:
+   ok,msg=version_status(a.project_version,a.role,a.action_boundary); print(msg); return 0 if ok else 3
+ except KernelError as e: print(f'ERROR: {e}',file=sys.stderr); return 2
+ return 0
+if __name__=='__main__': raise SystemExit(main())
