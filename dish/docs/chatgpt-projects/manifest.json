@@ -1,0 +1,18 @@
+{
+  "canonical_version": "dish-chatgpt-projects-v2-57da079ecc11",
+  "generated_role_files": {
+    "coordinator": "coordinator.md",
+    "development-workflow": "development-workflow.md",
+    "implementation": "implementation.md",
+    "integration": "integration.md",
+    "postgresql-dark-launch": "postgresql-dark-launch.md",
+    "review": "review.md",
+    "workflow": "workflow.md"
+  },
+  "kernel_identity_sha256": "57da079ecc111d3a3feb55692504f835317ca25d740a65a20c572eddfef16fbc",
+  "max_kernel_chars": 3500,
+  "schema_version": 1,
+  "source_file": "source.json",
+  "source_sha256": "7d30413c347634300529f00cbf402ec6ae4fa567b33301d2e31bbbc3d24af921",
+  "version_namespace": "dish-chatgpt-projects-v2"
+}

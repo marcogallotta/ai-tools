@@ -14,6 +14,10 @@ All repository-modifying roles inherit [`contributor-base.md`](contributor-base.
 | Workflow specialist, workflow agent | [`workflow.md`](workflow.md) |
 | PostgreSQL specialist, dark-launch specialist, dark-launch agent, PostgreSQL agent | [`postgresql-dark-launch.md`](postgresql-dark-launch.md) |
 
+## ChatGPT Project kernels
+
+Recurring ChatGPT role Projects use the concise, versioned kernels in [`../chatgpt-projects/`](../chatgpt-projects/README.md). Those generated kernels bootstrap high-consequence gates and drift detection; this index and the mapped standing contracts remain detailed role authority. A Project canonical-version mismatch must be reported as `PROJECT INSTRUCTIONS STALE` before role-critical state changes.
+
 ## Shared repository lifecycle
 
 For new repository work, all roles use the same Git-native lifecycle:
