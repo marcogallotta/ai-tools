@@ -19,6 +19,16 @@ class ExternalGitHub(base.FakeGitHub):
         raise pr_lifecycle.LifecycleError(f"PR #{number} unavailable")
 
 
+class FakeFixer:
+    command = "fake-fixer"
+
+    def __init__(self):
+        self.calls = []
+
+    def dispatch(self, payload):
+        self.calls.append(payload)
+
+
 def external_dependency_comment(
     *,
     action="blocked",
@@ -83,6 +93,16 @@ def test_resolved_external_record_reenters_gate_evaluation():
     assert "refresh/re-run" in state.residual_reason
     assert state.external_dependency is None
 
+    fixer = FakeFixer()
+    result = base.engine(gh).dispatch_one(
+        state,
+        workspace=None,
+        local_reviewer=None,
+        implementation_fixer=fixer,
+    )
+    assert result.state == pr_lifecycle.LifecycleState.REVIEW_PASSED
+    assert fixer.calls == []
+
 
 def test_closed_unmerged_external_owner_remains_blocked_explicitly():
     gh = ExternalGitHub()
@@ -110,3 +130,88 @@ def test_malformed_external_record_fails_closed_without_external_ownership():
     assert state.state == pr_lifecycle.LifecycleState.CHANGES_REQUESTED
     assert state.gate["diagnosis"] == pr_lifecycle.pr_gate.GateDiagnosis.FAILED_REQUIRED_CI.value
     assert "external dependency marker invalid" in state.residual_reason
+
+
+def test_merged_external_owner_reuses_integration_evidence_path():
+    gh = ExternalGitHub()
+    gh.reviews = [base.review()]
+    gh.workflow_runs = base.runs(conclusion="failure")
+    owner = base.pr(state="closed", merged=True)
+    owner["number"] = 77
+    gh.other_prs[77] = owner
+    gh.comments = [external_dependency_comment()]
+    fixer = FakeFixer()
+    lifecycle = base.engine(gh)
+
+    result = lifecycle.dispatch_one(
+        lifecycle.inspect(gh.pr),
+        workspace=None,
+        local_reviewer=None,
+        implementation_fixer=fixer,
+    )
+
+    assert result.state == pr_lifecycle.LifecycleState.REVIEW_PASSED
+    assert (
+        result.gate["diagnosis"]
+        == pr_lifecycle.pr_gate.GateDiagnosis.EVIDENCE_MISSING_OR_STALE.value
+    )
+    assert fixer.calls == []
+
+
+class CompletedAsana:
+    def get_task(self, gid):
+        return {
+            "gid": gid,
+            "completed": True,
+            "completed_at": base.NOW.isoformat(),
+        }
+
+
+def test_completed_external_owner_task_reuses_integration_evidence_path():
+    gh = ExternalGitHub()
+    gh.reviews = [base.review()]
+    gh.workflow_runs = base.runs(conclusion="failure")
+    gh.comments = [external_dependency_comment(owner_pr=None)]
+    fixer = FakeFixer()
+    lifecycle = pr_lifecycle.LifecycleEngine(
+        gh,
+        asana=CompletedAsana(),
+        now=lambda: base.NOW,
+    )
+
+    result = lifecycle.dispatch_one(
+        lifecycle.inspect(gh.pr),
+        workspace=None,
+        local_reviewer=None,
+        implementation_fixer=fixer,
+    )
+
+    assert result.state == pr_lifecycle.LifecycleState.REVIEW_PASSED
+    assert (
+        result.gate["diagnosis"]
+        == pr_lifecycle.pr_gate.GateDiagnosis.EVIDENCE_MISSING_OR_STALE.value
+    )
+    assert fixer.calls == []
+
+
+def test_new_failure_after_resolution_can_be_pr_owned():
+    gh = ExternalGitHub()
+    gh.reviews = [base.review()]
+    gh.workflow_runs = base.runs(conclusion="failure")
+    gh.workflow_runs["workflow_runs"][0]["run_started_at"] = "2026-08-13T09:00:00Z"
+    gh.comments = [
+        external_dependency_comment(when=base.NOW - timedelta(minutes=1), comment_id=80),
+        external_dependency_comment(action="resolved", when=base.NOW, comment_id=81),
+    ]
+    fixer = FakeFixer()
+    lifecycle = base.engine(gh)
+
+    result = lifecycle.dispatch_one(
+        lifecycle.inspect(gh.pr),
+        workspace=None,
+        local_reviewer=None,
+        implementation_fixer=fixer,
+    )
+
+    assert result.state == pr_lifecycle.LifecycleState.CHANGES_REQUESTED
+    assert len(fixer.calls) == 1
