@@ -99,6 +99,27 @@ def test_independent_transactions_report_commit_and_rollback(tmp_path) -> None:
 
 
 
+def test_probe_canonical_local_postgresql_accepts_cidr_form_server_address(monkeypatch) -> None:
+    namespace = runpy.run_path(str(ROOT / "scripts" / "dish-pg-native-certification"))
+    globals_ = namespace["_probe_canonical_local_postgresql"].__globals__
+
+    class FakeIdentity:
+        database = "dish_test"
+        server_port = 5432
+        server_address = "127.0.0.1/32"
+
+        def as_dict(self):
+            return {
+                "database": self.database,
+                "server_port": self.server_port,
+                "server_address": self.server_address,
+            }
+
+    monkeypatch.setitem(globals_, "probe_native_postgresql", lambda dsn: FakeIdentity())
+    result = namespace["_probe_canonical_local_postgresql"]()
+    assert result["role"] == "dish_test"
+
+
 def test_canonical_local_postgresql_bootstrap_is_bounded_and_reports_residual_reason(monkeypatch) -> None:
     namespace = runpy.run_path(str(ROOT / "scripts" / "dish-pg-native-certification"))
     unavailable = namespace["LocalPostgreSQLUnavailable"]

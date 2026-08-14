@@ -51,7 +51,7 @@ def _probe_canonical_local_postgresql() -> dict[str, object]:
                 f"canonical local identity mismatch: database={identity.database!r} "
                 f"port={identity.server_port!r}"
             )
-        if address is None or not ipaddress.ip_address(address).is_loopback:
+        if address is None or not ipaddress.ip_interface(address).ip.is_loopback:
             raise LocalPostgreSQLUnavailable(
                 f"canonical local identity is not loopback: address={address!r}"
             )
