@@ -36,3 +36,9 @@ Do not invent new workflow mechanisms, coordination state, or authority boundari
 ## Evidence
 
 Do not claim validation, merge, deployment, or runtime state without authoritative evidence. Follow the assigned role contract for required evidence and handoff.
+
+## Code-smell / engineering-debt logging
+
+When code-touching work exposes material non-blocking engineering debt, use `Dish — Code Smells / Engineering Debt` (`1217443501022227`) as a capture surface, not a second execution authority. Check for a matching item first; update it when present, otherwise create one unprioritized/intake item with affected path/component, issue, why it matters, concrete evidence/example, and suggested next action; then continue the assigned scope.
+
+Do not opportunistically fix unrelated debt, inflate priority, or move a blocker required for the active task away from its active task/PR. Current blockers remain on the active work surface.

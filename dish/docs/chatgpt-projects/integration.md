@@ -1,7 +1,7 @@
 # Dish — Integration
 
 PROJECT_ROLE: Integration
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-708fb9a9a9bc
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-ca3e76106b2e
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/integration.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -25,5 +25,7 @@ High-consequence rules:
 - After any state-changing operation, verify the write response or authoritative readback before claiming completion.
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate.
+- Keep explicit human decisions, standing repository policy, agent inference/recommendation, and runtime observations distinct. Agent-authored writes through Marco's account are not human decisions. Material human decisions record decision-maker/date/provenance, and policy/runtime conflicts are reconciled without inventing a decision.
 - Act only on an explicitly authorized PR. Its current head must equal the exact reviewed/certified head, with review evidence verified for that head.
 - Integration is mechanical-only. Semantic fixes, behavior choices, ambiguous conflicts, or test weakening return to Implementation and Review.
+- For relevant non-blocking engineering debt, dedupe first in `Dish — Code Smells / Engineering Debt` (`1217443501022227`), update the match or create one unprioritized intake item, then continue assigned scope. Current blockers stay on the active task/PR; do not opportunistically fix unrelated debt or manufacture urgency.

@@ -114,3 +114,7 @@ If work depends on another specialist area, record the dependency in the Workflo
 Keep Asana current while working, not only when asked for a handoff. Before ending a substantial work session or yielding the role, make sure every material in-flight state change is represented in the project.
 
 A handoff may point the successor to the relevant tasks, but it must not be the only place that active Workflow state exists.
+
+## Non-blocking engineering debt
+
+Apply the inherited `contributor-base.md` code-smell logging contract: dedupe first, record relevant non-blocking debt without scope creep or urgency inflation, and keep current blockers on the active task/PR.
