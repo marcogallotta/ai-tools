@@ -511,9 +511,12 @@ execute mode and start the TEST worker. PostgreSQL remains non-authoritative thr
 ### TEST fixture-contamination generation rollover
 
 Use this recovery only when an existing `dish_stage_a_test` authority generation is blocked by the
-known fixture-contamination shape: an activated ReleaseCandidate, an `admission_open` CutoverRun
-with no rehearsal identity, a closed MutationAdmissionControl, and a reserved first request. It is
-not a general "new generation" command and refuses a clean or inactive predecessor.
+known fixture-contamination incident. Lifecycle shape alone is not sufficient: the operator must
+supply the exact contaminated candidate/cutover/reservation IDs, and the command independently
+verifies the persisted fixture-specific source/import/first-admission provenance before it can retire
+anything. An ordinary supported first-admission state with the same `activated` / `admission_open` /
+closed-control / reserved-request shape is refused. It is not a general "new generation" command and
+refuses a clean or inactive predecessor.
 
 The rollover is one database transaction. It leaves every predecessor Stage 6, reservation,
 rehearsal, shadow-baseline/envelope/comparison/gap, project, section, task, and external-alias row in
@@ -532,14 +535,21 @@ export DISH_PG_DATABASE_URL='postgresql+psycopg://dish:...@127.0.0.1:55432/dish_
 
 .venv/bin/python scripts/dish-pg-test-generation-rollover \
   --predecessor-generation-id <exact-contaminated-generation-id> \
+  --contaminated-candidate-id <exact-contaminated-candidate-id> \
+  --contaminated-cutover-run-id <exact-contaminated-cutover-run-id> \
+  --contaminated-reservation-id <exact-contaminated-reservation-id> \
   --research-queue-section-id <exact-research-queue-section-id> \
   --verification-queue-section-id <exact-verification-queue-section-id> \
   --source-commit "$(git rev-parse HEAD)" \
   --receipt /home/marco/.local/state/dish/test/dark-launch-evidence/generation-rollover-receipt.json
 ```
 
-The receipt binds predecessor/successor IDs, recovery reason, exact source commit, timestamp,
-contaminated candidate/cutover/reservation IDs, and the carried-forward snapshot digest. After a
+The three contaminated Stage 6 IDs must come from the read-only incident evidence; the command
+does not infer them from the active generation. Before any generation mutation it verifies their
+exact relational binding and the known fixture signature (fixture source/import provenance, fixed
+fixture clock, release identity, and first-admission plan/reservation payload). The receipt binds
+predecessor/successor IDs, recovery reason, exact source commit, timestamp, contaminated
+candidate/cutover/reservation IDs, and the carried-forward snapshot digest. After a
 successful rollover, update the TEST shadow worker to the returned new baseline ID before resuming
 shadow execution. Do not point the worker back at the retired predecessor baseline.
 

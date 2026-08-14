@@ -1,8 +1,8 @@
 """TEST-only authority-generation rollover for fixture-contamination recovery.
 
 This is deliberately not a general generation-management surface. It is fenced to the
-maintained ``dish_stage_a_test`` database and only accepts the exact Stage 6 state shape
-left by the known first-admission fixture contamination incident.
+maintained ``dish_stage_a_test`` database and only accepts operator-supplied exact Stage 6
+identities whose persisted provenance matches the known first-admission fixture contamination incident.
 """
 from __future__ import annotations
 
@@ -38,6 +38,12 @@ ROLLOVER_REASON = "test-fixture contamination recovery"
 CREATION_REASON = "test_fixture_recovery"
 _SOURCE_COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 _SPECIAL_ROLES = {"research_queue", "verification_queue"}
+_FIXTURE_SHA256 = "a" * 64
+_FIXTURE_SOURCE_COMMIT = "42619b9"
+_FIXTURE_SOURCE_RELEASE = "dish-42619b9"
+_FIXTURE_TIMESTAMP = datetime(2026, 8, 1, 20, 0, tzinfo=timezone.utc)
+_FIXTURE_TASK_ID = uuid.UUID(int=10)
+_FIXTURE_REHEARSAL_ENVIRONMENT = f"production-shaped@{_FIXTURE_SHA256}"
 
 
 class GenerationRolloverError(ValueError):
@@ -134,50 +140,126 @@ def _require_test_database_name(database_name: str) -> None:
         )
 
 
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _contamination_evidence(
-    session: Session, predecessor_generation_id: uuid.UUID
+    session: Session,
+    predecessor_generation_id: uuid.UUID,
+    *,
+    contaminated_candidate_id: uuid.UUID,
+    contaminated_cutover_run_id: uuid.UUID,
+    contaminated_reservation_id: uuid.UUID,
 ) -> ContaminationEvidence:
-    matches = session.execute(
-        select(
-            rel.ReleaseCandidate.candidate_id,
-            rel.CutoverRun.cutover_run_id,
-            reservations.FirstRequestReservation.reservation_id,
-            rel.ReleaseCandidate.shadow_baseline_id,
-            rel.ReleaseCandidate.projection_epoch_id,
-        )
-        .join(rel.CutoverRun, rel.CutoverRun.candidate_id == rel.ReleaseCandidate.candidate_id)
-        .join(
-            rel.MutationAdmissionControl,
-            rel.MutationAdmissionControl.candidate_id == rel.ReleaseCandidate.candidate_id,
-        )
-        .join(
-            reservations.FirstRequestReservation,
-            reservations.FirstRequestReservation.candidate_id == rel.ReleaseCandidate.candidate_id,
-        )
-        .where(
-            rel.ReleaseCandidate.generation_id == predecessor_generation_id,
-            rel.ReleaseCandidate.status == "activated",
-            rel.CutoverRun.rehearsal_id.is_(None),
-            rel.CutoverRun.state == "admission_open",
-            rel.MutationAdmissionControl.generation_id == predecessor_generation_id,
-            rel.MutationAdmissionControl.state == "closed",
-            reservations.FirstRequestReservation.generation_id == predecessor_generation_id,
-            reservations.FirstRequestReservation.cutover_run_id == rel.CutoverRun.cutover_run_id,
-            reservations.FirstRequestReservation.state == "reserved",
-        )
-    ).all()
-    if len(matches) != 1:
+    """Require the exact known fixture incident, never a generic first-admission state."""
+    candidate = session.get(rel.ReleaseCandidate, contaminated_candidate_id)
+    cutover = session.get(rel.CutoverRun, contaminated_cutover_run_id)
+    reservation = session.get(reservations.FirstRequestReservation, contaminated_reservation_id)
+    control = session.get(rel.MutationAdmissionControl, predecessor_generation_id)
+    if candidate is None or cutover is None or reservation is None or control is None:
         raise GenerationRolloverError(
-            "predecessor must have exactly one contaminated Stage 6 bundle "
-            "(activated candidate, admission_open cutover without rehearsal, closed control, reserved first request)"
+            "explicit contaminated candidate/cutover/reservation identity is incomplete"
         )
-    row = matches[0]
+    if (
+        candidate.generation_id != predecessor_generation_id
+        or cutover.candidate_id != candidate.candidate_id
+        or reservation.generation_id != predecessor_generation_id
+        or reservation.candidate_id != candidate.candidate_id
+        or reservation.cutover_run_id != cutover.cutover_run_id
+        or control.candidate_id != candidate.candidate_id
+    ):
+        raise GenerationRolloverError(
+            "explicit contaminated candidate/cutover/reservation identities do not bind one predecessor bundle"
+        )
+    if (
+        candidate.status != "activated"
+        or cutover.rehearsal_id is not None
+        or cutover.state != "admission_open"
+        or control.state != "closed"
+        or reservation.state != "reserved"
+    ):
+        raise GenerationRolloverError(
+            "explicit contaminated bundle is not in the known blocked first-admission lifecycle state"
+        )
+
+    plan = session.get(rel.FirstAdmissionPlan, reservation.plan_id)
+    batch = session.get(tx.SourceImportBatch, candidate.source_import_batch_id)
+    if plan is None or batch is None:
+        raise GenerationRolloverError("fixture-contamination provenance is incomplete")
+    source_evidence = session.scalars(
+        select(tx.SourceImportEntityEvidence)
+        .where(tx.SourceImportEntityEvidence.import_batch_id == batch.import_batch_id)
+        .order_by(tx.SourceImportEntityEvidence.entity_kind)
+    ).all()
+
+    expected_plan_payload = {
+        "command_arguments": {
+            "task_id": str(_FIXTURE_TASK_ID),
+            "agent": "codex",
+            "kind": "initial",
+        },
+        "operator_evidence": {"probe": "first production mutation"},
+        "operation_id": None,
+        "owner_id": "owner-1",
+        "principal_class": "agent",
+        "run_id": str(reservation.run_id),
+        "canonical_payload_sha256": reservation.canonical_payload_sha256,
+    }
+    signature_ok = all(
+        (
+            candidate.source_release == _FIXTURE_SOURCE_RELEASE,
+            candidate.source_commit == _FIXTURE_SOURCE_COMMIT,
+            candidate.ledger_through_commit == _FIXTURE_SOURCE_COMMIT,
+            candidate.source_manifest_sha256 == _FIXTURE_SHA256,
+            candidate.rehearsal_environment_identity == _FIXTURE_REHEARSAL_ENVIRONMENT,
+            candidate.dish_release == _FIXTURE_SOURCE_RELEASE,
+            candidate.openapi_release == "openapi-stage4",
+            candidate.routing_release == "routing-stage6",
+            _as_utc(candidate.created_at) == _FIXTURE_TIMESTAMP,
+            _as_utc(cutover.started_at) == _FIXTURE_TIMESTAMP.replace(minute=5),
+            batch.generation_id == predecessor_generation_id,
+            batch.source_release == _FIXTURE_SOURCE_RELEASE,
+            batch.source_commit == _FIXTURE_SOURCE_COMMIT,
+            batch.ledger_through_commit == _FIXTURE_SOURCE_COMMIT,
+            batch.source_database_sha256 == _FIXTURE_SHA256,
+            batch.source_sidecars == {"audit": {"sha256": _FIXTURE_SHA256}},
+            batch.expected_entities == 4,
+            batch.imported_entities == 4,
+            batch.status == "complete",
+            _as_utc(batch.started_at) == _FIXTURE_TIMESTAMP,
+            _as_utc(batch.completed_at) == _FIXTURE_TIMESTAMP,
+            len(source_evidence) == 4,
+            all(row.source_sha256 == _FIXTURE_SHA256 for row in source_evidence),
+            all(row.provenance == {"source": "stage6-fixture"} for row in source_evidence),
+            all(_as_utc(row.imported_at) == _FIXTURE_TIMESTAMP for row in source_evidence),
+            plan.cutover_run_id == cutover.cutover_run_id,
+            plan.request_id == reservation.request_id,
+            plan.command_name == "start",
+            plan.task_id == _FIXTURE_TASK_ID,
+            plan.expected_projection_events == 0,
+            plan.payload == expected_plan_payload,
+            _as_utc(plan.recorded_at) == _FIXTURE_TIMESTAMP.replace(minute=6),
+            reservation.command_name == "start",
+            reservation.owner_id == "owner-1",
+            reservation.principal_class == "agent",
+            reservation.reservation_revision == 1,
+            _as_utc(reservation.reserved_at) == _FIXTURE_TIMESTAMP.replace(minute=6),
+        )
+    )
+    if not signature_ok:
+        raise GenerationRolloverError(
+            "explicit Stage 6 bundle does not match the known fixture-contamination incident signature"
+        )
+
     return ContaminationEvidence(
-        candidate_id=row.candidate_id,
-        cutover_run_id=row.cutover_run_id,
-        reservation_id=row.reservation_id,
-        shadow_baseline_id=row.shadow_baseline_id,
-        projection_epoch_id=row.projection_epoch_id,
+        candidate_id=candidate.candidate_id,
+        cutover_run_id=cutover.cutover_run_id,
+        reservation_id=reservation.reservation_id,
+        shadow_baseline_id=candidate.shadow_baseline_id,
+        projection_epoch_id=candidate.projection_epoch_id,
     )
 
 
@@ -532,6 +614,9 @@ def rollover_test_generation(
     session: Session,
     *,
     predecessor_generation_id: uuid.UUID,
+    contaminated_candidate_id: uuid.UUID,
+    contaminated_cutover_run_id: uuid.UUID,
+    contaminated_reservation_id: uuid.UUID,
     research_queue_section_id: uuid.UUID,
     verification_queue_section_id: uuid.UUID,
     source_commit: str,
@@ -549,6 +634,9 @@ def rollover_test_generation(
     return _rollover_generation_transaction(
         session,
         predecessor_generation_id=predecessor_generation_id,
+        contaminated_candidate_id=contaminated_candidate_id,
+        contaminated_cutover_run_id=contaminated_cutover_run_id,
+        contaminated_reservation_id=contaminated_reservation_id,
         research_queue_section_id=research_queue_section_id,
         verification_queue_section_id=verification_queue_section_id,
         source_commit=source_commit,
@@ -562,6 +650,9 @@ def _rollover_generation_transaction(
     session: Session,
     *,
     predecessor_generation_id: uuid.UUID,
+    contaminated_candidate_id: uuid.UUID,
+    contaminated_cutover_run_id: uuid.UUID,
+    contaminated_reservation_id: uuid.UUID,
     research_queue_section_id: uuid.UUID,
     verification_queue_section_id: uuid.UUID,
     source_commit: str,
@@ -591,7 +682,13 @@ def _rollover_generation_transaction(
     if active_ids != [predecessor_generation_id]:
         raise GenerationRolloverError("explicit predecessor must be the one active authority generation")
 
-    contamination = _contamination_evidence(session, predecessor_generation_id)
+    contamination = _contamination_evidence(
+        session,
+        predecessor_generation_id,
+        contaminated_candidate_id=contaminated_candidate_id,
+        contaminated_cutover_run_id=contaminated_cutover_run_id,
+        contaminated_reservation_id=contaminated_reservation_id,
+    )
     old_baseline = session.get(tx.ShadowBaseline, contamination.shadow_baseline_id)
     old_epoch = session.get(tx.ProjectionEpoch, contamination.projection_epoch_id)
     if (
@@ -785,6 +882,9 @@ def _atomic_json(path: Path, value: dict[str, Any]) -> None:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="dish-pg-test-generation-rollover")
     parser.add_argument("--predecessor-generation-id", type=uuid.UUID, required=True)
+    parser.add_argument("--contaminated-candidate-id", type=uuid.UUID, required=True)
+    parser.add_argument("--contaminated-cutover-run-id", type=uuid.UUID, required=True)
+    parser.add_argument("--contaminated-reservation-id", type=uuid.UUID, required=True)
     parser.add_argument("--research-queue-section-id", type=uuid.UUID, required=True)
     parser.add_argument("--verification-queue-section-id", type=uuid.UUID, required=True)
     parser.add_argument("--source-commit", required=True)
@@ -805,6 +905,9 @@ def main(argv: list[str] | None = None) -> int:
                 result = rollover_test_generation(
                     session,
                     predecessor_generation_id=args.predecessor_generation_id,
+                    contaminated_candidate_id=args.contaminated_candidate_id,
+                    contaminated_cutover_run_id=args.contaminated_cutover_run_id,
+                    contaminated_reservation_id=args.contaminated_reservation_id,
                     research_queue_section_id=args.research_queue_section_id,
                     verification_queue_section_id=args.verification_queue_section_id,
                     source_commit=args.source_commit,

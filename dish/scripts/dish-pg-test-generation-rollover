@@ -1,30 +1,12 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/usr/bin/env python3
+import sys
+from pathlib import Path
 
-candidate_id=""
-cutover_run_id=""
-reservation_id=""
-forward=()
-while (($#)); do
-  case "$1" in
-    --contaminated-candidate-id)
-      (($# >= 2)) || { echo "--contaminated-candidate-id requires a UUID" >&2; exit 2; }
-      candidate_id="$2"; shift 2 ;;
-    --contaminated-cutover-run-id)
-      (($# >= 2)) || { echo "--contaminated-cutover-run-id requires a UUID" >&2; exit 2; }
-      cutover_run_id="$2"; shift 2 ;;
-    --contaminated-reservation-id)
-      (($# >= 2)) || { echo "--contaminated-reservation-id requires a UUID" >&2; exit 2; }
-      reservation_id="$2"; shift 2 ;;
-    *) forward+=("$1"); shift ;;
-  esac
-done
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-[[ -n "$candidate_id" ]] || { echo "--contaminated-candidate-id is required" >&2; exit 2; }
-[[ -n "$cutover_run_id" ]] || { echo "--contaminated-cutover-run-id is required" >&2; exit 2; }
-[[ -n "$reservation_id" ]] || { echo "--contaminated-reservation-id is required" >&2; exit 2; }
+from dish_pg.test_generation_rollover import main
 
-export DISH_TEST_ROLLOVER_CANDIDATE_ID="$candidate_id"
-export DISH_TEST_ROLLOVER_CUTOVER_RUN_ID="$cutover_run_id"
-export DISH_TEST_ROLLOVER_RESERVATION_ID="$reservation_id"
-exec "$(dirname "$0")/../.venv/bin/python" -m dish_pg.test_generation_rollover "${forward[@]}"
+if __name__ == "__main__":
+    raise SystemExit(main())
