@@ -71,6 +71,14 @@ runs:
       with:
         node-version: '22'
 
+    - name: Install PGlite Node dependencies only when Node is provisioned
+      if: steps.runtime.outputs.node == 'true'
+      shell: bash
+      working-directory: dish/tests/postgresql/pglite
+      run: |
+        set -euo pipefail
+        npm ci --no-audit --no-fund
+
     - name: Start isolated PostgreSQL only when selected
       if: steps.runtime.outputs.postgresql == 'true'
       shell: bash
