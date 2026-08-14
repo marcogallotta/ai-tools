@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import copy
 import inspect
+import json
+import urllib.error
+import urllib.request
 import uuid
 from pathlib import Path
 
@@ -22,6 +25,7 @@ from dish_pg.workflow import (
     WorkflowAuthorityService,
     sha256_json,
 )
+from dish_service.http import DishHTTPServer
 from dish_service.leases import ServicePrincipal
 from dish_tool.errors import DishRuleError
 from tests.support.postgresql.concurrency import run_concurrent_workers, wait_at_barrier
@@ -31,6 +35,30 @@ from tests.support.postgresql.runtime_validation import (
     without_replay_metadata,
 )
 from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
+from tests.support.thread_teardown import start_server_thread, stop_server
+
+def _post_json(
+    url: str,
+    *,
+    body: dict[str, object],
+    token: str = "postgres-agent-token",
+) -> tuple[int, dict[str, object]]:
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        response = urllib.request.urlopen(request, timeout=3.0)
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.loads(exc.read().decode("utf-8"))
+    with response:
+        return response.status, json.loads(response.read().decode("utf-8"))
+
 
 def test_runtime_validation_adapter_delegates_replay_lifecycle_to_command_port() -> None:
     source = inspect.getsource(PostgresRuntimeService.record_replay_validation_failure)
@@ -250,6 +278,144 @@ def test_validation_failure_persists_and_exactly_replays(workflow_db, tmp_path: 
     assert replay["data"]["request_replayed"] is True
     assert without_replay_metadata(replay) == first
     with session_scope(factory) as session:
+        assert _row_counts(session, request_id) == _expected_counts()
+
+
+def test_http_agent_validation_failure_preserves_agent_request_identity(
+    workflow_db, tmp_path: Path
+) -> None:
+    factory, ids, context, _task_id = workflow_db
+    run_id = _next(ids)
+    request_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(
+            session, generation_id=context["generation_id"], run_id=run_id, owner="cli"
+        )
+
+    service = runtime_service(factory, tmp_path)
+    body = {
+        "client": {"run_id": str(run_id), "request_id": str(request_id)},
+        "arguments": {"operation_id": "not-a-uuid"},
+    }
+    with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="private") as server:
+        thread = start_server_thread(server, name="postgres-agent-validation-replay")
+        url = f"http://127.0.0.1:{server.server_address[1]}/v1/commands/create"
+        try:
+            status, result = _post_json(url, body=body)
+        finally:
+            stop_server(server, thread)
+
+    assert status == 200
+    assert result["errors"][0]["rule"] == "uuid_identifier_required"
+    with session_scope(factory) as session:
+        request = session.get(wf.ServiceRequest, request_id)
+        assert request is not None
+        assert request.owner_id == "cli"
+        assert request.principal_class == "agent"
+        assert request.command_name == "create"
+
+
+def test_http_admin_validation_failure_preserves_admin_request_identity_and_replay(
+    workflow_db, tmp_path: Path
+) -> None:
+    factory, ids, context, _task_id = workflow_db
+    run_id = _next(ids)
+    request_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=run_id,
+            owner="marco-admin",
+        )
+
+    service = runtime_service(factory, tmp_path)
+    service._profile = "prod"
+    first_body = {
+        "client": {"run_id": str(run_id), "request_id": str(request_id)},
+        "arguments": {"operation_id": "not-a-uuid"},
+    }
+    conflicting_body = {
+        "client": {"run_id": str(run_id), "request_id": str(request_id)},
+        "arguments": {"operation_id": "also-not-a-uuid"},
+    }
+    with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="private") as server:
+        thread = start_server_thread(server, name="postgres-admin-validation-replay")
+        url = f"http://127.0.0.1:{server.server_address[1]}/v1/admin/recover"
+        try:
+            first_status, first = _post_json(
+                url, body=first_body, token="postgres-admin-token"
+            )
+            replay_status, replay = _post_json(
+                url, body=first_body, token="postgres-admin-token"
+            )
+            conflict_status, conflict = _post_json(
+                url, body=conflicting_body, token="postgres-admin-token"
+            )
+        finally:
+            stop_server(server, thread)
+
+    assert first_status == replay_status == conflict_status == 200
+    assert first["errors"][0]["rule"] == "uuid_identifier_required"
+    assert "request_replayed" not in first["data"]
+    assert replay["data"]["request_replayed"] is True
+    assert without_replay_metadata(replay) == first
+    assert conflict["code"] == "CONFLICT"
+    assert conflict["errors"][0]["rule"] == "service_request_identity_conflict"
+    with session_scope(factory) as session:
+        request = session.get(wf.ServiceRequest, request_id)
+        assert request is not None
+        assert request.owner_id == "marco-admin"
+        assert request.principal_class == "admin"
+        assert request.command_name == "recover"
+        assert request.canonical_payload["arguments"] == {"operation_id": "not-a-uuid"}
+        assert _row_counts(session, request_id) == _expected_counts()
+
+
+def test_http_admin_lease_validation_failure_preserves_admin_request_identity(
+    workflow_db, tmp_path: Path
+) -> None:
+    factory, ids, context, _task_id = workflow_db
+    run_id = _next(ids)
+    request_id = _next(ids)
+    operation_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=run_id,
+            owner="marco-admin",
+        )
+
+    service = runtime_service(factory, tmp_path)
+    service._profile = "prod"
+    body = {
+        "client": {"run_id": str(run_id), "request_id": str(request_id)},
+        "reason": "",
+    }
+    with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="private") as server:
+        thread = start_server_thread(server, name="postgres-admin-lease-validation-replay")
+        url = (
+            f"http://127.0.0.1:{server.server_address[1]}"
+            f"/v1/admin/leases/{operation_id}/recover"
+        )
+        try:
+            status, result = _post_json(url, body=body, token="postgres-admin-token")
+        finally:
+            stop_server(server, thread)
+
+    assert status == 200
+    assert result["errors"][0]["rule"] == "recovery_reason_required"
+    with session_scope(factory) as session:
+        request = session.get(wf.ServiceRequest, request_id)
+        assert request is not None
+        assert request.owner_id == "marco-admin"
+        assert request.principal_class == "admin"
+        assert request.command_name == "recover-lease"
+        assert request.canonical_payload["arguments"] == {
+            "operation_id": str(operation_id),
+            "reason": "",
+        }
         assert _row_counts(session, request_id) == _expected_counts()
 
 

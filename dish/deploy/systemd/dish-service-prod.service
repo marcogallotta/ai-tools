@@ -8,6 +8,7 @@ Type=notify
 User=marco
 WorkingDirectory=/home/marco/ai-tools/dish
 EnvironmentFile=/home/marco/.config/dish-service/prod.env
+EnvironmentFile=/home/marco/.config/dish-service/postgres-prod.env
 ExecStart=/home/marco/ai-tools/dish/dish-service
 Restart=on-failure
 RestartPreventExitStatus=78

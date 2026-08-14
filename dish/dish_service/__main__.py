@@ -260,13 +260,22 @@ def _required_postgresql_runtime_argument(args, name: str):
     return value
 
 
-def _postgresql_runtime_config(args) -> ServiceConfig:
-    if os.environ.get("DISH_PROFILE", "").strip().lower() != "test":
+_POSTGRESQL_RUNTIME_PROFILES = ("test", "prod")
+
+
+def _postgresql_runtime_profile() -> str:
+    profile = os.environ.get("DISH_PROFILE", "").strip().lower()
+    if profile not in _POSTGRESQL_RUNTIME_PROFILES:
         raise DishRuleError(
             "INVALID_ARGUMENT",
-            "the PostgreSQL rehearsal service requires DISH_PROFILE=test",
-            rule="postgresql_runtime_profile_not_test",
+            "the PostgreSQL service runtime requires DISH_PROFILE=test or DISH_PROFILE=prod",
+            rule="postgresql_runtime_profile_invalid",
         )
+    return profile
+
+
+def _postgresql_runtime_config(args) -> ServiceConfig:
+    _postgresql_runtime_profile()
     populated_asana = sorted(
         key for key, value in os.environ.items() if "ASANA" in key.upper() and value
     )
@@ -300,19 +309,34 @@ def _run_postgresql_test_runtime(args) -> int:
     from dish_pg.postgres_service import PostgresRuntimeService
     from dish_pg.release import ALEMBIC_HEAD
 
-    config = _postgresql_runtime_config(args)
-    expected_database = str(_required_postgresql_runtime_argument(args, "expected_database"))
-    if (
-        not expected_database.startswith("dish_")
-        or not expected_database.endswith("_test")
-        or "prod" in expected_database.lower()
-        or "production" in expected_database.lower()
-    ):
+    profile = _postgresql_runtime_profile()
+    if args.postgresql_test_runtime and profile != "test":
         raise DishRuleError(
             "INVALID_ARGUMENT",
-            "expected PostgreSQL database must be a disposable dish_*_test database",
-            rule="postgresql_runtime_database_not_disposable",
+            "--postgresql-test-runtime requires DISH_PROFILE=test",
+            rule="postgresql_runtime_test_entrypoint_requires_test_profile",
         )
+    config = _postgresql_runtime_config(args)
+    expected_database = str(_required_postgresql_runtime_argument(args, "expected_database"))
+    if profile == "test":
+        if (
+            not expected_database.startswith("dish_")
+            or not expected_database.endswith("_test")
+            or "prod" in expected_database.lower()
+            or "production" in expected_database.lower()
+        ):
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "expected PostgreSQL database must be a disposable dish_*_test database",
+                rule="postgresql_runtime_database_not_disposable",
+            )
+    else:
+        if not expected_database.startswith("dish_") or not expected_database.endswith("_prod"):
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "expected PostgreSQL database must be an explicit dish_*_prod database",
+                rule="postgresql_runtime_database_not_production_shaped",
+            )
     cursor_secret = str(_required_postgresql_runtime_argument(args, "cursor_secret")).encode()
     if len(cursor_secret) < 24:
         raise DishRuleError(
@@ -344,6 +368,7 @@ def _run_postgresql_test_runtime(args) -> int:
         expected_generation_id=_required_postgresql_runtime_argument(
             args, "expected_generation_id"
         ),
+        profile=profile,
     )
     try:
         startup = service.startup_check()
