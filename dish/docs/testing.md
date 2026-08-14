@@ -348,10 +348,10 @@ The canonical local target is the disposable role/database on the system-wide PG
 For a manual non-interactive reset equivalent to the helper's bounded path:
 
 ```sh
-sudo -n -u postgres psql -X -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "DROP DATABASE IF EXISTS dish_test;"
-sudo -n -u postgres psql -X -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "DROP ROLE IF EXISTS dish_test;"
-sudo -n -u postgres psql -X -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "CREATE ROLE dish_test LOGIN PASSWORD '0ddca88b81a8bf1a15d84caa78efd7b3' CREATEDB CREATEROLE;"
-sudo -n -u postgres psql -X -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE dish_test OWNER dish_test;"
+sudo -n -u postgres psql -X -h localhost -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "DROP DATABASE IF EXISTS dish_test;"
+sudo -n -u postgres psql -X -h localhost -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "DROP ROLE IF EXISTS dish_test;"
+sudo -n -u postgres psql -X -h localhost -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "CREATE ROLE dish_test LOGIN PASSWORD '0ddca88b81a8bf1a15d84caa78efd7b3' CREATEDB CREATEROLE;"
+sudo -n -u postgres psql -X -h localhost -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE dish_test OWNER dish_test;"
 ```
 
 The fixed local DSN is:
