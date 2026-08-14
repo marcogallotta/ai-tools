@@ -284,6 +284,8 @@ def test_canonical_local_postgresql_bootstrap_is_bounded_and_reports_residual_re
     assert command[1:4] == ["-n", "-u", "postgres"]
     assert "-w" in command and kwargs["timeout"] == 10
     assert "PGHOST" not in kwargs["env"]
+    assert command[command.index("-h") + 1] == "localhost"
+    assert command[command.index("-p") + 1] == "5432"
     assert any("CREATEDB CREATEROLE" in part for part in command)
 
 

@@ -144,7 +144,8 @@ def _provision_canonical_local_postgresql() -> None:
         "CREATE DATABASE dish_test OWNER dish_test;",
     )
     command = [
-        sudo, "-n", "-u", "postgres", "--", psql, "-X", "-w", "-p", "5432", "-d",
+        sudo, "-n", "-u", "postgres", "--", psql, "-X", "-w", "-h", "localhost",
+        "-p", "5432", "-d",
         "postgres", "-v", "ON_ERROR_STOP=1", "-q",
     ]
     for statement in statements:
