@@ -63,6 +63,7 @@ runs:
       uses: ./.github/actions/setup-python-bundle
       with:
         github-token: ${{ inputs.github-token }}
+        include-flake: ${{ steps.runtime.outputs.flake }}
 
     - name: Setup Node only when selected groups require it
       if: steps.runtime.outputs.node == 'true'

@@ -15,7 +15,7 @@ def test_missing_ci_after_merge_review_is_stale_evidence_not_pending_ci():
         state.gate["diagnosis"]
         == pr_lifecycle.pr_gate.GateDiagnosis.EVIDENCE_MISSING_OR_STALE.value
     )
-    assert "required ordinary CI status" in state.residual_reason
+    assert "required certification status" in state.residual_reason
 
 
 def test_pending_exact_head_ci_waits_in_integration_without_changing_review_verdict():

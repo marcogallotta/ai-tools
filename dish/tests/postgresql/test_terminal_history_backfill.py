@@ -632,7 +632,7 @@ def test_0036_preexisting_import_fails_closed_until_exact_revocations_reconciled
     engine.dispose()
 
     command.upgrade(config, "head")
-    assert ALEMBIC_HEAD == "0040_no_asana_post_burn"
+    assert ALEMBIC_HEAD == "0041_test_generation_rollover"
 
     engine = create_engine(f"sqlite+pysqlite:///{database}", future=True)
     factory = sessionmaker(
