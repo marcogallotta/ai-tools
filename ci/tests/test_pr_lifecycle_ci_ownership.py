@@ -124,6 +124,42 @@ def test_local_implementation_handoff_names_implementation_role():
     assert result.human_action == "give PR #31 to a local Implementation agent; full handoff is on the PR"
 
 
+def test_combined_pending_ci_and_local_certification_write_one_integration_handoff_with_both_gates():
+    command = "dish/scripts/dish-pg-native-certification --candidate aaaaa"
+    gh = base.FakeGitHub()
+    gh.reviews = [base.review(body_tail=f"TESTS TO RUN: {command}")]
+    gh.workflow_runs = base.runs(status_value="in_progress", conclusion=None)
+    notices = []
+    lifecycle = base.engine(gh)
+
+    initial = lifecycle.inspect(gh.pr)
+
+    assert initial.state == pr_lifecycle.LifecycleState.LOCAL_CERTIFICATION_REQUIRED
+    assert initial.gate["diagnosis"] == pr_lifecycle.pr_gate.GateDiagnosis.PENDING.value
+
+    result = lifecycle.dispatch_one(
+        initial, workspace=None, local_reviewer=None, notify=notices.append
+    )
+
+    handoffs = [
+        event[1]
+        for event in gh.events
+        if event[0] == "comment" and "dish-local-handoff:v1" in event[1]
+    ]
+    assert len(handoffs) == 1
+    handoff = handoffs[0]
+    assert "Role: Integration" in handoff
+    assert f"Action: `{command}`" in handoff
+    assert "Remaining exact-head CI gate: `Dish / exact-head certification` — PENDING." in handoff
+    assert "Integration owns both remaining gates on this exact head" in handoff
+    assert result.state == pr_lifecycle.LifecycleState.LOCAL_CERTIFICATION_REQUIRED
+    assert result.gate["diagnosis"] == pr_lifecycle.pr_gate.GateDiagnosis.PENDING.value
+    assert notices == [
+        "PR #31 — REVIEW PASSED; local Integration certification required. "
+        "Action: give PR #31 to a local Integration agent for exact-head certification; full handoff is on the PR"
+    ]
+
+
 def test_terminal_state_labels_are_distinct_and_role_aware():
     assert pr_lifecycle.STATE_LABELS == {
         pr_lifecycle.LifecycleState.AUTHORING: "AUTHORING / IMPLEMENTATION IN PROGRESS",

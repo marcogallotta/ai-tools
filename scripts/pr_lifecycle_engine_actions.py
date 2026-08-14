@@ -32,10 +32,26 @@ class LifecycleActionsMixin:
         else:
             label = "LOCAL IMPLEMENTATION COMPLETION REQUIRED"
             role = "Implementation"
+        gate_context = ""
+        if (
+            work.kind == "certification"
+            and pr.gate
+            and pr.gate.get("diagnosis") == pr_gate.GateDiagnosis.PENDING.value
+        ):
+            context = pr.gate.get("required_status_context") or pr_gate.REQUIRED_ORDINARY_CI_CONTEXT
+            reason = pr.gate.get("reason") or "exact-head CI is still pending"
+            gate_context = (
+                f"Remaining exact-head CI gate: `{context}` — PENDING.\n"
+                f"CI state: {reason}\n\n"
+                "Integration owns both remaining gates on this exact head: run/poll the local certification "
+                "and poll the CI gate. If either fails, record the exact evidence and route any semantic fix "
+                "to Implementation.\n\n"
+            )
         body = (
             f"{marker}\n{label} — exact head `{pr.head}`\n\n"
             f"Role: {role}\n\n"
             f"Action: `{work.instruction}`\n\n"
+            f"{gate_context}"
             "This handoff is exact-head scoped. A head change invalidates it and requires the normal review/recheck path.\n\n"
             "— Dish PR lifecycle dispatcher"
         )
