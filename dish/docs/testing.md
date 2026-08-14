@@ -506,10 +506,14 @@ pytest with both `--postgresql` and `--native-postgresql`, and compares collecti
 inventory in `tests/support/postgresql/certification.py`. This direct certification entrypoint keeps
 its explicit-DSN contract; the canonical-local bootstrap belongs only to the named local lane and is
 not a generic default in `tests/support/postgresql/certification.py`. Certification fails when zero tests execute,
-when inventory identities drift, when setup errors occur, or when a required test skips without an
-explicit `--waive-skip NODEID=REASON`. The report includes dialect, driver, database, native server
-version, selected/executed/passed/failed/error/skipped/unavailable counts, duration, and exact node
-IDs.
+when inventory identities drift, when setup errors occur, when a required test skips without a
+matching structured `--waive-skip` JSON object, or when a configured waiver is unused, malformed,
+unknown, review-due/expired, or bound to a different skip-reason signature. Each waiver carries the
+exact node ID, SHA-256 of the expected pytest skip reason, owning Asana task GID, review-by date, and
+a separate human justification. The signature hashes only the reason text (not pytest's source
+location/`Skipped:` wrapper), so explanatory prose cannot silently stand in for the observed skip
+condition. The report includes matched waiver evidence, observed reason signatures, mismatches,
+unused waivers, dialect, driver, database, native server version, counts, duration, and exact node IDs.
 
 Production/config/source-artifact ownership rows carrying the `native-pg` trait select this lane by
 default. Narrow PGlite and source-level PostgreSQL tests are not blanket-promoted merely because their
@@ -558,11 +562,14 @@ Compose stack; they are only waived here because bare native-certification never
 `DISH_SECTION1_COMPOSE_JSON`. All four skip (with a reason) rather than fail when that variable is
 unset:
 
+The accepted 2026-08-07 gap is review-bounded to 2026-09-07. These are the committed structured
+waivers; a reason change requires a new reviewed signature rather than reusing the node ID:
+
 ```sh
---waive-skip "tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_database_disconnect_rolls_back_then_recovers_once=no runner wires DISH_SECTION1_COMPOSE_JSON to the shared TEST PostgreSQL target; revisit before setting external_effects_enabled=true" \
---waive-skip "tests/postgresql/native/test_process_failure_command.py::test_command_process_disconnect_before_commit_fails_closed_and_recovers=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure" \
---waive-skip "tests/postgresql/native/test_process_failure_disconnect.py::test_projection_worker_fails_clearly_across_postgresql_disconnect=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure" \
---waive-skip "tests/postgresql/native/test_process_failure_disconnect.py::test_reconciliation_worker_writes_nothing_while_postgresql_is_down=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure"
+--waive-skip '{"nodeid":"tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_database_disconnect_rolls_back_then_recovers_once","expected_reason_sha256":"a73321063eef94cb68f134ff85b48a2a1eda77a2e3d60a5893a40dc8b288ac1b","owner_task_gid":"1217428310522281","review_by":"2026-09-07","justification":"bare native certification lacks shared TEST Compose control; revisit before enabling external effects"}' \
+--waive-skip '{"nodeid":"tests/postgresql/native/test_process_failure_command.py::test_command_process_disconnect_before_commit_fails_closed_and_recovers","expected_reason_sha256":"b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1","owner_task_gid":"1217428310522281","review_by":"2026-09-07","justification":"covered by dish-pg-process-failure; bare native certification lacks Compose control"}' \
+--waive-skip '{"nodeid":"tests/postgresql/native/test_process_failure_disconnect.py::test_projection_worker_fails_clearly_across_postgresql_disconnect","expected_reason_sha256":"b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1","owner_task_gid":"1217428310522281","review_by":"2026-09-07","justification":"covered by dish-pg-process-failure; bare native certification lacks Compose control"}' \
+--waive-skip '{"nodeid":"tests/postgresql/native/test_process_failure_disconnect.py::test_reconciliation_worker_writes_nothing_while_postgresql_is_down","expected_reason_sha256":"b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1","owner_task_gid":"1217428310522281","review_by":"2026-09-07","justification":"covered by dish-pg-process-failure; bare native certification lacks Compose control"}'
 ```
 
 The section4 test is a decided, accepted gap (2026-08-07), tolerable only because dark-launch

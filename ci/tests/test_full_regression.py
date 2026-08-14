@@ -98,6 +98,17 @@ def test_workflow_contract_is_independent_force_all_diagnostic_backstop():
     )
 
 
+def test_native_postgresql_skip_waivers_use_structured_bounded_contract():
+    workflow = WORKFLOW.read_text()
+    assert workflow.count("--waive-skip") == 4
+    assert '--waive-skip "tests/postgresql/native/' not in workflow
+    assert workflow.count('\\"owner_task_gid\\":\\"1217428310522281\\"') == 4
+    assert workflow.count('\\"review_by\\":\\"2026-09-07\\"') == 4
+    assert "a73321063eef94cb68f134ff85b48a2a1eda77a2e3d60a5893a40dc8b288ac1b" in workflow
+    assert workflow.count("b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1") == 3
+
+
+
 def test_unchanged_success_dedupes_scheduled_only():
     runs = {"workflow_runs": [{"id": 100, "status": "completed", "conclusion": "success", "head_sha": SHA}]}
     scheduled = fr.decide_run(runs_payload=runs, main_sha=SHA, event="schedule", current_run_id="101")

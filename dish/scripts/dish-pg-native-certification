@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import ipaddress
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -161,8 +163,11 @@ def _parser() -> argparse.ArgumentParser:
         "--waive-skip",
         action="append",
         default=[],
-        metavar="NODEID=REASON",
-        help="explicitly waive one required native test skip with a nonblank reason",
+        metavar="JSON",
+        help=(
+            "explicit structured waiver for one required native test skip; "
+            "requires nodeid, expected_reason_sha256, owner_task_gid, review_by, justification"
+        ),
     )
     return parser
 
@@ -183,16 +188,111 @@ def _write_atomic(path: Path, value: Any) -> None:
         temp.unlink(missing_ok=True)
 
 
-def _parse_waivers(values: list[str]) -> dict[str, str]:
-    waivers: dict[str, str] = {}
+WAIVER_FIELDS = frozenset(
+    {"nodeid", "expected_reason_sha256", "owner_task_gid", "review_by", "justification"}
+)
+
+
+def _parse_waivers(
+    values: list[str], *, today: date | None = None
+) -> dict[str, dict[str, str]]:
+    current_date = today or datetime.now(timezone.utc).date()
+    waivers: dict[str, dict[str, str]] = {}
     for value in values:
-        nodeid, separator, reason = value.partition("=")
-        if not separator or not nodeid.strip() or not reason.strip():
-            raise ValueError("--waive-skip must be NODEID=REASON with a nonblank reason")
+        try:
+            payload = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError("--waive-skip must be a JSON object") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("--waive-skip must be a JSON object")
+        missing = sorted(WAIVER_FIELDS - set(payload))
+        unknown = sorted(set(payload) - WAIVER_FIELDS)
+        if missing or unknown:
+            details = []
+            if missing:
+                details.append("missing " + ", ".join(missing))
+            if unknown:
+                details.append("unknown " + ", ".join(unknown))
+            raise ValueError("invalid --waive-skip fields: " + "; ".join(details))
+        normalized: dict[str, str] = {}
+        for field in WAIVER_FIELDS:
+            field_value = payload[field]
+            if not isinstance(field_value, str) or not field_value.strip():
+                raise ValueError(f"--waive-skip field {field} must be a nonblank string")
+            normalized[field] = field_value.strip()
+        nodeid = normalized["nodeid"]
+        signature = normalized["expected_reason_sha256"]
+        if re.fullmatch(r"[0-9a-f]{64}", signature) is None:
+            raise ValueError(
+                f"skip waiver for {nodeid} has invalid expected_reason_sha256"
+            )
+        if not normalized["owner_task_gid"].isdigit():
+            raise ValueError(f"skip waiver for {nodeid} has invalid owner_task_gid")
+        try:
+            review_by = date.fromisoformat(normalized["review_by"])
+        except ValueError as exc:
+            raise ValueError(f"skip waiver for {nodeid} has invalid review_by date") from exc
+        if review_by <= current_date:
+            raise ValueError(
+                f"skip waiver for {nodeid} is review-due or expired ({review_by.isoformat()})"
+            )
         if nodeid in waivers:
             raise ValueError(f"duplicate skip waiver for {nodeid}")
-        waivers[nodeid] = reason.strip()
+        waivers[nodeid] = normalized
     return waivers
+
+
+def _skip_reason_text(raw: object) -> str:
+    if not isinstance(raw, str):
+        return ""
+    value: object = raw.strip()
+    try:
+        value = ast.literal_eval(value)
+    except (SyntaxError, ValueError):
+        pass
+    if isinstance(value, tuple) and len(value) >= 3 and isinstance(value[2], str):
+        reason = value[2].strip()
+    elif isinstance(value, str):
+        reason = value.strip()
+    else:
+        reason = raw.strip()
+    return reason.removeprefix("Skipped: ").strip()
+
+
+def _skip_reason_signature(raw: object) -> str:
+    return hashlib.sha256(_skip_reason_text(raw).encode("utf-8")).hexdigest()
+
+
+def _evaluate_waivers(
+    *, waivers: dict[str, dict[str, str]], skipped: set[str], skip_reasons: dict[str, object]
+) -> dict[str, object]:
+    reason_signatures = {
+        nodeid: _skip_reason_signature(skip_reasons.get(nodeid, ""))
+        for nodeid in sorted(skipped)
+    }
+    waived_skips: list[str] = []
+    reason_mismatches: list[dict[str, str]] = []
+    for nodeid in sorted(skipped & set(waivers)):
+        expected = waivers[nodeid]["expected_reason_sha256"]
+        observed = reason_signatures[nodeid]
+        if observed == expected:
+            waived_skips.append(nodeid)
+        else:
+            reason_mismatches.append(
+                {
+                    "nodeid": nodeid,
+                    "expected_reason_sha256": expected,
+                    "observed_reason_sha256": observed,
+                }
+            )
+    waived = set(waived_skips)
+    return {
+        "skip_reason_signatures": reason_signatures,
+        "waived_skips": waived_skips,
+        "waiver_reason_mismatches": reason_mismatches,
+        "unwaived_skips": sorted(skipped - waived),
+        "unused_waivers": sorted(set(waivers) - skipped),
+    }
 
 
 def _run(command: list[str], *, env: dict[str, str]) -> dict[str, Any]:
@@ -216,7 +316,9 @@ def _run(command: list[str], *, env: dict[str, str]) -> dict[str, Any]:
     }
 
 
-def _base_report(*, dsn: str, waivers: dict[str, str], inventory: tuple[str, ...]) -> dict[str, Any]:
+def _base_report(
+    *, dsn: str, waivers: dict[str, dict[str, str]], inventory: tuple[str, ...]
+) -> dict[str, Any]:
     return {
         "format": "dish-native-postgresql-certification-report-v1",
         "recorded_at": datetime.now(timezone.utc).isoformat(),
@@ -348,8 +450,14 @@ def main(argv: list[str] | None = None) -> int:
     inventory_missing = sorted(expected - selected)
     inventory_unexpected = sorted(selected - expected)
     skipped = set(tests.get("skipped_nodeids", []))
-    unwaived_skips = sorted(skipped - set(waivers))
-    unused_waivers = sorted(set(waivers) - skipped)
+    waiver_evidence = _evaluate_waivers(
+        waivers=waivers,
+        skipped=skipped,
+        skip_reasons=dict(tests.get("skip_reasons", {})),
+    )
+    unwaived_skips = waiver_evidence["unwaived_skips"]
+    unused_waivers = waiver_evidence["unused_waivers"]
+    waiver_reason_mismatches = waiver_evidence["waiver_reason_mismatches"]
     identity_matches = pytest_payload.get("identity") == identity.as_dict()
     certified = (
         run["exit_code"] == 0
@@ -359,6 +467,8 @@ def main(argv: list[str] | None = None) -> int:
         and int(tests.get("failed", 0)) == 0
         and int(tests.get("errors", 0)) == 0
         and not unwaived_skips
+        and not unused_waivers
+        and not waiver_reason_mismatches
         and identity_matches
     )
     report.update(
@@ -370,6 +480,9 @@ def main(argv: list[str] | None = None) -> int:
             "tests": tests,
             "inventory_missing": inventory_missing,
             "inventory_unexpected": inventory_unexpected,
+            "skip_reason_signatures": waiver_evidence["skip_reason_signatures"],
+            "waived_skips": waiver_evidence["waived_skips"],
+            "waiver_reason_mismatches": waiver_reason_mismatches,
             "unwaived_skips": unwaived_skips,
             "unused_waivers": unused_waivers,
             "pytest": run,
