@@ -350,7 +350,7 @@ For a manual non-interactive reset equivalent to the helper's bounded path:
 ```sh
 sudo -n -u postgres psql -X -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "DROP DATABASE IF EXISTS dish_test;"
 sudo -n -u postgres psql -X -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "DROP ROLE IF EXISTS dish_test;"
-sudo -n -u postgres psql -X -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "CREATE ROLE dish_test LOGIN PASSWORD '0ddca88b81a8bf1a15d84caa78efd7b3' CREATEDB;"
+sudo -n -u postgres psql -X -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "CREATE ROLE dish_test LOGIN PASSWORD '0ddca88b81a8bf1a15d84caa78efd7b3' CREATEDB CREATEROLE;"
 sudo -n -u postgres psql -X -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE dish_test OWNER dish_test;"
 ```
 
@@ -363,6 +363,9 @@ export DISH_PG_TEST_URL="$DISH_TEST_POSTGRESQL_DSN"
 
 The native branch of `tests/support/postgresql/core.py` drops and recreates the disposable `public`
 schema before each test, so the role only needs ordinary ownership of `dish_test`, not superuser.
+The canonical local role requires both `CREATEDB` and `CREATEROLE` because governed native fixtures
+create and drop throwaway databases and roles; it does not require superuser. The canonical helper
+verifies both capabilities before treating an existing local target as ready.
 
 `parallel-safe` is an explicit allowlist, not a general pytest mode. The exact 565-test inventory
 passed static isolation review and three clean runs each at `-n 2`, `-n 4`, and `-n 8` on 2026-08-08.
