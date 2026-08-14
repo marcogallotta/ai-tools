@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import subprocess
 import sys
@@ -33,6 +34,7 @@ class Phase:
     name: str
     command: tuple[str, ...]
     required_env: tuple[str, ...] = ()
+    local_postgresql_bootstrap: bool = False
 
 
 LANES: Mapping[str, tuple[Phase, ...]] = {
@@ -95,7 +97,7 @@ LANES: Mapping[str, tuple[Phase, ...]] = {
                 "tests/postgresql/native/test_projection_epoch_lifecycle_concurrency.py",
                 "tests/postgresql/native/test_stage_a_concurrency.py",
             ),
-            required_env=("DISH_TEST_POSTGRESQL_DSN",),
+            local_postgresql_bootstrap=True,
         ),
     ),
     "release-cutover": (
@@ -234,8 +236,47 @@ def _diagnostic_command(command: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(part for part in command if part != "-q") + ("-vv", "--durations=20")
 
 
+def _bootstrap_native_postgresql_env(env: Mapping[str, str]) -> dict[str, str]:
+    resolved = dict(env)
+    explicit = str(resolved.get("DISH_TEST_POSTGRESQL_DSN", "")).strip() or str(
+        resolved.get("DISH_PG_TEST_URL", "")
+    ).strip()
+    if explicit:
+        resolved["DISH_TEST_POSTGRESQL_DSN"] = explicit
+        return resolved
+    try:
+        completed = subprocess.run(
+            [PYTHON, "scripts/dish-pg-native-certification", "--ensure-local-postgresql", "--json"],
+            cwd=ROOT, env=resolved, capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print(f"UNAVAILABLE [native PostgreSQL bootstrap]: {exc}", file=sys.stderr, flush=True)
+        raise RuntimeError("canonical local PostgreSQL bootstrap could not run") from exc
+    if completed is None:
+        raise RuntimeError("canonical local PostgreSQL bootstrap returned no process result")
+    try:
+        result = json.loads(completed.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("canonical local PostgreSQL bootstrap returned invalid JSON") from exc
+    fixed = (
+        "postgresql+psycopg://dish_test:0ddca88b81a8bf1a15d84caa78efd7b3"
+        "@localhost:5432/dish_test"
+    )
+    if completed.returncode or result.get("status") != "ready" or result.get("dsn") != fixed:
+        raise RuntimeError(str(result.get("reason") or "canonical local PostgreSQL bootstrap failed closed"))
+    resolved["DISH_TEST_POSTGRESQL_DSN"] = fixed
+    return resolved
+
+
 def _run_phase(phase: Phase, *, env: Mapping[str, str]) -> int:
-    missing = [name for name in phase.required_env if not str(env.get(name, "")).strip()]
+    resolved_env = dict(env)
+    if phase.local_postgresql_bootstrap:
+        try:
+            resolved_env = _bootstrap_native_postgresql_env(resolved_env)
+        except RuntimeError as exc:
+            print(f"UNAVAILABLE [{phase.name}]: {exc}", file=sys.stderr, flush=True)
+            return 3
+    missing = [name for name in phase.required_env if not str(resolved_env.get(name, "")).strip()]
     if missing:
         print(
             f"UNAVAILABLE [{phase.name}]: missing environment " + ", ".join(missing),
@@ -247,7 +288,7 @@ def _run_phase(phase: Phase, *, env: Mapping[str, str]) -> int:
     print(f"COMMAND {_display(phase.command)}", flush=True)
     started = time.monotonic()
     try:
-        completed = subprocess.run(phase.command, cwd=ROOT, env=dict(env), check=False)
+        completed = subprocess.run(phase.command, cwd=ROOT, env=resolved_env, check=False)
     except FileNotFoundError as exc:
         print(f"UNAVAILABLE [{phase.name}]: {exc}", file=sys.stderr, flush=True)
         return 3
@@ -387,6 +428,7 @@ def main(argv: list[str] | None = None) -> int:
                 phase.name,
                 _diagnostic_command(phase.command),
                 required_env=phase.required_env,
+                local_postgresql_bootstrap=phase.local_postgresql_bootstrap,
             )
             for phase in phases
         )
