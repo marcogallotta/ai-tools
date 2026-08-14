@@ -4,6 +4,10 @@ inputs:
   github-token:
     description: Token with read access to this repository's Releases.
     required: true
+  include-flake:
+    description: Recreate the optional flake-diagnostics environment too.
+    required: false
+    default: 'false'
 runs:
   using: composite
   steps:
@@ -51,9 +55,14 @@ runs:
         AI_TOOLS_GITHUB_RUNNER: ubuntu-24.04
       run: |
         set -euo pipefail
+        extra=()
+        if [[ "${{ inputs.include-flake }}" == "true" ]]; then
+          extra+=(--include-flake)
+        fi
         python scripts/dependency_bundle.py install \
           --repo-root "$GITHUB_WORKSPACE" \
           --archive ".ci/dependency-bundle/$ARCHIVE_NAME" \
           --checksum ".ci/dependency-bundle/$CHECKSUM_NAME" \
           --manifest ".ci/dependency-bundle/$MANIFEST_NAME" \
-          --evidence-dir .test-artifacts/dependency-bundle
+          --evidence-dir .test-artifacts/dependency-bundle \
+          "${extra[@]}"

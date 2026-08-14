@@ -53,6 +53,7 @@ def test_runtime_requirements_are_derived_only_from_selected_groups(tmp_path: Pa
         "node": True,
         "postgresql": False,
         "chromium": False,
+        "flake": False,
     }
 
     browser = module.load_execution_spec(
@@ -63,6 +64,7 @@ def test_runtime_requirements_are_derived_only_from_selected_groups(tmp_path: Pa
         "node": True,
         "postgresql": False,
         "chromium": True,
+        "flake": False,
     }
 
     postgres = module.load_execution_spec(
@@ -73,6 +75,7 @@ def test_runtime_requirements_are_derived_only_from_selected_groups(tmp_path: Pa
         "node": False,
         "postgresql": True,
         "chromium": False,
+        "flake": False,
     }
 
 
