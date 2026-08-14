@@ -23,7 +23,6 @@ Current production combines Honest assets, service-owned SQLite, and Asana. Post
 | Supported document contract | Honest assets | Parsed/validated forms are derived |
 | Live title/notes/placement/completion | Asana as coordinated and exactly reread by Dish | Transitional until frontend/backend replacement |
 | Workflow operations, replay, leases, audit | SQLite | Intended to migrate to PostgreSQL |
-| Writable repository Implementation ownership and task/branch/PR lineage | Repository-owned global Implementation claim service | One current `(repository, task_gid)` CAS generation; Asana is a mirrored orchestration/readback surface and GitHub is lineage evidence |
 | Legal workflow transitions | Workflow/application policy over authoritative state | Rendered actions are projections |
 | Request identity/outcome | Replay authority | Permanent identity semantics |
 | Kill request-to-revocation binding | SQLite replay/kill authority | Exact immutable request, operation, owner, run, source authority, and revocation identity; written atomically with revocation |
@@ -35,8 +34,6 @@ Current production combines Honest assets, service-owned SQLite, and Asana. Post
 ## Invariants
 
 - A consequential durable fact has one authoritative writer/decision boundary at a time.
-- Repository Implementation ownership has one current durable generation. A stale or superseded `claim_id` cannot authorize semantic authoring, branch/PR adoption, or publication, even when GitHub expected-head checks would otherwise pass.
-- The claim service commits ownership before Asana synchronization. Until the exact generation is mirrored and read back successfully, that generation is non-writable and ordinary dispatch remains blocked.
 - Derived views, caches, renderers, and transports may contain logic, but must not independently contradict the authoritative fact they represent.
 - Missing or contradictory evidence is handled explicitly rather than treated as permission.
 - Dark-launch evidence cannot silently become current authority.

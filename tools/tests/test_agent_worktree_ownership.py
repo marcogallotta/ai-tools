@@ -9,19 +9,9 @@ from agent_worktree_support import SCRIPT, Harness, assert_error, git_out, h
 
 
 def claim(h: Harness, *, task: str, branch: str, agent: str, child: list[str], takeover=False, expected=None, pr=None, head=None):
-    args = ["python3", str(SCRIPT), "claim", "--task", task, "--branch", branch, "--agent-id", agent, "--base", h.current_remote_main()]
-    prior = None
-    matches = list((h.home / ".local/state/dish/worktrees/claims").glob(f"*/{task}.json"))
-    if len(matches) == 1:
-        prior = json.loads(matches[0].read_text())
+    args = ["python3", str(SCRIPT), "claim", "--task", task, "--branch", branch, "--agent-id", agent]
     if takeover:
         args.append("--takeover")
-        if prior is not None and prior.get("global_claim_id"):
-            args += [
-                "--expected-global-claim", str(prior["global_claim_id"]),
-                "--takeover-reason", "fixture explicit handoff",
-                "--liveness-evidence", "fixture prior owner declared stale",
-            ]
     if expected is not None:
         args += ["--expected-claim", expected]
     if pr is not None:
@@ -66,8 +56,7 @@ def test_claim_gate_and_concurrent_start_choose_one_owner(h: Harness) -> None:
         stdout, stderr = process.communicate(timeout=20)
         results.append((process.returncode, stdout, stderr))
     assert sum(code == 0 for code, _, _ in results) == 1
-    losing = next(err for code, _, err in results if code != 0)
-    assert any(code in losing for code in ("OWNERSHIP_CONFLICT", "OWNERSHIP_CLAIMED", "OWNER_HANDOFF_REQUIRED"))
+    assert "OWNERSHIP_CLAIMED" in next(err for code, _, err in results if code != 0)
 
 
 def test_live_owner_fences_takeover_and_second_writer(h: Harness) -> None:
@@ -147,38 +136,6 @@ def test_pr_head_must_match_authorized_remote_branch(h: Harness) -> None:
     result = claim(h, task="3005", branch="agent/pr", agent="a", pr=44, head=base, child=["python3", "-c", "pass"])
     assert_error(result, "PR_BRANCH_HEAD_MISMATCH")
     assert not h.state_path("3005").exists()
-
-
-def test_two_local_processes_sharing_winning_global_claim_are_os_fenced(h: Harness) -> None:
-    task, branch, agent = "3006", "agent/shared-global", "a"
-    h.agent_file(agent)
-    h.start(task=task, branch=branch, agent=agent)
-    _, record_data = record(h, task)
-    global_id = str(record_data["global_claim_id"])
-    base = h.current_remote_main()
-    long = subprocess.Popen(
-        [
-            "python3", str(SCRIPT), "claim", "--task", task, "--branch", branch, "--agent-id", agent,
-            "--base", base, "--global-claim-id", global_id, "--",
-            "python3", "-c", "import time; time.sleep(1)",
-        ],
-        cwd=h.primary, env=h.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-    )
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:
-        _, current = record(h, task)
-        if current["released_at"] is None:
-            break
-        time.sleep(.02)
-    second = subprocess.run(
-        [
-            "python3", str(SCRIPT), "claim", "--task", task, "--branch", branch, "--agent-id", agent,
-            "--base", base, "--global-claim-id", global_id, "--", "python3", "-c", "pass",
-        ],
-        cwd=h.primary, env=h.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-    )
-    assert_error(second, "OWNERSHIP_CLAIMED")
-    long.communicate(timeout=20)
 
 
 def test_local_implementation_handoff_contract_is_terse_executable_and_pr_durable() -> None:

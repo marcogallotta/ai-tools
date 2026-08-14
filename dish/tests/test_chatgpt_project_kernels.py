@@ -49,8 +49,7 @@ def test_missing_repository_bootstrap_fails_closed():
 
 def test_current_edge_requires_exact_rule_classification():
  m,s=kernels.load_canonical(); bad=copy.deepcopy(m); edge=next(x for x in bad['change_history'] if x['to_version']==bad['canonical_version'])
- changed_rule=next(x['rule_id'] for x in edge['changes'] if not x['rule_id'].startswith('renderer:'))
- edge['changes']=[x for x in edge['changes'] if x['rule_id']!=changed_rule]
+ edge['changes']=[x for x in edge['changes'] if x['rule_id']!='development-workflow-context-preload']
  with pytest.raises(kernels.KernelError,match='classification mismatch'): kernels._validate_current_edge_classification(bad,s)
 
 def test_classified_stable_rule_removal_is_representable_and_unknown_ids_still_fail():

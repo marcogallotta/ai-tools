@@ -107,17 +107,9 @@ def _build_engine(
     asana_token = args.asana_token or os.getenv("ASANA_ACCESS_TOKEN")
     asana = AsanaREST(asana_token) if asana_token else None
     authority = args.integration_authority or os.getenv("DISH_INTEGRATION_AUTHORITY") == "bounded-reviewed-head"
-    claim_url = args.implementation_claim_url or os.getenv("DISH_IMPLEMENTATION_CLAIM_URL")
-    claim_token = args.implementation_claim_token or os.getenv("DISH_IMPLEMENTATION_CLAIM_TOKEN")
-    claim_guard = (
-        ImplementationClaimREST(claim_url, claim_token, args.repo)
-        if claim_url and claim_token
-        else None
-    )
     engine = LifecycleEngine(
         github,
         asana=asana,
-        implementation_claim_guard=claim_guard,
         integration_authority=authority,
         integration_capable=not args.no_merge_capability,
         merge_method=args.merge_method,
@@ -196,8 +188,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--repo", default=os.getenv("GITHUB_REPOSITORY", "marcogallotta/ai-tools"))
     parser.add_argument("--github-token", help=argparse.SUPPRESS)
     parser.add_argument("--asana-token", help=argparse.SUPPRESS)
-    parser.add_argument("--implementation-claim-url", help=argparse.SUPPRESS)
-    parser.add_argument("--implementation-claim-token", help=argparse.SUPPRESS)
     parser.add_argument("--github-api-root", default="https://api.github.com")
     parser.add_argument("--workspace-api-root", default=WORKSPACE_API_ROOT)
     parser.add_argument("--workspace-token", help=argparse.SUPPRESS)

@@ -159,9 +159,6 @@ def test_concurrent_first_start_serializes_to_one_task_worktree(h: Harness) -> N
 
     assert sum(code == 0 for code, _, _ in results) == 1, results
     loser = next(item for item in results if item[0] != 0)
-    assert any(
-        marker in loser[2]
-        for marker in ("ERROR OWNERSHIP_CONFLICT:", "ERROR OWNERSHIP_CLAIMED:", "ERROR OWNER_HANDOFF_REQUIRED:")
-    )
+    assert "ERROR OWNERSHIP_CLAIMED:" in loser[2]
     records = git_out(h.primary, "worktree", "list", "--porcelain").split("\n\n")
     assert sum(str(h.wt(task)) in record for record in records) == 1

@@ -29,11 +29,6 @@ memory or convenience.
 The supplied base is the authoring base. Later target-branch movement is observed at normal
 resume/handoff boundaries; it does not silently replace the base or authorize rebase/reset.
 
-The global Implementation claim is part of this same assignment identity. Fresh work has no prior
-global generation and acquires one before semantic authoring. Continuation/replacement records the
-exact current `global_claim_id`; a stale generation is never silently adopted from Asana, GitHub, or
-a local worktree.
-
 ## Local dispatch ownership
 
 Claude Code/Codex repository writers acquire the matching exclusive local claim **before** touching
@@ -47,7 +42,6 @@ tools/agent-worktree claim \
   --task <gid> \
   --branch agent/<short-task-slug> \
   --agent-id <local-agent-id> \
-  --base <exact-base-sha> \
   -- \
   tools/agent-worktree start \
     --task <gid> \
@@ -64,7 +58,6 @@ tools/agent-worktree claim \
   --task <gid> \
   --branch agent/<short-task-slug> \
   --agent-id <local-agent-id> \
-  --base <exact-base-sha> \
   --pr-number <pr-number> \
   --pr-head <exact-pr-head> \
   --pr-lease-state <active|none> \
@@ -79,11 +72,9 @@ tools/agent-worktree claim \
     --agent-id <local-agent-id>
 ```
 
-The global generation prevents a second host/session from receiving writable task authority; the
-local locks prevent two same-host processes from concurrently using the one winning generation. PR
+A live claim prevents a second local agent from independently writing the same task/branch/PR. PR
 `dish-agent-lease` markers remain advisory visibility evidence only; they are never sole ownership
-authority. Every dispatcher checks the global dispatch guard first and fails closed when the claim
-service or exact Asana mirror/readback is unavailable.
+authority.
 
 ## Explicit owner transfer and stale-owner recovery
 
@@ -97,11 +88,8 @@ the exact current durable claim generation:
 tools/agent-worktree status --task <gid> --json
 ```
 
-For claimed state, use both `claim.global_claim_id` (cross-host durable generation) and
-`claim.claim_id` (same-host process generation) from that output as exact compare-and-set values.
-The replacement also carries an explicit takeover reason and bounded liveness evidence; claim age
-alone is never sufficient. Then acquire the replacement claim and resume the preserved worktree in
-one claimed process:
+For claimed state, use `claim.claim_id` from that output as the exact compare-and-set value. Then
+acquire the replacement claim and resume the preserved worktree in one claimed process:
 
 ```sh
 tools/agent-worktree claim \
@@ -109,10 +97,7 @@ tools/agent-worktree claim \
   --branch agent/<short-task-slug> \
   --agent-id <replacement-agent-id> \
   --takeover \
-  --expected-global-claim <exact-current-global-claim-id> \
-  --takeover-reason <explicit-handoff-or-recovery-reason> \
-  --liveness-evidence <bounded-current-evidence> \
-  --expected-claim <exact-current-local-claim-id> \
+  --expected-claim <exact-current-claim-id> \
   [--pr-number <pr-number> --pr-head <exact-pr-head> --pr-lease-state <active|none> [--pr-lease-id <lease-uuid>]] \
   -- \
   tools/agent-worktree resume \
@@ -121,13 +106,10 @@ tools/agent-worktree claim \
     --takeover
 ```
 
-The task/branch/PR locks serialize same-host takeover acquisition. `--expected-claim` is checked
-against the current local process generation while those locks are held **before** the global CAS is
-attempted, so a bad local takeover cannot advance cross-host ownership. The global service then
-compares `--expected-global-claim` atomically and creates a fresh opaque generation. If either value
-changed, takeover fails without granting writable authority; old global ids are ABA-safe and cannot
-be reused after a later generation. An unresolved publication intent must be reconciled or explicitly
-aborted before takeover, so no previously authorized branch-write window survives ownership transfer.
+The task/branch/PR locks serialize takeover acquisition. `--expected-claim` is checked against the
+current durable claim while those locks are held, before a new ownership generation is written. If
+another generation intervened, takeover fails with `OWNER_CLAIM_CHANGED`; an old claim id cannot be
+reused after a later generation (ABA-safe because each generation has a new opaque claim id).
 
 Legacy active worktree state created before exclusive claim records is recoverable only after
 explicit orchestration handoff with `--expected-claim legacy-unclaimed`. The sentinel is accepted

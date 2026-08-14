@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import uuid
 from typing import Any, NoReturn
 
 from .common import DISPOSITIONS, GitRunner, fail, now_utc, require_task_gid
@@ -12,8 +11,7 @@ from .operations import (
 )
 from .state import TaskLock, atomic_write_json, clear_agent_reference, load_task_state, state_path
 from .operations import owner_agent_id
-from .ownership import require_active_claim, read_claim
-from . import global_claim
+from .ownership import require_active_claim
 
 def _claimed_state(task_gid: str) -> dict[str, Any]:
     state = load_task_state(task_gid)
@@ -33,88 +31,18 @@ def command_publish(args: argparse.Namespace, runner: GitRunner) -> dict[str, An
         state = _claimed_state(task_gid)
         repo = resolve_repository_from_state(runner, state)
         identity = verify_owned_worktree(runner, repo, state)
-        claim = read_claim(task_gid)
-        if claim is None or not claim.get("global_claim_id"):
-            fail("GLOBAL_CLAIM_REQUIRED", "publish requires a durable global claim bound to the local ownership record")
-        claim_id = str(claim["global_claim_id"])
-        branch = str(state["branch"])
-        relation, remote_head = remote_relation(runner, repo, branch, identity.head)
+        relation, remote_head = remote_relation(runner, repo, state["branch"], identity.head)
         if relation == "remote-ahead":
             fail("REMOTE_AHEAD", "remote owned branch is ahead; publish refuses automatic synchronization")
         if relation == "divergent":
             fail("REMOTE_DIVERGED", "remote owned branch diverged; publish refuses merge/rebase/force-push")
-
-        durable = global_claim.authorize(task_gid, claim_id, branch)
-        if relation == "equal":
-            if durable.get("branch_head") != identity.head:
-                fail(
-                    "GLOBAL_HEAD_UNRECORDED",
-                    f"remote branch already equals local HEAD {identity.head}, but durable claim records {durable.get('branch_head')!r}; explicit lineage reconciliation is required",
-                )
-        else:
-            pending = state.get("global_publication")
-            if isinstance(pending, dict):
-                if pending.get("claim_id") != claim_id or pending.get("proposed_head") != identity.head:
-                    fail("GLOBAL_PUBLICATION_AMBIGUOUS", "stored publication intent does not match the current claim/local HEAD")
-                request_id = str(pending.get("request_id") or "")
-                expected_head = pending.get("expected_head")
-                observed = remote_ref_sha(runner, repo, f"refs/heads/{branch}", allow_missing=True)
-                if observed == identity.head:
-                    global_claim.complete_publication(
-                        task_gid=task_gid, claim_id=claim_id, request_id=request_id, result_head=identity.head
-                    )
-                    state.pop("global_publication", None)
-                    atomic_write_json(state_path(task_gid), state)
-                    relation, remote_head = "equal", identity.head
-                elif observed != expected_head:
-                    fail(
-                        "HEAD_MOVED",
-                        f"pending publication expected remote {expected_head!r} or proposed {identity.head}, observed {observed!r}",
-                    )
-            else:
-                request_id = f"agent-worktree-{uuid.uuid4().hex}"
-                expected_head = remote_head
-                state["global_publication"] = {
-                    "request_id": request_id,
-                    "claim_id": claim_id,
-                    "expected_head": expected_head,
-                    "proposed_head": identity.head,
-                    "started_at": now_utc(),
-                }
-                atomic_write_json(state_path(task_gid), state)
-
-            if relation != "equal":
-                pending = state["global_publication"]
-                request_id = str(pending["request_id"])
-                expected_head = pending.get("expected_head")
-                global_claim.begin_publication(
-                    task_gid=task_gid, claim_id=claim_id, branch=branch, expected_head=expected_head,
-                    proposed_head=identity.head, request_id=request_id,
-                )
-                ref = f"refs/heads/{branch}"
-                refspec = f"{ref}:{ref}"
-                result = runner.run(repo.source_top, "push", repo.origin_url, refspec, check=False)
-                verified_remote = remote_ref_sha(runner, repo, ref, allow_missing=True)
-                if verified_remote == identity.head:
-                    global_claim.complete_publication(
-                        task_gid=task_gid, claim_id=claim_id, request_id=request_id, result_head=identity.head
-                    )
-                    state.pop("global_publication", None)
-                elif verified_remote == expected_head:
-                    # Keep the exact publication intent durable. A retry reuses the same request id;
-                    # do not create a competing request after an unambiguous no-move failure.
-                    atomic_write_json(state_path(task_gid), state)
-                    fail("PUBLISH_FAILED", f"explicit owned-branch push failed without branch movement: {result.stderr.strip()}")
-                else:
-                    atomic_write_json(state_path(task_gid), state)
-                    fail(
-                        "HEAD_MOVED",
-                        f"publication branch moved to {verified_remote!r}, neither expected {expected_head!r} nor proposed {identity.head}",
-                    )
-                remote_head = verified_remote
-                relation = "equal"
-
-        verified_remote = remote_ref_sha(runner, repo, f"refs/heads/{branch}")
+        if relation != "equal":
+            ref = f"refs/heads/{state['branch']}"
+            refspec = f"{ref}:{ref}"
+            result = runner.run(repo.source_top, "push", repo.origin_url, refspec, check=False)
+            if result.returncode != 0:
+                fail("PUBLISH_FAILED", f"explicit owned-branch push failed without force: {result.stderr.strip()}")
+        verified_remote = remote_ref_sha(runner, repo, f"refs/heads/{state['branch']}")
         assert verified_remote is not None
         if verified_remote != identity.head:
             fail("PUBLISH_VERIFY_FAILED", f"remote owned head {verified_remote} != local HEAD {identity.head}")
