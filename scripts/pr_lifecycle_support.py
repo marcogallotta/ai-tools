@@ -182,6 +182,8 @@ class GitHubBackend(Protocol):
     def get_combined_status(self, sha: str) -> dict[str, Any]: ...
     def get_workflow_runs(self) -> dict[str, Any]: ...
     def add_comment(self, number: int, body: str) -> dict[str, Any]: ...
+    def close_pr(self, number: int) -> dict[str, Any]: ...
+    def get_branch(self, branch: str) -> dict[str, Any] | None: ...
     def merge(self, number: int, *, expected_head: str, method: str) -> dict[str, Any]: ...
 
 
@@ -308,6 +310,26 @@ class GitHubREST:
             raise LifecycleError("GitHub comment response was not an object")
         return value
 
+    def close_pr(self, number: int) -> dict[str, Any]:
+        _, _, value = self.http.request(
+            "PATCH", self._url(f"pulls/{number}"), headers=self.headers, body={"state": "closed"}
+        )
+        if not isinstance(value, dict):
+            raise LifecycleError("GitHub close pull request response was not an object")
+        return value
+
+    def get_branch(self, branch: str) -> dict[str, Any] | None:
+        encoded = urlparse.quote(branch, safe="")
+        try:
+            _, _, value = self.http.request("GET", self._url(f"branches/{encoded}"), headers=self.headers)
+        except HTTPError as exc:
+            if exc.status == 404:
+                return None
+            raise
+        if not isinstance(value, dict):
+            raise LifecycleError("GitHub branch response was not an object")
+        return value
+
     def merge(self, number: int, *, expected_head: str, method: str) -> dict[str, Any]:
         _, _, value = self.http.request(
             "PUT",
@@ -327,7 +349,7 @@ class AsanaREST:
         self.headers = {"Authorization": f"Bearer {token}", "User-Agent": "dish-pr-lifecycle/1"}
 
     def get_task(self, gid: str) -> dict[str, Any]:
-        query = urlparse.urlencode({"opt_fields": "gid,name,completed,modified_at,permalink_url"})
+        query = urlparse.urlencode({"opt_fields": "gid,name,notes,completed,completed_at,modified_at,permalink_url"})
         _, _, value = self.http.request("GET", f"{self.api_root}/tasks/{gid}?{query}", headers=self.headers)
         if not isinstance(value, dict) or not isinstance(value.get("data"), dict):
             raise LifecycleError(f"Asana task {gid} response was not an object")
