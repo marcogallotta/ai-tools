@@ -56,9 +56,9 @@ def status(*, head=HEAD, state="success", run_id=700):
         "sha": head,
         "statuses": [
             {
-                "context": "Dish / required ordinary CI",
+                "context": "Dish / exact-head certification",
                 "state": state,
-                "updated_at": "2026-08-13T07:10:00Z",
+                "updated_at": "2026-08-13T08:10:00Z",
                 "target_url": f"https://github.com/marcogallotta/ai-tools/actions/runs/{run_id}",
             }
         ],
@@ -72,11 +72,11 @@ def runs(*, head=HEAD, run_id=700, status_value="completed", conclusion="success
                 "id": run_id,
                 "run_attempt": 1,
                 "path": ".github/workflows/ci.yml",
-                "event": "pull_request",
-                "head_sha": head,
+                "event": "pull_request_review",
+                "pull_requests": [{"number": 31}],
                 "status": status_value,
                 "conclusion": conclusion,
-                "run_started_at": "2026-08-13T07:00:00Z",
+                "run_started_at": "2026-08-13T08:00:00Z",
             }
         ]
     }
@@ -113,7 +113,7 @@ class FakeGitHub:
     def get_combined_status(self, sha):
         return deepcopy(self.combined_status)
 
-    def get_workflow_runs(self, sha):
+    def get_workflow_runs(self):
         return deepcopy(self.workflow_runs)
 
     def add_comment(self, number, body):

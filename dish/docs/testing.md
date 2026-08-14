@@ -152,10 +152,15 @@ against the current checkout before deleting/recreating any environment and then
 with `--no-index --require-hashes`. A changed dependency manifest or target does not trigger a hidden
 rebuild or index access; it requires a newly published bundle.
 
-GitHub CI is the integrated backstop, not a replacement for the governed local selection rules below.
-Implementation agents continue to use changed-path focused tests and semantic lane escalation during
-iteration. The CI jobs recreate the expected `.venv` paths and then run broad Python, frontend/tooling,
-isolated native-PostgreSQL, and browser-acceptance coverage independently.
+GitHub PR certification consumes the same governed selection policy rather than running a blanket suite.
+A formal exact-head `VERDICT: MERGE` Review starts `.github/workflows/ci.yml`; the candidate is the
+Review `commit_id`, changed paths are computed from its exact merge base, and the repository planner
+selects the union of required `python-control-plane`, `frontend-static`, `native-postgresql`, and
+`browser-acceptance` groups. Review may add validated lanes but cannot remove planner-required evidence.
+Unknown repository paths, selector uncertainty, and certification/self-governance changes fail closed to
+full certification. A cheap `dish-test-plan --validate` guard runs before any heavy runner allocation.
+Unselected groups are neither started nor required by the exact-head gate. Periodic full regression remains
+a separate backstop in `.github/workflows/full-regression.yml`; it is not ordinary per-PR certification.
 
 ## Autonomous changed-path selection
 
@@ -847,7 +852,7 @@ state, complete thread/process teardown, and independent oracles.
 | When | Required work |
 | --- | --- |
 | Every scoped code handoff | planner-selected focused tests and governed lanes, with classification and omission reasons |
-| Integration, merge, or final staged archive | planner-selected lanes plus the ordinary full suite |
+| Integration or merge | reuse the fresh exact-head selector-driven PR certification; run only explicitly required local/environment-specific `TESTS TO RUN` evidence, with no routine blanket recertification |
 | Global test infrastructure or selector change | all affected governed lanes, ordinary full suite, and structural map validation |
 | Test infrastructure or concurrency change | rerun detector, five random-order runs, and twenty `flake_stress` runs |
 | One unexpected failure | exact-node repeat workflow and recorded triage evidence |

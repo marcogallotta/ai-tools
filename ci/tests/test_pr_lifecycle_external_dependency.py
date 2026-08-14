@@ -33,7 +33,7 @@ def external_dependency_comment(
     *,
     action="blocked",
     owner_pr=77,
-    check="Dish%20%2F%20required%20ordinary%20CI",
+    check="Dish%20%2F%20exact-head%20certification",
     main="d" * 40,
     evidence="task%3A1217449623846547",
     reason="baseline%20failure",
@@ -67,10 +67,10 @@ def test_failed_required_ci_with_valid_external_record_waits_on_external_depende
     assert state.state == pr_lifecycle.LifecycleState.WAITING_EXTERNAL_DEPENDENCY
     assert state.external_dependency["task_gid"] == "1217449623846547"
     assert state.external_dependency["owner_pr"] == 77
-    assert state.external_dependency["check"] == "Dish / required ordinary CI"
+    assert state.external_dependency["check"] == "Dish / exact-head certification"
     assert state.human_action == (
         "Waiting on PR #77 / task 1217449623846547: "
-        "Dish / required ordinary CI. No action for Marco."
+        "Dish / exact-head certification. No action for Marco."
     )
 
 

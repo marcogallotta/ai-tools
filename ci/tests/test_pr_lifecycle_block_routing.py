@@ -40,7 +40,7 @@ def external_dependency_comment():
         "id": 80,
         "body": (
             f"<!-- dish-external-dependency:v1 action=blocked task=1217449623846547 pr=77 "
-            f"check=Dish%20%2F%20required%20ordinary%20CI main={'d' * 40} "
+            f"check=Dish%20%2F%20exact-head%20certification main={'d' * 40} "
             "evidence=task%3A1217449623846547 reason=baseline%20failure -->"
         ),
         "created_at": base.NOW.isoformat(),
