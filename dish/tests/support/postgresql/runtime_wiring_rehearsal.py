@@ -223,7 +223,7 @@ def _exercise_unsupported_routes(
             },
         ),
         (
-            f"{action_base_url}/v1/action/proposals",
+            f"{action_base_url}/v1/action/backup-create",
             action_token,
             {
                 "client": {"run_id": str(run_id), "request_id": str(next(ids))},
