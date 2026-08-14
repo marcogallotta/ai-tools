@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 import threading
 from collections import defaultdict
 from typing import Any
@@ -29,6 +30,21 @@ class ClaimCoordinator:
             raise ClaimError("REPOSITORY_DENIED", f"service is scoped to {self.repository}", 403)
         return self.repository
 
+    @staticmethod
+    def _mint_writer_capability() -> str:
+        return secrets.token_urlsafe(48)
+
+    @staticmethod
+    def _writer(payload: dict[str, Any]) -> str:
+        value = str(payload.get("writer_capability") or "").strip()
+        if not value:
+            raise ClaimError(
+                "WRITER_AUTHORITY_REQUIRED",
+                "a private writer capability for the current generation is required",
+                403,
+            )
+        return value
+
     def _sync(self, claim: dict[str, Any]) -> dict[str, Any]:
         try:
             self.asana.sync(claim)
@@ -54,13 +70,12 @@ class ClaimCoordinator:
             "claim": claim,
         }
 
-    def sync(self, task_gid: str, claim_id: str) -> dict[str, Any]:
+    def sync(self, payload: dict[str, Any]) -> dict[str, Any]:
+        task_gid = str(payload["task_gid"])
+        claim_id = str(payload["claim_id"])
+        writer_capability = self._writer(payload)
         with self._task_lock(task_gid):
-            current = self.store.read(self.repository, task_gid)
-            if current is None:
-                raise ClaimError("CLAIM_MISSING", "no durable claim exists", 404)
-            if current["claim_id"] != claim_id:
-                raise ClaimError("OWNERSHIP_CONFLICT", "claim_id is stale", 409, current=current)
+            current = self.store.verify_writer(self.repository, task_gid, claim_id, writer_capability)
             if current["asana_sync_state"] == "synced":
                 return current
             return self._sync(current)
@@ -68,38 +83,52 @@ class ClaimCoordinator:
     def acquire(self, payload: dict[str, Any]) -> dict[str, Any]:
         repo = self._repo(payload.get("repository"))
         task = str(payload["task_gid"])
+        writer_capability = self._mint_writer_capability()
         with self._task_lock(task):
             claim = self.store.acquire(
                 repository=repo, task_gid=task, owner=str(payload["owner"]), session_id=str(payload["session_id"]),
-                host=str(payload["host"]), authoring_base_sha=str(payload["authoring_base_sha"]), branch=payload.get("branch"),
+                host=str(payload["host"]), authoring_base_sha=str(payload["authoring_base_sha"]),
+                writer_capability=writer_capability, branch=payload.get("branch"),
             )
-            return self._sync(claim)
+            try:
+                claim = self._sync(claim)
+            except ClaimError as exc:
+                exc.writer_capability = writer_capability
+                raise
+            return {**claim, "writer_capability": writer_capability}
 
-    def takeover(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def takeover(self, payload: dict[str, Any], *, recovery_authorized: bool = False) -> dict[str, Any]:
         repo = self._repo(payload.get("repository"))
         task = str(payload["task_gid"])
+        writer_capability = self._mint_writer_capability()
         with self._task_lock(task):
             claim = self.store.takeover(
                 repository=repo, task_gid=task, expected_claim_id=str(payload["expected_claim_id"]),
                 owner=str(payload["owner"]), session_id=str(payload["session_id"]), host=str(payload["host"]),
                 authoring_base_sha=str(payload["authoring_base_sha"]), reason=str(payload["reason"]),
-                liveness_evidence=str(payload["liveness_evidence"]),
+                liveness_evidence=str(payload["liveness_evidence"]), writer_capability=writer_capability,
+                recovery_authorized=recovery_authorized,
             )
-            return self._sync(claim)
+            try:
+                claim = self._sync(claim)
+            except ClaimError as exc:
+                exc.writer_capability = writer_capability
+                raise
+            return {**claim, "writer_capability": writer_capability}
 
     def authorize(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._repo(payload.get("repository"))
-        return self.store.authorize(self.repository, str(payload["task_gid"]), str(payload["claim_id"]), branch=payload.get("branch"))
+        return self.store.authorize(self.repository, str(payload["task_gid"]), str(payload["claim_id"]), self._writer(payload), branch=payload.get("branch"))
 
     def renew(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._repo(payload.get("repository"))
-        return self.store.renew(self.repository, str(payload["task_gid"]), str(payload["claim_id"]))
+        return self.store.renew(self.repository, str(payload["task_gid"]), str(payload["claim_id"]), self._writer(payload))
 
     def bind_branch(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._repo(payload.get("repository"))
         task = str(payload["task_gid"])
         with self._task_lock(task):
-            claim = self.store.bind_branch(self.repository, task, str(payload["claim_id"]), str(payload["branch"]))
+            claim = self.store.bind_branch(self.repository, task, str(payload["claim_id"]), self._writer(payload), str(payload["branch"]))
             return self._sync(claim)
 
     def bind_pr(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -107,7 +136,7 @@ class ClaimCoordinator:
         task = str(payload["task_gid"])
         with self._task_lock(task):
             claim = self.store.bind_pr(
-                self.repository, task, str(payload["claim_id"]), pr_number=int(payload["pr_number"]), pr_head=str(payload["pr_head"])
+                self.repository, task, str(payload["claim_id"]), self._writer(payload), pr_number=int(payload["pr_number"]), pr_head=str(payload["pr_head"])
             )
             return self._sync(claim)
 
@@ -116,7 +145,7 @@ class ClaimCoordinator:
         task = str(payload["task_gid"])
         with self._task_lock(task):
             claim, publication, replay = self.store.begin_publication(
-                self.repository, task, str(payload["claim_id"]), branch=str(payload["branch"]),
+                self.repository, task, str(payload["claim_id"]), self._writer(payload), branch=str(payload["branch"]),
                 expected_head=payload.get("expected_head"), proposed_head=str(payload["proposed_head"]), request_id=str(payload["request_id"]),
             )
             if not replay:
@@ -128,7 +157,7 @@ class ClaimCoordinator:
         task = str(payload["task_gid"])
         with self._task_lock(task):
             claim, publication = self.store.complete_publication(
-                self.repository, task, str(payload["claim_id"]), request_id=str(payload["request_id"]),
+                self.repository, task, str(payload["claim_id"]), self._writer(payload), request_id=str(payload["request_id"]),
                 result_head=str(payload["result_head"]), pr_number=(int(payload["pr_number"]) if payload.get("pr_number") is not None else None),
             )
             claim = self._sync(claim)
@@ -138,7 +167,7 @@ class ClaimCoordinator:
         self._repo(payload.get("repository"))
         task = str(payload["task_gid"])
         with self._task_lock(task):
-            claim = self.store.abort_publication(self.repository, task, str(payload["claim_id"]), request_id=str(payload["request_id"]))
+            claim = self.store.abort_publication(self.repository, task, str(payload["claim_id"]), self._writer(payload), request_id=str(payload["request_id"]))
             return self._sync(claim)
 
     def reconcile_publication(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -148,7 +177,9 @@ class ClaimCoordinator:
         task = str(payload["task_gid"])
         request_id = str(payload["request_id"])
         claim_id = str(payload["claim_id"])
+        writer_capability = self._writer(payload)
         with self._task_lock(task):
+            self.store.verify_writer(self.repository, task, claim_id, writer_capability)
             publication = self.store.publication(self.repository, task, request_id)
             if publication is None:
                 raise ClaimError("PUBLICATION_MISSING", "publication intent does not exist", 404)
@@ -162,7 +193,7 @@ class ClaimCoordinator:
             live_head = self.github.branch_head(self.repository, publication["branch"])
             if live_head == publication["proposed_head"]:
                 claim, publication = self.store.complete_publication(
-                    self.repository, task, claim_id, request_id=request_id, result_head=publication["proposed_head"],
+                    self.repository, task, claim_id, writer_capability, request_id=request_id, result_head=publication["proposed_head"],
                     pr_number=publication.get("pr_number"),
                 )
                 claim = self._sync(claim)
@@ -183,7 +214,7 @@ class ClaimCoordinator:
         task = str(payload["task_gid"])
         with self._task_lock(task):
             claim = self.store.review_ready(
-                self.repository, task, str(payload["claim_id"]), pr_number=int(payload["pr_number"]), pr_head=str(payload["pr_head"])
+                self.repository, task, str(payload["claim_id"]), self._writer(payload), pr_number=int(payload["pr_number"]), pr_head=str(payload["pr_head"])
             )
             return self._sync(claim)
 
@@ -191,12 +222,12 @@ class ClaimCoordinator:
         self._repo(payload.get("repository"))
         task = str(payload["task_gid"])
         with self._task_lock(task):
-            claim = self.store.release(self.repository, task, str(payload["claim_id"]), reason=str(payload["reason"]))
+            claim = self.store.release(self.repository, task, str(payload["claim_id"]), self._writer(payload), reason=str(payload["reason"]))
             return self._sync(claim)
 
     def supersede(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._repo(payload.get("repository"))
         task = str(payload["task_gid"])
         with self._task_lock(task):
-            claim = self.store.supersede(self.repository, task, str(payload["claim_id"]), reason=str(payload["reason"]))
+            claim = self.store.supersede(self.repository, task, str(payload["claim_id"]), self._writer(payload), reason=str(payload["reason"]))
             return self._sync(claim)

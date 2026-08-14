@@ -90,7 +90,7 @@ def test_stale_global_claim_is_rejected_before_push(h: Harness) -> None:
         "authoring_base_sha": str(current["authoring_base_sha"]),
         "reason": "fixture cross-host takeover",
         "liveness_evidence": "fixture explicit coordinator handoff",
-    })
+    }, recovery_authorized=True)
     assert replacement["claim_id"] != old_global
 
     result = h.tool("publish", "--task", "1001", "--json", check=False)

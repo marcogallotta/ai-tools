@@ -14,6 +14,7 @@ from implementation_claim_lib.store import ClaimStore
 from .common import fail
 
 GLOBAL_CLAIM_ENV = "DISH_IMPLEMENTATION_GLOBAL_CLAIM_ID"
+GLOBAL_WRITER_ENV = "DISH_IMPLEMENTATION_GLOBAL_WRITER_CAPABILITY"
 TEST_DB_ENV = "DISH_IMPLEMENTATION_CLAIM_TEST_DB"
 TEST_MODE_ENV = "DISH_IMPLEMENTATION_CLAIM_TESTING"
 
@@ -37,16 +38,16 @@ class _DirectTestClient:
         return self._coordinator.acquire({"repository": self.repository, **kwargs})
 
     def takeover(self, **kwargs: Any) -> dict[str, Any]:
-        return self._coordinator.takeover({"repository": self.repository, **kwargs})
+        return self._coordinator.takeover({"repository": self.repository, **kwargs}, recovery_authorized=True)
 
-    def sync(self, *, task_gid: str, claim_id: str) -> dict[str, Any]:
-        return self._coordinator.sync(task_gid, claim_id)
+    def sync(self, *, task_gid: str, claim_id: str, writer_capability: str) -> dict[str, Any]:
+        return self._coordinator.sync({"repository": self.repository, "task_gid": task_gid, "claim_id": claim_id, "writer_capability": writer_capability})
 
-    def authorize(self, *, task_gid: str, claim_id: str, branch: str | None = None) -> dict[str, Any]:
-        return self._coordinator.authorize({"repository": self.repository, "task_gid": task_gid, "claim_id": claim_id, "branch": branch})
+    def authorize(self, *, task_gid: str, claim_id: str, writer_capability: str, branch: str | None = None) -> dict[str, Any]:
+        return self._coordinator.authorize({"repository": self.repository, "task_gid": task_gid, "claim_id": claim_id, "writer_capability": writer_capability, "branch": branch})
 
-    def bind_pr(self, *, task_gid: str, claim_id: str, pr_number: int, pr_head: str) -> dict[str, Any]:
-        return self._coordinator.bind_pr({"repository": self.repository, "task_gid": task_gid, "claim_id": claim_id, "pr_number": pr_number, "pr_head": pr_head})
+    def bind_pr(self, *, task_gid: str, claim_id: str, writer_capability: str, pr_number: int, pr_head: str) -> dict[str, Any]:
+        return self._coordinator.bind_pr({"repository": self.repository, "task_gid": task_gid, "claim_id": claim_id, "writer_capability": writer_capability, "pr_number": pr_number, "pr_head": pr_head})
 
     def begin_publication(self, **kwargs: Any) -> dict[str, Any]:
         return self._coordinator.begin_publication({"repository": self.repository, **kwargs})
@@ -85,9 +86,16 @@ def status(task_gid: str) -> dict[str, Any] | None:
     return _call(c.status, task_gid)
 
 
-def authorize(task_gid: str, claim_id: str, branch: str) -> dict[str, Any]:
+def _writer_capability(explicit: str | None = None) -> str:
+    capability = explicit or os.environ.get(GLOBAL_WRITER_ENV)
+    if not capability:
+        fail("WRITER_AUTHORITY_REQUIRED", f"private global writer capability is required via {GLOBAL_WRITER_ENV}")
+    return capability
+
+
+def authorize(task_gid: str, claim_id: str, branch: str, *, writer_capability: str | None = None) -> dict[str, Any]:
     c = client()
-    return _call(c.authorize, task_gid=task_gid, claim_id=claim_id, branch=branch)
+    return _call(c.authorize, task_gid=task_gid, claim_id=claim_id, writer_capability=_writer_capability(writer_capability), branch=branch)
 
 
 def acquire(*, task_gid: str, owner: str, session_id: str, host: str, base_sha: str, branch: str) -> dict[str, Any]:
@@ -109,26 +117,33 @@ def takeover(*, task_gid: str, expected_claim_id: str, owner: str, session_id: s
     )
 
 
-def bind_pr(task_gid: str, claim_id: str, pr_number: int, pr_head: str) -> dict[str, Any]:
+def sync(task_gid: str, claim_id: str, *, writer_capability: str | None = None) -> dict[str, Any]:
     c = client()
-    return _call(c.bind_pr, task_gid=task_gid, claim_id=claim_id, pr_number=pr_number, pr_head=pr_head)
+    return _call(c.sync, task_gid=task_gid, claim_id=claim_id, writer_capability=_writer_capability(writer_capability))
+
+
+def bind_pr(task_gid: str, claim_id: str, pr_number: int, pr_head: str, *, writer_capability: str | None = None) -> dict[str, Any]:
+    c = client()
+    return _call(c.bind_pr, task_gid=task_gid, claim_id=claim_id, writer_capability=_writer_capability(writer_capability), pr_number=pr_number, pr_head=pr_head)
 
 
 def begin_publication(*, task_gid: str, claim_id: str, branch: str, expected_head: str | None,
-                      proposed_head: str, request_id: str) -> dict[str, Any]:
+                      proposed_head: str, request_id: str, writer_capability: str | None = None) -> dict[str, Any]:
     c = client()
     return _call(
         c.begin_publication,
-        task_gid=task_gid, claim_id=claim_id, branch=branch, expected_head=expected_head,
+        task_gid=task_gid, claim_id=claim_id, writer_capability=_writer_capability(writer_capability), branch=branch, expected_head=expected_head,
         proposed_head=proposed_head, request_id=request_id,
     )
 
 
-def complete_publication(*, task_gid: str, claim_id: str, request_id: str, result_head: str) -> dict[str, Any]:
+def complete_publication(*, task_gid: str, claim_id: str, request_id: str, result_head: str,
+                         writer_capability: str | None = None) -> dict[str, Any]:
     c = client()
-    return _call(c.complete_publication, task_gid=task_gid, claim_id=claim_id, request_id=request_id, result_head=result_head)
+    return _call(c.complete_publication, task_gid=task_gid, claim_id=claim_id, writer_capability=_writer_capability(writer_capability), request_id=request_id, result_head=result_head)
 
 
-def abort_publication(*, task_gid: str, claim_id: str, request_id: str) -> dict[str, Any]:
+def abort_publication(*, task_gid: str, claim_id: str, request_id: str,
+                      writer_capability: str | None = None) -> dict[str, Any]:
     c = client()
-    return _call(c.abort_publication, task_gid=task_gid, claim_id=claim_id, request_id=request_id)
+    return _call(c.abort_publication, task_gid=task_gid, claim_id=claim_id, writer_capability=_writer_capability(writer_capability), request_id=request_id)

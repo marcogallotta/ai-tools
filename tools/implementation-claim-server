@@ -24,6 +24,9 @@ def main() -> int:
     db_path = Path(required("DISH_IMPLEMENTATION_CLAIM_DB")).expanduser()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     token = required("DISH_IMPLEMENTATION_CLAIM_SERVICE_TOKEN")
+    recovery_token = required("DISH_IMPLEMENTATION_CLAIM_RECOVERY_TOKEN")
+    if recovery_token == token:
+        raise SystemExit("DISH_IMPLEMENTATION_CLAIM_RECOVERY_TOKEN must differ from the ordinary service token")
     asana_token = required("ASANA_PAT")
     github_token = required("GITHUB_TOKEN")
     projects = frozenset(filter(None, (p.strip() for p in required("DISH_IMPLEMENTATION_CLAIM_PROJECTS").split(","))))
@@ -33,7 +36,7 @@ def main() -> int:
         ClaimStore(db_path), repository=repository,
         asana=AsanaMirror(token=asana_token, allowed_projects=projects), github=GitHubReader(github_token),
     )
-    server = ClaimHTTPServer((host, port), coordinator, token)
+    server = ClaimHTTPServer((host, port), coordinator, token, recovery_token)
     print(f"implementation-claim service listening on {host}:{port}", file=sys.stderr)
     try:
         server.serve_forever()

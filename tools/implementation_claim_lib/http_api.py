@@ -13,9 +13,10 @@ from .service import ClaimCoordinator
 class ClaimHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, server_address, coordinator: ClaimCoordinator, token: str):
+    def __init__(self, server_address, coordinator: ClaimCoordinator, token: str, recovery_token: str):
         self.coordinator = coordinator
         self.service_token = token
+        self.recovery_token = recovery_token
         super().__init__(server_address, ClaimRequestHandler)
 
 
@@ -35,6 +36,22 @@ class ClaimRequestHandler(BaseHTTPRequestHandler):
 
     def _auth(self) -> bool:
         return hmac.compare_digest(self.headers.get("Authorization", ""), f"Bearer {self.server.service_token}")
+
+    def _recovery_auth(self) -> bool:
+        return hmac.compare_digest(
+            self.headers.get("X-Dish-Recovery-Authorization", ""),
+            f"Bearer {self.server.recovery_token}",
+        )
+
+    def _writer_capability(self) -> str:
+        value = self.headers.get("X-Dish-Writer-Capability", "").strip()
+        if not value:
+            raise ClaimError(
+                "WRITER_AUTHORITY_REQUIRED",
+                "a private writer capability for the current generation is required",
+                403,
+            )
+        return value
 
     def _body(self) -> dict[str, Any]:
         try:
@@ -56,6 +73,10 @@ class ClaimRequestHandler(BaseHTTPRequestHandler):
             payload: dict[str, Any] = {"ok": False, "error": {"code": exc.code, "message": exc.message}}
             if exc.current is not None:
                 payload["current"] = exc.current
+            if exc.writer_capability is not None:
+                # Only acquire/authorized-takeover synchronization failures set this.
+                # It is never added to public status/conflict responses.
+                payload["writer_capability"] = exc.writer_capability
             self._json(exc.status, payload)
             return
         self._json(500, {"ok": False, "error": {"code": "INTERNAL", "message": str(exc)}})
@@ -85,12 +106,19 @@ class ClaimRequestHandler(BaseHTTPRequestHandler):
             payload = self._body()
             action = payload.pop("action", None)
             c = self.server.coordinator
+            writer_actions = {
+                "sync", "authorize", "renew", "bind-branch", "bind-pr",
+                "begin-publication", "complete-publication", "abort-publication",
+                "reconcile-publication", "review-ready", "release", "supersede",
+            }
+            if action in writer_actions:
+                payload["writer_capability"] = self._writer_capability()
             if action == "acquire":
                 result = {"claim": c.acquire(payload)}
             elif action == "takeover":
-                result = {"claim": c.takeover(payload)}
+                result = {"claim": c.takeover(payload, recovery_authorized=self._recovery_auth())}
             elif action == "sync":
-                result = {"claim": c.sync(str(payload["task_gid"]), str(payload["claim_id"]))}
+                result = {"claim": c.sync(payload)}
             elif action == "status":
                 result = {"claim": c.status(str(payload["task_gid"]))}
             elif action == "dispatch-guard":

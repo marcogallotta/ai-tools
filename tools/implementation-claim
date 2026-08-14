@@ -3,11 +3,22 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import socket
 import sys
 
 from implementation_claim_lib.client import ClaimServiceClient
 from implementation_claim_lib.errors import ClaimError
+
+
+WRITER_ENV = "DISH_IMPLEMENTATION_GLOBAL_WRITER_CAPABILITY"
+
+
+def writer_capability() -> str:
+    value = os.environ.get(WRITER_ENV, "").strip()
+    if not value:
+        raise ClaimError("WRITER_AUTHORITY_REQUIRED", f"{WRITER_ENV} is required for writable claim operations", 403)
+    return value
 
 
 def parser() -> argparse.ArgumentParser:
@@ -39,18 +50,18 @@ def main() -> int:
         elif args.command == "dispatch-check": payload = client.dispatch_guard(args.task)
         elif args.command == "acquire": payload = {"claim": client.acquire(task_gid=args.task, owner=args.owner, session_id=args.session, host=args.host, authoring_base_sha=args.base, branch=args.branch)}
         elif args.command == "takeover": payload = {"claim": client.takeover(task_gid=args.task, expected_claim_id=args.expected_claim, owner=args.owner, session_id=args.session, host=args.host, authoring_base_sha=args.base, reason=args.reason, liveness_evidence=args.liveness_evidence)}
-        elif args.command == "authorize": payload = {"claim": client.authorize(task_gid=args.task, claim_id=args.claim_id, branch=args.branch)}
-        elif args.command == "sync": payload = {"claim": client.sync(task_gid=args.task, claim_id=args.claim_id)}
-        elif args.command == "renew": payload = {"claim": client.renew(task_gid=args.task, claim_id=args.claim_id)}
-        elif args.command == "bind-branch": payload = {"claim": client.bind_branch(task_gid=args.task, claim_id=args.claim_id, branch=args.branch)}
-        elif args.command == "bind-pr": payload = {"claim": client.bind_pr(task_gid=args.task, claim_id=args.claim_id, pr_number=args.pr_number, pr_head=args.pr_head)}
-        elif args.command == "begin-publication": payload = client.begin_publication(task_gid=args.task, claim_id=args.claim_id, branch=args.branch, expected_head=args.expected_head, proposed_head=args.proposed_head, request_id=args.request_id)
-        elif args.command == "complete-publication": payload = client.complete_publication(task_gid=args.task, claim_id=args.claim_id, request_id=args.request_id, result_head=args.result_head, pr_number=args.pr_number)
-        elif args.command == "reconcile-publication": payload = client.reconcile_publication(task_gid=args.task, claim_id=args.claim_id, request_id=args.request_id)
-        elif args.command == "abort-publication": payload = {"claim": client.abort_publication(task_gid=args.task, claim_id=args.claim_id, request_id=args.request_id)}
-        elif args.command == "review-ready": payload = {"claim": client.review_ready(task_gid=args.task, claim_id=args.claim_id, pr_number=args.pr_number, pr_head=args.pr_head)}
-        elif args.command == "release": payload = {"claim": client.release(task_gid=args.task, claim_id=args.claim_id, reason=args.reason)}
-        elif args.command == "supersede": payload = {"claim": client.supersede(task_gid=args.task, claim_id=args.claim_id, reason=args.reason)}
+        elif args.command == "authorize": payload = {"claim": client.authorize(task_gid=args.task, claim_id=args.claim_id, writer_capability=writer_capability(), branch=args.branch)}
+        elif args.command == "sync": payload = {"claim": client.sync(task_gid=args.task, claim_id=args.claim_id, writer_capability=writer_capability())}
+        elif args.command == "renew": payload = {"claim": client.renew(task_gid=args.task, claim_id=args.claim_id, writer_capability=writer_capability())}
+        elif args.command == "bind-branch": payload = {"claim": client.bind_branch(task_gid=args.task, claim_id=args.claim_id, writer_capability=writer_capability(), branch=args.branch)}
+        elif args.command == "bind-pr": payload = {"claim": client.bind_pr(task_gid=args.task, claim_id=args.claim_id, writer_capability=writer_capability(), pr_number=args.pr_number, pr_head=args.pr_head)}
+        elif args.command == "begin-publication": payload = client.begin_publication(task_gid=args.task, claim_id=args.claim_id, writer_capability=writer_capability(), branch=args.branch, expected_head=args.expected_head, proposed_head=args.proposed_head, request_id=args.request_id)
+        elif args.command == "complete-publication": payload = client.complete_publication(task_gid=args.task, claim_id=args.claim_id, writer_capability=writer_capability(), request_id=args.request_id, result_head=args.result_head, pr_number=args.pr_number)
+        elif args.command == "reconcile-publication": payload = client.reconcile_publication(task_gid=args.task, claim_id=args.claim_id, writer_capability=writer_capability(), request_id=args.request_id)
+        elif args.command == "abort-publication": payload = {"claim": client.abort_publication(task_gid=args.task, claim_id=args.claim_id, writer_capability=writer_capability(), request_id=args.request_id)}
+        elif args.command == "review-ready": payload = {"claim": client.review_ready(task_gid=args.task, claim_id=args.claim_id, writer_capability=writer_capability(), pr_number=args.pr_number, pr_head=args.pr_head)}
+        elif args.command == "release": payload = {"claim": client.release(task_gid=args.task, claim_id=args.claim_id, writer_capability=writer_capability(), reason=args.reason)}
+        elif args.command == "supersede": payload = {"claim": client.supersede(task_gid=args.task, claim_id=args.claim_id, writer_capability=writer_capability(), reason=args.reason)}
         else: raise AssertionError(args.command)
         print(json.dumps({"ok": True, **payload}, sort_keys=True)); return 0
     except ClaimError as exc:

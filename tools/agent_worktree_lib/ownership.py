@@ -32,12 +32,13 @@ from .state import (
     validate_agent_state,
 )
 
-CLAIM_SCHEMA_VERSION = 1
+CLAIM_SCHEMA_VERSION = 2
 CLAIM_TOKEN_ENV = "DISH_AGENT_CLAIM_TOKEN"
 CLAIM_TASK_ENV = "DISH_AGENT_CLAIM_TASK"
 CLAIM_BRANCH_ENV = "DISH_AGENT_CLAIM_BRANCH"
 CLAIM_AGENT_ENV = "DISH_AGENT_CLAIM_AGENT"
 GLOBAL_CLAIM_ENV = global_claim.GLOBAL_CLAIM_ENV
+GLOBAL_WRITER_ENV = global_claim.GLOBAL_WRITER_ENV
 
 
 def _repo_key() -> str:
@@ -119,9 +120,14 @@ def _validate_claim_record(record: dict[str, Any], task_gid: str) -> dict[str, A
     missing = sorted(required - record.keys())
     if missing:
         fail("OWNERSHIP_AMBIGUOUS", "claim record is missing required field(s): " + ", ".join(missing))
-    if record.get("schema_version") != CLAIM_SCHEMA_VERSION:
-        fail("OWNERSHIP_AMBIGUOUS", f"unsupported claim schema {record.get('schema_version')!r}")
+    schema_version = record.get("schema_version")
+    if schema_version not in {1, CLAIM_SCHEMA_VERSION}:
+        fail("OWNERSHIP_AMBIGUOUS", f"unsupported claim schema {schema_version!r}")
     record.setdefault("global_claim_id", None)
+    record.setdefault("global_writer_capability", None)
+    capability = record.get("global_writer_capability")
+    if schema_version == CLAIM_SCHEMA_VERSION and (not isinstance(capability, str) or len(capability) < 32):
+        fail("OWNERSHIP_AMBIGUOUS", "claim record is missing the private global writer capability")
     if record.get("repository") != EXPECTED_REPOSITORY or record.get("origin_id") != EXPECTED_ORIGIN_ID:
         fail("OWNERSHIP_AMBIGUOUS", "claim record repository identity is not marcogallotta/ai-tools")
     if record.get("task_gid") != task_gid:
@@ -346,6 +352,7 @@ def _obtain_global_claim(
     prior = read_claim(task_gid)
     explicit = getattr(args, "global_claim_id", None)
     prior_global = prior.get("global_claim_id") if prior is not None else None
+    prior_writer = prior.get("global_writer_capability") if prior is not None else None
     if args.takeover:
         expected = getattr(args, "expected_global_claim", None)
         if not expected:
@@ -367,7 +374,7 @@ def _obtain_global_claim(
         )
     elif explicit or prior_global:
         claim_id = str(explicit or prior_global)
-        current = global_claim.authorize(task_gid, claim_id, branch)
+        current = global_claim.authorize(task_gid, claim_id, branch, writer_capability=str(prior_writer or ""))
         if current.get("authoring_base_sha") != base_sha:
             fail(
                 "GLOBAL_CLAIM_BASE_MISMATCH",
@@ -379,10 +386,18 @@ def _obtain_global_claim(
             session_id=getattr(args, "session_id", None) or f"{agent_id}:{uuid.uuid4().hex}",
             host=socket.gethostname(), base_sha=base_sha, branch=branch,
         )
+    writer_capability = current.get("writer_capability") or prior_writer
+    if not isinstance(writer_capability, str) or len(writer_capability) < 32:
+        fail("WRITER_AUTHORITY_REQUIRED", "global claim did not return/preserve private writer authority")
     if current.get("branch") != branch:
         fail("GLOBAL_LINEAGE_CONFLICT", f"global claim is bound to branch {current.get('branch')!r}, not {branch!r}")
     if pr is not None:
-        current = global_claim.bind_pr(task_gid, str(current["claim_id"]), int(pr["number"]), str(pr["head"]))
+        current = global_claim.bind_pr(
+            task_gid, str(current["claim_id"]), int(pr["number"]), str(pr["head"]),
+            writer_capability=writer_capability,
+        )
+    current = dict(current)
+    current["writer_capability"] = writer_capability
     return current
 
 def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
@@ -489,6 +504,7 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
             "released_at": None,
             "takeover": bool(args.takeover),
             "global_claim_id": global_record["claim_id"],
+            "global_writer_capability": global_record["writer_capability"],
             "pr": pr,
         }
         atomic_write_json(path, record)
@@ -501,6 +517,7 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
                 CLAIM_BRANCH_ENV: branch,
                 CLAIM_AGENT_ENV: agent_id,
                 GLOBAL_CLAIM_ENV: str(global_record["claim_id"]),
+                GLOBAL_WRITER_ENV: str(global_record["writer_capability"]),
             }
         )
         try:
@@ -562,7 +579,10 @@ def require_active_claim(
         )
     if os.environ.get(GLOBAL_CLAIM_ENV) != global_id:
         fail("GLOBAL_CLAIM_MISMATCH", "process global claim id does not match the durable local ownership record")
-    global_claim.authorize(task_gid, global_id, branch)
+    global_writer = record.get("global_writer_capability")
+    if not isinstance(global_writer, str) or os.environ.get(GLOBAL_WRITER_ENV) != global_writer:
+        fail("WRITER_AUTHORITY_DENIED", "process private writer capability does not match the durable local ownership record")
+    global_claim.authorize(task_gid, global_id, branch, writer_capability=global_writer)
     status = claim_status(task_gid)
     if status.get("state") != "live":
         fail(

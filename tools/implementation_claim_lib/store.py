@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import sqlite3
 import threading
@@ -12,7 +13,7 @@ from typing import Any, Iterator
 
 from .errors import ClaimError
 
-CLAIM_SCHEMA_VERSION = 1
+CLAIM_SCHEMA_VERSION = 2
 ROLE = "Implementation"
 ACTIVE_STATES = {"claimed", "publishing", "review-ready"}
 WRITABLE_STATES = {"claimed", "publishing"}
@@ -97,6 +98,7 @@ class ClaimStore:
                         role TEXT NOT NULL,
                         generation INTEGER NOT NULL,
                         claim_id TEXT NOT NULL,
+                        writer_capability_hash TEXT,
                         previous_claim_id TEXT,
                         owner TEXT NOT NULL,
                         session_id TEXT NOT NULL,
@@ -171,6 +173,12 @@ class ClaimStore:
                     );
                     """
                 )
+                columns = {row["name"] for row in conn.execute("PRAGMA table_info(implementation_claims)")}
+                if "writer_capability_hash" not in columns:
+                    # Pre-v2 rows are intentionally left without writer authority. They can
+                    # only be recovered through an explicitly authorized takeover, which mints
+                    # a fresh capability for a fresh generation.
+                    conn.execute("ALTER TABLE implementation_claims ADD COLUMN writer_capability_hash TEXT")
             finally:
                 conn.close()
             self._initialized = True
@@ -196,6 +204,9 @@ class ClaimStore:
         if row is None:
             return None
         claim = dict(row)
+        # Writer authority is intentionally not part of the public claim projection.
+        # Neither the credential nor its hash may escape through status/conflict/Asana views.
+        claim.pop("writer_capability_hash", None)
         claim["generation"] = int(claim["generation"])
         claim["pr_number"] = int(claim["pr_number"]) if claim["pr_number"] is not None else None
         claim["writable"] = claim["state"] in WRITABLE_STATES and claim["asana_sync_state"] == "synced"
@@ -267,6 +278,40 @@ class ClaimStore:
             raise ClaimError("OWNERSHIP_CONFLICT", "claim_id is stale or belongs to another generation", 409, current=current)
 
     @staticmethod
+    def _capability_hash(writer_capability: str) -> str:
+        value = require_text(writer_capability, "writer capability", limit=512)
+        return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+    def _expect_writer(
+        self, conn: sqlite3.Connection, current: dict[str, Any], claim_id: str, writer_capability: str
+    ) -> None:
+        self._expect_claim(current, claim_id)
+        row = conn.execute(
+            "SELECT writer_capability_hash FROM implementation_claims WHERE repository=? AND task_gid=? AND claim_id=?",
+            (current["repository"], current["task_gid"], claim_id),
+        ).fetchone()
+        stored = row["writer_capability_hash"] if row is not None else None
+        supplied = self._capability_hash(writer_capability)
+        if not stored or not hmac.compare_digest(str(stored), supplied):
+            raise ClaimError(
+                "WRITER_AUTHORITY_DENIED",
+                "writer capability does not authorize the current claim generation",
+                403,
+                current=current,
+            )
+
+    def verify_writer(
+        self, repository: str, task_gid: str, claim_id: str, writer_capability: str
+    ) -> dict[str, Any]:
+        conn = self._connect()
+        try:
+            current = self._current_or_error(conn, require_repository(repository), require_task_gid(task_gid))
+            self._expect_writer(conn, current, claim_id, writer_capability)
+            return current
+        finally:
+            conn.close()
+
+    @staticmethod
     def _assert_writable(current: dict[str, Any]) -> None:
         if current["state"] not in WRITABLE_STATES:
             raise ClaimError("CLAIM_NOT_WRITABLE", f"claim state {current['state']!r} is not writable", 409, current=current)
@@ -296,13 +341,14 @@ class ClaimStore:
         return branch
 
     def acquire(self, *, repository: str, task_gid: str, owner: str, session_id: str, host: str,
-                authoring_base_sha: str, branch: str | None = None) -> dict[str, Any]:
+                authoring_base_sha: str, writer_capability: str, branch: str | None = None) -> dict[str, Any]:
         repository = require_repository(repository)
         task_gid = require_task_gid(task_gid)
         owner = require_text(owner, "owner", limit=200)
         session_id = require_text(session_id, "session_id", limit=200)
         host = require_text(host, "host", limit=200)
         authoring_base_sha = str(require_sha(authoring_base_sha, "authoring_base_sha"))
+        writer_capability_hash = self._capability_hash(writer_capability)
         with self._write() as conn:
             existing = self._select(conn, repository, task_gid)
             if existing is not None:
@@ -316,12 +362,12 @@ class ClaimStore:
             claim_id = uuid.uuid4().hex
             conn.execute(
                 """INSERT INTO implementation_claims
-                   (repository,task_gid,schema_version,role,generation,claim_id,previous_claim_id,owner,session_id,host,
+                   (repository,task_gid,schema_version,role,generation,claim_id,writer_capability_hash,previous_claim_id,owner,session_id,host,
                     authoring_base_sha,state,branch,branch_head,pr_number,pr_head,claimed_at,last_renewed_at,released_at,
                     superseded_at,transition_reason,liveness_evidence,asana_sync_state,asana_synced_at,last_event)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
-                    repository, task_gid, CLAIM_SCHEMA_VERSION, ROLE, 1, claim_id, None, owner, session_id, host,
+                    repository, task_gid, CLAIM_SCHEMA_VERSION, ROLE, 1, claim_id, writer_capability_hash, None, owner, session_id, host,
                     authoring_base_sha, "claimed", None, None, None, None, now, now, None, None, None, None,
                     "pending", None, "acquired",
                 ),
@@ -340,7 +386,8 @@ class ClaimStore:
             return current
 
     def takeover(self, *, repository: str, task_gid: str, expected_claim_id: str, owner: str, session_id: str,
-                 host: str, authoring_base_sha: str, reason: str, liveness_evidence: str) -> dict[str, Any]:
+                 host: str, authoring_base_sha: str, reason: str, liveness_evidence: str,
+                 writer_capability: str, recovery_authorized: bool) -> dict[str, Any]:
         repository = require_repository(repository)
         task_gid = require_task_gid(task_gid)
         owner = require_text(owner, "owner", limit=200)
@@ -349,6 +396,13 @@ class ClaimStore:
         reason = require_text(reason, "takeover reason")
         liveness_evidence = require_text(liveness_evidence, "liveness evidence", limit=2000)
         authoring_base_sha = str(require_sha(authoring_base_sha, "authoring_base_sha"))
+        writer_capability_hash = self._capability_hash(writer_capability)
+        if not recovery_authorized:
+            raise ClaimError(
+                "RECOVERY_AUTHORITY_REQUIRED",
+                "takeover requires distinct recovery/orchestration authority",
+                403,
+            )
         with self._write() as conn:
             current = self._current_or_error(conn, repository, task_gid)
             self._expect_claim(current, expected_claim_id)
@@ -370,12 +424,12 @@ class ClaimStore:
             now = utc_now()
             cursor = conn.execute(
                 """UPDATE implementation_claims
-                   SET generation=?,claim_id=?,previous_claim_id=?,owner=?,session_id=?,host=?,state='claimed',
+                   SET schema_version=?,generation=?,claim_id=?,writer_capability_hash=?,previous_claim_id=?,owner=?,session_id=?,host=?,state='claimed',
                        claimed_at=?,last_renewed_at=?,released_at=NULL,superseded_at=NULL,transition_reason=?,
                        liveness_evidence=?,asana_sync_state='pending',asana_synced_at=NULL,last_event='takeover'
                    WHERE repository=? AND task_gid=? AND claim_id=?""",
                 (
-                    current["generation"] + 1, new_id, old_id, owner, session_id, host, now, now, reason,
+                    CLAIM_SCHEMA_VERSION, current["generation"] + 1, new_id, writer_capability_hash, old_id, owner, session_id, host, now, now, reason,
                     liveness_evidence, repository, task_gid, old_id,
                 ),
             )
@@ -400,11 +454,11 @@ class ClaimStore:
             assert current is not None
             return current
 
-    def authorize(self, repository: str, task_gid: str, claim_id: str, *, branch: str | None = None) -> dict[str, Any]:
+    def authorize(self, repository: str, task_gid: str, claim_id: str, writer_capability: str, *, branch: str | None = None) -> dict[str, Any]:
         conn = self._connect()
         try:
             current = self._current_or_error(conn, require_repository(repository), require_task_gid(task_gid))
-            self._expect_claim(current, claim_id)
+            self._expect_writer(conn, current, claim_id, writer_capability)
             self._assert_writable(current)
             if branch is not None:
                 branch = require_branch(branch)
@@ -414,10 +468,10 @@ class ClaimStore:
         finally:
             conn.close()
 
-    def renew(self, repository: str, task_gid: str, claim_id: str) -> dict[str, Any]:
+    def renew(self, repository: str, task_gid: str, claim_id: str, writer_capability: str) -> dict[str, Any]:
         with self._write() as conn:
             current = self._current_or_error(conn, require_repository(repository), require_task_gid(task_gid))
-            self._expect_claim(current, claim_id)
+            self._expect_writer(conn, current, claim_id, writer_capability)
             self._assert_writable(current)
             conn.execute(
                 "UPDATE implementation_claims SET last_renewed_at=?,last_event='renewed' WHERE repository=? AND task_gid=? AND claim_id=?",
@@ -428,10 +482,10 @@ class ClaimStore:
             self._append_event(conn, current, "renewed")
             return current
 
-    def bind_branch(self, repository: str, task_gid: str, claim_id: str, branch: str) -> dict[str, Any]:
+    def bind_branch(self, repository: str, task_gid: str, claim_id: str, writer_capability: str, branch: str) -> dict[str, Any]:
         with self._write() as conn:
             current = self._current_or_error(conn, require_repository(repository), require_task_gid(task_gid))
-            self._expect_claim(current, claim_id)
+            self._expect_writer(conn, current, claim_id, writer_capability)
             self._assert_writable(current)
             bound = self._bind_branch_tx(conn, current, branch)
             conn.execute(
@@ -444,13 +498,13 @@ class ClaimStore:
             self._append_event(conn, current, "branch-bound")
             return current
 
-    def bind_pr(self, repository: str, task_gid: str, claim_id: str, *, pr_number: int, pr_head: str) -> dict[str, Any]:
+    def bind_pr(self, repository: str, task_gid: str, claim_id: str, writer_capability: str, *, pr_number: int, pr_head: str) -> dict[str, Any]:
         pr_head = str(require_sha(pr_head, "pr_head"))
         if not isinstance(pr_number, int) or pr_number <= 0:
             raise ClaimError("INVALID_PR", "pr_number must be a positive integer", 400)
         with self._write() as conn:
             current = self._current_or_error(conn, require_repository(repository), require_task_gid(task_gid))
-            self._expect_claim(current, claim_id)
+            self._expect_writer(conn, current, claim_id, writer_capability)
             self._assert_writable(current)
             branch = current["branch"]
             if branch is None:
@@ -479,7 +533,7 @@ class ClaimStore:
             self._append_event(conn, current, "pr-bound")
             return current
 
-    def begin_publication(self, repository: str, task_gid: str, claim_id: str, *, branch: str,
+    def begin_publication(self, repository: str, task_gid: str, claim_id: str, writer_capability: str, *, branch: str,
                           expected_head: str | None, proposed_head: str, request_id: str) -> tuple[dict[str, Any], dict[str, Any], bool]:
         repository = require_repository(repository)
         task_gid = require_task_gid(task_gid)
@@ -493,7 +547,7 @@ class ClaimStore:
         )
         with self._write() as conn:
             current = self._current_or_error(conn, repository, task_gid)
-            self._expect_claim(current, claim_id)
+            self._expect_writer(conn, current, claim_id, writer_capability)
             self._assert_writable(current)
             if current["branch"] != branch:
                 raise ClaimError("LINEAGE_CONFLICT", "publication branch does not match the authoritative claim lineage", 409, current=current)
@@ -541,12 +595,12 @@ class ClaimStore:
             self._append_event(conn, current, "publication-begin")
             return current, publication, False
 
-    def complete_publication(self, repository: str, task_gid: str, claim_id: str, *, request_id: str,
+    def complete_publication(self, repository: str, task_gid: str, claim_id: str, writer_capability: str, *, request_id: str,
                              result_head: str, pr_number: int | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
         result_head = str(require_sha(result_head, "result_head"))
         with self._write() as conn:
             current = self._current_or_error(conn, require_repository(repository), require_task_gid(task_gid))
-            self._expect_claim(current, claim_id)
+            self._expect_writer(conn, current, claim_id, writer_capability)
             row = conn.execute(
                 "SELECT * FROM implementation_publications WHERE repository=? AND task_gid=? AND request_id=?",
                 (repository, task_gid, request_id),
@@ -604,10 +658,10 @@ class ClaimStore:
             self._append_event(conn, current, "publication-complete")
             return current, publication
 
-    def abort_publication(self, repository: str, task_gid: str, claim_id: str, *, request_id: str) -> dict[str, Any]:
+    def abort_publication(self, repository: str, task_gid: str, claim_id: str, writer_capability: str, *, request_id: str) -> dict[str, Any]:
         with self._write() as conn:
             current = self._current_or_error(conn, require_repository(repository), require_task_gid(task_gid))
-            self._expect_claim(current, claim_id)
+            self._expect_writer(conn, current, claim_id, writer_capability)
             row = conn.execute(
                 "SELECT * FROM implementation_publications WHERE repository=? AND task_gid=? AND request_id=?",
                 (repository, task_gid, request_id),
@@ -632,11 +686,11 @@ class ClaimStore:
             self._append_event(conn, current, "publication-abort")
             return current
 
-    def review_ready(self, repository: str, task_gid: str, claim_id: str, *, pr_number: int, pr_head: str) -> dict[str, Any]:
+    def review_ready(self, repository: str, task_gid: str, claim_id: str, writer_capability: str, *, pr_number: int, pr_head: str) -> dict[str, Any]:
         pr_head = str(require_sha(pr_head, "pr_head"))
         with self._write() as conn:
             current = self._current_or_error(conn, require_repository(repository), require_task_gid(task_gid))
-            self._expect_claim(current, claim_id)
+            self._expect_writer(conn, current, claim_id, writer_capability)
             self._assert_writable(current)
             if current["pr_number"] != pr_number or current["pr_head"] != pr_head or current["branch_head"] != pr_head:
                 raise ClaimError("PR_LINEAGE_MISMATCH", "review-ready identity must equal the bound exact PR/head lineage", 409, current=current)
@@ -657,11 +711,11 @@ class ClaimStore:
             self._append_event(conn, current, "review-ready")
             return current
 
-    def release(self, repository: str, task_gid: str, claim_id: str, *, reason: str) -> dict[str, Any]:
+    def release(self, repository: str, task_gid: str, claim_id: str, writer_capability: str, *, reason: str) -> dict[str, Any]:
         reason = require_text(reason, "release reason")
         with self._write() as conn:
             current = self._current_or_error(conn, require_repository(repository), require_task_gid(task_gid))
-            self._expect_claim(current, claim_id)
+            self._expect_writer(conn, current, claim_id, writer_capability)
             if current["state"] == "released":
                 return current
             if current["state"] == "superseded":
@@ -684,11 +738,11 @@ class ClaimStore:
             self._append_event(conn, current, "released")
             return current
 
-    def supersede(self, repository: str, task_gid: str, claim_id: str, *, reason: str) -> dict[str, Any]:
+    def supersede(self, repository: str, task_gid: str, claim_id: str, writer_capability: str, *, reason: str) -> dict[str, Any]:
         reason = require_text(reason, "supersede reason")
         with self._write() as conn:
             current = self._current_or_error(conn, require_repository(repository), require_task_gid(task_gid))
-            self._expect_claim(current, claim_id)
+            self._expect_writer(conn, current, claim_id, writer_capability)
             pending = conn.execute(
                 "SELECT request_id FROM implementation_publications WHERE repository=? AND task_gid=? AND state='pending' LIMIT 1",
                 (repository, task_gid),

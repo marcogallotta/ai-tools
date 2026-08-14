@@ -11,10 +11,13 @@ CAS store for the configured repository. All ChatGPT/Claude Code/Codex writable 
 clients for that repository must reach that same HTTPS service. Do not copy the SQLite database to
 multiple writable hosts or run independent claim services per agent host.
 
-The durable key is `(repository, task_gid)`. A current row has an opaque `claim_id` generation and
+The durable key is `(repository, task_gid)`. A current row has an opaque public `claim_id` generation and
 records owner/session/host provenance, authoring base, lifecycle state, branch/PR lineage, exact heads,
-and Asana synchronization state. Asana receives an exact generation marker for visibility and
-reconstruction; GitHub branch/PR state is lineage/readback evidence. Neither is a second claim writer.
+and Asana synchronization state. The service separately stores only a hash of a high-entropy
+per-generation writer capability. The cleartext capability is returned only to the winning acquire or
+explicitly authorized takeover caller; it is not part of status/conflict/dispatch responses and is never
+mirrored to Asana. Asana receives the public generation marker for visibility and reconstruction;
+GitHub branch/PR state is lineage/readback evidence. Neither is a second claim writer.
 
 ## Service process
 
@@ -27,7 +30,8 @@ tools/implementation-claim-server
 Required environment:
 
 - `DISH_IMPLEMENTATION_CLAIM_DB`: durable SQLite path on the service host;
-- `DISH_IMPLEMENTATION_CLAIM_SERVICE_TOKEN`: bearer token accepted by the private service;
+- `DISH_IMPLEMENTATION_CLAIM_SERVICE_TOKEN`: ordinary bearer token accepted by the private service;
+- `DISH_IMPLEMENTATION_CLAIM_RECOVERY_TOKEN`: separate recovery/orchestration bearer token, distinct from the ordinary service token;
 - `DISH_IMPLEMENTATION_CLAIM_PROJECTS`: comma-separated Asana project GIDs allowed for claims;
 - `ASANA_PAT`: Asana credential able to read the task/project and move/comment the task;
 - `GITHUB_TOKEN`: read-only GitHub credential sufficient to resolve branch heads for recovery;
@@ -45,6 +49,13 @@ DISH_IMPLEMENTATION_CLAIM_URL=https://<private-claim-endpoint>
 DISH_IMPLEMENTATION_CLAIM_TOKEN=<service bearer token>
 DISH_IMPLEMENTATION_CLAIM_REPOSITORY=marcogallotta/ai-tools
 ```
+
+Ordinary writable agent hosts do **not** receive `DISH_IMPLEMENTATION_CLAIM_RECOVERY_TOKEN`. That
+credential is provisioned only to the authorized recovery/orchestration path that may replace a current
+generation. The winning writer keeps its generation capability in private local claim state (`0600`
+under the `0700` Dish state directory) and the wrapper passes it to the claimed child process via
+`DISH_IMPLEMENTATION_GLOBAL_WRITER_CAPABILITY`. Do not put the writer capability or recovery token in
+Asana, PR text, status output, shell history, shared logs, or handoff prose.
 
 The direct SQLite adapter (`DISH_IMPLEMENTATION_CLAIM_TEST_DB` plus
 `DISH_IMPLEMENTATION_CLAIM_TESTING=1`) is repository-test-only and is rejected unless the explicit
@@ -64,13 +75,22 @@ unavailability, Asana synchronization/readback failure, or contradictory lineage
 
 Local Claude Code/Codex dispatch uses the canonical `tools/agent-worktree claim ... -- ...` wrapper.
 That wrapper acquires/validates the global generation before branch/worktree mutation and layers the
-same-host OS locks beneath it.
+same-host OS locks beneath it. Knowing only the public `claim_id` is insufficient to continue a live
+generation: every writable service operation also verifies the private writer capability for that exact
+generation.
 
 ## Takeover and recovery
 
 Takeover always supplies the exact current `claim_id`, the unchanged authoring base, an explicit
-handoff/recovery reason, and bounded liveness evidence. Time passage alone is not sufficient.
-Successful CAS creates a fresh generation and permanently fences the old id.
+handoff/recovery reason, bounded liveness evidence, **and the distinct recovery/orchestration authority**.
+Time passage alone and possession of the ordinary service credential are not sufficient. Successful CAS
+creates a fresh generation plus fresh writer capability and permanently fences both the old public id and
+the old private writer capability. Concurrent authorized takeovers still race on the exact prior
+generation CAS, so exactly one can win.
+
+Database rows created by the earlier schema have no writer-capability hash. They fail closed for ordinary
+writes after upgrade and require an explicitly authorized exact-generation takeover to mint a fresh writer
+capability; do not synthesize or infer a capability for an old row.
 
 If a publication journal entry is still `pending`, takeover/release/supersede is refused. First use
 `reconcile-publication` against GitHub. If GitHub still equals the exact expected head and recovery has
@@ -81,14 +101,15 @@ lineage investigation.
 
 ## Publication boundary
 
-Every publisher must call `begin-publication` with `task_gid + claim_id + branch + expected_head +
-proposed_head + request_id` before moving GitHub. The store admits at most one unresolved intent for
+Every publisher must call `begin-publication` with `task_gid + claim_id +` the private writer capability
+`+ branch + expected_head + proposed_head + request_id` before moving GitHub. The store admits at most one unresolved intent for
 the task lineage and makes the claim non-writable until the intent's exact Asana marker is read back.
 After the branch CAS/push, call `complete-publication`. On ambiguous network/process failure, use
 `reconcile-publication`; do not blindly retry the GitHub write.
 
 The future connector-native expected-head publisher consumes this same API. A correct Git expected
-head with the wrong/stale `claim_id` is authorization failure with zero branch mutation.
+head with the wrong/stale `claim_id`, or with the public current `claim_id` but without its private writer
+capability, is authorization failure with zero branch mutation.
 
 ## Review-ready and terminal state
 
