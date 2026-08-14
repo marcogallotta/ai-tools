@@ -15,6 +15,7 @@ from .common import fail
 
 GLOBAL_CLAIM_ENV = "DISH_IMPLEMENTATION_GLOBAL_CLAIM_ID"
 GLOBAL_WRITER_ENV = "DISH_IMPLEMENTATION_GLOBAL_WRITER_CAPABILITY"
+RECOVERY_TOKEN_ENV = "DISH_IMPLEMENTATION_CLAIM_RECOVERY_TOKEN"
 TEST_DB_ENV = "DISH_IMPLEMENTATION_CLAIM_TEST_DB"
 TEST_MODE_ENV = "DISH_IMPLEMENTATION_CLAIM_TESTING"
 
@@ -109,12 +110,18 @@ def acquire(*, task_gid: str, owner: str, session_id: str, host: str, base_sha: 
 
 def takeover(*, task_gid: str, expected_claim_id: str, owner: str, session_id: str, host: str,
              base_sha: str, reason: str, liveness_evidence: str) -> dict[str, Any]:
-    c = client()
-    return _call(
-        c.takeover,
-        task_gid=task_gid, expected_claim_id=expected_claim_id, owner=owner, session_id=session_id,
-        host=host, authoring_base_sha=base_sha, reason=reason, liveness_evidence=liveness_evidence,
-    )
+    try:
+        c = client()
+        return _call(
+            c.takeover,
+            task_gid=task_gid, expected_claim_id=expected_claim_id, owner=owner, session_id=session_id,
+            host=host, authoring_base_sha=base_sha, reason=reason, liveness_evidence=liveness_evidence,
+        )
+    finally:
+        # Recovery authority belongs only to the orchestration/takeover boundary.
+        # Any claimed Implementation child spawned after this call inherits only
+        # ordinary service credentials plus the fresh generation writer capability.
+        os.environ.pop(RECOVERY_TOKEN_ENV, None)
 
 
 def sync(task_gid: str, claim_id: str, *, writer_capability: str | None = None) -> dict[str, Any]:
