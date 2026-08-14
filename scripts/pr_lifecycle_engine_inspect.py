@@ -265,7 +265,7 @@ class LifecycleInspectMixin:
 
         try:
             combined = self.github.get_combined_status(head)
-            runs = self.github.get_workflow_runs(head)
+            runs = self.github.get_workflow_runs()
         except LifecycleError as exc:
             gate = {
                 "diagnosis": pr_gate.GateDiagnosis.INFRASTRUCTURE_ERROR.value,
@@ -291,6 +291,7 @@ class LifecycleInspectMixin:
             diagnosis = pr_gate.diagnose_integration_gate(
                 current,
                 reviewed_head=reviewed_head,
+                reviewed_at=str(exact_review.get("submitted_at") or exact_review.get("submittedAt") or ""),
                 combined_status=combined,
                 workflow_runs=runs,
             )
@@ -341,7 +342,7 @@ class LifecycleInspectMixin:
                     human_action=external_dependency_human_action(dependency),
                 )
             residual = (
-                "exact-head required ordinary CI failed; failure remains owned by this PR "
+                "exact-head required certification failed; failure remains owned by this PR "
                 "and returns to Implementation/fix"
             )
             if marker_note:
@@ -391,6 +392,7 @@ class LifecycleInspectMixin:
         gate = pr_gate.evaluate_integration_gate(
             current,
             reviewed_head=reviewed_head,
+            reviewed_at=str(exact_review.get("submitted_at") or exact_review.get("submittedAt") or ""),
             combined_status=combined,
             workflow_runs=runs,
         )

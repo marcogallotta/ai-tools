@@ -122,3 +122,22 @@ def test_test_prepare_requires_the_test_service_environment(
 
     with pytest.raises(namespace["PrepareError"], match="DISH_TEST_SERVICE_ENV"):
         namespace["require_env"]("test")
+
+
+def test_postgresql_service_units_stop_restarting_on_deterministic_exit() -> None:
+    root = ROOT / "deploy/systemd"
+    for name in (
+        "dish-service.service",
+        "dish-service-test.service",
+        "dish-service-prod.service",
+        "dish-shadow-worker.service",
+        "dish-shadow-worker-test.service",
+    ):
+        unit = (root / name).read_text(encoding="utf-8")
+        assert "Restart=on-failure" in unit
+        assert "RestartPreventExitStatus=78" in unit
+
+    for name in ("dish-shadow-worker.service", "dish-shadow-worker-test.service"):
+        unit = (root / name).read_text(encoding="utf-8")
+        assert "ExecStartPre=" not in unit
+        assert "-m dish_pg.shadow_worker_entrypoint" in unit

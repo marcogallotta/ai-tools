@@ -1,10 +1,7 @@
-# Codex protected-checkout hook
+# Codex local-agent hooks
 
-`hooks.json` is a user-level Codex hook because the protected checkout must be
-guarded even when a session starts elsewhere and uses `git -C` or repository
-redirects to target it. The hook calls the thin Codex adapter at
-`~/.local/bin/codex-protected-checkout`; that adapter returns only Codex's
-supported `PreToolUse` hard-deny shape.
+`hooks.json` is a user-level Codex hook because both protected-checkout enforcement and post-compaction Dish re-grounding must be
+available even when a session starts elsewhere. `SessionStart(source=compact)` invokes `~/.local/bin/agent-reground`, which reloads current Dish role/process authority plus owning Asana and active Git/PR state from durable identity. A generic `PreToolUse` entry enforces the resulting generation marker before substantive tool work. The existing Bash-specific hook calls `~/.local/bin/codex-protected-checkout` and preserves its hard-deny boundary.
 
 The shared `hooks/protected_checkout.py` classifier denies direct and visibly
 nested `git checkout`/`git switch` branch changes against the primary
@@ -26,6 +23,7 @@ session and use `/hooks` to review and trust the exact hook definition:
 
 ```sh
 ln -s /home/marco/ai-tools/codex/hooks.json /home/marco/.codex/hooks.json
+ln -s /home/marco/ai-tools/hooks/agent-reground /home/marco/.local/bin/agent-reground
 ln -s /home/marco/ai-tools/hooks/codex-protected-checkout /home/marco/.local/bin/codex-protected-checkout
 ```
 
@@ -48,16 +46,17 @@ git -C "$WT" status --short
 
 Temporarily point the user hook and adapter links at that exact worktree head.
 First inspect `~/.codex/hooks.json` and
-`~/.local/bin/codex-protected-checkout`; move aside and later restore any
+`~/.local/bin/agent-reground` and `~/.local/bin/codex-protected-checkout`; move aside and later restore any
 pre-existing files or links rather than overwriting them.
 
 ```sh
 ln -s "$WT/codex/hooks.json" /home/marco/.codex/hooks.json
+ln -s "$WT/hooks/agent-reground" /home/marco/.local/bin/agent-reground
 ln -s "$WT/hooks/codex-protected-checkout" /home/marco/.local/bin/codex-protected-checkout
 ```
 
 Start a fresh installed Codex session, open `/hooks`, and confirm the user
-`PreToolUse` matcher is loaded from the exact-head `hooks.json`; review/trust
+`SessionStart` compact and `PreToolUse` matchers are loaded from the exact-head `hooks.json`; review/trust
 its current hash if prompted. Record `codex --version`, the PR head, and the
 active sandbox/approval settings (`danger-full-access` and `on-request` on the
 machine at implementation time).

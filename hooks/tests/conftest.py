@@ -88,3 +88,8 @@ def protected_repo(tmp_path, destructive_op_guard, monkeypatch):
         destructive_op_guard.protected_checkout, "DEFAULT_PROTECTED_CHECKOUT_ROOT", root
     )
     return {"primary": primary, "linked": linked, "unrelated": unrelated}
+
+
+@pytest.fixture
+def agent_reground():
+    return load_hook_module("agent-reground")

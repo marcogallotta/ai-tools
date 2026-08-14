@@ -61,7 +61,7 @@ from .release_status import (
     WriterFenceStatus,
 )
 
-ALEMBIC_HEAD = "0040_no_asana_post_burn"
+ALEMBIC_HEAD = "0041_test_generation_rollover"
 
 
 class ReleaseCandidateService(

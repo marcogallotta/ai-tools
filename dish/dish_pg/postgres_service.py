@@ -15,6 +15,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
+from alembic.runtime.migration import MigrationContext
 from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -151,7 +152,31 @@ class PostgresRuntimeService:
         try:
             with session_scope(self._session_maker) as session:
                 database_name = str(session.scalar(text("SELECT current_database()")))
-                schema_head = str(session.scalar(text("SELECT version_num FROM alembic_version")))
+                current_heads = tuple(
+                    sorted(MigrationContext.configure(session.connection()).get_current_heads())
+                )
+                if database_name != self._expected_database:
+                    raise DishRuleError(
+                        "BACKEND_REJECTED",
+                        "PostgreSQL runtime database identity does not match the rehearsal binding",
+                        rule="postgresql_runtime_identity_mismatch",
+                        retryable=False,
+                        details={
+                            "expected_database": self._expected_database,
+                            "observed_database": database_name,
+                        },
+                    )
+                if current_heads != (self._expected_schema_head,):
+                    raise DishRuleError(
+                        "BACKEND_REJECTED",
+                        "PostgreSQL runtime schema does not match the exact expected Alembic head",
+                        rule="postgresql_runtime_schema_mismatch",
+                        retryable=False,
+                        details={
+                            "expected_schema_head": self._expected_schema_head,
+                            "observed_schema_heads": list(current_heads),
+                        },
+                    )
                 generation = session.scalar(
                     select(models.AuthorityGeneration).where(
                         models.AuthorityGeneration.status == "active"
@@ -162,6 +187,7 @@ class PostgresRuntimeService:
                         "BACKEND_REJECTED",
                         "PostgreSQL authority has no active generation",
                         rule="postgresql_generation_missing",
+                        retryable=False,
                     )
         except DishRuleError:
             raise
@@ -176,7 +202,7 @@ class PostgresRuntimeService:
 
         observed = {
             "database": database_name,
-            "schema_head": schema_head,
+            "schema_head": current_heads[0],
             "dish_release": generation.dish_release,
             "generation_id": str(generation.generation_id),
             "generation_status": generation.status,
@@ -193,6 +219,7 @@ class PostgresRuntimeService:
                 "BACKEND_REJECTED",
                 "PostgreSQL runtime identity does not match the rehearsal binding",
                 rule="postgresql_runtime_identity_mismatch",
+                retryable=False,
                 details={"expected": expected, "observed": observed},
             )
         return observed

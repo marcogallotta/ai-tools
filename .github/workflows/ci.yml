@@ -1,380 +1,195 @@
-name: CI
+name: Exact-head PR certification
 
 on:
-  push:
+  pull_request_review:
     branches: [main]
+    types: [submitted]
   pull_request:
     branches: [main]
-    types: [opened, reopened, synchronize, ready_for_review]
-  workflow_dispatch:
+    types: [synchronize]
 
 permissions:
   contents: read
 
-env:
-  # pull_request GITHUB_SHA is the synthetic merge ref. Dish review/integration
-  # identity is always the source PR head SHA.
-  CI_CANDIDATE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-  CI_CANDIDATE_SOURCE: ${{ github.event_name == 'pull_request' && 'pull_request.head.sha' || 'github.sha' }}
-  EXACT_HEAD_STATUS_CONTEXT: Dish / required ordinary CI
+concurrency:
+  group: pr-certification-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
-  exact-head-ordinary-ci-start:
-    name: Begin exact-head ordinary CI gate
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+  plan:
+    name: Plan exact-head certification
+    if: github.event_name == 'pull_request_review' && github.event.review.state == 'commented'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
       statuses: write
-    steps:
-      - name: Invalidate any prior exact-head ordinary CI success
-        if: github.event_name == 'pull_request'
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          short_sha="${CI_CANDIDATE_SHA:0:12}"
-          gh api --method POST \
-            "/repos/$GITHUB_REPOSITORY/statuses/$CI_CANDIDATE_SHA" \
-            -f state=pending \
-            -f context="$EXACT_HEAD_STATUS_CONTEXT" \
-            -f target_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            -f description="ordinary CI running for exact head $short_sha"
-
-  bundle-metadata:
-    needs: exact-head-ordinary-ci-start
-    name: Dependency bundle metadata
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
-    runs-on: ubuntu-24.04
     outputs:
-      python_version: ${{ steps.bundle.outputs.python_version }}
-      bundle_id: ${{ steps.bundle.outputs.bundle_id }}
+      eligible: ${{ steps.prepare.outputs.eligible }}
+      candidate_sha: ${{ steps.prepare.outputs.candidate_sha }}
+      plan_digest: ${{ steps.prepare.outputs.plan_digest }}
+      selected_groups: ${{ steps.prepare.outputs.selected_groups }}
+      force_full: ${{ steps.prepare.outputs.force_full }}
+      selector_ok: ${{ steps.selector.outputs.selector_ok }}
+      run_certification: ${{ steps.decision.outputs.run_certification }}
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ env.CI_CANDIDATE_SHA }}
-      - name: Compute fail-closed bundle identity
-        id: bundle
+          ref: ${{ github.event.review.commit_id }}
+          fetch-depth: 0
+
+      - name: Build exact-head repository certification plan
+        id: prepare
         shell: bash
         run: |
           set -euo pipefail
-          python scripts/dependency_bundle.py expected \
+          mkdir -p .test-artifacts/pr-certification
+          python3 scripts/pr_certification.py prepare \
+            --event-json "$GITHUB_EVENT_PATH" \
             --repo-root "$GITHUB_WORKSPACE" \
+            --plan .test-artifacts/pr-certification/plan.json \
+            --execution-spec .test-artifacts/pr-certification/execution-spec.json \
             --github-output "$GITHUB_OUTPUT"
-          python scripts/dependency_bundle.py expected \
-            --repo-root "$GITHUB_WORKSPACE" \
-            --json
 
-  python-tests:
-    name: Broad Python tests
-    needs: bundle-metadata
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ env.CI_CANDIDATE_SHA }}
-      - uses: actions/setup-python@v6
-        with:
-          python-version: ${{ needs.bundle-metadata.outputs.python_version }}
-      - uses: ./.github/actions/setup-python-bundle
-        with:
-          github-token: ${{ github.token }}
-      - name: Validate bundle contracts
+      - name: Invalidate older certification status for this reviewed head
+        if: steps.prepare.outputs.eligible == 'true'
         shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p .test-artifacts/python
-          dish/.venv/bin/python -m pytest -q \
-            ci/tests/test_dependency_bundle.py \
-            ci/tests/test_repository_bundle.py \
-            ci/tests/test_pr_gate.py \
-            ci/tests/test_ci_evidence_upload.py \
-            --junitxml=.test-artifacts/python/bundles.xml \
-            2>&1 | tee .test-artifacts/python/bundles.log
-      - name: Validate governed Dish test-selection map
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p .test-artifacts/python
-          (
-            cd dish
-            .venv/bin/python scripts/dish-test-plan --validate
-          ) 2>&1 | tee .test-artifacts/python/test-selection-validation.log
-      - name: Dish Python suite
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p .test-artifacts/python
-          (
-            cd dish
-            .venv/bin/python -m pytest -q tests \
-              --junitxml=../.test-artifacts/python/dish.xml
-          ) 2>&1 | tee .test-artifacts/python/dish.log
-      - name: Tools Python suite
-        shell: bash
-        run: |
-          set -euo pipefail
-          tools/.venv/bin/python -m pytest -q tools/tests \
-            --junitxml=.test-artifacts/python/tools.xml \
-            2>&1 | tee .test-artifacts/python/tools.log
-      - name: Upload Python test evidence
-        if: always()
-        uses: ./.github/actions/upload-test-evidence
-        with:
-          name: python-tests-${{ env.CI_CANDIDATE_SHA }}
-          path: .test-artifacts
-
-  frontend-tooling:
-    name: Frontend and tooling
-    needs: bundle-metadata
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ env.CI_CANDIDATE_SHA }}
-      - uses: actions/setup-python@v6
-        with:
-          python-version: ${{ needs.bundle-metadata.outputs.python_version }}
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '22'
-      - uses: ./.github/actions/setup-python-bundle
-        with:
-          github-token: ${{ github.token }}
-      - name: Static, schema, unit, and build checks
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p .test-artifacts/frontend-tooling
-          npm --prefix dish/frontend run check:static \
-            2>&1 | tee .test-artifacts/frontend-tooling/check-static.log
-      - name: Upload frontend/tooling evidence
-        if: always()
-        uses: ./.github/actions/upload-test-evidence
-        with:
-          name: frontend-tooling-${{ env.CI_CANDIDATE_SHA }}
-          path: |
-            .test-artifacts
-            dish/frontend/dist
-
-  native-postgresql:
-    name: Native PostgreSQL
-    needs: bundle-metadata
-    runs-on: ubuntu-24.04
-    services:
-      postgres:
-        image: postgres:17.10
         env:
-          POSTGRES_DB: dish_ai_tools_ci_test
-          POSTGRES_USER: ai_tools_ci
-          POSTGRES_PASSWORD: ci-only-password
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U ai_tools_ci -d dish_ai_tools_ci_test"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      DISH_TEST_POSTGRESQL_DSN: postgresql+psycopg://ai_tools_ci:ci-only-password@127.0.0.1:5432/dish_ai_tools_ci_test
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ env.CI_CANDIDATE_SHA }}
-      - uses: actions/setup-python@v6
-        with:
-          python-version: ${{ needs.bundle-metadata.outputs.python_version }}
-      - uses: ./.github/actions/setup-python-bundle
-        with:
-          github-token: ${{ github.token }}
-      - name: Prove database target is CI-owned and isolated
-        shell: bash
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ steps.prepare.outputs.candidate_sha }}
         run: |
           set -euo pipefail
-          mkdir -p .test-artifacts/native-postgresql
-          dish/.venv/bin/python - <<'PY' | tee .test-artifacts/native-postgresql/target-guard.log
-          import os
-          from urllib.parse import urlparse
+          gh api --method POST \
+            -H 'Accept: application/vnd.github+json' \
+            "/repos/$GITHUB_REPOSITORY/statuses/$CANDIDATE_SHA" \
+            -f state=pending \
+            -f context='Dish / exact-head certification' \
+            -f description='Selector-driven certification is running' \
+            -f target_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
-          assert os.environ.get("GITHUB_ACTIONS") == "true", "native PostgreSQL lane is CI-only here"
-          parsed = urlparse(os.environ["DISH_TEST_POSTGRESQL_DSN"])
-          assert parsed.hostname in {"127.0.0.1", "localhost"}, parsed.hostname
-          assert parsed.username == "ai_tools_ci", parsed.username
-          database = parsed.path.removeprefix("/")
-          assert database == "dish_ai_tools_ci_test", database
-          assert database.startswith("dish_") and database.endswith("_test"), database
-          assert "prod" not in database.lower() and "production" not in database.lower(), database
-          print("CI PostgreSQL target guard passed")
-          PY
-      - name: Run governed native PostgreSQL certification
+      - name: Validate governed selector map before heavy allocation
+        id: selector
+        if: steps.prepare.outputs.eligible == 'true'
         shell: bash
         run: |
-          set -euo pipefail
-          dish/.venv/bin/python dish/scripts/dish-pg-native-certification \
-            --output .test-artifacts/native-postgresql/report.json \
-            --waive-skip "tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_database_disconnect_rolls_back_then_recovers_once=no runner wires DISH_SECTION1_COMPOSE_JSON to the shared TEST PostgreSQL target; revisit before setting external_effects_enabled=true" \
-            --waive-skip "tests/postgresql/native/test_process_failure_command.py::test_command_process_disconnect_before_commit_fails_closed_and_recovers=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure" \
-            --waive-skip "tests/postgresql/native/test_process_failure_disconnect.py::test_projection_worker_fails_clearly_across_postgresql_disconnect=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure" \
-            --waive-skip "tests/postgresql/native/test_process_failure_disconnect.py::test_reconciliation_worker_writes_nothing_while_postgresql_is_down=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure" \
-            2>&1 | tee .test-artifacts/native-postgresql/native-certification.log
-      - name: Upload native PostgreSQL evidence
-        if: always()
-        uses: ./.github/actions/upload-test-evidence
-        with:
-          name: native-postgresql-${{ env.CI_CANDIDATE_SHA }}
-          path: .test-artifacts
+          set +e
+          mkdir -p .test-artifacts/pr-certification
+          python3 dish/scripts/dish-test-plan --validate \
+            2>&1 | tee .test-artifacts/pr-certification/selector-map-validation.log
+          rc=${PIPESTATUS[0]}
+          if [[ "$rc" -eq 0 ]]; then
+            echo 'selector_ok=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'selector_ok=false' >> "$GITHUB_OUTPUT"
+          fi
+          exit 0
 
-  browser-acceptance:
-    name: Browser acceptance
-    needs: bundle-metadata
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          ref: ${{ env.CI_CANDIDATE_SHA }}
-      - uses: actions/setup-python@v6
-        with:
-          python-version: ${{ needs.bundle-metadata.outputs.python_version }}
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '22'
-      - uses: ./.github/actions/setup-python-bundle
-        with:
-          github-token: ${{ github.token }}
-      - name: Install maintained Chromium runtime
+      - name: Publish selector-map failure without allocating certification runner
+        if: steps.prepare.outputs.eligible == 'true' && steps.selector.outputs.selector_ok != 'true'
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_SHA: ${{ steps.prepare.outputs.candidate_sha }}
         run: |
           set -euo pipefail
-          mkdir -p .test-artifacts/browser
-          dish/.venv/bin/python -m playwright install --with-deps chromium \
-            2>&1 | tee .test-artifacts/browser/playwright-install.log
-      - name: Run browser harness
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm --prefix dish/frontend run test:browser \
-            2>&1 | tee .test-artifacts/browser/browser-harness.log
-      - name: Run Stage 7 browser acceptance
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm --prefix dish/frontend run test:acceptance \
-            2>&1 | tee .test-artifacts/browser/stage7-acceptance.log
-      - name: Upload browser evidence
-        if: always()
-        uses: ./.github/actions/upload-test-evidence
-        with:
-          name: browser-acceptance-${{ env.CI_CANDIDATE_SHA }}
-          path: |
-            .test-artifacts
-            dish/.test-artifacts
-            dish/frontend/screenshots
+          gh api --method POST \
+            -H 'Accept: application/vnd.github+json' \
+            "/repos/$GITHUB_REPOSITORY/statuses/$CANDIDATE_SHA" \
+            -f state=failure \
+            -f context='Dish / exact-head certification' \
+            -f description='Governed selector map validation failed' \
+            -f target_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
-  exact-head-ordinary-ci:
-    name: Exact-head ordinary CI gate
-    if: always() && (github.event_name != 'pull_request' || github.event.pull_request.draft == false)
-    needs: [python-tests, frontend-tooling, native-postgresql, browser-acceptance]
+      - name: Decide whether to allocate certification runner
+        id: decision
+        if: steps.prepare.outputs.eligible == 'true'
+        shell: bash
+        env:
+          SELECTOR_OK: ${{ steps.selector.outputs.selector_ok }}
+        run: |
+          set -euo pipefail
+          if [[ "$SELECTOR_OK" == "true" ]]; then
+            echo 'run_certification=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'run_certification=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload exact plan and execution spec
+        if: steps.decision.outputs.run_certification == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: pr-certification-plan-${{ steps.prepare.outputs.candidate_sha }}-${{ github.run_id }}
+          path: .test-artifacts/pr-certification
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
+
+  certify:
+    name: Run selected certification groups
+    needs: plan
+    if: needs.plan.outputs.run_certification == 'true'
     runs-on: ubuntu-24.04
     permissions:
+      actions: read
       contents: read
       statuses: write
     steps:
       - uses: actions/checkout@v6
-        if: always()
         with:
-          ref: ${{ env.CI_CANDIDATE_SHA }}
-      - name: Determine terminal ordinary CI state
-        id: outcome
+          ref: ${{ needs.plan.outputs.candidate_sha }}
+          fetch-depth: 0
+
+      - name: Verify exact formal Review candidate checkout
         shell: bash
         env:
-          PYTHON_RESULT: ${{ needs.python-tests.result }}
-          FRONTEND_RESULT: ${{ needs.frontend-tooling.result }}
-          POSTGRESQL_RESULT: ${{ needs.native-postgresql.result }}
-          BROWSER_RESULT: ${{ needs.browser-acceptance.result }}
+          CANDIDATE_SHA: ${{ needs.plan.outputs.candidate_sha }}
         run: |
           set -euo pipefail
-          state=success
-          for result in "$PYTHON_RESULT" "$FRONTEND_RESULT" "$POSTGRESQL_RESULT" "$BROWSER_RESULT"; do
-            if [[ "$result" != "success" ]]; then
-              state=failure
-            fi
-          done
-          printf 'status_state=%s\n' "$state" >> "$GITHUB_OUTPUT"
-          printf 'python_result=%s\n' "$PYTHON_RESULT" >> "$GITHUB_OUTPUT"
-          printf 'frontend_result=%s\n' "$FRONTEND_RESULT" >> "$GITHUB_OUTPUT"
-          printf 'postgresql_result=%s\n' "$POSTGRESQL_RESULT" >> "$GITHUB_OUTPUT"
-          printf 'browser_result=%s\n' "$BROWSER_RESULT" >> "$GITHUB_OUTPUT"
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
 
-      - name: Write exact candidate evidence metadata
-        if: always()
-        shell: bash
-        env:
-          STATUS_STATE: ${{ steps.outcome.outputs.status_state }}
-          PYTHON_RESULT: ${{ steps.outcome.outputs.python_result }}
-          FRONTEND_RESULT: ${{ steps.outcome.outputs.frontend_result }}
-          POSTGRESQL_RESULT: ${{ steps.outcome.outputs.postgresql_result }}
-          BROWSER_RESULT: ${{ steps.outcome.outputs.browser_result }}
-        run: |
-          set -euo pipefail
-          mkdir -p .test-artifacts/ci-candidate
-          python3 - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          candidate_sha = os.environ["CI_CANDIDATE_SHA"]
-          if len(candidate_sha) != 40:
-              raise SystemExit(f"invalid candidate SHA: {candidate_sha!r}")
-          payload = {
-              "schema": "dish-exact-head-ci-v1",
-              "workflow": os.environ["GITHUB_WORKFLOW"],
-              "event": os.environ["GITHUB_EVENT_NAME"],
-              "candidate_sha": candidate_sha,
-              "candidate_source": os.environ["CI_CANDIDATE_SOURCE"],
-              "workflow_sha": os.environ["GITHUB_SHA"],
-              "run_id": os.environ["GITHUB_RUN_ID"],
-              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
-              "required_status_context": os.environ["EXACT_HEAD_STATUS_CONTEXT"],
-              "required_status_state": os.environ["STATUS_STATE"] or "failure",
-              "required_lane_results": {
-                  "python-tests": os.environ["PYTHON_RESULT"],
-                  "frontend-tooling": os.environ["FRONTEND_RESULT"],
-                  "native-postgresql": os.environ["POSTGRESQL_RESULT"],
-                  "browser-acceptance": os.environ["BROWSER_RESULT"],
-              },
-          }
-          Path(".test-artifacts/ci-candidate/identity.json").write_text(
-              json.dumps(payload, indent=2, sort_keys=True) + "\n",
-              encoding="utf-8",
-          )
-          print(json.dumps(payload, sort_keys=True))
-          PY
-      - name: Upload required ordinary CI evidence
-        if: always()
-        uses: ./.github/actions/upload-test-evidence
+      - name: Download exact certification plan
+        uses: actions/download-artifact@v8
         with:
-          name: required-ordinary-ci-${{ env.CI_CANDIDATE_SHA }}
-          path: .test-artifacts/ci-candidate/identity.json
-      - name: Publish terminal exact-head ordinary CI status
-        if: always() && github.event_name == 'pull_request'
+          name: pr-certification-plan-${{ needs.plan.outputs.candidate_sha }}-${{ github.run_id }}
+          path: .test-artifacts/pr-certification
+
+      - name: Execute only planner-selected groups
+        id: certification
+        uses: ./.github/actions/run-certification
+        with:
+          execution-spec: .test-artifacts/pr-certification/execution-spec.json
+          github-token: ${{ github.token }}
+          run-id: ${{ github.run_id }}
+          run-attempt: ${{ github.run_attempt }}
+          evidence-path: .test-artifacts/pr-certification/evidence.json
+
+      - name: Upload exact-head certification evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pr-certification-evidence-${{ needs.plan.outputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .test-artifacts
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Publish terminal exact-head certification status
+        if: always()
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          STATUS_STATE: ${{ steps.outcome.outputs.status_state }}
+          CANDIDATE_SHA: ${{ needs.plan.outputs.candidate_sha }}
+          CERTIFICATION_OUTCOME: ${{ steps.certification.outcome }}
         run: |
           set -euo pipefail
-          short_sha="${CI_CANDIDATE_SHA:0:12}"
-          status_state="$STATUS_STATE"
-          description="ordinary CI failed for exact head $short_sha"
-          if [[ "$status_state" == "success" ]]; then
-            description="ordinary CI passed for exact head $short_sha"
-          else
-            status_state=failure
+          state=failure
+          description='Selected certification groups failed'
+          if [[ "$CERTIFICATION_OUTCOME" == "success" ]]; then
+            state=success
+            description='All planner-required certification groups passed'
           fi
           gh api --method POST \
-            "/repos/$GITHUB_REPOSITORY/statuses/$CI_CANDIDATE_SHA" \
-            -f state="$status_state" \
-            -f context="$EXACT_HEAD_STATUS_CONTEXT" \
-            -f target_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            -f description="$description"
+            -H 'Accept: application/vnd.github+json' \
+            "/repos/$GITHUB_REPOSITORY/statuses/$CANDIDATE_SHA" \
+            -f state="$state" \
+            -f context='Dish / exact-head certification' \
+            -f description="$description" \
+            -f target_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"

@@ -144,6 +144,10 @@ REVIEWED_PRIVATE_FAULT_SEAMS = {
     ("postgresql/test_runtime_wiring_rehearsal.py", "_run_configured_service"): (
         "Legacy configured-service dispatch boundary for wiring selection tests."
     ),
+    ("postgresql/native/test_routine_migration.py", "_repository_script"): (
+        "Alembic repository-graph fault-injection boundary used to prove a known "
+        "non-ancestor database revision fails before mutation."
+    ),
     ("test_admin_round1b.py", "_command_abandon_operation"): (
         "Post-revocation abandonment failure boundary for durable kill fencing."
     ),

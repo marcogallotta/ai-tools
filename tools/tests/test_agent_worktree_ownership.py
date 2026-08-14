@@ -179,3 +179,34 @@ def test_two_local_processes_sharing_winning_global_claim_are_os_fenced(h: Harne
     )
     assert_error(second, "OWNERSHIP_CLAIMED")
     long.communicate(timeout=20)
+
+
+def test_local_implementation_handoff_contract_is_terse_executable_and_pr_durable() -> None:
+    repo = Path(__file__).resolve().parents[2]
+    handoff = (repo / "tools/agent-worktree-handoff.md").read_text()
+    root = (repo / "CLAUDE.md").read_text()
+
+    assert "tools/agent-worktree-handoff.md" in root
+    for token in (
+        "use exactly two lines: `Blocker:`",
+        "`Action:` giving one exact next action",
+        "PostgreSQL bootstrap, package/service setup",
+        "/tmp/dish-pg-bootstrap.sh",
+        "set -euo pipefail",
+        "/tmp/dish-pg-bootstrap.json",
+        "Persist failure diagnostics as well as success evidence",
+        "exactly one runnable command",
+        "sudo bash /tmp/dish-pg-bootstrap.sh",
+        "read the persisted output file",
+        "Do not request authorization that the current task or standing role contract already grants",
+        "Keep it current proactively",
+        "must be durable on the PR before it is reported to Marco",
+        "exact current remote PR head SHA",
+        "exact local unpublished head SHA",
+        "publication action and authorized fallback attempted",
+        "persisted evidence/output-file path",
+        "Branch/head publication and PR discussion are separate transports",
+        "Never leave critical implementation or blocker state only in chat",
+        "return only PR number, exact current PR head SHA, PASS/FAIL, and next action",
+    ):
+        assert token in handoff

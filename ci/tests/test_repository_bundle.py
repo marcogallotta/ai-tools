@@ -89,7 +89,7 @@ def test_pull_request_validation_has_read_only_contents_permission():
     assert 'contents: write' not in build_job
 
     publish_job = workflow.split('  publish-release-retention:\n', 1)[1]
-    assert "if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'" in publish_job
+    assert "if: github.ref == 'refs/heads/main'" in publish_job
     assert 'permissions:\n      actions: read\n      contents: write\n' in publish_job
 
 
@@ -98,15 +98,10 @@ def test_source_sha_selection_is_event_specific():
     build_job = workflow.split('  build-verify-artifact:\n', 1)[1].split(
         '  publish-release-retention:\n', 1
     )[0]
-    source_selection = '''if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
-            # PR validation follows live main so an old PR base does not make acceptance stale.
-            source_sha="$(git rev-parse FETCH_HEAD)"
-          else
-            # Push/manual publication stays bound to the workflow event/requested commit.
-            # The build authority check below fails closed if main has since advanced.
-            source_sha="$GITHUB_SHA"
-          fi'''
-    assert source_selection in build_job
+    assert 'pull_request:' not in workflow.split('permissions:', 1)[0]
+    assert '# Push/manual publication stays bound to the workflow event/requested commit.' in build_job
+    assert 'source_sha="$GITHUB_SHA"' in build_job
+    assert 'source_sha="$(git rev-parse FETCH_HEAD)"' not in build_job
 
 
 def test_build_verify_clone_round_trip(tmp_path: Path):

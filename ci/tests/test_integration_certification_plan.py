@@ -102,8 +102,8 @@ def test_dish_paths_delegate_to_existing_selector_without_repo_path_duplication(
         }
     ]
     assert plan["dish_selector"]["changed_paths"] == ["frontend/fixtures/stage1-board.js"]
-    assert plan["dish_selector"]["lanes"] == ["frontend check"]
-    assert plan["selected_lanes"] == ["frontend check"]
+    assert plan["dish_selector"]["lanes"] == ["frontend static/tooling"]
+    assert plan["selected_lanes"] == ["frontend static/tooling"]
     assert plan["selected_groups"] == ["frontend-static"]
     assert plan["force_full"] is False
 

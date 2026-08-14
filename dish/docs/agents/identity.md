@@ -34,6 +34,8 @@ handles agent identity separately (see root `CLAUDE.md`). Do not extend this mec
   "assigned_at": "2026-08-12T00:00:00Z",
   "notes": "free text",
   "workspace": "optional metadata, e.g. checkout path",
+  "owning_task_gid": "1234567890",
+  "owning_project_gid": "1217419962189616",
   "active_worktree": {
     "task_gid": "1234567890",
     "state_path": "/home/user/.local/state/dish/worktrees/1234567890.json",
@@ -43,7 +45,9 @@ handles agent identity separately (see root `CLAUDE.md`). Do not extend this mec
 }
 ```
 
-`active_worktree` is optional compatibility/recovery metadata written by `tools/agent-worktree`; older records without it remain valid. The task-keyed worktree record is the local lifecycle record. The exclusive local claim is stored separately under the task-scoped claim state. Neither record creates task-assignment authority: the explicit implementation handoff and live orchestration/GitHub authority decide which task/branch/PR lineage may be worked. `active_worktree` is not a heartbeat or proof that its recorded agent is still running.
+`owning_task_gid` and `owning_project_gid` are optional durable recovery pointers for the current assignment. They do not create assignment authority. When a mapped standing role names Asana as its live coordination authority, `owning_task_gid` is required for post-compaction re-grounding so the hook can re-read the live owning task rather than reconstructing it from chat. `owning_project_gid` is checked against both the role contract and the task's current project membership when present.
+
+`active_worktree` is optional compatibility/recovery metadata written by `tools/agent-worktree`; older records without it remain valid. Its `task_gid` is also accepted as the owning-task recovery pointer for implementation work. The task-keyed worktree record is the local lifecycle record. The exclusive local claim is stored separately under the task-scoped claim state. Neither record creates task-assignment authority: the explicit implementation handoff and live orchestration/GitHub authority decide which task/branch/PR lineage may be worked. `active_worktree` is not a heartbeat or proof that its recorded agent is still running.
 
 ## Staleness and owner recovery
 
