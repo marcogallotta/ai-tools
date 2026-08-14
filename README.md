@@ -53,6 +53,7 @@ The repo is used through `~/.claude/` and `~/.local/bin/`, not from this directo
 | `CLAUDE-global.md` | `~/.claude/CLAUDE.md` |
 | `hooks/` | `~/.claude/hooks/` |
 | `codex/hooks.json` | `~/.codex/hooks.json` |
+| `hooks/agent-reground` | `~/.local/bin/agent-reground` |
 | `hooks/codex-protected-checkout` | `~/.local/bin/codex-protected-checkout` |
 | `tools/git-commit` | `~/.local/bin/git-commit` |
 | `tools/asana` | `~/.local/bin/asana` |
@@ -60,7 +61,7 @@ The repo is used through `~/.claude/` and `~/.local/bin/`, not from this directo
 | `dish/dish-admin` | `~/.local/bin/dish-admin` |
 | `dish/dish-service` | `~/.local/bin/dish-service` |
 
-Agent-facing hook configs live under each host's discovery path. Shared executables live in
+Claude Code also loads the repository-owned `.claude/settings.json`, which wires the post-compaction re-grounding barrier for Dish worktrees. Agent-facing hook configs live under each host's discovery path. Shared executables live in
 `~/.local/bin/`, which is on the real `PATH`, so `git-commit`, `asana`, `dish`, and
 `dish-admin` work in Claude Code, Codex, and plain shell sessions alike. See
 `codex/README.md` for the protected-checkout boundary and exact-head runtime certification.

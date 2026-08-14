@@ -47,9 +47,11 @@ The JSON schema is `dish-pr-lifecycle-status-v1`. The state engine distinguishes
 
 A draft PR that explicitly carries `IMPLEMENTATION EVIDENCE PENDING: <evidence>` is `IMPLEMENTATION CONTINUATION REQUIRED`, not Review/Integration/local certification. The dispatcher reuses the existing Implementation/fix consumer. If no current `phase=implementation`/`fix` owner is active, it first writes a durable `dish-implementation-continuation:v1` handoff on the same PR, then claims `phase=implementation` and dispatches the exact existing branch/task/head plus named evidence. That comment is the explicit replacement-owner handoff when the prior Implementation agent is unavailable. The consumer must follow the single canonical repository handoff contract at `dish/docs/agents/templates/implementation-handoff.md` and reconcile the matching local `tools/agent-worktree` claim before touching preserved state; the PR handoff/lease does not itself override a live local claim. The only human-facing message for this state is `PR #N still needs Implementation to finish <evidence>.`
 
-`VERDICT: MERGE` is not terminal. It starts Integration gate evaluation. Ordinary Review does not wait for ordinary CI and does not require a pre-review sync to moved `main` unless that movement creates a known semantic dependency that invalidates the review question.
+`VERDICT: MERGE` is not terminal. It starts Integration gate evaluation. Ordinary Review does not wait for pre-Review CI and does not require a pre-review sync to moved `main` unless that movement creates a known semantic dependency that invalidates the review question.
 
 `scripts/pr_gate.py` diagnoses the exact reviewed head as `PASS`, `PENDING`, `FAILED_REQUIRED_CI`, `EVIDENCE_MISSING_OR_STALE`, `HEAD_MOVED`, or (for transport/read failures distinguished by the lifecycle adapter) `INFRASTRUCTURE_ERROR`. Only `PENDING` is `WAITING CI / CERTIFICATION`. Missing/stale evidence remains fail-closed while accurately staying in gate evaluation; it is not described as CI still running. Failed required CI is either PR-owned and returned to Implementation/fix, or externally owned only when a valid durable external-dependency record proves that ownership.
+
+The normal hosted gate is `.github/workflows/ci.yml` on formal `pull_request_review` submission. Its candidate identity is the Review `commit_id`, not workflow `head_sha`. A planner step computes exact merge-base changed paths and required execution groups before the single conditional runner job is allocated. A `pull_request` `synchronize` event exists only to cancel a superseded in-flight certification via concurrency; it does not allocate heavy work. The accepted `Dish / exact-head certification` status must target the exact Actions run and be fresher than the formal Review and current rerun attempt. Periodic full regression is separate and cannot satisfy this gate.
 
 ## Structured advisory leases
 
@@ -158,7 +160,7 @@ DISH_LOCAL_INTEGRATION_CERTIFICATION_COMMAND='<local Integration launcher>'
 
 or `--local-integration-certifier`. The command receives `dish-pr-integration-certification-v1` JSON on standard input only after the dispatcher has written and re-read the durable exact-head handoff. The payload contains repository/PR identity, branch and exact reviewed head, the complete PR body, owning task IDs, the formal exact-head Review, the certification handoff, and the current lifecycle snapshot. The consumer acts under `dish/docs/agents/integration.md`: it re-reads live GitHub/Asana authority, executes the durable handoff, derives existing routine task/branch/agent IDs or safely creates the documented attempt identities, and records durable exact-head pass/fail evidence. It must not ask Marco to copy routine identifiers or choose a bypass that the workflow can resolve safely.
 
-A synchronous consumer return without a durable completion marker leaves `LOCAL CERTIFICATION REQUIRED` with a machine-actionable residual reason; it does not emit a human-action notice. A durable pass is re-read and the dispatcher continues the ordinary CI/order/mergeability/Integration gates in the same dispatch when possible. A durable failure is evidence for the normal Implementation/fix loop, not permission for Integration to change semantics. Missing Integration authority or a missing local Integration consumer remains an execution/authority boundary and may still require a real human action when no authorized execution path exists.
+A synchronous consumer return without a durable completion marker leaves `LOCAL CERTIFICATION REQUIRED` with a machine-actionable residual reason; it does not emit a human-action notice. A durable pass is re-read and the dispatcher continues the exact-head certification/order/mergeability/Integration gates in the same dispatch when possible. A durable failure is evidence for the normal Implementation/fix loop, not permission for Integration to change semantics. Missing Integration authority or a missing local Integration consumer remains an execution/authority boundary and may still require a real human action when no authorized execution path exists.
 
 ## Integration composition
 
@@ -173,7 +175,7 @@ DISH_INTEGRATION_AUTHORITY=bounded-reviewed-head
 With that authority and merge capability, the dispatcher:
 
 1. re-reads the PR/current head;
-2. re-evaluates exact-head Review, local work, mergeability/order, ordinary CI, and certification;
+2. re-evaluates exact-head Review, local work, mergeability/order, and selector-driven exact-head certification;
 3. creates/resumes an exact-head `phase=integration` lease;
 4. merges with expected-head protection;
 5. re-reads GitHub;

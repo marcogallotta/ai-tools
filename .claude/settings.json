@@ -1,0 +1,29 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/hooks/agent-reground",
+            "timeout": 30,
+            "statusMessage": "Re-grounding Dish role and active work"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/hooks/agent-reground",
+            "timeout": 10,
+            "statusMessage": "Checking post-compaction Dish role state"
+          }
+        ]
+      }
+    ]
+  }
+}

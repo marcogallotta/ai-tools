@@ -46,6 +46,7 @@ class CertificationError(ValueError):
 class CommandSpec:
     name: str
     argv: tuple[str, ...]
+    cwd: str | None = None
 
 
 @dataclass(frozen=True)
@@ -118,7 +119,19 @@ def load_execution_spec(path: Path) -> ExecutionSpec:
                 raise CertificationError(
                     f"{group}[{index}].argv must be a non-empty array of non-empty strings"
                 )
-            commands.append(CommandSpec(name=name, argv=tuple(argv)))
+            cwd = raw_command.get("cwd")
+            if cwd is not None:
+                if (
+                    not isinstance(cwd, str)
+                    or not cwd
+                    or cwd.startswith(("/", "\\"))
+                    or "\\" in cwd
+                    or any(part in {"", ".", ".."} for part in cwd.split("/"))
+                ):
+                    raise CertificationError(
+                        f"{group}[{index}].cwd must be canonical repository-relative POSIX form"
+                    )
+            commands.append(CommandSpec(name=name, argv=tuple(argv), cwd=cwd))
         groups[group] = tuple(commands)
 
     return ExecutionSpec(
@@ -138,12 +151,14 @@ def setup_requirements(spec: ExecutionSpec) -> dict[str, bool]:
         "node": bool(selected & {"frontend-static", "browser-acceptance"}),
         "postgresql": "native-postgresql" in selected,
         "chromium": "browser-acceptance" in selected,
+        "flake": any(command.cwd == "dish" and command.argv and command.argv[0].startswith(".venv-flake/") for commands in spec.groups.values() for command in commands),
     }
 
 
 def _run_command(command: CommandSpec, repo_root: Path, log_path: Path) -> int:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     printable = shlex.join(command.argv)
+    command_root = repo_root / command.cwd if command.cwd else repo_root
     print(f"[{command.name}] $ {printable}", flush=True)
     with log_path.open("a", encoding="utf-8") as log:
         log.write(f"[{command.name}] $ {printable}\n")
@@ -151,7 +166,7 @@ def _run_command(command: CommandSpec, repo_root: Path, log_path: Path) -> int:
         try:
             process = subprocess.Popen(
                 command.argv,
-                cwd=repo_root,
+                cwd=command_root,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -267,7 +282,7 @@ def _validate_evidence(payload: Mapping[str, object]) -> None:
 
 def _write_github_output(path: Path, requirements: Mapping[str, bool]) -> None:
     with path.open("a", encoding="utf-8") as handle:
-        for key in ("python", "node", "postgresql", "chromium"):
+        for key in ("python", "node", "postgresql", "chromium", "flake"):
             handle.write(f"{key}={'true' if requirements[key] else 'false'}\n")
 
 

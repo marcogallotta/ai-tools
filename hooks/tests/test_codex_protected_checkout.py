@@ -79,6 +79,6 @@ def test_codex_adapter_honors_per_call_workdir(
 
 def test_codex_hooks_config_is_user_level_and_hard_deny_adapter(hooks_dir):
     config = json.loads((hooks_dir.parent / "codex" / "hooks.json").read_text())
-    entry = config["hooks"]["PreToolUse"][0]
-    assert entry["matcher"] == "^Bash$"
+    entries = config["hooks"]["PreToolUse"]
+    entry = next(item for item in entries if item.get("matcher") == "^Bash$")
     assert entry["hooks"][0]["command"] == "/home/marco/.local/bin/codex-protected-checkout"

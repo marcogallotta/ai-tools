@@ -24,7 +24,7 @@ Retention is bounded:
 - repository-bundle Releases retain the **12 newest** publications; older repository-bundle Releases and their tags are deleted by the publication workflow;
 - dependency-bundle Releases/artifacts use their existing independent namespace and retention policy.
 
-Pull-request runs build and upload an artifact mirror but do not create Releases. That path exists to validate changes and to prove the real ChatGPT connector retrieval/materialization path before merge.
+Repository-bundle publication has no pull-request trigger. PR exact-head readiness is owned by the Review-triggered certification workflow; rebuilding the main-only ChatGPT bootstrap cache for each PR would spend hosted minutes without certifying the candidate.
 
 ## ChatGPT bootstrap order
 

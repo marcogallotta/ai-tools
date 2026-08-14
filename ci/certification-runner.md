@@ -1,6 +1,6 @@
 # Single-job certification runner primitives
 
-These primitives are intentionally below selector and Integration policy. They do not decide which certification groups a change requires, alter live workflow triggers, or replace exact-head gate authority.
+These primitives are intentionally below selector and Integration policy. They do not decide which certification groups a change requires or replace exact-head gate authority. Stage E wires them into `.github/workflows/ci.yml` only after the formal Review event has produced an exact-candidate repository plan.
 
 ## Execution spec
 
@@ -13,7 +13,7 @@ These primitives are intentionally below selector and Integration policy. They d
   "plan_digest": "<64-hex sha256>",
   "required_groups": {
     "python-control-plane": [
-      {"name": "focused evidence", "argv": ["dish/.venv/bin/python", "-m", "pytest", "..."]}
+      {"name": "focused evidence", "argv": [".venv/bin/python", "-m", "pytest", "..."], "cwd": "dish"}
     ]
   }
 }
@@ -26,7 +26,7 @@ Allowed groups, in execution order, are:
 3. `native-postgresql`
 4. `browser-acceptance`
 
-Commands are argv arrays, not shell strings. Unknown groups or malformed selected groups fail closed. Selection and command composition remain upstream policy; the runner only executes the supplied boundary commands.
+Commands are argv arrays, not shell strings. An optional canonical repository-relative `cwd` lets the adapter execute Dish-local commands without shell wrappers. Unknown groups, non-canonical working directories, or malformed selected groups fail closed. Selection and command composition remain upstream policy; the runner only executes the supplied boundary commands.
 
 ## Conditional runtime setup
 
@@ -37,13 +37,19 @@ Commands are argv arrays, not shell strings. Unknown groups or malformed selecte
 - isolated PostgreSQL 17.10: native PostgreSQL only;
 - maintained Chromium: browser acceptance only.
 
-The action is a composite action, not a hosted job. It is inert until a workflow explicitly invokes it, so this primitive does not add a separate preflight job or change current CI dispatch.
+The action is a composite action, not a hosted job. The Stage E PR workflow invokes it from exactly one conditional hosted runner job after planning and selector-map validation. Runtime setup is therefore never allocated for an unselected group. `flake diagnostics` additionally requests the optional dependency-bundle flake environment only when that selected command needs it.
 
 ## Execution and evidence
 
 Integration execution is deterministic and fail-fast. When a selected group fails, later selected groups are recorded `not_run_due_to_prior_failure`; unselected groups are always recorded `not_selected`.
 
 The runner writes `dish-integration-certification-v1` evidence containing candidate SHA, run ID/attempt, plan digest, required groups, deterministic execution order, every group result, per-group elapsed seconds, total elapsed seconds, and terminal outcome. Successful selected groups are `passed`; the first failing selected group is `failed`.
+
+## Stage E Review adapter
+
+`scripts/pr_certification.py` is the PR-event adapter. It accepts only a submitted formal `COMMENTED` Review with `VERDICT: MERGE`, takes the candidate exclusively from `review.commit_id`, verifies that commit still equals the PR head in the event, computes the exact merge base and complete rename-aware changed-path set, and calls the repository planner with semantic review complete. The optional Review line `CERTIFICATION ADD LANES: <lane>; <lane>` is additive only; `NONE` means no additions. Unknown lane names fail closed in planner validation and there is no removal/subtraction operation.
+
+The adapter hashes the complete plan and writes `dish-certification-execution-spec-v1` commands only for `selected_groups`. `.github/workflows/ci.yml` runs the cheap global selector-map validation before it allocates the conditional certification job. A PR `synchronize` event participates only in workflow concurrency cancellation, so a superseded candidate does not allocate new heavy work. The terminal `Dish / exact-head certification` status is posted to the Review commit and targets the exact Actions run.
 
 ## Actions cost reporting
 
