@@ -94,8 +94,6 @@ Use comments for meaningful chronology. After a comment changes current truth, f
 
 Repository-changing Implementation/fix dispatch policy is defined once in the canonical handoff contract at [`templates/implementation-handoff.md`](templates/implementation-handoff.md). Development Workflow tooling and handoffs must consume that source rather than maintaining a parallel template.
 
-The durable cross-host dispatch gate is the repository-owned global Implementation claim keyed by `(repository, task_gid)`. Dispatch tooling must query that gate before launching a new writable Implementation assignment. A current generation, an unresolved Asana mirror/readback, or claim-service unavailability is fail-closed and cannot be overridden by a stale `Ready` placement. Explicit continuation/replacement carries the exact prior global generation; ordinary redispatch never silently adopts it.
-
 The normal repository lifecycle is:
 
 > implementation branch + commit -> GitHub pull request -> review of the exact PR head -> integration of that reviewed head
@@ -210,8 +208,6 @@ If a claim is stale, takeover is normal recovery, not an exceptional human escal
 Maintain one semantic implementation owner per branch while work is being authored.
 
 For local Claude Code/Codex implementation, `tools/agent-worktree` is the shared repository-owned lifecycle boundary. One task attempt maps to one durable `agent/<slug>` branch plus one linked worktree outside the shared primary checkout, with task-keyed recoverability state under `~/.local/state/dish/worktrees/`. Per-agent identity files may reference that task record for compatibility, but neither file is task-assignment or liveness authority. Do not add a second `git-sync`, `sync-main`, host-native worktree manager, or implicit branch-replacement path.
-
-That local lifecycle is subordinate to the global claim: its outer `claim` command obtains/validates the current global generation before branch/worktree writes, then uses OS locks to serialize same-host use of that one winning generation. Local stale-owner takeover cannot override a global generation owned by another host. `publish` records a claim-journal intent and validates the exact global generation before `git push`; ambiguous outcomes are reconciled against GitHub before retry.
 
 Repository freshness must be deterministic:
 

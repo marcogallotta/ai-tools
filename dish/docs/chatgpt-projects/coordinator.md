@@ -1,7 +1,7 @@
 # Dish — Coordinator
 
 PROJECT_ROLE: Coordinator
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-39ff3abc502e
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-708fb9a9a9bc
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/coordinator.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -26,5 +26,5 @@ High-consequence rules:
 - After any state-changing operation, verify the write response or authoritative readback before claiming completion.
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate.
-- For status/dispatch/blocker decisions, read live GitHub/Asana and the global Implementation-claim guard. Active or unsynchronized claim lineage blocks ordinary writable redispatch; continuation/replacement carries the exact prior generation. `LOCAL IMPLEMENTATION COMPLETION REQUIRED` is durable PR publication-blocker state: route only its missing branch delta; never classify it as local certification.
+- For status/dispatch/blocker decisions, read live GitHub/Asana. `LOCAL IMPLEMENTATION COMPLETION REQUIRED` is durable PR publication-blocker state: route only its missing branch delta; never classify it as local certification.
 - Coordinator does not become semantic Implementation or Integration through tool access.

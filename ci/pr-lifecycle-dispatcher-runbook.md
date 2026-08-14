@@ -24,7 +24,7 @@ python scripts/pr_lifecycle.py watch --dispatch --interval 180
 
 `status` is read-only. `dispatch` performs one idempotent routing pass. `watch --dispatch` repeats the same pass; repeated polls must be safe.
 
-GitHub authentication comes from `GITHUB_TOKEN` or `GH_TOKEN`. `ASANA_ACCESS_TOKEN` is optional for linked-task metadata; missing Asana access is surfaced rather than replaced by local state. Writable Implementation/fix dispatch additionally requires `DISH_IMPLEMENTATION_CLAIM_URL` and `DISH_IMPLEMENTATION_CLAIM_TOKEN`; when an Implementation consumer is configured but that global guard is unavailable, dispatch fails closed before writing an Implementation/fix lease or launching the consumer.
+GitHub authentication comes from `GITHUB_TOKEN` or `GH_TOKEN`. `ASANA_ACCESS_TOKEN` is optional for linked-task metadata; missing Asana access is surfaced rather than replaced by local state.
 
 ## Derived lifecycle states
 
@@ -80,9 +80,7 @@ Explicit release is:
 <!-- dish-agent-lease-release:v1 lease=<uuid> -->
 ```
 
-A renewal repeats the lease marker with the same UUID on a new PR comment. Do not infer local-agent liveness or stale-owner eligibility from a PR lease, its age, an agent process/session, or a GitHub assignee. Local Implementation/fix exclusivity and stale-owner transfer are enforced by the repository-owned global Implementation claim plus subordinate `tools/agent-worktree` locks under the single canonical handoff contract at `dish/docs/agents/templates/implementation-handoff.md`.
-
-Before launching an Implementation/fix consumer, the dispatcher queries the global claim guard for the single owning Asana task. A writable/unsynchronized current generation is not dispatchable merely because the task/PR presentation is stale. No existing generation permits a fresh acquisition; `review-ready`/`released` lineage is passed to the consumer as the exact takeover CAS input after branch/PR/head agreement is verified. Formal exact-head `BLOCK` is an explicit lifecycle handoff, but a replacement still performs exact-generation takeover; draft-authoring continuation must not infer cross-host staleness from an expired advisory PR lease. Claim-service/readback unavailability or lineage disagreement fails closed.
+A renewal repeats the lease marker with the same UUID on a new PR comment. Do not infer local-agent liveness or stale-owner eligibility from a PR lease, its age, an agent process/session, or a GitHub assignee. Local Implementation/fix exclusivity and stale-owner transfer are enforced by `tools/agent-worktree` claims under the single canonical handoff contract at `dish/docs/agents/templates/implementation-handoff.md`.
 
 ## Review routing
 
