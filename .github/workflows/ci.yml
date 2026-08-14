@@ -117,10 +117,10 @@ jobs:
         if: steps.decision.outputs.run_certification == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: pr-certification-plan-${{ steps.prepare.outputs.candidate_sha }}-${{ github.run_id }}
+          name: pr-certification-plan-${{ steps.prepare.outputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: .test-artifacts/pr-certification
+          include-hidden-files: true
           if-no-files-found: error
-          overwrite: true
           retention-days: 14
 
   certify:
@@ -149,7 +149,7 @@ jobs:
       - name: Download exact certification plan
         uses: actions/download-artifact@v8
         with:
-          name: pr-certification-plan-${{ needs.plan.outputs.candidate_sha }}-${{ github.run_id }}
+          name: pr-certification-plan-${{ needs.plan.outputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: .test-artifacts/pr-certification
 
       - name: Execute only planner-selected groups
@@ -163,12 +163,14 @@ jobs:
           evidence-path: .test-artifacts/pr-certification/evidence.json
 
       - name: Upload exact-head certification evidence
+        id: evidence-upload
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: pr-certification-evidence-${{ needs.plan.outputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
-          path: .test-artifacts
-          if-no-files-found: warn
+          path: .test-artifacts/pr-certification/evidence.json
+          include-hidden-files: true
+          if-no-files-found: error
           retention-days: 14
 
       - name: Publish terminal exact-head certification status
@@ -178,13 +180,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CANDIDATE_SHA: ${{ needs.plan.outputs.candidate_sha }}
           CERTIFICATION_OUTCOME: ${{ steps.certification.outcome }}
+          EVIDENCE_UPLOAD_OUTCOME: ${{ steps.evidence-upload.outcome }}
+          EVIDENCE_ARTIFACT_ID: ${{ steps.evidence-upload.outputs.artifact-id }}
+          EVIDENCE_ARTIFACT_URL: ${{ steps.evidence-upload.outputs.artifact-url }}
         run: |
           set -euo pipefail
           state=failure
           description='Selected certification groups failed'
+          target_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           if [[ "$CERTIFICATION_OUTCOME" == "success" ]]; then
-            state=success
-            description='All planner-required certification groups passed'
+            if [[ "$EVIDENCE_UPLOAD_OUTCOME" == "success" && -n "$EVIDENCE_ARTIFACT_ID" && -n "$EVIDENCE_ARTIFACT_URL" ]]; then
+              state=success
+              description='All planner-required certification groups passed with durable evidence'
+              target_url="$EVIDENCE_ARTIFACT_URL"
+            else
+              description='Certification evidence publication failed'
+            fi
           fi
           gh api --method POST \
             -H 'Accept: application/vnd.github+json' \
@@ -192,4 +203,4 @@ jobs:
             -f state="$state" \
             -f context='Dish / exact-head certification' \
             -f description="$description" \
-            -f target_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            -f target_url="$target_url"
