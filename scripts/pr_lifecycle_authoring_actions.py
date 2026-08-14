@@ -62,6 +62,7 @@ class LifecycleAuthoringActionsMixin:
             )
             return current
 
+        global_claim = self._implementation_claim_dispatch_context(current)
         self._ensure_implementation_continuation_handoff(current, evidence)
         reread = self.inspect(self.github.get_pr(current.number))
         if reread.head != current.head or reread.state != LifecycleState.IMPLEMENTATION_CONTINUATION_REQUIRED:
@@ -87,9 +88,11 @@ class LifecycleAuthoringActionsMixin:
             "task_ids": current.task_ids,
             "unfinished_authoring_evidence": evidence,
             "lifecycle": claimed.json(),
+            "global_implementation_claim": global_claim,
             "instruction": (
                 "Follow the current repository Implementation contract. Continue the existing draft PR, "
-                "branch, and owning task; finish only the named authoring evidence, update the durable PR "
+                "branch, and owning task; acquire or exact-generation-take over the supplied global Implementation claim "
+                "before semantic work; finish only the named authoring evidence, update the durable PR "
                 "evidence/head, and mark ready for review only when authoring is complete. Pending ordinary CI "
                 "belongs to Integration and is not authoring evidence."
             ),

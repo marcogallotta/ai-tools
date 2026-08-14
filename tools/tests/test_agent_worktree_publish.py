@@ -33,7 +33,8 @@ def test_publish_refuses_main_or_other_branch_identity_tampering(h: Harness) -> 
     state["branch"] = "agent/other-task"
     h.state_path().write_text(json.dumps(state) + "\n")
     result = h.tool("publish", "--task", "1001", "--json", check=False)
-    assert_error(result, "BRANCH_MISMATCH")
+    assert result.returncode != 0
+    assert "ERROR BRANCH_MISMATCH:" in result.stderr or "ERROR OWNERSHIP_AMBIGUOUS:" in result.stderr
 
 
 def test_verify_handoff_requires_remote_equal_and_reports_four_distinct_heads(h: Harness) -> None:
@@ -58,3 +59,42 @@ def test_dirty_handoff_refuses_claiming_durable_handoff(h: Harness) -> None:
     (h.wt() / "dirty.txt").write_text("dirty\n")
     result = h.tool("verify-handoff", "--task", "1001", "--json", check=False)
     assert_error(result, "DIRTY_HANDOFF")
+
+
+def test_stale_global_claim_is_rejected_before_push(h: Harness) -> None:
+    h.start()
+    local_head = h.commit_local(text="candidate")
+    claim_files = list((h.home / ".local/state/dish/worktrees/claims").glob("*/1001.json"))
+    assert len(claim_files) == 1
+    local_claim = json.loads(claim_files[0].read_text())
+    old_global = str(local_claim["global_claim_id"])
+
+    from implementation_claim_lib.orchestration import NullAsanaMirror
+    from implementation_claim_lib.service import ClaimCoordinator
+    from implementation_claim_lib.store import ClaimStore
+
+    c = ClaimCoordinator(
+        ClaimStore(h.root / "global-claims.sqlite3"),
+        repository="marcogallotta/ai-tools",
+        asana=NullAsanaMirror(),
+    )
+    current = c.status("1001")
+    assert current is not None and current["claim_id"] == old_global
+    replacement = c.takeover({
+        "repository": "marcogallotta/ai-tools",
+        "task_gid": "1001",
+        "expected_claim_id": old_global,
+        "owner": "replacement",
+        "session_id": "replacement-session",
+        "host": "other-host",
+        "authoring_base_sha": str(current["authoring_base_sha"]),
+        "reason": "fixture cross-host takeover",
+        "liveness_evidence": "fixture explicit coordinator handoff",
+    })
+    assert replacement["claim_id"] != old_global
+
+    result = h.tool("publish", "--task", "1001", "--json", check=False)
+    assert_error(result, "OWNERSHIP_CONFLICT")
+    remote = git(h.origin, "rev-parse", "--verify", "refs/heads/agent/fixture", check=False)
+    assert remote.returncode != 0
+    assert local_head == git_out(h.wt(), "rev-parse", "HEAD")

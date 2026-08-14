@@ -23,6 +23,10 @@ Durable claim/lease identity determines which executor may continue a mutation. 
 ## Invariants
 
 - A stale or superseded executor cannot continue writing authoritative outcomes.
+- Writable repository Implementation work uses a separate repository-owned global claim keyed by `(repository, task_gid)`. Acquisition and takeover serialize through one durable CAS writer; takeover requires the exact prior generation and creates a fresh opaque `claim_id`.
+- Branch and PR identities are permanently bound to the owning task lineage. Same-host `agent-worktree` locks are subordinate process fences for the current global generation, not another ownership authority.
+- Publication authorization is journaled before GitHub branch movement. At most one unresolved publication intent exists for a task lineage; takeover/release/supersede is denied while that intent is unresolved, so an old process cannot retain an already-issued write window across generation transfer. Crash ambiguity is settled by exact GitHub readback before completion/abort/retry.
+- Asana synchronization is part of admission: a pending/failed mirror/readback fences writes and ordinary dispatch. The absence of an active-looking Asana section or PR lease is never evidence that the global claim is free.
 - Marco kill/replace is an explicit durable revocation of one exact `(operation_id, owner_id, run_id)`. Historical lease state may identify which exact run Marco is killing after its lease was normally released, but history never implies revocation by itself. Ordinary lease loss remains recoverable until an explicit revocation exists; after revocation, that exact run may never acquire, reacquire, renew, or otherwise re-establish mutation authority for that operation.
 - Revocation is checked at the canonical mutation-claim writer boundary. Approved mechanical proposal application uses that same operation-execution claim/fence as connected `apply-proposal`; durable human approval substitutes for the actor-lease prerequisite only, not for execution fencing or exact-principal revocation.
 - Reclaim/recovery does not silently duplicate an uncertain external effect.

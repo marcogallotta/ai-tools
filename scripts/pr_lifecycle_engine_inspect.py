@@ -15,6 +15,7 @@ class LifecycleInspectMixin:
         github: GitHubBackend,
         *,
         asana: AsanaBackend | None = None,
+        implementation_claim_guard: ImplementationClaimGuardBackend | None = None,
         integration_authority: bool = False,
         integration_capable: bool = True,
         merge_method: str = "squash",
@@ -22,6 +23,7 @@ class LifecycleInspectMixin:
     ) -> None:
         self.github = github
         self.asana = asana
+        self.implementation_claim_guard = implementation_claim_guard
         self.integration_authority = integration_authority
         self.integration_capable = integration_capable
         self.merge_method = merge_method

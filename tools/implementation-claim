@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import socket
+import sys
+
+from implementation_claim_lib.client import ClaimServiceClient
+from implementation_claim_lib.errors import ClaimError
+
+
+def parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description="Durable cross-host Dish Implementation claim client")
+    sub = p.add_subparsers(dest="command", required=True)
+    s = sub.add_parser("status"); s.add_argument("--task", required=True)
+    d = sub.add_parser("dispatch-check"); d.add_argument("--task", required=True)
+    a = sub.add_parser("acquire"); a.add_argument("--task", required=True); a.add_argument("--owner", required=True); a.add_argument("--session", required=True); a.add_argument("--host", default=socket.gethostname()); a.add_argument("--base", required=True); a.add_argument("--branch")
+    t = sub.add_parser("takeover"); t.add_argument("--task", required=True); t.add_argument("--expected-claim", required=True); t.add_argument("--owner", required=True); t.add_argument("--session", required=True); t.add_argument("--host", default=socket.gethostname()); t.add_argument("--base", required=True); t.add_argument("--reason", required=True); t.add_argument("--liveness-evidence", required=True)
+    for name in ("authorize", "sync", "renew"):
+        q = sub.add_parser(name); q.add_argument("--task", required=True); q.add_argument("--claim-id", required=True)
+        if name == "authorize": q.add_argument("--branch")
+    b = sub.add_parser("bind-branch"); b.add_argument("--task", required=True); b.add_argument("--claim-id", required=True); b.add_argument("--branch", required=True)
+    bp = sub.add_parser("bind-pr"); bp.add_argument("--task", required=True); bp.add_argument("--claim-id", required=True); bp.add_argument("--pr-number", type=int, required=True); bp.add_argument("--pr-head", required=True)
+    begin = sub.add_parser("begin-publication"); begin.add_argument("--task", required=True); begin.add_argument("--claim-id", required=True); begin.add_argument("--branch", required=True); begin.add_argument("--expected-head"); begin.add_argument("--proposed-head", required=True); begin.add_argument("--request-id", required=True)
+    complete = sub.add_parser("complete-publication"); complete.add_argument("--task", required=True); complete.add_argument("--claim-id", required=True); complete.add_argument("--request-id", required=True); complete.add_argument("--result-head", required=True); complete.add_argument("--pr-number", type=int)
+    reconcile = sub.add_parser("reconcile-publication"); reconcile.add_argument("--task", required=True); reconcile.add_argument("--claim-id", required=True); reconcile.add_argument("--request-id", required=True)
+    abort = sub.add_parser("abort-publication"); abort.add_argument("--task", required=True); abort.add_argument("--claim-id", required=True); abort.add_argument("--request-id", required=True)
+    ready = sub.add_parser("review-ready"); ready.add_argument("--task", required=True); ready.add_argument("--claim-id", required=True); ready.add_argument("--pr-number", type=int, required=True); ready.add_argument("--pr-head", required=True)
+    release = sub.add_parser("release"); release.add_argument("--task", required=True); release.add_argument("--claim-id", required=True); release.add_argument("--reason", required=True)
+    supersede = sub.add_parser("supersede"); supersede.add_argument("--task", required=True); supersede.add_argument("--claim-id", required=True); supersede.add_argument("--reason", required=True)
+    return p
+
+
+def main() -> int:
+    args = parser().parse_args(); client = ClaimServiceClient.from_env()
+    try:
+        if args.command == "status": payload = {"claim": client.status(args.task)}
+        elif args.command == "dispatch-check": payload = client.dispatch_guard(args.task)
+        elif args.command == "acquire": payload = {"claim": client.acquire(task_gid=args.task, owner=args.owner, session_id=args.session, host=args.host, authoring_base_sha=args.base, branch=args.branch)}
+        elif args.command == "takeover": payload = {"claim": client.takeover(task_gid=args.task, expected_claim_id=args.expected_claim, owner=args.owner, session_id=args.session, host=args.host, authoring_base_sha=args.base, reason=args.reason, liveness_evidence=args.liveness_evidence)}
+        elif args.command == "authorize": payload = {"claim": client.authorize(task_gid=args.task, claim_id=args.claim_id, branch=args.branch)}
+        elif args.command == "sync": payload = {"claim": client.sync(task_gid=args.task, claim_id=args.claim_id)}
+        elif args.command == "renew": payload = {"claim": client.renew(task_gid=args.task, claim_id=args.claim_id)}
+        elif args.command == "bind-branch": payload = {"claim": client.bind_branch(task_gid=args.task, claim_id=args.claim_id, branch=args.branch)}
+        elif args.command == "bind-pr": payload = {"claim": client.bind_pr(task_gid=args.task, claim_id=args.claim_id, pr_number=args.pr_number, pr_head=args.pr_head)}
+        elif args.command == "begin-publication": payload = client.begin_publication(task_gid=args.task, claim_id=args.claim_id, branch=args.branch, expected_head=args.expected_head, proposed_head=args.proposed_head, request_id=args.request_id)
+        elif args.command == "complete-publication": payload = client.complete_publication(task_gid=args.task, claim_id=args.claim_id, request_id=args.request_id, result_head=args.result_head, pr_number=args.pr_number)
+        elif args.command == "reconcile-publication": payload = client.reconcile_publication(task_gid=args.task, claim_id=args.claim_id, request_id=args.request_id)
+        elif args.command == "abort-publication": payload = {"claim": client.abort_publication(task_gid=args.task, claim_id=args.claim_id, request_id=args.request_id)}
+        elif args.command == "review-ready": payload = {"claim": client.review_ready(task_gid=args.task, claim_id=args.claim_id, pr_number=args.pr_number, pr_head=args.pr_head)}
+        elif args.command == "release": payload = {"claim": client.release(task_gid=args.task, claim_id=args.claim_id, reason=args.reason)}
+        elif args.command == "supersede": payload = {"claim": client.supersede(task_gid=args.task, claim_id=args.claim_id, reason=args.reason)}
+        else: raise AssertionError(args.command)
+        print(json.dumps({"ok": True, **payload}, sort_keys=True)); return 0
+    except ClaimError as exc:
+        payload = {"ok": False, "error": {"code": exc.code, "message": exc.message}}
+        if exc.current is not None: payload["current"] = exc.current
+        print(json.dumps(payload, sort_keys=True), file=sys.stderr); return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
