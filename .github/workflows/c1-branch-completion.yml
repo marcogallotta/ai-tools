@@ -1,0 +1,99 @@
+name: C1 branch completion
+
+on:
+  push:
+    branches:
+      - agent/c1-role-kernel-governance
+
+permissions:
+  contents: write
+  issues: read
+
+jobs:
+  complete:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Apply verified V3 payload and publish exact candidate tree
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_parent=1d30055554487b025ae527f6b8fe3a154858edb3
+          expected_source_tree=e0f563f9e497fb42ba8116c75ccbcfe86a56a6ba
+          expected_target_tree=d3c29dbad62c13f35de7a185e3b26e4ee769e304
+          parent=$(git rev-parse HEAD^)
+          test "$parent" = "$expected_parent"
+          source_tree=$(git show -s --format=%T "$parent")
+          test "$source_tree" = "$expected_source_tree"
+
+          rm -f .github/workflows/c1-branch-completion.yml
+
+          python3 - <<'PY'
+          import base64, gzip, hashlib, json, os, pathlib, re, urllib.request
+
+          repo = os.environ['GITHUB_REPOSITORY']
+          token = os.environ['GH_TOKEN']
+          req = urllib.request.Request(
+              f'https://api.github.com/repos/{repo}/issues/81/comments?per_page=100',
+              headers={
+                  'Authorization': f'Bearer {token}',
+                  'Accept': 'application/vnd.github+json',
+                  'X-GitHub-Api-Version': '2022-11-28',
+              },
+          )
+          with urllib.request.urlopen(req) as response:
+              comments = json.load(response)
+
+          pattern = re.compile(
+              r'^C1 residual payload V3 — PART (\d+)/12\s*\n\n```text\n([A-Za-z0-9+/=\n]+)\n```',
+              re.MULTILINE,
+          )
+          parts = {}
+          for comment in comments:
+              match = pattern.search(comment.get('body') or '')
+              if match:
+                  number = int(match.group(1))
+                  payload = ''.join(match.group(2).split())
+                  if number in parts and parts[number] != payload:
+                      raise SystemExit(f'conflicting V3 part {number}')
+                  parts[number] = payload
+
+          expected = set(range(1, 13))
+          if set(parts) != expected:
+              raise SystemExit(f'missing/unexpected V3 parts: have {sorted(parts)}')
+
+          encoded = ''.join(parts[i] for i in range(1, 13))
+          if len(encoded) != 46204:
+              raise SystemExit(f'base64 length mismatch: {len(encoded)}')
+
+          compressed = base64.b64decode(encoded, validate=True)
+          compressed_hash = hashlib.sha256(compressed).hexdigest()
+          if compressed_hash != '4bc6b3ba2f350c9ea82b8cbe203fd5d8af7c38baa10e23a8c368d82a0f67ca14':
+              raise SystemExit(f'gzip sha256 mismatch: {compressed_hash}')
+
+          raw = gzip.decompress(compressed)
+          raw_hash = hashlib.sha256(raw).hexdigest()
+          if raw_hash != 'de2c16d284055dbef22f4a9c841568f985a859473ea3dfac49fef937f7d5e6ef':
+              raise SystemExit(f'patch sha256 mismatch: {raw_hash}')
+
+          pathlib.Path('/tmp/c1-v3.patch').write_bytes(raw)
+          PY
+
+          git apply --binary /tmp/c1-v3.patch
+          git add -A
+          target_tree=$(git write-tree)
+          test "$target_tree" = "$expected_target_tree"
+
+          python3 dish/scripts/chatgpt_project_kernels.py render --check
+          python3 dish/scripts/chatgpt_project_kernels.py check
+          git diff --cached --check
+
+          git config user.name 'Dish Agent Implementation (ChatGPT)'
+          git config user.email 'dish-agent@users.noreply.github.com'
+          git commit -m 'Complete consolidated role kernel governance'
+          test "$(git rev-parse HEAD^{tree})" = "$expected_target_tree"
+          git push origin HEAD:agent/c1-role-kernel-governance
