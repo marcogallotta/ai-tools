@@ -9,6 +9,7 @@ import subprocess
 from typing import Any
 
 from pr_lifecycle_support import LifecycleError, PRLifecycle
+from pr_lifecycle_owner import owning_task_identity_from_references
 
 TERMINAL_DISPOSITION_MARKER = "dish-terminal-disposition:v1"
 TERMINAL_CLEANUP_MARKER = "dish-terminal-cleanup:v1"
@@ -52,48 +53,53 @@ def _replacement_lineage(notes: str, *, current_pr: int) -> tuple[int | None, st
 
 
 def asana_terminal_decision(lifecycle: PRLifecycle) -> TerminalDecision | None:
-    """Return only explicit current Asana abandonment/supersession authority.
+    """Return terminal authority only from the one explicit owning Asana task.
 
-    Generic completion, age/staleness, parking, and temporary blockers are not terminal
-    authority. Legacy prose is accepted only when the current task record names the exact
-    PR and uses explicit no-revive/supersession language, covering the #45/#54 incidents.
+    Auxiliary/related task references remain available on ``lifecycle.task_ids`` and
+    ``lifecycle.asana`` for non-authority context, but they can never authorize a
+    terminal mutation. Missing or ambiguous owner identity therefore yields no
+    terminal decision.
     """
-    for task in lifecycle.asana:
-        gid = str(task.get("gid") or "")
-        if not gid or task.get("error"):
-            continue
-        name = str(task.get("name") or "")
-        notes = str(task.get("notes") or "")
-        combined = f"{name}\n{notes}"
-        replacement_pr, replacement_task = _replacement_lineage(notes, current_pr=lifecycle.number)
+    owner_gid, owner_error = owning_task_identity_from_references(lifecycle.task_ids)
+    if not owner_gid or owner_error:
+        return None
+    task = next((item for item in lifecycle.asana if str(item.get("gid") or "") == owner_gid), None)
+    if task is None or task.get("error"):
+        return None
 
-        level = _TASK_LEVEL_RE.match(name)
-        if level and bool(task.get("completed")):
-            kind = level.group("kind").lower()
-            disposition = "abandoned" if kind == "abandoned" else "superseded"
+    gid = str(task.get("gid") or "")
+    name = str(task.get("name") or "")
+    notes = str(task.get("notes") or "")
+    combined = f"{name}\n{notes}"
+    replacement_pr, replacement_task = _replacement_lineage(notes, current_pr=lifecycle.number)
+
+    level = _TASK_LEVEL_RE.match(name)
+    if level and bool(task.get("completed")):
+        kind = level.group("kind").lower()
+        disposition = "abandoned" if kind == "abandoned" else "superseded"
+        return TerminalDecision(
+            disposition=disposition,
+            task_gid=gid,
+            task_url=task.get("permalink_url"),
+            reason=f"owning Asana task is completed with explicit {kind} disposition",
+            replacement_pr=replacement_pr,
+            replacement_task=replacement_task,
+        )
+
+    # PR-specific authority can live in an ongoing umbrella task. Require the exact
+    # PR token and explicit terminal/no-revive language in the same line or sentence.
+    for line in combined.splitlines():
+        numbers = {int(match.group("number")) for match in _PR_TOKEN_RE.finditer(line)}
+        if lifecycle.number in numbers and _EXPLICIT_PR_TERMINAL_RE.search(line):
+            disposition = "abandoned" if re.search(r"abandon", line, re.IGNORECASE) else "superseded"
             return TerminalDecision(
                 disposition=disposition,
                 task_gid=gid,
                 task_url=task.get("permalink_url"),
-                reason=f"owning Asana task is completed with explicit {kind} disposition",
+                reason="owning Asana task explicitly marks this PR as terminal/not-to-be-revived",
                 replacement_pr=replacement_pr,
                 replacement_task=replacement_task,
             )
-
-        # PR-specific authority can live in an ongoing umbrella task. Require the exact
-        # PR token and explicit terminal/no-revive language in the same line or sentence.
-        for line in combined.splitlines():
-            numbers = {int(match.group("number")) for match in _PR_TOKEN_RE.finditer(line)}
-            if lifecycle.number in numbers and _EXPLICIT_PR_TERMINAL_RE.search(line):
-                disposition = "abandoned" if re.search(r"abandon", line, re.IGNORECASE) else "superseded"
-                return TerminalDecision(
-                    disposition=disposition,
-                    task_gid=gid,
-                    task_url=task.get("permalink_url"),
-                    reason="owning Asana task explicitly marks this PR as terminal/not-to-be-revived",
-                    replacement_pr=replacement_pr,
-                    replacement_task=replacement_task,
-                )
     return None
 
 
@@ -132,14 +138,16 @@ class TerminalCleanupDispatcher:
     def dispatch(self, lifecycle: PRLifecycle, disposition: str) -> dict[str, Any]:
         if not self.command:
             raise LifecycleError("terminal cleanup command is unavailable")
-        if len(lifecycle.task_ids) != 1:
+        owner_gid, owner_error = owning_task_identity_from_references(lifecycle.task_ids)
+        if not owner_gid or owner_error:
+            detail = owner_error or "explicit owning Asana task is missing"
             raise LifecycleError(
-                f"terminal cleanup requires exactly one owning task id; PR #{lifecycle.number} has {lifecycle.task_ids!r}"
+                f"terminal cleanup requires one explicit owning task; PR #{lifecycle.number}: {detail}"
             )
         command = shlex.split(self.command) + [
             "cleanup",
             "--task",
-            lifecycle.task_ids[0],
+            owner_gid,
             "--branch",
             lifecycle.branch,
             "--expected-head",
