@@ -97,7 +97,7 @@ class AuthorityGeneration(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "creation_reason IN ('initial_cutover','destructive_restore')",
+            "creation_reason IN ('initial_cutover','destructive_restore','test_fixture_recovery')",
             name="creation_reason_allowed",
         ),
         CheckConstraint("status IN ('pending','active','retired')", name="status_allowed"),
@@ -105,7 +105,9 @@ class AuthorityGeneration(Base):
             "(creation_reason = 'initial_cutover' AND predecessor_generation_id IS NULL "
             "AND external_restore_control_id IS NULL) OR "
             "(creation_reason = 'destructive_restore' AND predecessor_generation_id IS NOT NULL "
-            "AND external_restore_control_id IS NOT NULL)",
+            "AND external_restore_control_id IS NOT NULL) OR "
+            "(creation_reason = 'test_fixture_recovery' AND predecessor_generation_id IS NOT NULL "
+            "AND external_restore_control_id IS NULL)",
             name="creation_provenance_complete",
         ),
         CheckConstraint(
