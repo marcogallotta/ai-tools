@@ -116,21 +116,136 @@ def test_probe_canonical_local_postgresql_accepts_cidr_form_server_address(monke
             }
 
     monkeypatch.setitem(globals_, "probe_native_postgresql", lambda dsn: FakeIdentity())
+    monkeypatch.setitem(
+        globals_,
+        "_probe_canonical_local_role_capabilities",
+        lambda: {"role": "dish_test", "createdb": True, "createrole": True},
+    )
     result = namespace["_probe_canonical_local_postgresql"]()
     assert result["role"] == "dish_test"
+    assert result["createdb"] is True
+    assert result["createrole"] is True
+
+
+@pytest.mark.parametrize(
+    ("database", "server_address", "server_port", "message"),
+    [
+        ("not_dish_test", "127.0.0.1/32", 5432, "identity mismatch"),
+        ("dish_test", "10.0.0.25/32", 5432, "not loopback"),
+        ("dish_test", "127.0.0.1/32", 6543, "identity mismatch"),
+    ],
+)
+def test_probe_canonical_local_postgresql_refuses_noncanonical_target_before_role_probe(
+    monkeypatch, database, server_address, server_port, message
+) -> None:
+    namespace = runpy.run_path(str(ROOT / "scripts" / "dish-pg-native-certification"))
+    unavailable = namespace["LocalPostgreSQLUnavailable"]
+    globals_ = namespace["_probe_canonical_local_postgresql"].__globals__
+
+    class FakeIdentity:
+        def as_dict(self):
+            return {
+                "database": database,
+                "server_port": server_port,
+                "server_address": server_address,
+            }
+
+    FakeIdentity.database = database
+    FakeIdentity.server_port = server_port
+    FakeIdentity.server_address = server_address
+    monkeypatch.setitem(globals_, "probe_native_postgresql", lambda dsn: FakeIdentity())
+    monkeypatch.setitem(
+        globals_,
+        "_probe_canonical_local_role_capabilities",
+        lambda: pytest.fail("noncanonical target must be rejected before role capability probing"),
+    )
+
+    with pytest.raises(unavailable, match=message):
+        namespace["_probe_canonical_local_postgresql"]()
+
+
+def test_probe_canonical_local_role_requires_createdb_and_createrole(monkeypatch) -> None:
+    namespace = runpy.run_path(str(ROOT / "scripts" / "dish-pg-native-certification"))
+    unavailable = namespace["LocalPostgreSQLUnavailable"]
+    globals_ = namespace["_probe_canonical_local_role_capabilities"].__globals__
+
+    class FakeResult:
+        def __init__(self, row):
+            self.row = row
+
+        def mappings(self):
+            return self
+
+        def one(self):
+            return self.row
+
+    class FakeConnection:
+        def __init__(self, row):
+            self.row = row
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, statement):
+            assert "rolcreatedb" in str(statement)
+            assert "rolcreaterole" in str(statement)
+            return FakeResult(self.row)
+
+    class FakeEngine:
+        def __init__(self, row):
+            self.row = row
+            self.disposed = False
+
+        def connect(self):
+            return FakeConnection(self.row)
+
+        def dispose(self):
+            self.disposed = True
+
+    def probe(row):
+        engine = FakeEngine(row)
+        monkeypatch.setitem(globals_, "create_engine", lambda *args, **kwargs: engine)
+        return engine, namespace["_probe_canonical_local_role_capabilities"]
+
+    engine, probe_capabilities = probe(
+        {"role": "dish_test", "createdb": True, "createrole": True}
+    )
+    assert probe_capabilities() == {
+        "role": "dish_test",
+        "createdb": True,
+        "createrole": True,
+    }
+    assert engine.disposed is True
+
+    engine, probe_capabilities = probe(
+        {"role": "dish_test", "createdb": True, "createrole": False}
+    )
+    with pytest.raises(unavailable, match="CREATEROLE"):
+        probe_capabilities()
+    assert engine.disposed is True
 
 
 def test_canonical_local_postgresql_bootstrap_is_bounded_and_reports_residual_reason(monkeypatch) -> None:
     namespace = runpy.run_path(str(ROOT / "scripts" / "dish-pg-native-certification"))
     unavailable = namespace["LocalPostgreSQLUnavailable"]
     globals_ = namespace["ensure_canonical_local_postgresql"].__globals__
-    identity = {"database": "dish_test", "role": "dish_test", "server_address": "127.0.0.1", "server_port": 5432}
+    identity = {
+        "database": "dish_test",
+        "role": "dish_test",
+        "server_address": "127.0.0.1",
+        "server_port": 5432,
+        "createdb": True,
+        "createrole": True,
+    }
 
     monkeypatch.setitem(globals_, "_probe_canonical_local_postgresql", lambda: identity)
     monkeypatch.setitem(globals_, "_provision_canonical_local_postgresql", lambda: pytest.fail("reachable target must not reset"))
     assert namespace["ensure_canonical_local_postgresql"]()["source"] == "existing"
 
-    probes = iter([unavailable("missing"), identity])
+    probes = iter([unavailable("canonical local role capabilities missing: CREATEROLE"), identity])
     provisioned: list[bool] = []
     def probe():
         value = next(probes)
@@ -169,6 +284,7 @@ def test_canonical_local_postgresql_bootstrap_is_bounded_and_reports_residual_re
     assert command[1:4] == ["-n", "-u", "postgres"]
     assert "-w" in command and kwargs["timeout"] == 10
     assert "PGHOST" not in kwargs["env"]
+    assert any("CREATEDB CREATEROLE" in part for part in command)
 
 
 def test_native_concurrency_lane_is_explicit_first_and_local_helper_is_canonical_only(monkeypatch) -> None:
