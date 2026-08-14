@@ -35,10 +35,16 @@ def build_parser() -> argparse.ArgumentParser:
             "from the service environment; see deploy/systemd/service.env.example."
         ),
     )
-    parser.add_argument(
+    runtime_group = parser.add_mutually_exclusive_group()
+    runtime_group.add_argument(
         "--postgresql-test-runtime",
         action="store_true",
         help="run the existing HTTP service against an explicitly bound TEST PostgreSQL authority",
+    )
+    runtime_group.add_argument(
+        "--postgresql-production-runtime",
+        action="store_true",
+        help="run the existing HTTP service against the explicitly bound production PostgreSQL authority",
     )
     parser.add_argument("--database-url")
     parser.add_argument("--expected-database")
@@ -252,7 +258,7 @@ def _required_postgresql_runtime_argument(args, name: str):
             "INVALID_ARGUMENT",
             (
                 f"--{name.replace('_', '-')} or {_POSTGRESQL_RUNTIME_ENV[name]} "
-                "is required for the PostgreSQL TEST runtime"
+                "is required for the PostgreSQL authority runtime"
             ),
             rule="postgresql_runtime_argument_required",
             details={"argument": name},
@@ -260,12 +266,48 @@ def _required_postgresql_runtime_argument(args, name: str):
     return value
 
 
-def _postgresql_runtime_config(args) -> ServiceConfig:
-    if os.environ.get("DISH_PROFILE", "").strip().lower() != "test":
+def _postgresql_runtime_profile(args, *, authority_backend: str | None = None) -> str:
+    explicit = (
+        "test"
+        if args.postgresql_test_runtime
+        else "prod"
+        if args.postgresql_production_runtime
+        else None
+    )
+    configured = os.environ.get("DISH_PROFILE", "").strip().lower()
+    if explicit is not None:
+        if configured != explicit:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                f"the PostgreSQL {explicit} runtime requires DISH_PROFILE={explicit}",
+                rule="postgresql_runtime_profile_mismatch",
+                details={"expected_profile": explicit, "configured_profile": configured or None},
+            )
+        return explicit
+    if authority_backend == "postgresql":
+        if configured not in {"test", "prod"}:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "PostgreSQL authority requires DISH_PROFILE=test or DISH_PROFILE=prod",
+                rule="postgresql_runtime_profile_required",
+                details={"configured_profile": configured or None},
+            )
+        return configured
+    raise DishRuleError(
+        "INVALID_ARGUMENT",
+        "PostgreSQL runtime profile was not selected",
+        rule="postgresql_runtime_profile_required",
+    )
+
+
+def _postgresql_runtime_config(args, *, profile: str) -> ServiceConfig:
+    configured = os.environ.get("DISH_PROFILE", "").strip().lower()
+    if configured != profile:
         raise DishRuleError(
             "INVALID_ARGUMENT",
-            "the PostgreSQL rehearsal service requires DISH_PROFILE=test",
-            rule="postgresql_runtime_profile_not_test",
+            f"the PostgreSQL {profile} runtime requires DISH_PROFILE={profile}",
+            rule="postgresql_runtime_profile_mismatch",
+            details={"expected_profile": profile, "configured_profile": configured or None},
         )
     populated_asana = sorted(
         key for key, value in os.environ.items() if "ASANA" in key.upper() and value
@@ -273,7 +315,7 @@ def _postgresql_runtime_config(args) -> ServiceConfig:
     if populated_asana:
         raise DishRuleError(
             "INVALID_ARGUMENT",
-            "Asana credentials or configuration are reachable in the PostgreSQL rehearsal process",
+            "Asana credentials or configuration are reachable in the PostgreSQL authority process",
             rule="postgresql_runtime_asana_environment_reachable",
             details={"environment_keys": populated_asana},
         )
@@ -296,23 +338,43 @@ def _postgresql_runtime_config(args) -> ServiceConfig:
     return config
 
 
-def _run_postgresql_test_runtime(args) -> int:
+def _validate_postgresql_runtime_database(*, profile: str, expected_database: str) -> None:
+    clean = expected_database.strip()
+    if profile == "test":
+        safe = (
+            clean.startswith("dish_")
+            and clean.endswith("_test")
+            and "prod" not in clean.lower()
+            and "production" not in clean.lower()
+        )
+        message = "expected PostgreSQL database must be a disposable dish_*_test database"
+        rule = "postgresql_runtime_database_not_disposable"
+    else:
+        safe = (
+            clean.startswith("dish_")
+            and clean.endswith("_prod")
+            and "test" not in clean.lower()
+        )
+        message = "expected production PostgreSQL database must be a dish_*_prod database"
+        rule = "postgresql_runtime_database_not_production"
+    if not safe:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            message,
+            rule=rule,
+            details={"profile": profile, "expected_database": clean},
+        )
+
+
+def _run_postgresql_runtime(args, *, profile: str) -> int:
     from dish_pg.postgres_service import PostgresRuntimeService
     from dish_pg.release import ALEMBIC_HEAD
 
-    config = _postgresql_runtime_config(args)
+    config = _postgresql_runtime_config(args, profile=profile)
     expected_database = str(_required_postgresql_runtime_argument(args, "expected_database"))
-    if (
-        not expected_database.startswith("dish_")
-        or not expected_database.endswith("_test")
-        or "prod" in expected_database.lower()
-        or "production" in expected_database.lower()
-    ):
-        raise DishRuleError(
-            "INVALID_ARGUMENT",
-            "expected PostgreSQL database must be a disposable dish_*_test database",
-            rule="postgresql_runtime_database_not_disposable",
-        )
+    _validate_postgresql_runtime_database(
+        profile=profile, expected_database=expected_database
+    )
     cursor_secret = str(_required_postgresql_runtime_argument(args, "cursor_secret")).encode()
     if len(cursor_secret) < 24:
         raise DishRuleError(
@@ -344,11 +406,12 @@ def _run_postgresql_test_runtime(args) -> int:
         expected_generation_id=_required_postgresql_runtime_argument(
             args, "expected_generation_id"
         ),
+        profile=profile,
     )
     try:
         startup = service.startup_check()
         if not startup["ok"] or startup["isolation"]["asana_environment_keys"]:
-            raise RuntimeError("PostgreSQL rehearsal service startup validation failed")
+            raise RuntimeError("PostgreSQL authority service startup validation failed")
         private_server, action_server = _build_servers(service)
         stop_event = threading.Event()
         handler = _signal_handler(stop_event)
@@ -365,6 +428,14 @@ def _run_postgresql_test_runtime(args) -> int:
         service.close()
 
 
+def _run_postgresql_test_runtime(args) -> int:
+    return _run_postgresql_runtime(args, profile="test")
+
+
+def _run_postgresql_production_runtime(args) -> int:
+    return _run_postgresql_runtime(args, profile="prod")
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -376,8 +447,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "DISH_AUTHORITY_BACKEND must be legacy or postgresql",
                 rule="authority_backend_invalid",
             )
-        if args.postgresql_test_runtime or authority_backend == "postgresql":
+        if args.postgresql_test_runtime:
+            _postgresql_runtime_profile(args, authority_backend=authority_backend)
             return _run_postgresql_test_runtime(args)
+        if args.postgresql_production_runtime:
+            _postgresql_runtime_profile(args, authority_backend=authority_backend)
+            return _run_postgresql_production_runtime(args)
+        if authority_backend == "postgresql":
+            profile = _postgresql_runtime_profile(args, authority_backend=authority_backend)
+            if profile == "test":
+                return _run_postgresql_test_runtime(args)
+            return _run_postgresql_production_runtime(args)
         config = ServiceConfig.from_env()
         config.validate_runtime(require_action=True)
         return _run_configured_service(config)

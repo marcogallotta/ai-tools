@@ -92,6 +92,31 @@ listener delegates Action request validation to the active backend, so the Postg
 accept canonical identity fields without weakening or changing the legacy SQLite/Asana Action
 contract.
 
+### PostgreSQL no-Asana admin contract
+
+The PostgreSQL authority service also exposes its retained private/admin command contract through the
+shared private HTTP listener. Authentication and command execution preserve the privileged principal
+boundary: `/v1/admin/*` requires the admin bearer credential and retained PostgreSQL admin commands
+execute as `principal_class=admin`, not as the connected-agent principal.
+
+The retained PostgreSQL admin inventory includes `attention`, `holds`, `recover`,
+`repair-destination`, `discard`, `abandon-operation`, `reconcile-abandonment`, `reopen-planning`,
+`reopen`, `supply-evidence`, `record-human-decision`, `resolved`, `authorize-governed-change`,
+`revise-section-registry`, `recover-lease`, `expire-lease`, `migrate`, and
+`planning-intent-settlement`. These are the PostgreSQL-native Human Review, evidence, recovery,
+abandonment/reconciliation, governance, and maintenance primitives already owned by the command
+port; the HTTP composition does not redefine their semantics.
+
+The shared special lease endpoints remain transport conveniences only. They resolve an exact active
+PostgreSQL actor lease and then invoke the canonical retained `recover-lease` or `expire-lease` admin
+command with its exact operation/lease identity. Any legacy `task_gid` accepted by the expiry bridge
+resolves only through an active PostgreSQL alias row; there is no Asana lookup or network fallback.
+
+Historical PostgreSQL backup commands are retired and are not exposed by the PostgreSQL admin HTTP
+surface. Likewise, legacy human-presentation helpers are not silently reimplemented inside the
+PostgreSQL service: the cutover runtime exposes the retained PostgreSQL command contract rather than
+creating a second workflow/recovery authority to imitate pre-cutover presentation.
+
 ### Current human admin presentation
 
 `dish-admin` intentionally has a small normal operator surface even though older recovery and

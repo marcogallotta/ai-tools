@@ -3,12 +3,16 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+import uuid
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
 from sqlalchemy import func, select
 
+from dish_pg import models
 from dish_pg import stage3_models as wf
+from dish_pg import stage5_models as tx
 from dish_pg.database import session_scope
 from dish_pg.postgres_service import PostgresRuntimeService
 from dish_pg.transition import ProjectionService
@@ -279,7 +283,7 @@ def test_postgresql_runtime_exposes_only_implemented_action_commands(
         action_token="postgres-action-token",
         action_public_base_url="https://dish-pg-test.example.invalid/test",
     )
-    assert service.supports_http_route("agent", "recover") is True
+    assert service.supports_http_route("agent", "recover") is False
     assert service.supports_http_route("agent", "proposals") is True
     assert service.supports_http_route("agent", "apply-proposal") is True
     assert service.supports_http_route("agent", "safe-reclaim") is True
@@ -288,6 +292,16 @@ def test_postgresql_runtime_exposes_only_implemented_action_commands(
     assert service.supports_http_route("action", "proposals") is True
     assert service.supports_http_route("action", "apply-proposal") is True
     assert service.supports_http_route("action", "safe-reclaim") is True
+    assert service.supports_http_route("admin", "attention") is True
+    assert service.supports_http_route("admin", "holds") is True
+    assert service.supports_http_route("admin", "record-human-decision") is True
+    assert service.supports_http_route("admin", "supply-evidence") is True
+    assert service.supports_http_route("admin", "abandon-operation") is True
+    assert service.supports_http_route("admin", "reconcile-abandonment") is True
+    assert service.supports_http_route("admin-lease", "recover-lease") is True
+    assert service.supports_http_route("admin-lease-expiry", "expire-lease") is True
+    assert service.supports_http_route("admin", "backup-create") is False
+    assert service.supports_http_route("admin-backup", "backup-create") is False
 
     with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="action") as server:
         thread = start_server_thread(server, name="postgres-action-http")
@@ -325,6 +339,229 @@ def test_postgresql_runtime_exposes_only_implemented_action_commands(
     assert "/v1/action/proposals" in openapi["paths"]
     assert "/v1/action/apply-proposal" in openapi["paths"]
     assert "/v1/action/safe-reclaim" in openapi["paths"]
+
+
+
+def test_production_runtime_accepts_preburn_deploy_and_enforces_postburn_fence(
+    workflow_db, tmp_path: Path
+) -> None:
+    factory, ids, context, _task_id = workflow_db
+    service = runtime_service(factory, tmp_path)
+    service._expected_schema_head = "0002_core_authority_model"
+    service._expected_release = "dish-42619b9"
+
+    with session_scope(factory) as session:
+        generation = session.get(models.AuthorityGeneration, context["generation_id"])
+        with pytest.raises(DishRuleError) as missing_epoch:
+            service._production_boundary(session, generation)
+        assert missing_epoch.value.rule == "postgresql_production_projection_epoch_missing"
+
+        projection_epoch_id = _next(ids)
+        activation_id = _next(ids)
+        epoch = tx.ProjectionEpoch(
+            projection_epoch_id=projection_epoch_id,
+            generation_id=context["generation_id"],
+            epoch_number=1,
+            status="active",
+            activation_reason="test production deployment authority",
+            external_effects_enabled=True,
+            created_at=NOW,
+            retired_at=None,
+        )
+        session.add(epoch)
+        session.flush()
+
+        assert service._production_boundary(session, generation) == {
+            "phase": "pre_rollback_burn",
+            "projection_epoch_id": str(projection_epoch_id),
+            "external_effects_enabled": True,
+        }
+
+        activation = models.AuthorityActivation(
+            activation_id=activation_id,
+            generation_id=context["generation_id"],
+            import_run_id=context["import_run_id"],
+            cutover_approval_id="cutover-approval-1",
+            legacy_bundle_id="legacy-bundle-1",
+            registry_version_id=context["registry_version_id"],
+            honest_binding_id=context["binding_id"],
+            rehearsal_id=None,
+            schema_head="0002_core_authority_model",
+            dish_release="dish-42619b9",
+            honest_release="honest-1",
+            protocol_release="protocol-1",
+            openapi_release="openapi-1",
+            routing_release="routing-1",
+            projection_epoch=projection_epoch_id,
+            outcome="activated",
+            rollback_burned_at=NOW,
+            recorded_at=NOW,
+        )
+        session.add(activation)
+        session.flush()
+
+        with pytest.raises(DishRuleError) as projection:
+            service._production_boundary(session, generation)
+        assert projection.value.rule == "postgresql_production_projection_not_fenced"
+
+        epoch.external_effects_enabled = False
+        session.flush()
+        boundary = service._production_boundary(session, generation)
+        assert boundary == {
+            "phase": "post_rollback_burn",
+            "activation_id": str(activation_id),
+            "rollback_burned_at": NOW.isoformat(),
+            "projection_epoch_id": str(projection_epoch_id),
+            "external_effects_enabled": False,
+        }
+
+        service._expected_release = "different-release"
+        with pytest.raises(DishRuleError) as release:
+            service._production_boundary(session, generation)
+        assert release.value.rule == "postgresql_production_activation_identity_mismatch"
+
+
+def test_postgresql_private_admin_transport_uses_admin_principal(
+    workflow_db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    factory, ids, context, _task_id = workflow_db
+    run_id = _next(ids)
+    request_id = _next(ids)
+    missing_task_id = _next(ids)
+    missing_operation_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=run_id,
+            owner="marco-admin",
+        )
+
+    from dish_tool import backend as asana_backend
+
+    def reject_asana_construction(*_args, **_kwargs):
+        raise AssertionError("PostgreSQL admin path must not construct Asana")
+
+    monkeypatch.setattr(asana_backend.AsanaBackend, "__init__", reject_asana_construction)
+    service = runtime_service(factory, tmp_path)
+    service._profile = "prod"
+    with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="private") as server:
+        thread = start_server_thread(server, name="postgres-admin-http")
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            attention_status, attention = _post_json(
+                f"{base}/v1/admin/attention",
+                token="postgres-admin-token",
+                body={
+                    "client": {
+                        "run_id": str(run_id),
+                        "request_id": str(request_id),
+                    },
+                    "arguments": {},
+                },
+            )
+            human_status, human = _post_json(
+                f"{base}/v1/admin/record-human-decision",
+                token="postgres-admin-token",
+                body={
+                    "client": {
+                        "run_id": str(run_id),
+                        "request_id": str(_next(ids)),
+                    },
+                    "arguments": {
+                        "task_id": str(missing_task_id),
+                        "operation_id": str(missing_operation_id),
+                        "detail": "A",
+                        "rationale": "test routing only",
+                    },
+                },
+            )
+            agent_status, _agent = _post_json(
+                f"{base}/v1/admin/attention",
+                token="postgres-agent-token",
+                body={
+                    "client": {
+                        "run_id": str(run_id),
+                        "request_id": str(_next(ids)),
+                    },
+                    "arguments": {},
+                },
+            )
+        finally:
+            stop_server(server, thread)
+
+    assert attention_status == 200
+    assert attention["ok"] is True, attention
+    assert attention["command"] == "attention"
+    assert attention["data"]["read_only"] is True
+    assert human_status == 200
+    assert human["code"] in {"TASK_NOT_FOUND", "OPERATION_NOT_FOUND"}
+    assert all(
+        error.get("rule") != "principal_scope_rejected"
+        for error in human.get("errors", [])
+        if isinstance(error, dict)
+    )
+    assert agent_status == 403
+
+
+def test_postgresql_admin_lease_bridges_keep_canonical_admin_transport(tmp_path: Path) -> None:
+    service = PostgresRuntimeService.__new__(PostgresRuntimeService)
+    service.config = ServiceConfig(
+        db_path=tmp_path / "unused.sqlite3",
+        honest_root=tmp_path,
+        agent_token="postgres-agent-token",
+        admin_token="postgres-admin-token",
+        action_token="postgres-action-token",
+        legacy_writer_fence_path=None,
+    )
+    lease_id = uuid.UUID("33333333-3333-4333-8333-333333333333")
+    operation_id = uuid.UUID("44444444-4444-4444-8444-444444444444")
+    principal = ServicePrincipal.from_values(
+        "marco-admin", "11111111-1111-4111-8111-111111111111"
+    )
+    observed: list[tuple[str, dict[str, object], str]] = []
+
+    service._active_actor_lease_target = lambda **_kwargs: (lease_id, operation_id)
+
+    def execute_admin(command, arguments, *, principal, request_id):
+        observed.append((command, dict(arguments), request_id))
+        return {"ok": True, "command": command, "code": "OK", "data": {}}
+
+    service.execute_admin = execute_admin
+
+    service.recover_lease(
+        str(operation_id),
+        principal,
+        reason="expired owner",
+        request_id="55555555-5555-4555-8555-555555555555",
+    )
+    service.expire_lease(
+        principal,
+        lease_id=lease_id,
+        reason="owner gone",
+        request_id="66666666-6666-4666-8666-666666666666",
+    )
+
+    assert observed == [
+        (
+            "recover-lease",
+            {
+                "operation_id": str(operation_id),
+                "lease_id": str(lease_id),
+                "reason": "expired owner",
+            },
+            "55555555-5555-4555-8555-555555555555",
+        ),
+        (
+            "expire-lease",
+            {
+                "operation_id": str(operation_id),
+                "lease_id": str(lease_id),
+                "reason": "owner gone",
+            },
+            "66666666-6666-4666-8666-666666666666",
+        ),
+    ]
 
 
 def test_postgresql_action_canonical_ids_work_without_asana_identity(

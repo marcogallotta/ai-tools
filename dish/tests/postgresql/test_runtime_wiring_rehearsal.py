@@ -214,6 +214,7 @@ def _set_service_env(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_postgresql_authority_runtime_is_opt_in() -> None:
     args = service_main.build_parser().parse_args([])
     assert args.postgresql_test_runtime is False
+    assert args.postgresql_production_runtime is False
 
 
 def test_postgresql_authority_env_selects_pg_runtime(
@@ -221,6 +222,7 @@ def test_postgresql_authority_env_selects_pg_runtime(
 ) -> None:
     calls: list[str] = []
     monkeypatch.setenv("DISH_AUTHORITY_BACKEND", "postgresql")
+    monkeypatch.setenv("DISH_PROFILE", "test")
     monkeypatch.setattr(
         service_main,
         "_run_postgresql_test_runtime",
@@ -229,6 +231,22 @@ def test_postgresql_authority_env_selects_pg_runtime(
 
     assert service_main.main([]) == 0
     assert calls == ["postgresql"]
+
+
+def test_postgresql_authority_env_selects_production_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setenv("DISH_AUTHORITY_BACKEND", "postgresql")
+    monkeypatch.setenv("DISH_PROFILE", "prod")
+    monkeypatch.setattr(
+        service_main,
+        "_run_postgresql_production_runtime",
+        lambda _args: calls.append("postgresql-prod") or 0,
+    )
+
+    assert service_main.main([]) == 0
+    assert calls == ["postgresql-prod"]
 
 
 def test_postgresql_runtime_arguments_can_come_from_test_environment(
@@ -285,15 +303,15 @@ def test_default_test_startup_keeps_legacy_service_composition(
     assert calls == ["legacy"]
 
 
-def test_postgresql_service_mode_requires_test_profile(
+def test_postgresql_service_mode_rejects_profile_mismatch(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _set_service_env(monkeypatch)
-    monkeypatch.setenv("DISH_PROFILE", "production")
+    monkeypatch.setenv("DISH_PROFILE", "prod")
     with pytest.raises(DishRuleError) as caught:
-        service_main._postgresql_runtime_config(_service_args(tmp_path))
+        service_main._postgresql_runtime_config(_service_args(tmp_path), profile="test")
     assert caught.value.code == "INVALID_ARGUMENT"
-    assert caught.value.rule == "postgresql_runtime_profile_not_test"
+    assert caught.value.rule == "postgresql_runtime_profile_mismatch"
 
 
 def test_postgresql_service_mode_rejects_reachable_asana_environment(
@@ -302,7 +320,7 @@ def test_postgresql_service_mode_rejects_reachable_asana_environment(
     _set_service_env(monkeypatch)
     monkeypatch.setenv("ASANA_ACCESS_TOKEN", "reachable")
     with pytest.raises(DishRuleError) as caught:
-        service_main._postgresql_runtime_config(_service_args(tmp_path))
+        service_main._postgresql_runtime_config(_service_args(tmp_path), profile="test")
     assert caught.value.code == "INVALID_ARGUMENT"
     assert caught.value.rule == "postgresql_runtime_asana_environment_reachable"
 
@@ -315,7 +333,7 @@ def test_postgresql_service_mode_reuses_loopback_service_configuration(
     for key in list(os.environ):
         if "ASANA" in key.upper():
             monkeypatch.delenv(key, raising=False)
-    config = service_main._postgresql_runtime_config(_service_args(tmp_path))
+    config = service_main._postgresql_runtime_config(_service_args(tmp_path), profile="test")
     assert config.bind_host == "127.0.0.1"
     assert config.action_bind_host == "127.0.0.1"
     assert config.action_public_base_url == "https://dish.example.invalid/test"

@@ -41,6 +41,44 @@ PostgreSQL uses SQLAlchemy sessions/transactions, row locks, revisions, claims, 
 
 Before rollback burn, admit/test requests as allowed, execute canonical mutation, record outcome/audit/projection intent, project/observe separately, and reconcile drift for cutover evidence. After rollback burn, admitted live mutations record canonical outcome/audit state without an external projection intent; replay/audit authority and PostgreSQL recovery evidence carry the runtime contract.
 
+## Production authority service composition
+
+The PostgreSQL authority HTTP adapter has two explicit runtime profiles: TEST and PROD. TEST remains
+the rehearsal/development path. PROD is the supported post-cutover service composition and is
+deliberately separate from the legacy SQLite/Asana production service.
+
+Production startup is attestation-only. It never runs migrations or performs cutover. Before the
+listeners open it requires the exact expected production database name, the repository's current
+`ALEMBIC_HEAD` and database's single applied Alembic head, the exact expected active Dish release
+and generation, and one active projection epoch for that generation. This deliberately permits the
+approved cutover step that deploys the coherent PostgreSQL runtime while mutation admission is still
+closed and before activation/rollback burn.
+
+Once a durable activated `AuthorityActivation` exists for that generation, the runtime becomes
+strictly post-burn: the activation's schema/release must match the configured binding, its projection
+epoch must be the active epoch, and external effects must be disabled. A post-burn process therefore
+cannot report healthy against a stale activation or an Asana-projecting epoch.
+
+The production service unit is `deploy/systemd/dish-service-postgresql-prod.service`, with the
+credential-free template `deploy/systemd/service-postgresql-prod.env.example`. The unit uses the
+existing production PostgreSQL database service, a dedicated authority state directory, loopback
+private/Action listeners, and denies access to the known Asana CLI configuration directory. Runtime
+startup also rejects any populated inherited environment key containing `ASANA`. The template does
+not contain a legacy SQLite path, Cooking-project GID, Honest source path, dark-launch capture
+configuration, or Asana credential/configuration key.
+
+Starting this unit does **not** stop, conflict with, or fence the legacy production service. Legacy
+writer fencing and rollback burn remain cutover-controller authority and require their own explicit
+authorization. The unit may be deployed pre-burn while PostgreSQL mutation admission remains closed;
+after rollback burn, its health identity records and enforces the durable post-burn projection fence.
+
+The private HTTP listener exposes only retained PostgreSQL admin commands. It authenticates with the
+admin bearer token and invokes `dish_pg.command_port` with `principal_class=admin`; it never routes
+those commands through an agent principal or a legacy service fallback. Read-only `attention` and
+`holds`, Human Review/evidence commands, recovery/abandonment/reconciliation commands, and the
+canonical lease recovery/expiry bridges therefore remain available after Asana is absent. Retired
+backup routes remain hidden from the PostgreSQL authority service.
+
 ## Failure, replay, recovery, and concurrency
 
 Runtime recovery relies on durable request/claim/effect identities. Reconciliation is coordinated by `start_reconciliation`, `record_reconciliation_item`, and `complete_reconciliation` paths. Native PostgreSQL is required to certify behavior that depends specifically on PostgreSQL locks/DDL/process semantics; other tests can still provide useful non-final evidence.
