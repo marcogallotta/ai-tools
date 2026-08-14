@@ -1,7 +1,30 @@
 {
-  "description": "Mechanical protection for the shared primary ai-tools checkout.",
+  "description": "Mechanical protected-checkout and Dish post-compaction re-grounding barriers.",
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "^compact$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/marco/.local/bin/agent-reground",
+            "timeout": 30,
+            "statusMessage": "Re-grounding Dish role and active work"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/marco/.local/bin/agent-reground",
+            "timeout": 10,
+            "statusMessage": "Checking post-compaction Dish role state"
+          }
+        ]
+      },
       {
         "matcher": "^Bash$",
         "hooks": [

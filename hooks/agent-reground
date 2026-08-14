@@ -1,0 +1,643 @@
+#!/usr/bin/env python3
+"""Mechanical post-compaction role/process re-grounding for local Dish agents."""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+EXPECTED_REPOSITORY = "marcogallotta/ai-tools"
+SCHEMA_VERSION = 1
+AGENT_ID_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
+TASK_GID_RE = re.compile(r"^[0-9]+$")
+PROJECT_GID_RE = re.compile(r"^[0-9]+$")
+LIVE_ASANA_RE = re.compile(
+    r"Asana project\s+`[^`]+`\s+\(`(?P<gid>[0-9]+)`\)\s+is the live coordination authority",
+    re.IGNORECASE,
+)
+MARKDOWN_LINK_RE = re.compile(r"\[[^]]+\]\((?P<path>[^)]+\.md)\)")
+
+
+class RegroundError(RuntimeError):
+    pass
+
+
+def now_utc() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def state_root() -> Path:
+    configured = os.environ.get("DISH_AGENT_STATE_ROOT")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return Path.home().resolve() / ".local" / "state" / "dish"
+
+
+def identity_path(agent_id: str) -> Path:
+    return state_root() / "agents" / f"{agent_id}.json"
+
+
+def reground_dir() -> Path:
+    return state_root() / "reground"
+
+
+def boundary_path(agent_id: str) -> Path:
+    return reground_dir() / f"{agent_id}.boundary.json"
+
+
+def marker_path(agent_id: str) -> Path:
+    return reground_dir() / f"{agent_id}.json"
+
+
+def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    tmp = Path(tmp_name)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+    finally:
+        try:
+            tmp.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _read_json(path: Path, label: str) -> dict[str, Any]:
+    if path.is_symlink():
+        raise RegroundError(f"{label} must not be a symlink: {path}")
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise RegroundError(f"{label} is missing: {path}") from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RegroundError(f"cannot read {label} {path}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise RegroundError(f"{label} must contain a JSON object: {path}")
+    return value
+
+
+def _command(args: list[str], *, cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
+    try:
+        proc = subprocess.run(args, cwd=cwd, capture_output=True, text=True, check=False)
+    except OSError as exc:
+        raise RegroundError(f"cannot execute {args[0]}: {exc}") from exc
+    if check and proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise RegroundError(f"command failed ({' '.join(args)}): {detail or f'exit {proc.returncode}'}")
+    return proc
+
+
+def _git(repo: Path, *args: str) -> str:
+    return _command(["git", "-C", str(repo), *args]).stdout.strip()
+
+
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _validate_agent_id(value: str | None) -> str:
+    if not value or not AGENT_ID_RE.fullmatch(value):
+        raise RegroundError("cannot resolve a safe local agent_id from the hook/session")
+    return value
+
+
+def resolve_agent_id(payload: dict[str, Any]) -> tuple[str, str]:
+    codex_id = os.environ.get("CODEX_THREAD_ID")
+    if codex_id:
+        return _validate_agent_id(codex_id), "codex"
+    value = payload.get("session_id") or payload.get("sessionId") or payload.get("agent_id")
+    return _validate_agent_id(str(value) if value is not None else None), "claude"
+
+
+def hook_event(payload: dict[str, Any]) -> str:
+    return str(payload.get("hook_event_name") or payload.get("hookEventName") or "")
+
+
+def _repo_from_candidate(candidate: str | None) -> Path | None:
+    if not candidate:
+        return None
+    path = Path(candidate).expanduser()
+    proc = _command(["git", "-C", str(path), "rev-parse", "--show-toplevel"], check=False)
+    if proc.returncode != 0:
+        return None
+    return Path(proc.stdout.strip()).resolve()
+
+
+def resolve_repo(identity: dict[str, Any], payload: dict[str, Any]) -> Path:
+    active = identity.get("active_worktree")
+    candidates: list[str | None] = []
+    if isinstance(active, dict):
+        candidates.append(active.get("worktree"))
+    candidates.extend([identity.get("workspace"), payload.get("cwd")])
+    for candidate in candidates:
+        repo = _repo_from_candidate(str(candidate) if candidate else None)
+        if repo is not None:
+            return repo
+    raise RegroundError("cannot resolve the active ai-tools Git checkout from durable identity/cwd")
+
+
+def verify_repository(repo: Path) -> None:
+    root = _git(repo, "rev-parse", "--show-toplevel")
+    if Path(root).resolve() != repo.resolve():
+        raise RegroundError(f"resolved checkout root changed unexpectedly: {root}")
+    origin = _command(["git", "-C", str(repo), "remote", "get-url", "origin"], check=False)
+    if origin.returncode != 0:
+        if os.environ.get("DISH_AGENT_REGROUND_TEST_REPO") == "1":
+            return
+        raise RegroundError("active checkout has no readable origin remote")
+    remote = origin.stdout.strip().removesuffix(".git")
+    accepted = (
+        remote == f"https://github.com/{EXPECTED_REPOSITORY}"
+        or remote == f"git@github.com:{EXPECTED_REPOSITORY}"
+        or remote.endswith(f"/{EXPECTED_REPOSITORY}")
+    )
+    if not accepted:
+        raise RegroundError(f"active checkout is not {EXPECTED_REPOSITORY}: {origin.stdout.strip()}")
+
+
+def load_identity(agent_id: str) -> dict[str, Any]:
+    identity = _read_json(identity_path(agent_id), "per-agent identity")
+    if identity.get("agent_id") != agent_id:
+        raise RegroundError("per-agent identity agent_id does not match this session")
+    role = identity.get("role")
+    if not isinstance(role, str) or not role.strip():
+        raise RegroundError("per-agent identity has no resolved role")
+    return identity
+
+
+def role_contract_from_index(index_text: str, role: str) -> str:
+    wanted = role.strip().lower().replace("_", "-")
+    paths: list[str] = []
+    for line in index_text.splitlines():
+        if not line.startswith("|"):
+            continue
+        match = MARKDOWN_LINK_RE.search(line)
+        if not match:
+            continue
+        path = match.group("path")
+        if not path.startswith("../") and Path(path).stem.lower().replace("_", "-") == wanted:
+            paths.append(path)
+    if len(paths) != 1:
+        raise RegroundError(f"role {role!r} does not resolve uniquely through dish/docs/agents/index.md")
+    return f"dish/docs/agents/{paths[0]}"
+
+
+def _read_required(repo: Path, relative: str) -> str:
+    path = repo / relative
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RegroundError(f"cannot read required authority {relative}: {exc}") from exc
+
+
+def _authority_record(repo: Path, relative: str, text: str) -> dict[str, Any]:
+    blob = _command(["git", "-C", str(repo), "rev-parse", f"HEAD:{relative}"], check=False)
+    return {
+        "path": relative,
+        "version": blob.stdout.strip() if blob.returncode == 0 else "UNCOMMITTED_OR_UNTRACKED",
+        "sha256": _sha256_text(text),
+    }
+
+
+def _all_role_contract_paths(index_text: str) -> list[str]:
+    paths = []
+    for line in index_text.splitlines():
+        if not line.startswith("|"):
+            continue
+        match = MARKDOWN_LINK_RE.search(line)
+        if match:
+            path = match.group("path")
+            if not path.startswith("../"):
+                paths.append(f"dish/docs/agents/{path}")
+    return sorted(set(paths))
+
+
+def _task_gid(identity: dict[str, Any]) -> str | None:
+    direct = identity.get("owning_task_gid")
+    active = identity.get("active_worktree")
+    fallback = active.get("task_gid") if isinstance(active, dict) else None
+    value = direct or fallback
+    if value is None:
+        return None
+    value = str(value)
+    if not TASK_GID_RE.fullmatch(value):
+        raise RegroundError(f"invalid owning task GID in durable identity: {value!r}")
+    return value
+
+
+def _project_gid(identity: dict[str, Any]) -> str | None:
+    value = identity.get("owning_project_gid")
+    if value is None:
+        return None
+    value = str(value)
+    if not PROJECT_GID_RE.fullmatch(value):
+        raise RegroundError(f"invalid owning project GID in durable identity: {value!r}")
+    return value
+
+
+def _contract_live_project(contract_text: str) -> str | None:
+    match = LIVE_ASANA_RE.search(contract_text)
+    return match.group("gid") if match else None
+
+
+def _asana_get(repo: Path, path: str) -> Any:
+    tool = repo / "tools" / "asana"
+    proc = _command([str(tool), "raw", "GET", path], cwd=repo)
+    try:
+        return json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise RegroundError(f"Asana read returned non-JSON for {path}") from exc
+
+
+def recover_asana(repo: Path, identity: dict[str, Any], contract_text: str) -> dict[str, Any] | None:
+    task_gid = _task_gid(identity)
+    declared_project = _contract_live_project(contract_text)
+    identity_project = _project_gid(identity)
+    if declared_project and identity_project and declared_project != identity_project:
+        raise RegroundError(
+            f"durable identity project {identity_project} conflicts with role live-coordination project {declared_project}"
+        )
+    if declared_project and task_gid is None:
+        raise RegroundError(
+            "role contract names Asana as live coordination authority but durable identity has no owning_task_gid"
+        )
+    if task_gid is None:
+        return None
+    task = _asana_get(
+        repo,
+        f"/tasks/{task_gid}?opt_fields=gid,name,completed,modified_at,permalink_url,memberships.project.gid,memberships.project.name",
+    )
+    memberships = task.get("memberships") if isinstance(task, dict) else None
+    project_ids = []
+    if isinstance(memberships, list):
+        for membership in memberships:
+            if not isinstance(membership, dict):
+                continue
+            project = membership.get("project")
+            if isinstance(project, dict) and project.get("gid"):
+                project_ids.append(str(project["gid"]))
+    expected_project = identity_project or declared_project
+    if expected_project and expected_project not in project_ids:
+        raise RegroundError(
+            f"owning task {task_gid} is not currently in expected Asana project {expected_project}"
+        )
+    resolved_project = expected_project or (project_ids[0] if len(project_ids) == 1 else None)
+    project = None
+    if declared_project:
+        project = _asana_get(
+            repo,
+            f"/projects/{declared_project}?opt_fields=gid,name,modified_at,archived,current_status.title,current_status.text",
+        )
+    return {
+        "task": task,
+        "project": project,
+        "owning_task_gid": task_gid,
+        "owning_project_gid": resolved_project,
+    }
+
+
+def recover_git_pr(repo: Path, identity: dict[str, Any]) -> dict[str, Any]:
+    branch = _git(repo, "branch", "--show-current")
+    if not branch:
+        raise RegroundError("active checkout is detached; cannot recover durable branch identity")
+    head = _git(repo, "rev-parse", "HEAD")
+    active = identity.get("active_worktree")
+    if isinstance(active, dict) and active.get("branch") and active.get("branch") != branch:
+        raise RegroundError(
+            f"durable identity branch {active.get('branch')!r} does not match active checkout branch {branch!r}"
+        )
+
+    pr: dict[str, Any] | None = None
+    if branch != "main":
+        proc = _command(
+            [
+                "gh", "pr", "list", "--repo", EXPECTED_REPOSITORY,
+                "--head", branch, "--state", "all", "--limit", "10",
+                "--json", "number,url,state,isDraft,headRefOid,reviewDecision,mergeStateStatus,mergedAt,closedAt",
+            ],
+            cwd=repo,
+        )
+        try:
+            rows = json.loads(proc.stdout)
+        except json.JSONDecodeError as exc:
+            raise RegroundError("GitHub PR recovery returned non-JSON") from exc
+        if not isinstance(rows, list):
+            raise RegroundError("GitHub PR recovery returned an unexpected shape")
+        open_rows = [row for row in rows if isinstance(row, dict) and row.get("state") == "OPEN"]
+        if len(open_rows) > 1:
+            raise RegroundError(f"branch {branch} has multiple open pull requests")
+        if open_rows:
+            pr = open_rows[0]
+        elif rows:
+            first = rows[0]
+            if isinstance(first, dict):
+                pr = first
+
+    return {"branch": branch, "local_head": head, "pr": pr}
+
+
+def grounding_context(
+    *,
+    root_text: str,
+    index_text: str,
+    contract_text: str,
+    contract_path: str,
+    preload: dict[str, str],
+    asana: dict[str, Any] | None,
+    git_pr: dict[str, Any],
+    marker: dict[str, Any],
+) -> str:
+    pieces = [
+        "POST-COMPACTION DISH RE-GROUNDING — authoritative reload completed mechanically.",
+        f"Grounding generation: {marker['grounding_generation']}",
+        "\n===== CURRENT ROOT CLAUDE.md =====\n" + root_text,
+        "\n===== CURRENT ROLE INDEX =====\n" + index_text,
+        f"\n===== MAPPED ROLE CONTRACT: {contract_path} =====\n" + contract_text,
+    ]
+    for path, text in preload.items():
+        if path == contract_path:
+            continue
+        pieces.append(f"\n===== READ-ONLY ROLE CONTEXT: {path} =====\n{text}")
+    if asana is not None:
+        pieces.append("\n===== LIVE OWNING ASANA STATE =====\n" + json.dumps(asana, indent=2, sort_keys=True))
+    pieces.append("\n===== ACTIVE GIT / PR IDENTITY =====\n" + json.dumps(git_pr, indent=2, sort_keys=True))
+    pieces.append(
+        "\n===== SELF-HISTORY VERIFICATION RULE =====\n"
+        "For any factual claim about events before this compaction boundary, do not infer the event or its absence "
+        "from the compacted summary. If the fact is not in durable state or current context, classify it UNKNOWN. "
+        "When the local transcript is available, verify with `agent-reground history --query <literal>` before making "
+        "a factual claim. A no-match remains UNKNOWN; it is never evidence that an event did not happen."
+    )
+    return "\n".join(pieces)
+
+
+def perform_reground(payload: dict[str, Any], agent_id: str, host: str) -> dict[str, Any]:
+    generation = str(uuid.uuid4())
+    boundary = {
+        "schema_version": SCHEMA_VERSION,
+        "agent_id": agent_id,
+        "host": host,
+        "grounding_generation": generation,
+        "source": "compact",
+        "boundary_at": now_utc(),
+        "status": "pending",
+    }
+    _atomic_write_json(boundary_path(agent_id), boundary)
+
+    identity = load_identity(agent_id)
+    repo = resolve_repo(identity, payload)
+    verify_repository(repo)
+    root_text = _read_required(repo, "CLAUDE.md")
+    index_text = _read_required(repo, "dish/docs/agents/index.md")
+    role = str(identity["role"]).strip()
+    contract_path = role_contract_from_index(index_text, role)
+    contract_text = _read_required(repo, contract_path)
+
+    preload: dict[str, str] = {}
+    if role == "development-workflow":
+        for path in _all_role_contract_paths(index_text):
+            preload[path] = _read_required(repo, path)
+        contributor = "dish/docs/agents/contributor-base.md"
+        preload[contributor] = _read_required(repo, contributor)
+
+    asana = recover_asana(repo, identity, contract_text)
+    git_pr = recover_git_pr(repo, identity)
+    transcript_path = payload.get("transcript_path") or payload.get("transcriptPath")
+    transcript_accessible = bool(transcript_path and Path(str(transcript_path)).is_file())
+
+    marker = {
+        "schema_version": SCHEMA_VERSION,
+        "status": "ready",
+        "grounding_generation": generation,
+        "agent_id": agent_id,
+        "host": host,
+        "resolved_role": role,
+        "grounded_at": now_utc(),
+        "repository": EXPECTED_REPOSITORY,
+        "workspace": str(repo),
+        "identity_sha256": _sha256_text(json.dumps(identity, sort_keys=True, separators=(",", ":"))),
+        "root_instructions": _authority_record(repo, "CLAUDE.md", root_text),
+        "role_index": _authority_record(repo, "dish/docs/agents/index.md", index_text),
+        "role_contract": _authority_record(repo, contract_path, contract_text),
+        "owning_task_gid": asana.get("owning_task_gid") if asana else _task_gid(identity),
+        "owning_project_gid": asana.get("owning_project_gid") if asana else _project_gid(identity),
+        "asana_state": asana,
+        "git": {"branch": git_pr["branch"], "local_head": git_pr["local_head"]},
+        "pr": git_pr["pr"],
+        "transcript": {
+            "path": str(transcript_path) if transcript_path else None,
+            "accessible": transcript_accessible,
+            "history_before_boundary": "VERIFY_TRANSCRIPT_OR_UNKNOWN",
+        },
+    }
+    _atomic_write_json(marker_path(agent_id), marker)
+    boundary["status"] = "ready"
+    boundary["grounded_at"] = marker["grounded_at"]
+    _atomic_write_json(boundary_path(agent_id), boundary)
+
+    context = grounding_context(
+        root_text=root_text,
+        index_text=index_text,
+        contract_text=contract_text,
+        contract_path=contract_path,
+        preload=preload,
+        asana=asana,
+        git_pr=git_pr,
+        marker=marker,
+    )
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": context,
+        }
+    }
+
+
+def validate_barrier(payload: dict[str, Any], agent_id: str) -> str | None:
+    boundary_file = boundary_path(agent_id)
+    if not boundary_file.exists():
+        return None
+    try:
+        boundary = _read_json(boundary_file, "compaction boundary")
+        if boundary.get("source") != "compact":
+            return None
+        marker = _read_json(marker_path(agent_id), "re-grounding marker")
+        if boundary.get("status") != "ready" or marker.get("status") != "ready":
+            return "post-compaction re-grounding is incomplete"
+        if marker.get("grounding_generation") != boundary.get("grounding_generation"):
+            return "post-compaction re-grounding marker belongs to a stale compaction generation"
+        identity = load_identity(agent_id)
+        identity_hash = _sha256_text(json.dumps(identity, sort_keys=True, separators=(",", ":")))
+        if marker.get("identity_sha256") != identity_hash:
+            return "durable agent identity changed after post-compaction re-grounding"
+        repo = resolve_repo(identity, payload)
+        verify_repository(repo)
+        for key, relative in (
+            ("root_instructions", "CLAUDE.md"),
+            ("role_index", "dish/docs/agents/index.md"),
+        ):
+            text = _read_required(repo, relative)
+            if marker.get(key, {}).get("sha256") != _sha256_text(text):
+                return f"{relative} changed after post-compaction re-grounding"
+        index_text = _read_required(repo, "dish/docs/agents/index.md")
+        contract_path = role_contract_from_index(index_text, str(identity["role"]))
+        contract_text = _read_required(repo, contract_path)
+        contract_record = marker.get("role_contract")
+        if not isinstance(contract_record, dict):
+            return "re-grounding marker has no role-contract record"
+        if contract_record.get("path") != contract_path or contract_record.get("sha256") != _sha256_text(contract_text):
+            return "mapped role contract changed after post-compaction re-grounding"
+        branch = _git(repo, "branch", "--show-current")
+        if branch != marker.get("git", {}).get("branch"):
+            return "active Git branch changed after post-compaction re-grounding"
+        # Local HEAD is expected to advance during implementation; observe it without fetching/chasing main.
+        marker["git"]["local_head"] = _git(repo, "rev-parse", "HEAD")
+        marker["last_local_validation_at"] = now_utc()
+        _atomic_write_json(marker_path(agent_id), marker)
+    except RegroundError as exc:
+        return str(exc)
+    return None
+
+
+def deny(reason: str) -> dict[str, Any]:
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": (
+                "Dish post-compaction role/process barrier: " + reason + ". "
+                "Re-run the compact SessionStart re-grounding hook before substantive work."
+            ),
+        }
+    }
+
+
+def history_check(agent_id: str, query: str | None) -> int:
+    try:
+        marker = _read_json(marker_path(agent_id), "re-grounding marker")
+    except RegroundError as exc:
+        print(f"UNKNOWN: {exc}")
+        return 0
+    transcript = marker.get("transcript")
+    path_value = transcript.get("path") if isinstance(transcript, dict) else None
+    path = Path(path_value) if path_value else None
+    if path is None or not path.is_file():
+        print("UNKNOWN: pre-compaction transcript is unavailable; compacted-context absence is not evidence of non-occurrence")
+        return 0
+    if not query:
+        print(f"TRANSCRIPT_AVAILABLE: {path}")
+        return 0
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as exc:
+        print(f"UNKNOWN: cannot read pre-compaction transcript: {exc}")
+        return 0
+    needle = query.casefold()
+    matches = []
+    for number, line in enumerate(lines, 1):
+        if needle in line.casefold():
+            excerpt = line.strip()
+            if len(excerpt) > 500:
+                excerpt = excerpt[:497] + "..."
+            matches.append((number, excerpt))
+            if len(matches) == 5:
+                break
+    if not matches:
+        print("UNKNOWN: transcript inspected but literal query was not found; no-match does not prove the event did not happen")
+        return 0
+    print("TRANSCRIPT_MATCH: factual support exists in the local transcript")
+    for number, excerpt in matches:
+        print(f"{number}: {excerpt}")
+    return 0
+
+
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="command")
+    history = sub.add_parser("history", help="verify a pre-compaction fact against the durable transcript")
+    history.add_argument("--agent-id")
+    history.add_argument("--query")
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "history":
+        args = _parse_args(argv)
+        agent_id = args.agent_id or os.environ.get("CODEX_THREAD_ID")
+        if not agent_id:
+            print("UNKNOWN: --agent-id is required when CODEX_THREAD_ID is unavailable")
+            return 0
+        try:
+            safe_id = _validate_agent_id(agent_id)
+        except RegroundError as exc:
+            print(f"UNKNOWN: {exc}")
+            return 0
+        return history_check(safe_id, args.query)
+
+    try:
+        payload = json.load(sys.stdin)
+        if not isinstance(payload, dict):
+            raise RegroundError("hook input must be a JSON object")
+        event = hook_event(payload)
+        agent_id, host = resolve_agent_id(payload)
+        if event == "SessionStart" and payload.get("source") == "compact":
+            print(json.dumps(perform_reground(payload, agent_id, host)))
+            return 0
+        if event == "PreToolUse":
+            reason = validate_barrier(payload, agent_id)
+            if reason:
+                print(json.dumps(deny(reason)))
+            return 0
+        return 0
+    except (RegroundError, json.JSONDecodeError) as exc:
+        # A compact boundary failure must leave a durable pending generation whenever we can
+        # identify the session, so the next substantive tool call fails closed.
+        try:
+            payload_obj = locals().get("payload")
+            if isinstance(payload_obj, dict):
+                agent_id, host = resolve_agent_id(payload_obj)
+                if hook_event(payload_obj) == "SessionStart" and payload_obj.get("source") == "compact":
+                    existing = None
+                    try:
+                        existing = _read_json(boundary_path(agent_id), "compaction boundary")
+                    except RegroundError:
+                        pass
+                    if not existing:
+                        _atomic_write_json(
+                            boundary_path(agent_id),
+                            {
+                                "schema_version": SCHEMA_VERSION,
+                                "agent_id": agent_id,
+                                "host": host,
+                                "grounding_generation": str(uuid.uuid4()),
+                                "source": "compact",
+                                "boundary_at": now_utc(),
+                                "status": "pending",
+                                "error": str(exc),
+                            },
+                        )
+        except Exception:
+            pass
+        print(f"agent-reground: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
