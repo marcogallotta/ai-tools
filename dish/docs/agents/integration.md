@@ -176,3 +176,7 @@ Return:
 11. any missing certification, semantic conflict, stale approval, push/merge race, or other reason integration stopped.
 
 Use `PR merged` only when GitHub reports that state. Otherwise use the exact exceptional outcome, such as `landed out-of-band and closed`. Deployment/runtime state remains separate.
+
+## Development friction and non-blocking debt
+
+Apply the inherited contributor-base contracts: repository friction is discoverable/dedupe-first and logged without creating a second queue or urgency; relevant non-blocking code smells are deduped/logged to the Code Smells surface and the assigned scope continues. True current-task blockers stay on the active task/PR.

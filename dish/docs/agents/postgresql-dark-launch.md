@@ -124,6 +124,6 @@ Keep Asana current while working, not only when asked for a handoff. Before endi
 
 A handoff may point the successor to relevant tasks, but it must not be the only place that active PostgreSQL/dark-launch state exists.
 
-## Non-blocking engineering debt
+## Development friction and non-blocking debt
 
-Apply the inherited `contributor-base.md` code-smell logging contract: dedupe first, record relevant non-blocking debt without scope creep or urgency inflation, and keep current blockers on the active task/PR.
+Apply the inherited contributor-base contracts: repository friction is discoverable/dedupe-first and logged without creating a second queue or urgency; relevant non-blocking code smells are deduped/logged to the Code Smells surface and the assigned scope continues. True current-task blockers stay on the active task/PR.

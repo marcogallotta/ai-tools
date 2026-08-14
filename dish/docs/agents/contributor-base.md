@@ -37,8 +37,14 @@ Do not invent new workflow mechanisms, coordination state, or authority boundari
 
 Do not claim validation, merge, deployment, or runtime state without authoritative evidence. Follow the assigned role contract for required evidence and handoff.
 
+## Development Workflow Friction capture
+
+Repository-modifying roles must be able to discover `Dish — Development Workflow Friction` (`1217443500915644`) without Marco naming it. When non-blocking development-process friction appears: **notice -> dedupe -> log/update -> continue**. Search the Friction project first; update a matching item or create an unprioritized `Inbox` item with what/where, why it matters, evidence/reproduction, role/host, and suggested next action; then continue the assigned scope.
+
+Do not manufacture urgency from repetition, age, or annoyance. A blocker required to complete the active task stays on the active task/PR rather than becoming a parallel Friction task. The Friction project is a capture/triage surface, not a second orchestration authority.
+
 ## Code-smell / engineering-debt logging
 
-When code-touching work exposes material non-blocking engineering debt, use `Dish — Code Smells / Engineering Debt` (`1217443501022227`) as a capture surface, not a second execution authority. Check for a matching item first; update it when present, otherwise create one unprioritized/intake item with affected path/component, issue, why it matters, concrete evidence/example, and suggested next action; then continue the assigned scope.
+When code-touching work exposes material non-blocking engineering debt, use `Dish — Code Smells / Engineering Debt` (`1217443501022227`) as a capture surface, not a second execution authority. Check for a matching item first; update it when present, otherwise create one unprioritized `Inbox` item with affected path/component, issue, why it matters, concrete evidence/example, and suggested next action; then continue the assigned scope.
 
 Do not opportunistically fix unrelated debt, inflate priority, or move a blocker required for the active task away from its active task/PR. Current blockers remain on the active work surface.
