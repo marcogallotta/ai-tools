@@ -76,6 +76,17 @@ For new work:
 
 The ready-for-review transition is the author's explicit handoff from AUTHORING to REVIEW-READY. PR-triggered ordinary CI starts from this review-ready state and may complete while review proceeds; any CI still pending at the transition must be named as pending integration evidence rather than claimed as passed.
 
+### Authoritative publication/readback gate
+
+Never report `published`, `PR created`, or `REVIEW-READY` from intended/local state alone. Before claiming those states, authoritative GitHub readback must prove all of the following for the intended implementation identity:
+
+- the remote owned branch exists at the exact intended implementation head;
+- a real GitHub PR exists with an authoritative PR number/URL;
+- PR readback names the expected owned branch and the exact same head;
+- after the ready-for-review transition, PR readback reports `draft=false` on that same exact head.
+
+A local commit, verified bundle, patch, sandbox/HTML artifact, intended PR URL, successful local tests, or attempted/ambiguous publication is not a GitHub PR and cannot satisfy this gate. Missing or mismatched branch/PR/head/readback means Implementation publication is incomplete. Use the existing publication-blocker/durable-handoff path (or the owning Asana task when no PR can yet exist) before the concise human notification; do not emit `PR: N/A` / `head: N/A` as a terminal repository handoff.
+
 The PR is the review surface. Do not create a patch file or patch-only handoff for new work.
 
 ### Durable review context in the PR

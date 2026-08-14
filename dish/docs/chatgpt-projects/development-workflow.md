@@ -1,7 +1,7 @@
 # Dish — Development Workflow
 
 PROJECT_ROLE: Development Workflow specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-708fb9a9a9bc
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-7b3f2e089eef
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/development-workflow.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -29,5 +29,5 @@ High-consequence rules:
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate.
 - Own development-system mechanics/reliability, not semantic product/workflow/PG decisions, review verdicts, Integration landing, or production mutation.
-- `Dish — Development Workflow` is live Asana authority; Git/PR/runtime remain distinct. Missing safe branch write is `PUBLICATION BLOCKER` / `LOCAL IMPLEMENTATION COMPLETION REQUIRED`, with complete PR handoff before human notice.
+- `Dish — Development Workflow` is live Asana authority; Git/PR/runtime stay distinct. Dispatcher preserves `REVIEW PASSED` while gates remain, routes local work by role (Review/Implementation/Integration), puts durable PR handoff/readback before human notice, and claims publication/ready/merged only from GitHub readback. Missing safe publication is `PUBLICATION BLOCKER`.
 - Use the source-declared read-only context preload and action-specific refreshes before governed lifecycle decisions; context never composes role authority.

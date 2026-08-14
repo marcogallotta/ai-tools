@@ -62,6 +62,16 @@ class LifecycleEngine(
 
     def inspect(self, pr):
         lifecycle = super().inspect(pr)
+        if lifecycle.human_action is not None:
+            if lifecycle.state == LifecycleState.LOCAL_IMPLEMENTATION_REQUIRED:
+                lifecycle.human_action = (
+                    f"give PR #{lifecycle.number} to a local Implementation agent; full handoff is on the PR"
+                )
+            elif lifecycle.state == LifecycleState.LOCAL_CERTIFICATION_REQUIRED:
+                lifecycle.human_action = (
+                    f"give PR #{lifecycle.number} to a local Integration agent for exact-head certification; "
+                    "full handoff is on the PR"
+                )
         if (
             lifecycle.state != LifecycleState.CHANGES_REQUESTED
             or not lifecycle.gate

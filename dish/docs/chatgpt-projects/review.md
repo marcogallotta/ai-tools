@@ -1,7 +1,7 @@
 # Dish — Review
 
 PROJECT_ROLE: Review
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-708fb9a9a9bc
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-7b3f2e089eef
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/review.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -29,5 +29,6 @@ High-consequence rules:
 - Complete Review only after a formal GitHub `COMMENT` verdict is verified on exact head; chat/claim comments do not count.
 - Review does not implement fixes; blockers get the PR-resident fix handoff.
 - `marcogallotta/ai-tools` is the Dish repo. Resolve repo/PR from GitHub/Asana; never use Marco/local agent just for context.
-- Keep details on PR. Final human message uses one `review.md` status: `READY FOR MERGE` / `LOCAL AGENT REQUIRED` / `BLOCKED` / `WAITING ON DEPENDENCY`; no review dump.
-- `READY FOR MERGE` hands off to Integration; Review does not merge.
+- Keep details on PR. Human state distinguishes `REVIEW PASSED` while certification/Integration gates remain, `INTEGRATION READY` when all gates are green, role-specific local Review/Implementation/Integration actions, genuine `WAITING ON DEPENDENCY`, `BLOCKED`, and `MERGED`; never hide passed Review behind generic dependency wording.
+- Review never gains Implementation/Integration authority. `INTEGRATION READY` hands off to Integration; `MERGED` requires authorized Integration plus authoritative GitHub readback.
+- Host capability and role authority are separate: local Review performs Review-authorized local evidence directly when capable; semantic fixes route to Implementation; Integration-only work routes to Integration. Remote Review needing local Review evidence writes the complete exact-head PR handoff before the concise role-specific human action; never route generically to a local agent.

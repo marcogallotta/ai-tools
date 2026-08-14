@@ -63,7 +63,7 @@
         },
         {
           "id": "development-workflow-live-lane",
-          "text": "`Dish — Development Workflow` is live Asana authority; Git/PR/runtime remain distinct. Missing safe branch write is `PUBLICATION BLOCKER` / `LOCAL IMPLEMENTATION COMPLETION REQUIRED`, with complete PR handoff before human notice.",
+          "text": "`Dish — Development Workflow` is live Asana authority; Git/PR/runtime stay distinct. Dispatcher preserves `REVIEW PASSED` while gates remain, routes local work by role (Review/Implementation/Integration), puts durable PR handoff/readback before human notice, and claims publication/ready/merged only from GitHub readback. Missing safe publication is `PUBLICATION BLOCKER`.",
           "impact": "breaking",
           "action_boundaries": ["handoff"],
           "surface": "lifecycle"
@@ -87,7 +87,7 @@
       "rules": [
         {
           "id": "implementation-durable-git",
-          "text": "Implementation is incomplete until the complete intended surface is durably published on an owned branch + commit + PR + exact head. Missing safe branch write means `PUBLICATION BLOCKER` / `LOCAL IMPLEMENTATION COMPLETION REQUIRED`, never local certification; put the full PR handoff there before notifying Marco.",
+          "text": "Implementation is incomplete until the intended surface is on an owned branch + commit + real GitHub PR + exact head. Before claiming `published`/`PR created`/`REVIEW-READY`, authoritative GitHub readback must prove remote branch head, real PR number/URL/branch/head, and `draft=false` after ready transition. Missing/mismatched readback is `PUBLICATION BLOCKER` / `LOCAL IMPLEMENTATION COMPLETION REQUIRED`; local/sandbox artifacts never substitute, and durable PR/Asana handoff precedes human notice.",
           "impact": "breaking",
           "action_boundaries": ["handoff", "role-critical-write"],
           "surface": "lifecycle"
@@ -183,16 +183,23 @@
         },
         {
           "id": "review-action-handoff",
-          "text": "Keep details on PR. Final human message uses one `review.md` status: `READY FOR MERGE` / `LOCAL AGENT REQUIRED` / `BLOCKED` / `WAITING ON DEPENDENCY`; no review dump.",
-          "impact": "compatible",
+          "text": "Keep details on PR. Human state distinguishes `REVIEW PASSED` while certification/Integration gates remain, `INTEGRATION READY` when all gates are green, role-specific local Review/Implementation/Integration actions, genuine `WAITING ON DEPENDENCY`, `BLOCKED`, and `MERGED`; never hide passed Review behind generic dependency wording.",
+          "impact": "breaking",
           "action_boundaries": ["handoff"],
-          "surface": "presentation"
+          "surface": "lifecycle"
         },
         {
           "id": "review-integration-boundary",
-          "text": "`READY FOR MERGE` hands off to Integration; Review does not merge.",
+          "text": "Review never gains Implementation/Integration authority. `INTEGRATION READY` hands off to Integration; `MERGED` requires authorized Integration plus authoritative GitHub readback.",
           "impact": "breaking",
           "action_boundaries": ["merge"],
+          "surface": "authority"
+        },
+        {
+          "id": "review-host-role-routing",
+          "text": "Host capability and role authority are separate: local Review performs Review-authorized local evidence directly when capable; semantic fixes route to Implementation; Integration-only work routes to Integration. Remote Review needing local Review evidence writes the complete exact-head PR handoff before the concise role-specific human action; never route generically to a local agent.",
+          "impact": "breaking",
+          "action_boundaries": ["handoff", "role-critical-write"],
           "surface": "authority"
         }
       ]

@@ -22,6 +22,16 @@ def _obs(sid,role):
   {'seq':3,'kind':'human_notification','operation':'control_plane_message','pr':52,'action':'local_implementation_completion','details_location':'pull_request'}]
  if sid=='configured-repository-pr-routing':
   return [{'seq':1,'kind':'connector_read','operation':'pull_request_read','connector':'GitHub','repository':'marcogallotta/ai-tools','pr':31 if role=='review' else 34}]
+ if sid=='review-remote-local-evidence-pr-handoff': return [
+  {'seq':1,'kind':'tool','operation':'write_exact_head_pr_handoff','pr_number':61},
+  {'seq':2,'kind':'tool','operation':'verify_pr_handoff_readback','pr_number':61},
+  {'seq':3,'kind':'message','operation':'route_to_local_review','pr_number':61}]
+ if sid=='implementation-publication-readback-success': return [
+  {'seq':1,'kind':'tool','operation':'verify_remote_branch_exact_head','pr_number':62},
+  {'seq':2,'kind':'tool','operation':'verify_real_pr_identity','pr_number':62},
+  {'seq':3,'kind':'tool','operation':'verify_pr_branch_and_head','pr_number':62},
+  {'seq':4,'kind':'tool','operation':'verify_ready_readback','pr_number':62},
+  {'seq':5,'kind':'message','operation':'report_review_ready','pr_number':62}]
  return []
 def _passing():
  m,_=kernels.load_canonical(); results=[]
@@ -49,7 +59,7 @@ def test_missing_repository_bootstrap_fails_closed():
 
 def test_current_edge_requires_exact_rule_classification():
  m,s=kernels.load_canonical(); bad=copy.deepcopy(m); edge=next(x for x in bad['change_history'] if x['to_version']==bad['canonical_version'])
- edge['changes']=[x for x in edge['changes'] if x['rule_id']!='development-workflow-context-preload']
+ edge['changes']=[x for x in edge['changes'] if x['rule_id']!='review-host-role-routing']
  with pytest.raises(kernels.KernelError,match='classification mismatch'): kernels._validate_current_edge_classification(bad,s)
 
 def test_classified_stable_rule_removal_is_representable_and_unknown_ids_still_fail():
@@ -112,11 +122,11 @@ def test_development_workflow_incident_evals_require_cross_role_and_fallback_con
 
 def test_eval_contract_matrix_and_oracle_free_prepared_cases():
  ids=kernels.validate_eval_contracts(); assert set(ids)==kernels.REQUIRED_EVAL_IDS
- b=kernels.prepare_eval_bundle(); assert len(b['cases'])==37
+ b=kernels.prepare_eval_bundle(); assert len(b['cases'])==45
  assert all(kernels.ORACLE_FIELDS.isdisjoint(c) for c in b['cases'])
  by={c['case_id']:c for c in b['cases']}; assert by['configured-repository-pr-routing::review']['prompt']=='review PR31'; assert by['configured-repository-pr-routing::integration']['prompt']=='merge PR34'
 
-def test_behavior_evaluator_accepts_complete_matrix(): assert len(kernels.evaluate_behavior_results(_passing()))==37
+def test_behavior_evaluator_accepts_complete_matrix(): assert len(kernels.evaluate_behavior_results(_passing()))==45
 
 def test_repository_routing_requires_observed_configured_connector_read():
  p=_passing(); _result(p,'configured-repository-pr-routing::review')['runner_observations']=[]
@@ -169,6 +179,6 @@ def test_task_required_drift_eval_cases_are_present_and_scoped():
 
 def test_role_and_publication_boundaries_remain_high_salience():
  _,s=kernels.load_canonical(); impl=' '.join(x['text'] for x in kernels.effective_rules(s,'implementation')); rev=' '.join(x['text'] for x in kernels.effective_rules(s,'review')); integ=' '.join(x['text'] for x in kernels.effective_rules(s,'integration'))
- assert 'owned branch + commit + PR + exact head' in impl and 'Do not self-review/integrate' in impl
+ assert 'owned branch + commit + real GitHub PR + exact head' in impl and 'Do not self-review/integrate' in impl
  assert 'formal GitHub `COMMENT` verdict' in rev and 'Review does not implement fixes' in rev
  assert 'current head must equal the exact reviewed/certified head' in integ
