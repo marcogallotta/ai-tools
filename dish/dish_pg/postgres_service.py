@@ -316,6 +316,15 @@ class PostgresRuntimeService:
                 rule="service_identifier_invalid",
             ) from exc
 
+        definition = COMMAND_DEFINITIONS.get(command)
+        if definition is None or definition.principal not in {"agent", "admin"}:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "command is not eligible for replay-bound HTTP validation",
+                rule="postgresql_validation_principal_invalid",
+                details={"command": command},
+            )
+
         envelope = error_envelope(command, error)
         envelope["data"]["request_id"] = request_id
         recorded_at = datetime.now(timezone.utc)
@@ -329,7 +338,7 @@ class PostgresRuntimeService:
                         command_name=command,
                         arguments=dict(arguments),
                         owner_id=principal.owner_id,
-                        principal_class="agent",
+                        principal_class=definition.principal,
                         run_id=run_id,
                         request_id=parsed_request_id,
                         now=recorded_at,
