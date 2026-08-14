@@ -1497,7 +1497,6 @@ class WorkflowAuthorityService:
             terminal_at=None,
         )
         self.session.add(row)
-        cycle.lifecycle = "open"
         self.session.flush()
         return row
 
