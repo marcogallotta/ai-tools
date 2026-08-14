@@ -49,7 +49,7 @@ def test_missing_repository_bootstrap_fails_closed():
 
 def test_current_edge_requires_exact_rule_classification():
  m,s=kernels.load_canonical(); bad=copy.deepcopy(m); edge=next(x for x in bad['change_history'] if x['to_version']==bad['canonical_version'])
- edge['changes']=[x for x in edge['changes'] if x['rule_id']!='development-workflow-context-preload']
+ edge['changes']=[x for x in edge['changes'] if x['rule_id']!='marco-scoped-override']
  with pytest.raises(kernels.KernelError,match='classification mismatch'): kernels._validate_current_edge_classification(bad,s)
 
 def test_classified_stable_rule_removal_is_representable_and_unknown_ids_still_fail():
@@ -110,13 +110,55 @@ def test_development_workflow_incident_evals_require_cross_role_and_fallback_con
  noauth=_scenario('development-workflow-context-preload-no-authority')
  assert {'treat_context_read_as_implementation_authority','treat_context_read_as_review_authority','treat_context_read_as_integration_authority'}<=set(noauth['forbidden_actions'])
 
+def test_shared_human_language_override_and_host_policy_are_deterministic():
+ m,s=kernels.load_canonical()
+ for role in s['roles']:
+  text=kernels.render_role(m,s,role)
+  assert 'plain English' in text
+  assert 'GATE WAIVED BY MARCO OVERRIDE' in text
+ plain=_scenario('human-facing-plain-language')
+ assert {'use_unexplained_internal_codename','make_identifier_carry_meaning'}<=set(plain['forbidden_actions'])
+ override=_scenario('marco-scoped-override-preserves-evidence')
+ assert {'rerun_waived_tests','convert_failure_to_pass','demand_override_syntax','ask_confirmation_again'}<=set(override['forbidden_actions'])
+ for host in (DISH_ROOT.parent/'CLAUDE.md',DISH_ROOT.parent/'AGENTS.md'):
+  policy=host.read_text()
+  assert 'plain English' in policy and 'GATE WAIVED BY MARCO OVERRIDE' in policy
+
+
+def test_five_whys_is_one_evidence_grounded_shared_method():
+ index=(DISH_ROOT/'docs'/'agents'/'index.md').read_text()
+ method=(DISH_ROOT/'docs'/'agents'/'five-whys.md').read_text()
+ assert 'Shared analysis methods' in index and '[`five-whys.md`](five-whys.md)' in index
+ assert '**VERIFIED FACT**' in method
+ assert '**TESTED/REJECTED ALTERNATIVE**' in method
+ assert '**HYPOTHESIS/UNKNOWN**' in method
+ assert 'heuristic, not a required count' in method and 'Branch into multiple causal chains' in method
+ assert 'Do not stop at individual blame' in method and 'Keep cause and countermeasure separate' in method
+ for heading in ('Problem statement / observed failure','Root cause(s)','Detection / escape failure','Rejected alternatives / contrary evidence','Verification / recurrence-prevention test','Remaining uncertainty','Owner / next action'):
+  assert heading in method
+ for anti in ('five unrelated reasons','five restatements of the same symptom','speculation presented as fact','treating exactly five questions as mandatory','calling chronology or correlation a cause without evidence'):
+  assert anti in method
+ scenario=_scenario('five-whys-evidence-discipline')
+ assert {'force_exactly_five','stop_at_human_blame','present_hypothesis_as_fact','reverse_engineer_cause_from_solution'}<=set(scenario['forbidden_actions'])
+
+
+def test_development_workflow_uses_owning_asana_task_as_design_review_state():
+ role=(DISH_ROOT/'docs'/'agents'/'development-workflow.md').read_text()
+ assert 'owning Asana task is the durable canonical design/review artifact' in role
+ assert 'persist the complete proposed design' in role and 'read it back' in role
+ assert 'fold the accepted/current design into task notes' in role
+ assert 'stale copied chat subset never overrides newer Asana task state' in role
+ scenario=_scenario('development-workflow-asana-design-review-state')
+ assert {'dispatch_from_chat_only_design','let_stale_chat_override_asana','claim_durable_without_readback'}<=set(scenario['forbidden_actions'])
+
+
 def test_eval_contract_matrix_and_oracle_free_prepared_cases():
  ids=kernels.validate_eval_contracts(); assert set(ids)==kernels.REQUIRED_EVAL_IDS
- b=kernels.prepare_eval_bundle(); assert len(b['cases'])==37
+ b=kernels.prepare_eval_bundle(); assert len(b['cases'])==sum(len(q['roles']) for q in kernels._evals())
  assert all(kernels.ORACLE_FIELDS.isdisjoint(c) for c in b['cases'])
  by={c['case_id']:c for c in b['cases']}; assert by['configured-repository-pr-routing::review']['prompt']=='review PR31'; assert by['configured-repository-pr-routing::integration']['prompt']=='merge PR34'
 
-def test_behavior_evaluator_accepts_complete_matrix(): assert len(kernels.evaluate_behavior_results(_passing()))==37
+def test_behavior_evaluator_accepts_complete_matrix(): assert len(kernels.evaluate_behavior_results(_passing()))==sum(len(q['roles']) for q in kernels._evals())
 
 def test_repository_routing_requires_observed_configured_connector_read():
  p=_passing(); _result(p,'configured-repository-pr-routing::review')['runner_observations']=[]

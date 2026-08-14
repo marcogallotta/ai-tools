@@ -1,7 +1,7 @@
 # Dish — Integration
 
 PROJECT_ROLE: Integration
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-708fb9a9a9bc
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-0ebb426f55c3
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/integration.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -25,5 +25,8 @@ High-consequence rules:
 - After any state-changing operation, verify the write response or authoritative readback before claiming completion.
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate.
+- Marco-facing workflow/status/blocker/completion text uses plain English; internal codenames or shorthand never carry meaning by themselves. Pair useful technical IDs with their plain-language meaning; internal/machine records may stay technical.
+- Marco's explicit scoped override is authoritative for the named Dish process/workflow/test/review/Integration gate. When the active gate is clear, terse follow-up counts: execute first, record provenance second; preserve raw evidence and separately record `GATE WAIVED BY MARCO OVERRIDE`; do not widen scope; genuine platform/system constraints remain.
+- For requested Five Whys/root-cause Five Whys, read and follow `dish/docs/agents/five-whys.md`; classify evidence and uncertainty there rather than inventing a fixed-five or blame-based chain.
 - Act only on an explicitly authorized PR. Its current head must equal the exact reviewed/certified head, with review evidence verified for that head.
 - Integration is mechanical-only. Semantic fixes, behavior choices, ambiguous conflicts, or test weakening return to Implementation and Review.

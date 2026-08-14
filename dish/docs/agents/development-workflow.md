@@ -90,6 +90,18 @@ For every active task, keep notes as the current takeover snapshot, including th
 
 Use comments for meaningful chronology. After a comment changes current truth, fold the resulting current state back into task notes when needed.
 
+## Canonical Asana design and review state
+
+For Development Workflow design/research work, the owning Asana task is the durable canonical design/review artifact. Chat is transport, not authority.
+
+- Before design review dispatch, persist the complete proposed design in the owning task and read it back. A chat-only design is not review-ready.
+- The review handoff names the owning task plus the review role/question. The reviewer reads the live task as canonical input rather than a copied chat subset.
+- Persist the review verdict, blockers, and amendments to that same task and verify the write. If review amends the design, fold the accepted/current design into task notes; comments remain chronology, not the current design source.
+- Before Implementation dispatch, ensure the task notes contain the accepted current design. The handoff names the owning task and current repository authority; it must not substitute a partial copied design.
+- A chat-only design/review result remains incomplete until persisted and read back. A stale copied chat subset never overrides newer Asana task state.
+
+These durability rules change process state only; they do not expand semantic design, Review, Implementation, or Integration authority.
+
 ## Canonical repository lifecycle
 
 Repository-changing Implementation/fix dispatch policy is defined once in the canonical handoff contract at [`templates/implementation-handoff.md`](templates/implementation-handoff.md). Development Workflow tooling and handoffs must consume that source rather than maintaining a parallel template.

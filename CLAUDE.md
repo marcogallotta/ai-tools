@@ -14,6 +14,12 @@ Standing role contracts contain stable policy so task handoffs can stay short an
 
 For exact-reviewed-PR-head integration, local integration certification, commit/promotion to `main`, push verification, or integration-worktree cleanup, follow the dedicated Integration agent contract in `dish/docs/agents/integration.md`. Implementation/fix agents do not inherit final integration authority merely because they produced the implementation.
 
+## Marco-facing workflow policy
+
+Anything shown directly to Marco must explain the workflow state and next action in plain English rather than relying on internal codenames or unexplained process shorthand. Technical IDs may be included when useful, but they do not carry the meaning by themselves.
+
+Marco's explicit scoped `override` of a named Dish process/workflow/test/review/Integration gate is authoritative for that scope. When the active gate is already clear, a terse follow-up such as `override`, `go`, `do not run tests`, or `mark in PR override` is sufficient: execute the override first and record the waived gate second. Preserve raw evidence truthfully; a failure does not become a PASS, and the lifecycle record separately states `GATE WAIVED BY MARCO OVERRIDE`. Do not extend the waiver beyond the named scope; genuine platform/system constraints remain non-overridable.
+
 ## Dish safety and environments
 
 - Genuine work uses production. Test is only for experiments, rehearsals, destructive testing, or Marco's explicit request. Confirm the target before an ambiguous mutation.

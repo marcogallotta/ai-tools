@@ -35,10 +35,12 @@ python3 -m venv .venv
 
 `dish`, `dish-admin`, and `dish-service` re-exec under `.venv/bin/python` and fail closed if it is unavailable.
 
-### Isolated Stage A PostgreSQL development
+### PostgreSQL development target
 
-The PostgreSQL target is isolated under `dish_pg/` and is not imported by the live
-SQLite/Asana service. Start its disposable local database with:
+The PostgreSQL replacement runtime is implemented under `dish_pg/` and remains non-authoritative for
+production mutations until explicit cutover. `dish_service` also imports PostgreSQL modules for the
+replacement runtime and frontend paths, so package boundaries are not an authority boundary. Start a
+disposable local PostgreSQL database with:
 
 ```sh
 docker compose -f deploy/postgresql/compose.yaml up -d
@@ -322,45 +324,36 @@ evidence is fabricated.
 
 `dish-admin` is available to agents only with the test profile; production use is Marco-only.
 On an interactive terminal it is human-readable by default; use `--json` for the canonical envelope
-and `--verbose` for technical details. Start global diagnosis with `dish-admin attention`; it scans
-active workflow records and lists stale ownership, abandonments, holds, and uncertain effects without
-changing anything. Start one blocked task with `dish-admin inspect TASK_GID_OR_OPERATION_ID`; it
+and `--verbose` for technical details. Start the global Marco work queue with
+`dish-admin queue --non-interactive`; it lists current work requiring Marco without making a choice.
+Start one blocked task with `dish-admin inspect TASK_GID_OR_OPERATION_ID`; it
 resolves internal operation, cycle, lease, hold, and abandonment bindings and shows the safe next
 command.
 
-In service mode it exposes:
+In service mode, normal operator navigation is intentionally small:
 
-- `attention` to list abnormal workflow state across all active Dish tasks without mutating it;
-- `inspect` to explain what a task is waiting on and show Marco's safe next actions;
-- `recover-lease` to release an expired client/run lease when the same durable run will continue, without transferring workflow ownership to Marco;
-- `abandon-operation` to permanently retire the latest expired or administratively released actor attempt and automatically prepare the safe stage-specific continuation;
-- `reconcile-abandonment` to reclassify a blocked or interrupted abandonment after the live task has been inspected or repaired;
-- `expire-lease` to release the active lease selected by exact lease ID, task GID, or a supported Asana task URL;
-- `recover` for ambiguous operation-backed write or movement evidence;
-- `reopen-planning` to reopen a completed bare task and, after interruption, replay the exact original request UUID without blindly repeating the Asana update;
-- `repair-destination` to replace only an approved Planning destination after an unrecoverable final movement failure, while preserving the original Verification evidence;
-- `discard` for a provably unapplied stale operation;
-- `reopen`, `supply-evidence`, and `record-human-decision` for the existing protocol-specific hold routes;
-- `authorize-governed-change` for a standalone exact governed-field change; unused exact grants
-  carry across abandonment succession for the same task and typed before/after values;
-- `review-queue` and `review-inspect` to review durable semantic proposals and Verification Human
-  Review holds parked by agents; queue numbers are accepted for the current view, while UUIDs are
-  stable for sharing;
-- `review-approve` and `review-reject` to decide one complete linked proposal bundle atomically;
-  `review-approve REVIEW_ID --detail "..."` records and releases a Human Review item;
-- `migrate` for explicit task-schema migration;
-- `backup-create` and `backup-restore` for managed shared-database snapshots.
+- `queue` works through everything currently waiting for Marco; use `--non-interactive` for a read-only listing;
+- `inspect` explains what one task is waiting on and shows the exact safe next action;
+- `audit` checks fleet integrity without treating Marco-managed Asana organization as drift;
+- `active` shows current run ownership;
+- `kill`, `kill-all-expired`, and `kill-all` are the visible run-replacement controls.
+
+Advanced recovery, review-detail, migration, backup, and governance commands remain callable when
+Dish returns one as an exact next action. They are not normal navigation. The compatibility aliases
+`issues`, `attention`, and `active-leases` remain executable for old callers but must not be recommended
+as starting commands. `review-queue` is a hidden review-detail view; the normal review entry point is
+`queue`.
 
 Agents can continue an explicitly requested batch after Dish returns `batch_may_continue=true` for
 a proposal, Human Review/Evidence hold, or completed Large correction. They track handled task GIDs
-for that run and skip parked tasks if listing pagination returns them again. Marco reviews the queue
-with:
+for that run and skip parked tasks if listing pagination returns them again. Marco reviews pending work through the primary queue:
 
 ```sh
-dish-admin review-queue
-dish-admin review-inspect PROPOSAL_ID
-dish-admin review-approve PROPOSAL_ID --reason "approved exact linked correction"
+dish-admin queue
 ```
+
+When a review item needs an advanced detail or decision command, Dish presents the exact next action;
+Marco does not need to discover hidden review commands manually.
 
 A later fresh invocation lists and applies approved work without inheriting the proposing run:
 

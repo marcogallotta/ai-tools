@@ -460,10 +460,10 @@ It may return a command template only when Marco must supply decision or reason 
 the returned `human_action` and its rendered command exactly; they do not reconstruct flags from
 cycle, hold, lease, or identity fields.
 
-For a global read-only inventory, run:
+For a global read-only inventory, run the primary queue non-interactively:
 
 ```sh
-dish-admin attention
+dish-admin queue --non-interactive
 ```
 
 The scan checks active operations, non-completed abandonments, unreleased actor leases, and
@@ -478,7 +478,7 @@ required human input, summary, plain-language `details`, exact effect, structure
 after-success instruction. Agents must relay the details before the command rather than making Marco
 infer approval scope or consequences from shell arguments. Compatibility fields
 `admin_command`, `admin_command_is_template`, and `admin_command_template` describe the same action.
-Generated commands must parse on the current `dish-admin` CLI.  When exact recovery cannot be
+Generated commands must parse on the current `dish-admin` CLI. Compatibility aliases `attention`, `issues`, and `active-leases` remain callable for old clients but are not normal operator starting commands.  When exact recovery cannot be
 chosen safely, the response directs Marco to `dish-admin inspect` rather than listing internal IDs
 for manual selection.
 
@@ -526,13 +526,13 @@ not keep mutating the parked operation. The same flag is returned after a durabl
 Evidence, or completed Large-correction handoff. In an explicit batch, the agent tracks handled task
 GIDs for that run and skips them if section pagination returns them again.
 
-`dish-admin review-queue` aggregates pending semantic proposals and Verification Human Review holds.
-Each item carries a compact `review_summary`: outcome, material issue, quantified blocker when one was
-recorded, the decision where applicable, and the simplest next step. `review-inspect` accepts either
-the durable UUID or the current queue number. Semantic bundles use `review-approve`/`review-reject`.
-For an unanswered Verification Human Review item the normal operator surface is also the review flow:
-`review-inspect` presents `review-approve REVIEW_ID --reason '<Marco decision>'` or
-`review-reject REVIEW_ID --reason '<why the escalation is invalid>'`; low-level hold IDs and
+The normal operator entry point for pending semantic proposals and Verification Human Review holds is
+`dish-admin queue`. Each item carries a compact `review_summary`: outcome, material issue, quantified
+blocker when one was recorded, the decision where applicable, and the simplest next step. The hidden
+`review-queue` command remains a detail view, and `review-inspect` accepts either the durable UUID or
+the current queue number. Semantic bundles use `review-approve`/`review-reject` only when Dish returns
+those exact next actions. For an unanswered Verification Human Review item, `review-inspect` presents
+`review-approve REVIEW_ID --reason '<Marco decision>'` or `review-reject REVIEW_ID --reason '<why the escalation is invalid>'`; low-level hold IDs and
 `record-human-decision` remain internal/compatibility mechanics rather than the normal UX. Formal
 Human Review is reserved for consequential governed authorization. Ordinary clarification/preference
 may be used directly, while an intentional choice worth preserving may be appended as an attributed
