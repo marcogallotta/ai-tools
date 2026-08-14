@@ -163,6 +163,14 @@ REVIEWED_PRIVATE_FAULT_SEAMS = {
     ("test_shadow_capture.py", "_execute_locked"): (
         "Shadow-spool locked execution boundary."
     ),
+    ("postgresql/test_postgres_runtime_validation_http.py", "__init__"): (
+        "Non-construction guard proving the canonical PostgreSQL Action HTTP path never"
+        " constructs AsanaBackend."
+    ),
+    ("postgresql/test_stage4_command_port.py", "__init__"): (
+        "Non-construction guard proving PostgreSQL safe-reclaim and proposal-apply command"
+        " paths never construct AsanaBackend."
+    ),
 }
 
 
