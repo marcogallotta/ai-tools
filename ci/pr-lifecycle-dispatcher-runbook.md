@@ -45,7 +45,7 @@ The JSON schema is `dish-pr-lifecycle-status-v1`. The state engine distinguishes
 - `merged`;
 - `closed_superseded`.
 
-A draft PR that explicitly carries `IMPLEMENTATION EVIDENCE PENDING: <evidence>` is `IMPLEMENTATION CONTINUATION REQUIRED`, not Review/Integration/local certification. The dispatcher reuses the existing Implementation/fix consumer. If no current `phase=implementation`/`fix` owner is active, it first writes a durable `dish-implementation-continuation:v1` handoff on the same PR, then claims `phase=implementation` and dispatches the exact existing branch/task/head plus named evidence. That comment is the explicit replacement-owner handoff when the prior Implementation agent is unavailable. The only human-facing message for this state is `PR #N still needs Implementation to finish <evidence>.`
+A draft PR that explicitly carries `IMPLEMENTATION EVIDENCE PENDING: <evidence>` is `IMPLEMENTATION CONTINUATION REQUIRED`, not Review/Integration/local certification. The dispatcher reuses the existing Implementation/fix consumer. If no current `phase=implementation`/`fix` owner is active, it first writes a durable `dish-implementation-continuation:v1` handoff on the same PR, then claims `phase=implementation` and dispatches the exact existing branch/task/head plus named evidence. That comment is the explicit replacement-owner handoff when the prior Implementation agent is unavailable. The consumer must follow the single canonical repository handoff contract at `dish/docs/agents/templates/implementation-handoff.md` and reconcile the matching local `tools/agent-worktree` claim before touching preserved state; the PR handoff/lease does not itself override a live local claim. The only human-facing message for this state is `PR #N still needs Implementation to finish <evidence>.`
 
 `VERDICT: MERGE` is not terminal. It starts Integration gate evaluation. Ordinary Review does not wait for ordinary CI and does not require a pre-review sync to moved `main` unless that movement creates a known semantic dependency that invalidates the review question.
 
@@ -63,7 +63,7 @@ The dispatcher may add `owner=` and `class=` fields. Supported phases include `i
 
 Lease rules:
 
-- advisory only; never semantic or Integration authority;
+- advisory only; never semantic, Integration, or local-agent ownership authority;
 - exact-head scoped;
 - a head move invalidates immediately;
 - stale 60 minutes after the most recent structured renewal/activity for that lease UUID;
@@ -78,7 +78,7 @@ Explicit release is:
 <!-- dish-agent-lease-release:v1 lease=<uuid> -->
 ```
 
-A renewal repeats the lease marker with the same UUID on a new PR comment. Do not infer liveness from an agent process, session, or GitHub assignee.
+A renewal repeats the lease marker with the same UUID on a new PR comment. Do not infer local-agent liveness or stale-owner eligibility from a PR lease, its age, an agent process/session, or a GitHub assignee. Local Implementation/fix exclusivity and stale-owner transfer are enforced by `tools/agent-worktree` claims under the single canonical handoff contract at `dish/docs/agents/templates/implementation-handoff.md`.
 
 ## Review routing
 
@@ -109,9 +109,9 @@ A formal exact-head `VERDICT: BLOCK` is not only a status classification. A `FAI
 DISH_IMPLEMENTATION_FIX_COMMAND='<existing implementation/fix launcher>'
 ```
 
-or `--implementation-fixer`. The command receives `dish-pr-fix-dispatch-v1` JSON on standard input containing the exact PR URL/number, branch, blocked head SHA, owning task IDs, the current lifecycle snapshot, and either the authoritative formal BLOCK review or the structured PR-owned CI diagnosis. The consumer must follow `dish/docs/agents/implementation.md`, update the existing PR branch, and re-read GitHub before semantic work. A CI-driven semantic fix changes head identity and therefore requires substantive Review on the new head.
+or `--implementation-fixer`. The command receives `dish-pr-fix-dispatch-v1` JSON on standard input containing the exact PR URL/number, branch, blocked head SHA, owning task IDs, the current lifecycle snapshot, and either the authoritative formal BLOCK review or the structured PR-owned CI diagnosis. The consumer must follow `dish/docs/agents/implementation.md` and the single canonical handoff contract at `dish/docs/agents/templates/implementation-handoff.md`, reconcile the matching `tools/agent-worktree` claim before touching local state, update only the authorized existing PR branch, and re-read GitHub before semantic work. Matching Asana task identity on another branch/PR is not authority. A CI-driven semantic fix changes head identity and therefore requires substantive Review on the new head.
 
-Before launching the consumer, the dispatcher writes an exact-head `phase=fix` lease. A fresh `phase=fix` or `phase=implementation` lease on the current blocked head prevents duplicate dispatch. A head move immediately invalidates the old review and lease; the dispatcher never launches a fix consumer for a BLOCK that is no longer on the current head. If the configured command fails synchronously, the dispatcher releases its lease so recovery is not deadlocked.
+Before launching the consumer, the dispatcher writes an exact-head `phase=fix` advisory lease. A fresh `phase=fix` or `phase=implementation` lease on the current blocked head prevents duplicate dispatcher launches, but does not transfer or override a local `tools/agent-worktree` claim. A head move immediately invalidates the old review and lease; the dispatcher never launches a fix consumer for a BLOCK that is no longer on the current head. If the configured command fails synchronously, the dispatcher releases its lease so recovery is not deadlocked.
 
 Missing implementation/fix consumer configuration is a deployment boundary, not a request for Marco to forward the review transcript. The durable BLOCK review remains on GitHub until the consumer is configured/recovered.
 
@@ -148,7 +148,7 @@ Completion is recorded as:
 <!-- dish-local-completion:v1 kind=implementation head=<sha> result=complete -->
 ```
 
-Before notifying Marco about either local action, the dispatcher first writes the complete exact-head handoff to the PR with a `dish-local-handoff:v1` marker. If the local implementation action changes the source head, the prior Review and completion marker are stale and the new head returns to Review/recheck under the normal rules.
+Before notifying Marco about either local action, the dispatcher first writes the complete exact-head handoff to the PR with a `dish-local-handoff:v1` marker. For `kind=implementation`, the local worker must follow the single canonical handoff contract at `dish/docs/agents/templates/implementation-handoff.md` and reconcile the matching agent-worktree claim before touching prepared state. If the local implementation action changes the source head, the prior Review and completion marker are stale and the new head returns to Review/recheck under the normal rules.
 
 For reviewed exact heads with a complete durable certification handoff, bounded Integration can execute that handoff locally instead of turning it into a Marco message. Configure the local Integration consumer with:
 

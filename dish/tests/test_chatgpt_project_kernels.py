@@ -49,19 +49,21 @@ def test_missing_repository_bootstrap_fails_closed():
 
 def test_current_edge_requires_exact_rule_classification():
  m,s=kernels.load_canonical(); bad=copy.deepcopy(m); edge=next(x for x in bad['change_history'] if x['to_version']==bad['canonical_version'])
- edge['changes']=[x for x in edge['changes'] if x['rule_id']!='review-action-handoff']
+ edge['changes']=[x for x in edge['changes'] if x['rule_id']!='development-workflow-context-preload']
  with pytest.raises(kernels.KernelError,match='classification mismatch'): kernels._validate_current_edge_classification(bad,s)
 
 def test_classified_stable_rule_removal_is_representable_and_unknown_ids_still_fail():
- m,s=kernels.load_canonical(); removed=copy.deepcopy(s)
+ _,s=kernels.load_canonical(); removed=copy.deepcopy(s)
  removed['roles']['review']['rules']=[r for r in removed['roles']['review']['rules'] if r['id']!='review-formal-comment']
- unclassified=copy.deepcopy(m); edge=next(x for x in unclassified['change_history'] if x['to_version']==unclassified['canonical_version'])
- edge['changes']=[x for x in edge['changes'] if x['rule_id']!='review-formal-comment']
- with pytest.raises(kernels.KernelError,match='classification mismatch'):
+ prior_shared={x['id']:kernels._rule_fingerprint(x) for x in kernels._rules(s['shared_rules'],'shared_rules')}
+ prior_roles={role:{x['id']:kernels._rule_fingerprint(x) for x in kernels._rules(s['roles'][role]['rules'],f'roles.{role}.rules')} for role in s['roles']}
+ edge={'from_version':'v1','to_version':'v2','changes':[_change('review-formal-comment','review','breaking','review-write','lifecycle')],'from_rule_fingerprints':{'_shared':prior_shared,'_roles':prior_roles},'from_renderer_fingerprint':kernels.renderer_fingerprint()}
+ m={'canonical_version':'v2','change_history':[edge]}
+ unclassified=copy.deepcopy(m); unclassified['change_history'][0]['changes']=[]
+ with pytest.raises(kernels.KernelError,match='requires changes|classification mismatch'):
   kernels.validate_change_history(unclassified,removed)
  kernels.validate_change_history(copy.deepcopy(m),removed)
- unknown=copy.deepcopy(m); edge=next(x for x in unknown['change_history'] if x['to_version']==unknown['canonical_version'])
- edge['changes'].append(_change('never-existed-rule','review','breaking','review-write','lifecycle'))
+ unknown=copy.deepcopy(m); unknown['change_history'][0]['changes'].append(_change('never-existed-rule','review','breaking','review-write','lifecycle'))
  with pytest.raises(kernels.KernelError,match='unknown rule'):
   kernels.validate_change_history(unknown,removed)
 
@@ -72,13 +74,49 @@ def test_generated_kernels_current_bound_and_within_budget():
   assert text.index('PROJECT_REPOSITORY: marcogallotta/ai-tools')<text.index('Startup:')
   assert 'Version mismatch triggers manifest `change_history`' in text
 
+def test_development_workflow_context_preload_is_role_index_driven_and_read_only():
+ m,s=kernels.load_canonical(); deps=kernels.context_dependencies(s,'development-workflow'); assert deps is not None
+ expected={'coordinator.md','development-workflow.md','implementation.md','integration.md','review.md','workflow.md','postgresql-dark-launch.md'}
+ assert kernels.role_index_contracts()==expected
+ assert deps['preload']=={'role_index_contracts':True,'additional':['dish/docs/agents/contributor-base.md']}
+ assert deps['action_specific']['test-scope decisions']==['dish/docs/testing.md','dish/docs/architecture/testing-boundaries.md']
+ assert deps['action_specific']['dispatcher/Integration mechanics']==['ci/pr-lifecycle-dispatcher-runbook.md']
+ assert deps['action_specific']['native-PostgreSQL workflow mechanics']==['dish/docs/testing.md','dish/docs/architecture/postgresql-runtime.md']
+ text=kernels.render_role(m,s,'development-workflow')
+ assert text.index('Startup:')<text.index('Read-only decision context (startup/re-grounding):')
+ assert 'load every standing role contract listed by the current role index' in text
+ assert '`dish/docs/agents/contributor-base.md`' in text
+ assert 'grants no Implementation, Review, Integration, merge, or production authority' in text
+ comps=s['roles']['development-workflow']['allowed_compositions']; assert len(comps)==1 and 'implementation.md' in comps[0]
+ assert 'review.md' not in comps[0] and 'integration.md' not in comps[0]
+
+
+def test_development_workflow_re_grounding_and_action_context_match_standing_contract():
+ role=(DISH_ROOT/'docs'/'agents'/'development-workflow.md').read_text()
+ assert 'At fresh startup and after compaction/session replacement' in role
+ assert 'every standing role contract it lists' in role and 'contributor-base.md' in role
+ assert 'compaction/session restart should trigger role/process re-grounding' in role
+ assert 'Review evidence semantics' in role and "Integration's literal `TESTS TO RUN`" in role
+ for path in ('../testing.md','../architecture/testing-boundaries.md','../../../ci/pr-lifecycle-dispatcher-runbook.md','../architecture/postgresql-runtime.md'):
+  assert path in role
+
+
+def test_development_workflow_incident_evals_require_cross_role_and_fallback_context():
+ pr60=_scenario('development-workflow-pr60-test-scope-context')
+ assert pr60['roles']==['development-workflow']
+ assert {'load_role_index_context_dependencies','load_test_scope_context','consider_review_evidence_semantics','consider_integration_literal_tests_to_run_semantics'}<=set(pr60['required_actions'])
+ pr40=_scenario('development-workflow-pr40-fallback-context')
+ assert {'load_contributor_base_context','inspect_authorized_fallback_surface','classify_residual_certification_only_after_fallback_check'}<=set(pr40['required_actions'])
+ noauth=_scenario('development-workflow-context-preload-no-authority')
+ assert {'treat_context_read_as_implementation_authority','treat_context_read_as_review_authority','treat_context_read_as_integration_authority'}<=set(noauth['forbidden_actions'])
+
 def test_eval_contract_matrix_and_oracle_free_prepared_cases():
  ids=kernels.validate_eval_contracts(); assert set(ids)==kernels.REQUIRED_EVAL_IDS
- b=kernels.prepare_eval_bundle(); assert len(b['cases'])==34
+ b=kernels.prepare_eval_bundle(); assert len(b['cases'])==37
  assert all(kernels.ORACLE_FIELDS.isdisjoint(c) for c in b['cases'])
  by={c['case_id']:c for c in b['cases']}; assert by['configured-repository-pr-routing::review']['prompt']=='review PR31'; assert by['configured-repository-pr-routing::integration']['prompt']=='merge PR34'
 
-def test_behavior_evaluator_accepts_complete_matrix(): assert len(kernels.evaluate_behavior_results(_passing()))==34
+def test_behavior_evaluator_accepts_complete_matrix(): assert len(kernels.evaluate_behavior_results(_passing()))==37
 
 def test_repository_routing_requires_observed_configured_connector_read():
  p=_passing(); _result(p,'configured-repository-pr-routing::review')['runner_observations']=[]

@@ -124,13 +124,41 @@ def test_empty_precreation_path_is_recoverable_before_registration(h: Harness) -
 
 
 def test_concurrent_first_start_serializes_to_one_task_worktree(h: Harness) -> None:
-    args = ["python3", str(SCRIPT), "start", "--task", "1020", "--branch", "agent/race", "--base-ref", "refs/heads/main", "--base", h.base, "--json"]
-    p1 = subprocess.Popen(args, cwd=h.primary, env=h.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    p2 = subprocess.Popen(args, cwd=h.primary, env=h.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    o1, e1 = p1.communicate(timeout=30)
-    o2, e2 = p2.communicate(timeout=30)
-    assert p1.returncode == 0, e1
-    assert p2.returncode == 0, e2
-    assert json.loads(o1)["worktree"] == json.loads(o2)["worktree"] == str(h.wt("1020"))
+    task = "1020"
+    branch = "agent/race"
+    base = h.base
+    processes = []
+    for agent in ("race-a", "race-b"):
+        h.agent_file(agent)
+        start_argv = [
+            "python3", str(SCRIPT), "start",
+            "--task", task, "--branch", branch,
+            "--base-ref", "refs/heads/main", "--base", base,
+            "--agent-id", agent, "--json",
+        ]
+        child = [
+            "python3", "-c",
+            "import subprocess,time,sys; subprocess.check_call(sys.argv[1:]); time.sleep(.5)",
+            *start_argv,
+        ]
+        processes.append(
+            subprocess.Popen(
+                [
+                    "python3", str(SCRIPT), "claim",
+                    "--task", task, "--branch", branch, "--agent-id", agent,
+                    "--", *child,
+                ],
+                cwd=h.primary, env=h.env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+        )
+
+    results = []
+    for process in processes:
+        stdout, stderr = process.communicate(timeout=30)
+        results.append((process.returncode, stdout, stderr))
+
+    assert sum(code == 0 for code, _, _ in results) == 1, results
+    loser = next(item for item in results if item[0] != 0)
+    assert "ERROR OWNERSHIP_CLAIMED:" in loser[2]
     records = git_out(h.primary, "worktree", "list", "--porcelain").split("\n\n")
-    assert sum(str(h.wt("1020")) in record for record in records) == 1
+    assert sum(str(h.wt(task)) in record for record in records) == 1

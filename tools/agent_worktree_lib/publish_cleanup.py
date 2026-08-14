@@ -11,11 +11,24 @@ from .operations import (
 )
 from .state import TaskLock, atomic_write_json, clear_agent_reference, load_task_state, state_path
 from .operations import owner_agent_id
+from .ownership import require_active_claim
+
+def _claimed_state(task_gid: str) -> dict[str, Any]:
+    state = load_task_state(task_gid)
+    claimed_agent = require_active_claim(task_gid, str(state["branch"]), owner_agent_id(state))["agent_id"]
+    if owner_agent_id(state) is None:
+        # A legacy ownerless active state may be explicitly claimed only through
+        # dispatch takeover/resume; writer-only operations must not silently
+        # assign provenance while bypassing that reconciliation boundary.
+        fail("OWNER_MISMATCH", f"task record has no concrete owner; claimed agent {claimed_agent!r} must resume --takeover first")
+    return state
+
 
 def command_publish(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]:
     task_gid = require_task_gid(args.task)
+    _claimed_state(task_gid)
     with TaskLock(task_gid):
-        state = load_task_state(task_gid)
+        state = _claimed_state(task_gid)
         repo = resolve_repository_from_state(runner, state)
         identity = verify_owned_worktree(runner, repo, state)
         relation, remote_head = remote_relation(runner, repo, state["branch"], identity.head)
@@ -45,8 +58,9 @@ def command_publish(args: argparse.Namespace, runner: GitRunner) -> dict[str, An
 
 def command_verify_handoff(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]:
     task_gid = require_task_gid(args.task)
+    _claimed_state(task_gid)
     with TaskLock(task_gid):
-        state = load_task_state(task_gid)
+        state = _claimed_state(task_gid)
         repo = resolve_repository_from_state(runner, state)
         identity = verify_owned_worktree(runner, repo, state)
         relation, remote_head, target_head, moved = remote_and_target_observation(runner, repo, state, identity.head)
@@ -72,7 +86,7 @@ def command_verify_handoff(args: argparse.Namespace, runner: GitRunner) -> dict[
         return payload
 
 
-def remote_contains_head(runner: GitRunner, repo: Repository, remote_head: str | None, local_head: str) -> bool:
+def remote_contains_head(runner: GitRunner, repo, remote_head: str | None, local_head: str) -> bool:
     if remote_head is None:
         return False
     if remote_head == local_head:
@@ -100,8 +114,9 @@ def command_cleanup(args: argparse.Namespace, runner: GitRunner) -> dict[str, An
     task_gid = require_task_gid(args.task)
     if args.disposition not in DISPOSITIONS:
         fail("INVALID_DISPOSITION", "cleanup disposition must be merged|closed|abandoned|superseded")
+    _claimed_state(task_gid)
     with TaskLock(task_gid):
-        state = load_task_state(task_gid)
+        state = _claimed_state(task_gid)
         repo = resolve_repository_from_state(runner, state)
         identity = verify_owned_worktree(runner, repo, state)
         if identity.dirty:
@@ -174,7 +189,7 @@ def command_cleanup(args: argparse.Namespace, runner: GitRunner) -> dict[str, An
 
 def command_exec(args: argparse.Namespace, runner: GitRunner) -> "NoReturn":
     task_gid = require_task_gid(args.task)
-    state = load_task_state(task_gid)
+    state = _claimed_state(task_gid)
     repo = resolve_repository_from_state(runner, state)
     identity = verify_owned_worktree(runner, repo, state)
     command = list(args.argv)
