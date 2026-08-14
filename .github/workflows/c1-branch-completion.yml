@@ -1,4 +1,4 @@
-name: C1 branch completion
+name: C1 exact rebuild and publish
 
 on:
   push:
@@ -7,89 +7,61 @@ on:
 
 permissions:
   contents: write
-  issues: read
 
 jobs:
-  complete:
+  publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 3
-      - name: Apply V3 payload with exact-tree acceptance
+          fetch-depth: 5
+      - name: Rebuild exact C1 candidate and publish
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
-          expected_partial_head=1d30055554487b025ae527f6b8fe3a154858edb3
-          expected_source_tree=e0f563f9e497fb42ba8116c75ccbcfe86a56a6ba
-          expected_target_tree=d3c29dbad62c13f35de7a185e3b26e4ee769e304
-          partial=$(git rev-parse HEAD~2)
-          test "$partial" = "$expected_partial_head"
-          source_tree=$(git show -s --format=%T "$partial")
-          test "$source_tree" = "$expected_source_tree"
+          expected_parent=a97b6b236eee3ec115bb434209f40331544415d5
+          base=9f43db73f9ccfbdcb06e284cf7e7bc5858482b67
+          target_tree=8bb2e0e59f17087a3b55b007089ae83a064f0ed7
+          script_blob=b08ce8eacdbbd6311b2d08be554728849930285a
+          test "$(git rev-parse HEAD^)" = "$expected_parent"
+          git cat-file -e "$base^{commit}"
 
-          rm -f .github/workflows/c1-branch-completion.yml
+          git rm -r -q .
+          git checkout "$base" -- .
 
           python3 - <<'PY'
-          import base64, gzip, hashlib, json, os, pathlib, re, urllib.request
-
-          repo = os.environ['GITHUB_REPOSITORY']
-          token = os.environ['GH_TOKEN']
-          req = urllib.request.Request(
-              f'https://api.github.com/repos/{repo}/issues/81/comments?per_page=100',
-              headers={
-                  'Authorization': f'Bearer {token}',
-                  'Accept': 'application/vnd.github+json',
-                  'X-GitHub-Api-Version': '2022-11-28',
-              },
-          )
-          with urllib.request.urlopen(req) as response:
-              comments = json.load(response)
-
-          pattern = re.compile(
-              r'^C1 residual payload V3 — PART (\d+)/12\s*\n\n```text\n([A-Za-z0-9+/=\n]+)\n```',
-              re.MULTILINE,
-          )
-          parts = {}
-          for comment in comments:
-              match = pattern.search(comment.get('body') or '')
-              if match:
-                  number = int(match.group(1))
-                  payload = ''.join(match.group(2).split())
-                  if number in parts and parts[number] != payload:
-                      raise SystemExit(f'conflicting V3 part {number}')
-                  parts[number] = payload
-
-          expected = set(range(1, 13))
-          if set(parts) != expected:
-              raise SystemExit(f'missing/unexpected V3 parts: have {sorted(parts)}')
-
-          for number in range(1, 13):
-              print(f'V3 part {number} length={len(parts[number])} sha256={hashlib.sha256(parts[number].encode()).hexdigest()}')
-
-          encoded = ''.join(parts[i] for i in range(1, 13))
-          print(f'V3 concatenated base64 length={len(encoded)} sha256={hashlib.sha256(encoded.encode()).hexdigest()}')
-          compressed = base64.b64decode(encoded, validate=True)
-          print(f'V3 gzip bytes={len(compressed)} sha256={hashlib.sha256(compressed).hexdigest()}')
-          raw = gzip.decompress(compressed)
-          print(f'V3 raw patch bytes={len(raw)} sha256={hashlib.sha256(raw).hexdigest()}')
-          pathlib.Path('/tmp/c1-v3.patch').write_bytes(raw)
+          import base64, gzip, hashlib, json, os, pathlib, urllib.request
+          repo=os.environ['GITHUB_REPOSITORY']; token=os.environ['GH_TOKEN']
+          sha='b08ce8eacdbbd6311b2d08be554728849930285a'
+          req=urllib.request.Request(f'https://api.github.com/repos/{repo}/git/blobs/{sha}',headers={'Authorization':f'Bearer {token}','Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'})
+          with urllib.request.urlopen(req) as r: obj=json.load(r)
+          gz=base64.b64decode(''.join(obj['content'].split()),validate=True)
+          assert hashlib.sha256(gz).hexdigest()=='d2ee42d0a1ced0cd371b14f8c7a3306b0d912abf9fdd04dd25afc773845c1575'
+          raw=gzip.decompress(gz)
+          assert hashlib.sha256(raw).hexdigest()=='8424d06600484695366b411a4a3aaef7ef58c671fb95515b49f7a4cb40f40080'
+          pathlib.Path('/tmp/rebuild_c1.py').write_bytes(raw)
           PY
 
-          git apply --binary /tmp/c1-v3.patch
-          git add -A
-          target_tree=$(git write-tree)
-          echo "candidate tree=$target_tree"
-          test "$target_tree" = "$expected_target_tree"
-
-          python3 dish/scripts/chatgpt_project_kernels.py render --check
+          python3 /tmp/rebuild_c1.py
+          python3 dish/scripts/chatgpt_project_kernels.py render
           python3 dish/scripts/chatgpt_project_kernels.py check
+          python3 dish/scripts/chatgpt_project_kernels.py prepare-eval --output /tmp/c1-eval.json
+          python3 - <<'PY'
+          import json
+          p=json.load(open('/tmp/c1-eval.json'))
+          assert len(p['cases'])==73
+          assert len({c['role'] for c in p['cases']})==8
+          PY
+          git add -A
           git diff --cached --check
+          actual_tree=$(git write-tree)
+          echo "candidate tree=$actual_tree"
+          test "$actual_tree" = "$target_tree"
 
           git config user.name 'Dish Agent Implementation (ChatGPT)'
           git config user.email 'dish-agent@users.noreply.github.com'
-          git commit -m 'Complete consolidated role kernel governance'
-          test "$(git rev-parse HEAD^{tree})" = "$expected_target_tree"
+          git commit -m 'Add consolidated role kernel governance'
+          test "$(git rev-parse HEAD^{tree})" = "$target_tree"
           git push origin HEAD:agent/c1-role-kernel-governance
