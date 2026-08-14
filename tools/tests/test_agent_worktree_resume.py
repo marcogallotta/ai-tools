@@ -9,14 +9,14 @@ import pytest
 
 from agent_worktree_support import GIT, SCRIPT, Harness, assert_error, git, git_out, h, payload, run
 
-def test_resume_can_attach_agent_reference_after_state_write_and_takeover_is_explicit(h: Harness) -> None:
-    h.start()
+def test_resume_preserves_owner_and_takeover_is_explicit(h: Harness) -> None:
     a = h.agent_file("agent-a")
+    h.start(agent="agent-a")
     h.tool("resume", "--task", "1001", "--agent-id", "agent-a", "--json")
     assert h.state()["owner"]["agent_id"] == "agent-a"
     b = h.agent_file("agent-b")
     result = h.tool("resume", "--task", "1001", "--agent-id", "agent-b", "--json", check=False)
-    assert_error(result, "OWNER_MISMATCH")
+    assert_error(result, "OWNER_HANDOFF_REQUIRED")
     h.tool("resume", "--task", "1001", "--agent-id", "agent-b", "--takeover", "--json")
     assert h.state()["owner"]["agent_id"] == "agent-b"
     assert json.loads(a.read_text())["active_worktree"] is None

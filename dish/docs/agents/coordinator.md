@@ -168,6 +168,8 @@ A lifecycle dispatcher must be able to classify `LOCAL IMPLEMENTATION COMPLETION
 
 ## Branch/worktree and direct-commit policy
 
+Every repository-changing Implementation/fix dispatch uses the single canonical handoff contract at [`templates/implementation-handoff.md`](templates/implementation-handoff.md). Coordinator must supply its full assignment identity and must not dispatch from a same-task branch/PR match alone.
+
 Day-one rules for new work:
 
 - agent-created implementation branches use `agent/<short-task-slug>` unless an explicit handoff establishes another convention;
