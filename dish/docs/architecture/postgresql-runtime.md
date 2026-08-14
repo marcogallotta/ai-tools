@@ -23,14 +23,15 @@ Authority transfer is explicit and one-way for the activated generation. Importe
 ## Invariants
 
 - Request admission/outcome semantics preserve permanent request identity.
+- PostgreSQL-backed service promotion is schema-gated: for each explicit TEST or PROD target, the exact release/source commit and repository `ALEMBIC_HEAD` must be bound to durable migration evidence, and that target must be re-read at the exact expected head before its corresponding service is restarted/promoted. TEST evidence never proves PROD. Migration failure blocks promotion; startup validation remains fail closed and never performs DDL.
 - Validation-only failures are recorded through the target replay authority (`record_replay_validation_failure` / `record_validation_failure`) where applicable.
 - The first-request reservation and activation/admission controls prevent uncontrolled authority opening.
 - Projection origin/effect settlement remain separate from canonical command authority.
 - Reconciliation is evidence/repair machinery, not an alternate canonical writer.
 - Forward candidate-authority manifests use contract v3: they bind the exact approval-time reconciliation run and exclude all post-burn worker-readiness state. Historical v2 fingerprints keep their original stored semantics.
 - Supplemental terminal-history application and candidate validation serialize on the active generation. Primary-only v3 manifest fingerprints retain their original bytes; when supplemental terminal history exists, the v3 builder extension folds a deterministic digest of supplemental ImportRun/source/primary linkage and exact imported terminal operations, verification cycles, and leases into `import_completion_sha256`.
-- Post-burn projection-worker readiness is one immutable `projection_worker_readiness` report with validator-owned `claim`, `exact_write`, and `restart` probes, exact worker/artifact identity, exact fresh reconciliation identity, and a report SHA-256 revalidated at first admission.
-- PostgreSQL-backed service promotion is schema-gated: for each explicit TEST or PROD target, the exact release/source commit and repository `ALEMBIC_HEAD` must be bound to durable migration evidence, and that target must be re-read at the exact expected head before its corresponding service is restarted/promoted. TEST evidence never proves PROD. Migration failure blocks promotion; startup validation remains fail closed and never performs DDL.
+- Rollback burn disables external projection for the exact candidate generation. Post-burn runtime attestation binds the PostgreSQL service/route and disabled projection mode; projection-worker readiness and fresh Asana reconciliation are not first-admission authority. Historical readiness/reconciliation rows retain their original evidence semantics.
+- First-admission verification is PostgreSQL-native: exact canonical request hash/replay, immutable successful outcome hash, committed execution, governed audit linkage, and terminal invocation-audit obligation. Post-burn live commands create no external projection intent.
 
 ## Process and transaction boundaries
 
@@ -38,7 +39,7 @@ PostgreSQL uses SQLAlchemy sessions/transactions, row locks, revisions, claims, 
 
 ## Normal flow
 
-Admit request, execute canonical mutation, record outcome/audit/projection intent, project/observe separately, reconcile drift, and expose release/cutover evidence when preparing authority transfer.
+Before rollback burn, admit/test requests as allowed, execute canonical mutation, record outcome/audit/projection intent, project/observe separately, and reconcile drift for cutover evidence. After rollback burn, admitted live mutations record canonical outcome/audit state without an external projection intent; replay/audit authority and PostgreSQL recovery evidence carry the runtime contract.
 
 ## Failure, replay, recovery, and concurrency
 
