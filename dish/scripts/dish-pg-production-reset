@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """Reset, rebuild, and re-grant the production PostgreSQL dark-launch target.
 
-The command persists the original trusted pre-reset snapshot and a PostgreSQL
-resident reset guard before destructive work.  A later process may continue only
-with ``--resume`` and that retained snapshot; ordinary retries never resnapshot a
-partially reset database.
+This is the only reviewed in-repo path for the maintenance-window production
+wipe. It validates the existing prepare prerequisites first, durably records the
+original access snapshot, fences/terminates connections, recreates the same
+database under a PostgreSQL-resident incomplete-reset guard, runs
+``dish-pg-production-prepare``, and restores/verifies the original non-owner
+access before clearing that guard.
+
+An incomplete reset is never retried as a new reset. Use ``--resume`` with the
+same recovery record so the retained original snapshot remains the only access
+baseline for that reset lineage.
 
 It never changes capture mode, the kill switch, service enablement, or worker
-state.  It must be run only after Marco has explicitly authorized the specific
+state. It must be run only after Marco has explicitly authorized the specific
 production reset.
 """
 from __future__ import annotations
@@ -17,42 +23,28 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import uuid
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from dish_pg.production_reset import (  # noqa: E402
-    RECOVERY_STATE_ACCESS_RESTORED,
-    RECOVERY_STATE_COMPLETED,
-    RECOVERY_STATE_DATABASE_RECREATED,
-    RECOVERY_STATE_GUARD_INSTALLED,
-    RECOVERY_STATE_PREPARE_FAILED,
-    RECOVERY_STATE_SNAPSHOT_CAPTURED,
     ProductionResetError,
-    ResetRecoveryRecord,
-    ResetRecoveryStore,
+    capture_reset_target_identity,
     clear_reset_guard,
-    cluster_system_identifier,
-    inspect_reset_guard,
-    install_reset_guard,
+    create_recovery_record,
+    load_recovery_record,
+    new_recovery_record,
+    read_reset_guard,
     recreate_database,
     redacted_database_url,
     restore_database_access,
     snapshot_database_state,
+    transition_recovery_record,
     validate_cli_target,
+    validate_recovery_record_target,
     verify_database_access,
 )
-
-DEFAULT_RECOVERY_FILE = Path(
-    "~/.local/state/dish/prod/postgresql-production-reset-recovery.json"
-).expanduser()
-_DESTRUCTIVE_STATES = {
-    RECOVERY_STATE_GUARD_INSTALLED,
-    RECOVERY_STATE_DATABASE_RECREATED,
-    RECOVERY_STATE_PREPARE_FAILED,
-}
 
 
 def log(message: str) -> None:
@@ -102,253 +94,82 @@ def _run_prepare(*, preflight_only: bool) -> None:
         )
 
 
-def _validate_record_identity(
-    record: ResetRecoveryRecord,
+def _path_exists(path: Path) -> bool:
+    return os.path.lexists(path.expanduser())
+
+
+def _load_lineage_for_invocation(
     *,
-    expected_database_name: str,
-    database_url: str,
-) -> None:
-    if record.target_database != expected_database_name:
-        raise ProductionResetError(
-            "recovery record target does not match DISH_PG_EXPECTED_DATABASE_NAME"
-        )
-    current_cluster = cluster_system_identifier(database_url)
-    if current_cluster != record.cluster_system_identifier:
-        raise ProductionResetError(
-            "recovery record PostgreSQL cluster identity does not match the current server"
-        )
-    state = inspect_reset_guard(database_url, expected_database_name)
-    if state.exists and state.owner != record.owner:
-        raise ProductionResetError(
-            "recovery record owner does not match the current target database owner"
-        )
-
-
-def _finalize_access(
-    *,
-    database_url: str,
-    store: ResetRecoveryStore,
-    record: ResetRecoveryRecord,
-) -> ResetRecoveryRecord:
-    """Complete access restoration with crash-safe state transitions."""
-    restore_database_access(database_url, record.snapshot)
-    record = store.update_state(record, RECOVERY_STATE_ACCESS_RESTORED)
-    clear_reset_guard(
-        database_url,
-        record.target_database,
-        record.reset_id,
-        expected_owner=record.owner,
-    )
-    record = store.update_state(record, RECOVERY_STATE_COMPLETED)
-    return record
-
-
-def _resume_finalization(
-    *,
-    database_url: str,
-    store: ResetRecoveryStore,
-    record: ResetRecoveryRecord,
-) -> ResetRecoveryRecord:
-    state = inspect_reset_guard(database_url, record.target_database)
-    if not state.exists or state.allow_connections is not True:
-        raise ProductionResetError(
-            "cannot finalize recovered reset: target is missing or still connection-fenced"
-        )
-    if state.reset_id not in {None, record.reset_id}:
-        raise ProductionResetError(
-            f"production reset guard mismatch: database={state.reset_id}, recovery={record.reset_id}"
-        )
-    # This verification is deliberately read-only.  It proves the retained original
-    # authority before either clearing a still-present guard or accepting the
-    # clear-before-record-update crash boundary.
-    verify_database_access(database_url, record.snapshot)
-    if state.reset_id == record.reset_id:
-        clear_reset_guard(
-            database_url,
-            record.target_database,
-            record.reset_id,
-            expected_owner=record.owner,
-        )
-    return store.update_state(record, RECOVERY_STATE_COMPLETED)
-
-
-def _ordinary_reset(
-    *,
-    database_url: str,
-    expected_database_name: str,
-    store: ResetRecoveryStore,
-) -> None:
-    # The local artifact is checked before a target snapshot.  Even a completed
-    # record is never silently recycled into a new lineage.
-    if store.exists():
-        existing = store.load()
-        raise ProductionResetError(
-            f"recovery record already exists in state {existing.state!r}; "
-            "ordinary retry is forbidden. Resume that lineage or archive the completed "
-            "record and choose a fresh recovery path for a separately authorized reset"
-        )
-
-    guard = inspect_reset_guard(database_url, expected_database_name)
-    if not guard.exists:
-        raise ProductionResetError(
-            f"target database {expected_database_name!r} does not exist; no trusted recovery lineage is available"
-        )
-    if guard.reset_id is not None:
-        raise ProductionResetError(
-            "target carries an incomplete production reset guard but the recovery artifact is missing; fail closed"
-        )
-    if guard.allow_connections is not True:
-        raise ProductionResetError(
-            "target has ALLOW_CONNECTIONS=false without a trusted recovery artifact; fail closed"
-        )
-
-    log("validating the complete prepare environment before destructive work")
-    _run_prepare(preflight_only=True)
-    log("snapshotting original database identity, grants, default privileges, and settings")
-    snapshot = snapshot_database_state(database_url, expected_database_name)
-    reset_id = str(uuid.uuid4())
-    record = ResetRecoveryRecord(
-        reset_id=reset_id,
-        target_database=expected_database_name,
-        owner=snapshot.database.owner,
-        cluster_system_identifier=cluster_system_identifier(database_url),
-        state=RECOVERY_STATE_SNAPSHOT_CAPTURED,
-        snapshot=snapshot,
-    )
-    store.create(record)
-    log(f"durable reset recovery lineage created at {store.path}")
-
-    install_reset_guard(
-        database_url,
-        expected_database_name,
-        reset_id,
-        expected_owner=record.owner,
-    )
-    record = store.update_state(record, RECOVERY_STATE_GUARD_INSTALLED)
-
-    recreate_database(database_url, snapshot, reset_id=reset_id, log=log)
-    record = store.update_state(record, RECOVERY_STATE_DATABASE_RECREATED)
-
-    log("running the reviewed production prepare sequence against the fresh database")
-    try:
-        _run_prepare(preflight_only=False)
-    except ProductionResetError as exc:
-        record = store.update_state(record, RECOVERY_STATE_PREPARE_FAILED)
-        raise ProductionResetError(
-            f"{exc}; retained original snapshot and reset guard remain authoritative; "
-            f"retry only with --resume --recovery-file {store.path}"
-        ) from exc
-
-    log("restoring and verifying original pre-reset non-owner access atomically")
-    _finalize_access(database_url=database_url, store=store, record=record)
-
-
-def _resume_reset(
-    *,
-    database_url: str,
-    expected_database_name: str,
-    store: ResetRecoveryStore,
-) -> None:
-    if not store.exists():
-        raise ProductionResetError(
-            f"--resume requires the retained original recovery record at {store.path}"
-        )
-    record = store.load()
-    _validate_record_identity(
-        record,
-        expected_database_name=expected_database_name,
-        database_url=database_url,
-    )
-
-    if record.state == RECOVERY_STATE_COMPLETED:
-        state = inspect_reset_guard(database_url, expected_database_name)
-        if state.reset_id is not None:
-            raise ProductionResetError(
-                "completed recovery record conflicts with a still-present reset guard"
-            )
-        verify_database_access(database_url, record.snapshot)
-        log("retained reset lineage is already completed; no mutation performed")
-        return
-
-    if record.state == RECOVERY_STATE_ACCESS_RESTORED:
-        _resume_finalization(database_url=database_url, store=store, record=record)
-        log("completed reset finalization from retained original snapshot")
-        return
-
-    guard = inspect_reset_guard(database_url, expected_database_name)
-    if guard.reset_id not in {None, record.reset_id}:
-        raise ProductionResetError(
-            f"production reset guard mismatch: database={guard.reset_id}, recovery={record.reset_id}"
-        )
-
-    if record.state == RECOVERY_STATE_SNAPSHOT_CAPTURED:
-        # Only two states prove no destructive mutation has begun: the original
-        # live target with no guard, or that same target with the matching guard
-        # after a crash before the local state transition was persisted.
-        if not guard.exists:
-            raise ProductionResetError(
-                "recovery record is only snapshot_captured but target is missing; destructive lineage is not durably established"
-            )
-        if guard.reset_id is None:
-            if guard.allow_connections is not True:
+    recovery_path: Path,
+    guard_reset_id: str | None,
+    resume: bool,
+):
+    exists = _path_exists(recovery_path)
+    if resume:
+        if not exists:
+            if guard_reset_id is not None:
                 raise ProductionResetError(
-                    "recovery record is only snapshot_captured but target is fenced without a guard; refusing to infer destructive lineage"
+                    "active production-reset guard exists but the original recovery "
+                    f"record is missing: {recovery_path}"
                 )
-            install_reset_guard(
-                database_url,
-                expected_database_name,
-                record.reset_id,
-                expected_owner=record.owner,
-            )
-        record = store.update_state(record, RECOVERY_STATE_GUARD_INSTALLED)
-        guard = inspect_reset_guard(database_url, expected_database_name)
-
-    if record.state not in _DESTRUCTIVE_STATES:
-        raise ProductionResetError(f"unsupported incomplete recovery state {record.state!r}")
-
-    # Resume still validates the complete prepare environment before further
-    # destructive work, but it never obtains a new target snapshot.
-    log("validating prepare environment before explicit resume")
-    _run_prepare(preflight_only=True)
-
-    allow_unguarded_fenced = False
-    guard = inspect_reset_guard(database_url, expected_database_name)
-    if guard.reset_id not in {None, record.reset_id}:
-        raise ProductionResetError(
-            f"production reset guard mismatch: database={guard.reset_id}, recovery={record.reset_id}"
-        )
-    if guard.exists and guard.reset_id is None:
-        if guard.allow_connections is not False:
             raise ProductionResetError(
-                "incomplete reset target lost its guard while connections are allowed; fail closed"
+                f"--resume requires the original recovery record: {recovery_path}"
             )
-        # This is only legal because the local record already proves destructive
-        # reset work had crossed the guard-installed boundary.
-        allow_unguarded_fenced = True
+        record = load_recovery_record(recovery_path)
+        if record.state == "completed":
+            raise ProductionResetError(
+                "production-reset recovery record is already completed and cannot be reused"
+            )
+        if guard_reset_id is not None and guard_reset_id != record.reset_id:
+            raise ProductionResetError(
+                "production-reset guard/reset-id mismatch; refusing recovery"
+            )
+        return record
 
-    recreate_database(
-        database_url,
-        record.snapshot,
-        reset_id=record.reset_id,
-        resume=True,
-        allow_unguarded_fenced=allow_unguarded_fenced,
-        log=log,
-    )
-    if record.state != RECOVERY_STATE_DATABASE_RECREATED:
-        record = store.update_state(record, RECOVERY_STATE_DATABASE_RECREATED)
-
-    log("rerunning production prepare from the beginning using the retained original snapshot lineage")
-    try:
-        _run_prepare(preflight_only=False)
-    except ProductionResetError as exc:
-        if record.state != RECOVERY_STATE_PREPARE_FAILED:
-            record = store.update_state(record, RECOVERY_STATE_PREPARE_FAILED)
+    if exists:
+        record = load_recovery_record(recovery_path)
+        if record.state == "completed":
+            raise ProductionResetError(
+                "completed production-reset recovery record already exists and will not be reused; "
+                "choose a new recovery-record path for a separately authorized reset"
+            )
         raise ProductionResetError(
-            f"{exc}; recovery remains incomplete and the original retained snapshot remains authoritative"
-        ) from exc
+            "unresolved production-reset recovery record exists; ordinary retry is forbidden; "
+            "use --resume with this same recovery record"
+        )
+    if guard_reset_id is not None:
+        raise ProductionResetError(
+            "active production-reset guard exists but the original recovery artifact is missing; "
+            "ordinary reset cannot establish a new baseline"
+        )
+    return None
 
-    log("restoring and verifying original pre-reset access")
-    _finalize_access(database_url=database_url, store=store, record=record)
+
+def _finalize_access_restored(
+    *,
+    database_url: str,
+    expected_database_name: str,
+    recovery_path: Path,
+    record,
+) -> None:
+    log("verifying retained original access before finalizing recovered reset")
+    verify_database_access(database_url, record.snapshot)
+    guard_reset_id = read_reset_guard(database_url, expected_database_name)
+    if guard_reset_id is None:
+        log("reset guard is already clear; recovering final record finalization")
+    elif guard_reset_id == record.reset_id:
+        log("clearing verified production-reset guard")
+        clear_reset_guard(database_url, expected_database_name, record.reset_id)
+    else:
+        raise ProductionResetError(
+            "production-reset guard/reset-id mismatch; refusing finalization"
+        )
+    transition_recovery_record(
+        recovery_path,
+        expected_reset_id=record.reset_id,
+        expected_state="access_restored",
+        new_state="completed",
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -359,45 +180,153 @@ def main(argv: list[str] | None = None) -> int:
         help="must exactly match DISH_PG_EXPECTED_DATABASE_NAME",
     )
     parser.add_argument(
-        "--recovery-file",
+        "--recovery-record",
+        required=True,
         type=Path,
-        default=DEFAULT_RECOVERY_FILE,
-        help=f"durable reset lineage record (default: {DEFAULT_RECOVERY_FILE})",
+        help="durable JSON recovery record; must not already exist for a new reset",
     )
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="resume only the retained reset lineage from --recovery-file",
+        help="resume only the incomplete reset lineage in --recovery-record",
     )
     args = parser.parse_args(argv)
+    recovery_path = args.recovery_record.expanduser()
 
     try:
-        database_url, expected_database_name, capture_environment = _required_environment()
+        database_url, expected_database_name, capture_environment = (
+            _required_environment()
+        )
         validate_cli_target(
             database_url=database_url,
             expected_database_name=expected_database_name,
             confirmed_database_name=args.confirm_database_name,
             capture_environment=capture_environment,
         )
+
         log(
             "target confirmed: "
             + redacted_database_url(database_url)
             + f" (database={expected_database_name})"
         )
-        store = ResetRecoveryStore(args.recovery_file)
-        if args.resume:
-            _resume_reset(
-                database_url=database_url,
-                expected_database_name=expected_database_name,
-                store=store,
+        guard_reset_id = read_reset_guard(database_url, expected_database_name)
+        record = _load_lineage_for_invocation(
+            recovery_path=recovery_path,
+            guard_reset_id=guard_reset_id,
+            resume=args.resume,
+        )
+
+        if record is not None:
+            validate_recovery_record_target(
+                database_url, expected_database_name, record
+            )
+            log(
+                f"resuming reset_id={record.reset_id} from durable state={record.state}; "
+                "live ACL state will not be snapshotted"
+            )
+            if record.state == "access_restored":
+                _finalize_access_restored(
+                    database_url=database_url,
+                    expected_database_name=expected_database_name,
+                    recovery_path=recovery_path,
+                    record=record,
+                )
+                log("reset recovery finalization complete")
+                log("no capture-mode, kill-switch, service, or worker state was changed")
+                return 0
+
+            log("validating the complete prepare environment before resumed destructive work")
+            _run_prepare(preflight_only=True)
+            if record.state == "snapshot_captured":
+                record = transition_recovery_record(
+                    recovery_path,
+                    expected_reset_id=record.reset_id,
+                    expected_state="snapshot_captured",
+                    new_state="reset_started",
+                )
+            elif record.state != "reset_started":
+                raise ProductionResetError(
+                    f"unsupported incomplete production-reset state {record.state!r}"
+                )
+            snapshot = record.snapshot
+            recreate_database(
+                database_url,
+                snapshot,
+                reset_id=record.reset_id,
+                resume=True,
+                log=log,
             )
         else:
-            _ordinary_reset(
-                database_url=database_url,
-                expected_database_name=expected_database_name,
-                store=store,
+            log("validating the complete prepare environment before destructive work")
+            _run_prepare(preflight_only=True)
+
+            log("snapshotting database identity, grants, default privileges, and settings")
+            snapshot = snapshot_database_state(database_url, expected_database_name)
+            target_identity = capture_reset_target_identity(database_url, snapshot)
+            record = new_recovery_record(target=target_identity, snapshot=snapshot)
+            create_recovery_record(recovery_path, record)
+            log(
+                f"durable recovery lineage captured: reset_id={record.reset_id} "
+                f"record={recovery_path}"
             )
-        log("reset + prepare + re-grant sequence complete")
+            non_owner_roles = sorted(
+                {
+                    grant.grantee
+                    for grant in snapshot.object_grants
+                    if grant.grantee != "PUBLIC"
+                }
+            )
+            log(
+                f"snapshot complete: {len(snapshot.object_grants)} access grant(s), "
+                f"{len(snapshot.default_privileges)} default-privilege definition(s), "
+                f"{len(snapshot.settings)} database-scoped setting(s); "
+                f"non-owner role(s)={','.join(non_owner_roles) if non_owner_roles else 'none'}"
+            )
+            record = transition_recovery_record(
+                recovery_path,
+                expected_reset_id=record.reset_id,
+                expected_state="snapshot_captured",
+                new_state="reset_started",
+            )
+            recreate_database(
+                database_url,
+                snapshot,
+                reset_id=record.reset_id,
+                resume=False,
+                log=log,
+            )
+
+        log("running the reviewed production prepare sequence against the fresh database")
+        try:
+            _run_prepare(preflight_only=False)
+        except ProductionResetError as exc:
+            raise ProductionResetError(
+                f"{exc}; reset_id={record.reset_id} remains incomplete with its original "
+                f"snapshot retained at {recovery_path}; non-owner database access remains "
+                "fenced; retry only with --resume and this recovery record"
+            ) from exc
+
+        log("restoring and verifying retained original non-owner access atomically")
+        restore_database_access(
+            database_url,
+            record.snapshot,
+            reset_id=record.reset_id,
+        )
+        record = transition_recovery_record(
+            recovery_path,
+            expected_reset_id=record.reset_id,
+            expected_state="reset_started",
+            new_state="access_restored",
+        )
+        log("original access verified; clearing production-reset guard")
+        clear_reset_guard(database_url, expected_database_name, record.reset_id)
+        transition_recovery_record(
+            recovery_path,
+            expected_reset_id=record.reset_id,
+            expected_state="access_restored",
+            new_state="completed",
+        )
+        log("reset + prepare + re-grant sequence complete; recovery record retained as completed")
         log("no capture-mode, kill-switch, service, or worker state was changed")
         return 0
     except ProductionResetError as exc:

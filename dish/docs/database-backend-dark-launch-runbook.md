@@ -156,27 +156,55 @@ never touches capture mode, the kill switch, or the worker.
 
 The maintenance-window wipe is **only** `scripts/dish-pg-production-reset`; do not run manual
 `DROP DATABASE`, `CREATE DATABASE`, `pg_terminate_backend`, inline Python, or heredoc SQL against
-production. The reset requires Marco's explicit authorization for that specific wipe and an exact
-human confirmation of `DISH_PG_EXPECTED_DATABASE_NAME`:
+production. The reset requires Marco's explicit authorization for that specific wipe, an exact
+human confirmation of `DISH_PG_EXPECTED_DATABASE_NAME`, and a **new, non-existing** recovery-record
+path for this one reset lineage. Keep the completed record as durable evidence; never reuse or
+overwrite it for another reset.
+
+```sh
+RESET_RECOVERY=/home/marco/.local/state/dish/prod/dark-launch-evidence/production-reset-<maintenance-id>.json
+.venv/bin/python scripts/dish-pg-production-reset \
+  --confirm-database-name "$DISH_PG_EXPECTED_DATABASE_NAME" \
+  --recovery-record "$RESET_RECOVERY"
+```
+
+Before destructive work, the command checks for any PostgreSQL-resident incomplete-reset guard and
+for an existing recovery record **before it snapshots live ACL state**. A normal invocation refuses
+an active guard, any unresolved record, and a completed record at the same path. The initial run
+then validates prepare preflight and durably records a versioned/checksummed original snapshot plus
+reset UUID, database/owner identity, and PostgreSQL cluster identity. The record is written with
+restrictive permissions and is the only trusted access baseline for that reset lineage; it contains
+no DSN or password.
+
+Recreation is born with `ALLOW_CONNECTIONS=false`. The command installs the UUID-bound reserved
+PostgreSQL database guard and revokes the fresh database's non-owner/default PUBLIC access before it
+allows the owner connection needed by `dish-pg-production-prepare`. This closes the CREATE-to-guard
+crash window: if the process dies after CREATE but before guard installation, the recreated database
+remains connection-fenced rather than becoming an unguarded accessible target.
+
+If prepare or access restoration fails, do **not** invoke the reset as a new operation and do not
+repair/adopt the current ACL state. Resume only the retained original lineage with the same record:
 
 ```sh
 .venv/bin/python scripts/dish-pg-production-reset \
-  --confirm-database-name "$DISH_PG_EXPECTED_DATABASE_NAME"
+  --confirm-database-name "$DISH_PG_EXPECTED_DATABASE_NAME" \
+  --recovery-record "$RESET_RECOVERY" \
+  --resume
 ```
 
-Before dropping anything, the reset runs the prepare preflight, verifies that the target URL,
-expected database, connected owner, and PostgreSQL maintenance identity agree, snapshots the
-existing database/schema/table/sequence/column grants, default privileges, and database-scoped
-settings, and refuses PostgreSQL subscriptions, prepared transactions, or logical replication
-slots. It then blocks new connections, reports and terminates active sessions for that exact
-database, rechecks that no blockers remain, and recreates the database with its existing owner,
-encoding, locale provider/settings, tablespace, and connection limit.
+Resume verifies the record checksum/version, database/owner/cluster identity, and any active guard
+UUID before mutation. For an incomplete rebuild it re-recreates the database and runs prepare from
+the beginning using the retained **original** snapshot; it never snapshots the live post-failure ACL
+as a replacement baseline. A guard/reset-ID mismatch fails before target mutation, and an active
+guard with the original recovery artifact missing fails closed.
 
-After recreation, non-owner access remains fenced while `dish-pg-production-prepare` runs. Only
-after that sequence succeeds does the reset restore and verify the snapshotted access in one
-transaction. This includes `dish_frontend_observer` and any other non-owner roles represented by
-the preserved grants/settings. If prepare or grant verification fails, the command fails closed;
-do not repair production with ad hoc SQL -- fix/review the script or the stated blocker first.
+After prepare succeeds, the command restores and verifies the original database/schema/table/
+sequence/column grants, default privileges, and database-scoped settings while the reset guard is
+still active. It then durably records `access_restored`, clears the matching PostgreSQL guard, and
+finally records `completed`. If the process dies in either finalization window, `--resume` verifies
+the restored original authority and completes only the missing guard-clear/record-finalization step;
+it does not establish a new baseline. This includes `dish_frontend_observer` and every other
+non-owner role represented by the retained snapshot. There is no force-adopt-current-baseline path.
 
 ### Backfill one task after `allow_open_operations`
 

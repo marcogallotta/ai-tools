@@ -12,9 +12,15 @@ paths without ever targeting production.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
+import hashlib
+import json
+import os
+from pathlib import Path
 import re
+import tempfile
 import time
+import uuid
 from collections.abc import Callable, Iterable
 
 from sqlalchemy import create_engine, text
@@ -82,6 +88,24 @@ class ResetSnapshot:
     default_privileges: tuple[DefaultPrivilegeSet, ...]
 
 
+@dataclass(frozen=True)
+class ResetTargetIdentity:
+    database_name: str
+    owner: str
+    cluster_system_identifier: str
+
+
+@dataclass(frozen=True)
+class ResetRecoveryRecord:
+    format: str
+    version: int
+    reset_id: str
+    target: ResetTargetIdentity
+    snapshot: ResetSnapshot
+    state: str
+    checksum: str
+
+
 _PROVIDER_NAMES = {
     "b": "builtin",
     "c": "libc",
@@ -119,6 +143,21 @@ _ALLOWED_DEFAULT_PRIVILEGES = {
 }
 _SETTING_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_.]*$")
 _SYSTEM_DATABASES = {"postgres", "template0", "template1"}
+_RESET_RECOVERY_FORMAT = "dish-production-reset-recovery"
+_RESET_RECOVERY_VERSION = 1
+RESET_GUARD_SETTING = "dish.production_reset_incomplete"
+_RESET_RECOVERY_STATES = {
+    "snapshot_captured",
+    "reset_started",
+    "access_restored",
+    "completed",
+}
+_RESET_STATE_TRANSITIONS = {
+    "snapshot_captured": {"reset_started"},
+    "reset_started": {"access_restored"},
+    "access_restored": {"completed"},
+    "completed": set(),
+}
 
 
 def maintenance_database_url(database_url: str) -> str:
@@ -131,6 +170,336 @@ def maintenance_database_url(database_url: str) -> str:
 def redacted_database_url(database_url: str) -> str:
     """Return a log-safe SQLAlchemy URL that never includes the password."""
     return make_url(database_url).render_as_string(hide_password=True)
+
+
+def _canonical_json_bytes(value: object) -> bytes:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+
+
+def _validated_reset_id(value: str) -> str:
+    try:
+        parsed = uuid.UUID(value)
+    except (ValueError, AttributeError) as exc:
+        raise ProductionResetError(f"invalid production-reset id {value!r}") from exc
+    canonical = str(parsed)
+    if value != canonical:
+        raise ProductionResetError(
+            f"production-reset id must use canonical UUID form, got {value!r}"
+        )
+    return canonical
+
+
+def _snapshot_from_payload(value: object) -> ResetSnapshot:
+    if not isinstance(value, dict):
+        raise ProductionResetError("production-reset recovery snapshot is not an object")
+    expected = {"database", "object_grants", "settings", "default_privileges"}
+    if set(value) != expected:
+        raise ProductionResetError("production-reset recovery snapshot has unexpected fields")
+    try:
+        database_raw = value["database"]
+        grants_raw = value["object_grants"]
+        settings_raw = value["settings"]
+        defaults_raw = value["default_privileges"]
+        if not isinstance(database_raw, dict):
+            raise TypeError("database")
+        if not isinstance(grants_raw, list):
+            raise TypeError("object_grants")
+        if not isinstance(settings_raw, list):
+            raise TypeError("settings")
+        if not isinstance(defaults_raw, list):
+            raise TypeError("default_privileges")
+        database = DatabaseDefinition(**database_raw)
+        grants = tuple(ObjectGrant(**grant) for grant in grants_raw)
+        settings = tuple(DatabaseSetting(**setting) for setting in settings_raw)
+        default_privileges = tuple(
+            DefaultPrivilegeSet(
+                owner=default_set["owner"],
+                schema_name=default_set["schema_name"],
+                object_type=default_set["object_type"],
+                grants=tuple(DefaultGrant(**grant) for grant in default_set["grants"]),
+            )
+            for default_set in defaults_raw
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ProductionResetError(
+            "production-reset recovery snapshot is malformed"
+        ) from exc
+    snapshot = ResetSnapshot(
+        database=database,
+        object_grants=grants,
+        settings=settings,
+        default_privileges=default_privileges,
+    )
+    if any(setting.name == RESET_GUARD_SETTING for setting in snapshot.settings):
+        raise ProductionResetError(
+            "production-reset recovery snapshot contains the reserved reset guard setting"
+        )
+    return snapshot
+
+
+def _recovery_payload(
+    *,
+    reset_id: str,
+    target: ResetTargetIdentity,
+    snapshot: ResetSnapshot,
+    state: str,
+) -> dict[str, object]:
+    if state not in _RESET_RECOVERY_STATES:
+        raise ProductionResetError(f"invalid production-reset recovery state {state!r}")
+    return {
+        "format": _RESET_RECOVERY_FORMAT,
+        "version": _RESET_RECOVERY_VERSION,
+        "reset_id": _validated_reset_id(reset_id),
+        "target": asdict(target),
+        "snapshot": asdict(snapshot),
+        "state": state,
+    }
+
+
+def _record_from_values(
+    *,
+    reset_id: str,
+    target: ResetTargetIdentity,
+    snapshot: ResetSnapshot,
+    state: str,
+) -> ResetRecoveryRecord:
+    payload = _recovery_payload(
+        reset_id=reset_id,
+        target=target,
+        snapshot=snapshot,
+        state=state,
+    )
+    checksum = hashlib.sha256(_canonical_json_bytes(payload)).hexdigest()
+    return ResetRecoveryRecord(
+        format=_RESET_RECOVERY_FORMAT,
+        version=_RESET_RECOVERY_VERSION,
+        reset_id=reset_id,
+        target=target,
+        snapshot=snapshot,
+        state=state,
+        checksum=checksum,
+    )
+
+
+def new_recovery_record(
+    *,
+    target: ResetTargetIdentity,
+    snapshot: ResetSnapshot,
+    reset_id: str | None = None,
+) -> ResetRecoveryRecord:
+    return _record_from_values(
+        reset_id=reset_id or str(uuid.uuid4()),
+        target=target,
+        snapshot=snapshot,
+        state="snapshot_captured",
+    )
+
+
+def _record_document(record: ResetRecoveryRecord) -> dict[str, object]:
+    payload = _recovery_payload(
+        reset_id=record.reset_id,
+        target=record.target,
+        snapshot=record.snapshot,
+        state=record.state,
+    )
+    expected_checksum = hashlib.sha256(_canonical_json_bytes(payload)).hexdigest()
+    if record.checksum != expected_checksum:
+        raise ProductionResetError("production-reset recovery record checksum is inconsistent")
+    return {**payload, "checksum": expected_checksum}
+
+
+def _write_record_bytes(fd: int, document: dict[str, object]) -> None:
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "wb", closefd=True) as handle:
+        handle.write(_canonical_json_bytes(document))
+        handle.write(b"\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _fsync_directory(directory: Path) -> None:
+    directory_fd = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
+
+
+def create_recovery_record(path: Path, record: ResetRecoveryRecord) -> None:
+    destination = Path(os.path.abspath(path.expanduser()))
+    destination.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    document = _record_document(record)
+    fd, raw_temporary = tempfile.mkstemp(
+        prefix=f".{destination.name}.", dir=destination.parent
+    )
+    temporary = Path(raw_temporary)
+    try:
+        _write_record_bytes(fd, document)
+        try:
+            os.link(temporary, destination)
+        except FileExistsError as exc:
+            raise ProductionResetError(
+                f"production-reset recovery record already exists and will not be reused: {destination}"
+            ) from exc
+        _fsync_directory(destination.parent)
+    except OSError as exc:
+        raise ProductionResetError(
+            f"could not persist production-reset recovery record {destination}: {exc}"
+        ) from exc
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _replace_recovery_record(path: Path, record: ResetRecoveryRecord) -> None:
+    destination = Path(os.path.abspath(path.expanduser()))
+    document = _record_document(record)
+    fd, raw_temporary = tempfile.mkstemp(
+        prefix=f".{destination.name}.", dir=destination.parent
+    )
+    temporary = Path(raw_temporary)
+    try:
+        _write_record_bytes(fd, document)
+        os.replace(temporary, destination)
+        _fsync_directory(destination.parent)
+    except OSError as exc:
+        raise ProductionResetError(
+            f"could not update production-reset recovery record {destination}: {exc}"
+        ) from exc
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def load_recovery_record(path: Path) -> ResetRecoveryRecord:
+    source = Path(os.path.abspath(path.expanduser()))
+    if source.is_symlink():
+        raise ProductionResetError(
+            f"production-reset recovery record must not be a symlink: {source}"
+        )
+    try:
+        stat_result = source.stat()
+    except FileNotFoundError as exc:
+        raise ProductionResetError(
+            f"production-reset recovery record is missing: {source}"
+        ) from exc
+    except OSError as exc:
+        raise ProductionResetError(
+            f"could not inspect production-reset recovery record {source}: {exc}"
+        ) from exc
+    if not source.is_file():
+        raise ProductionResetError(
+            f"production-reset recovery record must be a regular non-symlink file: {source}"
+        )
+    if stat_result.st_mode & 0o077:
+        raise ProductionResetError(
+            f"production-reset recovery record permissions must not grant group/other access: {source}"
+        )
+    try:
+        document = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ProductionResetError(
+            f"could not read production-reset recovery record {source}: {exc}"
+        ) from exc
+    if not isinstance(document, dict):
+        raise ProductionResetError("production-reset recovery record is not an object")
+    expected_fields = {
+        "format",
+        "version",
+        "reset_id",
+        "target",
+        "snapshot",
+        "state",
+        "checksum",
+    }
+    if set(document) != expected_fields:
+        raise ProductionResetError("production-reset recovery record has unexpected fields")
+    if document["format"] != _RESET_RECOVERY_FORMAT:
+        raise ProductionResetError("unsupported production-reset recovery record format")
+    if document["version"] != _RESET_RECOVERY_VERSION:
+        raise ProductionResetError(
+            f"unsupported production-reset recovery record version {document['version']!r}"
+        )
+    reset_id = _validated_reset_id(str(document["reset_id"]))
+    state = document["state"]
+    if not isinstance(state, str) or state not in _RESET_RECOVERY_STATES:
+        raise ProductionResetError("production-reset recovery record has invalid state")
+    target_raw = document["target"]
+    if not isinstance(target_raw, dict) or set(target_raw) != {
+        "database_name",
+        "owner",
+        "cluster_system_identifier",
+    }:
+        raise ProductionResetError("production-reset recovery target identity is malformed")
+    target = ResetTargetIdentity(
+        database_name=str(target_raw["database_name"]),
+        owner=str(target_raw["owner"]),
+        cluster_system_identifier=str(target_raw["cluster_system_identifier"]),
+    )
+    snapshot = _snapshot_from_payload(document["snapshot"])
+    payload = _recovery_payload(
+        reset_id=reset_id,
+        target=target,
+        snapshot=snapshot,
+        state=state,
+    )
+    checksum = document["checksum"]
+    if not isinstance(checksum, str) or not re.fullmatch(r"[0-9a-f]{64}", checksum):
+        raise ProductionResetError("production-reset recovery record checksum is malformed")
+    expected_checksum = hashlib.sha256(_canonical_json_bytes(payload)).hexdigest()
+    if checksum != expected_checksum:
+        raise ProductionResetError("production-reset recovery record checksum mismatch")
+    if target.database_name != snapshot.database.name or target.owner != snapshot.database.owner:
+        raise ProductionResetError(
+            "production-reset recovery target identity does not match its original snapshot"
+        )
+    return ResetRecoveryRecord(
+        format=_RESET_RECOVERY_FORMAT,
+        version=_RESET_RECOVERY_VERSION,
+        reset_id=reset_id,
+        target=target,
+        snapshot=snapshot,
+        state=state,
+        checksum=checksum,
+    )
+
+
+def transition_recovery_record(
+    path: Path,
+    *,
+    expected_reset_id: str,
+    expected_state: str,
+    new_state: str,
+) -> ResetRecoveryRecord:
+    record = load_recovery_record(path)
+    if record.reset_id != expected_reset_id:
+        raise ProductionResetError(
+            "production-reset recovery record reset_id changed during recovery"
+        )
+    if record.state != expected_state:
+        raise ProductionResetError(
+            "production-reset recovery record state changed unexpectedly: "
+            f"expected {expected_state!r}, found {record.state!r}"
+        )
+    if new_state not in _RESET_STATE_TRANSITIONS[record.state]:
+        raise ProductionResetError(
+            f"illegal production-reset recovery transition {record.state!r} -> {new_state!r}"
+        )
+    updated = _record_from_values(
+        reset_id=record.reset_id,
+        target=record.target,
+        snapshot=record.snapshot,
+        state=new_state,
+    )
+    _replace_recovery_record(path, updated)
+    verified = load_recovery_record(path)
+    if verified != updated:
+        raise ProductionResetError("production-reset recovery record write verification failed")
+    return verified
 
 
 def validate_cli_target(
@@ -230,6 +599,177 @@ def _load_database_definition(
         allow_connections=bool(row["datallowconn"]),
         is_template=bool(row["datistemplate"]),
     )
+
+
+def _database_exists(connection: Connection, database_name: str) -> bool:
+    return bool(
+        connection.execute(
+            text("SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = :database_name)"),
+            {"database_name": database_name},
+        ).scalar_one()
+    )
+
+
+def _maintenance_actor_identity(connection: Connection) -> tuple[str, bool]:
+    row = connection.execute(
+        text(
+            "SELECT current_user AS role_name, role.rolsuper AS is_superuser "
+            "FROM pg_roles AS role WHERE role.rolname = current_user"
+        )
+    ).mappings().one()
+    return str(row["role_name"]), bool(row["is_superuser"])
+
+
+def _cluster_system_identifier(connection: Connection) -> str:
+    return str(
+        connection.execute(
+            text("SELECT system_identifier::text FROM pg_control_system()")
+        ).scalar_one()
+    )
+
+
+def _load_reset_guard(connection: Connection, database_name: str) -> str | None:
+    rows = connection.execute(
+        text(
+            """
+            SELECT setting_role.rolname AS role_name, setting
+            FROM pg_db_role_setting AS role_setting
+            LEFT JOIN pg_roles AS setting_role ON setting_role.oid = role_setting.setrole
+            CROSS JOIN LATERAL unnest(role_setting.setconfig) AS setting
+            WHERE role_setting.setdatabase = (
+                SELECT oid FROM pg_database WHERE datname = :database_name
+            )
+            ORDER BY setting_role.rolname NULLS FIRST, setting
+            """
+        ),
+        {"database_name": database_name},
+    ).mappings()
+    values: list[str] = []
+    for row in rows:
+        raw = str(row["setting"])
+        name, separator, value = raw.partition("=")
+        if not separator or name != RESET_GUARD_SETTING:
+            continue
+        if row["role_name"] is not None:
+            raise ProductionResetError(
+                "reserved production-reset guard is contaminated by a role-scoped setting"
+            )
+        values.append(value)
+    if not values:
+        return None
+    if len(values) != 1:
+        raise ProductionResetError(
+            "reserved production-reset guard has multiple database-scoped values"
+        )
+    try:
+        return _validated_reset_id(values[0])
+    except ProductionResetError as exc:
+        raise ProductionResetError(
+            "reserved production-reset guard contains a non-canonical reset id"
+        ) from exc
+
+
+def read_reset_guard(database_url: str, expected_database_name: str) -> str | None:
+    engine = create_engine(maintenance_database_url(database_url))
+    try:
+        with engine.connect() as connection:
+            return _load_reset_guard(connection, expected_database_name)
+    finally:
+        engine.dispose()
+
+
+def capture_reset_target_identity(
+    database_url: str, snapshot: ResetSnapshot
+) -> ResetTargetIdentity:
+    engine = create_engine(maintenance_database_url(database_url))
+    try:
+        with engine.connect() as connection:
+            current = _load_database_definition(connection, snapshot.database.name)
+            if current != snapshot.database:
+                raise ProductionResetError(
+                    "database identity changed before reset recovery lineage was captured"
+                )
+            role_name, is_superuser = _maintenance_actor_identity(connection)
+            if role_name != snapshot.database.owner or not is_superuser:
+                raise ProductionResetError(
+                    "maintenance connection is not the verified superuser database owner"
+                )
+            if _load_reset_guard(connection, snapshot.database.name) is not None:
+                raise ProductionResetError(
+                    "reserved production-reset guard became active before recovery lineage capture"
+                )
+            return ResetTargetIdentity(
+                database_name=snapshot.database.name,
+                owner=snapshot.database.owner,
+                cluster_system_identifier=_cluster_system_identifier(connection),
+            )
+    finally:
+        engine.dispose()
+
+
+def validate_recovery_record_target(
+    database_url: str,
+    expected_database_name: str,
+    record: ResetRecoveryRecord,
+) -> None:
+    if expected_database_name != record.target.database_name:
+        raise ProductionResetError(
+            "production-reset recovery record targets a different database name"
+        )
+    engine = create_engine(maintenance_database_url(database_url))
+    try:
+        with engine.connect() as connection:
+            role_name, is_superuser = _maintenance_actor_identity(connection)
+            if role_name != record.target.owner or not is_superuser:
+                raise ProductionResetError(
+                    "maintenance connection does not match recovery-record owner/superuser identity"
+                )
+            cluster_id = _cluster_system_identifier(connection)
+            if cluster_id != record.target.cluster_system_identifier:
+                raise ProductionResetError(
+                    "production-reset recovery record cluster identity mismatch"
+                )
+            if _database_exists(connection, expected_database_name):
+                current = _load_database_definition(connection, expected_database_name)
+                if current.owner != record.target.owner:
+                    raise ProductionResetError(
+                        "production-reset recovery record database owner mismatch"
+                    )
+    finally:
+        engine.dispose()
+
+
+def clear_reset_guard(
+    database_url: str, expected_database_name: str, expected_reset_id: str
+) -> None:
+    expected_reset_id = _validated_reset_id(expected_reset_id)
+    engine = create_engine(maintenance_database_url(database_url))
+    try:
+        with engine.connect() as raw_connection:
+            connection = raw_connection.execution_options(isolation_level="AUTOCOMMIT")
+            if not _database_exists(connection, expected_database_name):
+                raise ProductionResetError(
+                    "cannot clear production-reset guard because target database is missing"
+                )
+            current = _load_database_definition(connection, expected_database_name)
+            role_name, is_superuser = _maintenance_actor_identity(connection)
+            if role_name != current.owner or not is_superuser:
+                raise ProductionResetError(
+                    "maintenance connection lost verified owner/superuser identity"
+                )
+            actual = _load_reset_guard(connection, expected_database_name)
+            if actual != expected_reset_id:
+                raise ProductionResetError(
+                    "production-reset guard/reset-id mismatch; refusing to clear guard"
+                )
+            database_sql = _quote_identifier(connection, expected_database_name)
+            connection.exec_driver_sql(
+                f"ALTER DATABASE {database_sql} RESET {RESET_GUARD_SETTING}"
+            )
+            if _load_reset_guard(connection, expected_database_name) is not None:
+                raise ProductionResetError("production-reset guard clear verification failed")
+    finally:
+        engine.dispose()
 
 
 def _validate_connected_identity(
@@ -386,7 +926,10 @@ def _load_object_grants(
 
 
 def _load_database_settings(
-    connection: Connection, database: DatabaseDefinition
+    connection: Connection,
+    database: DatabaseDefinition,
+    *,
+    allow_reset_guard: bool = False,
 ) -> tuple[DatabaseSetting, ...]:
     rows = connection.execute(
         text(
@@ -410,6 +953,12 @@ def _load_database_settings(
         if not separator or not _SETTING_NAME.fullmatch(name):
             raise ProductionResetError(
                 f"cannot safely restore database setting {raw!r}"
+            )
+        if name == RESET_GUARD_SETTING:
+            if allow_reset_guard:
+                continue
+            raise ProductionResetError(
+                "reserved production-reset guard setting already exists on the target"
             )
         settings.append(
             DatabaseSetting(
@@ -575,7 +1124,12 @@ def snapshot_database_state(
     )
 
 
-def _database_create_sql(connection: Connection, database: DatabaseDefinition) -> str:
+def _database_create_sql(
+    connection: Connection,
+    database: DatabaseDefinition,
+    *,
+    allow_connections: bool | None = None,
+) -> str:
     name = _quote_identifier(connection, database.name)
     owner = _quote_identifier(connection, database.owner)
     tablespace = _quote_identifier(connection, database.tablespace)
@@ -609,9 +1163,13 @@ def _database_create_sql(connection: Connection, database: DatabaseDefinition) -
         if not database.locale:
             raise ProductionResetError("builtin database is missing its catalog locale")
         parts.append(f"BUILTIN_LOCALE = {_quote_literal(database.locale)}")
+    effective_allow_connections = (
+        database.allow_connections if allow_connections is None else allow_connections
+    )
     parts.extend(
         [
             f"TABLESPACE = {tablespace}",
+            "ALLOW_CONNECTIONS = " + ("true" if effective_allow_connections else "false"),
             f"CONNECTION LIMIT = {database.connection_limit}",
         ]
     )
@@ -640,107 +1198,145 @@ def recreate_database(
     database_url: str,
     snapshot: ResetSnapshot,
     *,
+    reset_id: str,
+    resume: bool = False,
     log: Callable[[str], None] | None = None,
     wait_seconds: float = 5.0,
 ) -> None:
-    """Fence, terminate blockers, then drop/recreate the exact snapshotted database."""
+    """Fence and re-create the target while preserving one durable reset lineage."""
     emit = log or (lambda _message: None)
+    reset_id = _validated_reset_id(reset_id)
     database = snapshot.database
     maintenance_engine = create_engine(maintenance_database_url(database_url))
-    fenced = False
+    changed_allow_connections = False
     dropped = False
     try:
         with maintenance_engine.connect() as raw_connection:
             connection = raw_connection.execution_options(isolation_level="AUTOCOMMIT")
-            current = _load_database_definition(connection, database.name)
-            if current != database:
-                raise ProductionResetError(
-                    "database identity/configuration changed since reset snapshot"
-                )
-            identity = connection.execute(
-                text(
-                    "SELECT current_user AS role_name, role.rolsuper AS is_superuser "
-                    "FROM pg_roles AS role WHERE role.rolname = current_user"
-                )
-            ).mappings().one()
-            if str(identity["role_name"]) != database.owner or not bool(
-                identity["is_superuser"]
-            ):
+            current = (
+                _load_database_definition(connection, database.name)
+                if _database_exists(connection, database.name)
+                else None
+            )
+            role_name, is_superuser = _maintenance_actor_identity(connection)
+            if role_name != database.owner or not is_superuser:
                 raise ProductionResetError(
                     "maintenance connection lost verified owner/superuser identity"
                 )
-            _check_non_session_drop_blockers(connection, database.name)
 
-            initial_sessions = _active_sessions(connection, database.name)
-            if initial_sessions:
-                identities = ", ".join(
-                    f"pid={row['pid']} role={row['usename']} app={row['application_name'] or '-'}"
-                    for row in initial_sessions
-                )
-                emit(
-                    f"found {len(initial_sessions)} blocking connection(s) before reset: "
-                    f"{identities}"
-                )
-            else:
-                emit("no blocking connections present before reset")
-
-            database_sql = _quote_identifier(connection, database.name)
-            connection.exec_driver_sql(
-                f"ALTER DATABASE {database_sql} WITH ALLOW_CONNECTIONS false"
-            )
-            fenced = True
-
-            sessions = _active_sessions(connection, database.name)
-            for session in sessions:
-                terminated = bool(
-                    connection.execute(
-                        text("SELECT pg_terminate_backend(:pid)"),
-                        {"pid": int(session["pid"])},
-                    ).scalar_one()
-                )
-                if not terminated:
+            current_guard = _load_reset_guard(connection, database.name)
+            if resume:
+                if current_guard is not None and current_guard != reset_id:
                     raise ProductionResetError(
-                        f"PostgreSQL refused to terminate blocking pid {session['pid']}"
+                        "production-reset guard/reset-id mismatch; refusing to mutate target"
+                    )
+                if current is not None and replace(
+                    current, allow_connections=database.allow_connections
+                ) != database:
+                    raise ProductionResetError(
+                        "database identity/configuration changed from the retained original snapshot"
+                    )
+            else:
+                if current_guard is not None:
+                    raise ProductionResetError(
+                        "active production-reset guard exists; ordinary reset cannot establish a new baseline"
+                    )
+                if current is None or current != database:
+                    raise ProductionResetError(
+                        "database identity/configuration changed since reset snapshot"
                     )
 
-            deadline = time.monotonic() + wait_seconds
-            remaining = _active_sessions(connection, database.name)
-            while remaining and time.monotonic() < deadline:
-                time.sleep(0.05)
+            if current is not None:
+                _check_non_session_drop_blockers(connection, database.name)
+                initial_sessions = _active_sessions(connection, database.name)
+                if initial_sessions:
+                    identities = ", ".join(
+                        f"pid={row['pid']} role={row['usename']} app={row['application_name'] or '-'}"
+                        for row in initial_sessions
+                    )
+                    emit(
+                        f"found {len(initial_sessions)} blocking connection(s) before reset: "
+                        f"{identities}"
+                    )
+                else:
+                    emit("no blocking connections present before reset")
+
+                database_sql = _quote_identifier(connection, database.name)
+                if current.allow_connections:
+                    connection.exec_driver_sql(
+                        f"ALTER DATABASE {database_sql} WITH ALLOW_CONNECTIONS false"
+                    )
+                    changed_allow_connections = True
+
+                sessions = _active_sessions(connection, database.name)
+                for session in sessions:
+                    terminated = bool(
+                        connection.execute(
+                            text("SELECT pg_terminate_backend(:pid)"),
+                            {"pid": int(session["pid"])},
+                        ).scalar_one()
+                    )
+                    if not terminated:
+                        raise ProductionResetError(
+                            f"PostgreSQL refused to terminate blocking pid {session['pid']}"
+                        )
+
+                deadline = time.monotonic() + wait_seconds
                 remaining = _active_sessions(connection, database.name)
-            if remaining:
-                pids = ", ".join(str(row["pid"]) for row in remaining)
-                raise ProductionResetError(
-                    f"blocking connections remained after termination request: {pids}"
-                )
-            emit("connection fence active; all blocking sessions are gone")
+                while remaining and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                    remaining = _active_sessions(connection, database.name)
+                if remaining:
+                    pids = ", ".join(str(row["pid"]) for row in remaining)
+                    raise ProductionResetError(
+                        f"blocking connections remained after termination request: {pids}"
+                    )
+                emit("connection fence active; all blocking sessions are gone")
+                connection.exec_driver_sql(f"DROP DATABASE {database_sql}")
+                dropped = True
+            else:
+                database_sql = _quote_identifier(connection, database.name)
+                emit("target database is absent; resuming from retained reset lineage")
 
-            create_sql = _database_create_sql(connection, database)
-            connection.exec_driver_sql(f"DROP DATABASE {database_sql}")
-            dropped = True
-            fenced = False
+            create_sql = _database_create_sql(
+                connection, database, allow_connections=False
+            )
             connection.exec_driver_sql(create_sql)
+            emit(
+                "database recreated with ALLOW_CONNECTIONS=false; installing durable reset guard"
+            )
 
-            # Keep non-owner clients out until prepare and grant restoration have
-            # both succeeded.  Ownership still lets the prepare connection in.
+            connection.exec_driver_sql(
+                f"ALTER DATABASE {database_sql} SET {RESET_GUARD_SETTING} "
+                f"TO {_quote_literal(reset_id)}"
+            )
+            installed_guard = _load_reset_guard(connection, database.name)
+            if installed_guard != reset_id:
+                raise ProductionResetError(
+                    "production-reset guard installation verification failed"
+                )
             connection.exec_driver_sql(
                 f"REVOKE ALL PRIVILEGES ON DATABASE {database_sql} FROM PUBLIC"
             )
-            emit("database recreated; non-owner access remains fenced pending prepare")
+            connection.exec_driver_sql(
+                f"ALTER DATABASE {database_sql} WITH ALLOW_CONNECTIONS true"
+            )
+            emit(
+                "database recreated; reset guard active and non-owner access remains fenced pending prepare"
+            )
     except Exception:
-        if fenced and not dropped:
+        if changed_allow_connections and not dropped:
             try:
                 with maintenance_engine.connect() as raw_connection:
                     connection = raw_connection.execution_options(
                         isolation_level="AUTOCOMMIT"
                     )
-                    database_sql = _quote_identifier(connection, database.name)
-                    connection.exec_driver_sql(
-                        f"ALTER DATABASE {database_sql} WITH ALLOW_CONNECTIONS true"
-                    )
+                    if _database_exists(connection, database.name):
+                        database_sql = _quote_identifier(connection, database.name)
+                        connection.exec_driver_sql(
+                            f"ALTER DATABASE {database_sql} WITH ALLOW_CONNECTIONS true"
+                        )
             except Exception:
-                # Preserve the original failure.  The caller gets an explicit
-                # warning from the raised error path and can inspect the fence.
                 pass
         raise
     finally:
@@ -837,6 +1433,10 @@ def _restore_settings(connection: Connection, snapshot: ResetSnapshot) -> None:
             raise ProductionResetError(
                 f"unsafe database setting name {setting.name!r} in reset snapshot"
             )
+        if setting.name == RESET_GUARD_SETTING:
+            raise ProductionResetError(
+                "reset snapshot attempts to restore the reserved production-reset guard"
+            )
         value = _quote_literal(setting.value)
         if setting.role_name is None:
             connection.exec_driver_sql(
@@ -895,7 +1495,11 @@ def _verify_restored_state(connection: Connection, snapshot: ResetSnapshot) -> N
         raise ProductionResetError(
             f"grant verification failed; {len(missing_grants)} pre-reset grant(s) are missing"
         )
-    current_settings = set(_load_database_settings(connection, snapshot.database))
+    current_settings = set(
+        _load_database_settings(
+            connection, snapshot.database, allow_reset_guard=True
+        )
+    )
     missing_settings = sorted(set(snapshot.settings) - current_settings)
     if missing_settings:
         raise ProductionResetError(
@@ -913,8 +1517,30 @@ def _verify_restored_state(connection: Connection, snapshot: ResetSnapshot) -> N
         )
 
 
-def restore_database_access(database_url: str, snapshot: ResetSnapshot) -> None:
-    """Restore the snapshotted grants/settings and verify them in one transaction."""
+def verify_database_access(database_url: str, snapshot: ResetSnapshot) -> None:
+    """Verify the retained original access snapshot without changing PostgreSQL state."""
+    engine = create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            _assert_roles_exist(connection, snapshot)
+            _verify_restored_state(connection, snapshot)
+    finally:
+        engine.dispose()
+
+
+def restore_database_access(
+    database_url: str,
+    snapshot: ResetSnapshot,
+    *,
+    reset_id: str,
+) -> None:
+    """Restore the retained original grants/settings under the matching active guard."""
+    reset_id = _validated_reset_id(reset_id)
+    actual_guard = read_reset_guard(database_url, snapshot.database.name)
+    if actual_guard != reset_id:
+        raise ProductionResetError(
+            "production-reset guard/reset-id mismatch; refusing to restore access"
+        )
     engine = create_engine(database_url)
     try:
         with engine.begin() as connection:

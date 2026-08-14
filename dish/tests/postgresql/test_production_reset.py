@@ -1,23 +1,18 @@
 from __future__ import annotations
 
-import hashlib
+from contextlib import contextmanager
+from dataclasses import replace
 import json
+import os
 from pathlib import Path
 import runpy
 from types import SimpleNamespace
-import uuid
 
 import pytest
 from sqlalchemy.dialects import postgresql
 
+import dish_pg.production_reset as production_reset
 from dish_pg.production_reset import (
-    RECOVERY_RECORD_FORMAT,
-    RECOVERY_STATE_ACCESS_RESTORED,
-    RECOVERY_STATE_COMPLETED,
-    RECOVERY_STATE_DATABASE_RECREATED,
-    RECOVERY_STATE_GUARD_INSTALLED,
-    RECOVERY_STATE_PREPARE_FAILED,
-    RECOVERY_STATE_SNAPSHOT_CAPTURED,
     RESET_GUARD_SETTING,
     DatabaseDefinition,
     DatabaseSetting,
@@ -25,21 +20,26 @@ from dish_pg.production_reset import (
     DefaultPrivilegeSet,
     ObjectGrant,
     ProductionResetError,
-    ResetGuardState,
-    ResetRecoveryRecord,
-    ResetRecoveryStore,
     ResetSnapshot,
+    ResetTargetIdentity,
     _database_create_sql,
     _grant_statement,
+    _load_database_settings,
+    create_recovery_record,
+    load_recovery_record,
     maintenance_database_url,
-    parse_recovery_record,
+    new_recovery_record,
     redacted_database_url,
-    serialize_recovery_record,
+    transition_recovery_record,
     validate_cli_target,
 )
 
+
 ROOT = Path(__file__).resolve().parents[2]
+PREPARE = ROOT / "scripts/dish-pg-production-prepare"
 RESET = ROOT / "scripts/dish-pg-production-reset"
+RESET_ID = "11111111-1111-4111-8111-111111111111"
+OTHER_RESET_ID = "22222222-2222-4222-8222-222222222222"
 
 
 def _fake_connection():
@@ -97,31 +97,54 @@ def _snapshot() -> ResetSnapshot:
     )
 
 
-def _record(state: str = RECOVERY_STATE_SNAPSHOT_CAPTURED) -> ResetRecoveryRecord:
-    return ResetRecoveryRecord(
-        reset_id="11111111-1111-4111-8111-111111111111",
-        target_database="dish_stage_a_prod",
+def _target() -> ResetTargetIdentity:
+    return ResetTargetIdentity(
+        database_name="dish_stage_a_prod",
         owner="dish",
-        cluster_system_identifier="7654321",
-        state=state,
-        snapshot=_snapshot(),
+        cluster_system_identifier="7461234567890123456",
     )
 
 
-def _store(tmp_path: Path, record: ResetRecoveryRecord | None = None) -> ResetRecoveryStore:
-    path = tmp_path / "state" / "recovery.json"
-    path.parent.mkdir(mode=0o700)
-    store = ResetRecoveryStore(path)
-    if record is not None:
-        store.create(record)
-    return store
+def _record(state: str = "snapshot_captured"):
+    record = new_recovery_record(
+        target=_target(), snapshot=_snapshot(), reset_id=RESET_ID
+    )
+    if state == "snapshot_captured":
+        return record
+    transitions = {
+        "reset_started": ["reset_started"],
+        "access_restored": ["reset_started", "access_restored"],
+        "completed": ["reset_started", "access_restored", "completed"],
+    }
+    current = record
+    for new_state in transitions[state]:
+        current = production_reset._record_from_values(
+            reset_id=current.reset_id,
+            target=current.target,
+            snapshot=current.snapshot,
+            state=new_state,
+        )
+    return current
 
 
-def _canonical_checksum(payload: dict[str, object]) -> str:
-    unsigned = {k: v for k, v in payload.items() if k != "checksum_sha256"}
-    return hashlib.sha256(
-        json.dumps(unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
-    ).hexdigest()
+def _configure_cli(monkeypatch: pytest.MonkeyPatch) -> str:
+    url = "postgresql+psycopg://dish:secret@127.0.0.1:55433/dish_stage_a_prod"
+    monkeypatch.setenv("DISH_PG_DATABASE_URL", url)
+    monkeypatch.setenv("DISH_PG_EXPECTED_DATABASE_NAME", "dish_stage_a_prod")
+    monkeypatch.setenv("DISH_PG_CAPTURE_ENVIRONMENT", "production")
+    return url
+
+
+def _args(path: Path, *, resume: bool = False) -> list[str]:
+    args = [
+        "--confirm-database-name",
+        "dish_stage_a_prod",
+        "--recovery-record",
+        str(path),
+    ]
+    if resume:
+        args.append("--resume")
+    return args
 
 
 def test_production_reset_target_gate_is_explicit_and_fail_closed() -> None:
@@ -132,6 +155,7 @@ def test_production_reset_target_gate_is_explicit_and_fail_closed() -> None:
         confirmed_database_name="dish_stage_a_prod",
         capture_environment="production",
     )
+
     with pytest.raises(ProductionResetError, match="confirm-database-name"):
         validate_cli_target(
             database_url=url,
@@ -146,310 +170,518 @@ def test_production_reset_target_gate_is_explicit_and_fail_closed() -> None:
             confirmed_database_name="dish_stage_a_prod",
             capture_environment="test",
         )
+    with pytest.raises(ProductionResetError, match="ending in '_test'"):
+        validate_cli_target(
+            database_url="postgresql+psycopg://dish:secret@127.0.0.1:55432/dish_stage_a_test",
+            expected_database_name="dish_stage_a_test",
+            confirmed_database_name="dish_stage_a_test",
+            capture_environment="production",
+        )
 
 
-def test_database_url_helpers_redact_password() -> None:
-    url = "postgresql+psycopg://dish:super-secret@127.0.0.1:55433/dish_stage_a_prod?sslmode=disable"
-    assert "super-secret" in maintenance_database_url(url)
-    assert "/postgres?" in maintenance_database_url(url)
-    assert "super-secret" not in redacted_database_url(url)
-
-
-def test_create_sql_starts_recreated_database_connection_fenced() -> None:
-    sql = _database_create_sql(_fake_connection(), _snapshot().database)
-    assert 'CREATE DATABASE "dish_stage_a_prod"' in sql
-    assert "ALLOW_CONNECTIONS = false" in sql
-
-
-def test_grant_sql_quotes_catalog_identifiers() -> None:
-    statement = _grant_statement(
-        _fake_connection(),
-        ObjectGrant("COLUMN", 'odd"schema', 'odd"table', 'odd"column', 'odd"role', "SELECT", True),
+def test_reset_entrypoint_requires_explicit_production_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    namespace = runpy.run_path(str(RESET))
+    monkeypatch.setenv(
+        "DISH_PG_DATABASE_URL",
+        "postgresql+psycopg://dish:secret@127.0.0.1:55433/dish_stage_a_prod",
     )
+    monkeypatch.setenv("DISH_PG_EXPECTED_DATABASE_NAME", "dish_stage_a_prod")
+    monkeypatch.delenv("DISH_PG_CAPTURE_ENVIRONMENT", raising=False)
+
+    with pytest.raises(ProductionResetError, match="DISH_PG_CAPTURE_ENVIRONMENT"):
+        namespace["_required_environment"]()
+
+
+def test_database_url_helpers_preserve_target_shape_without_exposing_password() -> None:
+    url = (
+        "postgresql+psycopg://dish:super-secret@127.0.0.1:55433/"
+        "dish_stage_a_prod?sslmode=disable"
+    )
+    maintenance = maintenance_database_url(url)
+    assert "super-secret" in maintenance
+    assert "/postgres?" in maintenance
+    assert "sslmode=disable" in maintenance
+
+    redacted = redacted_database_url(url)
+    assert "super-secret" not in redacted
+    assert "***" in redacted
+    assert "dish_stage_a_prod" in redacted
+
+
+def test_create_and_grant_sql_quote_catalog_identifiers_and_create_fence() -> None:
+    connection = _fake_connection()
+    database = _snapshot().database
+    create_sql = _database_create_sql(connection, database, allow_connections=False)
+    assert 'CREATE DATABASE "dish_stage_a_prod"' in create_sql
+    assert 'OWNER = "dish"' in create_sql
+    assert "TEMPLATE = template0" in create_sql
+    assert "LOCALE_PROVIDER = libc" in create_sql
+    assert "LC_COLLATE = 'C.UTF-8'" in create_sql
+    assert "ALLOW_CONNECTIONS = false" in create_sql
+
+    grant = ObjectGrant(
+        object_type="COLUMN",
+        schema_name='odd"schema',
+        object_name='odd"table',
+        column_name='odd"column',
+        grantee='odd"role',
+        privilege="SELECT",
+        grantable=True,
+    )
+    statement = _grant_statement(connection, grant)
     assert '"odd""schema"."odd""table"' in statement
     assert '("odd""column")' in statement
     assert 'TO "odd""role" WITH GRANT OPTION' in statement
 
 
-def test_recovery_record_round_trips_original_snapshot_without_credentials() -> None:
-    data = serialize_recovery_record(_record())
-    assert b"secret" not in data
-    assert b"postgresql" not in data
-    assert parse_recovery_record(data) == _record()
-    payload = json.loads(data)
-    assert payload["format"] == RECOVERY_RECORD_FORMAT
+def test_prepare_command_logging_redacts_database_credentials(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    namespace = runpy.run_path(str(PREPARE))
+    url = "postgresql+psycopg://dish:do-not-print@127.0.0.1:55433/dish_stage_a_prod"
+    monkeypatch.setenv("DISH_PG_DATABASE_URL", url)
+
+    class Completed:
+        returncode = 0
+        stdout = f"child echoed {url}\n"
+        stderr = ""
+
+    monkeypatch.setattr(namespace["subprocess"], "run", lambda *args, **kwargs: Completed())
+    namespace["run_step"]("redaction probe", ["tool", "--database-url", url])
+
+    output = capsys.readouterr().out
+    assert "do-not-print" not in output
+    assert "***" in output
 
 
-def test_recovery_record_checksum_is_fail_closed() -> None:
-    payload = json.loads(serialize_recovery_record(_record()))
-    payload["state"] = RECOVERY_STATE_GUARD_INSTALLED
+def test_recovery_record_is_restrictive_checksum_bound_and_stateful(tmp_path: Path) -> None:
+    path = tmp_path / "reset-recovery.json"
+    record = _record()
+    create_recovery_record(path, record)
+
+    assert path.stat().st_mode & 0o077 == 0
+    raw = path.read_text(encoding="utf-8")
+    assert "secret" not in raw
+    assert load_recovery_record(path) == record
+
+    started = transition_recovery_record(
+        path,
+        expected_reset_id=RESET_ID,
+        expected_state="snapshot_captured",
+        new_state="reset_started",
+    )
+    assert started.state == "reset_started"
+    assert load_recovery_record(path) == started
+
+    with pytest.raises(ProductionResetError, match="already exists"):
+        create_recovery_record(path, record)
+
+
+def test_recovery_record_rejects_checksum_version_and_identity_mismatch(tmp_path: Path) -> None:
+    path = tmp_path / "reset-recovery.json"
+    create_recovery_record(path, _record())
+    document = json.loads(path.read_text(encoding="utf-8"))
+
+    document["checksum"] = "0" * 64
+    path.write_text(json.dumps(document), encoding="utf-8")
+    os.chmod(path, 0o600)
     with pytest.raises(ProductionResetError, match="checksum mismatch"):
-        parse_recovery_record((json.dumps(payload) + "\n").encode())
+        load_recovery_record(path)
+
+    create_path = tmp_path / "version.json"
+    create_recovery_record(create_path, _record())
+    versioned = json.loads(create_path.read_text(encoding="utf-8"))
+    versioned["version"] = 99
+    create_path.write_text(json.dumps(versioned), encoding="utf-8")
+    os.chmod(create_path, 0o600)
+    with pytest.raises(ProductionResetError, match="unsupported.*version"):
+        load_recovery_record(create_path)
+
+    mismatch_path = tmp_path / "identity.json"
+    mismatch = new_recovery_record(
+        target=replace(_target(), database_name="dish_other_prod"),
+        snapshot=_snapshot(),
+        reset_id=RESET_ID,
+    )
+    create_recovery_record(mismatch_path, mismatch)
+    with pytest.raises(ProductionResetError, match="target identity does not match"):
+        load_recovery_record(mismatch_path)
 
 
-def test_recovery_record_rejects_type_corruption_even_with_valid_checksum() -> None:
-    payload = json.loads(serialize_recovery_record(_record()))
-    payload["snapshot"]["database"]["connection_limit"] = "-1"
-    payload["checksum_sha256"] = _canonical_checksum(payload)
-    with pytest.raises(ProductionResetError, match="must be an integer"):
-        parse_recovery_record((json.dumps(payload) + "\n").encode())
+def test_recovery_record_rejects_reserved_guard_contamination() -> None:
+    database = _snapshot().database
+    result = SimpleNamespace(
+        mappings=lambda: [
+            {
+                "role_name": None,
+                "setting": f"{RESET_GUARD_SETTING}={RESET_ID}",
+            }
+        ]
+    )
+    connection = SimpleNamespace(execute=lambda *_args, **_kwargs: result)
+    with pytest.raises(ProductionResetError, match="reserved production-reset guard"):
+        _load_database_settings(connection, database)
 
 
-def test_recovery_record_rejects_identity_mismatch() -> None:
-    payload = json.loads(serialize_recovery_record(_record()))
-    payload["owner"] = "someone_else"
-    payload["checksum_sha256"] = _canonical_checksum(payload)
-    with pytest.raises(ProductionResetError, match="identity does not match"):
-        parse_recovery_record((json.dumps(payload) + "\n").encode())
-
-
-def test_recovery_store_is_owner_only_and_never_overwrites(tmp_path: Path) -> None:
-    store = _store(tmp_path)
-    store.create(_record())
-    assert store.path.stat().st_mode & 0o777 == 0o600
-    assert store.path.parent.stat().st_mode & 0o777 == 0o700
-    with pytest.raises(ProductionResetError, match="overwrite or reuse"):
-        store.create(_record())
-
-
-def test_recovery_store_rejects_unsafe_parent(tmp_path: Path) -> None:
-    parent = tmp_path / "unsafe"
-    parent.mkdir(mode=0o755)
-    parent.chmod(0o755)
-    store = ResetRecoveryStore(parent / "record.json")
-    with pytest.raises(ProductionResetError, match="owner-only"):
-        store.create(_record())
-
-
-def test_recovery_store_enforces_legal_state_transitions(tmp_path: Path) -> None:
-    store = _store(tmp_path, _record())
-    current = store.load()
-    current = store.update_state(current, RECOVERY_STATE_GUARD_INSTALLED)
-    assert store.load().state == RECOVERY_STATE_GUARD_INSTALLED
-    with pytest.raises(ProductionResetError, match="illegal"):
-        store.update_state(current, RECOVERY_STATE_COMPLETED)
-
-
-def _script_namespace(monkeypatch: pytest.MonkeyPatch):
+def test_lineage_gate_refuses_active_guard_unresolved_artifact_and_completed_reuse(
+    tmp_path: Path,
+) -> None:
     namespace = runpy.run_path(str(RESET))
-    globals_ = namespace["_ordinary_reset"].__globals__
-    globals_["log"] = lambda _message: None
-    return globals_
+    gate = namespace["_load_lineage_for_invocation"]
+    path = tmp_path / "lineage.json"
+
+    with pytest.raises(ProductionResetError, match="active production-reset guard"):
+        gate(recovery_path=path, guard_reset_id=RESET_ID, resume=False)
+
+    create_recovery_record(path, _record("reset_started"))
+    with pytest.raises(ProductionResetError, match="ordinary retry is forbidden"):
+        gate(recovery_path=path, guard_reset_id=RESET_ID, resume=False)
+
+    path.unlink()
+    create_recovery_record(path, _record("completed"))
+    with pytest.raises(ProductionResetError, match="completed.*will not be reused"):
+        gate(recovery_path=path, guard_reset_id=None, resume=False)
+    with pytest.raises(ProductionResetError, match="already completed"):
+        gate(recovery_path=path, guard_reset_id=None, resume=True)
 
 
-def test_ordinary_reset_writes_recovery_before_guard_or_destructive_work(
+def test_reset_entrypoint_orders_lineage_before_snapshot_and_finalization(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    ns = _script_namespace(monkeypatch)
-    store = _store(tmp_path)
+    namespace = runpy.run_path(str(RESET))
+    url = _configure_cli(monkeypatch)
+    recovery_path = tmp_path / "lineage.json"
     calls: list[str] = []
-    monkeypatch.setitem(ns, "inspect_reset_guard", lambda *_: ResetGuardState(True, "dish", True, None))
-    monkeypatch.setitem(ns, "_run_prepare", lambda *, preflight_only: calls.append("preflight" if preflight_only else "prepare"))
-    monkeypatch.setitem(ns, "snapshot_database_state", lambda *_: calls.append("snapshot") or _snapshot())
-    monkeypatch.setitem(ns, "cluster_system_identifier", lambda *_: "7654321")
+    snapshot = _snapshot()
+    record = _record()
 
-    def install(*_a, **_kw):
-        assert store.exists()
-        assert store.load().state == RECOVERY_STATE_SNAPSHOT_CAPTURED
-        calls.append("guard")
+    main = namespace["main"]
+    globals_ = main.__globals__
+    monkeypatch.setitem(globals_, "read_reset_guard", lambda *_args: calls.append("guard") or None)
+    monkeypatch.setitem(
+        globals_,
+        "_run_prepare",
+        lambda *, preflight_only: calls.append("preflight" if preflight_only else "prepare"),
+    )
+    monkeypatch.setitem(
+        globals_,
+        "snapshot_database_state",
+        lambda database_url, expected: calls.append("snapshot") or snapshot,
+    )
+    monkeypatch.setitem(
+        globals_,
+        "capture_reset_target_identity",
+        lambda database_url, reset_snapshot: calls.append("identity") or _target(),
+    )
+    monkeypatch.setitem(
+        globals_, "new_recovery_record", lambda **_kwargs: record
+    )
+    monkeypatch.setitem(
+        globals_, "create_recovery_record", lambda *_args: calls.append("create-record")
+    )
 
-    def recreate(*_a, **_kw):
-        assert store.load().state == RECOVERY_STATE_GUARD_INSTALLED
+    states = iter(["reset_started", "access_restored", "completed"])
+
+    def fake_transition(*_args, **kwargs):
+        new_state = kwargs["new_state"]
+        assert new_state == next(states)
+        calls.append(f"state:{new_state}")
+        return replace(record, state=new_state)
+
+    monkeypatch.setitem(globals_, "transition_recovery_record", fake_transition)
+    def fake_recreate(database_url, reset_snapshot, **kwargs):
+        assert database_url == url
+        assert reset_snapshot is snapshot
+        assert kwargs["reset_id"] == RESET_ID
+        assert kwargs["resume"] is False
         calls.append("recreate")
 
-    monkeypatch.setitem(ns, "install_reset_guard", install)
-    monkeypatch.setitem(ns, "recreate_database", recreate)
-    monkeypatch.setitem(ns, "restore_database_access", lambda *_: calls.append("restore"))
-    monkeypatch.setitem(ns, "clear_reset_guard", lambda *_a, **_kw: calls.append("clear"))
-    ns["_ordinary_reset"](
-        database_url="postgresql+psycopg://dish:x@localhost/dish_stage_a_prod",
-        expected_database_name="dish_stage_a_prod",
-        store=store,
+    monkeypatch.setitem(globals_, "recreate_database", fake_recreate)
+    monkeypatch.setitem(
+        globals_,
+        "restore_database_access",
+        lambda *_args, **_kwargs: calls.append("restore"),
     )
-    assert calls == ["preflight", "snapshot", "guard", "recreate", "prepare", "restore", "clear"]
-    assert store.load().state == RECOVERY_STATE_COMPLETED
+    monkeypatch.setitem(
+        globals_, "clear_reset_guard", lambda *_args: calls.append("clear")
+    )
+
+    assert main(_args(recovery_path)) == 0
+    assert calls == [
+        "guard",
+        "preflight",
+        "snapshot",
+        "identity",
+        "create-record",
+        "state:reset_started",
+        "recreate",
+        "prepare",
+        "restore",
+        "state:access_restored",
+        "clear",
+        "state:completed",
+    ]
 
 
-def test_ordinary_retry_refuses_existing_record_before_live_snapshot(
+def test_prepare_failure_retains_reset_started_lineage_and_guard(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    ns = _script_namespace(monkeypatch)
-    store = _store(tmp_path, _record(RECOVERY_STATE_PREPARE_FAILED))
-    monkeypatch.setitem(ns, "snapshot_database_state", lambda *_: pytest.fail("must not resnapshot"))
-    with pytest.raises(ProductionResetError, match="ordinary retry is forbidden"):
-        ns["_ordinary_reset"](
-            database_url="postgresql+psycopg://dish:x@localhost/dish_stage_a_prod",
-            expected_database_name="dish_stage_a_prod",
-            store=store,
-        )
+    namespace = runpy.run_path(str(RESET))
+    _configure_cli(monkeypatch)
+    recovery_path = tmp_path / "lineage.json"
+    calls: list[str] = []
+    snapshot = _snapshot()
+    record = _record()
 
+    main = namespace["main"]
+    globals_ = main.__globals__
+    monkeypatch.setitem(globals_, "read_reset_guard", lambda *_args: None)
 
-def test_ordinary_retry_refuses_database_guard_without_artifact(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    ns = _script_namespace(monkeypatch)
-    store = _store(tmp_path)
-    monkeypatch.setitem(ns, "inspect_reset_guard", lambda *_: ResetGuardState(True, "dish", False, _record().reset_id))
-    monkeypatch.setitem(ns, "snapshot_database_state", lambda *_: pytest.fail("must not resnapshot"))
-    with pytest.raises(ProductionResetError, match="artifact is missing"):
-        ns["_ordinary_reset"](
-            database_url="postgresql+psycopg://dish:x@localhost/dish_stage_a_prod",
-            expected_database_name="dish_stage_a_prod",
-            store=store,
-        )
-
-
-def test_prepare_failure_retains_original_snapshot_and_guard_lineage(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    ns = _script_namespace(monkeypatch)
-    store = _store(tmp_path)
-    monkeypatch.setitem(ns, "inspect_reset_guard", lambda *_: ResetGuardState(True, "dish", True, None))
-    monkeypatch.setitem(ns, "snapshot_database_state", lambda *_: _snapshot())
-    monkeypatch.setitem(ns, "cluster_system_identifier", lambda *_: "7654321")
-    monkeypatch.setitem(ns, "install_reset_guard", lambda *_a, **_kw: None)
-    monkeypatch.setitem(ns, "recreate_database", lambda *_a, **_kw: None)
-
-    def prepare(*, preflight_only: bool):
+    def fake_prepare(*, preflight_only: bool) -> None:
+        calls.append("preflight" if preflight_only else "prepare")
         if not preflight_only:
             raise ProductionResetError("prepare failed")
 
-    monkeypatch.setitem(ns, "_run_prepare", prepare)
-    with pytest.raises(ProductionResetError, match="retained original snapshot"):
-        ns["_ordinary_reset"](
-            database_url="postgresql+psycopg://dish:x@localhost/dish_stage_a_prod",
-            expected_database_name="dish_stage_a_prod",
-            store=store,
-        )
-    assert store.load().state == RECOVERY_STATE_PREPARE_FAILED
-    assert store.load().snapshot == _snapshot()
+    monkeypatch.setitem(globals_, "_run_prepare", fake_prepare)
+    monkeypatch.setitem(globals_, "snapshot_database_state", lambda *_args: snapshot)
+    monkeypatch.setitem(globals_, "capture_reset_target_identity", lambda *_args: _target())
+    monkeypatch.setitem(globals_, "new_recovery_record", lambda **_kwargs: record)
+    monkeypatch.setitem(globals_, "create_recovery_record", lambda *_args: None)
 
+    def fake_transition(*_args, **kwargs):
+        calls.append(f"state:{kwargs['new_state']}")
+        return replace(record, state=kwargs["new_state"])
 
-def _patch_resume_identity(ns: dict[str, object], monkeypatch: pytest.MonkeyPatch, state: ResetGuardState) -> None:
-    monkeypatch.setitem(ns, "cluster_system_identifier", lambda *_: "7654321")
-    monkeypatch.setitem(ns, "inspect_reset_guard", lambda *_: state)
-
-
-def test_resume_uses_only_retained_original_snapshot_and_reruns_prepare(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    ns = _script_namespace(monkeypatch)
-    record = _record(RECOVERY_STATE_PREPARE_FAILED)
-    store = _store(tmp_path, record)
-    _patch_resume_identity(ns, monkeypatch, ResetGuardState(True, "dish", True, record.reset_id))
-    monkeypatch.setitem(ns, "snapshot_database_state", lambda *_: pytest.fail("resume must never resnapshot"))
-    seen: list[object] = []
-    monkeypatch.setitem(ns, "_run_prepare", lambda *, preflight_only: seen.append("preflight" if preflight_only else "prepare"))
-    monkeypatch.setitem(ns, "recreate_database", lambda _url, snapshot, **_kw: seen.append(snapshot))
-    monkeypatch.setitem(ns, "restore_database_access", lambda _url, snapshot: seen.append(("restore", snapshot)))
-    monkeypatch.setitem(ns, "clear_reset_guard", lambda *_a, **_kw: seen.append("clear"))
-    ns["_resume_reset"](
-        database_url="postgresql+psycopg://dish:x@localhost/dish_stage_a_prod",
-        expected_database_name="dish_stage_a_prod",
-        store=store,
+    monkeypatch.setitem(globals_, "transition_recovery_record", fake_transition)
+    monkeypatch.setitem(
+        globals_, "recreate_database", lambda *_args, **_kwargs: calls.append("recreate")
     )
-    assert record.snapshot in seen
-    assert ("restore", record.snapshot) in seen
-    assert "prepare" in seen
-    assert store.load().state == RECOVERY_STATE_COMPLETED
-
-
-@pytest.mark.parametrize(
-    "guard,match",
-    [
-        (ResetGuardState(False, None, None, None), "target is missing"),
-        (ResetGuardState(True, "dish", False, None), "fenced without a guard"),
-    ],
-)
-def test_snapshot_captured_resume_refuses_to_infer_destructive_lineage(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, guard: ResetGuardState, match: str
-) -> None:
-    ns = _script_namespace(monkeypatch)
-    store = _store(tmp_path, _record(RECOVERY_STATE_SNAPSHOT_CAPTURED))
-    _patch_resume_identity(ns, monkeypatch, guard)
-    monkeypatch.setitem(ns, "recreate_database", lambda *_a, **_kw: pytest.fail("must not mutate"))
-    with pytest.raises(ProductionResetError, match=match):
-        ns["_resume_reset"](
-            database_url="postgresql+psycopg://dish:x@localhost/dish_stage_a_prod",
-            expected_database_name="dish_stage_a_prod",
-            store=store,
-        )
-
-
-def test_destructive_resume_allows_only_fenced_unguarded_create_crash_window(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    ns = _script_namespace(monkeypatch)
-    record = _record(RECOVERY_STATE_GUARD_INSTALLED)
-    store = _store(tmp_path, record)
-    _patch_resume_identity(ns, monkeypatch, ResetGuardState(True, "dish", False, None))
-    monkeypatch.setitem(ns, "_run_prepare", lambda **_kw: None)
-    seen: dict[str, object] = {}
-    monkeypatch.setitem(ns, "recreate_database", lambda *_a, **kw: seen.update(kw))
-    monkeypatch.setitem(ns, "restore_database_access", lambda *_: None)
-    monkeypatch.setitem(ns, "clear_reset_guard", lambda *_a, **_kw: None)
-    ns["_resume_reset"](
-        database_url="postgresql+psycopg://dish:x@localhost/dish_stage_a_prod",
-        expected_database_name="dish_stage_a_prod",
-        store=store,
+    monkeypatch.setitem(
+        globals_, "restore_database_access", lambda *_args, **_kwargs: calls.append("restore")
     )
-    assert seen["allow_unguarded_fenced"] is True
+    monkeypatch.setitem(
+        globals_, "clear_reset_guard", lambda *_args: calls.append("clear")
+    )
+
+    assert main(_args(recovery_path)) == 1
+    assert calls == ["preflight", "state:reset_started", "recreate", "prepare"]
 
 
-def test_guard_reset_id_mismatch_refuses_before_resume_mutation(
+def test_explicit_resume_uses_retained_snapshot_and_never_snapshots_live_acl(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    ns = _script_namespace(monkeypatch)
-    store = _store(tmp_path, _record(RECOVERY_STATE_PREPARE_FAILED))
-    _patch_resume_identity(ns, monkeypatch, ResetGuardState(True, "dish", True, str(uuid.uuid4())))
-    monkeypatch.setitem(ns, "recreate_database", lambda *_a, **_kw: pytest.fail("must not mutate"))
-    with pytest.raises(ProductionResetError, match="guard mismatch"):
-        ns["_resume_reset"](
-            database_url="postgresql+psycopg://dish:x@localhost/dish_stage_a_prod",
-            expected_database_name="dish_stage_a_prod",
-            store=store,
-        )
-
-
-@pytest.mark.parametrize("guard_id", [_record().reset_id, None])
-def test_access_restored_resume_covers_both_finalization_crash_windows(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, guard_id: str | None
-) -> None:
-    ns = _script_namespace(monkeypatch)
-    record = _record(RECOVERY_STATE_ACCESS_RESTORED)
-    store = _store(tmp_path, record)
-    _patch_resume_identity(ns, monkeypatch, ResetGuardState(True, "dish", True, guard_id))
+    namespace = runpy.run_path(str(RESET))
+    _configure_cli(monkeypatch)
+    recovery_path = tmp_path / "lineage.json"
+    recovery_path.touch(mode=0o600)
+    record = _record("reset_started")
     calls: list[str] = []
-    monkeypatch.setitem(ns, "verify_database_access", lambda *_: calls.append("verify"))
-    monkeypatch.setitem(ns, "clear_reset_guard", lambda *_a, **_kw: calls.append("clear"))
-    ns["_resume_reset"](
-        database_url="postgresql+psycopg://dish:x@localhost/dish_stage_a_prod",
-        expected_database_name="dish_stage_a_prod",
-        store=store,
+
+    main = namespace["main"]
+    globals_ = main.__globals__
+    monkeypatch.setitem(globals_, "read_reset_guard", lambda *_args: RESET_ID)
+    monkeypatch.setitem(globals_, "load_recovery_record", lambda *_args: record)
+    monkeypatch.setitem(
+        globals_, "validate_recovery_record_target", lambda *_args: calls.append("identity")
     )
-    assert calls[0] == "verify"
-    assert ("clear" in calls) is (guard_id is not None)
-    assert store.load().state == RECOVERY_STATE_COMPLETED
+    monkeypatch.setitem(
+        globals_, "snapshot_database_state", lambda *_args: pytest.fail("live snapshot on resume")
+    )
+    monkeypatch.setitem(
+        globals_,
+        "_run_prepare",
+        lambda *, preflight_only: calls.append("preflight" if preflight_only else "prepare"),
+    )
+
+    def fake_recreate(database_url, reset_snapshot, **kwargs):
+        assert reset_snapshot is record.snapshot
+        assert kwargs["resume"] is True
+        assert kwargs["reset_id"] == RESET_ID
+        calls.append("recreate")
+
+    monkeypatch.setitem(globals_, "recreate_database", fake_recreate)
+    monkeypatch.setitem(
+        globals_, "restore_database_access", lambda *_args, **_kwargs: calls.append("restore")
+    )
+    monkeypatch.setitem(
+        globals_, "clear_reset_guard", lambda *_args: calls.append("clear")
+    )
+
+    transition_states = iter(["access_restored", "completed"])
+
+    def fake_transition(*_args, **kwargs):
+        assert kwargs["new_state"] == next(transition_states)
+        calls.append(f"state:{kwargs['new_state']}")
+        return replace(record, state=kwargs["new_state"])
+
+    monkeypatch.setitem(globals_, "transition_recovery_record", fake_transition)
+
+    assert main(_args(recovery_path, resume=True)) == 0
+    assert calls == [
+        "identity",
+        "preflight",
+        "recreate",
+        "prepare",
+        "restore",
+        "state:access_restored",
+        "clear",
+        "state:completed",
+    ]
 
 
-def test_completed_record_is_verified_but_never_reused(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize("guard_present", [True, False])
+def test_resume_access_restored_covers_both_finalization_crash_windows(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    guard_present: bool,
 ) -> None:
-    ns = _script_namespace(monkeypatch)
-    record = _record(RECOVERY_STATE_COMPLETED)
-    store = _store(tmp_path, record)
-    _patch_resume_identity(ns, monkeypatch, ResetGuardState(True, "dish", True, None))
+    namespace = runpy.run_path(str(RESET))
+    _configure_cli(monkeypatch)
+    recovery_path = tmp_path / "lineage.json"
+    recovery_path.touch(mode=0o600)
+    record = _record("access_restored")
     calls: list[str] = []
-    monkeypatch.setitem(ns, "verify_database_access", lambda *_: calls.append("verify"))
-    monkeypatch.setitem(ns, "recreate_database", lambda *_a, **_kw: pytest.fail("completed must not mutate"))
-    ns["_resume_reset"](
-        database_url="postgresql+psycopg://dish:x@localhost/dish_stage_a_prod",
-        expected_database_name="dish_stage_a_prod",
-        store=store,
+
+    main = namespace["main"]
+    globals_ = main.__globals__
+    guard_values = [RESET_ID if guard_present else None]
+    guard_values.append(RESET_ID if guard_present else None)
+    monkeypatch.setitem(
+        globals_, "read_reset_guard", lambda *_args: guard_values.pop(0)
     )
-    assert calls == ["verify"]
+    monkeypatch.setitem(globals_, "load_recovery_record", lambda *_args: record)
+    monkeypatch.setitem(
+        globals_, "validate_recovery_record_target", lambda *_args: calls.append("identity")
+    )
+    monkeypatch.setitem(
+        globals_, "verify_database_access", lambda *_args: calls.append("verify")
+    )
+    monkeypatch.setitem(
+        globals_, "clear_reset_guard", lambda *_args: calls.append("clear")
+    )
+    monkeypatch.setitem(
+        globals_, "_run_prepare", lambda **_kwargs: pytest.fail("prepare during finalization")
+    )
+    monkeypatch.setitem(
+        globals_, "recreate_database", lambda *_args, **_kwargs: pytest.fail("recreate during finalization")
+    )
+
+    def fake_transition(*_args, **kwargs):
+        assert kwargs["expected_state"] == "access_restored"
+        assert kwargs["new_state"] == "completed"
+        calls.append("state:completed")
+        return replace(record, state="completed")
+
+    monkeypatch.setitem(globals_, "transition_recovery_record", fake_transition)
+
+    assert main(_args(recovery_path, resume=True)) == 0
+    expected = ["identity", "verify"]
+    if guard_present:
+        expected.append("clear")
+    expected.append("state:completed")
+    assert calls == expected
 
 
-def test_reserved_guard_name_is_not_a_normal_snapshot_setting() -> None:
-    assert RESET_GUARD_SETTING == "dish.production_reset_id"
-    assert all(setting.name != RESET_GUARD_SETTING for setting in _snapshot().settings)
+def test_recreate_orders_create_fence_guard_and_non_owner_fence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = _snapshot()
+    sql: list[str] = []
+
+    class FakeConnection:
+        dialect = postgresql.dialect()
+
+        def execution_options(self, **_kwargs):
+            return self
+
+        def exec_driver_sql(self, statement: str):
+            sql.append(statement)
+
+    connection = FakeConnection()
+
+    class ConnectContext:
+        def __enter__(self):
+            return connection
+
+        def __exit__(self, *_args):
+            return False
+
+    class FakeEngine:
+        def connect(self):
+            return ConnectContext()
+
+        def dispose(self):
+            pass
+
+    guard_reads = iter([None, RESET_ID])
+    monkeypatch.setattr(production_reset, "create_engine", lambda *_args, **_kwargs: FakeEngine())
+    monkeypatch.setattr(production_reset, "_database_exists", lambda *_args: True)
+    monkeypatch.setattr(
+        production_reset, "_load_database_definition", lambda *_args: snapshot.database
+    )
+    monkeypatch.setattr(
+        production_reset, "_maintenance_actor_identity", lambda *_args: ("dish", True)
+    )
+    monkeypatch.setattr(
+        production_reset, "_load_reset_guard", lambda *_args: next(guard_reads)
+    )
+    monkeypatch.setattr(production_reset, "_check_non_session_drop_blockers", lambda *_args: None)
+    monkeypatch.setattr(production_reset, "_active_sessions", lambda *_args: [])
+
+    production_reset.recreate_database(
+        "postgresql+psycopg://dish:secret@localhost/dish_stage_a_prod",
+        snapshot,
+        reset_id=RESET_ID,
+    )
+
+    assert "ALLOW_CONNECTIONS false" in sql[0]
+    assert sql[1].startswith('DROP DATABASE "dish_stage_a_prod"')
+    assert sql[2].startswith('CREATE DATABASE "dish_stage_a_prod"')
+    assert "ALLOW_CONNECTIONS = false" in sql[2]
+    assert f"SET {RESET_GUARD_SETTING}" in sql[3]
+    assert sql[4].startswith("REVOKE ALL PRIVILEGES ON DATABASE")
+    assert "ALLOW_CONNECTIONS true" in sql[5]
+
+
+def test_guard_reset_id_mismatch_refuses_before_any_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    snapshot = _snapshot()
+    sql: list[str] = []
+
+    class FakeConnection:
+        dialect = postgresql.dialect()
+
+        def execution_options(self, **_kwargs):
+            return self
+
+        def exec_driver_sql(self, statement: str):
+            sql.append(statement)
+
+    connection = FakeConnection()
+
+    @contextmanager
+    def connected():
+        yield connection
+
+    engine = SimpleNamespace(connect=connected, dispose=lambda: None)
+    monkeypatch.setattr(production_reset, "create_engine", lambda *_args, **_kwargs: engine)
+    monkeypatch.setattr(production_reset, "_database_exists", lambda *_args: True)
+    monkeypatch.setattr(
+        production_reset, "_load_database_definition", lambda *_args: snapshot.database
+    )
+    monkeypatch.setattr(
+        production_reset, "_maintenance_actor_identity", lambda *_args: ("dish", True)
+    )
+    monkeypatch.setattr(production_reset, "_load_reset_guard", lambda *_args: OTHER_RESET_ID)
+
+    with pytest.raises(ProductionResetError, match="guard/reset-id mismatch"):
+        production_reset.recreate_database(
+            "postgresql+psycopg://dish:secret@localhost/dish_stage_a_prod",
+            snapshot,
+            reset_id=RESET_ID,
+            resume=True,
+        )
+    assert sql == []
