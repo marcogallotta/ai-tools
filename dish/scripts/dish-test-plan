@@ -37,7 +37,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--integration-checkpoint",
         action="store_true",
-        help="add the ordinary full suite for an integration, merge, or certification checkpoint",
+        help="record Integration/certification checkpoint metadata without broadening selector-required lanes",
     )
     parser.add_argument(
         "--parallel-workers",

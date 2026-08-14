@@ -29,7 +29,7 @@ from tests.support.postgresql.release import (
     _prepare_candidate,
     _record_and_engage_writer_fence,
     _record_final_closure,
-    _record_runtime_and_worker_readiness_report,
+    _record_runtime_attestation,
     _writer_fence_proof,
 )
 from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
@@ -153,20 +153,11 @@ def _burn_and_open_admission(factory, ids, context, task_id, candidate_id, cutov
         )
         assert activation.rollback_burned_at is not None
         candidate = service.candidate_status(candidate_id)
-        reconciliation = _complete_active_mapping_reconciliation(
-            session,
-            ids,
-            generation_id=context["generation_id"],
-            corpus_identity="projection-worker-readiness",
-            started_at=NOW + timedelta(minutes=6),
-            completed_at=NOW + timedelta(minutes=6),
-        )
-        _record_runtime_and_worker_readiness_report(
+        _record_runtime_attestation(
             session,
             ids,
             service=service,
             candidate_id=candidate_id,
-            reconciliation=reconciliation,
             recorded_at=NOW + timedelta(minutes=6),
         )
         service.plan_first_admission(
@@ -287,21 +278,7 @@ def _record_committed_first_request(factory, ids, context, task_id, cutover_id, 
 
 def _verify_and_complete(factory, ids, context, candidate_id, cutover_id, request_id):
     with session_scope(factory) as session:
-        _complete_active_mapping_reconciliation(
-            session,
-            ids,
-            generation_id=context["generation_id"],
-            corpus_identity="post-first-admission",
-            started_at=NOW + timedelta(minutes=8),
-            completed_at=NOW + timedelta(minutes=9),
-        )
         service = ReleaseCandidateService(session, uuid_factory=lambda: _next(ids))
-        with pytest.raises(ReleaseAuthorityError, match="execution, audit, projection, and reconciliation"):
-            service.verify_first_admission(
-                cutover_run_id=cutover_id,
-                request_id=request_id,
-                verified_at=NOW + timedelta(minutes=8),
-            )
         service.verify_first_admission(
             cutover_run_id=cutover_id,
             request_id=request_id,

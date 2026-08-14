@@ -488,7 +488,7 @@ class RuntimeReleaseAttestation(Base):
         Uuid, ForeignKey("release_candidates.candidate_id", ondelete="RESTRICT"), nullable=False, unique=True
     )
     service_artifact_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
-    projection_worker_artifact_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    projection_worker_artifact_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
     route_probe_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     attestation_sha256: Mapped[str] = mapped_column(String(64), nullable=False)

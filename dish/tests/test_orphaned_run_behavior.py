@@ -1,13 +1,8 @@
-"""Characterization tests for the suspected orphaned-operation problem.
+"""Regression coverage for orphaned-operation recovery boundaries.
 
-These tests do not propose or exercise a fix. They pin down what Dish
-actually does today when the client run/lease that opened a Research,
-Planning, or Verification attempt is gone before the attempt completes,
-and whether `recover-lease` (which only clears the lease row) lets a
-fresh run continue the same durable workflow attempt.
-
-See the findings table in the PR/commit description for the summary
-this file was written to produce.
+Clean expiry does not revoke the original durable run: that same run may
+revive its actor lease and continue. A genuinely different run still needs
+the governed safe-reclaim or admin recovery path before it can take over.
 """
 from __future__ import annotations
 
@@ -70,7 +65,7 @@ def _reject_large_args(operation_id: str, *, model: str = "m") -> dict:
 # 1. Research: lease released before `prepare`
 # ---------------------------------------------------------------------------
 
-def test_research_same_run_blocked_by_expired_lease_then_reclaims_after_recovery(tmp_path):
+def test_research_expired_same_run_transparently_revives_without_admin_recovery(tmp_path):
     clock = Clock()
     service, _backend = _service(tmp_path, clock=clock, ttl=60)
     run_a = _agent("gpt", "research-run-a")
@@ -85,17 +80,8 @@ def test_research_same_run_blocked_by_expired_lease_then_reclaims_after_recovery
     same_run_attempt = service.execute_agent(
         "prepare", _prepare_args(operation_id), principal=run_a,
     )
-    assert same_run_attempt["code"] == "CONFLICT"
-    assert same_run_attempt["errors"][0]["rule"] == "service_lease_expired"
-
-    recovered = service.recover_lease(operation_id, _admin(), reason="test recovery")
-    assert recovered["ok"]
-    assert recovered["data"]["ownership_transferred"] is False
-
-    resumed = service.execute_agent(
-        "prepare", _prepare_args(operation_id), principal=run_a,
-    )
-    assert resumed["ok"]
+    assert same_run_attempt["ok"], same_run_attempt
+    assert same_run_attempt["data"].get("required_admin_action") is None
 
 
 def test_research_fresh_run_is_permanently_locked_out_by_durable_run_id(tmp_path):
@@ -152,11 +138,10 @@ def _planning_prepare_args(operation_id: str) -> dict:
     }
 
 
-def test_planning_fresh_run_is_permanently_locked_out_by_durable_run_id(tmp_path):
+def test_planning_expired_same_run_transparently_revives_without_admin_recovery(tmp_path):
     clock = Clock()
     service, _backend = _planning_service(tmp_path, clock=clock, ttl=60)
     run_a = _agent("gpt", "planning-run-a")
-    run_b = _agent("gpt", "planning-run-b")
     started = confirmed_planning_start(
         service,
         {"agent": "gpt", "task_gid": "t", "kind": "planning"},
@@ -171,29 +156,15 @@ def test_planning_fresh_run_is_permanently_locked_out_by_durable_run_id(tmp_path
     recovered_early = service.execute_agent(
         "prepare", _planning_prepare_args(operation_id), principal=run_a,
     )
-    assert recovered_early["code"] == "CONFLICT"
-    assert recovered_early["errors"][0]["rule"] == "service_lease_expired"
-
-    recovered = service.recover_lease(operation_id, _admin(), reason="test recovery")
-    assert recovered["ok"]
-
-    fresh_prepare_after_recovery = service.execute_agent(
-        "prepare", _planning_prepare_args(operation_id), principal=run_b,
-    )
-    assert fresh_prepare_after_recovery["code"] == "AGENT_MISMATCH"
-    assert fresh_prepare_after_recovery["errors"][0]["rule"] == "service_lease_claim_forbidden"
-
-    original_run_still_works = service.execute_agent(
-        "prepare", _planning_prepare_args(operation_id), principal=run_a,
-    )
-    assert original_run_still_works["ok"], original_run_still_works
+    assert recovered_early["ok"], recovered_early
+    assert recovered_early["data"].get("required_admin_action") is None
 
 
 # ---------------------------------------------------------------------------
 # 3. Verification: lease released before approve/reject
 # ---------------------------------------------------------------------------
 
-def test_verification_fresh_run_is_permanently_locked_out_same_as_research(tmp_path):
+def test_verification_expired_same_run_revives_while_fresh_run_stays_locked_out(tmp_path):
     clock = Clock()
     service, _backend = _service(tmp_path, clock=clock, ttl=60)
     constructor = _agent("gpt", "constructor-run")
@@ -214,66 +185,31 @@ def test_verification_fresh_run_is_permanently_locked_out_same_as_research(tmp_p
         principal=verifier_a,
     )
     assert review_a["ok"]
-
-    clock.advance(61)
-
-    run_a_continuing = service.execute_agent(
-        "reject", _reject_large_args(operation_id), principal=verifier_a,
-    )
-    assert run_a_continuing["code"] == "CONFLICT"
-    assert run_a_continuing["errors"][0]["rule"] == "service_lease_expired"
-
-    verifier_b = _agent("codex", "verifier-run-b")
-    fresh_start_before_recovery = service.execute_agent(
-        "start",
-        {"agent": "codex", "task_gid": "t", "kind": "verification",
-         "independence_attestation": "independent"},
-        principal=verifier_b,
-    )
-    assert fresh_start_before_recovery["code"] == "CONFLICT"
-    assert fresh_start_before_recovery["errors"][0]["rule"] == "service_lease_expired"
-
-    recovered = service.recover_lease(operation_id, _admin(), reason="test recovery")
-    assert recovered["ok"]
-
-    # `start` for verification reads and binds the cycle in one shot (unlike
-    # Research/Planning `prepare`, which is a separate later command). Once
-    # verifier_a's `start` already bound and read the cycle, the workflow
-    # layer itself -- independent of the lease -- refuses a second `start`:
-    # "start" is no longer a legal_action once a cycle is under review.
-    fresh_start_after_recovery = service.execute_agent(
-        "start",
-        {"agent": "codex", "task_gid": "t", "kind": "verification",
-         "independence_attestation": "independent"},
-        principal=verifier_b,
-    )
-    assert fresh_start_after_recovery["code"] == "WRONG_STATE"
-    assert fresh_start_after_recovery["errors"][0]["rule"] == "operation_action_not_allowed"
-
-    # The only legal next actions are the decision commands, which are
-    # _LEASED_AGENT_COMMANDS and therefore gated by _may_claim_missing_lease:
-    # only a run recorded with role="verifier" in operation_actor_facts may
-    # claim the now-missing lease. Verifier_b was never recorded, so it is
-    # permanently locked out -- the identical structural failure as
-    # Research/Planning, just reached through `start` instead of `prepare`.
-    run_b_next_action = service.execute_agent(
-        "reject", _reject_large_args(operation_id), principal=verifier_b,
-    )
-    assert run_b_next_action["code"] == "AGENT_MISMATCH"
-    assert run_b_next_action["errors"][0]["rule"] == "service_lease_claim_forbidden"
-
-    # Verifier_a, by contrast, IS recorded with role="verifier" for this
-    # operation, so it can still reclaim the lease and complete its review
-    # even though its client run/conversation is nominally the one that
-    # "went away" and triggered admin recovery in the first place.
     inspected_a = service.execute_agent(
         "inspect", {"agent": "codex", "submission_id": operation_id}, principal=verifier_a,
     )
     assert inspected_a["ok"]
-    run_a_after_recovery = service.execute_agent(
+
+    clock.advance(61)
+
+    revived = service.renew_lease(operation_id, verifier_a)
+    assert revived["ok"], revived
+    assert revived["data"]["service_lease"]["run_id"] == verifier_a.run_id
+
+    verifier_b = _agent("codex", "verifier-run-b")
+    fresh_start = service.execute_agent(
+        "start",
+        {"agent": "codex", "task_gid": "t", "kind": "verification",
+         "independence_attestation": "independent"},
+        principal=verifier_b,
+    )
+    assert fresh_start["code"] == "AGENT_MISMATCH"
+    assert fresh_start["errors"][0]["rule"] == "service_lease_owner_mismatch"
+
+    run_a_after_revival = service.execute_agent(
         "reject", _reject_large_args(operation_id), principal=verifier_a,
     )
-    assert run_a_after_recovery["ok"], run_a_after_recovery
+    assert run_a_after_revival["ok"], run_a_after_revival
 
 
 # ---------------------------------------------------------------------------
@@ -427,10 +363,6 @@ def test_dead_verifier_failure_and_admin_inspect_return_same_safe_reclaim_action
         principal=verifier_a,
     )["ok"]
     clock.advance(61)
-    expired = service.execute_agent(
-        "reject", _reject_large_args(operation_id), principal=verifier_a,
-    )
-    assert expired["errors"][0]["rule"] == "service_lease_expired"
     assert service.recover_lease(
         operation_id, _admin("admin-guidance"), reason="original run ended"
     )["ok"]

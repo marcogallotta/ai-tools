@@ -408,6 +408,40 @@ def _worker_readiness_probes(*, worker_identity: str) -> dict[str, dict[str, str
     }
 
 
+
+def _record_runtime_attestation(
+    session,
+    ids,
+    *,
+    service,
+    candidate_id,
+    recorded_at,
+):
+    candidate = service.candidate_status(candidate_id)
+    service_path, service_sha = _artifact_file("service-artifact-no-asana")
+    route_path, route_sha = _artifact_file("route-probe-no-asana")
+    return service.record_runtime_release_attestation(
+        candidate_id=candidate_id,
+        service_artifact_sha256=service_sha,
+        route_probe_sha256=route_sha,
+        payload={
+            "dish_release": candidate.dish_release,
+            "honest_release": candidate.honest_release,
+            "protocol_release": candidate.protocol_release,
+            "registry_version_id": str(candidate.registry_version_id),
+            "honest_binding_id": str(candidate.honest_binding_id),
+            "openapi_release": candidate.openapi_release,
+            "routing_release": candidate.routing_release,
+            "route_target": "postgresql",
+            "health": "pass",
+            "mutation_admission": "closed",
+            "external_projection": "disabled_post_burn",
+            "service_artifact_path": service_path,
+            "route_probe_path": route_path,
+        },
+        recorded_at=recorded_at,
+    )
+
 def _record_runtime_and_worker_readiness_report(
     session,
     ids,
@@ -438,6 +472,7 @@ def _record_runtime_and_worker_readiness_report(
             "route_target": "postgresql",
             "health": "pass",
             "mutation_admission": "closed",
+            "external_projection": "disabled_post_burn",
             "projection_worker_identity": worker_identity,
             "service_artifact_path": service_path,
             "projection_worker_artifact_path": worker_path,

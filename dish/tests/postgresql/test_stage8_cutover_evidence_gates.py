@@ -381,6 +381,7 @@ def test_post_burn_evidence_cannot_predate_rollback_burn(workflow_db) -> None:
                     "route_target": "postgresql",
                     "health": "pass",
                     "mutation_admission": "closed",
+                "external_projection": "disabled_post_burn",
                 },
                 recorded_at=NOW + timedelta(minutes=5),
             )

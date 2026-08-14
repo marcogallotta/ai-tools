@@ -26,6 +26,9 @@ No test becomes runtime authority. Evidence is only as strong as the boundary ac
 - SQLite/PGlite/mocks/in-process tests do not certify PostgreSQL lock/server/process behavior.
 - Native PostgreSQL is final certification for claims that specifically depend on PostgreSQL runtime semantics, while smaller tests remain useful evidence.
 - Structural/source-layout tests should not substitute for behavioral proof unless topology itself is the safety property.
+- Frontend static/tooling evidence and browser acceptance are distinct boundaries: static/unit/build
+  success does not certify browser/HTTP/session behavior, and browser acceptance should be selected
+  when the changed invariant crosses that boundary.
 - Browser tests can prove frontend lifecycle and presentation behavior only at the HTTP/browser
   boundary they exercise. They do not certify native PostgreSQL locking, production HTTPS/proxy
   configuration, destructive restore behavior, or live deployment identity.

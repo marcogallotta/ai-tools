@@ -122,7 +122,9 @@ Rules:
 
 ## PR intake and review routing
 
-Ordinary review discovery must filter out GitHub draft PRs. `draft=true` means implementation is still AUTHORING even when the PR already exists; do not dispatch it for ordinary review. `draft=false` is the explicit REVIEW-READY transition. Marco may explicitly request an exceptional early review of a draft. `scripts/pr_gate.py review-ready` encodes the same predicate for machine use.
+Ordinary review discovery must filter out GitHub draft PRs. `draft=true` means implementation is still AUTHORING even when the PR already exists; do not dispatch it for ordinary review. When the durable PR description names unfinished task-scoped authoring evidence with `IMPLEMENTATION EVIDENCE PENDING: <evidence>`, classify it as **IMPLEMENTATION CONTINUATION REQUIRED** and route the existing PR/branch/task back to Implementation. Do not turn unfinished authoring evidence into a Review, Integration, environment-owner, or local-certification question. A replacement Implementation agent may take it only through an explicit durable ownership handoff on the PR.
+
+`draft=false` is the explicit REVIEW-READY transition. Pending ordinary CI after that transition is Integration evidence and does not send the PR back to authoring. Marco may explicitly request an exceptional early review of a draft. `scripts/pr_gate.py review-ready` encodes the same Review predicate. If a human-facing status is required for unfinished draft evidence, use only `PR #N still needs Implementation to finish <evidence>.`; do not ask Marco to choose the next agent or certification route.
 
 The repository lifecycle dispatcher owns routine PR polling, exact-head state classification, Review dispatch, local-work handoff, and authorized mechanical Integration continuation. Coordinator should consume its durable state/output for cross-lane ordering or genuine decisions rather than manually forwarding agent transcripts between roles. Routine transitions remain silent; Marco is notified only for a real local action/decision or useful terminal result.
 
@@ -165,6 +167,8 @@ After local completion:
 A lifecycle dispatcher must be able to classify `LOCAL IMPLEMENTATION COMPLETION REQUIRED` directly from durable PR state without coordinator chat history.
 
 ## Branch/worktree and direct-commit policy
+
+Every repository-changing Implementation/fix dispatch uses the single canonical handoff contract at [`templates/implementation-handoff.md`](templates/implementation-handoff.md). Coordinator must supply its full assignment identity and must not dispatch from a same-task branch/PR match alone.
 
 Day-one rules for new work:
 

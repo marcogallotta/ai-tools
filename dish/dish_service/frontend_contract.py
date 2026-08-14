@@ -33,7 +33,7 @@ ATTENTION_PRESENTATIONS: tuple[AttentionPresentation, ...] = (
     AttentionPresentation("recovery_required", "Recovery required", "error", "The current task requires recovery before normal workflow can continue."),
     AttentionPresentation("abandonment_active", "Abandonment active", "error", "An abandonment workflow is active for this task."),
     AttentionPresentation("succession_active", "Succession active", "error", "A successor operation is active for this task."),
-    AttentionPresentation("projection_abnormal", "Asana projection issue", "warning", "The downstream Asana projection needs attention."),
+    AttentionPresentation("projection_abnormal", "External projection issue", "warning", "The active downstream projection needs attention."),
 )
 ATTENTION_BY_CODE = {item.code: item for item in ATTENTION_PRESENTATIONS}
 

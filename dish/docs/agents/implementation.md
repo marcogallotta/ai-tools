@@ -32,6 +32,8 @@ Before changing Dish code, follow root `CLAUDE.md` and start at `dish/docs/archi
 
 Do not silently substitute another base or assume unmerged parallel work has landed.
 
+Every repository-changing implementation/fix assignment uses the single canonical handoff contract at [`templates/implementation-handoff.md`](templates/implementation-handoff.md). Treat repository + Asana task GID + authorized branch + existing PR/expected head as one assignment identity. Matching task identity on a different branch or PR never authorizes adopting or modifying that lineage. Local Claude Code/Codex work acquires the matching `tools/agent-worktree claim` before touching task-owned worktree or branch state; replacement/fix/publication handoffs reconcile the same claim before takeover.
+
 Before returning an assigned implementation as no-op/already-fixed/not-reproducible, apply the inherited assigned-task dismissal gate to the owning task's notes and material history; current source/runtime health alone is not enough to erase a recorded historical defect. Before declaring a routine authorized implementation/publication action blocked, apply the inherited authorized-fallback gate and verify any state-changing fallback before reporting success.
 
 ## Branch and worktree ownership
@@ -70,7 +72,7 @@ For new work:
 7. verify every recorded SHA is current, then explicitly mark the PR **ready for review**;
 8. verify GitHub now reports `draft=false`; only then return it for ordinary review discovery.
 
-`draft=true` means **AUTHORING / NOT REVIEWABLE**. The PR may exist and receive implementation commits while evidence is still in progress, but ordinary Coordinator/Review discovery must ignore it. Marco may explicitly request an exceptional early review of a draft; that is an override, not a change to the normal state machine.
+`draft=true` means **AUTHORING / NOT REVIEWABLE**. The PR may exist and receive implementation commits while evidence is still in progress, but ordinary Coordinator/Review discovery must ignore it. While a draft is specifically waiting on unfinished task-scoped authoring evidence, keep one concise durable line in the PR description: `IMPLEMENTATION EVIDENCE PENDING: <exact evidence>`. Remove or replace that line as the evidence is completed. Pending ordinary CI after the ready-for-review transition is Integration evidence, not unfinished authoring evidence. Marco may explicitly request an exceptional early review of a draft; that is an override, not a change to the normal state machine.
 
 The ready-for-review transition is the author's explicit handoff from AUTHORING to REVIEW-READY. PR-triggered ordinary CI starts from this review-ready state and may complete while review proceeds; any CI still pending at the transition must be named as pending integration evidence rather than claimed as passed.
 

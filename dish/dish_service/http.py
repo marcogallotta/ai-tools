@@ -420,7 +420,12 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             self._validate_request_shape(surface, command, request)
             if surface == "action":
                 principal = self._principal(credential, request)
-                _client, arguments = validate_action_request(command, request)
+                action_validator = getattr(
+                    self.server.service,
+                    "validate_action_request",
+                    validate_action_request,
+                )
+                _client, arguments = action_validator(command, request)
                 request = {"client": _client, "arguments": arguments}
             if principal is None:
                 principal = self._principal(credential, request)

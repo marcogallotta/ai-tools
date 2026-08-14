@@ -214,7 +214,7 @@ def _prepare_fenced_recertified_cutover(
     return service, candidate_id, closure, run, fence
 
 
-def _case_test_admission_requires_post_burn_runtime_worker_and_first_request_evidence(workflow_db) -> None:
+def _case_test_admission_requires_post_burn_runtime_and_first_request_evidence(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
     with session_scope(factory) as session:
         service, candidate_id, cutover_run_id = _burn_rollback(
@@ -318,5 +318,5 @@ def _case_test_admission_requires_post_burn_runtime_worker_and_first_request_evi
         )
         assert checkpoint is not None
         assert checkpoint.payload["runtime_attestation_id"]
-        assert checkpoint.payload["projection_worker_readiness_id"]
+        assert checkpoint.payload["external_projection_mode"] == "disabled_post_burn"
         assert checkpoint.payload["first_admission_plan_id"]

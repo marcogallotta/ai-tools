@@ -27,6 +27,18 @@ def projection_fact(
     evaluation_time: datetime,
     projection_delay: timedelta,
 ) -> ProjectionFact:
+    active_external_epoch = session.scalar(
+        select(projection.ProjectionEpoch.projection_epoch_id)
+        .where(
+            projection.ProjectionEpoch.generation_id == generation_id,
+            projection.ProjectionEpoch.status == "active",
+            projection.ProjectionEpoch.external_effects_enabled.is_(True),
+        )
+        .limit(1)
+    )
+    if active_external_epoch is None:
+        return ProjectionFact(None, None, None, None)
+
     cutoff = evaluation_time - projection_delay
     statement = select(
         select(func.max(projection.ProjectionDriftEvent.detected_at))

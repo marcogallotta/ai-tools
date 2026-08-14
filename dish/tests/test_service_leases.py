@@ -129,7 +129,7 @@ def test_workflow_handoff_releases_owner_lease_but_keeps_task_operation_lock(tmp
     assert review["data"]["service_lease"]["owner_id"] == "verifier"
 
 
-def test_lease_renewal_expiry_and_admin_recovery_are_deterministic(tmp_path):
+def test_lease_renewal_clean_expiry_revives_same_run_and_admin_recovery_remains_exceptional(tmp_path):
     clock = Clock()
     backend = Backend()
     service = _service(tmp_path, backend, clock=clock, ttl=30)
@@ -157,20 +157,62 @@ def test_lease_renewal_expiry_and_admin_recovery_are_deterministic(tmp_path):
     assert not_stale["errors"][0]["rule"] == "service_lease_not_stale"
 
     clock.advance(31)
-    expired = service.renew_lease(operation_id, owner)
-    assert expired["code"] == "CONFLICT"
-    assert expired["task_gid"] == "t"
-    assert expired["submission_id"] == operation_id
-    assert expired["errors"][0]["rule"] == "service_lease_expired"
+    revived = service.renew_lease(operation_id, owner)
+    assert revived["ok"] is True
+    assert revived["task_gid"] == "t"
+    assert revived["submission_id"] == operation_id
+    assert revived["data"]["service_lease"]["lease_id"] == started["data"]["service_lease"]["lease_id"]
+    assert revived["data"]["service_lease"]["run_id"] == owner.run_id
 
+    still_live = service.recover_lease(
+        operation_id, _principal("admin", "recovery-2"), reason="premature after revival"
+    )
+    assert still_live["code"] == "CONFLICT"
+    assert still_live["errors"][0]["rule"] == "service_lease_not_stale"
+
+    clock.advance(31)
     recovered = service.recover_lease(
-        operation_id, _principal("admin", "recovery-2"), reason="owner confirmed dead"
+        operation_id, _principal("admin", "recovery-3"), reason="owner confirmed dead"
     )
     assert recovered["ok"]
     assert recovered["task_gid"] == "t"
     assert recovered["state"] == "open"
     assert recovered["data"]["service_lease"] is None
     assert recovered["data"]["ownership_transferred"] is False
+
+
+def test_same_principal_acquire_reuses_and_revives_expired_actor_lease(tmp_path):
+    clock = Clock()
+    service = _service(tmp_path, Backend(), clock=clock, ttl=30)
+    owner = _principal("owner", "same-acquire-run")
+    started = service.execute_agent(
+        "start",
+        {
+            "agent": "gpt",
+            "task_gid": "t",
+            "kind": "initial",
+            "run_id": owner.run_id,
+        },
+        principal=owner,
+    )
+    operation_id = started["submission_id"]
+    lease_id = started["data"]["service_lease"]["lease_id"]
+    clock.advance(31)
+
+    conn = initialize_database(service.config.db_path)
+    try:
+        revived = LeaseManager(conn, ttl_seconds=30, now=clock.now).acquire(
+            operation_id, owner
+        )
+        assert revived["lease_id"] == lease_id
+        assert revived["run_id"] == owner.run_id
+        assert revived["released_at"] is None
+        assert conn.execute(
+            "SELECT COUNT(*) FROM service_leases WHERE operation_id=?",
+            (operation_id,),
+        ).fetchone()[0] == 1
+    finally:
+        conn.close()
 
 
 def test_terminal_operation_renewal_reports_terminal_wrong_state(tmp_path):

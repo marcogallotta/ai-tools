@@ -31,6 +31,7 @@ from tests.support.postgresql.core import _import_one
 from tests.support.postgresql.command import (
     _add_verification_queue,
     _call,
+    _inspect,
     _port,
     _prepare_for_verification,
     _start_initial,
@@ -345,6 +346,366 @@ def test_authoritative_sections_and_registry_bound_pagination(workflow_db) -> No
             )
 
 
+def test_canonical_section_id_lists_tasks_without_section_gid(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port = _port(session, ids)
+        result = port.execute(
+            _call(
+                "section-tasks",
+                run_id=_next(ids),
+                arguments={"section_id": str(context["section_id"])},
+            )
+        )
+
+    assert result.ok
+    assert [item["dish_id"] for item in result.data["tasks"]] == [str(task_id)]
+    assert result.data["tasks"][0]["section_id"] == str(context["section_id"])
+    assert result.data["tasks"][0]["task_gid"] == "123456789"
+
+
+def test_read_resolves_canonical_dish_id_without_task_gid(workflow_db) -> None:
+    factory, ids, _context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port = _port(session, ids)
+        result = port.execute(
+            _call("read", run_id=_next(ids), arguments={"dish_id": str(task_id)})
+        )
+
+    assert result.ok
+    assert result.data["dish_id"] == str(task_id)
+    assert result.data["identity_binding"] == {
+        "dish_id": str(task_id),
+        "task_gid": "123456789",
+    }
+
+
+def test_unknown_canonical_read_and_section_ids_fail_locally(workflow_db) -> None:
+    factory, ids, _context, _task_id = workflow_db
+    unknown_dish = uuid.UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+    unknown_section = uuid.UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+    with session_scope(factory) as session:
+        port = _port(session, ids)
+        read_result = port.execute(
+            _call("read", run_id=_next(ids), arguments={"dish_id": str(unknown_dish)})
+        )
+        section_result = port.execute(
+            _call(
+                "section-tasks",
+                run_id=_next(ids),
+                arguments={"section_id": str(unknown_section)},
+            )
+        )
+
+    assert read_result.ok is False
+    assert (read_result.code, read_result.http_status) == ("DISH_NOT_FOUND", 404)
+    assert read_result.data == {"dish_reference": str(unknown_dish)}
+    assert section_result.ok is False
+    assert (section_result.code, section_result.http_status) == ("SECTION_NOT_FOUND", 404)
+    assert section_result.data == {"section_reference": str(unknown_section)}
+
+
+def test_start_resolves_canonical_dish_id_without_task_gid(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        result = port.execute(
+            _call(
+                "start",
+                run_id=run_id,
+                request_id=_next(ids),
+                arguments={"dish_id": str(task_id), "kind": "initial", "agent": "claude"},
+            )
+        )
+
+    assert result.ok, (result.code, result.http_status, result.data)
+    assert result.data["operation_id"]
+
+
+def test_legacy_task_gid_alias_resolves_locally_for_start(workflow_db) -> None:
+    factory, ids, context, _task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        result = port.execute(
+            _call(
+                "start",
+                run_id=run_id,
+                request_id=_next(ids),
+                arguments={"task_gid": "123456789", "kind": "initial", "agent": "claude"},
+            )
+        )
+
+    assert result.ok, (result.code, result.http_status, result.data)
+
+
+def test_safe_reclaim_is_postgresql_native_different_run_recovery(workflow_db, monkeypatch) -> None:
+    factory, ids, context, task_id = workflow_db
+    source_run = _next(ids)
+    successor_run = _next(ids)
+    from dish_tool import backend as asana_backend
+
+    monkeypatch.setattr(
+        asana_backend.AsanaBackend,
+        "__init__",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("PostgreSQL safe-reclaim must not construct Asana")
+        ),
+    )
+    with session_scope(factory) as session:
+        _register_run(session, generation_id=context["generation_id"], run_id=source_run)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=successor_run,
+            owner="successor-owner",
+        )
+        port = _port(session, ids)
+        started = _start_initial(port, ids, task_id=task_id, run_id=source_run)
+        later = NOW + timedelta(minutes=11)
+        same_run = port.execute(
+            CommandCall(
+                command_name="safe-reclaim",
+                arguments={
+                    "submission_id": started.data["operation_id"],
+                    "lease_id": started.data["lease_id"],
+                    "agent": "claude",
+                },
+                owner_id="owner-1",
+                principal_class="agent",
+                run_id=source_run,
+                request_id=_next(ids),
+                now=later,
+            )
+        )
+        assert not same_run.ok
+        assert same_run.code == "SAFE_RECLAIM_REQUIRES_DIFFERENT_RUN"
+
+        reclaimed = port.execute(
+            CommandCall(
+                command_name="safe-reclaim",
+                arguments={
+                    "submission_id": started.data["operation_id"],
+                    "lease_id": started.data["lease_id"],
+                    "agent": "claude",
+                },
+                owner_id="successor-owner",
+                principal_class="agent",
+                run_id=successor_run,
+                request_id=_next(ids),
+                now=later,
+            )
+        )
+        assert reclaimed.ok, (reclaimed.code, reclaimed.http_status, reclaimed.data)
+        successor_id = uuid.UUID(reclaimed.data["successor_operation_id"])
+        source = session.get(wf.WorkflowOperation, uuid.UUID(started.data["operation_id"]))
+        successor = session.get(wf.WorkflowOperation, successor_id)
+        edge = session.scalar(
+            select(wf.OperationSuccessionEdge).where(
+                wf.OperationSuccessionEdge.source_operation_id == source.operation_id
+            )
+        )
+        assert source.lifecycle == "abandoned"
+        assert source.terminal_outcome == "safe_reclaimed"
+        assert successor.lifecycle == "open"
+        assert successor.predecessor_operation_id == source.operation_id
+        assert edge.successor_operation_id == successor.operation_id
+        assert reclaimed.data["agent_action"]["arguments"]["prepared_operation_id"] == str(successor_id)
+
+        source_reclaim = port.execute(
+            CommandCall(
+                command_name="start",
+                arguments={
+                    "dish_id": str(task_id),
+                    "agent": "claude",
+                    "kind": "initial",
+                    "prepared_operation_id": str(successor_id),
+                },
+                owner_id="owner-1",
+                principal_class="agent",
+                run_id=source_run,
+                request_id=_next(ids),
+                now=later,
+            )
+        )
+        assert not source_reclaim.ok
+        assert source_reclaim.code == "SAFE_RECLAIM_SOURCE_RUN_FORBIDDEN"
+
+        claimed = port.execute(
+            CommandCall(
+                command_name="start",
+                arguments={
+                    "dish_id": str(task_id),
+                    "agent": "claude",
+                    "kind": "initial",
+                    "prepared_operation_id": str(successor_id),
+                },
+                owner_id="successor-owner",
+                principal_class="agent",
+                run_id=successor_run,
+                request_id=_next(ids),
+                now=later,
+            )
+        )
+        assert claimed.ok, (claimed.code, claimed.http_status, claimed.data)
+        assert claimed.data["operation_id"] == str(successor_id)
+        assert claimed.data["claimed_prepared_successor"] is True
+
+
+def test_postgresql_proposals_and_apply_proposal_install_exact_authorized_candidate(
+    workflow_db, monkeypatch
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    author_run = _next(ids)
+    verifier_run = _next(ids)
+    admin_run = _next(ids)
+    applying_run = _next(ids)
+    from dish_tool import backend as asana_backend
+
+    monkeypatch.setattr(
+        asana_backend.AsanaBackend,
+        "__init__",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("PostgreSQL proposal commands must not construct Asana")
+        ),
+    )
+    with session_scope(factory) as session:
+        _add_verification_queue(session, ids, context)
+        _register_run(session, generation_id=context["generation_id"], run_id=author_run)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=verifier_run,
+            owner="verifier-owner",
+            agent="codex",
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=admin_run,
+            owner="marco",
+            agent="marco",
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=applying_run,
+            owner="applying-owner",
+            agent="gpt",
+        )
+        port = _port(session, ids)
+        started = _start_initial(port, ids, task_id=task_id, run_id=author_run)
+        prepared = _prepare_for_verification(
+            port,
+            ids,
+            task_id=task_id,
+            operation_id=started.data["operation_id"],
+            run_id=author_run,
+        )
+        _start_verification(
+            port,
+            ids,
+            task_id=task_id,
+            operation_id=started.data["operation_id"],
+            run_id=verifier_run,
+        )
+        _inspect(
+            port,
+            ids,
+            task_id=task_id,
+            operation_id=started.data["operation_id"],
+            run_id=verifier_run,
+        )
+        reviewed = session.get(
+            models.ContentVersion, uuid.UUID(prepared.data["content_version_id"])
+        )
+        candidate_text = (reviewed.title + "\n" + reviewed.body).replace(
+            "Purpose: Compare texture",
+            "Purpose: Compare texture and aroma",
+        )
+        rejected = port.execute(
+            _call(
+                "reject",
+                run_id=verifier_run,
+                request_id=_next(ids),
+                owner="verifier-owner",
+                principal="verification",
+                arguments={
+                    "task_id": str(task_id),
+                    "submission_id": started.data["operation_id"],
+                    "agent": "codex",
+                    "reason": "Marco-governed purpose change needs durable approval",
+                    "route": "large",
+                    "model": "test-verifier",
+                    "file_text": candidate_text,
+                    "governed_change_fields": ["Purpose"],
+                },
+            )
+        )
+        assert rejected.ok, (rejected.code, rejected.http_status, rejected.data)
+        assert rejected.data["semantic_proposal_queued"] is True
+        proposal_id = rejected.data["proposal_id"]
+        assert port._current_content_version_id(context["generation_id"], task_id) == reviewed.content_version_id
+        assert port.execute(
+            _call("proposals", run_id=applying_run, owner="applying-owner")
+        ).data["count"] == 0
+
+        for change in rejected.data["required_authorizations"]:
+            grant = port.execute(
+                _call(
+                    "authorize-governed-change",
+                    run_id=admin_run,
+                    request_id=_next(ids),
+                    owner="marco",
+                    principal="admin",
+                    arguments={
+                        "task_id": str(task_id),
+                        "operation_id": started.data["operation_id"],
+                        "field_name": change["field"],
+                        "before": change["before"],
+                        "after": change["after"],
+                        "reason": "approved exact semantic proposal",
+                    },
+                )
+            )
+            assert grant.ok, (grant.code, grant.http_status, grant.data)
+
+        listed = port.execute(
+            _call("proposals", run_id=applying_run, owner="applying-owner")
+        )
+        assert listed.ok
+        assert listed.data["count"] == 1
+        assert listed.data["proposals"][0]["proposal_id"] == proposal_id
+
+        applied = port.execute(
+            _call(
+                "apply-proposal",
+                run_id=applying_run,
+                request_id=_next(ids),
+                owner="applying-owner",
+                arguments={
+                    "proposal_id": proposal_id,
+                    "agent": "gpt",
+                    "model": "test-model",
+                },
+            )
+        )
+        assert applied.ok, (applied.code, applied.http_status, applied.data)
+        assert applied.data["proposal_id"] == proposal_id
+        current_id = port._current_content_version_id(context["generation_id"], task_id)
+        current = session.get(models.ContentVersion, current_id)
+        assert current.content_identity == rejected.data["candidate_identity"]
+        assert "Purpose: Compare texture and aroma" in current.body
+        requirement = session.get(wf.HumanReviewRequirement, uuid.UUID(proposal_id))
+        assert requirement.state == "decided"
+        assert port.execute(
+            _call("proposals", run_id=applying_run, owner="applying-owner")
+        ).data["count"] == 0
+
+
 def test_create_commits_one_authoritative_bundle_and_exact_replay(workflow_db) -> None:
     factory, ids, context, _task_id = workflow_db
     run_id, request_id = _next(ids), _next(ids)
@@ -360,9 +721,11 @@ def test_create_commits_one_authoritative_bundle_and_exact_replay(workflow_db) -
         first = port.execute(call)
         replay = port.execute(call)
         created = session.scalar(
-            select(models.DishTask).where(models.DishTask.task_id == uuid.UUID(first.data["task_id"]))
+            select(models.DishTask).where(models.DishTask.task_id == uuid.UUID(first.data["dish_id"]))
         )
         assert first.ok and created.creation_route == "create"
+        assert first.data["dish_id"] == first.data["task_id"]
+        assert first.data["section_id"] == str(context["section_id"])
         assert replay.ok and replay.request_replayed is True
         assert session.scalar(
             select(func.count()).select_from(models.DishTask).where(models.DishTask.creation_route == "create")

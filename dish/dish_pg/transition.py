@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from . import models
 from . import stage3_models as wf
 from . import stage5_models as tx
+from .command_effect_runtime import external_projection_required
 from .planner import EffectObservation, adjudicate_effect
 from .shadow_evidence import compare_evidence
 from .workflow import sha256_json
@@ -1272,6 +1273,12 @@ class ProjectionService:
         generation = self.session.get(models.AuthorityGeneration, generation_id)
         if generation is None or generation.status != "active":
             raise TransitionAuthorityError("projection epoch requires active authority generation")
+        if external_effects_enabled and not external_projection_required(
+            self.session, generation_id=generation_id
+        ):
+            raise TransitionAuthorityError(
+                "external projection cannot be enabled after rollback burn"
+            )
         active = self.session.scalar(
             select(tx.ProjectionEpoch).where(
                 tx.ProjectionEpoch.generation_id == generation_id,
@@ -1323,6 +1330,12 @@ class ProjectionService:
             raise TransitionAuthorityError("projection epoch is not active")
         if not str(reason).strip():
             raise TransitionAuthorityError("projection effect-mode change requires a reason")
+        if enabled and not external_projection_required(
+            self.session, generation_id=epoch.generation_id
+        ):
+            raise TransitionAuthorityError(
+                "external projection cannot be enabled after rollback burn"
+            )
         epoch.external_effects_enabled = bool(enabled)
         self.session.flush()
         return epoch
@@ -1793,6 +1806,10 @@ class ProjectionService:
                 populate_existing=True,
             )
             if generation is None or generation.status != "active":
+                continue
+            if not external_projection_required(
+                self.session, generation_id=candidate.generation_id
+            ):
                 continue
             event = self._lock_event(candidate.projection_event_id)
             if (

@@ -35,12 +35,13 @@ FOCUSED_LANES = {
 }
 
 LANE_ORDER = (
-    "frontend check",
+    "frontend static/tooling",
     "smoke",
     "SQLite database-boundary",
     "PGlite primary",
     "PGlite quarantine",
     "native PostgreSQL certification",
+    "browser acceptance",
     "default mutation sample",
     "Stage A mutation sample",
     "source acceptance",
@@ -49,7 +50,8 @@ LANE_ORDER = (
 )
 
 LANE_COMMANDS = {
-    "frontend check": "npm --prefix frontend run check",
+    "frontend static/tooling": "npm --prefix frontend run check:static",
+    "browser acceptance": "npm --prefix frontend run test:acceptance",
     "smoke": ".venv/bin/python -m pytest --smoke",
     "SQLite database-boundary": ".venv/bin/python -m pytest --database-boundary",
     "PGlite primary": (
@@ -278,9 +280,6 @@ def build_plan(
                     escalations=row.conditional_escalations,
                 )
             )
-
-    if integration_checkpoint:
-        lanes.add("ordinary full suite")
 
     ordinary_focused = _ordinary_focused_tests(focused_tests)
     parallel_eligible = parallel_safe_eligible(ordinary_focused)

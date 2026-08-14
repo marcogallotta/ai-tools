@@ -24,7 +24,11 @@ from dish_tool.errors import DishRuleError
 from dish_tool.results import error_envelope
 
 from . import models
-from .command_contract import ACTION_COMMANDS
+from .command_contract import (
+    ACTION_COMMANDS,
+    COMMAND_DEFINITIONS,
+    validate_postgres_action_request,
+)
 from .command_port import CommandCall, CommandPortError, PostgresCommandPort
 from .database import DatabaseSettings, create_database_engine, session_factory, session_scope
 from .openapi import postgres_action_openapi
@@ -127,7 +131,7 @@ class PostgresRuntimeService:
         """
 
         if surface == "agent":
-            return True
+            return command in COMMAND_DEFINITIONS
         if surface == "action":
             return command in ACTION_COMMANDS
         return False
@@ -136,6 +140,13 @@ class PostgresRuntimeService:
         """Return the PostgreSQL Action contract served by the shared listener."""
 
         return postgres_action_openapi(server_url=server_url)
+
+    def validate_action_request(
+        self, command: str, request: Mapping[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Validate the PostgreSQL-specific no-Asana Action contract."""
+
+        return validate_postgres_action_request(command, request)
 
     def _identity(self) -> dict[str, Any]:
         try:

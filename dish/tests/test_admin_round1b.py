@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 import pytest
 
 from dish_service.admin_cli import build_parser
@@ -74,6 +76,28 @@ def test_inspect_active_dish_exposes_high_level_run_and_replace_choice() -> None
     assert actions[0]["arguments"]["positional"] == [_dish_id()]
     assert "expire-lease" not in actions[0]["shell_command"]
     assert "abandon-operation" not in actions[0]["shell_command"]
+
+
+def test_inspect_clean_expired_lease_does_not_imply_original_run_was_evicted() -> None:
+    conn = initialize_database(":memory:")
+    backend = Backend(section="pi", task_gid=_NUMERIC_TASK_GID)
+    operation = _numeric_task_source(conn, backend)
+    lease = LeaseManager(
+        conn,
+        ttl_seconds=30,
+        now=lambda: datetime(2020, 1, 1, tzinfo=timezone.utc),
+    ).acquire(operation["operation_id"], ServicePrincipal("owner", "returning-run"))
+    app = DishAdminApplication(conn, backend=backend)
+
+    result = app.execute("inspect", dish=_dish_id())
+
+    assert result["ok"], result
+    assert "original run to resume" in result["data"]["waiting_for"]
+    assert "original owner/run may still resume" in result["data"]["problem"]
+    assert any(
+        isinstance(action, dict) and action.get("command") == "safe-reclaim"
+        for action in result["data"]["agent_actions_now"]
+    )
 
 
 def test_kill_frontend_url_fences_run_and_prepares_safe_successor() -> None:

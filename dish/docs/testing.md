@@ -174,9 +174,11 @@ For every Dish code or test change, start with the complete changed-path set:
 The command reads `test_selection/ownership.csv`, takes the union across mixed changes, and prints
 focused owner tests plus governed lane commands. For Git-based planning it also reads the map at the
 base revision so deleted paths retain their prior test ownership. The map is a strong current-HEAD
-prior; it does not replace semantic review. An agent must evaluate the actual invariant, authority, durable state,
-external effect, transaction boundary, and release consequence changed. Add any additional required
-lane explicitly:
+prior; it does not replace semantic review. Frontend evidence is split into independent governed
+`frontend static/tooling` and `browser acceptance` lanes, and production/config PostgreSQL rows marked
+`native-pg` select `native PostgreSQL certification` rather than relying on advisory follow-up. An agent
+must evaluate the actual invariant, authority, durable state, external effect, transaction boundary, and
+release consequence changed. Add any additional required lane explicitly:
 
 ```sh
 .venv/bin/python scripts/dish-test-plan \
@@ -230,7 +232,9 @@ Test rows select their own module automatically, so `direct_owner_tests` and
 uses fan-out scope: narrow helpers run known consumers; cross-lane helpers run their consumer lanes;
 only genuinely global collection, dependency, fixture, selector, or governed-runner changes force
 the ordinary full suite before handoff. A row addition that only classifies a new path does not by
-itself force the full suite.
+itself force the full suite. `--integration-checkpoint` records checkpoint metadata only; Integration
+is not itself a reason to add `ordinary full suite`. Broad/full selection must come from the changed-path
+policy, unresolved semantic uncertainty, a high-consequence rule, or an explicit additive escalation.
 
 Validate the map after adding, deleting, renaming, or reclassifying a path:
 
@@ -252,18 +256,28 @@ results, conditional lanes omitted with reasons, and any unresolved uncertainty.
 review these decisions; repeated mistakes should become clearer map rules, examples, inventories, or
 structural checks.
 
-## Frontend browser acceptance
+## Frontend static/tooling and browser acceptance
 
-Delivery Stage 7 adds a committed Playwright suite under `frontend/tests/browser/`. It drives the
-production `frontend/dist` through the real private Dish HTTP surface with deterministic read-only
-acceptance state; it does not mount mocked frontend components. The normal frontend gate includes
-this suite after the static/unit/build checks:
+Frontend certification has two independently selectable boundaries. `frontend static/tooling` runs
+format/lint/schema/unit/build evidence without allocating a browser:
 
 ```sh
-npm --prefix frontend run check
+npm --prefix frontend run check:static
 ```
 
-For focused browser iteration, build once and run only the acceptance suite:
+`browser acceptance` drives the production `frontend/dist` through the real private Dish HTTP surface
+with deterministic read-only acceptance state; it does not mount mocked frontend components. The lane
+is selected for browser/presentation/session source, browser test infrastructure, and backend frontend
+contracts whose changed invariant can alter browser behavior. Pure unit/tooling/generated-check changes
+can remain static-only unless their semantic change alters emitted production assets, browser runtime
+contracts/dependencies, or acceptance execution. The standalone governed command rebuilds as needed:
+
+```sh
+npm --prefix frontend run test:acceptance
+```
+
+`npm --prefix frontend run check` remains a convenience aggregate of static plus built acceptance; it is
+not a selector lane. For focused browser iteration, build once and run only the acceptance suite:
 
 ```sh
 npm --prefix frontend run build
@@ -310,22 +324,32 @@ lane; it never hides a failed inner phase behind one final aggregate result.
 
 `round1c-journeys` is the fixed pre-cutover confidence lane for the concrete workflow failures discovered during the 1A/1B dark-launch work and subsequent operator retesting. It intentionally reuses the strongest existing behavioral regressions rather than cloning them: stranded request/execution recovery, recover/inspect progress, expired-run ownership and safe reclaim, abandonment successors, Human Review continuation and ranked-choice resolution, semantic-proposal application/staleness, Action schema/runtime vocabulary and inspect request IDs, canonical Dish-UUID resolution without section/title discovery, connected transport replay identity/backoff and Marco-override guidance, post-mutation continuation refresh, Change signoff lineage, resting/out-of-project Dish inspect, population-audit/verbose-inspect contracts, and bulk-kill successor fencing. Keep that inventory literal and review changes to it as changes to the accepted confidence boundary.
 
-`native-concurrency` requires `DISH_TEST_POSTGRESQL_DSN`; `operational-certification` requires
-`DISH_PG_TEST_URL`. Missing infrastructure is reported as unavailable with exit status 3, never as a
-pass. These commands complement, rather than replace, changed-path focused tests and the ordinary
-full-suite integration checkpoint.
+`native-concurrency` first honors an explicit `DISH_TEST_POSTGRESQL_DSN`, then an explicit
+`DISH_PG_TEST_URL` alias. When neither is set, the lane invokes
+`scripts/dish-pg-native-certification --ensure-local-postgresql --json`: it probes only the canonical disposable target
+`localhost:5432`, role/database `dish_test`, and injects that fixed DSN only after the target proves
+its local/native identity. If the target is missing but the local server is available, the helper
+uses bounded non-interactive `sudo -n -u postgres` provisioning and reprobes. It never accepts a
+host, role, database, DSN, or credential override, and never falls back to shared TEST, PROD, or a
+remote server. Only after that supported local path is exhausted does the lane report `UNAVAILABLE`
+with exit status 3 and the residual reason.
 
-Both variables point at a disposable local PostgreSQL role/database on the system-wide PG17 cluster
-from the "Local PostgreSQL 17 server binaries" section below (port 5432). Provision or reset it with:
+`operational-certification` still requires explicit `DISH_PG_TEST_URL`. Missing infrastructure is
+reported as unavailable, never as a pass. These commands complement, rather than replace,
+changed-path focused tests and the ordinary full-suite integration checkpoint.
+
+The canonical local target is the disposable role/database on the system-wide PG17 cluster from the
+"Local PostgreSQL 17 server binaries" section below. The lane normally provisions it automatically.
+For a manual non-interactive reset equivalent to the helper's bounded path:
 
 ```sh
-sudo -u postgres psql -c "DROP DATABASE IF EXISTS dish_test;"
-sudo -u postgres psql -c "DROP ROLE IF EXISTS dish_test;"
-sudo -u postgres psql -c "CREATE ROLE dish_test LOGIN PASSWORD '0ddca88b81a8bf1a15d84caa78efd7b3' CREATEDB;"
-sudo -u postgres psql -c "CREATE DATABASE dish_test OWNER dish_test;"
+sudo -n -u postgres psql -X -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "DROP DATABASE IF EXISTS dish_test;"
+sudo -n -u postgres psql -X -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "DROP ROLE IF EXISTS dish_test;"
+sudo -n -u postgres psql -X -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "CREATE ROLE dish_test LOGIN PASSWORD '0ddca88b81a8bf1a15d84caa78efd7b3' CREATEDB;"
+sudo -n -u postgres psql -X -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE dish_test OWNER dish_test;"
 ```
 
-then export the DSN in the same shell before running the lane above:
+The fixed local DSN is:
 
 ```sh
 export DISH_TEST_POSTGRESQL_DSN='postgresql+psycopg://dish_test:0ddca88b81a8bf1a15d84caa78efd7b3@localhost:5432/dish_test'
@@ -474,14 +498,20 @@ DISH_TEST_POSTGRESQL_DSN='postgresql+psycopg://...' \
 
 The script probes the target before pytest, rejects SQLite and PGlite server identities, invokes
 pytest with both `--postgresql` and `--native-postgresql`, and compares collection with the literal
-inventory in `tests/support/postgresql/certification.py`. Certification fails when zero tests execute,
+inventory in `tests/support/postgresql/certification.py`. This direct certification entrypoint keeps
+its explicit-DSN contract; the canonical-local bootstrap belongs only to the named local lane and is
+not a generic default in `tests/support/postgresql/certification.py`. Certification fails when zero tests execute,
 when inventory identities drift, when setup errors occur, or when a required test skips without an
 explicit `--waive-skip NODEID=REASON`. The report includes dialect, driver, database, native server
 version, selected/executed/passed/failed/error/skipped/unavailable counts, duration, and exact node
 IDs.
 
-Native-marked tests in ordinary source or full-suite runs skip before their bodies with a governed
-reason unless `--postgresql` is present. They never substitute SQLite. The native branch of
+Production/config/source-artifact ownership rows carrying the `native-pg` trait select this lane by
+default. Narrow PGlite and source-level PostgreSQL tests are not blanket-promoted merely because their
+fixtures mention PostgreSQL; they remain focused unless their owning production/config path or an
+explicit semantic escalation requires native evidence. Native-marked tests in ordinary source or
+full-suite runs skip before their bodies with a governed reason unless `--postgresql` is present. They
+never substitute SQLite. The native branch of
 `tests/support/postgresql/core.py` drops and recreates the disposable `public` schema before each
 owning test, then runs Alembic through `head`. It must not use `Base.metadata.create_all()`:
 hand-written PostgreSQL triggers and constraints are part of the behavior under certification.

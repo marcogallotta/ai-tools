@@ -37,18 +37,25 @@ LOCAL_HANDOFF_MARKER = "dish-local-handoff:v1"
 LOCAL_COMPLETION_MARKER = "dish-local-completion:v1"
 HUMAN_NOTICE_MARKER = "dish-human-notice:v1"
 REVIEW_ROUTE_MARKER = "dish-review-route:v1"
+IMPLEMENTATION_CONTINUATION_MARKER = "dish-implementation-continuation:v1"
+EXTERNAL_DEPENDENCY_MARKER = "dish-external-dependency:v1"
 DISPATCH_OWNER = "pr-lifecycle"
 WORKSPACE_API_ROOT = "https://api.chatgpt.com/v1"
 WORKSPACE_RUNS_BETA = "workspace_agent_runs=v1"
 TASK_GID_RE = re.compile(r"(?<!\d)(\d{16})(?!\d)")
 TESTS_TO_RUN_RE = re.compile(r"(?im)^TESTS TO RUN:\s*(?P<value>.+?)\s*$")
+AUTHORING_EVIDENCE_PENDING_RE = re.compile(
+    r"(?im)^IMPLEMENTATION EVIDENCE PENDING:\s*(?P<value>[^\n]+?)\s*$"
+)
 LOCAL_IMPLEMENTATION_RE = re.compile(
     r"(?im)^LOCAL IMPLEMENTATION COMPLETION REQUIRED:\s*(?P<value>.+?)\s*$"
 )
 INTEGRATION_BLOCK_RE = re.compile(r"(?im)^INTEGRATION BLOCKED BY:\s*(?P<value>.+?)\s*$")
 REVIEW_CLASS_RE = re.compile(r"(?im)^REVIEW CLASS:\s*(?P<value>[^\n]+?)\s*$")
+FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$", re.IGNORECASE)
+
 AFTER_FIX_RE = re.compile(
-    r"(?im)^(?:AFTER-FIX DISPOSITION:\s*)?(FOCUSED RECHECK|MECHANICAL CHECK ONLY|NEW SPECIALIST REVIEW|NORMAL MERGE REVIEW)\s*$"
+    r"(?im)^(?:AFTER-FIX DISPOSITION:\s*)?(FOCUSED RECHECK|MECHANICAL CHECK ONLY|DOMAIN DEEP RECHECK|NEW SPECIALIST REVIEW|NORMAL MERGE REVIEW)\s*$"
 )
 
 
@@ -65,6 +72,7 @@ class HTTPError(LifecycleError):
 
 class LifecycleState(str, Enum):
     AUTHORING = "authoring_implementation_in_progress"
+    IMPLEMENTATION_CONTINUATION_REQUIRED = "implementation_continuation_required"
     REVIEW_READY = "review_ready"
     REVIEW_IN_PROGRESS = "review_in_progress"
     CHANGES_REQUESTED = "changes_requested_fix_in_progress"
@@ -72,6 +80,7 @@ class LifecycleState(str, Enum):
     LOCAL_IMPLEMENTATION_REQUIRED = "local_implementation_completion_required"
     LOCAL_CERTIFICATION_REQUIRED = "local_certification_required"
     WAITING_CI = "waiting_ci_certification"
+    WAITING_EXTERNAL_DEPENDENCY = "waiting_external_dependency"
     INTEGRATION_READY = "integration_ready"
     MERGING = "merging_integration_in_progress"
     MERGED = "merged"
@@ -80,6 +89,7 @@ class LifecycleState(str, Enum):
 
 STATE_LABELS: dict[LifecycleState, str] = {
     LifecycleState.AUTHORING: "AUTHORING / IMPLEMENTATION IN PROGRESS",
+    LifecycleState.IMPLEMENTATION_CONTINUATION_REQUIRED: "IMPLEMENTATION CONTINUATION REQUIRED",
     LifecycleState.REVIEW_READY: "REVIEW READY",
     LifecycleState.REVIEW_IN_PROGRESS: "REVIEW IN PROGRESS",
     LifecycleState.CHANGES_REQUESTED: "CHANGES REQUESTED / FIX IN PROGRESS",
@@ -87,11 +97,29 @@ STATE_LABELS: dict[LifecycleState, str] = {
     LifecycleState.LOCAL_IMPLEMENTATION_REQUIRED: "LOCAL IMPLEMENTATION COMPLETION REQUIRED",
     LifecycleState.LOCAL_CERTIFICATION_REQUIRED: "LOCAL CERTIFICATION REQUIRED",
     LifecycleState.WAITING_CI: "WAITING CI / CERTIFICATION",
+    LifecycleState.WAITING_EXTERNAL_DEPENDENCY: "WAITING ON EXTERNAL DEPENDENCY",
     LifecycleState.INTEGRATION_READY: "INTEGRATION READY",
     LifecycleState.MERGING: "MERGING / INTEGRATION IN PROGRESS",
     LifecycleState.MERGED: "MERGED",
     LifecycleState.CLOSED: "CLOSED / SUPERSEDED",
 }
+
+
+@dataclass(frozen=True)
+class ExternalDependency:
+    action: str
+    task_gid: str
+    owner_pr: int | None
+    check: str
+    main_sha: str
+    evidence: str
+    reason: str | None
+    timestamp: datetime
+    comment_id: int
+    marker_index: int
+
+    def json(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass(frozen=True)
@@ -126,12 +154,14 @@ class PRLifecycle:
     state: LifecycleState
     state_label: str
     task_ids: list[str] = field(default_factory=list)
+    authoring_evidence: str | None = None
     review_class: str | None = None
     review_verdict: str | None = None
     reviewed_head: str | None = None
     active_leases: list[dict[str, Any]] = field(default_factory=list)
     local_work: list[dict[str, Any]] = field(default_factory=list)
     gate: dict[str, Any] | None = None
+    external_dependency: dict[str, Any] | None = None
     residual_reason: str | None = None
     human_action: str | None = None
     asana: list[dict[str, Any]] = field(default_factory=list)
@@ -317,13 +347,11 @@ class WorkspaceAgentDispatcher:
         *,
         access_token: str,
         review_trigger_id: str | None,
-        specialist_triggers: Mapping[str, str] | None = None,
         api_root: str = WORKSPACE_API_ROOT,
         http: JSONHTTPClient | None = None,
     ) -> None:
         self.access_token = access_token
         self.review_trigger_id = review_trigger_id
-        self.specialist_triggers = dict(specialist_triggers or {})
         self.api_root = api_root.rstrip("/")
         self.http = http or JSONHTTPClient()
 
@@ -333,9 +361,8 @@ class WorkspaceAgentDispatcher:
         return hashlib.sha256(identity.encode("utf-8")).hexdigest()
 
     def trigger_id_for(self, review_class: str) -> str | None:
-        if review_class.startswith("specialist:"):
-            specialist = review_class.split(":", 1)[1]
-            return self.specialist_triggers.get(specialist)
+        # domain:<name> (and legacy specialist:<name>) deepen scrutiny inside the same
+        # ordinary Review Workspace Agent; they never select a different trigger/reviewer.
         return self.review_trigger_id
 
     def dispatch(
@@ -352,16 +379,22 @@ class WorkspaceAgentDispatcher:
         if not self.access_token:
             raise LifecycleError("Workspace Agent access token is unavailable")
         if not trigger_id:
-            if review_class.startswith("specialist:"):
-                specialist = review_class.split(":", 1)[1]
-                raise LifecycleError(f"published Workspace Agent trigger is unavailable for specialist {specialist}")
             raise LifecycleError("published ChatGPT Review Workspace Agent trigger is unavailable")
         key = self.idempotency_key(repository, pr_number, head, review_class)
         task_identity = ", ".join(task_ids) if task_ids else "none linked"
+        domain_hint = ""
+        if review_class.startswith("domain:") or review_class.startswith("specialist:"):
+            domain_hint = (
+                f" This is domain-sensitive work in {review_class.split(':', 1)[1]}: deepen your own "
+                "scrutiny of that domain as part of this one formal Review rather than deferring to a "
+                "separate specialist reviewer; if a genuine evidence/tool/environment boundary applies "
+                "(e.g. native/isolated execution, production-only authority, TEST-only local certification, "
+                "or an actual external expert), say so explicitly and name the exact parallel handoff."
+            )
         prompt = (
             "Review the exact GitHub pull request as a Dish Review agent. "
             f"Repository: {repository}. PR: {pr_url} (#{pr_number}). "
-            f"Exact current head SHA: {head}. Review type: {review_class}. "
+            f"Exact current head SHA: {head}. Review type: {review_class}.{domain_hint} "
             f"Owning Asana task identity: {task_identity}. "
             "Read and follow the current repository dish/docs/agents/review.md contract. "
             "Re-read the PR head before submitting. The authoritative completion artifact must be a formal "

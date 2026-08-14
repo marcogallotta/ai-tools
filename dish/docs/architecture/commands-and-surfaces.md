@@ -58,6 +58,40 @@ A surface authenticates/validates its protocol, maps the request into a shared c
 
 For the connected GPT specifically, checked-in source capability and the deployed Action schema can differ temporarily. The current shared Action specification is the source-side exposure contract; deployment synchronization is an operational concern.
 
+### PostgreSQL no-Asana Action contract
+
+The retained PostgreSQL Action is a backend-specific projection of the connected-agent contract,
+not a rename of Asana fields. After no-Asana cutover, canonical PostgreSQL identities are sufficient
+for its retained product paths:
+
+- `read` accepts canonical `dish_id`; exact legacy `task_gid` is a compatibility alternative that
+  resolves only through active PostgreSQL `TaskExternalAlias` rows;
+- `section-tasks` accepts canonical `section_id`; exact legacy `section_gid` is a compatibility
+  alternative that resolves only through active PostgreSQL `SectionExternalAlias` rows;
+- `start` accepts canonical `dish_id` as its task target; exact legacy `task_gid` is the same
+  PostgreSQL-local compatibility alternative;
+- PostgreSQL-native `create` returns canonical `data.dish_id` and the canonical `section_id` of the
+  initial placement. Internal `task_id` may remain in the result for local compatibility, but clients
+  do not need it as a separate external identity;
+- operation/submission/lease targets remain canonical Dish UUIDs and do not require an Asana task
+  identity.
+
+The retained PostgreSQL connected inventory is `create`, `sections`, `section-tasks`, `read`,
+`proposals`, `apply-proposal`, `safe-reclaim`, `inspect`, `start`, `prepare`, `approve`, `reject`,
+`submit`, and `renew-lease`. `proposals` lists exact PostgreSQL-native semantic proposals whose
+governed changes have durable authorization; `apply-proposal` installs only the exact stored,
+revalidated candidate and opens fresh Verification; and `safe-reclaim` performs different-run
+recovery only from a mechanically clean inactive PostgreSQL frontier by fencing the source and
+publishing an exact linked successor. None of these commands falls through to a legacy backend.
+Their retained disposition is executable in
+`dish_pg.command_contract.CONNECTED_COMMAND_DISPOSITIONS`.
+
+Canonical and legacy-alias resolution on these PostgreSQL paths is database-local. It must not load
+an Asana credential, construct an Asana client, or make an Asana network request. The shared HTTP
+listener delegates Action request validation to the active backend, so the PostgreSQL validator can
+accept canonical identity fields without weakening or changing the legacy SQLite/Asana Action
+contract.
+
 ### Current human admin presentation
 
 `dish-admin` intentionally has a small normal operator surface even though older recovery and

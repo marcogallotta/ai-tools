@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import shlex
 import uuid
 
 from dish_service.application import DishService
@@ -52,36 +51,28 @@ def _verification_with_expired_lease(tmp_path):
     return service, verifier, operation_id, reviewed["data"]["reviewed_identity"]
 
 
-def _assert_expired_guidance(result, operation_id, *, view_path):
-    assert result["allowed_actions"] == []
+def _assert_same_run_revival_guidance(result, operation_id, *, view_path):
+    assert result["allowed_actions"] == ["renew-lease"]
     data = result["data"]
-    assert data["legal_next_actions"] == []
-    assert data["recovery_required"] is True
-    assert data["required_admin_action"] == "recover-lease"
-    assert data["resolver"] == "Marco/admin recover-lease"
-    argv = shlex.split(data["admin_command"])
-    assert argv == ["dish-admin", "recover-lease", operation_id]
-    assert data["admin_command_is_template"] is False
-    assert data["human_action"]["effect"] == (
-        "This does not transfer workflow ownership to a different run."
-    )
-    assert "blocked by a stale workflow lease" in data["directive"]
-    assert data["admin_command"] not in data["directive"]
-    assert "unless Marco asks" in data["directive"]
-    assert data["after_recovery"] == {"legal_actions": ["approve", "reject"]}
-    assert data["service_access"]["state"] == "expired"
-    assert data["service_access"]["rule"] == "service_lease_expired"
-    assert data["service_access"]["after_recovery"] == data["after_recovery"]
-    assert "recover-lease" not in result["allowed_actions"]
-    assert "recover-lease" not in data["legal_next_actions"]
+    assert data["legal_next_actions"] == ["renew-lease"]
+    assert data.get("recovery_required") is not True
+    assert data.get("required_admin_action") is None
+    assert data["agent_action"] == {
+        "command": "renew-lease",
+        "arguments": {"operation_id": operation_id},
+    }
+    assert "no Marco/admin recovery" in data["legal_next_step"]
+    assert "no new run_id" in data["legal_next_step"]
+    assert data["service_access"]["state"] == "expired_same_run_revivable"
+    assert data["service_access"]["rule"] == "service_lease_same_run_revivable"
 
     view = data
     for key in view_path:
         view = view[key]
-    assert view["legal_actions"] == []
+    assert view["legal_actions"] == ["renew-lease"]
 
 
-def test_expired_inspect_and_read_separate_current_from_post_recovery_actions(tmp_path):
+def test_expired_inspect_and_read_offer_same_run_connected_revival(tmp_path):
     service, verifier, operation_id, _reviewed_identity = (
         _verification_with_expired_lease(tmp_path)
     )
@@ -93,7 +84,7 @@ def test_expired_inspect_and_read_separate_current_from_post_recovery_actions(tm
     )
     assert inspected["ok"] is True
     assert inspected["code"] == "OK"
-    _assert_expired_guidance(
+    _assert_same_run_revival_guidance(
         inspected, operation_id, view_path=("authoritative_view",)
     )
 
@@ -104,14 +95,14 @@ def test_expired_inspect_and_read_separate_current_from_post_recovery_actions(tm
     )
     assert read["ok"] is True
     assert read["code"] == "OK"
-    _assert_expired_guidance(
+    _assert_same_run_revival_guidance(
         read,
         operation_id,
         view_path=("active_operation", "authoritative_view"),
     )
 
 
-def test_expired_command_failure_and_exact_replay_preserve_same_guidance(tmp_path):
+def test_expired_mutation_transparently_revives_same_run_and_exact_replay_is_stable(tmp_path):
     service, verifier, operation_id, reviewed_identity = (
         _verification_with_expired_lease(tmp_path)
     )
@@ -126,17 +117,14 @@ def test_expired_command_failure_and_exact_replay_preserve_same_guidance(tmp_pat
         "provenance_complete": True,
     }
 
-    failed = service.execute_agent(
+    approved = service.execute_agent(
         "approve",
         arguments,
         principal=verifier,
         request_id=request_id,
     )
-    assert failed["code"] == "CONFLICT"
-    assert failed["errors"][0]["rule"] == "service_lease_expired"
-    _assert_expired_guidance(
-        failed, operation_id, view_path=("authoritative_view",)
-    )
+    assert approved["ok"] is True
+    assert approved["submission_id"] == operation_id
 
     restarted = DishService(
         service.config,
@@ -150,32 +138,28 @@ def test_expired_command_failure_and_exact_replay_preserve_same_guidance(tmp_pat
         principal=verifier,
         request_id=request_id,
     )
+    assert replayed["ok"] is True
     assert replayed["data"]["request_replayed"] is True
     assert replayed["data"]["request_id"] == request_id
-    _assert_expired_guidance(
-        replayed, operation_id, view_path=("authoritative_view",)
-    )
+    assert replayed["submission_id"] == operation_id
 
 
-def test_expired_lease_renewal_reports_private_recovery_and_post_recovery_actions(tmp_path):
+def test_expired_lease_renewal_revives_same_run_and_exact_request_replays(tmp_path):
     service, verifier, operation_id, _reviewed_identity = (
         _verification_with_expired_lease(tmp_path)
     )
     request_id = str(uuid.uuid4())
 
-    failed = service.renew_lease(
+    revived = service.renew_lease(
         operation_id, verifier, request_id=request_id
     )
-    assert failed["code"] == "CONFLICT"
-    assert failed["errors"][0]["rule"] == "service_lease_expired"
-    _assert_expired_guidance(
-        failed, operation_id, view_path=("authoritative_view",)
-    )
+    assert revived["ok"] is True
+    assert revived["data"]["service_lease"]["run_id"] == verifier.run_id
 
     replayed = service.renew_lease(
         operation_id, verifier, request_id=request_id
     )
+    assert replayed["ok"] is True
     assert replayed["data"]["request_replayed"] is True
-    _assert_expired_guidance(
-        replayed, operation_id, view_path=("authoritative_view",)
-    )
+    assert replayed["data"]["request_id"] == request_id
+    assert replayed["data"]["service_lease"]["lease_id"] == revived["data"]["service_lease"]["lease_id"]

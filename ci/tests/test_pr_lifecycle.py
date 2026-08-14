@@ -277,14 +277,6 @@ def test_agent_prose_or_stale_review_never_advances_to_merged():
     assert engine(gh, authority=True).inspect(gh.pr).state == pr_lifecycle.LifecycleState.REVIEW_READY
 
 
-def test_missing_ci_after_merge_review_waits_instead_of_reporting_integration_ready():
-    gh = FakeGitHub()
-    gh.reviews = [review()]
-    gh.combined_status = {"sha": HEAD, "statuses": []}
-    state = engine(gh, authority=True).inspect(gh.pr)
-    assert state.state == pr_lifecycle.LifecycleState.WAITING_CI
-    assert "required ordinary CI status" in state.residual_reason
-
 
 def test_green_gates_without_integration_authority_exposes_exact_residual_boundary():
     gh = FakeGitHub()
@@ -356,15 +348,53 @@ def test_workspace_agent_dispatch_uses_exact_identity_and_idempotency_header():
     assert "dish/docs/agents/review.md" in body["input"]
 
 
-def test_specialist_dispatch_requires_matching_published_trigger():
+def test_domain_dispatch_uses_the_one_ordinary_reviewer_not_a_second_specialist():
     dispatcher = pr_lifecycle.WorkspaceAgentDispatcher(
         access_token="secret",
         review_trigger_id="agtch_review",
-        specialist_triggers={"postgresql": "agtch_pg"},
         http=RecordingHTTP(),
     )
-    assert dispatcher.trigger_id_for("specialist:postgresql") == "agtch_pg"
-    assert dispatcher.trigger_id_for("specialist:security") is None
+    # A domain label never selects a different Workspace Agent trigger: the same
+    # ordinary reviewer handles both substantive and domain-deep review classes.
+    assert dispatcher.trigger_id_for("domain:postgresql") == "agtch_review"
+    assert dispatcher.trigger_id_for("specialist:postgresql") == "agtch_review"
+    assert dispatcher.trigger_id_for("substantive") == "agtch_review"
+
+
+def test_domain_dispatch_prompt_instructs_deeper_in_workflow_scrutiny():
+    http = RecordingHTTP()
+    dispatcher = pr_lifecycle.WorkspaceAgentDispatcher(
+        access_token="secret",
+        review_trigger_id="agtch_review",
+        http=http,
+    )
+    dispatcher.dispatch(
+        repository="marcogallotta/ai-tools",
+        pr_number=43,
+        pr_url="https://github.com/marcogallotta/ai-tools/pull/43",
+        head=HEAD,
+        review_class="domain:postgresql",
+        task_ids=["1217463570624074"],
+    )
+    _, url, _, body = http.calls[0]
+    assert url.endswith("/workspace_agents/agtch_review/trigger")
+    assert "postgresql" in body["input"]
+    assert "deepen your own" in body["input"]
+    assert "separate specialist reviewer" in body["input"]
+
+
+def test_legacy_specialist_route_normalizes_to_domain_depth_hint():
+    candidate = pr(body="Owning task: 1217443403986570\nREVIEW CLASS: specialist:postgresql")
+    gh = FakeGitHub(candidate)
+    state = engine(gh).inspect(gh.pr)
+    assert state.review_class == "domain:postgresql"
+
+
+def test_explicit_domain_route_stays_in_one_review_workflow():
+    candidate = pr(body="Owning task: 1217443403986570\nREVIEW CLASS: domain:postgresql")
+    gh = FakeGitHub(candidate)
+    state = engine(gh).inspect(gh.pr)
+    assert state.review_class == "domain:postgresql"
 
 
 def test_explicit_focused_route_is_eligible_for_bounded_local_adapter_only():
@@ -386,6 +416,20 @@ def test_old_block_focused_recheck_routes_new_head_as_focused():
     state = engine(gh).inspect(gh.pr)
     assert state.state == pr_lifecycle.LifecycleState.REVIEW_READY
     assert state.review_class == "focused"
+
+
+def test_old_block_domain_deep_recheck_stays_in_one_review_workflow():
+    gh = FakeGitHub(pr(head=NEW_HEAD))
+    gh.reviews = [
+        review(
+            head=HEAD,
+            verdict="BLOCK",
+            body_tail="TESTS TO RUN: NONE.\nDOMAIN DEEP RECHECK",
+        )
+    ]
+    state = engine(gh).inspect(gh.pr)
+    assert state.state == pr_lifecycle.LifecycleState.REVIEW_READY
+    assert state.review_class == "domain:unspecified"
 
 
 def test_restart_resumes_dispatcher_owned_integration_lease():

@@ -151,6 +151,7 @@ class LeaseRequestCoordinator:
                     row = leases.renew(
                         operation_id,
                         principal,
+                        request_id=request_id,
                         manage_transaction=not bool(request_id),
                     )
                     result = result_envelope(

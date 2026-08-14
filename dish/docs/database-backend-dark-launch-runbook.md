@@ -449,15 +449,20 @@ Configuration rollback is separate:
 
 ## TEST dark-launch acceptance sequence
 
-**Retired for TEST's current generation (2026-08-11):** TEST's active
-generation now has PostgreSQL authority wired in (`#67`) and its only
-projection epoch has `external_effects_enabled=true`, so dark-launch shadow
-comparison against it is no longer valid — `dish-shadow-worker-test.service`
-should stay stopped/disabled rather than crash-looping. See `ops.md`'s "TEST
-dark-launch state" entry for the current status and open follow-ups. This
-procedure is kept below for reference in case a future non-authoritative
-generation needs the same acceptance sequence again; it does not describe
-TEST's present state.
+**TEST dark-launch shadow comparison stays running (settled 2026-08-13):**
+TEST remains legacy-authoritative and PostgreSQL shadow comparison is meant
+to keep running there, accumulating evidence toward an eventual fenced
+cutover and PostgreSQL-only TEST exercise. A 2026-08-11 entry previously
+here claimed TEST's dark-launch shadow worker was permanently retired
+because its original projection epoch had `external_effects_enabled=true`;
+that was an agent inference written up as settled policy, not an actual
+Marco decision, and it is superseded. An effects-enabled epoch blocking the
+shadow worker calls for retiring that one epoch and activating a fresh
+effects-disabled epoch/baseline for shadow comparison — not for concluding
+dark launch itself should stop. See `ops.md`'s "TEST dark-launch state"
+entry for the current epoch/baseline identities and runtime observation.
+This procedure is kept below for reference; it does not necessarily
+describe TEST's exact current epoch/baseline, which `ops.md` tracks.
 
 ### Maintained TEST deployment
 

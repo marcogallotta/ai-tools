@@ -199,7 +199,7 @@ def test_cutover_is_resumable_admission_stays_closed_until_burn_and_first_outcom
     _verify_and_complete(factory, ids, context, candidate_id, cutover_id, request_id)
 
 @pytest.mark.parametrize("defect", ["stale", "wrong_candidate", "wrong_boundary"])
-def test_first_admission_rejects_non_strict_post_request_reconciliation(
+def test_first_admission_ignores_post_burn_external_reconciliation(
     workflow_db, defect: str
 ) -> None:
     factory, ids, context, task_id = workflow_db
@@ -268,15 +268,14 @@ def test_first_admission_rejects_non_strict_post_request_reconciliation(
         session.flush()
 
         service = ReleaseCandidateService(session, uuid_factory=lambda: _next(ids))
-        with pytest.raises(
-            ReleaseAuthorityError,
-            match="execution, audit, projection, and reconciliation",
-        ):
-            service.verify_first_admission(
-                cutover_run_id=cutover_id,
-                request_id=request_id,
-                verified_at=verified_at,
-            )
+        verified = service.verify_first_admission(
+            cutover_run_id=cutover_id,
+            request_id=request_id,
+            verified_at=verified_at,
+        )
+        assert verified.state == "first_admission_verified"
+        control = session.get(rel.MutationAdmissionControl, context["generation_id"])
+        assert control is not None and control.state == "open"
 
 def test_rollback_burn_replay_requires_exact_bundle_and_timestamp(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
@@ -359,6 +358,6 @@ def test_rollback_bundle_identity_migration_adds_nonblank_constraint(tmp_path: P
             )
         assert index_sql is not None
         assert "WHERE state IN ('reserved','consumed')" in index_sql
-        assert ALEMBIC_HEAD == "0039_remove_unused_causality_edges"
+        assert ALEMBIC_HEAD == "0040_no_asana_post_burn"
     finally:
         engine.dispose()

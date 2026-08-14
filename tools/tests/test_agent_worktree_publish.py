@@ -29,7 +29,7 @@ def test_publish_refuses_main_or_other_branch_identity_tampering(h: Harness) -> 
     state["branch"] = "main"
     h.state_path().write_text(json.dumps(state) + "\n")
     result = h.tool("publish", "--task", "1001", "--json", check=False)
-    assert_error(result, "STATE_INVALID")
+    assert_error(result, "INVALID_BRANCH")
     state["branch"] = "agent/other-task"
     h.state_path().write_text(json.dumps(state) + "\n")
     result = h.tool("publish", "--task", "1001", "--json", check=False)

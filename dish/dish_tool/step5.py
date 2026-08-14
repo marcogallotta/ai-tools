@@ -6,7 +6,7 @@ import sqlite3
 from typing import Any, Mapping
 
 from .constants import COOKING_PROJECT_GID
-from .database import confirm_task_content, create_operation, content_identity, phase_candidate_actions, transition_operation, declare_operation_step, complete_operation_step
+from .database import confirm_task_content, create_operation, content_identity, transition_operation, declare_operation_step, complete_operation_step
 from .errors import DishRuleError
 from .models import OperationActors, ResolvedRelease
 from .migrations import migrate_task_document
@@ -300,7 +300,6 @@ def inspect_operation(conn: sqlite3.Connection, operation_id: str) -> dict[str, 
         raise DishRuleError("NOT_FOUND", f"operation not found: {operation_id}", rule="operation_not_found")
     state = conn.execute("SELECT * FROM task_content_state WHERE task_gid = ?", (op["task_gid"],)).fetchone()
     cycles = conn.execute("SELECT * FROM verification_cycles WHERE operation_id = ? ORDER BY cycle_number", (operation_id,)).fetchall()
-    actions = phase_candidate_actions(op)
     return {
         "operation": {k: op[k] for k in op.keys()},
         "content": (
@@ -315,7 +314,6 @@ def inspect_operation(conn: sqlite3.Connection, operation_id: str) -> dict[str, 
         "actors": {"editor": op["editor_agent"], "researcher": op["researcher_agent"], "verifier": op["verifier_agent"], "run_id": op["run_id"], "independence_attestation": op["independence_attestation"]},
         "verification_cycles": [{k: row[k] for k in row.keys()} for row in cycles],
         "completion": {"content_write": op["content_write_completed_at"], "signoff": op["signoff_completed_at"], "movement": op["movement_completed_at"]},
-        "legal_next_actions": actions,
     }
 
 

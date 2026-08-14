@@ -138,7 +138,13 @@ class LifecycleActionsMixin:
 
             reviews = self.github.get_reviews(current.number)
             exact_review = pr_gate.latest_exact_head_review(reviews, reviewed_head=current.head)
-            if exact_review is None or exact_review.get("verdict") != "BLOCK":
+            formal_block = exact_review is not None and exact_review.get("verdict") == "BLOCK"
+            pr_owned_ci_failure = bool(
+                current.gate
+                and current.gate.get("diagnosis")
+                == pr_gate.GateDiagnosis.FAILED_REQUIRED_CI.value
+            )
+            if not formal_block and not pr_owned_ci_failure:
                 return self.inspect(self.github.get_pr(current.number))
 
             if implementation_fixer is None or not implementation_fixer.command:
@@ -172,12 +178,18 @@ class LifecycleActionsMixin:
                 "branch": current.branch,
                 "blocked_head": current.head,
                 "task_ids": current.task_ids,
-                "formal_block_review": exact_review,
+                "formal_block_review": exact_review if formal_block else None,
+                "pr_owned_ci_failure": current.gate if pr_owned_ci_failure else None,
                 "lifecycle": reread.json(),
                 "instruction": (
                     "Follow the current repository Implementation contract. Update the existing PR/branch, "
                     "treat blocked_head as the exact review identity, re-read GitHub before semantic work, "
-                    "and return the new exact PR head for the reviewer's requested disposition."
+                    + (
+                        "fix the PR-owned exact-head required CI failure, and return the new exact PR head; "
+                        "any semantic head movement requires substantive re-review."
+                        if pr_owned_ci_failure and not formal_block
+                        else "and return the new exact PR head for the reviewer's requested disposition."
+                    )
                 ),
             }
             try:
