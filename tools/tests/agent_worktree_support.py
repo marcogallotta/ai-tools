@@ -78,6 +78,8 @@ class Harness:
             GIT_SSH_COMMAND=str(self.ssh),
             GIT_SSH_VARIANT="ssh",
             TEST_BARE_ORIGIN=str(self.origin),
+            DISH_IMPLEMENTATION_CLAIM_TEST_DB=str(self.root / "global-claims.sqlite3"),
+            DISH_IMPLEMENTATION_CLAIM_TESTING="1",
         )
 
     @staticmethod
@@ -154,6 +156,13 @@ class Harness:
             claim.append("--takeover")
             expected = str(prior["token"]) if prior is not None else "legacy-unclaimed"
             claim.extend(["--expected-claim", expected])
+            if prior is None or not prior.get("global_claim_id"):
+                raise AssertionError("global takeover fixture requires an existing durable global claim")
+            claim.extend([
+                "--expected-global-claim", str(prior["global_claim_id"]),
+                "--takeover-reason", "fixture explicit handoff",
+                "--liveness-evidence", "fixture prior owner declared stale",
+            ])
         if child[0] == "adopt":
             expected = self._option(child, "--expected-head")
             assert expected is not None

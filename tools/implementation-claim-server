@@ -1,0 +1,51 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import os
+import sys
+from pathlib import Path
+
+from implementation_claim_lib.github import GitHubReader
+from implementation_claim_lib.http_api import ClaimHTTPServer
+from implementation_claim_lib.orchestration import AsanaMirror
+from implementation_claim_lib.service import ClaimCoordinator
+from implementation_claim_lib.store import ClaimStore
+
+
+def required(name: str) -> str:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        raise SystemExit(f"{name} is required")
+    return value
+
+
+def main() -> int:
+    repository = os.environ.get("DISH_IMPLEMENTATION_CLAIM_REPOSITORY", "marcogallotta/ai-tools")
+    db_path = Path(required("DISH_IMPLEMENTATION_CLAIM_DB")).expanduser()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    token = required("DISH_IMPLEMENTATION_CLAIM_SERVICE_TOKEN")
+    recovery_token = required("DISH_IMPLEMENTATION_CLAIM_RECOVERY_TOKEN")
+    if recovery_token == token:
+        raise SystemExit("DISH_IMPLEMENTATION_CLAIM_RECOVERY_TOKEN must differ from the ordinary service token")
+    asana_token = required("ASANA_PAT")
+    github_token = required("GITHUB_TOKEN")
+    projects = frozenset(filter(None, (p.strip() for p in required("DISH_IMPLEMENTATION_CLAIM_PROJECTS").split(","))))
+    host = os.environ.get("DISH_IMPLEMENTATION_CLAIM_BIND", "127.0.0.1")
+    port = int(os.environ.get("DISH_IMPLEMENTATION_CLAIM_PORT", "8765"))
+    coordinator = ClaimCoordinator(
+        ClaimStore(db_path), repository=repository,
+        asana=AsanaMirror(token=asana_token, allowed_projects=projects), github=GitHubReader(github_token),
+    )
+    server = ClaimHTTPServer((host, port), coordinator, token, recovery_token)
+    print(f"implementation-claim service listening on {host}:{port}", file=sys.stderr)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

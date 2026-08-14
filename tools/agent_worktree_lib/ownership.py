@@ -22,6 +22,7 @@ from .common import (
 )
 from .operations import owner_agent_id, remote_ref_sha, resolve_repository_from_state, validate_branch, verify_owned_worktree
 from .repository import discover_repository
+from . import global_claim
 from .state import (
     atomic_write_json,
     load_task_state,
@@ -31,11 +32,13 @@ from .state import (
     validate_agent_state,
 )
 
-CLAIM_SCHEMA_VERSION = 1
+CLAIM_SCHEMA_VERSION = 2
 CLAIM_TOKEN_ENV = "DISH_AGENT_CLAIM_TOKEN"
 CLAIM_TASK_ENV = "DISH_AGENT_CLAIM_TASK"
 CLAIM_BRANCH_ENV = "DISH_AGENT_CLAIM_BRANCH"
 CLAIM_AGENT_ENV = "DISH_AGENT_CLAIM_AGENT"
+GLOBAL_CLAIM_ENV = global_claim.GLOBAL_CLAIM_ENV
+GLOBAL_WRITER_ENV = global_claim.GLOBAL_WRITER_ENV
 
 
 def _repo_key() -> str:
@@ -117,8 +120,14 @@ def _validate_claim_record(record: dict[str, Any], task_gid: str) -> dict[str, A
     missing = sorted(required - record.keys())
     if missing:
         fail("OWNERSHIP_AMBIGUOUS", "claim record is missing required field(s): " + ", ".join(missing))
-    if record.get("schema_version") != CLAIM_SCHEMA_VERSION:
-        fail("OWNERSHIP_AMBIGUOUS", f"unsupported claim schema {record.get('schema_version')!r}")
+    schema_version = record.get("schema_version")
+    if schema_version not in {1, CLAIM_SCHEMA_VERSION}:
+        fail("OWNERSHIP_AMBIGUOUS", f"unsupported claim schema {schema_version!r}")
+    record.setdefault("global_claim_id", None)
+    record.setdefault("global_writer_capability", None)
+    capability = record.get("global_writer_capability")
+    if schema_version == CLAIM_SCHEMA_VERSION and (not isinstance(capability, str) or len(capability) < 32):
+        fail("OWNERSHIP_AMBIGUOUS", "claim record is missing the private global writer capability")
     if record.get("repository") != EXPECTED_REPOSITORY or record.get("origin_id") != EXPECTED_ORIGIN_ID:
         fail("OWNERSHIP_AMBIGUOUS", "claim record repository identity is not marcogallotta/ai-tools")
     if record.get("task_gid") != task_gid:
@@ -188,6 +197,7 @@ def claim_status(task_gid: str) -> dict[str, Any]:
         "released_at": record.get("released_at"),
         "takeover": bool(record.get("takeover")),
         "claim_id": record["token"],
+        "global_claim_id": record.get("global_claim_id"),
         "pr": record.get("pr"),
     }
 
@@ -308,6 +318,88 @@ class _HeldClaimLocks:
         self.fds = []
 
 
+
+def _option(argv: list[str], name: str) -> str | None:
+    try:
+        index = argv.index(name)
+    except ValueError:
+        return None
+    if index + 1 >= len(argv):
+        return None
+    return argv[index + 1]
+
+
+def _global_base(args: argparse.Namespace, task_gid: str, argv: list[str]) -> str:
+    supplied = getattr(args, "base", None)
+    if supplied:
+        return require_full_sha(supplied, "global claim authoring base SHA")
+    if state_path(task_gid).exists():
+        state = load_task_state(task_gid)
+        return require_full_sha(str(state.get("base_sha")), "stored authoring base SHA")
+    child_base = _option(argv, "--base")
+    if child_base:
+        return require_full_sha(child_base, "child authoring base SHA")
+    fail(
+        "GLOBAL_CLAIM_BASE_REQUIRED",
+        "global Implementation ownership requires the exact authoring base SHA via claim --base or the wrapped start/adopt command",
+    )
+
+
+def _obtain_global_claim(
+    args: argparse.Namespace, *, task_gid: str, branch: str, agent_id: str, argv: list[str], pr: dict[str, Any] | None
+) -> dict[str, Any]:
+    base_sha = _global_base(args, task_gid, argv)
+    prior = read_claim(task_gid)
+    explicit = getattr(args, "global_claim_id", None)
+    prior_global = prior.get("global_claim_id") if prior is not None else None
+    prior_writer = prior.get("global_writer_capability") if prior is not None else None
+    if args.takeover:
+        expected = getattr(args, "expected_global_claim", None)
+        if not expected:
+            fail(
+                "EXPECTED_GLOBAL_CLAIM_REQUIRED",
+                "claim --takeover requires --expected-global-claim with the exact current durable global claim id",
+            )
+        reason = getattr(args, "takeover_reason", None)
+        evidence = getattr(args, "liveness_evidence", None)
+        if not reason or not evidence:
+            fail(
+                "GLOBAL_TAKEOVER_EVIDENCE_REQUIRED",
+                "global takeover requires --takeover-reason and --liveness-evidence; time passage alone is not ownership transfer",
+            )
+        current = global_claim.takeover(
+            task_gid=task_gid, expected_claim_id=expected, owner=agent_id,
+            session_id=getattr(args, "session_id", None) or f"{agent_id}:{uuid.uuid4().hex}",
+            host=socket.gethostname(), base_sha=base_sha, reason=reason, liveness_evidence=evidence,
+        )
+    elif explicit or prior_global:
+        claim_id = str(explicit or prior_global)
+        current = global_claim.authorize(task_gid, claim_id, branch, writer_capability=str(prior_writer or ""))
+        if current.get("authoring_base_sha") != base_sha:
+            fail(
+                "GLOBAL_CLAIM_BASE_MISMATCH",
+                f"current global claim authoring base {current.get('authoring_base_sha')} does not equal requested {base_sha}",
+            )
+    else:
+        current = global_claim.acquire(
+            task_gid=task_gid, owner=agent_id,
+            session_id=getattr(args, "session_id", None) or f"{agent_id}:{uuid.uuid4().hex}",
+            host=socket.gethostname(), base_sha=base_sha, branch=branch,
+        )
+    writer_capability = current.get("writer_capability") or prior_writer
+    if not isinstance(writer_capability, str) or len(writer_capability) < 32:
+        fail("WRITER_AUTHORITY_REQUIRED", "global claim did not return/preserve private writer authority")
+    if current.get("branch") != branch:
+        fail("GLOBAL_LINEAGE_CONFLICT", f"global claim is bound to branch {current.get('branch')!r}, not {branch!r}")
+    if pr is not None:
+        current = global_claim.bind_pr(
+            task_gid, str(current["claim_id"]), int(pr["number"]), str(pr["head"]),
+            writer_capability=writer_capability,
+        )
+    current = dict(current)
+    current["writer_capability"] = writer_capability
+    return current
+
 def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
     task_gid = require_task_gid(args.task)
     agent_id = require_agent_id(args.agent_id)
@@ -335,23 +427,37 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
     if not argv:
         fail("CLAIM_COMMAND_REQUIRED", "claim must wrap the dispatched local-agent command after --")
 
+    # Cheap fail-closed preflight prevents a new global generation from being created
+    # for an assignment that already contradicts durable same-host lineage. Full
+    # reconciliation is repeated while the local locks are held below.
+    preexisting = read_claim(task_gid)
+    if preexisting is not None:
+        if preexisting.get("branch") != branch:
+            fail(
+                "OWNERSHIP_AMBIGUOUS",
+                f"stale/released claim names branch {preexisting.get('branch')!r}, but dispatch requested {branch!r}",
+            )
+        if not args.takeover and preexisting.get("agent_id") != agent_id:
+            fail(
+                "OWNER_HANDOFF_REQUIRED",
+                f"task/branch belongs to prior local owner {preexisting.get('agent_id')!r}; explicit handoff requires claim --takeover",
+            )
+
     lock_paths = [task_claim_lock_path(task_gid), branch_claim_lock_path(branch)]
     if pr is not None:
         lock_paths.append(pr_claim_lock_path(int(pr["number"])))
     locks = _HeldClaimLocks(lock_paths)
-    locks.acquire()
-    token = uuid.uuid4().hex
-    path = claim_path(task_gid)
+    locked = False
+    previous = None
     try:
-        previous = _reconcile_existing(
-            runner=runner,
-            task_gid=task_gid,
-            branch=branch,
-            agent_id=agent_id,
-            takeover=bool(args.takeover),
-            pr=pr,
-        )
         if args.takeover:
+            # A live same-host claimant is direct liveness evidence. Acquire the
+            # local process fences before transferring the durable global generation.
+            locks.acquire()
+            locked = True
+            previous = _reconcile_existing(
+                runner=runner, task_gid=task_gid, branch=branch, agent_id=agent_id, takeover=True, pr=pr
+            )
             if previous is None:
                 if expected_claim != "legacy-unclaimed" or not state_path(task_gid).exists():
                     fail(
@@ -363,6 +469,21 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
                     "OWNER_CLAIM_CHANGED",
                     "takeover expected claim does not match the current durable ownership generation",
                 )
+            global_record = _obtain_global_claim(
+                args, task_gid=task_gid, branch=branch, agent_id=agent_id, argv=argv, pr=pr
+            )
+        else:
+            global_record = _obtain_global_claim(
+                args, task_gid=task_gid, branch=branch, agent_id=agent_id, argv=argv, pr=pr
+            )
+            locks.acquire()
+            locked = True
+            previous = _reconcile_existing(
+                runner=runner, task_gid=task_gid, branch=branch, agent_id=agent_id, takeover=False, pr=pr
+            )
+
+        token = uuid.uuid4().hex
+        path = claim_path(task_gid)
         if pr is not None:
             remote_head = remote_ref_sha(runner, repo, f"refs/heads/{branch}")
             if remote_head != pr["head"]:
@@ -382,6 +503,8 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
             "acquired_at": now_utc(),
             "released_at": None,
             "takeover": bool(args.takeover),
+            "global_claim_id": global_record["claim_id"],
+            "global_writer_capability": global_record["writer_capability"],
             "pr": pr,
         }
         atomic_write_json(path, record)
@@ -393,6 +516,8 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
                 CLAIM_TASK_ENV: task_gid,
                 CLAIM_BRANCH_ENV: branch,
                 CLAIM_AGENT_ENV: agent_id,
+                GLOBAL_CLAIM_ENV: str(global_record["claim_id"]),
+                GLOBAL_WRITER_ENV: str(global_record["writer_capability"]),
             }
         )
         try:
@@ -412,7 +537,8 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
         atomic_write_json(path, current)
         return completed.returncode
     finally:
-        locks.release()
+        if locked:
+            locks.release()
 
 
 def require_active_claim(
@@ -445,6 +571,18 @@ def require_active_claim(
         )
     if record.get("released_at") is not None:
         fail("OWNERSHIP_CLAIM_STALE", "ownership claim was already released")
+    global_id = record.get("global_claim_id")
+    if not isinstance(global_id, str) or not global_id:
+        fail(
+            "GLOBAL_CLAIM_REQUIRED",
+            "local ownership record predates the durable global claim; reacquire through tools/agent-worktree claim before writing",
+        )
+    if os.environ.get(GLOBAL_CLAIM_ENV) != global_id:
+        fail("GLOBAL_CLAIM_MISMATCH", "process global claim id does not match the durable local ownership record")
+    global_writer = record.get("global_writer_capability")
+    if not isinstance(global_writer, str) or os.environ.get(GLOBAL_WRITER_ENV) != global_writer:
+        fail("WRITER_AUTHORITY_DENIED", "process private writer capability does not match the durable local ownership record")
+    global_claim.authorize(task_gid, global_id, branch, writer_capability=global_writer)
     status = claim_status(task_gid)
     if status.get("state") != "live":
         fail(

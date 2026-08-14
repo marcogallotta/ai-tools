@@ -137,9 +137,12 @@ class FakeGitHub:
         return deepcopy(self.merge_response)
 
 
-def engine(gh, *, now=NOW, authority=False, capable=True):
+def engine(gh, *, now=NOW, authority=False, capable=True, claim_guard=None):
+    if claim_guard is None:
+        claim_guard = FakeClaimGuard()
     return pr_lifecycle.LifecycleEngine(
         gh,
+        implementation_claim_guard=claim_guard,
         integration_authority=authority,
         integration_capable=capable,
         now=lambda: now,
@@ -187,6 +190,26 @@ def test_formal_exact_head_review_supersedes_review_lease():
     state = engine(gh).inspect(gh.pr)
     assert state.state == pr_lifecycle.LifecycleState.CHANGES_REQUESTED
     assert not [lease for lease in state.active_leases if lease["phase"] == "review"]
+
+
+class FakeClaimGuard:
+    def __init__(self, result=None, *, error=None):
+        self.result = result or {
+            "task_gid": "1217443403986570",
+            "dispatchable": True,
+            "reason": "no durable claim lineage",
+            "claim": None,
+        }
+        self.error = error
+        self.calls = []
+
+    def dispatch_guard(self, task_gid):
+        self.calls.append(str(task_gid))
+        if self.error is not None:
+            raise self.error
+        value = deepcopy(self.result)
+        value["task_gid"] = str(task_gid)
+        return value
 
 
 class FakeWorkspace:

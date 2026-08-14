@@ -34,6 +34,10 @@ Do not silently substitute another base or assume unmerged parallel work has lan
 
 Every repository-changing implementation/fix assignment uses the single canonical handoff contract at [`templates/implementation-handoff.md`](templates/implementation-handoff.md). Treat repository + Asana task GID + authorized branch + existing PR/expected head as one assignment identity. Matching task identity on a different branch or PR never authorizes adopting or modifying that lineage. Local Claude Code/Codex work acquires the matching `tools/agent-worktree claim` before touching task-owned worktree or branch state; replacement/fix/publication handoffs reconcile the same claim before takeover.
 
+Writable Implementation ownership is additionally fenced by the repository-owned **global Implementation claim** for `(repository, task_gid)`. Acquire that durable generation before semantic authoring, branch creation/adoption, or publication. Every later writer operation carries the same opaque global `claim_id`; stale/superseded generations are authorization failures. Exact-generation takeover is the only ownership-transfer path and requires an explicit handoff/recovery reason plus bounded liveness evidence. Time passage, a stale Asana section, or an expired advisory PR lease never transfers ownership.
+
+For local Claude Code/Codex work, `tools/agent-worktree claim` obtains/validates the global generation first and then layers the same-host OS/process locks underneath it. The local claim token is not a competing global authority. ChatGPT/native publishers must validate the same `(task_gid, claim_id)` at their publication boundary; a correct expected Git head without the current global generation is still unauthorized.
+
 Before returning an assigned implementation as no-op/already-fixed/not-reproducible, apply the inherited assigned-task dismissal gate to the owning task's notes and material history; current source/runtime health alone is not enough to erase a recorded historical defect. Before declaring a routine authorized implementation/publication action blocked, apply the inherited authorized-fallback gate and verify any state-changing fallback before reporting success.
 
 ## Branch and worktree ownership
@@ -56,6 +60,7 @@ Marco may explicitly authorize an emergency direct-to-`main` commit. That overri
 ## Durable active-work signal
 
 When a PR exists and implementation/fix work is actively owned, agents may publish the structured exact-head advisory lease `<!-- dish-agent-lease:v1 phase=implementation head=<sha> lease=<uuid> -->` or `phase=fix`. Renew it with the same UUID when visible progress needs to keep the lease fresh; release it explicitly when yielding. A head change or 60 minutes without structured renewal/activity makes it inactive. The lease is visibility only and never source-authority or branch-ownership authority.
+The durable global claim is the cross-host writer authority. Its Asana mirror is orchestration visibility/readback, and GitHub branch/PR markers are lineage evidence; neither replaces the claim CAS. A dispatcher that cannot read the global claim guard fails closed rather than inferring dispatchability from `Ready` or from absent/stale PR markers.
 
 After the PR becomes review-ready, the repository lifecycle dispatcher owns routine lifecycle observation. Implementation should not require Marco to poll or forward Review results. An exact-head formal `VERDICT: BLOCK` is the durable transition back to the existing PR's fix owner; a new semantic commit creates a new review identity. Operational marker details are in [`../../../ci/pr-lifecycle-dispatcher-runbook.md`](../../../ci/pr-lifecycle-dispatcher-runbook.md).
 

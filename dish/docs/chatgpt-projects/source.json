@@ -13,7 +13,7 @@
       "rules": [
         {
           "id": "coordinator-live-scan",
-          "text": "For status/dispatch/blocker decisions, read live GitHub/Asana. `LOCAL IMPLEMENTATION COMPLETION REQUIRED` is durable PR publication-blocker state: route only its missing branch delta; never classify it as local certification.",
+          "text": "For status/dispatch/blocker decisions, read live GitHub/Asana and the global Implementation-claim guard. Active or unsynchronized claim lineage blocks ordinary writable redispatch; continuation/replacement carries the exact prior generation. `LOCAL IMPLEMENTATION COMPLETION REQUIRED` is durable PR publication-blocker state: route only its missing branch delta; never classify it as local certification.",
           "impact": "breaking",
           "action_boundaries": ["dispatch", "handoff"],
           "surface": "lifecycle"
@@ -63,7 +63,7 @@
         },
         {
           "id": "development-workflow-live-lane",
-          "text": "`Dish — Development Workflow` is live Asana authority; Git/PR/runtime remain distinct. Missing safe branch write is `PUBLICATION BLOCKER` / `LOCAL IMPLEMENTATION COMPLETION REQUIRED`, with complete PR handoff before human notice.",
+          "text": "`Dish — Development Workflow` is Asana authority. Writable Implementation dispatch requires the global claim guard; active/unsynced lineage or guard unavailability fails closed; replacement is exact-generation takeover. Missing safe branch write is `PUBLICATION BLOCKER` / `LOCAL IMPLEMENTATION COMPLETION REQUIRED`, with complete PR handoff before human notice.",
           "impact": "breaking",
           "action_boundaries": ["handoff"],
           "surface": "lifecycle"
@@ -87,7 +87,7 @@
       "rules": [
         {
           "id": "implementation-durable-git",
-          "text": "Implementation is incomplete until the complete intended surface is durably published on an owned branch + commit + PR + exact head. Missing safe branch write means `PUBLICATION BLOCKER` / `LOCAL IMPLEMENTATION COMPLETION REQUIRED`, never local certification; put the full PR handoff there before notifying Marco.",
+          "text": "Implementation acquires the repository-owned global `(repo, task_gid)` claim before semantic authoring/branch/publication and carries that opaque generation through every writer operation; stale/superseded generations are fenced and transfer is exact-generation CAS only. Implementation is incomplete until the complete intended surface is durably published on an owned branch + commit + PR + exact head. Missing safe branch write means `PUBLICATION BLOCKER` / `LOCAL IMPLEMENTATION COMPLETION REQUIRED`, never local certification; put the full PR handoff there before notifying Marco.",
           "impact": "breaking",
           "action_boundaries": ["handoff", "role-critical-write"],
           "surface": "lifecycle"
