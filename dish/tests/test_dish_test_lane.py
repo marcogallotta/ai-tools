@@ -43,7 +43,7 @@ def test_round1c_lane_names_the_observed_failure_journey_contracts() -> None:
         "tests/test_semantic_proposal_bundle_workflow.py::test_governed_large_correction_queues_one_bundle_and_fresh_run_applies_it",
         "tests/test_semantic_proposal_bundle_workflow.py::test_approved_proposal_is_not_advertised_after_exact_content_staleness",
         "tests/test_action_surface_openapi.py::test_verification_action_schema_exposes_closed_correction_and_route_values",
-        "tests/test_action_surface_openapi.py::test_inspect_openapi_requires_request_id_in_generated_and_checked_schema",
+        "tests/test_action_surface_openapi.py::test_inspect_openapi_requires_request_id_in_generated_and_checked_in_schema",
         "tests/test_authoritative_actions.py::test_submit_terminal_response_and_inspect_expose_no_stale_actions",
         "tests/test_change_start_intent.py::test_direct_create_change_requires_signed_baseline_before_insert",
         "tests/test_admin_round1b.py::test_inspect_resting_dish_by_frontend_url_uses_uuid_not_slug",
