@@ -23,6 +23,7 @@ Authority transfer is explicit and one-way for the activated generation. Importe
 ## Invariants
 
 - Request admission/outcome semantics preserve permanent request identity.
+- PostgreSQL-backed service promotion is schema-gated: for each explicit TEST or PROD target, the exact release/source commit and repository `ALEMBIC_HEAD` must be bound to durable migration evidence, and that target must be re-read at the exact expected head before its corresponding service is restarted/promoted. TEST evidence never proves PROD. Migration failure blocks promotion; startup validation remains fail closed and never performs DDL.
 - Validation-only failures are recorded through the target replay authority (`record_replay_validation_failure` / `record_validation_failure`) where applicable.
 - The first-request reservation and activation/admission controls prevent uncontrolled authority opening.
 - Projection origin/effect settlement remain separate from canonical command authority.
@@ -63,5 +64,6 @@ Legacy and PostgreSQL implementations overlap during migration. The migration ch
 ## Related documents
 
 - [Dark launch](dark-launch.md)
+- [Routine release migration gate](../postgresql-routine-migration.md)
 - [Request replay and idempotency](request-replay-and-idempotency.md)
 - [External effects and Asana](external-effects-and-asana.md)
