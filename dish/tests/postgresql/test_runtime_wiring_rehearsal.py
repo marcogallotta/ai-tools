@@ -285,7 +285,7 @@ def test_default_test_startup_keeps_legacy_service_composition(
     assert calls == ["legacy"]
 
 
-def test_postgresql_service_mode_requires_test_profile(
+def test_postgresql_service_mode_requires_test_or_prod_profile(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _set_service_env(monkeypatch)
@@ -293,7 +293,34 @@ def test_postgresql_service_mode_requires_test_profile(
     with pytest.raises(DishRuleError) as caught:
         service_main._postgresql_runtime_config(_service_args(tmp_path))
     assert caught.value.code == "INVALID_ARGUMENT"
-    assert caught.value.rule == "postgresql_runtime_profile_not_test"
+    assert caught.value.rule == "postgresql_runtime_profile_invalid"
+
+
+def test_postgresql_service_mode_accepts_prod_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set_service_env(monkeypatch)
+    monkeypatch.setenv("DISH_PROFILE", "prod")
+    for key in list(os.environ):
+        if "ASANA" in key.upper():
+            monkeypatch.delenv(key, raising=False)
+    config = service_main._postgresql_runtime_config(_service_args(tmp_path))
+    assert config.bind_host == "127.0.0.1"
+
+
+def test_postgresql_test_runtime_entrypoint_rejects_prod_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _set_service_env(monkeypatch)
+    monkeypatch.setenv("DISH_PROFILE", "prod")
+    for key in list(os.environ):
+        if "ASANA" in key.upper():
+            monkeypatch.delenv(key, raising=False)
+    args = service_main.build_parser().parse_args(["--postgresql-test-runtime"])
+    with pytest.raises(DishRuleError) as caught:
+        service_main._run_postgresql_test_runtime(args)
+    assert caught.value.code == "INVALID_ARGUMENT"
+    assert caught.value.rule == "postgresql_runtime_test_entrypoint_requires_test_profile"
 
 
 def test_postgresql_service_mode_rejects_reachable_asana_environment(

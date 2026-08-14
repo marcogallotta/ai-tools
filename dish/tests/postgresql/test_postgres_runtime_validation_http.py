@@ -4,11 +4,14 @@ import json
 import urllib.error
 import urllib.request
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 
 from sqlalchemy import func, select
 
+from dish_pg import postgres_service as postgres_service_module
 from dish_pg import stage3_models as wf
+from dish_pg.command_port import CommandResult
 from dish_pg.database import session_scope
 from dish_pg.postgres_service import PostgresRuntimeService
 from dish_pg.transition import ProjectionService
@@ -22,6 +25,59 @@ from tests.support.postgresql.runtime_validation import (
 )
 from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
 from tests.support.thread_teardown import start_server_thread, stop_server
+
+
+def _open_operation(session, ids, context, task_id):
+    operation_id = _next(ids)
+    session.add(
+        wf.WorkflowOperation(
+            operation_id=operation_id,
+            generation_id=context["generation_id"],
+            task_id=task_id,
+            kind="change",
+            lifecycle="completed",
+            phase="terminal",
+            persisted_actions=[],
+            import_run_id=context["import_run_id"],
+            creation_request_id=None,
+            creation_execution_id=None,
+            contract_binding_id=context["binding_id"],
+            predecessor_operation_id=None,
+            terminal_outcome="submitted",
+            operation_revision=1,
+            created_at=NOW,
+            terminal_at=NOW,
+        )
+    )
+    session.flush()
+    return operation_id
+
+
+def _active_actor_lease(session, ids, context, task_id, operation_id, run_id):
+    lease_id = _next(ids)
+    session.add(
+        wf.ServiceLease(
+            lease_id=lease_id,
+            generation_id=context["generation_id"],
+            task_id=task_id,
+            operation_id=operation_id,
+            run_id=run_id,
+            import_run_id=None,
+            source_run_id=None,
+            owner_id="owner-1",
+            lease_kind="actor",
+            actor_role="author",
+            actor_attempt_sequence=1,
+            verification_cycle_id=None,
+            state="active",
+            issued_at=NOW,
+            expires_at=NOW + timedelta(minutes=15),
+            lease_revision=1,
+            terminal_at=None,
+        )
+    )
+    session.flush()
+    return lease_id
 
 
 def _post_json(
@@ -279,7 +335,15 @@ def test_postgresql_runtime_exposes_only_implemented_action_commands(
         action_token="postgres-action-token",
         action_public_base_url="https://dish-pg-test.example.invalid/test",
     )
-    assert service.supports_http_route("agent", "recover") is True
+    service._profile = "prod"
+    assert service.supports_http_route("agent", "recover") is False
+    assert service.supports_http_route("admin", "recover") is True
+    assert service.supports_http_route("admin", "recover-lease") is True
+    assert service.supports_http_route("admin-lease", "recover-lease") is True
+    assert service.supports_http_route("admin-lease-expiry", "expire-lease") is True
+    assert service.supports_http_route("agent", "recover-lease") is False
+    assert service.supports_http_route("agent", "backup-create") is False
+    assert service.supports_http_route("admin", "backup-create") is False
     assert service.supports_http_route("agent", "proposals") is True
     assert service.supports_http_route("agent", "apply-proposal") is True
     assert service.supports_http_route("agent", "safe-reclaim") is True
@@ -325,6 +389,18 @@ def test_postgresql_runtime_exposes_only_implemented_action_commands(
     assert "/v1/action/proposals" in openapi["paths"]
     assert "/v1/action/apply-proposal" in openapi["paths"]
     assert "/v1/action/safe-reclaim" in openapi["paths"]
+
+
+def test_postgresql_admin_routes_stay_hidden_outside_prod_profile(
+    workflow_db, tmp_path: Path
+) -> None:
+    factory, _ids, _context, _task_id = workflow_db
+    service = runtime_service(factory, tmp_path)
+    assert service._profile == "test"
+    assert service.supports_http_route("admin", "recover") is False
+    assert service.supports_http_route("admin", "recover-lease") is False
+    assert service.supports_http_route("admin-lease", "recover-lease") is False
+    assert service.supports_http_route("admin-lease-expiry", "expire-lease") is False
 
 
 def test_postgresql_action_canonical_ids_work_without_asana_identity(
@@ -458,3 +534,179 @@ def test_postgresql_runtime_renew_lease_reuses_command_port(
         "principal": principal,
         "request_id": str(request_id),
     }
+
+
+def test_execute_admin_rejects_command_not_on_admin_surface(
+    workflow_db, tmp_path: Path
+) -> None:
+    factory, ids, context, _task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+
+    service = runtime_service(factory, tmp_path)
+    principal = ServicePrincipal.from_values("marco-admin", str(run_id))
+    try:
+        service.execute_admin("sections", {}, principal=principal, request_id=None)
+        raise AssertionError("expected admin_command_forbidden")
+    except DishRuleError as exc:
+        assert exc.code == "INVALID_ARGUMENT"
+        assert exc.rule == "admin_command_forbidden"
+
+
+def test_execute_admin_uses_admin_principal_class(
+    workflow_db, tmp_path: Path, monkeypatch
+) -> None:
+    factory, ids, context, _task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+
+    service = runtime_service(factory, tmp_path)
+    captured: dict[str, object] = {}
+
+    class _CapturingCommandPort:
+        def __init__(self, session, *, cursor_secret):
+            del session, cursor_secret
+
+        def execute(self, call):
+            captured["principal_class"] = call.principal_class
+            captured["command_name"] = call.command_name
+            return CommandResult(True, call.command_name, "OK", 200, {})
+
+    monkeypatch.setattr(postgres_service_module, "PostgresCommandPort", _CapturingCommandPort)
+    principal = ServicePrincipal.from_values("marco-admin", str(run_id))
+    result = service.execute_admin("attention", {}, principal=principal, request_id=None)
+
+    assert result["ok"] is True
+    assert captured == {"principal_class": "admin", "command_name": "attention"}
+
+
+def test_recover_lease_resolves_operation_and_lease_from_postgresql_only(
+    workflow_db, tmp_path: Path, monkeypatch
+) -> None:
+    # execute_admin is stubbed here (rather than run to completion) purely to
+    # avoid a SQLite-only SQLAlchemy timezone round-trip gap in the "now" vs
+    # stored "expires_at" comparison inside command_port's real lease-release
+    # path; native PostgreSQL preserves tzinfo and does not hit this. The
+    # point under test is the DB-only lease/task identity resolution below,
+    # which happens entirely before execute_admin is called.
+    factory, ids, context, task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(
+            session, generation_id=context["generation_id"], run_id=run_id, owner="marco-admin"
+        )
+        operation_id = _open_operation(session, ids, context, task_id)
+        lease_id = _active_actor_lease(session, ids, context, task_id, operation_id, run_id)
+
+    service = runtime_service(factory, tmp_path)
+    captured: dict[str, object] = {}
+
+    def execute_admin(command, arguments, *, principal, request_id):
+        captured.update(
+            command=command, arguments=dict(arguments), principal=principal, request_id=request_id
+        )
+        return {"ok": True, "data": {"lease_id": str(lease_id), "state": "recovered"}}
+
+    monkeypatch.setattr(service, "execute_admin", execute_admin)
+    principal = ServicePrincipal.from_values("marco-admin", str(run_id))
+    request_id = str(_next(ids))
+    result = service.recover_lease(
+        str(operation_id),
+        principal,
+        reason="stuck laptop",
+        request_id=request_id,
+    )
+
+    assert result["data"]["state"] == "recovered"
+    assert captured == {
+        "command": "recover-lease",
+        "arguments": {
+            "operation_id": str(operation_id),
+            "lease_id": str(lease_id),
+            "reason": "stuck laptop",
+        },
+        "principal": principal,
+        "request_id": request_id,
+    }
+
+
+def test_recover_lease_without_active_lease_fails_closed(
+    workflow_db, tmp_path: Path
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        operation_id = _open_operation(session, ids, context, task_id)
+
+    service = runtime_service(factory, tmp_path)
+    principal = ServicePrincipal.from_values("marco-admin", str(run_id))
+    try:
+        service.recover_lease(
+            str(operation_id), principal, reason="stuck laptop", request_id=str(_next(ids))
+        )
+        raise AssertionError("expected service_lease_not_found")
+    except DishRuleError as exc:
+        assert exc.code == "CONFLICT"
+        assert exc.rule == "service_lease_not_found"
+
+
+def test_expire_lease_by_lease_id_resolves_task_from_postgresql_only(
+    workflow_db, tmp_path: Path
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(
+            session, generation_id=context["generation_id"], run_id=run_id, owner="marco-admin"
+        )
+        operation_id = _open_operation(session, ids, context, task_id)
+        lease_id = _active_actor_lease(session, ids, context, task_id, operation_id, run_id)
+
+    service = runtime_service(factory, tmp_path)
+    principal = ServicePrincipal.from_values("marco-admin", str(run_id))
+    result = service.expire_lease(
+        principal,
+        lease_id=str(lease_id),
+        task_gid=None,
+        reason="operator recovery",
+        request_id=str(_next(ids)),
+    )
+
+    assert result["ok"] is True
+    assert result["data"]["state"] == "expired"
+
+
+def test_expire_lease_by_task_gid_resolves_through_task_external_alias_only(
+    workflow_db, tmp_path: Path, monkeypatch
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(
+            session, generation_id=context["generation_id"], run_id=run_id, owner="marco-admin"
+        )
+        operation_id = _open_operation(session, ids, context, task_id)
+        lease_id = _active_actor_lease(session, ids, context, task_id, operation_id, run_id)
+
+    from dish_tool import backend as asana_backend
+
+    def reject_asana_construction(*_args, **_kwargs):
+        raise AssertionError("DB-only lease expiry must not construct Asana")
+
+    monkeypatch.setattr(asana_backend.AsanaBackend, "__init__", reject_asana_construction)
+    service = runtime_service(factory, tmp_path)
+    principal = ServicePrincipal.from_values("marco-admin", str(run_id))
+    result = service.expire_lease(
+        principal,
+        lease_id=None,
+        task_gid="123456789",
+        reason="operator recovery",
+        request_id=str(_next(ids)),
+    )
+
+    assert result["ok"] is True
+    assert result["data"]["lease_id"] == str(lease_id)
+    assert result["data"]["state"] == "expired"

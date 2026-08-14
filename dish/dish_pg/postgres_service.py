@@ -24,8 +24,10 @@ from dish_tool.errors import DishRuleError
 from dish_tool.results import error_envelope
 
 from . import models
+from . import stage3_models as wf
 from .command_contract import (
     ACTION_COMMANDS,
+    ADMIN_COMMANDS,
     COMMAND_DEFINITIONS,
     validate_postgres_action_request,
 )
@@ -33,6 +35,24 @@ from .command_port import CommandCall, CommandPortError, PostgresCommandPort
 from .database import DatabaseSettings, create_database_engine, session_factory, session_scope
 from .openapi import postgres_action_openapi
 from .workflow import RequestIdentityConflict, WorkflowAuthorityError
+
+
+_SUPPORTED_PROFILES = ("test", "prod")
+
+# Retained admin-principal commands are exposed only through the private admin
+# transport; every other retained command remains reachable from the agent
+# surface. Retired/non-retained commands (e.g. historical backup-create/
+# backup-restore) stay unroutable on both surfaces.
+_ADMIN_EXPOSED_COMMANDS = frozenset(
+    name
+    for name in ADMIN_COMMANDS
+    if COMMAND_DEFINITIONS[name].retained
+)
+_AGENT_EXPOSED_COMMANDS = frozenset(
+    name
+    for name, definition in COMMAND_DEFINITIONS.items()
+    if definition.retained and name not in _ADMIN_EXPOSED_COMMANDS
+)
 
 
 _SECTION4_CONTROL_POINTS_FIRED: set[tuple[str, str]] = set()
@@ -97,6 +117,7 @@ class PostgresRuntimeService:
     """Expose PostgreSQL command authority through the established HTTP service."""
 
     _SUPPORTED_HTTP_SURFACES = frozenset({"agent", "action"})
+    _profile: str = "test"
 
     def __init__(
         self,
@@ -108,7 +129,15 @@ class PostgresRuntimeService:
         expected_schema_head: str,
         expected_release: str,
         expected_generation_id: uuid.UUID,
+        profile: str = "test",
     ) -> None:
+        if profile not in _SUPPORTED_PROFILES:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "PostgreSQL runtime profile must be test or prod",
+                rule="postgresql_runtime_profile_invalid",
+                details={"profile": profile},
+            )
         self.config = config
         self._engine = create_database_engine(DatabaseSettings(url=database_url))
         self._session_maker = session_factory(self._engine)
@@ -117,6 +146,7 @@ class PostgresRuntimeService:
         self._expected_schema_head = expected_schema_head
         self._expected_release = expected_release
         self._expected_generation_id = expected_generation_id
+        self._profile = profile
 
     def close(self) -> None:
         self._engine.dispose()
@@ -128,12 +158,18 @@ class PostgresRuntimeService:
         The public Action surface is intentionally limited to the already
         implemented PostgreSQL command contract; unsupported legacy Action
         commands remain hidden rather than falling through to another backend.
+        Admin-principal commands are reachable only through the admin
+        transport, never the agent route, and only when this runtime is bound
+        to the PROD profile: TEST rehearsals never expose live recovery
+        authority, matching TEST evidence never proving PROD.
         """
 
         if surface == "agent":
-            return command in COMMAND_DEFINITIONS
+            return command in _AGENT_EXPOSED_COMMANDS
         if surface == "action":
             return command in ACTION_COMMANDS
+        if surface in {"admin", "admin-lease", "admin-lease-expiry"}:
+            return self._profile == "prod" and command in _ADMIN_EXPOSED_COMMANDS
         return False
 
     def action_openapi(self, *, server_url: str) -> dict[str, Any]:
@@ -230,7 +266,7 @@ class PostgresRuntimeService:
             "ok": True,
             "startup_ready": True,
             "backend": "postgresql",
-            "profile": "test",
+            "profile": self._profile,
             "pid": os.getpid(),
             "identity": identity,
             "isolation": {
@@ -252,7 +288,7 @@ class PostgresRuntimeService:
                 "ok": False,
                 "startup_ready": False,
                 "backend": "postgresql",
-                "profile": "test",
+                "profile": self._profile,
                 "pid": os.getpid(),
                 "code": exc.code,
                 "rule": exc.rule,
@@ -345,13 +381,134 @@ class PostgresRuntimeService:
             request_id=request_id,
         )
 
-    def execute_agent(
+    def _active_lease_id_for_operation(self, operation_id: str) -> str:
+        with session_scope(self._session_maker) as session:
+            lease = session.scalar(
+                select(wf.ServiceLease).where(
+                    wf.ServiceLease.operation_id == uuid.UUID(str(operation_id)),
+                    wf.ServiceLease.state == "active",
+                )
+            )
+            if lease is None:
+                raise DishRuleError(
+                    "CONFLICT",
+                    "no matching active lease for this operation",
+                    rule="service_lease_not_found",
+                    details={"operation_id": str(operation_id)},
+                )
+            return str(lease.lease_id)
+
+    def _lease_and_task_for_lease_id(self, lease_id: str) -> tuple[str, str]:
+        with session_scope(self._session_maker) as session:
+            lease = session.get(wf.ServiceLease, uuid.UUID(str(lease_id)))
+            if lease is None:
+                raise DishRuleError(
+                    "NOT_FOUND",
+                    "unknown lease",
+                    rule="service_lease_not_found",
+                    details={"lease_id": str(lease_id)},
+                )
+            return str(lease.lease_id), str(lease.task_id)
+
+    def _lease_and_task_for_task_gid(self, task_gid: str) -> tuple[str, str]:
+        with session_scope(self._session_maker) as session:
+            task = session.scalar(
+                select(models.DishTask)
+                .join(
+                    models.TaskExternalAlias,
+                    models.TaskExternalAlias.task_id == models.DishTask.task_id,
+                )
+                .where(
+                    models.TaskExternalAlias.external_system == "asana",
+                    models.TaskExternalAlias.external_id == str(task_gid),
+                    models.TaskExternalAlias.state == "active",
+                )
+            )
+            if task is None:
+                raise DishRuleError(
+                    "NOT_FOUND",
+                    "unknown active Dish task",
+                    rule="service_task_not_found",
+                    details={"task_gid": str(task_gid)},
+                )
+            lease = session.scalar(
+                select(wf.ServiceLease).where(
+                    wf.ServiceLease.task_id == task.task_id,
+                    wf.ServiceLease.state == "active",
+                )
+            )
+            if lease is None:
+                raise DishRuleError(
+                    "CONFLICT",
+                    "no matching active lease for this task",
+                    rule="service_lease_not_found",
+                    details={"task_gid": str(task_gid)},
+                )
+            return str(lease.lease_id), str(task.task_id)
+
+    def recover_lease(
+        self,
+        operation_id: str,
+        principal: ServicePrincipal,
+        *,
+        reason: str,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Bridge the private admin lease-recovery route onto ``recover-lease``.
+
+        Operation/lease identity is resolved exclusively from PostgreSQL
+        ``ServiceLease``; no Asana lookup is performed.
+        """
+
+        lease_id = self._active_lease_id_for_operation(operation_id)
+        return self.execute_admin(
+            "recover-lease",
+            {"operation_id": str(operation_id), "lease_id": lease_id, "reason": reason},
+            principal=principal,
+            request_id=request_id,
+        )
+
+    def expire_lease(
+        self,
+        principal: ServicePrincipal,
+        *,
+        lease_id: str | None = None,
+        task_gid: str | None = None,
+        reason: str,
+        request_id: str,
+    ) -> dict[str, Any]:
+        """Bridge the private admin lease-expiry route onto ``expire-lease``.
+
+        Task/lease identity is resolved exclusively from PostgreSQL
+        (``ServiceLease`` and the local ``TaskExternalAlias`` compatibility
+        mapping); no Asana lookup is performed.
+        """
+
+        if lease_id is not None:
+            resolved_lease_id, resolved_task_id = self._lease_and_task_for_lease_id(lease_id)
+        else:
+            if task_gid is None:
+                raise DishRuleError(
+                    "INVALID_ARGUMENT",
+                    "exactly one of lease_id and task_gid is required",
+                    rule="lease_expiry_target_invalid",
+                )
+            resolved_lease_id, resolved_task_id = self._lease_and_task_for_task_gid(task_gid)
+        return self.execute_admin(
+            "expire-lease",
+            {"lease_id": resolved_lease_id, "task_id": resolved_task_id, "reason": reason},
+            principal=principal,
+            request_id=request_id,
+        )
+
+    def _execute_command(
         self,
         command: str,
         arguments: Mapping[str, Any],
         *,
-        principal: ServicePrincipal | None = None,
-        request_id: str | None = None,
+        principal: ServicePrincipal | None,
+        request_id: str | None,
+        principal_class: str,
     ) -> dict[str, Any]:
         if principal is None:
             raise DishRuleError(
@@ -379,7 +536,7 @@ class PostgresRuntimeService:
                         command_name=command,
                         arguments=dict(arguments),
                         owner_id=principal.owner_id,
-                        principal_class="agent",
+                        principal_class=principal_class,
                         run_id=run_id,
                         request_id=parsed_request_id,
                         now=datetime.now(timezone.utc),
@@ -415,3 +572,41 @@ class PostgresRuntimeService:
                 retryable=True,
                 details={"error_type": type(exc).__name__},
             ) from exc
+
+    def execute_agent(
+        self,
+        command: str,
+        arguments: Mapping[str, Any],
+        *,
+        principal: ServicePrincipal | None = None,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self._execute_command(
+            command,
+            arguments,
+            principal=principal,
+            request_id=request_id,
+            principal_class="agent",
+        )
+
+    def execute_admin(
+        self,
+        command: str,
+        arguments: Mapping[str, Any],
+        *,
+        principal: ServicePrincipal | None = None,
+        request_id: str | None = None,
+    ) -> dict[str, Any]:
+        if command not in _ADMIN_EXPOSED_COMMANDS:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "command is not exposed to the PostgreSQL admin surface",
+                rule="admin_command_forbidden",
+            )
+        return self._execute_command(
+            command,
+            arguments,
+            principal=principal,
+            request_id=request_id,
+            principal_class="admin",
+        )

@@ -86,6 +86,17 @@ publishing an exact linked successor. None of these commands falls through to a 
 Their retained disposition is executable in
 `dish_pg.command_contract.CONNECTED_COMMAND_DISPOSITIONS`.
 
+Retained PostgreSQL admin-principal commands (recovery, discard/abandon, Human Review, evidence,
+migrate, and lease recovery/expiry) are reachable only through the private admin bearer on
+`/v1/admin/<command>` and the admin lease routes, and only when the runtime is bound to the PROD
+profile; the agent/action surfaces expose only retained non-admin commands, and retired/non-retained
+historical commands (backup-create, backup-restore) stay unroutable everywhere. A TEST-profile
+runtime hides every admin route (`not_found`) regardless of bearer, so TEST rehearsals never reach
+live recovery authority. The private lease recovery (`/v1/admin/leases/<operation_id>/recover`)
+and expiry (`/v1/admin/leases/expire`) routes bridge onto canonical `recover-lease`/`expire-lease`
+and resolve operation/task/lease identity exclusively from PostgreSQL (`ServiceLease`,
+`TaskExternalAlias`); this is part of the zero-Asana runtime contract and never reaches Asana.
+
 Canonical and legacy-alias resolution on these PostgreSQL paths is database-local. It must not load
 an Asana credential, construct an Asana client, or make an Asana network request. The shared HTTP
 listener delegates Action request validation to the active backend, so the PostgreSQL validator can

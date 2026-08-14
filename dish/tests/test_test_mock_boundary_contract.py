@@ -138,6 +138,13 @@ REVIEWED_PRIVATE_FAULT_SEAMS = {
     ("postgresql/test_runtime_wiring_review_corrections.py", "_probe_native"): (
         "Native PostgreSQL connectivity probe boundary."
     ),
+    ("postgresql/test_postgres_runtime_validation_http.py", "__init__"): (
+        "Asana backend construction boundary for the canonical PostgreSQL Action no-Asana proof."
+    ),
+    ("postgresql/test_stage4_command_port.py", "__init__"): (
+        "Asana backend construction boundary for PostgreSQL-native command no-Asana proofs "
+        "(safe-reclaim and proposal/apply-proposal)."
+    ),
     ("postgresql/test_runtime_wiring_rehearsal.py", "_run_postgresql_test_runtime"): (
         "PostgreSQL service-runtime dispatch boundary for wiring selection tests."
     ),
