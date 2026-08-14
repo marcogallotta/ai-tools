@@ -143,7 +143,7 @@ After GitHub confirms a merge, a local-checkout integrator must fetch the target
 ## Migration from patch integration
 
 - New work is integrated from a GitHub PR; do not create a new patch-only integration handoff.
-- Existing patch-based work already in flight may complete under the legacy flow or be converted to a PR.
+- Existing patch-based work already in flight may complete under the legacy flow or be converted to a branch/commit/PR.
 - Once converted, the PR head SHA is the active review/integration identity. A legacy patch hash is provenance only.
 - A legacy patch that completes under the old flow remains legacy work; do not use it as precedent for new patch-only handoffs.
 
