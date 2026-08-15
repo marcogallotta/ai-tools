@@ -74,6 +74,7 @@ Do not rely on a stale approval attached only to the PR number or branch name. I
 ## Checks and certification
 
 Run the exact `TESTS TO RUN` from the coordinator/reviewer handoff when integration still requires local/environment-specific certification. Do not replace the requested command with a weaker substitute and do not claim evidence that did not run.
+`TESTS TO RUN: NONE` is literal: Integration does not invent a blanket suite or create a local test worktree solely for reassurance when the governed exact-head evidence has no remaining certification requirement.
 
 When the selected command is `scripts/dish-test-lane native-concurrency`, an unset PostgreSQL environment variable is not by itself an unavailable environment. The lane first honors an explicit `DISH_TEST_POSTGRESQL_DSN` or `DISH_PG_TEST_URL`, then exhausts the repository-owned canonical local `localhost:5432` `dish_test` helper mode in `dish-pg-native-certification` using bounded non-interactive privilege. Treat exit status 3 as `UNAVAILABLE` only after that helper has returned the exact residual reason. This local fallback is fenced to the disposable local role/database; it does not authorize selecting shared TEST, PROD, a remote host, or a generic certification default.
 

@@ -60,6 +60,7 @@ A domain label alone never justifies a second AI-reviewer dependency: the purpor
 ## Evidence and integration gates
 
 Treat implementation-agent test evidence as evidence; rerun only for a concrete review reason. Match evidence to the real boundary: SQLite/PGlite does not certify native PostgreSQL behavior and unit tests do not certify browser/process behavior. Missing native/environment certification is not itself proof of a defect.
+If Review requires evidence beyond the governed selector/implementation record, name the concrete missing guarantee and the exact stable command that would establish it. When no additional local/environment certification is missing, record `TESTS TO RUN: NONE`; do not request a broad/full suite as a generic safety ritual.
 
 Ordinary CI must certify the exact source PR head SHA. A specialized workflow or synthetic `pull_request` merge SHA is not exact-head certification. Missing, pending, or failed ordinary CI is Integration evidence/ownership state, not a reason to delay substantive Review or rewrite the semantic verdict. Review does not require the branch to be synchronized with current `main` before reviewing the exact current PR head merely because `main` moved. Require a newer base first only when the movement creates a known semantic dependency that makes the current review question invalid.
 

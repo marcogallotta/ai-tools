@@ -225,7 +225,7 @@ Local refs/checkouts are caches. GitHub remains source/history authority.
 
 The development workflow should make evidence bind to the exact candidate being reviewed/integrated.
 
-Maintain the repository-owned test-selection/planning authority rather than inventing disconnected GitHub-only path rules.
+Maintain the repository-owned test-selection/planning authority rather than inventing disconnected GitHub-only path rules. Its mechanical input is the complete tracked Git delta (including base-side ownership for deleted paths), and validation is derived from tracked/index state rather than ignored or generated filesystem materialization. Development Workflow may correct selector mechanics and policy consistency, but it does not weaken semantic evidence boundaries or invent a blanket suite outside governed selection.
 
 Ordinary CI runs for review-ready PR candidates and explicitly derives candidate identity from `pull_request.head.sha`; `GITHUB_SHA` on `pull_request` is not treated as the review identity. Every test checkout and evidence artifact for exact-head certification uses that candidate SHA.
 
