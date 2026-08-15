@@ -141,6 +141,12 @@ If a fix is required, put the blocker and complete standalone fix-agent handoff 
 
 After an isolated blocker fix, normally perform a focused recheck on the new exact head rather than a fresh broad review. Reopen broader review only when the fix materially changes the previously accepted design or exposes a new merge-critical uncertainty.
 
+### Scope-amplification check
+
+Re-anchor the candidate to the original operator request or current accepted task specification before judging architectural completeness. Ask whether the solution materially expands beyond the smallest sufficient operator outcome. A new scheduler, queue, database, service, ownership/identity system, control plane, or materially broader lifecycle requires an explicit durable Marco decision approving that expansion; without it, block the extra scope while preserving the narrow authorized slice.
+
+After two design/re-review cycles without implementation progress, require a smaller implementable slice or an explicit human decision rather than another default expansion pass. A claimed V1 dependency must name the concrete capability it supplies and why supported existing routes cannot supply it; unsupported same-session optimizations degrade to the ordinary supported route instead of becoming dependencies.
+
 ## Development friction and non-blocking debt
 
 Apply the inherited contributor-base contracts: repository friction is discoverable/dedupe-first and logged without creating a second queue or urgency; relevant non-blocking code smells are deduped/logged to the Code Smells surface and the assigned scope continues. True current-task blockers stay on the active task/PR.

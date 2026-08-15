@@ -199,6 +199,10 @@ Once the existing mechanism responsible for the requested invariant is identifie
 
 Before adding new files, systems, targets, or process changes, ask whether the change directly satisfies the acceptance criteria. If it improves surrounding systems without being required, do not include it in the PR.
 
+For operator-friction work, state the smallest operator outcome in one sentence: the manual/repetitive work this slice removes. Re-anchor implementation decisions to that outcome and the current accepted task specification. Before adding a scheduler, queue, database, service, new ownership/identity system, control plane, or materially broader lifecycle than that outcome requires, obtain an explicit durable Marco decision approving the expansion. Missing approval blocks the broader expansion, not the narrow authorized slice.
+
+After two design/re-review cycles without implementation progress, do not default to another broader design pass: reduce to a smaller implementable slice or require an explicit human decision. Before making a new V1 dependency, prove the exact capability the dependency supplies and that the supported existing route cannot provide it; unsupported same-session or convenience optimizations fall back to the ordinary supported route rather than becoming blockers.
+
 Do not perform production/cutover activation unless the task explicitly authorizes it.
 
 ## Parallel branches and migrations

@@ -270,6 +270,17 @@
             "handoff"
           ],
           "surface": "routing"
+        },
+        {
+          "id": "scope-amplification-checkpoint",
+          "text": "Re-anchor work to the one-sentence operator outcome. Before adding a scheduler/queue/database/service/new ownership/identity/control-plane or materially broader lifecycle, require explicit durable Marco approval; missing approval blocks only expansion. After two design/re-review loops, shrink the slice or seek a decision. Prove capability need before dependency.",
+          "impact": "additive",
+          "action_boundaries": [
+            "role-critical-write",
+            "review-write",
+            "handoff"
+          ],
+          "surface": "safety"
         }
       ]
     },
@@ -516,6 +527,17 @@
             "handoff"
           ],
           "surface": "routing"
+        },
+        {
+          "id": "scope-amplification-checkpoint",
+          "text": "Re-anchor work to the one-sentence operator outcome. Before adding a scheduler/queue/database/service/new ownership/identity/control-plane or materially broader lifecycle, require explicit durable Marco approval; missing approval blocks only expansion. After two design/re-review loops, shrink the slice or seek a decision. Prove capability need before dependency.",
+          "impact": "additive",
+          "action_boundaries": [
+            "role-critical-write",
+            "review-write",
+            "handoff"
+          ],
+          "surface": "safety"
         }
       ]
     },

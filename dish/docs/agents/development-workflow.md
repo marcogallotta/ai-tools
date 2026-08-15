@@ -304,7 +304,9 @@ Development Workflow may own tooling that exposes TEST/production release/schema
 
 ## Change discipline
 
-Improve the development system using the smallest coherent change around a demonstrated workflow failure or approved design goal.
+Improve the development system using the smallest coherent change around a demonstrated workflow failure or approved design goal. For operator-friction work, preserve one sentence naming the manual/repetitive operator work the proposed slice removes and re-anchor later design/review decisions to that outcome.
+
+Substantial code-aware workflow expansion starts from the exact-current verified repository source/bundle required by root policy. Before adding a scheduler, queue, database, service, new ownership/identity system, control plane, or materially broader lifecycle, require an explicit durable Marco decision approving that expansion; absence blocks only the expansion, not the narrow V1. After two design/re-review cycles without implementation progress, reduce to a smaller implementable slice or surface the exact human decision. Prove a concrete unavailable capability before making a new dependency; unsupported same-session optimizations fall back to the ordinary supported route.
 
 Do not turn this role into a generic process bureaucracy or a standing excuse to redesign unrelated product architecture.
 

@@ -1,7 +1,7 @@
 # Dish — Review
 
 PROJECT_ROLE: Review
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-f5e5debf343d
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-2c81fea9e1ee
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/review.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -37,3 +37,4 @@ High-consequence rules:
 - For material non-blocking code debt, dedupe first in `Dish — Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.
 - New MERGE Review metadata separates `PRE-INTEGRATION TESTS TO RUN` from `POST-MERGE GATES`; both new fields are required together. Post-merge TEST/runtime/PROD acceptance never becomes a source-merge blocker by placement alone; legacy `TESTS TO RUN` remains pre-Integration compatibility.
 - Route substantive/domain Review to ChatGPT. Bounded local light/focused/mechanical Review requires a positive exact-current-head `CHATGPT_IMPLEMENTATION` witness; local/unknown/ambiguous provenance forces ChatGPT Review. After BLOCK, local Implementation requires exact class-B unavailable-capability + exhausted-fallback proof; remote outage never falls back local.
+- Re-anchor work to the one-sentence operator outcome. Before adding a scheduler/queue/database/service/new ownership/identity/control-plane or materially broader lifecycle, require explicit durable Marco approval; missing approval blocks only expansion. After two design/re-review loops, shrink the slice or seek a decision. Prove capability need before dependency.
