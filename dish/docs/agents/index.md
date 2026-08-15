@@ -73,7 +73,7 @@ Role and execution host are separate concerns. The same Dish role may run under 
 
 - New agent-owned implementation branches normally use `agent/<short-task-slug>` unless the handoff establishes another repository convention.
 - One implementation agent owns semantic branch changes at a time; stale/merged/abandoned branches are not reused for unrelated work.
-- Cleanup automation is future work. Manual cleanup occurs only when recoverability/provenance no longer requires the branch/worktree.
+- Terminal cleanup is owned by the repository PR lifecycle controller after authoritative merged/closed/abandoned/superseded disposition. It must fail closed on dirty, unpublished-only, moved/reused, protected, or ambiguous lineage; manual cleanup is only for residual anomalies the controller cannot safely resolve.
 - Direct-to-`main` commits are not the default. Marco may explicitly authorize a specific emergency override; roles must state which normal gate is being waived.
 
 Rules:

@@ -176,7 +176,7 @@ Day-one rules for new work:
 - one implementation agent owns semantic changes on a branch at a time;
 - Claude Code/Codex use local git/worktrees as appropriate; ChatGPT uses connected-GitHub connector-native operations as source/history authority;
 - stale/merged/abandoned branches are not reused for unrelated work;
-- cleanup automation is future work. Manual cleanup happens only when the branch is no longer needed for recovery/provenance.
+- eligible terminal implementation lineages are cleaned by the repository PR lifecycle controller only after authoritative disposition and exact-lineage/recoverability checks; Coordinator treats any refusal as a residual anomaly rather than asking an agent to force cleanup.
 
 Default: **no direct-to-`main` commits**.
 

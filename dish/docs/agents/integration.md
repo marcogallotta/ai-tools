@@ -52,8 +52,8 @@ For local integration work:
 - never test or reconcile a candidate in a dirty shared `main` worktree;
 - use a dedicated worktree/temporary integration branch when local isolation is required;
 - do not reuse stale/merged/abandoned branches for unrelated work;
-- cleanup after confirmed landing is manual day-one hygiene;
-- cleanup automation is future work;
+- terminal implementation-lineage cleanup is owned by the repository PR lifecycle controller after authoritative landing/disposition;
+- Integration does not force-delete implementation recovery state when that controller refuses;
 - never delete the only recoverable copy of unlanded work.
 
 ## Verify review identity before integration
@@ -155,7 +155,7 @@ After remote landing is verified:
 - confirm the guarded local target-branch synchronization completed or was left untouched and reported pending;
 - local temporary integration worktrees/branches may be removed when safe;
 - the implementation branch may be deleted when the PR is merged/closed and no recoverability need remains;
-- stale-branch cleanup remains manual for day one; cleanup automation is future work.
+- eligible terminal implementation branches are cleaned by the repository PR lifecycle controller with exact-head/recoverability guards; residual or ambiguous cleanup remains manual and must not be forced.
 
 Do not delete an unlanded or superseded branch if it is still needed for provenance/recovery.
 

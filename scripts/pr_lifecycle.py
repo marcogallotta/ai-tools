@@ -17,6 +17,7 @@ from pr_lifecycle_engine_inspect import LifecycleInspectMixin
 from pr_lifecycle_engine_actions import LifecycleActionsMixin
 from pr_lifecycle_authoring_actions import LifecycleAuthoringActionsMixin
 from pr_lifecycle_integration_certification import LocalIntegrationCertificationMixin
+from pr_lifecycle_terminal import TerminalCleanupDispatcher
 
 class LifecycleEngine(
     LocalIntegrationCertificationMixin,
@@ -99,7 +100,10 @@ class LifecycleEngine(
         return lifecycle
 def _build_engine(
     args: argparse.Namespace,
-) -> tuple[LifecycleEngine, WorkspaceAgentDispatcher | None, LocalReviewDispatcher, ImplementationFixDispatcher]:
+) -> tuple[
+    LifecycleEngine, WorkspaceAgentDispatcher | None, LocalReviewDispatcher,
+    ImplementationFixDispatcher, TerminalCleanupDispatcher,
+]:
     token = args.github_token or os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
     if not token:
         raise LifecycleError("GitHub token is required via --github-token, GITHUB_TOKEN, or GH_TOKEN")
@@ -131,7 +135,11 @@ def _build_engine(
         args.local_integration_certifier or os.getenv("DISH_LOCAL_INTEGRATION_CERTIFICATION_COMMAND")
     )
     engine.local_integration_certifier = certifier
-    return engine, workspace, local, fixer
+    terminal_command = args.terminal_cleaner or os.getenv("DISH_TERMINAL_CLEANUP_COMMAND")
+    if terminal_command is None:
+        terminal_command = f"{shlex.quote(sys.executable)} {shlex.quote(str(SCRIPT_DIR.parent / 'tools' / 'agent-worktree'))}"
+    terminal_cleaner = TerminalCleanupDispatcher(terminal_command, repo_path=str(SCRIPT_DIR.parent))
+    return engine, workspace, local, fixer, terminal_cleaner
 
 
 def _render_json(values: list[PRLifecycle], *, repository: str) -> str:
@@ -201,6 +209,10 @@ def _parser() -> argparse.ArgumentParser:
         "--local-integration-certifier",
         help="local Integration consumer; receives complete exact-head certification handoff JSON on stdin",
     )
+    parser.add_argument(
+        "--terminal-cleaner",
+        help="repository-owned terminal cleanup command; defaults to tools/agent-worktree",
+    )
     parser.add_argument("--integration-authority", action="store_true", help="explicitly compose bounded Integration after exact-head MERGE")
     parser.add_argument("--no-merge-capability", action="store_true", help="declare that this host cannot perform GitHub merge")
     parser.add_argument("--merge-method", choices=["merge", "squash", "rebase"], default="squash")
@@ -223,16 +235,18 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        engine, workspace, local, fixer = _build_engine(args)
+        engine, workspace, local, fixer, terminal_cleaner = _build_engine(args)
         if args.command == "status":
             values = engine.status(include_closed=args.include_closed)
             print(_render_json(values, repository=args.repo) if args.format == "json" else _render_table(values))
             return 0
         if args.command == "dispatch":
             values = engine.dispatch(
+                include_closed=True,
                 workspace=workspace,
                 local_reviewer=local,
                 implementation_fixer=fixer,
+                terminal_cleaner=terminal_cleaner,
                 notify=_notification_printer,
             )
             print(_render_json(values, repository=args.repo) if args.format == "json" else _render_table(values))
@@ -242,9 +256,11 @@ def main(argv: list[str] | None = None) -> int:
         while True:
             values = (
                 engine.dispatch(
+                    include_closed=True,
                     workspace=workspace,
                     local_reviewer=local,
                     implementation_fixer=fixer,
+                    terminal_cleaner=terminal_cleaner,
                     notify=_notification_printer,
                 )
                 if args.dispatch
