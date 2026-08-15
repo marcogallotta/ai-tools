@@ -1,0 +1,47 @@
+{
+  "format": "dish-test-comparator-plan-v1",
+  "name": "pg-authority-vs-disposable-legacy-oracle",
+  "scenarios": [
+    {
+      "id": "sections",
+      "command": "sections",
+      "mutating": false,
+      "arguments": {"agent": "gpt"},
+      "compare": {
+        "drop_keys": [
+          "external_id", "external_system", "gid", "ordinal", "project_gid", "project_id",
+          "registry_revision", "registry_version_id", "section_gid", "section_id", "workflow_role"
+        ]
+      }
+    },
+    {
+      "id": "create-bare-dish",
+      "command": "create",
+      "mutating": true,
+      "arguments": {"agent": "gpt", "title": "[comparison] dual-stack ${run_id}"},
+      "captures": {
+        "created_task": {"authority": "/data/dish_id", "oracle": "/data/task_gid"}
+      },
+      "compare": {
+        "projection": {"ok": "/ok", "command": "/command", "code": "/code", "retryable": "/retryable"}
+      }
+    },
+    {
+      "id": "read-created-dish",
+      "command": "read",
+      "mutating": false,
+      "requires": ["create-bare-dish"],
+      "authority_arguments": {"agent": "gpt", "dish_id": "${created_task}"},
+      "oracle_arguments": {"agent": "gpt", "task_gid": "${created_task}"},
+      "compare": {
+        "projection": {
+          "ok": "/ok",
+          "command": "/command",
+          "title": {"authority": "/data/title", "oracle": "/data/task/title"},
+          "body": {"authority": "/data/body", "oracle": "/data/task/notes"},
+          "completed": {"authority": "/data/completed", "oracle": "/data/task/completed"}
+        }
+      }
+    }
+  ]
+}

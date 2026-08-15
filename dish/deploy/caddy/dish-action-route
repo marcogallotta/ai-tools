@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect the fixed TEST/production Dish Action router."""
+"""Inspect the fixed Dish Action router, including the TEST comparator oracle."""
 
 from __future__ import annotations
 
@@ -14,10 +14,12 @@ from typing import Any
 ADMIN_URL = "http://127.0.0.1:2019"
 PROXY_PATHS = {
     "test": "/id/dish_action_test_proxy/upstreams",
+    "test-legacy": "/id/dish_action_test_legacy_proxy/upstreams",
     "prod": "/id/dish_action_prod_proxy/upstreams",
 }
 EXPECTED_DIALS = {
     "test": "127.0.0.1:8766",
+    "test-legacy": "127.0.0.1:8796",
     "prod": "127.0.0.1:8776",
 }
 
@@ -52,11 +54,11 @@ def _read_upstream(admin_url: str, environment: str) -> str:
 def status(admin_url: str) -> dict[str, Any]:
     routes = {
         environment: _read_upstream(admin_url, environment)
-        for environment in ("prod", "test")
+        for environment in ("prod", "test", "test-legacy")
     }
     expected = routes == EXPECTED_DIALS
     return {
-        "mode": "fixed-path-split",
+        "mode": "fixed-path-split-with-comparator",
         "routes": routes,
         "status": "ready" if expected else "unexpected",
     }
@@ -66,7 +68,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--admin-url", default=ADMIN_URL, help=argparse.SUPPRESS)
     parser.add_subparsers(dest="command", required=True).add_parser(
-        "status", help="read both fixed Action upstreams from Caddy"
+        "status", help="read the fixed production, TEST authority, and comparator upstreams from Caddy"
     )
     return parser
 

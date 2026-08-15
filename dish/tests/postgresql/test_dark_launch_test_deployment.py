@@ -11,6 +11,10 @@ TEST_UNIT = ROOT / "deploy/systemd/dish-shadow-worker-test.service"
 TEST_POSTGRES_UNIT = ROOT / "deploy/systemd/dish-postgres-test.service"
 TEST_WORKER_ENV = ROOT / "deploy/systemd/dark-launch-test.env.example"
 TEST_SERVICE_ENV = ROOT / "deploy/systemd/service-test.env.example"
+TEST_SERVICE_UNIT = ROOT / "deploy/systemd/dish-service-test.service"
+LEGACY_SERVICE_ENV = ROOT / "deploy/systemd/service-test-legacy.env.example"
+LEGACY_SERVICE_UNIT = ROOT / "deploy/systemd/dish-service-test-legacy.service"
+COMPARATOR_RUNBOOK = ROOT / "docs/test-dual-stack-comparator.md"
 PREPARE = ROOT / "scripts/dish-pg-production-prepare"
 TEST_PREPARE = ROOT / "scripts/dish-pg-test-prepare"
 
@@ -70,22 +74,44 @@ def test_test_postgres_unit_preserves_existing_compose_volume_identity() -> None
     assert "docker compose -p dish-postgres-test " not in unit
 
 
-def test_test_service_has_explicit_matching_capture_configuration() -> None:
-    service = _assignments(TEST_SERVICE_ENV)
-    worker = _assignments(TEST_WORKER_ENV)
+def test_test_service_is_pg_authority_and_legacy_oracle_is_isolated() -> None:
+    authority = _assignments(TEST_SERVICE_ENV)
+    oracle = _assignments(LEGACY_SERVICE_ENV)
+    unit = TEST_SERVICE_UNIT.read_text(encoding="utf-8")
+    oracle_unit = LEGACY_SERVICE_UNIT.read_text(encoding="utf-8")
 
-    assert service["DISH_DARK_LAUNCH_MODE"] == "off"
-    assert service["DISH_DARK_LAUNCH_SOURCE_GENERATION"] != "legacy-sqlite"
-    for name in (
-        "DISH_DARK_LAUNCH_SPOOL_PATH",
-        "DISH_DARK_LAUNCH_KILL_SWITCH",
-        "DISH_DARK_LAUNCH_BUSY_TIMEOUT_MS",
-        "DISH_DARK_LAUNCH_MAX_SPOOL_BYTES",
-        "DISH_DARK_LAUNCH_MAX_SPOOL_RECORDS",
-        "DISH_DARK_LAUNCH_MIN_FREE_BYTES",
-    ):
-        assert service[name] == worker[name]
+    assert authority["DISH_AUTHORITY_BACKEND"] == "postgresql"
+    assert authority["DISH_PROFILE"] == "test"
+    assert authority["DISH_SERVICE_PORT"] == "8765"
+    assert authority["DISH_ACTION_PORT"] == "8766"
+    assert authority["DISH_DARK_LAUNCH_MODE"] == "off"
+    assert authority["DISH_PG_EXPECTED_SCHEMA_HEAD"] == "0041_test_generation_rollover"
+    assert authority["DISH_PG_EXPECTED_DATABASE_NAME"].endswith("_test")
+    assert authority["DISH_PG_AUTHORITY_STATE_DIR"].startswith("/home/marco/.local/state/dish/test/")
+    assert not any("ASANA" in name.upper() for name in authority)
+    assert "DISH_COOKING_PROJECT_GID" not in authority
+    assert "dish-postgres-test.service" in unit
+    assert "Conflicts=dish-service.service dish-shadow-worker-test.service" in unit
 
+    assert oracle["DISH_AUTHORITY_BACKEND"] == "legacy"
+    assert oracle["DISH_TEST_COMPARATOR_DISPOSABLE"] == "1"
+    assert oracle["DISH_SERVICE_PORT"] == "8795"
+    assert oracle["DISH_ACTION_PORT"] == "8796"
+    assert oracle["DISH_DARK_LAUNCH_MODE"] == "off"
+    assert oracle["DISH_DB_PATH"].startswith("/home/marco/.local/state/dish/test-legacy/")
+    assert oracle["DISH_SERVICE_BACKUP_DIR"].startswith("/home/marco/.local/state/dish/test-legacy/")
+    assert oracle["ASANA_ENV"]
+    assert oracle["DISH_SERVICE_ACTION_TOKEN"] != authority["DISH_SERVICE_ACTION_TOKEN"]
+    assert "EnvironmentFile=/home/marco/.config/dish-service/test-legacy.env" in oracle_unit
+    assert "ReadWritePaths=/home/marco/.local/state/dish/test-legacy" in oracle_unit
+    assert "dish-service-test.service" not in oracle_unit.split("Conflicts=", 1)[-1].splitlines()[0]
+
+
+def test_comparator_qualification_stops_legacy_to_pg_shadow_synchronization() -> None:
+    runbook = COMPARATOR_RUNBOOK.read_text(encoding="utf-8")
+    assert "systemctl disable --now dish-shadow-worker-test.service" in runbook
+    assert "no alternate upstream, load balancing, or automatic fallback" in runbook.lower()
+    assert "Do not copy PostgreSQL state into legacy" in runbook
 
 def test_test_prepare_entrypoint_forces_test_and_target_gate_precedes_mutation() -> None:
     wrapper = TEST_PREPARE.read_text(encoding="utf-8")
@@ -132,6 +158,7 @@ def test_postgresql_service_units_stop_restarting_on_deterministic_exit() -> Non
         "dish-service-prod.service",
         "dish-shadow-worker.service",
         "dish-shadow-worker-test.service",
+        "dish-service-test-legacy.service",
     ):
         unit = (root / name).read_text(encoding="utf-8")
         assert "Restart=on-failure" in unit
