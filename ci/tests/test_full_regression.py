@@ -108,6 +108,16 @@ def test_native_postgresql_skip_waivers_use_structured_bounded_contract():
     assert workflow.count("b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1") == 3
 
 
+def test_workflow_installs_pglite_dependencies_before_python_control_plane_lane():
+    workflow = WORKFLOW.read_text()
+    install = "Install PGlite Node dependencies"
+    lane = "Run Python/control-plane group"
+    assert install in workflow
+    assert "--phase pglite-node-dependencies --" in workflow
+    assert "cd dish/tests/postgresql/pglite" in workflow
+    assert "npm ci --no-audit --no-fund" in workflow
+    assert workflow.index(install) < workflow.index(lane)
+
 
 def test_unchanged_success_dedupes_scheduled_only():
     runs = {"workflow_runs": [{"id": 100, "status": "completed", "conclusion": "success", "head_sha": SHA}]}

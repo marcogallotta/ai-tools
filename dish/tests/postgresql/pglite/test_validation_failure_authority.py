@@ -23,7 +23,7 @@ pytestmark = pytest.mark.pglite
 def _runtime(factory) -> PostgresRuntimeService:
     runtime = PostgresRuntimeService.__new__(PostgresRuntimeService)
     runtime._session_maker = factory
-    runtime._cursor_secret = b"pglite-validation-replay-secret"
+    runtime._cursor_secret = b"pglite-validation-replay-secret-32"
     return runtime
 
 

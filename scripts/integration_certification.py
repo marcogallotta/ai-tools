@@ -148,7 +148,10 @@ def setup_requirements(spec: ExecutionSpec) -> dict[str, bool]:
             selected
             & {"python-control-plane", "native-postgresql", "browser-acceptance"}
         ),
-        "node": bool(selected & {"frontend-static", "browser-acceptance"}),
+        "node": bool(
+            selected
+            & {"python-control-plane", "frontend-static", "browser-acceptance"}
+        ),
         "postgresql": "native-postgresql" in selected,
         "chromium": "browser-acceptance" in selected,
         "flake": any(command.cwd == "dish" and command.argv and command.argv[0].startswith(".venv-flake/") for commands in spec.groups.values() for command in commands),
