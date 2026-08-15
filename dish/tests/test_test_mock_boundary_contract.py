@@ -192,6 +192,18 @@ REVIEWED_PRIVATE_FAULT_SEAMS = {
     ("test_shadow_capture.py", "_execute_locked"): (
         "Shadow-spool locked execution boundary."
     ),
+    ("postgresql/test_native_postgresql_certification_lane.py", "_git"): (
+        "Repository identity boundary for certification-entrypoint refusal tests."
+    ),
+    ("test_dish_test_lane.py", "_git"): (
+        "Repository identity boundary for governed lane refusal tests."
+    ),
+    ("test_test_execution_guard.py", "_protected_primary_root"): (
+        "Protected-primary identity boundary for checkout-admission tests."
+    ),
+    ("test_test_execution_guard.py", "_git"): (
+        "Repository identity boundary for checkout-admission tests."
+    ),
     ("postgresql/test_postgres_runtime_validation_http.py", "__init__"): (
         "Non-construction guard proving the canonical PostgreSQL Action HTTP path never"
         " constructs AsanaBackend."

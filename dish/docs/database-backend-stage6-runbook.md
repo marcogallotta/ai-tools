@@ -84,6 +84,7 @@ retain its mode-0600 report:
 ```sh
 DISH_TEST_POSTGRESQL_DSN="$DISH_PG_CERT_URL" \
   .venv/bin/python scripts/dish-pg-native-certification \
+    --expected-head <reviewed-head-sha> \
   --python .venv/bin/python \
   --output /secure/evidence/native-postgresql-certification.json
 sha256sum /secure/evidence/native-postgresql-certification.json \

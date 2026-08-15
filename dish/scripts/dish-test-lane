@@ -16,6 +16,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from test_selection.execution_guard import (  # noqa: E402
+    TestExecutionRefused,
+    require_safe_test_checkout,
+)
 from test_selection.model import PolicyError  # noqa: E402
 from test_selection.parallel import (  # noqa: E402
     PARALLEL_SAFE_TEST_FILES,
@@ -197,6 +201,7 @@ def _parser() -> argparse.ArgumentParser:
         description="Run one named Dish lane and report the exact failing phase.",
     )
     parser.add_argument("lane", choices=sorted(LANES))
+    parser.add_argument("--expected-head")
     parser.add_argument(
         "--list",
         action="store_true",
@@ -244,9 +249,19 @@ def _bootstrap_native_postgresql_env(env: Mapping[str, str]) -> dict[str, str]:
     if explicit:
         resolved["DISH_TEST_POSTGRESQL_DSN"] = explicit
         return resolved
+    expected_head = str(resolved.get("DISH_EXPECTED_HEAD", "")).strip()
+    if not expected_head:
+        raise RuntimeError("exact candidate HEAD is missing")
     try:
         completed = subprocess.run(
-            [PYTHON, "scripts/dish-pg-native-certification", "--ensure-local-postgresql", "--json"],
+            [
+                PYTHON,
+                "scripts/dish-pg-native-certification",
+                "--ensure-local-postgresql",
+                "--expected-head",
+                expected_head,
+                "--json",
+            ],
             cwd=ROOT, env=resolved, capture_output=True, text=True, timeout=30, check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -438,14 +453,25 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{phase.name}: {_display(phase.command)}")
         return 0
 
+    if args.expected_head is None:
+        parser.error("--expected-head is required for test execution")
+
+    try:
+        require_safe_test_checkout(ROOT, expected_head=args.expected_head)
+    except TestExecutionRefused as exc:
+        print(f"REFUSED: {exc}", file=sys.stderr)
+        return 4
+
     if args.lane == "parallel-safe" and args.workers is not None:
         if any("-n" in phase.command for phase in phases):
             preflight = _xdist_preflight()
             if preflight != 0:
                 return preflight
 
+    execution_env = dict(os.environ)
+    execution_env["DISH_EXPECTED_HEAD"] = args.expected_head
     for phase in phases:
-        result = _run_phase(phase, env=os.environ)
+        result = _run_phase(phase, env=execution_env)
         if result != 0:
             return result
     return 0

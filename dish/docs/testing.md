@@ -321,20 +321,20 @@ lane; it never hides a failed inner phase behind one final aggregate result.
 
 | Lane | Command |
 |---|---|
-| schema and migrations | `.venv/bin/python scripts/dish-test-lane schema-migrations` |
-| PGlite | `.venv/bin/python scripts/dish-test-lane pglite` |
-| native PostgreSQL concurrency | `.venv/bin/python scripts/dish-test-lane native-concurrency` |
-| release and cutover | `.venv/bin/python scripts/dish-test-lane release-cutover` |
-| command and API contracts | `.venv/bin/python scripts/dish-test-lane command-api-contracts` |
-| Round 1C observed failure journeys | `.venv/bin/python scripts/dish-test-lane round1c-journeys` |
-| operational certification | `.venv/bin/python scripts/dish-test-lane operational-certification` |
-| reviewed parallel-safe inventory | `.venv/bin/python scripts/dish-test-lane parallel-safe --workers <count>` |
+| schema and migrations | `.venv/bin/python scripts/dish-test-lane schema-migrations --expected-head <reviewed-head-sha>` |
+| PGlite | `.venv/bin/python scripts/dish-test-lane pglite --expected-head <reviewed-head-sha>` |
+| native PostgreSQL concurrency | `.venv/bin/python scripts/dish-test-lane native-concurrency --expected-head <reviewed-head-sha>` |
+| release and cutover | `.venv/bin/python scripts/dish-test-lane release-cutover --expected-head <reviewed-head-sha>` |
+| command and API contracts | `.venv/bin/python scripts/dish-test-lane command-api-contracts --expected-head <reviewed-head-sha>` |
+| Round 1C observed failure journeys | `.venv/bin/python scripts/dish-test-lane round1c-journeys --expected-head <reviewed-head-sha>` |
+| operational certification | `.venv/bin/python scripts/dish-test-lane operational-certification --expected-head <reviewed-head-sha>` |
+| reviewed parallel-safe inventory | `.venv/bin/python scripts/dish-test-lane parallel-safe --expected-head <reviewed-head-sha> --workers <count>` |
 
 `round1c-journeys` is the fixed pre-cutover confidence lane for the concrete workflow failures discovered during the 1A/1B dark-launch work and subsequent operator retesting. It intentionally reuses the strongest existing behavioral regressions rather than cloning them: stranded request/execution recovery, recover/inspect progress, expired-run ownership and safe reclaim, abandonment successors, Human Review continuation and ranked-choice resolution, semantic-proposal application/staleness, Action schema/runtime vocabulary and inspect request IDs, canonical Dish-UUID resolution without section/title discovery, connected transport replay identity/backoff and Marco-override guidance, post-mutation continuation refresh, Change signoff lineage, resting/out-of-project Dish inspect, population-audit/verbose-inspect contracts, and bulk-kill successor fencing. Keep that inventory literal and review changes to it as changes to the accepted confidence boundary.
 
 `native-concurrency` first honors an explicit `DISH_TEST_POSTGRESQL_DSN`, then an explicit
 `DISH_PG_TEST_URL` alias. When neither is set, the lane invokes
-`scripts/dish-pg-native-certification --ensure-local-postgresql --json`: it probes only the canonical disposable target
+`scripts/dish-pg-native-certification --ensure-local-postgresql --expected-head <reviewed-head-sha> --json`: it probes only the canonical disposable target
 `localhost:5432`, role/database `dish_test`, and injects that fixed DSN only after the target proves
 its local/native identity. If the target is missing but the local server is available, the helper
 uses bounded non-interactive `sudo -n -u postgres` provisioning and reprobes. It never accepts a
@@ -485,7 +485,7 @@ and process state are known. Named pytest lanes support a diagnostic rendering t
 exact selection but prints each node and final slowest durations:
 
 ```sh
-.venv/bin/python scripts/dish-test-lane release-cutover --diagnose
+.venv/bin/python scripts/dish-test-lane release-cutover --expected-head <reviewed-head-sha> --diagnose
 ```
 
 For the ordinary suite use the equivalent diagnostic command directly:
@@ -513,6 +513,7 @@ Run the governed native inventory with:
 ```sh
 DISH_TEST_POSTGRESQL_DSN='postgresql+psycopg://...' \
   .venv/bin/python scripts/dish-pg-native-certification \
+  --expected-head <reviewed-head-sha> \
   --output .test-artifacts/native-postgresql/report.json
 ```
 
