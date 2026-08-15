@@ -313,6 +313,147 @@ def test_failure_after_terminalization_is_explicit_and_exact_retry_recovers(h: H
     assert h.state(task)["branch"] == new_branch
 
 
+def _configure_direct_supersession_env(h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in ("HOME", "DISH_WORKTREE_ROOT", "GIT_SSH_COMMAND", "GIT_SSH_VARIANT", "TEST_BARE_ORIGIN"):
+        monkeypatch.setenv(key, h.env[key])
+    for key in list(os.environ):
+        if key.startswith("GIT_CONFIG_"):
+            monkeypatch.delenv(key, raising=False)
+
+
+def test_exact_retry_recovers_when_old_worktree_was_already_unlocked(h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    task, old_branch, new_branch = "4111", "agent/unlocked-old", "agent/unlocked-new"
+    base, old_head, replacement_head = prepare_lineages(h, task=task, old_branch=old_branch, replacement_branch=new_branch)
+    args_list = supersede_args(task=task, old_branch=old_branch, old_head=old_head, replacement_branch=new_branch, base=base, replacement_head=replacement_head)
+    _configure_direct_supersession_env(h, monkeypatch)
+
+    runner = GitRunner()
+    real_run = runner.run
+    crashed = False
+
+    def crash_before_remove(cwd, *args, **kwargs):
+        nonlocal crashed
+        if not crashed and args[:2] == ("worktree", "remove"):
+            crashed = True
+            raise SystemExit("injected process death after worktree unlock")
+        return real_run(cwd, *args, **kwargs)
+
+    monkeypatch.setattr(runner, "run", crash_before_remove)
+    with pytest.raises(SystemExit, match="after worktree unlock"):
+        supersession_module.command_supersede(_namespace(args_list, repo=str(h.primary)), runner)
+    runner.close()
+
+    state = h.state(task)
+    assert state["lifecycle"] == "supersession-incomplete"
+    assert h.wt(task).exists()
+    listing = git_out(h.primary, "worktree", "list", "--porcelain")
+    block = next(part for part in listing.split("\n\n") if str(h.wt(task)) in part)
+    assert not any(line.startswith("locked ") for line in block.splitlines())
+
+    monkeypatch.undo()
+    result = json.loads(h.raw_tool(*args_list).stdout)
+    assert result["ok"] is True and result["idempotent"] is False
+    assert h.state(task)["branch"] == new_branch
+    assert git_out(h.origin, "rev-parse", f"refs/heads/{old_branch}") == old_head
+
+
+def test_unlocked_old_worktree_with_moved_head_still_fails_closed(h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    task, old_branch, new_branch = "4112", "agent/unlocked-moved-old", "agent/unlocked-moved-new"
+    base, old_head, replacement_head = prepare_lineages(h, task=task, old_branch=old_branch, replacement_branch=new_branch)
+    args_list = supersede_args(task=task, old_branch=old_branch, old_head=old_head, replacement_branch=new_branch, base=base, replacement_head=replacement_head)
+    _configure_direct_supersession_env(h, monkeypatch)
+
+    runner = GitRunner()
+    real_run = runner.run
+    crashed = False
+
+    def crash_before_remove(cwd, *args, **kwargs):
+        nonlocal crashed
+        if not crashed and args[:2] == ("worktree", "remove"):
+            crashed = True
+            raise SystemExit("injected process death after worktree unlock")
+        return real_run(cwd, *args, **kwargs)
+
+    monkeypatch.setattr(runner, "run", crash_before_remove)
+    with pytest.raises(SystemExit):
+        supersession_module.command_supersede(_namespace(args_list, repo=str(h.primary)), runner)
+    runner.close()
+    monkeypatch.undo()
+
+    (h.wt(task) / "moved.txt").write_text("moved\n", encoding="utf-8")
+    git(h.wt(task), "add", "moved.txt")
+    git(h.wt(task), "commit", "-m", "move old local head")
+    result = h.raw_tool(*args_list, check=False)
+    assert_error(result, "EXPECTED_HEAD_MISMATCH")
+    assert h.state(task)["lifecycle"] == "supersession-incomplete"
+    assert git_out(h.origin, "rev-parse", f"refs/heads/{old_branch}") == old_head
+
+
+def test_exact_retry_recovers_branch_only_partial_replacement_adoption(h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    task, old_branch, new_branch = "4113", "agent/ref-only-old", "agent/ref-only-new"
+    base, old_head, replacement_head = prepare_lineages(h, task=task, old_branch=old_branch, replacement_branch=new_branch)
+    args_list = supersede_args(task=task, old_branch=old_branch, old_head=old_head, replacement_branch=new_branch, base=base, replacement_head=replacement_head)
+    _configure_direct_supersession_env(h, monkeypatch)
+
+    runner = GitRunner()
+    real_run = runner.run
+    crashed = False
+
+    def crash_before_worktree_add(cwd, *args, **kwargs):
+        nonlocal crashed
+        if not crashed and args[:2] == ("worktree", "add"):
+            crashed = True
+            raise SystemExit("injected process death after replacement ref creation")
+        return real_run(cwd, *args, **kwargs)
+
+    monkeypatch.setattr(runner, "run", crash_before_worktree_add)
+    with pytest.raises(SystemExit, match="after replacement ref creation"):
+        supersession_module.command_supersede(_namespace(args_list, repo=str(h.primary)), runner)
+    runner.close()
+
+    state = h.state(task)
+    assert state["lifecycle"] == "supersession-incomplete"
+    assert state["supersession"]["replacement_activation_started"] is True
+    assert git_out(h.primary, "rev-parse", f"refs/heads/{new_branch}") == replacement_head
+    assert not h.wt(task).exists()
+
+    monkeypatch.undo()
+    result = json.loads(h.raw_tool(*args_list).stdout)
+    assert result["ok"] is True and result["idempotent"] is False
+    assert h.state(task)["branch"] == new_branch
+    assert git_out(h.wt(task), "rev-parse", "HEAD") == replacement_head
+
+
+def test_branch_only_partial_with_moved_ref_still_fails_closed(h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    task, old_branch, new_branch = "4114", "agent/ref-moved-old", "agent/ref-moved-new"
+    base, old_head, replacement_head = prepare_lineages(h, task=task, old_branch=old_branch, replacement_branch=new_branch)
+    args_list = supersede_args(task=task, old_branch=old_branch, old_head=old_head, replacement_branch=new_branch, base=base, replacement_head=replacement_head)
+    _configure_direct_supersession_env(h, monkeypatch)
+
+    runner = GitRunner()
+    real_run = runner.run
+    crashed = False
+
+    def crash_before_worktree_add(cwd, *args, **kwargs):
+        nonlocal crashed
+        if not crashed and args[:2] == ("worktree", "add"):
+            crashed = True
+            raise SystemExit("injected process death after replacement ref creation")
+        return real_run(cwd, *args, **kwargs)
+
+    monkeypatch.setattr(runner, "run", crash_before_worktree_add)
+    with pytest.raises(SystemExit):
+        supersession_module.command_supersede(_namespace(args_list, repo=str(h.primary)), runner)
+    runner.close()
+    monkeypatch.undo()
+
+    git(h.primary, "update-ref", f"refs/heads/{new_branch}", base, replacement_head)
+    result = h.raw_tool(*args_list, check=False)
+    assert_error(result, "EXPECTED_HEAD_MISMATCH")
+    assert h.state(task)["lifecycle"] == "supersession-incomplete"
+    assert git_out(h.primary, "rev-parse", f"refs/heads/{new_branch}") == base
+
+
 def test_successful_exact_retry_is_idempotent_and_changed_identity_fails(h: Harness) -> None:
     task, old_branch, new_branch = "4108", "agent/retry-old", "agent/retry-new"
     base, old_head, replacement_head = prepare_lineages(h, task=task, old_branch=old_branch, replacement_branch=new_branch)

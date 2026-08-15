@@ -136,9 +136,12 @@ def _remove_old_local(
     path = Path(str(state["worktree_path"])).resolve()
     worktree_exists = _verify_old_worktree(runner, repo, state, old_head)
     if worktree_exists:
-        unlock = runner.run(repo.source_top, "worktree", "unlock", str(path), check=False)
-        if unlock.returncode != 0:
-            fail("SUPERSESSION_UNLOCK_FAILED", f"could not unlock old owned worktree: {unlock.stderr.strip()}")
+        record = find_worktree_record(worktree_records(runner, repo.source_top), path)
+        assert record is not None
+        if "locked" in record:
+            unlock = runner.run(repo.source_top, "worktree", "unlock", str(path), check=False)
+            if unlock.returncode != 0:
+                fail("SUPERSESSION_UNLOCK_FAILED", f"could not unlock old owned worktree: {unlock.stderr.strip()}")
         remove = runner.run(repo.source_top, "worktree", "remove", str(path), check=False)
         if remove.returncode != 0:
             runner.run(
@@ -410,6 +413,11 @@ def command_supersede(args: argparse.Namespace, runner: GitRunner) -> dict[str, 
                 old_branch=old_branch,
                 old_head=old_head,
             )
+
+            if not journal.get("replacement_activation_started"):
+                journal["replacement_activation_started"] = True
+                journal["replacement_activation_started_at"] = now_utc()
+                _write_progress(task_gid, state, journal)
 
             provisional, worktree_identity, current_target = _adopt_remote_branch_locked(
                 runner,

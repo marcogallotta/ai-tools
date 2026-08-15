@@ -130,13 +130,26 @@ def _adopt_remote_branch_locked(
     local_branch_exists = branch_exists(runner, repo.source_top, branch)
     registered = find_worktree_record(worktree_records(runner, repo.source_top), candidate)
     exact_retry = False
+    exact_ref_only_retry = False
     if allow_exact_local_retry and local_branch_exists:
         checked = _checked_out_path(runner, repo.source_top, branch)
+        actual = runner.sha(repo.source_top, remote_ref)
         if checked is not None and Path(checked).resolve() == candidate and registered is not None:
-            actual = runner.sha(repo.source_top, remote_ref)
             if actual == expected_head and registered.get("branch") == remote_ref and registered.get("HEAD") == expected_head:
                 exact_retry = True
-    if not exact_retry:
+        elif checked is None and registered is None:
+            if actual != expected_head:
+                fail(
+                    "EXPECTED_HEAD_MISMATCH",
+                    f"partial retry local branch moved: expected {expected_head}, local has {actual}",
+                )
+            candidate_path_is_safe(repo, runner, candidate)
+            # The caller has durably authorized exact local retry before entering this
+            # helper. That external journal is what makes this otherwise-forbidden
+            # branch-only state attributable to a ref creation that survived process
+            # death before `git worktree add` registered the replacement worktree.
+            exact_ref_only_retry = True
+    if not exact_retry and not exact_ref_only_retry:
         candidate_path_is_safe(repo, runner, candidate)
         if local_branch_exists:
             checked = _checked_out_path(runner, repo.source_top, branch)
@@ -152,18 +165,19 @@ def _adopt_remote_branch_locked(
             f"remote handoff branch moved before adoption: expected {expected_head}, origin has {verified_remote}; no state/worktree was created",
         )
 
-    owns_branch = False
+    owns_branch = exact_ref_only_retry
     if not exact_retry:
         candidate.parent.mkdir(parents=True, exist_ok=True)
-        create_ref = runner.run(
-            repo.source_top, "update-ref", remote_ref, expected_head, "0" * 40, check=False,
-        )
-        if create_ref.returncode != 0:
-            fail(
-                "BRANCH_CREATE_RACE",
-                f"local branch ref creation for handoff failed, likely raced by another local creator: {create_ref.stderr.strip()}",
+        if not exact_ref_only_retry:
+            create_ref = runner.run(
+                repo.source_top, "update-ref", remote_ref, expected_head, "0" * 40, check=False,
             )
-        owns_branch = True
+            if create_ref.returncode != 0:
+                fail(
+                    "BRANCH_CREATE_RACE",
+                    f"local branch ref creation for handoff failed, likely raced by another local creator: {create_ref.stderr.strip()}",
+                )
+            owns_branch = True
         reason = f"Dish task {task_gid}; adopted remote branch; agent {agent_id or 'unrecorded'}"
         add = runner.run(
             repo.source_top,
