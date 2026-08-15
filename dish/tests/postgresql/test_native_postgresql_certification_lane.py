@@ -20,7 +20,6 @@ from tests.support.postgresql.certification import (
 pytestmark = pytest.mark.smoke
 ROOT = Path(__file__).resolve().parents[2]
 
-
 TEST_NODEID = "tests/postgresql/native/test_governed_waiver.py::test_governed_skip"
 PASS_NODEID = "tests/postgresql/native/test_governed_waiver.py::test_governed_pass"
 OWNER_TASK_GID = "1217428310522281"
@@ -197,6 +196,39 @@ def test_native_certification_reports_unavailable_without_masquerading(
     assert report["tests"]["unavailable"] == len(discover_native_postgresql_inventory(ROOT))
 
 
+def test_native_certification_focused_selection_reports_only_required_inventory(
+    monkeypatch, tmp_path: Path
+) -> None:
+    namespace = runpy.run_path(str(ROOT / "scripts" / "dish-pg-native-certification"))
+    captured: dict[str, object] = {}
+
+    def unavailable(_dsn: str):
+        raise NativePostgreSQLUnavailable("focused disposable target unavailable")
+
+    main = namespace["main"]
+    monkeypatch.setitem(main.__globals__, "probe_native_postgresql", unavailable)
+    monkeypatch.setitem(
+        main.__globals__,
+        "_write_atomic",
+        lambda path, value: captured.update(path=path, report=value),
+    )
+    test_file = "tests/postgresql/native/test_migration_status.py"
+    assert main(["--output", str(tmp_path / "native.json"), "--test-file", test_file]) == 3
+    report = captured["report"]
+    assert isinstance(report, dict)
+    required = [
+        nodeid
+        for nodeid in discover_native_postgresql_inventory(ROOT)
+        if nodeid.split("::", 1)[0] == test_file
+    ]
+    assert required
+    assert report["selection_mode"] == "focused"
+    assert report["selected_test_files"] == [test_file]
+    assert report["required_inventory"] == required
+    assert report["tests"]["unavailable"] == len(required)
+    assert len(required) < report["inventory_count"]
+
+
 def test_native_certification_rejects_zero_executed_tests(
     monkeypatch, tmp_path: Path
 ) -> None:
@@ -351,7 +383,6 @@ def test_native_certification_rejects_structured_waiver_for_unknown_node(
                 _waiver(unknown, "unknown reason"),
             ]
         )
-
 
 
 def test_pglite_report_classifies_assertion_and_infrastructure_failures(tmp_path: Path) -> None:
