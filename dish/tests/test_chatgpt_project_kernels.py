@@ -51,6 +51,8 @@ def test_current_edge_requires_exact_rule_classification():
  m,s=kernels.load_canonical(); bad=copy.deepcopy(m); edge=next(x for x in bad['change_history'] if x['to_version']==bad['canonical_version'])
  edge['changes']=[x for x in edge['changes'] if x['rule_id']!='canonical-version-gate']
  with pytest.raises(kernels.KernelError,match='classification mismatch'): kernels._validate_current_edge_classification(bad,s)
+ drift=kernels.classify_project_drift(edge['from_version'],'review','review-write',manifest=bad,source=s)
+ assert drift['state']=='integrity_error' and drift['block'] and not drift['resync_required']
 
 def test_classified_stable_rule_removal_is_representable_and_unknown_ids_still_fail():
  _,s=kernels.load_canonical(); removed=copy.deepcopy(s)

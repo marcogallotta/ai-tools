@@ -203,7 +203,7 @@ def validate_change_history(m,s,*,role_key=None,action_boundary=None):
  if first not in versions or any(v not in versions for v in pre): raise KernelError('legacy bootstrap floor references unknown retained version')
  if any(v==canonical for v in pre): raise KernelError('canonical version cannot be pre-floor')
  # d96+ history may never retain an unproved hard break; the proof validator above is the only admissibility path.
- if not scoped:_validate_current_edge_classification(m,s)
+ _validate_current_edge_classification(m,s)
 def generated_sha256(m,s):
  parts=[]
  for role in sorted(s['roles']): parts.append(role+'\0'+render_role_with_version(s,role,str(m['canonical_version'])))
