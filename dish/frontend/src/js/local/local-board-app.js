@@ -2,8 +2,8 @@ import { activeRefreshIntervalMs } from "../config.js";
 import { FrontendApiError, FrontendHttpClient } from "../api/http-transport.js";
 import { mapAdminResponse } from "../features/admin/admin-model.js";
 import { renderBoardAdminSummary } from "../features/admin/admin.js";
-import { appendSectionPage, mapBoardResponse, mapSectionPageResponse } from "../features/board/api-board-model.js";
-import { renderBoard } from "../features/board/board.js";
+import { appendSectionPage, mapBoardResponse, mapSearchResponse, mapSectionPageResponse } from "../features/board/api-board-model.js";
+import { createActiveTitleSearch, renderBoard } from "../features/board/board.js";
 import { mapTaskDetailResponse } from "../features/detail/api-detail-model.js";
 import { closeTaskDetail, openTaskDetail } from "../features/detail/task-detail.js";
 import {
@@ -35,6 +35,12 @@ export async function renderLocalPostgresqlBoard(root, {
 } = {}) {
   const client = new FrontendHttpClient({ fetchImpl });
   const { shell, main, noticeHost, utilityHost } = createApplicationFrame({ environmentLabel, navigationSuffix: postgresSourceSuffix() });
+  const searchHost = document.createElement("section");
+  searchHost.className = "board-search";
+  searchHost.setAttribute("aria-label", "Active dish search");
+  const adminHost = document.createElement("div");
+  adminHost.className = "board-admin-host";
+  utilityHost.append(searchHost, adminHost);
   const live = document.createElement("p");
   live.className = "sr-only"; live.setAttribute("aria-live", "polite"); shell.append(live);
   root.replaceChildren(shell); root.dataset.shellState = "local-postgresql-loading";
@@ -61,12 +67,12 @@ export async function renderLocalPostgresqlBoard(root, {
 
   const refreshAdminSummary = async () => {
     try {
-      renderBoardAdminSummary(utilityHost, mapAdminResponse(await client.admin()));
-      const link = utilityHost.querySelector(".board-admin-summary__link");
+      renderBoardAdminSummary(adminHost, mapAdminResponse(await client.admin()));
+      const link = adminHost.querySelector(".board-admin-summary__link");
       if (link) link.href = `/admin${postgresSourceSuffix()}`;
     } catch (error) {
       if (onAuthenticationLost(error)) stop();
-      else utilityHost.replaceChildren();
+      else adminHost.replaceChildren();
     }
   };
 
@@ -134,6 +140,18 @@ export async function renderLocalPostgresqlBoard(root, {
       live.textContent = notice.message;
     }
   };
+
+  const titleSearch = createActiveTitleSearch(searchHost, {
+    search: async (query) => mapSearchResponse(await client.search(query)),
+    onSelect: (result, origin) => {
+      void openDetail(result.id, origin, { navigation: selectedDetail ? "replace" : "push", fromBoard: !selectedDetail });
+    },
+    onError: (error) => {
+      if (!onAuthenticationLost(error)) return false;
+      stop();
+      return true;
+    },
+  });
 
   const renderCurrent = ({ viewState = null } = {}) => {
     renderBoard(main, board, {
@@ -249,7 +267,7 @@ export async function renderLocalPostgresqlBoard(root, {
     } else { closeDetailForRoute(); root.dataset.shellState = "local-postgresql-board"; }
   };
   function stop() {
-    if (stopped) return; stopped = true; clearRefreshTimer(); requestState.cancelAll();
+    if (stopped) return; stopped = true; titleSearch.stop(); clearRefreshTimer(); requestState.cancelAll();
     document.removeEventListener("visibilitychange", onVisibility); window.removeEventListener("popstate", popstate);
   }
   document.addEventListener("visibilitychange", onVisibility); window.addEventListener("popstate", popstate);

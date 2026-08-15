@@ -28,7 +28,7 @@ from .frontend_admission import (
 )
 from .frontend_auth import FrontendAuthFailure
 from .frontend_security import valid_session_token
-from .frontend_board import BoardCapacityExceeded, BoardConfigurationInvalid
+from .frontend_board import BoardCapacityExceeded, BoardConfigurationInvalid, MAX_SEARCH_QUERY_LENGTH
 from .frontend_contract import FRONTEND_CONTRACT_VERSION
 from .frontend_detail import DetailCapacityExceeded, TaskNotFound
 from .frontend_tokens import CursorInvalid, CursorStale
@@ -42,7 +42,7 @@ _PUBLIC_STATIC_PREFIXES = ("/assets/", "/styles/", "/js/")
 _MAX_STATIC_BYTES = 10 * 1024 * 1024
 
 def is_frontend_get(path: str) -> bool:
-    return path in {"/", "/admin", "/login", "/frontend/session", "/frontend/board", "/frontend/admin", "/openapi/frontend.json"} or path.startswith(_PUBLIC_STATIC_PREFIXES) or path.startswith("/frontend/sections/") or path.startswith("/frontend/tasks/") or path.startswith("/dishes/")
+    return path in {"/", "/admin", "/login", "/frontend/session", "/frontend/board", "/frontend/search", "/frontend/admin", "/openapi/frontend.json"} or path.startswith(_PUBLIC_STATIC_PREFIXES) or path.startswith("/frontend/sections/") or path.startswith("/frontend/tasks/") or path.startswith("/dishes/")
 
 def is_frontend_post(path: str) -> bool:
     return path in {"/frontend/login", "/frontend/logout"}
@@ -69,6 +69,8 @@ def dispatch_get(handler, runtime) -> bool:
             _session(handler, runtime, parsed.query)
         elif path == "/frontend/board":
             _protected_json(handler, runtime, parsed.query, runtime.board)
+        elif path == "/frontend/search":
+            _search(handler, runtime, parsed.query)
         elif path == "/frontend/admin":
             _protected_json(handler, runtime, parsed.query, runtime.admin)
         elif path == "/openapi/frontend.json":
@@ -197,6 +199,38 @@ def _protected_json(handler, runtime, query: str, operation) -> None:
     except Exception as exc:
         LOG.error("private frontend read failed type=%s", type(exc).__name__)
         _write_api_error(handler, http.HTTPStatus.SERVICE_UNAVAILABLE, "internal_error", "Frontend data could not be loaded.")
+        return
+    if _validate_before(handler, runtime, token):
+        _write_api_json(handler, http.HTTPStatus.OK, payload)
+
+
+def _search(handler, runtime, query: str) -> None:
+    require_contract(handler.headers)
+    token = _required_session(handler)
+    if not _validate_before(handler, runtime, token):
+        return
+    values = parse_qsl(query, keep_blank_values=True)
+    if (
+        len(values) != 1
+        or values[0][0] != "q"
+        or not 1 <= len(values[0][1].strip()) <= MAX_SEARCH_QUERY_LENGTH
+    ):
+        _write_api_error(handler, http.HTTPStatus.BAD_REQUEST, "request_invalid", "Search request is invalid.")
+        return
+    try:
+        payload = runtime.search(values[0][1])
+    except BoardConfigurationInvalid:
+        _write_api_error(handler, http.HTTPStatus.SERVICE_UNAVAILABLE, "board_configuration_invalid", "Board configuration is invalid.")
+        return
+    except FrontendDataReadsDisabled:
+        _write_api_error(handler, http.HTTPStatus.SERVICE_UNAVAILABLE, "service_unavailable", "Frontend observation reads are not activated.")
+        return
+    except BoardReadUnavailable:
+        _write_api_error(handler, http.HTTPStatus.SERVICE_UNAVAILABLE, "service_unavailable", "Search is temporarily unavailable.")
+        return
+    except Exception as exc:
+        LOG.error("private frontend search failed type=%s", type(exc).__name__)
+        _write_api_error(handler, http.HTTPStatus.SERVICE_UNAVAILABLE, "internal_error", "Search could not be completed.")
         return
     if _validate_before(handler, runtime, token):
         _write_api_json(handler, http.HTTPStatus.OK, payload)

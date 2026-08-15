@@ -228,6 +228,104 @@ def test_board_includes_isolated_and_paginates_without_consuming_retry(core_db) 
         assert _task_route(nonmember.task_id) not in returned
 
 
+
+def test_active_title_search_is_global_case_insensitive_and_board_eligible(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(
+            session,
+            ids,
+            generation_status="active",
+            schema_head="0032_imported_operation_history",
+        )
+        exact = _import_title(session, ids, context, title="Chicken Curry", asana_gid="1101")
+        partial = _import_title(session, ids, context, title="Curry Noodles", asana_gid="1102")
+        beyond_page = _import_title(session, ids, context, title="Green Curry", asana_gid="1103")
+        completed = _import_title(session, ids, context, title="Completed Curry", asana_gid="1104")
+        archived = _import_title(session, ids, context, title="Archived Curry", asana_gid="1105")
+        inactive = _import_title(session, ids, context, title="Inactive Curry", asana_gid="1106")
+
+        completion = session.scalar(
+            select(models.CurrentTaskCompletion).where(
+                models.CurrentTaskCompletion.generation_id == context["generation_id"],
+                models.CurrentTaskCompletion.task_id == completed.task_id,
+            )
+        )
+        assert completion is not None
+        completion.completed = True
+        archived_row = session.get(models.DishTask, archived.task_id)
+        assert archived_row is not None
+        archived_row.existence_state = "retired"
+        archived_row.retired_at = NOW
+        membership = session.scalar(
+            select(models.CurrentTaskProjectMembership).where(
+                models.CurrentTaskProjectMembership.generation_id == context["generation_id"],
+                models.CurrentTaskProjectMembership.task_id == inactive.task_id,
+                models.CurrentTaskProjectMembership.project_id == context["project_id"],
+            )
+        )
+        assert membership is not None
+        membership.is_member = False
+
+    with session_scope(factory) as session:
+        service = _service(session, first_page_size=1)
+        exact_result = service.search("Chicken Curry")
+        assert [item["task_id"] for item in exact_result["results"]] == [_task_route(exact.task_id)]
+
+        partial_result = service.search("cUrRy")
+        assert {item["task_id"] for item in partial_result["results"]} == {
+            _task_route(exact.task_id),
+            _task_route(partial.task_id),
+            _task_route(beyond_page.task_id),
+        }
+        assert partial_result["truncated"] is False
+        assert all(item["project_label"] == "Cooking" for item in partial_result["results"])
+        assert all(item["section_label"] == "Research Queue" for item in partial_result["results"])
+
+        board = service.bootstrap()
+        loaded_ids = {
+            card["task_id"]
+            for section in board["sections"]
+            for card in section["cards"]
+        }
+        assert _task_route(beyond_page.task_id) not in loaded_ids
+        assert _task_route(beyond_page.task_id) in {
+            item["task_id"] for item in partial_result["results"]
+        }
+
+        assert service.search("does not exist") == {"results": [], "truncated": False}
+        assert _task_route(completed.task_id) not in {item["task_id"] for item in partial_result["results"]}
+        assert _task_route(archived.task_id) not in {item["task_id"] for item in partial_result["results"]}
+        assert _task_route(inactive.task_id) not in {item["task_id"] for item in partial_result["results"]}
+
+
+def test_active_title_search_follows_inactive_section_eligibility_without_asana(core_db) -> None:
+    factory, ids = core_db
+    with session_scope(factory) as session:
+        context = _bootstrap_registry(
+            session,
+            ids,
+            generation_status="active",
+            schema_head="0032_imported_operation_history",
+        )
+        task = _import_title(session, ids, context, title="Section Curry", asana_gid="1110")
+
+    with session_scope(factory) as session:
+        service = _service(session)
+        assert [item["task_id"] for item in service.search("section curry")["results"]] == [
+            _task_route(task.task_id)
+        ]
+
+    with session_scope(factory) as session:
+        section = session.get(models.GovernedSection, context["section_id"])
+        assert section is not None
+        section.lifecycle = "retired"
+        section.retired_at = NOW
+
+    with session_scope(factory) as session:
+        # This search path is PostgreSQL-only: no Asana client/credential is constructed.
+        assert _service(session).search("section curry") == {"results": [], "truncated": False}
+
 def test_post_burn_projection_history_is_forensic_not_frontend_health(core_db) -> None:
     factory, ids = core_db
     with session_scope(factory) as session:

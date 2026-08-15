@@ -86,10 +86,29 @@ class FakeRuntime:
             encoding="utf-8",
         )
         self.board_calls = 0
+        self.search_calls: list[str] = []
+        self.search_outcome = "ok"
 
     def board(self):
         self.board_calls += 1
         return {"kind": "board"}
+
+    def search(self, query: str):
+        self.search_calls.append(query)
+        if self.search_outcome == "failed":
+            from dish_pg.frontend_board_query import BoardReadUnavailable
+            raise BoardReadUnavailable("search unavailable")
+        return {
+            "results": [
+                {
+                    "task_id": "12345678-1234-5678-1234-567812345678",
+                    "title": "Chicken Curry",
+                    "project_label": "Cooking",
+                    "section_label": "Research Queue",
+                }
+            ],
+            "truncated": False,
+        }
 
     def continuation(self, **_kwargs):
         return {"kind": "page"}
@@ -233,6 +252,28 @@ def test_session_bootstrap_and_logout_are_contract_bound_without_stale_cookie_cl
     assert api(body) == {}
     assert header_values(headers, "Set-Cookie") == []
     assert runtime.auth.logout_calls == 1
+
+
+def test_private_search_is_authenticated_bounded_and_failure_is_isolated(private_server) -> None:
+    server, runtime = private_server
+    status, _, body = request(server, "GET", "/frontend/search?q=CuRrY", cookie=TOKEN)
+    assert status == 200
+    assert api(body)["results"][0]["title"] == "Chicken Curry"
+    assert runtime.search_calls == ["CuRrY"]
+
+    status, _, body = request(server, "GET", "/frontend/search?q=", cookie=TOKEN)
+    assert status == 400
+    assert api(body)["error"]["code"] == "request_invalid"
+    assert runtime.search_calls == ["CuRrY"]
+
+    runtime.search_outcome = "failed"
+    status, _, body = request(server, "GET", "/frontend/search?q=curry", cookie=TOKEN)
+    assert status == 503
+    assert api(body)["error"]["code"] == "service_unavailable"
+
+    status, _, body = request(server, "GET", "/frontend/board", cookie=TOKEN)
+    assert status == 200
+    assert api(body) == {"kind": "board"}
 
 
 def test_protected_payload_is_withheld_when_final_session_check_fails(private_server) -> None:

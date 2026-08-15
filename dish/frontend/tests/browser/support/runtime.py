@@ -13,7 +13,7 @@ from dish_service.frontend_detail import DetailCapacityExceeded, TaskNotFound
 from dish_service.frontend_security import csrf_proof, new_session_token
 from dish_service.frontend_tokens import CursorInvalid, CursorStale
 
-from .payloads import BoardState, board_payload, continuation_payload, detail_payload, empty_admin_payload
+from .payloads import BoardState, board_payload, continuation_payload, detail_payload, empty_admin_payload, search_payload
 
 PASSWORD = "correct horse battery staple"
 CSRF_SECRET = b"stage7-csrf-secret-material-0000001"
@@ -87,12 +87,14 @@ class AcceptanceRuntime:
         self.auth = AcceptanceAuth()
         self.board_state = BoardState()
         self.board_failure: str | None = None
+        self.search_failure: str | None = None
         self.detail_failures: dict[str, str] = {}
         self.continuation_failure: str | None = None
         self.malformed_board = False
         self.malformed_details: set[str] = set()
         self.admin_payload = empty_admin_payload()
         self.board_calls = 0
+        self.search_calls: list[str] = []
         self.detail_calls: list[str] = []
 
     def board(self) -> dict[str, Any]:
@@ -108,6 +110,16 @@ class AcceptanceRuntime:
             self.malformed_board = False
             payload["unexpected"] = True
         return payload
+
+    def search(self, query: str) -> dict[str, Any]:
+        self.search_calls.append(query)
+        if self.search_failure:
+            failure = self.search_failure
+            self.search_failure = None
+            if failure == "unavailable":
+                raise BoardReadUnavailable("acceptance search failure")
+            raise RuntimeError("acceptance search internal failure")
+        return search_payload(self.board_state, query)
 
     def continuation(self, *, section_route_id: str, cursor: str) -> dict[str, Any]:
         failure = self.continuation_failure
