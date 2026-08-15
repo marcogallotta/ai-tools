@@ -264,6 +264,7 @@ def build_execution_spec(plan: dict[str, object], *, plan_digest: str) -> dict[s
         argv = [
             "dish/.venv/bin/python", "dish/scripts/dish-pg-native-certification",
             "--output", ".test-artifacts/native-postgresql/report.json",
+            "--expected-head", candidate,
         ]
         for test_file in test_files:
             argv.extend(("--test-file", str(test_file)))
