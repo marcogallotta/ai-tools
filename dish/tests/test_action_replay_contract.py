@@ -110,12 +110,21 @@ def test_action_and_runtime_docs_preserve_replay_inventory_and_decision_rules():
     assert "For every Action whose imported schema requires `client.request_id`" in action_guide
     assert "This includes `inspect`" in action_guide
     assert "transport/client failure" in action_guide
-    assert "up to three times after the initial attempt" in action_guide
-    assert "approximately 2s, 5s, then 10s" in action_guide
-    assert "Reuse the same `client.run_id`" in action_guide
-    assert "the same `client.request_id`" in action_guide
-    assert "As soon as any Dish envelope is received, stop blind transport retries" in action_guide
+    assert "do not issue repeated automatic retries in the same assistant/tool loop" in action_guide
+    assert "real elapsed delay cannot be guaranteed" in action_guide
+    assert "Retry only at a genuine later opportunity after real elapsed time" in action_guide
+    assert "the same `client.run_id`" in action_guide
+    assert "the same `client.request_id` when present" in action_guide
+    assert "the same command, and the same arguments" in action_guide
+    assert "preserve the exact call for the next genuine retry opportunity" in action_guide
+    assert "do not hammer the Action or report that retries were exhausted" in action_guide
+    assert "As soon as any Dish envelope is received, stop transport retry behavior" in action_guide
     assert "Never blindly retry `BACKEND_UNCERTAIN`" in action_guide
+    assert "never rotate request or run IDs merely to escape a failed or pending call" in action_guide
+    assert "Do not invent a server-side sleep/timing Action" in action_guide
+    assert "no-same-turn retry rule" in action_guide
+    assert "up to three times after the initial attempt" not in action_guide
+    assert "approximately 2s, 5s, then 10s" not in action_guide
     assert "Truly read-only Actions" in action_guide
     assert "actual connected-agent run/principal, not a Marco-message boundary" in action_guide
     assert "Do not rotate a run ID merely because Marco sent another message" in action_guide
