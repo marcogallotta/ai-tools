@@ -58,3 +58,15 @@ If destination authority is unknown, the handoff is routing-required rather than
 Where execution requires a fresh owning task, including an independent Audit round, verify that exact task exists, matches the required scope/baseline, and is distinct from any separate round before the handoff becomes executable. Two independent audit handoffs therefore require two distinct fresh task identities.
 
 `scripts/handoff_preflight.py` is a transport-neutral fail-closed validator for these already-resolved inputs. It never creates a task, changes standing role authority, or performs a prerequisite write.
+
+## Marco decisions versus external blockers
+
+Use `MARCO DECISION — <priority> — <decision>` only when Marco's judgment or approval is the missing authority. Use `BLOCKED — <priority> — <dependency>` for task, PR, environment, external-system, or other mechanically owned dependencies. Deferred future work belongs in Backlog; an actionable investigation belongs in Ready/In Progress rather than being presented as a Marco decision.
+
+Every Marco-decision task begins current notes with a compact Decision Packet bound to a stable decision identity/revision: **Decision needed**, **Recommended answer**, **Alternatives / material tradeoff**, **Consequence of no decision**, and **What happens immediately after approval**. A revised question is a new decision revision and cannot reuse old surfaced state.
+
+Moving a current Marco decision into `Blocked / Decision` creates an immediate surfacing obligation. Startup/status reconciliation also surfaces any current revision not yet durably surfaced. Persist the initial surfaced timestamp; if the same revision is still unresolved after 24 hours, surface it once more and no more. External blockers and prerequisite gates are never promoted into human decisions merely because Marco may eventually approve a later step.
+
+When Marco explicitly answers the exact current decision revision, write that exact answer to the owning task, move it immediately to the correct next lifecycle section, and read both writes back in the same operation flow. A resolved decision must not remain presented in `Blocked / Decision`. Authenticated-account attribution alone never counts as Marco's decision.
+
+For blocked items, keep the wake contract concrete: `BLOCKED ON`, `OWNER OF UNBLOCK`, `UNBLOCK WHEN`, and `THEN`. `scripts/operator_decision.py` encodes the one-shot surface, 24-hour reminder, exact-revision answer binding, and lifecycle readback without creating a human-approval service.
