@@ -200,6 +200,10 @@ Visible activity includes a submitted GitHub review, review-thread/comment activ
 
 A submitted GitHub review on the exact head supersedes the claim. Independent specialist reviews may intentionally coexist; the claim prevents accidental duplication, not deliberate multi-review.
 
+## Remote-first host selection
+
+Host choice is separate from semantic role and elapsed runtime. Default substantive repository Implementation to the hosted/ChatGPT path. A local Implementation route requires `IMPLEMENTATION / PUBLICATION — <exact unavailable remote capability>; fallbacks exhausted: <bounded list>`. Slow/native tests remain `TESTS ONLY`; sudo/systemd/installed-runtime operations remain `LOCAL SYSTEM ACCESS`. Missing optional dependencies, command timeouts, prior local-agent involvement, or one unavailable tool primitive do not prove a local-only source boundary when another authorized hosted fallback remains.
+
 ## Repository-owned PR lifecycle dispatcher
 
 Routine lifecycle observation belongs to one repository-owned dispatcher, `scripts/pr_lifecycle.py`, rather than to Marco, Coordinator chat, or multiple agents racing independent poll loops. The dispatcher is disposable process state: every restart reconstructs truth from GitHub PR metadata, formal reviews, structured lease comments, exact-head CI evidence, local-work markers, and linked Asana identity. It has no authoritative queue database.

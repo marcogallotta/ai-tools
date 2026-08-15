@@ -10,6 +10,7 @@ from pr_mutation_broker import (
 from pr_lifecycle_operator import action_first_status
 from pr_lifecycle_owner import owning_task_identity_from_references
 from pr_lifecycle_asana_writeback import reconcile_after_merge
+from pr_lifecycle_host_routing import classify_requirement, implementation_host_for_boundary, LOCAL_IMPLEMENTATION
 from pr_lifecycle_terminal import (
     TERMINAL_DISPOSITION_MARKER, TerminalCleanupDispatcher, asana_terminal_decision, cleanup_marker,
     comment_has_marker, disposition_marker,
@@ -282,10 +283,23 @@ class LifecycleActionsMixin:
                 "and poll the CI gate. If either fails, record the exact evidence and route any semantic fix "
                 "to Implementation.\n\n"
             )
+        boundary = classify_requirement(work.instruction, default_kind=work.kind)
+        route_note = ""
+        if work.kind == "implementation":
+            selected = implementation_host_for_boundary(boundary)
+            if selected != LOCAL_IMPLEMENTATION:
+                route_note = (
+                    "REMOTE-FIRST ROUTING: local Implementation is not authorized by this text alone; "
+                    "a local route requires an exact unavailable hosted capability plus bounded exhausted "
+                    "fallbacks in the canonical IMPLEMENTATION / PUBLICATION classification.\n\n"
+                )
         body = (
             f"{marker}\n{label} — exact head `{pr.head}`\n\n"
             f"Role: {role}\n\n"
+            f"LOCAL WORK TYPE: {boundary.work_type}\n"
+            f"LOCAL SCOPE: {boundary.scope}\n\n"
             f"Action: `{work.instruction}`\n\n"
+            f"{route_note}"
             f"{gate_context}"
             "This handoff is exact-head scoped. A head change invalidates it and requires the normal review/recheck path.\n\n"
             "— Dish PR lifecycle dispatcher"

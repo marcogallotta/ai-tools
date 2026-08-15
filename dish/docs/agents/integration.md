@@ -203,7 +203,7 @@ A failed Asana writeback after verified GitHub merge is recovery work; it never 
 
 Human rendering is not a second lifecycle engine. For every Review/Integration transition shown directly to Marco, state his next action first, then why, owning task state, consequential PR/head/Review/gate state, and the next owner/system. Review PASS must say the exact candidate was accepted; Review BLOCK must say it was blocked. If continuation is automatic, say Marco has no action and never require transcript relay. If the real next step is human routing or a decision, say that first instead of hiding it behind an internal phase label.
 
-For local residual work, classify only `TESTS ONLY`, `IMPLEMENTATION / PUBLICATION`, or `LOCAL SYSTEM ACCESS`, and report elapsed runtime separately when useful. A long-running suite remains `TESTS ONLY`; runtime alone never makes it heavy semantic Implementation.
+For local residual work, classify only `TESTS ONLY — <exact boundary>`, `IMPLEMENTATION / PUBLICATION — <exact unavailable remote capability>; fallbacks exhausted: <bounded list>`, or `LOCAL SYSTEM ACCESS — <exact capability>`, and report elapsed runtime separately when useful. A long-running suite remains `TESTS ONLY`; runtime alone never makes it heavy semantic Implementation. Only the fully evidenced `IMPLEMENTATION / PUBLICATION` form can select a local semantic Implementation consumer. `TESTS ONLY` and `LOCAL SYSTEM ACCESS` stay with their actual evidence/system owner and never become local Implementation merely because they need a real machine.
 
 ## Development friction and non-blocking debt
 

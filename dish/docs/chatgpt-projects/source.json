@@ -250,6 +250,16 @@
             "handoff"
           ],
           "surface": "presentation"
+        },
+        {
+          "id": "implementation-remote-first-local-boundary",
+          "text": "Default substantive repository implementation to hosted/ChatGPT execution. Local semantic Implementation requires `IMPLEMENTATION / PUBLICATION` with the exact unavailable hosted capability and bounded exhausted fallbacks; `TESTS ONLY`, `LOCAL SYSTEM ACCESS`, runtime length, convenience, or prior local-agent use never justify it.",
+          "impact": "additive",
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "surface": "routing"
         }
       ]
     },
@@ -336,6 +346,16 @@
             "handoff"
           ],
           "surface": "lifecycle"
+        },
+        {
+          "id": "integration-local-work-classifier",
+          "text": "Classify residual local work as TESTS ONLY, IMPLEMENTATION / PUBLICATION, or LOCAL SYSTEM ACCESS with runtime separate. Only an explicitly evidenced IMPLEMENTATION / PUBLICATION boundary can route semantic Implementation locally; tests/system access retain their actual owner.",
+          "impact": "additive",
+          "action_boundaries": [
+            "handoff",
+            "merge"
+          ],
+          "surface": "routing"
         }
       ]
     },

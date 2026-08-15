@@ -1,7 +1,7 @@
 # Dish — Implementation
 
 PROJECT_ROLE: Implementation
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-2e87cf466b91
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-910ec9d7e7c1
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/implementation.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -35,3 +35,4 @@ High-consequence rules:
 - After broker activation, post-PR Implementation/fix mutates only with a current exact-PR grant whose run-attempt/comment/artifact proof verifies. Grant is fencing only: role/branch/worktree/CAS authority remains separate; read-only work is exempt and stale proof fails closed.
 - Before failed-CI source mutation, classify ownership. Only PR_OWNED may route to candidate fix; PROVEN_CURRENT_MAIN, INFRASTRUCTURE, and AMBIGUOUS do not authorize candidate mutation or rerun-until-green.
 - Marco-facing lifecycle output puts his next action first, names Review PASS/BLOCK and next owner/gate, and says no action for automatic continuation. Local work is TESTS ONLY, IMPLEMENTATION / PUBLICATION, or LOCAL SYSTEM ACCESS; runtime is separate.
+- Default substantive repository implementation to hosted/ChatGPT execution. Local semantic Implementation requires `IMPLEMENTATION / PUBLICATION` with the exact unavailable hosted capability and bounded exhausted fallbacks; `TESTS ONLY`, `LOCAL SYSTEM ACCESS`, runtime length, convenience, or prior local-agent use never justify it.
