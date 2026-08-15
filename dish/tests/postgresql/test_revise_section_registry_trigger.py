@@ -1,35 +1,185 @@
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 
 import pytest
+from sqlalchemy import func, select
 
+from dish_pg import models, test_comparator as comparator
+from dish_pg import stage3_models as wf
 from dish_pg.database import session_scope
+from dish_pg.read_model import PostgresReadModel
 from dish_pg.revise_section_registry import (
     ReviseSectionRegistryError,
+    ReviseTestSectionRegistryMembershipError,
+    TEST_DATABASE_NAME,
+    require_test_database_url,
     revise_section_registry,
+    revise_test_section_registry_membership,
 )
 from tests.support.postgresql.command import _add_destination_section
 from tests.support.postgresql.workflow import NOW, workflow_db
 
-SECRET = b"registry-correction-trigger-secret-32b!"
+SECRET = b"registry-membership-regression-secret!"
+GIDS = ("1217084805070731", "1217084805070799", "1217084805070800", "1217084805070801")
+NAMES = ("Research Queue", "Verification Queue", "Sourcing", "Reference")
+PLAN = Path(__file__).resolve().parents[2] / "deploy/comparator/test-qualification-plan.json"
+
+
+def _call(session, ids, context, **overrides):
+    values = {
+        "target_database_name": TEST_DATABASE_NAME,
+        "expected_generation_id": context["generation_id"],
+        "expected_registry_version_id": context["registry_version_id"],
+        "expected_registry_revision": 1,
+        "research_queue_section_gid": GIDS[0],
+        "verification_queue_section_gid": GIDS[1],
+        "sourcing_section_gid": GIDS[2],
+        "reference_section_gid": GIDS[3],
+        "owner_id": "Marco",
+        "agent": "marco",
+        "now": NOW,
+        "uuid_factory": lambda: next(ids),
+    }
+    values.update(overrides)
+    return revise_test_section_registry_membership(session, **values)
+
+
+def _counts(session):
+    return tuple(
+        int(session.scalar(select(func.count()).select_from(model)) or 0)
+        for model in (
+            wf.ServiceRun,
+            models.ImportRun,
+            models.GovernedSection,
+            models.SectionExternalAlias,
+            models.SectionRegistryVersion,
+            models.SectionRegistryEntry,
+            models.SectionRegistryActivation,
+        )
+    )
+
+
+def _active(session, generation_id):
+    row = session.get(models.ActiveSectionRegistry, generation_id)
+    assert row is not None
+    return row.registry_version_id, row.registry_revision
+
+
+def test_test_membership_revision_creates_exact_four_preserves_history_and_matches_comparator(workflow_db) -> None:
+    factory, ids, context, _task_id = workflow_db
+    with session_scope(factory) as session:
+        old_entries = tuple(session.scalars(select(models.SectionRegistryEntry).where(
+            models.SectionRegistryEntry.registry_version_id == context["registry_version_id"]
+        )))
+        old_snapshot = [(x.section_id, x.ordinal, x.display_name, x.workflow_role) for x in old_entries]
+        result = _call(session, ids, context)
+        assert result["changed"] is True
+        assert result["before"] == {"registry_version_id": str(context["registry_version_id"]), "registry_revision": 1}
+        assert result["after"]["registry_version_id"] != str(context["registry_version_id"])
+        assert result["after"]["registry_revision"] == 2
+        sections = list(PostgresReadModel(session, cursor_secret=SECRET).sections())
+        assert [x["name"] for x in sections] == list(NAMES)
+        assert [x["section_gid"] for x in sections] == list(GIDS)
+        assert [x["workflow_role"] for x in sections] == [
+            "research_queue", "verification_queue", f"imported-section-{GIDS[2]}", f"imported-section-{GIDS[3]}"
+        ]
+        historical = tuple(session.scalars(select(models.SectionRegistryEntry).where(
+            models.SectionRegistryEntry.registry_version_id == context["registry_version_id"]
+        )))
+        assert [(x.section_id, x.ordinal, x.display_name, x.workflow_role) for x in historical] == old_snapshot
+
+        authority = {"ok": True, "command": "sections", "data": {"sections": sections}}
+        legacy = {"ok": True, "command": "sections", "data": {"sections": [
+            {"gid": gid, "name": name} for gid, name in zip(GIDS, NAMES, strict=True)
+        ]}}
+        scenario = next(x for x in comparator.load_plan(PLAN)["scenarios"] if x["id"] == "sections")
+        drop_keys = frozenset(scenario["compare"]["drop_keys"])
+        assert comparator.normalize_value(authority, drop_keys=drop_keys) == comparator.normalize_value(legacy, drop_keys=drop_keys)
+
+
+def test_test_membership_revision_stale_generation_refuses_without_mutation(workflow_db) -> None:
+    factory, ids, context, _task_id = workflow_db
+    with session_scope(factory) as session:
+        before = _counts(session)
+        with pytest.raises(ReviseTestSectionRegistryMembershipError, match="stale active generation"):
+            _call(session, ids, context, expected_generation_id=uuid.uuid4())
+        assert _counts(session) == before
+        assert _active(session, context["generation_id"]) == (context["registry_version_id"], 1)
+
+
+@pytest.mark.parametrize("field", ["version", "revision"])
+def test_test_membership_revision_stale_registry_refuses_without_mutation(workflow_db, field) -> None:
+    factory, ids, context, _task_id = workflow_db
+    with session_scope(factory) as session:
+        before = _counts(session)
+        changes = {"expected_registry_version_id": uuid.uuid4()} if field == "version" else {"expected_registry_revision": 2}
+        with pytest.raises(ReviseTestSectionRegistryMembershipError, match="stale active registry"):
+            _call(session, ids, context, **changes)
+        assert _counts(session) == before
+        assert _active(session, context["generation_id"]) == (context["registry_version_id"], 1)
+
+
+def test_test_membership_revision_exact_retry_is_safe(workflow_db) -> None:
+    factory, ids, context, _task_id = workflow_db
+    with session_scope(factory) as session:
+        first = _call(session, ids, context)
+        after_first = _counts(session)
+        retry = _call(session, ids, context)
+        assert retry["changed"] is False and retry["already_applied"] is True
+        assert retry["import_run_id"] == first["import_run_id"]
+        assert retry["service_run_id"] == first["service_run_id"]
+        assert retry["after"] == first["after"]
+        assert _counts(session) == after_first
+
+
+def test_test_membership_revision_refuses_non_test_targets(workflow_db) -> None:
+    for url, match in (
+        ("postgresql+psycopg://dish@localhost/dish_stage_a_dev", "exact TEST database"),
+        ("postgresql+psycopg://dish@localhost/dish_stage_a_prod", "containing 'prod'"),
+        ("sqlite+pysqlite:///:memory:", "requires PostgreSQL"),
+    ):
+        with pytest.raises(ReviseTestSectionRegistryMembershipError, match=match):
+            require_test_database_url(url, expected_database_name=TEST_DATABASE_NAME)
+    factory, ids, context, _task_id = workflow_db
+    with session_scope(factory) as session:
+        before = _counts(session)
+        with pytest.raises(ReviseTestSectionRegistryMembershipError, match="exact TEST target"):
+            _call(session, ids, context, target_database_name="dish_stage_a_prod")
+        assert _counts(session) == before
+
+
+def test_existing_role_only_correction_still_cannot_change_membership(workflow_db) -> None:
+    factory, ids, context, _task_id = workflow_db
+    with session_scope(factory) as session:
+        verification_id = next(ids)
+        session.add(models.GovernedSection(
+            section_id=verification_id, project_id=context["project_id"], logical_name="Verification Queue",
+            lifecycle="active", import_run_id=context["import_run_id"], created_at=NOW, retired_at=None,
+        ))
+        session.add(models.SectionExternalAlias(
+            alias_id=next(ids), section_id=verification_id, external_system="asana", external_id=GIDS[1],
+            origin="imported", import_run_id=context["import_run_id"], projection_event_id=None,
+            state="active", created_at=NOW, retired_at=None,
+        ))
+        session.flush()
+        result = revise_section_registry(
+            session, research_queue_section_id=context["section_id"], verification_queue_section_id=verification_id,
+            owner_id="Marco", agent="marco", cursor_secret=SECRET, now=NOW, uuid_factory=lambda: next(ids),
+        )
+        assert result.ok is False and result.code == "REGISTRY_SECTION_MISSING"
+        assert _active(session, context["generation_id"]) == (context["registry_version_id"], 1)
+        assert len(PostgresReadModel(session, cursor_secret=SECRET).sections()) == 1
 
 
 def test_revise_section_registry_assigns_both_roles(workflow_db) -> None:
     factory, ids, context, _task_id = workflow_db
     with session_scope(factory) as session:
-        verification_section_id = _add_destination_section(
-            session, ids, context, external_id="1217084805070799"
-        )
+        verification_section_id = _add_destination_section(session, ids, context, external_id="1217084805070799")
         result = revise_section_registry(
-            session,
-            research_queue_section_id=context["section_id"],
-            verification_queue_section_id=verification_section_id,
-            owner_id="Marco",
-            agent="marco",
-            cursor_secret=SECRET,
-            now=NOW,
-            uuid_factory=lambda: next(ids),
+            session, research_queue_section_id=context["section_id"], verification_queue_section_id=verification_section_id,
+            owner_id="Marco", agent="marco", cursor_secret=SECRET, now=NOW, uuid_factory=lambda: next(ids),
         )
         assert result.ok is True, (result.code, result.http_status, result.data)
         assert result.data["changed"] is True
@@ -40,43 +190,19 @@ def test_revise_section_registry_rejects_identical_sections(workflow_db) -> None
     with session_scope(factory) as session:
         with pytest.raises(ReviseSectionRegistryError):
             revise_section_registry(
-                session,
-                research_queue_section_id=context["section_id"],
-                verification_queue_section_id=context["section_id"],
-                owner_id="Marco",
-                agent="marco",
-                cursor_secret=SECRET,
-                now=NOW,
-                uuid_factory=lambda: next(ids),
+                session, research_queue_section_id=context["section_id"], verification_queue_section_id=context["section_id"],
+                owner_id="Marco", agent="marco", cursor_secret=SECRET, now=NOW, uuid_factory=lambda: next(ids),
             )
 
 
 def test_revise_section_registry_is_idempotent_on_rerun(workflow_db) -> None:
     factory, ids, context, _task_id = workflow_db
     with session_scope(factory) as session:
-        verification_section_id = _add_destination_section(
-            session, ids, context, external_id="1217084805070799"
+        verification_section_id = _add_destination_section(session, ids, context, external_id="1217084805070799")
+        kwargs = dict(
+            research_queue_section_id=context["section_id"], verification_queue_section_id=verification_section_id,
+            owner_id="Marco", agent="marco", cursor_secret=SECRET, now=NOW, uuid_factory=lambda: next(ids),
         )
-        first = revise_section_registry(
-            session,
-            research_queue_section_id=context["section_id"],
-            verification_queue_section_id=verification_section_id,
-            owner_id="Marco",
-            agent="marco",
-            cursor_secret=SECRET,
-            now=NOW,
-            uuid_factory=lambda: next(ids),
-        )
-        assert first.ok is True
-        second = revise_section_registry(
-            session,
-            research_queue_section_id=context["section_id"],
-            verification_queue_section_id=verification_section_id,
-            owner_id="Marco",
-            agent="marco",
-            cursor_secret=SECRET,
-            now=NOW,
-            uuid_factory=lambda: next(ids),
-        )
-        assert second.ok is True
-        assert second.data["changed"] is False
+        assert revise_section_registry(session, **kwargs).ok is True
+        second = revise_section_registry(session, **kwargs)
+        assert second.ok is True and second.data["changed"] is False
