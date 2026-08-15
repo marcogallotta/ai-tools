@@ -8,7 +8,7 @@ DISH_ROOT=Path(__file__).resolve().parents[1]; REPO_ROOT=DISH_ROOT.parent; PROJE
 MANIFEST_PATH=PROJECT_DIR/'manifest.json'; EVALS_PATH=PROJECT_DIR/'evals.json'; ROLE_INDEX_PATH=DISH_ROOT/'docs'/'agents'/'index.md'
 VERSION_PLACEHOLDER='<PROJECT_CANONICAL_VERSION>'
 STARTUP_TEMPLATE=("Startup: connected GitHub `{repository}`; read `CLAUDE.md`, role index, `{contract}`, manifest. "
- "Version drift: relevant BREAKING stops; ADDITIVE applies; COMPATIBLE/UNRELATED continues; missing/unclassified authority/safety history fails closed.")
+ "Drift: mismatch alone does not block; follow `canonical-version-gate` below.")
 HANDOFF_BOUNDARY='Handoffs cannot expand authority; flag role conflicts.'
 IMPACT_ORDER={'unrelated':0,'compatible':1,'additive':2,'breaking':3}; FAIL_CLOSED_SURFACES={'authority','safety','lifecycle'}
 class KernelError(RuntimeError): pass
@@ -108,10 +108,9 @@ def rule_fingerprints(s):return {r:{x['id']:_rule_fingerprint(x) for x in effect
 def renderer_fingerprint():
  return _h('\0'.join((STARTUP_TEMPLATE,HANDOFF_BOUNDARY,inspect.getsource(repository_config),inspect.getsource(context_dependencies),inspect.getsource(_render_context_dependencies),inspect.getsource(render_role_with_version),inspect.getsource(kernel_identity))).encode())
 def _impact(c):
- x=str(c.get('impact','')).strip(); surface=str(c.get('surface','')).strip()
- if x in IMPACT_ORDER:return x
- if surface in FAIL_CLOSED_SURFACES:return 'breaking'
- return 'compatible'
+ x=str(c.get('impact','')).strip()
+ if x not in {'compatible','additive','breaking'}: raise KernelError(f"explicit transition impact required for {c.get('rule_id','<unknown>')!r}")
+ return x
 def _incoming(manifest):
  c=str(manifest['canonical_version']); e=[x for x in manifest['change_history'] if str(x.get('to_version'))==c]
  if len(e)!=1: raise KernelError('canonical version must have exactly one incoming change_history edge')
@@ -135,6 +134,32 @@ def _validate_current_edge_classification(m,s):
  if not oldr: raise KernelError('current edge requires from_renderer_fingerprint')
  if changedr and not renderer: raise KernelError('renderer changed without renderer:* classification')
  if not changedr and renderer: raise KernelError('renderer classifications exist but renderer unchanged')
+def _proof_text(v,key):
+ x=str(v.get(key,'')).strip() if isinstance(v,dict) else ''
+ if not x: raise KernelError(f'BREAKING proof requires {key}')
+ return x
+def _validate_breaking(e,c):
+ p=c.get('break_proof')
+ if not isinstance(p,dict): raise KernelError(f"BREAKING {c.get('rule_id')} requires break_proof")
+ if str(p.get('from_version',''))!=str(e.get('from_version')) or str(p.get('to_version',''))!=str(e.get('to_version')): raise KernelError(f"BREAKING {c.get('rule_id')} proof transition mismatch")
+ if p.get('roles')!=c.get('roles') or p.get('action_boundaries')!=c.get('action_boundaries'): raise KernelError(f"BREAKING {c.get('rule_id')} proof scope mismatch")
+ for key in ('prior_kernel_identity','counterexample','git_reconciliation_failure','migration','rollback','evidence_ref'): _proof_text(p,key)
+ if c.get('marco_approved') is not True or not str(c.get('marco_approval_ref','')).strip(): raise KernelError(f"BREAKING {c.get('rule_id')} requires explicit Marco approval reference")
+def _validate_correction(c):
+ q=c.get('historical_correction')
+ if q is None:return
+ if not isinstance(q,dict) or q.get('previous_impact')!='breaking' or not str(q.get('reason','')).strip() or not str(q.get('provenance_ref','')).strip(): raise KernelError(f"invalid historical correction for {c.get('rule_id')}")
+def _legacy_floor(m):
+ floor=m.get('legacy_bootstrap_floor')
+ if not isinstance(floor,dict): raise KernelError('manifest.legacy_bootstrap_floor required')
+ first=str(floor.get('first_drift_aware_version','')).strip(); pre=floor.get('pre_floor_versions')
+ if not first or not isinstance(pre,list) or not pre or any(not str(x).strip() for x in pre) or first in set(map(str,pre)): raise KernelError('invalid legacy bootstrap floor versions')
+ if floor.get('impact')!='breaking' or floor.get('roles')!=['*'] or floor.get('action_boundaries')!=['*']: raise KernelError('legacy bootstrap floor must be global BREAKING')
+ proof=floor.get('break_proof')
+ if not isinstance(proof,dict): raise KernelError('legacy bootstrap floor requires break_proof')
+ for key in ('prior_kernel_identity','counterexample','git_reconciliation_failure','migration','rollback','evidence_ref'): _proof_text(proof,key)
+ if floor.get('marco_approved') is not True or not str(floor.get('marco_approval_ref','')).strip(): raise KernelError('legacy bootstrap floor requires Marco approval reference')
+ return first,[str(x) for x in pre]
 def validate_change_history(m,s):
  h=m.get('change_history'); roles=set(s['roles']); ids={x['id'] for r in roles for x in effective_rules(s,r)}
  if not isinstance(h,list) or not h: raise KernelError('manifest.change_history must be non-empty')
@@ -147,20 +172,36 @@ def validate_change_history(m,s):
   if isinstance(role_maps,dict):
    for fingerprints in role_maps.values():
     if isinstance(fingerprints,dict): ids.update(map(str,fingerprints))
- seen=set()
+ seen=set(); versions=set(); inbound={}
  for e in h:
+  if not isinstance(e,dict): raise KernelError('change_history entries must be objects')
   a=str(e.get('from_version','')).strip(); b=str(e.get('to_version','')).strip(); ch=e.get('changes')
   if not a or not b or a==b or a in seen: raise KernelError(f'ambiguous/invalid change_history transition from {a!r}')
-  seen.add(a)
+  seen.add(a); versions.update((a,b)); inbound[b]=inbound.get(b,0)+1
+  if inbound[b]>1: raise KernelError(f'ambiguous change_history destination {b!r}')
   if not isinstance(ch,list) or not ch: raise KernelError(f'change_history {a}->{b} requires changes')
+  change_seen=set()
   for c in ch:
+   if not isinstance(c,dict): raise KernelError(f'change_history {a}->{b} contains non-object change')
    rid=str(c.get('rule_id','')).strip(); rs=c.get('roles'); bounds=c.get('action_boundaries'); surf=str(c.get('surface','')).strip()
    if not rid or (rid not in ids and not rid.startswith('renderer:')): raise KernelError(f'change_history references unknown rule {rid!r}')
    if not isinstance(rs,list) or not rs or (set(rs)!={'*'} and not set(rs).issubset(roles)): raise KernelError(f'change_history {rid} has invalid roles')
-   if not isinstance(bounds,list) or not bounds or not surf: raise KernelError(f'change_history {rid} requires boundaries/surface')
-   _impact(c)
- if not any(str(e.get('to_version'))==str(m.get('canonical_version')) for e in h): raise KernelError('change_history lacks canonical transition')
+   if not isinstance(bounds,list) or not bounds or any(not str(x).strip() for x in bounds) or not surf: raise KernelError(f'change_history {rid} requires boundaries/surface')
+   key=(rid,tuple(rs),tuple(bounds))
+   if key in change_seen: raise KernelError(f'duplicate/conflicting change_history classification for {rid}')
+   change_seen.add(key); imp=_impact(c); _validate_correction(c)
+   if imp=='breaking': _validate_breaking(e,c)
+ canonical=str(m.get('canonical_version',''))
+ if canonical not in versions or not any(str(e.get('to_version'))==canonical for e in h): raise KernelError('change_history lacks canonical transition')
+ first,pre=_legacy_floor(m)
+ if first not in versions or any(v not in versions for v in pre): raise KernelError('legacy bootstrap floor references unknown retained version')
+ if any(v==canonical for v in pre): raise KernelError('canonical version cannot be pre-floor')
+ # d96+ history may never retain an unproved hard break; the proof validator above is the only admissibility path.
  _validate_current_edge_classification(m,s)
+def generated_sha256(m,s):
+ parts=[]
+ for role in sorted(s['roles']): parts.append(role+'\0'+render_role_with_version(s,role,str(m['canonical_version'])))
+ return _h('\0'.join(parts).encode())
 def load_canonical():
  m=_read_json(MANIFEST_PATH); p=PROJECT_DIR/str(m.get('source_file','')); s=_read_json(p)
  if m.get('source_sha256')!=_h(json.dumps(s,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()): raise KernelError('canonical source semantic hash mismatch')
@@ -169,6 +210,7 @@ def load_canonical():
  if m.get('kernel_identity_sha256')!=kid: raise KernelError('rendered kernel identity mismatch')
  exp=f"{m.get('version_namespace','')}-{kid[:12]}"
  if m.get('canonical_version')!=exp: raise KernelError(f'canonical_version must be {exp!r}')
+ if m.get('generated_sha256')!=generated_sha256(m,s): raise KernelError('current generated Project digest mismatch')
  validate_change_history(m,s); return m,s
 def render_role(m,s,role):return render_role_with_version(s,role,str(m['canonical_version']))
 def generated_paths(m,s):
@@ -192,26 +234,42 @@ def _change_path(m,v):
   if cur in seen or cur not in by: raise KernelError(f'change_history does not cover {v} to {m["canonical_version"]}')
   seen.add(cur); e=by[cur]; out.append(e); cur=str(e['to_version'])
  return out
-def classify_project_drift(project_version,role_key,action_boundary,*,manifest=None,source=None):
+def _integrity_result(project_version,canonical,role,boundary,error):
+ return {'project_version':project_version,'canonical_version':canonical,'role':role,'action_boundary':boundary,'state':'integrity_error','impact':'integrity_error','drift_level':None,'indicator':'PROJECT SETTINGS: INTEGRITY ERROR · DRIFT ?/3','block':True,'resync_required':False,'settings_refresh_recommended':False,'repair':'repository-authority','error':str(error),'changes':[]}
+def classify_project_drift(project_version,role_key,action_boundary,*,manifest=None,source=None,actual_generated_sha256=None):
  if manifest is None or source is None:
-  mm,ss=load_canonical(); manifest=manifest or mm; source=source or ss
- if role_key not in source['roles']: raise KernelError(f'unknown Project role: {role_key}')
+  try:mm,ss=load_canonical()
+  except KernelError as e:return _integrity_result(project_version,'<unknown>',role_key,str(action_boundary),e)
+  manifest=manifest or mm; source=source or ss
+ canonical=str(manifest.get('canonical_version',''))
  boundary=str(action_boundary).strip()
- if not boundary: raise KernelError('drift classification requires action_boundary')
- canonical=str(manifest['canonical_version'])
- if project_version==canonical:return {'project_version':project_version,'canonical_version':canonical,'role':role_key,'action_boundary':boundary,'impact':'unrelated','block':False,'resync_required':False,'changes':[]}
- applicable=[]; effective=[]; blocking=[]
- for e in _change_path(manifest,project_version):
+ if role_key not in source.get('roles',{}): return _integrity_result(project_version,canonical,role_key,boundary,'unknown Project role')
+ if not boundary:return _integrity_result(project_version,canonical,role_key,boundary,'drift classification requires action_boundary')
+ try:validate_change_history(manifest,source)
+ except KernelError as e:return _integrity_result(project_version,canonical,role_key,boundary,e)
+ if project_version==canonical:
+  if actual_generated_sha256 is not None and str(actual_generated_sha256)!=str(manifest.get('generated_sha256','')): return _integrity_result(project_version,canonical,role_key,boundary,'current generated Project digest mismatch')
+  return {'project_version':project_version,'canonical_version':canonical,'role':role_key,'action_boundary':boundary,'state':'current','impact':'unrelated','drift_level':0,'indicator':None,'block':False,'resync_required':False,'settings_refresh_recommended':False,'changes':[]}
+ try:first,pre=_legacy_floor(manifest)
+ except KernelError as e:return _integrity_result(project_version,canonical,role_key,boundary,e)
+ if project_version in pre:
+  return {'project_version':project_version,'canonical_version':canonical,'role':role_key,'action_boundary':boundary,'state':'legacy_hard_break','impact':'breaking','drift_level':3,'indicator':'PROJECT SETTINGS: HARD BREAK · DRIFT 3/3','block':True,'resync_required':True,'settings_refresh_recommended':False,'legacy_bootstrap_incompatibility':True,'first_drift_aware_version':first,'changes':[]}
+ try:path=_change_path(manifest,project_version)
+ except KernelError as e:return _integrity_result(project_version,canonical,role_key,boundary,e)
+ effective=[]; blocking=[]
+ for e in path:
   for raw in e['changes']:
    if '*' not in raw['roles'] and role_key not in raw['roles']: continue
-   c=dict(raw,from_version=e['from_version'],to_version=e['to_version']); c['impact']=_impact(c); applicable.append(c)
-   rel='*' in c['action_boundaries'] or boundary in c['action_boundaries']
-   if c['impact']=='breaking' and rel: effective.append(c); blocking.append(c)
-   elif c['impact'] in {'additive','compatible'}: effective.append(c)
+   rel='*' in raw['action_boundaries'] or boundary in raw['action_boundaries']
+   if not rel: continue
+   c=dict(raw,from_version=e['from_version'],to_version=e['to_version']); c['impact']=_impact(c); effective.append(c)
+   if c['impact']=='breaking': blocking.append(c)
  impact='breaking' if blocking else (max((x['impact'] for x in effective),key=IMPACT_ORDER.get) if effective else 'unrelated')
- return {'project_version':project_version,'canonical_version':canonical,'role':role_key,'action_boundary':boundary,'impact':impact,'block':bool(blocking),'resync_required':bool(applicable),'changes':effective}
+ level=3 if impact=='breaking' else (2 if impact=='additive' else 1)
+ indicator='PROJECT SETTINGS: HARD BREAK · DRIFT 3/3' if level==3 else f'PROJECT SETTINGS: OUTDATED · DRIFT {level}/3'
+ return {'project_version':project_version,'canonical_version':canonical,'role':role_key,'action_boundary':boundary,'state':'hard_break' if blocking else 'outdated','impact':impact,'drift_level':level,'indicator':indicator,'block':bool(blocking),'resync_required':bool(blocking),'settings_refresh_recommended':not blocking,'changes':effective}
 
-REQUIRED_EVAL_IDS={'code-smell-dedupe-log-and-continue', 'implementation-publication-readback-success', 'publication-blocker-forbids-unsafe-shortcuts', 'publication-completion-invalidates-prior-review', 'repository-friction-discovery', 'cross-role-context-bleed', 'authenticated-account-not-human-decision', 'audit-exact-baseline', 'compatible-concise-output-drift', 'audit-missing-authority-fails-closed', 'additive-evidence-drift', 'audit-dedupe-existing-finding', 'integration-rejects-head-mismatch', 'compatible-wording-drift', 'review-local-semantic-fix-routes-implementation', 'publication-fully-published-local-certification', 'stale-project-version', 'marco-scoped-override-preserves-evidence', 'review-remote-local-evidence-pr-handoff', 'skipped-version-nonbreaking-drift', 'live-authority-over-stale-memory', 'audit-moved-baseline-current-blocker', 'review-local-evidence-direct', 'valid-action-fallback', 'five-whys-evidence-discipline', 'review-exact-head-completion', 'implementation-rejects-patch-only-completion', 'development-workflow-context-preload-no-authority', 'human-facing-plain-language', 'durable-review-classification', 'reviewed-head-movement-classification', 'unrelated-role-drift', 'handoff-conflicts-with-role-authority', 'review-passed-certification-pending', 'no-valid-fallback', 'current-template-lookup', 'publication-handoff-before-human-notification', 'code-smell-true-blocker-stays-active', 'development-workflow-pr60-test-scope-context', 'development-workflow-asana-design-review-state', 'allowed-specialist-implementation-composition', 'development-workflow-pr40-fallback-context', 'implementation-publication-readback-mismatch', 'forbidden-implicit-role-expansion', 'review-breaking-completion-drift', 'publication-unsafe-governed-path-blocker', 'task-history-before-no-op', 'integration-breaking-merge-drift', 'development-workflow-terminal-role-routing', 'friction-active-blocker-routes-to-active-work', 'coordinator-pr-intake-automatic-review', 'shared-resource-concurrency-preflight', 'configured-repository-pr-routing', 'friction-dedupe-no-urgency', 'audit-new-finding-backlog-only', 'review-local-integration-routes-integration', 'audit-refuses-mutation-authority', 'audit-specialist-context-no-authority', 'coordinator-check-everything-mixed-state', 'skipped-version-breaking-drift', 'chat-only-review-verdict-not-complete', 'consequential-reasoning-bundle-live-authority', 'human-review-durable-state-model', 'coordinator-fresh-session-queue-audit-reconciliation', 'development-workflow-fresh-session-queue-audit-reconciliation'}
+REQUIRED_EVAL_IDS={'code-smell-dedupe-log-and-continue', 'implementation-publication-readback-success', 'publication-blocker-forbids-unsafe-shortcuts', 'publication-completion-invalidates-prior-review', 'repository-friction-discovery', 'cross-role-context-bleed', 'authenticated-account-not-human-decision', 'audit-exact-baseline', 'compatible-concise-output-drift', 'audit-missing-authority-fails-closed', 'additive-evidence-drift', 'audit-dedupe-existing-finding', 'integration-rejects-head-mismatch', 'compatible-wording-drift', 'review-local-semantic-fix-routes-implementation', 'publication-fully-published-local-certification', 'stale-project-version', 'marco-scoped-override-preserves-evidence', 'review-remote-local-evidence-pr-handoff', 'skipped-version-nonbreaking-drift', 'live-authority-over-stale-memory', 'audit-moved-baseline-current-blocker', 'review-local-evidence-direct', 'valid-action-fallback', 'five-whys-evidence-discipline', 'review-exact-head-completion', 'implementation-rejects-patch-only-completion', 'development-workflow-context-preload-no-authority', 'human-facing-plain-language', 'durable-review-classification', 'reviewed-head-movement-classification', 'unrelated-role-drift', 'handoff-conflicts-with-role-authority', 'review-passed-certification-pending', 'no-valid-fallback', 'current-template-lookup', 'publication-handoff-before-human-notification', 'code-smell-true-blocker-stays-active', 'development-workflow-pr60-test-scope-context', 'development-workflow-asana-design-review-state', 'allowed-specialist-implementation-composition', 'development-workflow-pr40-fallback-context', 'implementation-publication-readback-mismatch', 'forbidden-implicit-role-expansion', 'review-breaking-completion-drift', 'publication-unsafe-governed-path-blocker', 'task-history-before-no-op', 'integration-breaking-merge-drift', 'development-workflow-terminal-role-routing', 'friction-active-blocker-routes-to-active-work', 'coordinator-pr-intake-automatic-review', 'shared-resource-concurrency-preflight', 'configured-repository-pr-routing', 'friction-dedupe-no-urgency', 'audit-new-finding-backlog-only', 'review-local-integration-routes-integration', 'audit-refuses-mutation-authority', 'audit-specialist-context-no-authority', 'coordinator-check-everything-mixed-state', 'skipped-version-breaking-drift', 'chat-only-review-verdict-not-complete', 'consequential-reasoning-bundle-live-authority', 'human-review-durable-state-model', 'coordinator-fresh-session-queue-audit-reconciliation', 'development-workflow-fresh-session-queue-audit-reconciliation', 'project-drift-current-silent', 'project-drift-integrity-error', 'project-drift-pre-d96-legacy', 'project-drift-v708-review-compatible', 'project-drift-self-compatible'}
 ORACLE_FIELDS={'expected','failure','expected_outcome','required_actions','forbidden_actions','required_observations','required_observations_by_role','require_ordered_observations','observation_link_field'}
 def _eval_payload():return _read_json(EVALS_PATH)
 def _evals():
@@ -318,11 +376,12 @@ def run_fresh_chat_runner(command):
   results.append({'case_id':case['case_id'],'fresh_chat_id':r.get('fresh_chat_id'),'assistant_response':r.get('assistant_response'),'runner_observations':r.get('runner_observations',[])})
  return {'schema_version':2,'runner_protocol':b['runner_protocol'],'canonical_version':b['canonical_version'],'results':results}
 def version_status(project_version,role_key,action_boundary):
- m,s=load_canonical(); c=str(m['canonical_version'])
- if project_version==c:return True,f'PROJECT INSTRUCTIONS CURRENT — {c}'
- d=classify_project_drift(project_version,role_key,action_boundary,manifest=m,source=s)
- if d['block']:return False,f'PROJECT INSTRUCTIONS BREAKING DRIFT — project={project_version} repository={c} role={role_key} boundary={action_boundary}; resynchronize the affected Project before this action'
- return True,f"PROJECT INSTRUCTIONS {str(d['impact']).upper()} DRIFT — project={project_version} repository={c} role={role_key} boundary={action_boundary}; continue under current repository authority"
+ d=classify_project_drift(project_version,role_key,action_boundary)
+ if d['state']=='current':return True,''
+ if d['state']=='integrity_error':return False,f"{d['indicator']} — repair repository authority before this action; Project resync is not the repair"
+ if d['block']:return False,f"{d['indicator']} — project={project_version} repository={d['canonical_version']} role={role_key} boundary={action_boundary}; scheduled Project migration/resync required"
+ suffix='; refresh Project settings when convenient' if d['drift_level']==2 else ''
+ return True,f"{d['indicator']} — continue under current repository authority{suffix}"
 def command_check():
  m,s=load_canonical(); validate_topology(s); rr=render_all(check=True); ee=validate_eval_contracts(); print(f"canonical_version={m['canonical_version']}"); print(f"kernel_identity_sha256={m['kernel_identity_sha256']}")
  for r,n in rr: print(f'PASS kernel {r}: {n} chars')
