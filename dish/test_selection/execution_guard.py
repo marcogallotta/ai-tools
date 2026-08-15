@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import pwd
 import re
 import subprocess
 from pathlib import Path
@@ -23,14 +24,22 @@ def _git(root: Path, *args: str) -> str:
     return completed.stdout.strip()
 
 
+def _protected_primary_root() -> Path:
+    try:
+        account_home = pwd.getpwuid(os.getuid()).pw_dir
+    except (KeyError, OSError) as exc:
+        raise TestExecutionRefused(
+            "cannot resolve the host account's protected primary checkout; execution refused"
+        ) from exc
+    return (Path(account_home) / "ai-tools").resolve()
+
+
 def require_safe_test_checkout(root: Path, *, expected_head: str | None = None) -> str:
     root = root.resolve()
     top = Path(_git(root, "rev-parse", "--show-toplevel")).resolve()
     branch = _git(root, "branch", "--show-current")
     head = _git(root, "rev-parse", "HEAD")
-    protected_primary = Path(
-        os.environ.get("DISH_PROTECTED_PRIMARY_ROOT", Path.home() / "ai-tools")
-    ).expanduser().resolve()
+    protected_primary = _protected_primary_root()
 
     if top == protected_primary or branch == "main":
         raise TestExecutionRefused(

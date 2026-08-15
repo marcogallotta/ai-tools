@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from test_selection import execution_guard
 from tests.support.postgresql.certification import (
     discover_native_postgresql_inventory,
     NativePostgreSQLIdentity,
@@ -212,6 +213,25 @@ def test_local_bootstrap_rejects_stale_head_before_provision(monkeypatch) -> Non
     )
 
     assert main(["--ensure-local-postgresql", "--expected-head", "b" * 40]) == 4
+
+
+def test_local_bootstrap_ignores_spoofed_primary_root_before_provision(monkeypatch) -> None:
+    namespace = runpy.run_path(str(ROOT / "scripts" / "dish-pg-native-certification"))
+    main = namespace["main"]
+    protected_primary = execution_guard._protected_primary_root()
+    monkeypatch.setenv("DISH_PROTECTED_PRIMARY_ROOT", "/somewhere/else")
+    monkeypatch.setattr(execution_guard, "_git", lambda _root, *args: {
+        ("rev-parse", "--show-toplevel"): str(protected_primary),
+        ("branch", "--show-current"): "",
+        ("rev-parse", "HEAD"): CANDIDATE_HEAD,
+    }[args])
+    monkeypatch.setitem(
+        main.__globals__,
+        "ensure_canonical_local_postgresql",
+        lambda: pytest.fail("PostgreSQL bootstrap must not start"),
+    )
+
+    assert main(_cert_args("--ensure-local-postgresql")) == 4
 
 
 def test_native_certification_focused_selection_reports_only_required_inventory(

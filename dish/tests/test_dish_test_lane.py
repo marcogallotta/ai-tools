@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from test_selection import execution_guard
 from test_selection.execution_guard import require_safe_test_checkout
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -103,6 +104,30 @@ def test_lane_rejects_stale_head_before_preflight_or_execution(monkeypatch) -> N
     )
 
     assert main(["parallel-safe", "--expected-head", "b" * 40, "--workers", "4"]) == 4
+
+
+def test_lane_ignores_spoofed_primary_root_before_preflight_or_execution(monkeypatch) -> None:
+    namespace = _namespace()
+    main = namespace["main"]
+    protected_primary = execution_guard._protected_primary_root()
+    monkeypatch.setenv("DISH_PROTECTED_PRIMARY_ROOT", "/somewhere/else")
+    monkeypatch.setattr(execution_guard, "_git", lambda _root, *args: {
+        ("rev-parse", "--show-toplevel"): str(protected_primary),
+        ("branch", "--show-current"): "",
+        ("rev-parse", "HEAD"): EXPECTED_HEAD,
+    }[args])
+    monkeypatch.setitem(
+        main.__globals__,
+        "_run_phase",
+        lambda *_args, **_kwargs: pytest.fail("test phase must not start"),
+    )
+    monkeypatch.setitem(
+        main.__globals__,
+        "_xdist_preflight",
+        lambda: pytest.fail("xdist preflight must not start"),
+    )
+
+    assert main(_lane_args("parallel-safe", "--workers", "4")) == 4
 
 
 def test_native_bootstrap_forwards_exact_candidate_head(monkeypatch) -> None:
