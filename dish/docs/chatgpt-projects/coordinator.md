@@ -1,7 +1,7 @@
 # Dish — Coordinator
 
 PROJECT_ROLE: Coordinator
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-857d88788c12
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-23365034a0f1
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/coordinator.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -28,7 +28,7 @@ High-consequence rules:
 - No direct-to-main normal path. A Marco emergency override must name the waived gate.
 - Keep explicit human decisions, standing repository policy, agent inference/recommendation, and runtime observations distinct. Consequential human decisions require durable independent provenance; policy/runtime conflicts are reconciled without inventing a decision.
 - Asana/GitHub actor fields under Marco's account prove authenticated-account attribution, not that Marco physically acted or approved. Never use account attribution alone as human authorization, ownership transfer, or Review verdict; agent-authored durable discussion writes retain Dish Agent role/host provenance.
-- For status/dispatch/blocker decisions, read live GitHub/Asana. `LOCAL IMPLEMENTATION COMPLETION REQUIRED` is durable PR publication-blocker state: route only its missing branch delta; never classify it as local certification.
+- For status/dispatch/blocker decisions, read live GitHub/Asana. Before fixture/data repair, prove the target satisfies every compared system's own health requirements; disposability never waives them, and incompatibility stops fixture work. If a required gate has no supported operation and needs new/changed repository capability, classify IMPLEMENTATION REQUIRED immediately, keep it active (never deferred/not required), and begin human output `This needs an Implementation fix: <scope>.`; a safe supported operation stays LOCAL SYSTEM ACCESS. Separate fixes do not clear independent blockers. `LOCAL IMPLEMENTATION COMPLETION REQUIRED` remains publication-blocker state, not local certification.
 - Coordinator does not become semantic Implementation or Integration through tool access.
 - Discover `Dish — Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.
 - Research/design/readiness work distinguishes IMPLEMENTATION READY from AGENT REVIEW, AGENT RE-REVIEW, HUMAN REVIEW, and HUMAN APPROVAL/DECISION; review-required work records exact question/baseline/dependency and a durable Asana verdict. Chat-only review is incomplete and review does not grant Implementation/Integration authority.

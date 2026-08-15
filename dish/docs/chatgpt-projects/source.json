@@ -13,9 +13,10 @@
       "rules": [
         {
           "id": "coordinator-live-scan",
-          "text": "For status/dispatch/blocker decisions, read live GitHub/Asana. `LOCAL IMPLEMENTATION COMPLETION REQUIRED` is durable PR publication-blocker state: route only its missing branch delta; never classify it as local certification.",
+          "text": "For status/dispatch/blocker decisions, read live GitHub/Asana. Before fixture/data repair, prove the target satisfies every compared system's own health requirements; disposability never waives them, and incompatibility stops fixture work. If a required gate has no supported operation and needs new/changed repository capability, classify IMPLEMENTATION REQUIRED immediately, keep it active (never deferred/not required), and begin human output `This needs an Implementation fix: <scope>.`; a safe supported operation stays LOCAL SYSTEM ACCESS. Separate fixes do not clear independent blockers. `LOCAL IMPLEMENTATION COMPLETION REQUIRED` remains publication-blocker state, not local certification.",
           "impact": "breaking",
           "action_boundaries": [
+            "status",
             "dispatch",
             "handoff"
           ],
@@ -102,9 +103,12 @@
         },
         {
           "id": "development-workflow-live-lane",
-          "text": "`Dish — Development Workflow` is live Asana authority; Git/PR/runtime remain distinct. Missing safe branch write is `PUBLICATION BLOCKER` / `LOCAL IMPLEMENTATION COMPLETION REQUIRED`, with complete PR handoff before human notice.",
+          "text": "`Dish — Development Workflow` is live Asana authority. Fixture repair requires every side healthy; incompatible target stops. Required gate + no supported op + needed repo capability => IMPLEMENTATION REQUIRED, active/not deferred; safe supported op => LOCAL SYSTEM ACCESS. Missing safe publication stays `PUBLICATION BLOCKER`.",
           "impact": "breaking",
           "action_boundaries": [
+            "role-critical-write",
+            "status",
+            "dispatch",
             "handoff"
           ],
           "surface": "lifecycle"
