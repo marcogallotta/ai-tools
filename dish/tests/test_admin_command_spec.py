@@ -82,7 +82,7 @@ def _explicitly_invokes_command(paragraph: str, command: str) -> bool:
     )
 
 
-def _assert_operator_doc_command_presentation(text: str, relative: str) -> None:
+def _assert_operator_doc_command_presentation(text: str, relative: str) -> bool:
     paragraphs = re.split(r"\n\s*\n", text)
     for index, paragraph in enumerate(paragraphs):
         lower = paragraph.lower()
@@ -111,6 +111,7 @@ def _assert_operator_doc_command_presentation(text: str, relative: str) -> None:
                 f"{relative} recommends {tier} command(s) {sorted(mentioned)} "
                 f"without an explicit {tier} exception"
             )
+    return True
 
 
 def test_registry_supplies_shared_command_identity_to_cli() -> None:
@@ -151,9 +152,9 @@ def test_registry_presentation_tiers_match_operator_surface() -> None:
 def test_maintained_operator_docs_do_not_recommend_non_primary_commands() -> None:
     dish_root = Path(__file__).resolve().parents[1]
     for relative in ("README.md", "docs/runtime-contract.md"):
-        _assert_operator_doc_command_presentation(
+        assert _assert_operator_doc_command_presentation(
             (dish_root / relative).read_text(), relative
-        )
+        ) is True
 
 
 def test_operator_doc_drift_gate_rejects_review_queue_as_normal_start() -> None:
@@ -189,22 +190,22 @@ def test_operator_doc_drift_gate_rejects_plain_review_queue_as_normal_start() ->
 
 
 def test_operator_doc_drift_gate_allows_explicit_review_queue_detail_guidance() -> None:
-    _assert_operator_doc_command_presentation(
+    assert _assert_operator_doc_command_presentation(
         "The normal operator entry point is `dish-admin queue`. "
         "The hidden `review-queue` command remains a detail view.",
         "synthetic.md",
-    )
+    ) is True
 
 
 def test_operator_doc_drift_gate_allows_explicit_attention_compatibility_guidance() -> None:
-    _assert_operator_doc_command_presentation(
+    assert _assert_operator_doc_command_presentation(
         "Do not start with attention; it is a compatibility alias for old callers.",
         "synthetic.md",
-    )
+    ) is True
 
 
 def test_operator_doc_drift_gate_ignores_longer_command_like_tokens() -> None:
-    _assert_operator_doc_command_presentation(
+    assert _assert_operator_doc_command_presentation(
         "Start with inattention or review-queue-extra for this unrelated example.",
         "synthetic.md",
-    )
+    ) is True
