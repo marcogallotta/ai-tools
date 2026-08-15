@@ -33,6 +33,7 @@ from .document_authority import (
     destination_gid,
     held_document,
     parse_canonical_document,
+    prepared_change_document,
     prepared_document,
     ready_document,
     resumed_document,
@@ -498,6 +499,10 @@ class PostgresCommandPort:
                         preconstruction_hold=preconstruction_hold,
                         semantic_proposal_queued=bool(
                             data.get("semantic_proposal_queued")
+                        ),
+                        non_material_checkin=(
+                            call.command_name == "prepare"
+                            and data.get("handoff") == "checked-in"
                         ),
                     ),
                     result_data=data,
@@ -2339,6 +2344,117 @@ class PostgresCommandPort:
             )
         return operation
 
+    def _change_intent(self, operation: wf.WorkflowOperation) -> tuple[str, str]:
+        creation_execution_id = operation.creation_execution_id
+        if creation_execution_id is None:
+            raise CommandRuleError(
+                "CHANGE_INTENT_MISSING",
+                "change operation is missing its durable start execution",
+            )
+        start_execution = self.session.get(wf.CommandExecution, creation_execution_id)
+        intent = dict(start_execution.canonical_intent) if start_execution is not None else {}
+        arguments = dict(intent.get("arguments") or {})
+        change_level = str(arguments.get("change_level") or "").strip()
+        change_reason = str(arguments.get("change_reason") or "").strip()
+        if (
+            start_execution is None
+            or start_execution.command_name != "start"
+            or change_level not in {"small", "large"}
+            or not change_reason
+        ):
+            raise CommandRuleError(
+                "CHANGE_INTENT_MISSING",
+                "change operation is missing its durable material-change intent",
+            )
+        return change_level, change_reason
+
+    def _signed_baseline_signoff(
+        self, task_id: uuid.UUID, content_version_id: uuid.UUID
+    ) -> wf.VerificationSignoff | None:
+        current_version_id: uuid.UUID | None = content_version_id
+        expected_inherited_signoff_id: uuid.UUID | None = None
+        visited: set[uuid.UUID] = set()
+        while current_version_id is not None:
+            if current_version_id in visited:
+                return None
+            visited.add(current_version_id)
+
+            signoff = self.session.scalar(
+                select(wf.VerificationSignoff)
+                .where(
+                    wf.VerificationSignoff.task_id == task_id,
+                    wf.VerificationSignoff.signed_content_version_id
+                    == current_version_id,
+                )
+                .order_by(wf.VerificationSignoff.signed_at.desc())
+                .limit(1)
+            )
+            if signoff is not None:
+                if (
+                    expected_inherited_signoff_id is not None
+                    and signoff.signoff_id != expected_inherited_signoff_id
+                ):
+                    return None
+                return signoff
+
+            version = self.session.get(models.ContentVersion, current_version_id)
+            if (
+                version is None
+                or version.task_id != task_id
+                or version.command_execution_id is None
+                or version.predecessor_content_version_id is None
+            ):
+                return None
+            prepare_execution = self.session.get(
+                wf.CommandExecution, version.command_execution_id
+            )
+            if (
+                prepare_execution is None
+                or prepare_execution.command_name != "prepare"
+                or prepare_execution.operation_id is None
+            ):
+                return None
+            checkin_operation = self.session.get(
+                wf.WorkflowOperation, prepare_execution.operation_id
+            )
+            if (
+                checkin_operation is None
+                or checkin_operation.task_id != task_id
+                or checkin_operation.lifecycle != "completed"
+                or checkin_operation.terminal_outcome != "non_material_checkin"
+            ):
+                return None
+            step = self.session.scalar(
+                select(wf.OperationStep)
+                .where(
+                    wf.OperationStep.operation_id == checkin_operation.operation_id,
+                    wf.OperationStep.command_execution_id
+                    == prepare_execution.execution_id,
+                    wf.OperationStep.outcome == "complete",
+                )
+                .order_by(wf.OperationStep.step_sequence.desc())
+                .limit(1)
+            )
+            evidence = dict(step.evidence or {}) if step is not None else {}
+            if (
+                evidence.get("handoff") != "checked-in"
+                or evidence.get("content_version_id") != str(current_version_id)
+            ):
+                return None
+            inherited_signoff_id = evidence.get("inherited_signoff_id")
+            if inherited_signoff_id is not None:
+                try:
+                    inherited_signoff_uuid = uuid.UUID(str(inherited_signoff_id))
+                except ValueError:
+                    return None
+                if (
+                    expected_inherited_signoff_id is not None
+                    and inherited_signoff_uuid != expected_inherited_signoff_id
+                ):
+                    return None
+                expected_inherited_signoff_id = inherited_signoff_uuid
+            current_version_id = version.predecessor_content_version_id
+
     def _prepare(self, call, generation, binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
         if operation.lifecycle != "open":
@@ -2358,6 +2474,8 @@ class PostgresCommandPort:
         )
         file_text = call.arguments.get("file_text")
         body_value = call.arguments.get("body")
+        change_preparation = None
+        inherited_signoff = None
         if operation.kind == "initial" and file_text is not None:
             parts = prepared_document(
                 str(file_text),
@@ -2366,6 +2484,37 @@ class PostgresCommandPort:
                 at=call.now,
                 protocol_release=binding.protocol_release,
             )
+        elif operation.kind == "change" and file_text is not None:
+            requested_classification = call.arguments.get("material_classification")
+            prior_parts = parse_canonical_document(
+                title=prior.title, body=prior.body
+            )
+            change_level, change_reason = self._change_intent(operation)
+            change_preparation = prepared_change_document(
+                str(file_text),
+                prior=prior_parts.document,
+                requested_classification=(
+                    str(requested_classification)
+                    if requested_classification is not None
+                    else None
+                ),
+                change_level=change_level,
+                change_reason=change_reason,
+                agent=str(call.arguments.get("agent")),
+                model=str(call.arguments.get("model")),
+                at=call.now,
+                protocol_release=binding.protocol_release,
+            )
+            parts = change_preparation.parts
+            if change_preparation.effective_classification != "material":
+                inherited_signoff = self._signed_baseline_signoff(
+                    task.task_id, prior.content_version_id
+                )
+                if inherited_signoff is None:
+                    raise CommandRuleError(
+                        "NON_MATERIAL_SIGNED_BASELINE_MISSING",
+                        "signed check-in requires an exact signed baseline",
+                    )
         else:
             parts = parse_canonical_document(
                 file_text=str(file_text) if file_text is not None else None,
@@ -2383,19 +2532,26 @@ class PostgresCommandPort:
             predecessor_content_version_id=prior.content_version_id,
             at=call.now,
         )
-        verification_section_id = self._section_for_role(
-            generation.generation_id,
-            "verification_queue",
-            missing_code="VERIFICATION_QUEUE_MISSING",
-            missing_message="active registry has no Verification Queue",
+        non_material_checkin = (
+            change_preparation is not None
+            and change_preparation.effective_classification != "material"
         )
-        self._set_placement(
-            generation.generation_id,
-            task.task_id,
-            verification_section_id,
-            execution.execution_id,
-            call.now,
-        )
+        verification_section_id = None
+        cycle = None
+        if not non_material_checkin:
+            verification_section_id = self._section_for_role(
+                generation.generation_id,
+                "verification_queue",
+                missing_code="VERIFICATION_QUEUE_MISSING",
+                missing_message="active registry has no Verification Queue",
+            )
+            self._set_placement(
+                generation.generation_id,
+                task.task_id,
+                verification_section_id,
+                execution.execution_id,
+                call.now,
+            )
         author_lease = self.session.scalar(
             select(wf.ServiceLease).where(
                 wf.ServiceLease.operation_id == operation.operation_id,
@@ -2409,11 +2565,47 @@ class PostgresCommandPort:
                 "released",
                 execution,
                 call.now,
-                "candidate prepared for Verification",
+                (
+                    "non-material change checked in"
+                    if non_material_checkin
+                    else "candidate prepared for Verification"
+                ),
             )
-        operation.phase = "await_verification"
-        operation.persisted_actions = ["inspect"]
+        if non_material_checkin:
+            operation.lifecycle = "completed"
+            operation.phase = "completed"
+            operation.persisted_actions = []
+            operation.terminal_outcome = "non_material_checkin"
+            operation.terminal_at = call.now
+        else:
+            operation.phase = "await_verification"
+            operation.persisted_actions = ["inspect"]
         operation.operation_revision += 1
+        step_evidence: dict[str, Any] = {
+            "content_version_id": str(version_id),
+        }
+        if verification_section_id is not None:
+            step_evidence["section_id"] = str(verification_section_id)
+        if change_preparation is not None:
+            step_evidence["handoff"] = (
+                "checked-in" if non_material_checkin else "verification"
+            )
+            if change_preparation.body_changed:
+                step_evidence["material_classification"] = {
+                    "requested": change_preparation.requested_classification,
+                    "effective": change_preparation.effective_classification,
+                    "forced_material_reasons": list(
+                        change_preparation.forced_material_reasons
+                    ),
+                    "effective_change_level": change_preparation.effective_change_level,
+                }
+            if inherited_signoff is not None:
+                step_evidence["inherited_signoff_id"] = str(
+                    inherited_signoff.signoff_id
+                )
+                step_evidence["inherited_signoff_cycle_id"] = str(
+                    inherited_signoff.cycle_id
+                )
         self.session.add(
             wf.OperationStep(
                 step_id=self.uuid_factory(),
@@ -2422,20 +2614,18 @@ class PostgresCommandPort:
                 step_sequence=self._next_step(operation.operation_id),
                 outcome="complete",
                 command_execution_id=execution.execution_id,
-                evidence={
-                    "content_version_id": str(version_id),
-                    "section_id": str(verification_section_id),
-                },
+                evidence=step_evidence,
                 occurred_at=call.now,
             )
         )
-        cycle = self.workflow.open_verification_cycle(
-            cycle_id=self.uuid_factory(),
-            execution_id=execution.execution_id,
-            operation_id=operation.operation_id,
-            reviewed_content_version_id=version_id,
-            created_at=call.now,
-        )
+        if not non_material_checkin:
+            cycle = self.workflow.open_verification_cycle(
+                cycle_id=self.uuid_factory(),
+                execution_id=execution.execution_id,
+                operation_id=operation.operation_id,
+                reviewed_content_version_id=version_id,
+                created_at=call.now,
+            )
         self.session.flush()
         projection_id = self._project(
             generation.generation_id,
@@ -2445,20 +2635,41 @@ class PostgresCommandPort:
             {"content_version_id": str(version_id)},
             call.now,
         )
-        placement_projection_id = self._project(
-            generation.generation_id,
-            execution.execution_id,
-            task.task_id,
-            "move_task",
-            {"section_id": str(verification_section_id)},
-            call.now,
-        )
-        return {
+        placement_projection_id = None
+        if verification_section_id is not None:
+            placement_projection_id = self._project(
+                generation.generation_id,
+                execution.execution_id,
+                task.task_id,
+                "move_task",
+                {"section_id": str(verification_section_id)},
+                call.now,
+            )
+        result: dict[str, Any] = {
             "content_version_id": str(version_id),
-            "cycle_id": str(cycle.cycle_id),
+            "cycle_id": str(cycle.cycle_id) if cycle is not None else None,
             "projection_event_id": projection_id,
             "placement_projection_event_id": placement_projection_id,
         }
+        if change_preparation is not None:
+            result["handoff"] = (
+                "checked-in" if non_material_checkin else "verification"
+            )
+        if change_preparation is not None and change_preparation.body_changed:
+            result["material_classification"] = {
+                "classified_subject": "canonical body diff from the signed baseline",
+                "requested": change_preparation.requested_classification,
+                "effective": change_preparation.effective_classification,
+                "forced_material_reasons": list(
+                    change_preparation.forced_material_reasons
+                ),
+                "route": (
+                    "signed-check-in"
+                    if non_material_checkin
+                    else "verification"
+                ),
+            }
+        return result
 
     def _inspect(self, call, generation, _binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
