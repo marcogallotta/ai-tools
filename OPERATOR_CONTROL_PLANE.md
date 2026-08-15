@@ -38,3 +38,13 @@ Coordinator's ordinary next-work path is deliberately narrow:
 5. dispatch only if that live check agrees.
 
 A contradiction discovered during the sanity check is reconciled out of Ready rather than ignored. Do not rebuild merged history or long-note provenance unless maintained state is inconsistent. Ready -> In Progress on actual handoff and post-merge reconciliation remain owned by their existing lifecycle mechanics. This policy creates **no scheduler, second queue, or ownership service**. Do not create a specialist scheduler.
+
+## Authorized Implementation handoff state
+
+When Coordinator or Development Workflow emits an **authorized** Implementation handoff, the handoff and owning Asana lifecycle write are one control-plane operation: move the task from `Ready` to `In Progress`, write one durable handoff record, and read both state and record back before claiming the handoff durable.
+
+The durable record contains task GID, target role, handoff timestamp, handoff source, stable handoff identity, and branch/base plus PR/head when known. A branch still equal to base or no PR immediately after handoff is not evidence that the work was never handed off. Later GitHub branch/PR evidence is reconciled onto the same task/lineage.
+
+At three hours after the durable handoff timestamp, if there is still no associated PR or other authoritative implementation evidence, surface exactly one `STALE HANDOFF — owner status unknown` observation for that handoff identity. The alert is observability only. It never authorizes duplicate dispatch, replacement, or a second writer. Before any ownership change, re-read live Asana + GitHub and reconcile the existing lineage.
+
+`scripts/operator_handoff.py` encodes the write/readback and idempotent staleness predicates. It uses the existing Asana orchestration surface and GitHub lineage; it creates no queue, admission database, ownership service, or new control plane.
