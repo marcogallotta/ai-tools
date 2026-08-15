@@ -32,13 +32,24 @@ TASK = "1217486212354554"
 ROUTE = "worker-fix"
 
 
-def request_comment(*, comment_id=10, action="fix", head=HEAD, review=77, grant=None, generation=None, route=ROUTE, authority=None):
+def request_comment(
+    *,
+    comment_id=10,
+    action="fix",
+    head=HEAD,
+    review=77,
+    grant=None,
+    generation=None,
+    route=ROUTE,
+    authority=None,
+    branch="agent/integration-v1",
+):
     marker = broker.request_marker(
         request_id=str(uuid.UUID(int=comment_id)),
         action=action,
         task_gid=TASK,
         pr_number=95,
-        branch="agent/integration-v1",
+        branch=branch,
         head=head,
         review_id=review,
         main_sha=MAIN if action in {"merge", "integration-reconcile"} else None,
@@ -309,6 +320,109 @@ def test_stale_takeover_requires_positive_marco_authority():
     assert kind == "takeover"
     assert grant_id != state.grant_id
     assert generation == 2
+
+
+def stale_grant(*, action="fix", route=ROUTE):
+    event = event_for(action=action, route=route)
+    return broker.GrantState(
+        grant_id=event.grant_id,
+        generation=1,
+        action=action,
+        task_gid=TASK,
+        pr_number=95,
+        branch="agent/integration-v1",
+        starting_head=HEAD,
+        review_id=77,
+        main_sha=MAIN if action in {"merge", "integration-reconcile"} else None,
+        route=route,
+        consumer_id=event.payload["consumer_id"],
+        issued_at=NOW - timedelta(hours=2),
+        stale_after=NOW - timedelta(hours=1),
+        event_comment_id=501,
+    )
+
+
+@pytest.mark.parametrize(
+    ("grant_id", "generation"),
+    [
+        (None, 1),
+        (str(uuid.UUID(int=1000)), 1),
+        (str(uuid.UUID(int=999)), 2),
+    ],
+)
+def test_takeover_rejects_missing_or_wrong_current_grant_generation(grant_id, generation):
+    state = stale_grant()
+    request = broker.parse_request_comment(
+        request_comment(action="takeover", grant=grant_id, generation=generation, authority="decision-1")
+    )
+    task = {"gid": TASK, "notes": "<!-- dish-marco-authority:v1 decision=decision-1 action=takeover broker_admission=true -->"}
+    with pytest.raises(broker.BrokerError, match="exact current grant generation/branch/head"):
+        broker.decision_for_request(request, current=state, task=task, now=NOW)
+
+
+@pytest.mark.parametrize(
+    ("head", "branch"),
+    [("c" * 40, "agent/integration-v1"), (HEAD, "agent/moved")],
+)
+def test_takeover_rejects_head_or_branch_movement_before_reclassification_or_recovery(head, branch):
+    state = stale_grant()
+    request = broker.parse_request_comment(
+        request_comment(
+            action="takeover",
+            head=head,
+            branch=branch,
+            grant=state.grant_id,
+            generation=state.generation,
+            authority="decision-1",
+        )
+    )
+    task = {"gid": TASK, "notes": "<!-- dish-marco-authority:v1 decision=decision-1 action=takeover broker_admission=true -->"}
+    with pytest.raises(broker.BrokerError, match="exact current grant generation/branch/head"):
+        broker.decision_for_request(request, current=state, task=task, now=NOW)
+
+
+@pytest.mark.parametrize(
+    ("action", "route", "policy"),
+    [
+        ("fix", ROUTE, {ROUTE: {"role": "implementation", "actions": ["takeover"]}}),
+        ("merge", "integration", {"integration": {"role": "integration", "actions": ["takeover"]}}),
+    ],
+)
+def test_takeover_cannot_use_literal_takeover_permission_for_original_action(action, route, policy):
+    state = stale_grant(action=action, route=route)
+    request = broker.parse_request_comment(
+        request_comment(
+            action="takeover",
+            grant=state.grant_id,
+            generation=state.generation,
+            route=route,
+            authority="decision-1",
+        )
+    )
+    with pytest.raises(broker.BrokerError, match="current grant's standing role/action authority"):
+        broker.validate_takeover_preconditions(request, current=state, route_policy=policy)
+
+
+def test_correctly_bound_marco_authorized_takeover_preserves_original_action_authority():
+    state = stale_grant()
+    request = broker.parse_request_comment(
+        request_comment(
+            action="takeover",
+            grant=state.grant_id,
+            generation=state.generation,
+            authority="decision-1",
+        )
+    )
+    broker.validate_takeover_preconditions(
+        request,
+        current=state,
+        route_policy={ROUTE: {"role": "implementation", "actions": ["fix"]}},
+    )
+    task = {"gid": TASK, "notes": "<!-- dish-marco-authority:v1 decision=decision-1 action=takeover broker_admission=true -->"}
+    kind, grant_id, generation = broker.decision_for_request(request, current=state, task=task, now=NOW)
+    assert (kind, generation) == ("takeover", state.generation + 1)
+    assert grant_id != state.grant_id
+    assert broker.action_for_state_event(request, state) == state.action
 
 
 def test_asana_hold_change_prevents_consequential_grant_even_with_repository_permission():

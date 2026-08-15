@@ -801,7 +801,7 @@ def validate_live_request_preconditions(
         raise BrokerError(reason or "live Asana task does not permit mutation")
     if permission.lower() not in {"write", "maintain", "admin"}:
         raise BrokerError("requester lacks required repository collaborator permission")
-    if not route_authorized(route_policy, request.route, request.action):
+    if request.action != "takeover" and not route_authorized(route_policy, request.route, request.action):
         raise BrokerError("configured route does not carry the standing role/action authority required for this request")
 
 
@@ -813,6 +813,30 @@ def grant_matches_request(state: GrantState, request: MutationRequest) -> bool:
         and request.task_gid == state.task_gid
         and request.route == state.route
     )
+
+
+def takeover_matches_current_grant(state: GrantState, request: MutationRequest) -> bool:
+    """Takeover replaces one fenced mutation only; it never reclassifies that mutation."""
+    return (
+        grant_matches_request(state, request)
+        and request.branch == state.branch
+        and request.head == state.starting_head
+    )
+
+
+def validate_takeover_preconditions(
+    request: MutationRequest,
+    *,
+    current: GrantState | None,
+    route_policy: Mapping[str, Mapping[str, Any]],
+) -> None:
+    if current is None or current.closed or not takeover_matches_current_grant(current, request):
+        raise BrokerError("takeover does not reference the exact current grant generation/branch/head")
+    # Route changes need their own explicit durable authority. V1 has none, so the
+    # replacement must stay on the fenced route and prove that route carries the
+    # original grant action, rather than merely declaring the takeover verb.
+    if request.route != current.route or not route_authorized(route_policy, request.route, current.action):
+        raise BrokerError("takeover route does not carry the current grant's standing role/action authority")
 
 
 def decision_for_request(
@@ -841,6 +865,8 @@ def decision_for_request(
     if request.action == "takeover":
         if current is None or current.closed or not current.is_stale(now):
             raise BrokerError("takeover requires a stale current grant; age alone never transfers work")
+        if not takeover_matches_current_grant(current, request):
+            raise BrokerError("takeover does not reference the exact current grant generation/branch/head")
         if not marco_authority_present(task, request.authority_id, action="takeover"):
             raise BrokerError("takeover requires exact durable Marco authority naming broker admission")
         return "takeover", str(uuid.uuid4()), current.generation + 1
@@ -995,6 +1021,8 @@ def prepare_broker_event(
         repository_id=repository_id,
     )
     current = fold_verified_events(verified)
+    if request.action == "takeover":
+        validate_takeover_preconditions(request, current=current, route_policy=route_policy)
 
     current_pr = engine.inspect(pr)
     reviews = github.get_reviews(request.pr_number)
@@ -1022,11 +1050,11 @@ def prepare_broker_event(
         main_sha = current.main_sha
         route = current.route
     elif kind == "takeover" and current is not None:
-        branch = request.branch
-        starting_head = request.head
-        review_id = request.review_id if request.review_id is not None else current.review_id
-        main_sha = request.main_sha if request.main_sha is not None else current.main_sha
-        route = request.route
+        branch = current.branch
+        starting_head = current.starting_head
+        review_id = current.review_id
+        main_sha = current.main_sha
+        route = current.route
     else:
         branch = request.branch
         starting_head = request.head
