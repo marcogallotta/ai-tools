@@ -158,6 +158,33 @@ def test_native_lane_without_exact_binding_fails_closed_to_full_native_only():
     }
 
 
+def test_mixed_bound_and_unbound_native_impacts_fail_closed_to_full_native():
+    plan = build(
+        [
+            "dish/dish_pg/migration_status.py",
+            "dish/deploy/systemd/dish-postgres-prod.service",
+        ]
+    )
+    assert plan["force_full"] is False
+    assert plan["native_postgresql"] == {
+        "mode": "full",
+        "test_files": [],
+        "reason": "native-impact-without-test-binding",
+    }
+
+
+def test_all_bound_native_impacts_union_exact_native_test_files():
+    plan = build(["dish/dish_pg/migration_status.py", "dish/dish_pg/importer.py"])
+    assert plan["native_postgresql"] == {
+        "mode": "focused",
+        "test_files": [
+            "tests/postgresql/native/test_importer.py",
+            "tests/postgresql/native/test_migration_status.py",
+        ],
+        "reason": "dish-selector-native-bindings",
+    }
+
+
 def test_unresolved_dish_semantic_predicates_force_full_until_review_disposes_them():
     unresolved = planner.build_repository_plan(
         ["dish/dish_tool/application_service.py"],

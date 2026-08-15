@@ -158,6 +158,29 @@ def test_native_postgresql_command_stays_full_when_lane_has_no_exact_native_bind
     assert "--test-file" not in native
 
 
+def test_mixed_bound_and_unbound_native_impacts_fail_closed_to_full_native() -> None:
+    plan = build_plan(
+        ["dish_pg/migration_status.py", "deploy/systemd/dish-postgres-prod.service"],
+        policy_path=POLICY,
+    )
+
+    native = next(command for command in plan.commands if "dish-pg-native-certification" in command)
+    assert "--test-file" not in native
+    assert plan.native_postgresql_fully_bound is False
+
+
+def test_all_bound_native_impacts_union_exact_native_test_files() -> None:
+    plan = build_plan(
+        ["dish_pg/migration_status.py", "dish_pg/importer.py"],
+        policy_path=POLICY,
+    )
+
+    native = next(command for command in plan.commands if "dish-pg-native-certification" in command)
+    assert "--test-file tests/postgresql/native/test_migration_status.py" in native
+    assert "--test-file tests/postgresql/native/test_importer.py" in native
+    assert plan.native_postgresql_fully_bound is True
+
+
 def test_agent_can_add_a_semantic_escalation_lane() -> None:
     plan = build_plan(
         ["dish_tool/review_queue.py"],

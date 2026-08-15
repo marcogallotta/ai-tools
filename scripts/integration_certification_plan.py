@@ -273,21 +273,19 @@ def _native_postgresql_selection(
     if force_full:
         return {"mode": "full", "test_files": [], "reason": "repository-plan-force-full"}
 
-    focused = () if dish_plan is None else dish_plan.focused_tests  # type: ignore[attr-defined]
-    test_files = sorted(
-        {
-            test
-            for test in focused
-            if test.startswith("tests/postgresql/native/test_") and test.endswith(".py")
-        }
-    )
-    if test_files:
-        return {
-            "mode": "focused",
-            "test_files": test_files,
-            "reason": "dish-selector-native-bindings",
-        }
-    # A native semantic lane without exact governed native bindings is not guessed narrower.
+    if (
+        dish_plan is not None
+        and "native PostgreSQL certification" in dish_plan.lanes  # type: ignore[attr-defined]
+        and dish_plan.native_postgresql_fully_bound  # type: ignore[attr-defined]
+    ):
+        test_files = list(dish_plan.native_postgresql_test_files)  # type: ignore[attr-defined]
+        if test_files:
+            return {
+                "mode": "focused",
+                "test_files": test_files,
+                "reason": "dish-selector-native-bindings",
+            }
+    # Every native-triggering path/addition must be exactly bound before narrowing.
     return {"mode": "full", "test_files": [], "reason": "native-impact-without-test-binding"}
 
 
