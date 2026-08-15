@@ -1,11 +1,11 @@
-name: PR82 merge diagnose
+name: PR82 reconcile onto current main
 on:
   push:
     branches: [agent/d1-durable-review-routing]
 permissions:
-  contents: read
+  contents: write
 jobs:
-  diagnose:
+  reconcile:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-24.04
     steps:
@@ -13,23 +13,168 @@ jobs:
         with:
           ref: agent/d1-durable-review-routing
           fetch-depth: 0
-      - name: Diagnose merge with current main
+      - name: Merge current main and resolve canonical project sources
         shell: bash
         run: |
-          set +e
+          set -euo pipefail
           git fetch origin main
-          git config user.name 'Dish Agent Integration (diagnostic)'
+          git config user.name 'Dish Agent Integration (GitHub Actions)'
           git config user.email 'dish-agent@users.noreply.github.com'
-          git merge --no-commit --no-ff origin/main
-          rc=$?
-          echo "MERGE_RC=$rc"
-          echo '--- UNMERGED FILES ---'
-          git diff --name-only --diff-filter=U
-          echo '--- STATUS ---'
-          git status --short
-          echo '--- CONFLICT HUNKS ---'
-          for f in $(git diff --name-only --diff-filter=U); do
-            echo "===== $f ====="
-            git diff -- "$f" | sed -n '1,260p'
+          git merge --no-commit --no-ff origin/main || true
+          python3 - <<'PY'
+          import ast
+          import json
+          import re
+          import subprocess
+          from pathlib import Path
+
+          def stage(stage, path):
+              return subprocess.check_output(['git','show',f':{stage}:{path}'], text=True)
+
+          MISSING = object()
+          def ident_key(items):
+              if not items or not all(isinstance(x, dict) for x in items):
+                  return None
+              for key in ('id','name','role','to_version','from_version'):
+                  vals=[x.get(key) for x in items]
+                  if all(v is not None for v in vals) and len(set(vals))==len(vals):
+                      return key
+              return None
+
+          def merge3(base, ours, theirs):
+              if ours == base:
+                  return theirs
+              if theirs == base:
+                  return ours
+              if ours == theirs:
+                  return ours
+              if isinstance(base, dict) and isinstance(ours, dict) and isinstance(theirs, dict):
+                  out={}
+                  for k in list(theirs) + [k for k in ours if k not in theirs]:
+                      b=base.get(k,MISSING); o=ours.get(k,MISSING); t=theirs.get(k,MISSING)
+                      if o is MISSING:
+                          if b is MISSING: out[k]=t
+                          elif t != b: out[k]=t
+                          continue
+                      if t is MISSING:
+                          if b is MISSING or o != b: out[k]=o
+                          continue
+                      if b is MISSING:
+                          out[k]=o if o != t else t
+                      else:
+                          out[k]=merge3(b,o,t)
+                  return out
+              if isinstance(base, list) and isinstance(ours, list) and isinstance(theirs, list):
+                  all_items=[x for seq in (base,ours,theirs) for x in seq]
+                  key=ident_key(all_items)
+                  if key:
+                      bm={x[key]:x for x in base}; om={x[key]:x for x in ours}; tm={x[key]:x for x in theirs}
+                      order=[x[key] for x in theirs] + [x[key] for x in ours if x[key] not in tm]
+                      out=[]
+                      for ident in order:
+                          b=bm.get(ident,MISSING); o=om.get(ident,MISSING); t=tm.get(ident,MISSING)
+                          if o is MISSING:
+                              if b is MISSING: out.append(t)
+                              elif t != b: out.append(t)
+                              continue
+                          if t is MISSING:
+                              if b is MISSING or o != b: out.append(o)
+                              continue
+                          if b is MISSING: out.append(o if o != t else t)
+                          else: out.append(merge3(b,o,t))
+                      return out
+                  # scalar/ordered list: preserve main additions, preserve #82 additions,
+                  # and honor #82 removals of base entries.
+                  result=[]
+                  for x in theirs:
+                      if x in base and x not in ours:
+                          continue
+                      if x not in result:
+                          result.append(x)
+                  for x in ours:
+                      if x not in result:
+                          result.append(x)
+                  return result
+              # Both sides changed the same scalar: #82 owns the D1 delta here.
+              return ours
+
+          for path in ('dish/docs/chatgpt-projects/source.json','dish/docs/chatgpt-projects/evals.json'):
+              base=json.loads(stage(1,path)); ours=json.loads(stage(2,path)); theirs=json.loads(stage(3,path))
+              merged=merge3(base,ours,theirs)
+              Path(path).write_text(json.dumps(merged, indent=2, sort_keys=False) + '\n')
+
+          # Preserve current-main generator logic and union #82's required eval IDs.
+          path='dish/scripts/chatgpt_project_kernels.py'
+          ours=stage(2,path); theirs=stage(3,path)
+          pat=re.compile(r'^REQUIRED_EVAL_IDS=(\{.*\})$', re.M)
+          mo=pat.search(ours); mt=pat.search(theirs)
+          if not mo or not mt:
+              raise SystemExit('REQUIRED_EVAL_IDS line not found')
+          ids=set(ast.literal_eval(mo.group(1))) | set(ast.literal_eval(mt.group(1)))
+          replacement='REQUIRED_EVAL_IDS=' + repr(set(sorted(ids)))
+          merged=pat.sub(replacement, theirs, count=1)
+          Path(path).write_text(merged)
+
+          # Preserve current-main kernel tests plus #82's D1-specific observations/assertions.
+          path='dish/tests/test_chatgpt_project_kernels.py'
+          text=stage(3,path)
+          marker=" if sid=='configured-repository-pr-routing':\n  return [{'seq':1,'kind':'connector_read','operation':'pull_request_read','connector':'GitHub','repository':'marcogallotta/ai-tools','pr':31 if role=='review' else 34}]\n"
+          additions=""" if sid=='review-remote-local-evidence-pr-handoff': return [\n  {'seq':1,'kind':'tool','operation':'write_exact_head_pr_handoff','pr_number':61},\n  {'seq':2,'kind':'tool','operation':'verify_pr_handoff_readback','pr_number':61},\n  {'seq':3,'kind':'message','operation':'route_to_local_review','pr_number':61}]\n if sid=='implementation-publication-readback-success': return [\n  {'seq':1,'kind':'tool','operation':'verify_remote_branch_exact_head','pr_number':62},\n  {'seq':2,'kind':'tool','operation':'verify_real_pr_identity','pr_number':62},\n  {'seq':3,'kind':'tool','operation':'verify_pr_branch_and_head','pr_number':62},\n  {'seq':4,'kind':'tool','operation':'verify_ready_readback','pr_number':62},\n  {'seq':5,'kind':'message','operation':'report_review_ready','pr_number':62}]\n"""
+          if 'review-remote-local-evidence-pr-handoff' not in text:
+              if marker not in text: raise SystemExit('kernel test observation marker not found')
+              text=text.replace(marker, marker+additions, 1)
+          text=text.replace(" edge['changes']=edge['changes'][1:]", " edge['changes']=[x for x in edge['changes'] if x['rule_id']!='review-host-role-routing']")
+          text=text.replace("assert len(b['cases'])==73", "assert len(b['cases'])==81")
+          text=text.replace("evaluate_behavior_results(_passing()))==73", "evaluate_behavior_results(_passing()))==81")
+          text=text.replace("'owned branch + commit + PR + exact head'", "'owned branch + commit + real GitHub PR + exact head'")
+          Path(path).write_text(text)
+
+          # Keep main's terminal cleanup section, but use #82's newer exact-head lifecycle wording.
+          path='ci/pr-lifecycle-dispatcher-runbook.md'
+          ours=stage(2,path); theirs=stage(3,path)
+          def paragraph(src):
+              start=src.index('`scripts/pr_gate.py` diagnoses')
+              end=src.index('\n\n', start)
+              return src[start:end]
+          merged=theirs.replace(paragraph(theirs), paragraph(ours), 1)
+          Path(path).write_text(merged)
+          PY
+
+          # Seed generated surfaces/history from current main, then regenerate from merged canonical source.
+          for f in \
+            dish/docs/chatgpt-projects/coordinator.md \
+            dish/docs/chatgpt-projects/development-workflow.md \
+            dish/docs/chatgpt-projects/implementation.md \
+            dish/docs/chatgpt-projects/integration.md \
+            dish/docs/chatgpt-projects/postgresql-dark-launch.md \
+            dish/docs/chatgpt-projects/review.md \
+            dish/docs/chatgpt-projects/workflow.md \
+            dish/docs/chatgpt-projects/manifest.json; do
+            git checkout --theirs -- "$f"
           done
-          exit 0
+
+          python3 dish/scripts/chatgpt_project_kernels.py generate
+          python3 dish/scripts/chatgpt_project_kernels.py check
+          python3 dish/scripts/chatgpt_project_kernels.py eval-validate
+          python3 - <<'PY'
+          import json
+          p=json.load(open('dish/docs/chatgpt-projects/evals.json'))
+          cases=0
+          for s in p['scenarios']:
+              roles=s.get('roles',[])
+              prompts=s.get('prompts')
+              cases += len(prompts) if isinstance(prompts,dict) else max(1,len(roles))
+          if cases != 81:
+              raise SystemExit(f'expected 81 merged eval cases, got {cases}')
+          print('merged eval cases:', cases)
+          PY
+
+          git diff --check
+          git rm .github/workflows/pr82-merge-diagnose.yml
+          git add -A
+          if git diff --name-only --diff-filter=U | grep .; then
+            echo 'unresolved merge conflicts remain' >&2
+            exit 1
+          fi
+          git commit -m 'Reconcile D1 routing with current governance'
+          git push origin HEAD:agent/d1-durable-review-routing
