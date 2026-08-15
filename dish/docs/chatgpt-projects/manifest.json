@@ -1003,8 +1003,8 @@
           },
           "review": {
             "review-action-handoff": "d2dcb847082abe4ec5b518e46be4ba51eec61ce54e88f78cdf3433ceabd4951c",
-            "review-exact-head": "7a148644e6376a9b39ddd0d19ec448f6b880f0dc35372d507fa0276d9657e309",
             "review-formal-comment": "8dbf6ee167c026d9187336f1f51d3a8ea22ea2a66e36477686693cf66e5b72bb",
+            "review-exact-head": "7a148644e6376a9b39ddd0d19ec448f6b880f0dc35372d507fa0276d9657e309",
             "review-integration-boundary": "d33b76d9d70112444f98dd1da4864dece076528670c1ccde170552e500747954",
             "review-no-fix": "79c3d749ed5450e948a5251ed9d6738237a05a1236fa4c77fdfba4de076b0404",
             "review-repository-context": "14bf874b84158ee54e952124d1ae302df3dc0c37cc84a8e1005d3bde2a97bfc6"
@@ -1467,7 +1467,7 @@
     },
     "first_drift_aware_version": "dish-chatgpt-projects-v2-d96ab5f0588d",
     "impact": "breaking",
-    "marco_approval_ref": "asana:task:1217510062693090#comment:1217510062660858",
+    "marco_approval_ref": "github:marcogallotta/ai-tools#pull:103#issuecomment:5304127067",
     "marco_approved": true,
     "pre_floor_versions": [
       "dish-chatgpt-projects-v2-57da079ecc11",
