@@ -1,0 +1,166 @@
+name: B1 exact-tree implementation evidence
+
+on:
+  push:
+    branches:
+      - agent/b1-selector-correctness
+    paths:
+      - '.github/workflows/b1-implementation-evidence.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  evidence:
+    if: contains(github.event.head_commit.message, '[b1-evidence]')
+    runs-on: ubuntu-24.04
+    env:
+      SEMANTIC_SHA: 64697c6efc7f39665918b2695d1a6a076a9e781a
+      BASE_SHA: 9f43db73f9ccfbdcb06e284cf7e7bc5858482b67
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.SEMANTIC_SHA }}
+          fetch-depth: 0
+
+      - name: Verify exact semantic checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SEMANTIC_SHA"
+          test "$(git rev-parse HEAD^{tree})" = '2c595f8c106a978850f44d753d8ddda677f3e3de'
+
+      - name: Resolve canonical Python version
+        id: py
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/dependency_bundle.py expected --repo-root "$GITHUB_WORKSPACE" --github-output "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ steps.py.outputs.python_version }}
+
+      - name: Recreate canonical Python environments
+        uses: ./.github/actions/setup-python-bundle
+        with:
+          github-token: ${{ github.token }}
+          include-flake: false
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+
+      - name: Provision governed PGlite npm dependencies
+        shell: bash
+        run: npm ci --prefix dish/tests/postgresql/pglite
+
+      - name: Start isolated native PostgreSQL
+        shell: bash
+        run: |
+          set -euo pipefail
+          container="b1-evidence-pg-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          docker run -d --rm --name "$container" \
+            -e POSTGRES_DB=dish_ai_tools_ci_test \
+            -e POSTGRES_USER=ai_tools_ci \
+            -e POSTGRES_PASSWORD=ci-only-password \
+            -p 5432:5432 postgres:17.10 >/dev/null
+          echo "B1_POSTGRES_CONTAINER=$container" >> "$GITHUB_ENV"
+          for _ in $(seq 1 30); do
+            if docker exec "$container" pg_isready -U ai_tools_ci -d dish_ai_tools_ci_test >/dev/null 2>&1; then
+              echo 'DISH_TEST_POSTGRESQL_DSN=postgresql+psycopg://ai_tools_ci:ci-only-password@127.0.0.1:5432/dish_ai_tools_ci_test' >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 2
+          done
+          docker logs "$container" >&2 || true
+          exit 1
+
+      - name: Run focused repository selector regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          dish/.venv/bin/python -m pytest -q \
+            ci/tests/test_integration_certification_plan.py \
+            ci/tests/test_pr_certification.py \
+            ci/tests/test_integration_certification.py
+
+      - name: Run focused Dish selector regressions
+        shell: bash
+        working-directory: dish
+        run: |
+          set -euo pipefail
+          .venv/bin/python -m pytest -q \
+            tests/test_dish_test_map_validation.py \
+            tests/test_dish_test_plan.py \
+            tests/postgresql/test_native_postgresql_certification_lane.py \
+            tests/test_flake_policy.py
+
+      - name: Validate ownership map
+        shell: bash
+        working-directory: dish
+        run: .venv/bin/python scripts/dish-test-plan --validate
+
+      - name: Build complete governed Dish plan
+        shell: bash
+        working-directory: dish
+        run: |
+          set -euo pipefail
+          mkdir -p ../.test-artifacts/b1-evidence
+          .venv/bin/python scripts/dish-test-plan --base "$BASE_SHA" --json \
+            > ../.test-artifacts/b1-evidence/dish-plan.json
+          cat ../.test-artifacts/b1-evidence/dish-plan.json
+
+      - name: Execute every planner-required Dish command
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          plan = json.loads(Path('.test-artifacts/b1-evidence/dish-plan.json').read_text())
+          commands = plan['commands']
+          print('planner commands:', len(commands), flush=True)
+          for index, command in enumerate(commands, 1):
+              placeholder = "DISH_TEST_POSTGRESQL_DSN='postgresql+psycopg://...' "
+              if command.startswith(placeholder):
+                  command = command[len(placeholder):]
+              print(f'[{index}/{len(commands)}] {command}', flush=True)
+              subprocess.run(['bash', '-lc', command], cwd='dish', env=os.environ.copy(), check=True)
+          PY
+
+      - name: Verify final semantic diff hygiene
+        shell: bash
+        run: git diff --check "$BASE_SHA" "$SEMANTIC_SHA"
+
+      - name: Upload implementation evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: b1-implementation-evidence-${{ env.SEMANTIC_SHA }}-${{ github.run_id }}
+          path: .test-artifacts/b1-evidence
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Stop isolated PostgreSQL
+        if: always()
+        shell: bash
+        run: |
+          if [[ -n "${B1_POSTGRES_CONTAINER:-}" ]]; then
+            docker rm -f "$B1_POSTGRES_CONTAINER" >/dev/null 2>&1 || true
+          fi
+
+      - name: Self-remove evidence transport after success
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin agent/b1-selector-correctness
+          git checkout -B agent/b1-selector-correctness origin/agent/b1-selector-correctness
+          rm -f .github/workflows/b1-implementation-evidence.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'Remove B1 evidence transport'
+          git push origin HEAD:agent/b1-selector-correctness
