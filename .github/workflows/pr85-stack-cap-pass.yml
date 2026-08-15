@@ -1,0 +1,41 @@
+name: PR85 stacked reconciliation cap pass
+on:
+  push:
+    branches: [agent/quick-win-docs-process-sweep]
+permissions:
+  contents: write
+jobs:
+  reconcile:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/quick-win-docs-process-sweep
+          fetch-depth: 0
+      - name: Run stacked reconciliation with final cap margin
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          src=Path('.github/workflows/pr85-stack-cap-ultrafinal.yml').read_text().splitlines()
+          start=next(i for i,l in enumerate(src) if l.strip()=='run: |')+1
+          lines=[]
+          for line in src[start:]:
+              if line.startswith('          '): lines.append(line[10:])
+              elif not line.strip(): lines.append('')
+              else: break
+          script='\n'.join(lines)+'\n'
+          inject=r'''python3 - <<'PY3'
+          from pathlib import Path
+          p=Path('/tmp/pr85-final.sh'); s=p.read_text()
+          s=s.replace('Allowed composition (explicit current authority only):','Allowed composition (explicit authority only):')
+          s=s.replace('.github/workflows/pr85-stack-cap-ultrafinal.yml', '.github/workflows/pr85-stack-cap-ultrafinal.yml .github/workflows/pr85-stack-cap-pass.yml', 1)
+          p.write_text(s)
+          PY3
+          '''
+          script=script.replace('bash /tmp/pr85-final.sh',inject+'bash /tmp/pr85-final.sh',1)
+          Path('/tmp/pr85-pass.sh').write_text(script)
+          PY
+          bash /tmp/pr85-pass.sh
