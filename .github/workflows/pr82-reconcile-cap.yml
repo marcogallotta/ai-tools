@@ -1,0 +1,58 @@
+name: PR82 reconciliation within kernel cap
+on:
+  push:
+    branches: [agent/d1-durable-review-routing]
+permissions:
+  contents: write
+jobs:
+  reconcile:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/d1-durable-review-routing
+          fetch-depth: 0
+      - name: Build corrected reconciliation and run it
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          src=Path('.github/workflows/pr82-reconcile-final.yml').read_text().splitlines()
+          start=next(i for i,l in enumerate(src) if l.strip()=='run: |') + 1
+          lines=[]
+          for line in src[start:]:
+              if line.startswith('          '): lines.append(line[10:])
+              elif not line.strip(): lines.append('')
+              else: break
+          wrapper='\n'.join(lines)+'\n'
+          wrapper=wrapper.rsplit('bash /tmp/pr82-final.sh',1)[0]
+          Path('/tmp/build-final.sh').write_text(wrapper)
+          PY
+          bash /tmp/build-final.sh
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('/tmp/pr82-final.sh')
+          s=p.read_text()
+          marker='# Seed generated surfaces/history from current main, then regenerate from merged canonical source.'
+          trim=r'''python3 - <<'PYT'
+          import json
+          from pathlib import Path
+          p=Path('dish/docs/chatgpt-projects/source.json')
+          data=json.loads(p.read_text())
+          rule=next(x for x in data['roles']['development-workflow']['rules'] if x['id']=='development-workflow-live-lane')
+          old='Dispatcher preserves `REVIEW PASSED` while gates remain, routes local work by role (Review/Implementation/Integration), puts durable PR handoff/readback before human notice, and claims publication/ready/merged only from GitHub readback.'
+          new='Dispatcher keeps `REVIEW PASSED` while gates remain, routes local work by role, puts durable PR handoff/readback before human notice, and claims publication/ready/merged only from GitHub readback.'
+          if old not in rule['text']:
+              raise SystemExit('expected redundant D1 wording not found')
+          rule['text']=rule['text'].replace(old,new,1)
+          p.write_text(json.dumps(data,indent=2)+'\n')
+          PYT
+          '''
+          if marker not in s: raise SystemExit('seed marker missing')
+          s=s.replace(marker,trim+marker,1)
+          s=s.replace('.github/workflows/pr82-reconcile-final.yml','.github/workflows/pr82-reconcile-final.yml .github/workflows/pr82-reconcile-cap.yml',1)
+          p.write_text(s)
+          PY
+          bash /tmp/pr82-final.sh
