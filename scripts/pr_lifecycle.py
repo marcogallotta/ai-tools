@@ -116,7 +116,7 @@ def _build_engine(
     args: argparse.Namespace,
 ) -> tuple[
     LifecycleEngine, WorkspaceAgentDispatcher | None, LocalReviewDispatcher,
-    ImplementationFixDispatcher, TerminalCleanupDispatcher,
+    ImplementationFixRouter, TerminalCleanupDispatcher,
 ]:
     token = args.github_token or os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
     if not token:
@@ -132,9 +132,12 @@ def _build_engine(
         repository_id = int(raw_repo_id) if raw_repo_id else github.get_repository_id()
     implementation_route = os.getenv("DISH_MUTATION_BROKER_IMPLEMENTATION_ROUTE")
     integration_route = os.getenv("DISH_MUTATION_BROKER_INTEGRATION_ROUTE")
+    legacy_fix_route = os.getenv("DISH_MUTATION_BROKER_FIX_ROUTE") or implementation_route
     broker_routes = {
         "implementation": implementation_route,
-        "fix": os.getenv("DISH_MUTATION_BROKER_FIX_ROUTE") or implementation_route,
+        "fix": legacy_fix_route,
+        "fix-chatgpt": os.getenv("DISH_MUTATION_BROKER_CHATGPT_IMPLEMENTATION_ROUTE") or legacy_fix_route,
+        "fix-local": os.getenv("DISH_MUTATION_BROKER_LOCAL_IMPLEMENTATION_ROUTE"),
         "integration-reconcile": os.getenv("DISH_MUTATION_BROKER_RECONCILE_ROUTE") or integration_route,
         "merge": os.getenv("DISH_MUTATION_BROKER_MERGE_ROUTE") or integration_route,
     }
@@ -158,8 +161,25 @@ def _build_engine(
             api_root=args.workspace_api_root,
         )
     local = LocalReviewDispatcher(args.local_reviewer or os.getenv("DISH_LOCAL_REVIEW_COMMAND"))
-    fixer = ImplementationFixDispatcher(
-        args.implementation_fixer or os.getenv("DISH_IMPLEMENTATION_FIX_COMMAND")
+    legacy_fix_command = args.implementation_fixer or os.getenv("DISH_IMPLEMENTATION_FIX_COMMAND")
+    legacy_fix_host = str(os.getenv("DISH_IMPLEMENTATION_FIX_HOST") or "").strip().lower()
+    chatgpt_fix_command = os.getenv("DISH_CHATGPT_IMPLEMENTATION_FIX_COMMAND")
+    local_fix_command = os.getenv("DISH_LOCAL_IMPLEMENTATION_FIX_COMMAND")
+    legacy_error = None
+    if legacy_fix_command:
+        if legacy_fix_host == "chatgpt":
+            chatgpt_fix_command = chatgpt_fix_command or legacy_fix_command
+        elif legacy_fix_host == "local":
+            local_fix_command = local_fix_command or legacy_fix_command
+        elif not chatgpt_fix_command and not local_fix_command:
+            legacy_error = (
+                "legacy DISH_IMPLEMENTATION_FIX_COMMAND/--implementation-fixer is unclassified; "
+                "set DISH_IMPLEMENTATION_FIX_HOST=chatgpt|local or configure the host-specific command"
+            )
+    fixer = ImplementationFixRouter(
+        chatgpt_command=chatgpt_fix_command,
+        local_command=local_fix_command,
+        legacy_error=legacy_error,
     )
     certifier = ImplementationFixDispatcher(
         args.local_integration_certifier or os.getenv("DISH_LOCAL_INTEGRATION_CERTIFICATION_COMMAND")

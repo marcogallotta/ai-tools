@@ -102,7 +102,15 @@ class RecordingLocalReviewer:
 
 
 def test_bounded_local_review_receives_host_and_role_routing_context():
-    gh = base.FakeGitHub(base.pr(body="Owning task: 1217443403986570\nREVIEW CLASS: focused"))
+    gh = base.FakeGitHub(
+        base.pr(
+            body=(
+                "Owning task: 1217443403986570\nREVIEW CLASS: focused\n"
+                f"<!-- dish-implementation-host-witness:v1 head={base.HEAD} host=chatgpt "
+                "source=orchestration launcher=dispatch-ci-ownership -->"
+            )
+        )
+    )
     reviewer = RecordingLocalReviewer()
     lifecycle = base.engine(gh)
 

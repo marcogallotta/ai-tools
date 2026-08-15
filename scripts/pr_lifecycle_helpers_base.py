@@ -404,6 +404,40 @@ def local_work_from_review(
     return work
 
 
+def implementation_host_witness(
+    pr: Mapping[str, Any],
+    comments: Iterable[Mapping[str, Any]],
+    *,
+    current_head: str,
+) -> str | None:
+    """Return a positive exact-head implementation-host witness or fail closed on ambiguity."""
+    hosts: set[str] = set()
+    sources = [str(pr.get("body") or "")] + [str(comment.get("body") or "") for comment in comments]
+    for body in sources:
+        for fields in _marker_fields(body, IMPLEMENTATION_HOST_WITNESS_MARKER):
+            if fields.get("head") != current_head or fields.get("source") != "orchestration":
+                continue
+            if not fields.get("launcher"):
+                continue
+            host = fields.get("host")
+            if host == "chatgpt":
+                hosts.add("CHATGPT_IMPLEMENTATION")
+            elif host == "local":
+                hosts.add("LOCAL_IMPLEMENTATION")
+        for fields in _marker_fields(body, IMPLEMENTATION_ROUTE_RESULT_MARKER):
+            if fields.get("head") != current_head:
+                continue
+            required = ("start", "route", "grant", "generation", "broker_event")
+            if any(not fields.get(name) for name in required):
+                continue
+            host = fields.get("host")
+            if host == "chatgpt":
+                hosts.add("CHATGPT_IMPLEMENTATION")
+            elif host == "local":
+                hosts.add("LOCAL_IMPLEMENTATION")
+    return next(iter(hosts)) if len(hosts) == 1 else None
+
+
 def review_class_for(
     pr: Mapping[str, Any],
     reviews: Iterable[Mapping[str, Any]],

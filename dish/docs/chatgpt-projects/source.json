@@ -260,6 +260,16 @@
             "handoff"
           ],
           "surface": "routing"
+        },
+        {
+          "id": "implementation-host-aware-fix-routing",
+          "text": "Post-PR BLOCK/PR-owned-CI fixes default to CHATGPT_IMPLEMENTATION. LOCAL_IMPLEMENTATION requires the canonical unavailable hosted capability + exhausted fallbacks; selected host is carried through the existing #95 broker route/grant and a new head returns to independent Review without cross-host fallback.",
+          "impact": "additive",
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "surface": "routing"
         }
       ]
     },
@@ -496,6 +506,16 @@
             "handoff"
           ],
           "surface": "lifecycle"
+        },
+        {
+          "id": "review-host-aware-independence-routing",
+          "text": "Route substantive/domain Review to ChatGPT. Bounded local light/focused/mechanical Review requires a positive exact-current-head `CHATGPT_IMPLEMENTATION` witness; local/unknown/ambiguous provenance forces ChatGPT Review. After BLOCK, local Implementation requires exact class-B unavailable-capability + exhausted-fallback proof; remote outage never falls back local.",
+          "impact": "additive",
+          "action_boundaries": [
+            "review-write",
+            "handoff"
+          ],
+          "surface": "routing"
         }
       ]
     },

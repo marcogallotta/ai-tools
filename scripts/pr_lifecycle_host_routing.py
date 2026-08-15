@@ -85,3 +85,21 @@ def implementation_host_for_boundary(boundary: LocalWorkBoundary | None) -> str:
     if boundary is not None and boundary.local_implementation_eligible:
         return LOCAL_IMPLEMENTATION
     return CHATGPT_IMPLEMENTATION
+
+
+_REVIEW_LOCAL_IMPLEMENTATION_RE = re.compile(
+    r"(?im)^LOCAL IMPLEMENTATION COMPLETION REQUIRED:\s*(?P<value>.+?)\s*$"
+)
+
+
+def implementation_boundary_from_review(review: Mapping[str, Any] | None) -> LocalWorkBoundary | None:
+    if not review:
+        return None
+    match = _REVIEW_LOCAL_IMPLEMENTATION_RE.search(str(review.get("body") or ""))
+    if match is None:
+        return None
+    return classify_requirement(match.group("value").strip(), default_kind="implementation")
+
+
+def implementation_host_for_review(review: Mapping[str, Any] | None) -> str:
+    return implementation_host_for_boundary(implementation_boundary_from_review(review))

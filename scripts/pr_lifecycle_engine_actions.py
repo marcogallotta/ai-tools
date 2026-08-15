@@ -10,11 +10,42 @@ from pr_mutation_broker import (
 from pr_lifecycle_operator import action_first_status
 from pr_lifecycle_owner import owning_task_identity_from_references
 from pr_lifecycle_asana_writeback import reconcile_after_merge
-from pr_lifecycle_host_routing import classify_requirement, implementation_host_for_boundary, LOCAL_IMPLEMENTATION
+from pr_lifecycle_host_routing import (
+    CHATGPT_IMPLEMENTATION, LOCAL_IMPLEMENTATION, classify_requirement,
+    implementation_host_for_boundary, implementation_host_for_review,
+)
 from pr_lifecycle_terminal import (
     TERMINAL_DISPOSITION_MARKER, TerminalCleanupDispatcher, asana_terminal_decision, cleanup_marker,
     comment_has_marker, disposition_marker,
 )
+
+
+
+def _fixer_command(dispatcher: Any, host: str) -> str | None:
+    selector = getattr(dispatcher, "command_for", None)
+    if callable(selector):
+        return selector(host)
+    # Legacy in-process dispatcher objects are interpreted as the remote/default path only.
+    return getattr(dispatcher, "command", None) if host == CHATGPT_IMPLEMENTATION else None
+
+
+def _dispatch_fixer(dispatcher: Any, context: dict[str, Any], *, host: str) -> None:
+    selector = getattr(dispatcher, "command_for", None)
+    if callable(selector):
+        dispatcher.dispatch(context, host=host)
+    else:
+        if host != CHATGPT_IMPLEMENTATION:
+            raise LifecycleError("legacy implementation/fix dispatcher is not classified for local execution")
+        dispatcher.dispatch(context)
+
+
+def _route_result_marker(*, starting_head: str, new_head: str, host: str, route: str, grant: Any) -> str:
+    host_token = "local" if host == LOCAL_IMPLEMENTATION else "chatgpt"
+    return (
+        f"<!-- {IMPLEMENTATION_ROUTE_RESULT_MARKER} start={starting_head} head={new_head} "
+        f"host={host_token} route={route} grant={grant.grant_id} generation={grant.generation} "
+        f"broker_event={grant.event_comment_id} -->"
+    )
 
 class LifecycleActionsMixin:
     def _broker_repository_id(self) -> int:
@@ -509,28 +540,23 @@ class LifecycleActionsMixin:
             if not formal_block and not pr_owned_ci_failure:
                 return self.inspect(self.github.get_pr(current.number))
 
-            if implementation_fixer is None or not implementation_fixer.command:
-                current.residual_reason = "implementation/fix dispatcher is not configured"
-                current.human_action = "configure the existing implementation/fix consumer command"
-                self._notify_once(
-                    current,
-                    kind="fix-dispatch-config",
-                    action=current.human_action,
-                    message=(
-                        f"PR #{current.number} — fix dispatch unavailable. "
-                        "Action: configure the existing implementation/fix consumer command."
-                    ),
-                    notify=notify,
-                )
+            fix_host = implementation_host_for_review(exact_review if formal_block else None)
+            selected_command = None if implementation_fixer is None else _fixer_command(implementation_fixer, fix_host)
+            if selected_command is None:
+                current.residual_reason = f"selected {fix_host} implementation/fix consumer is not configured"
+                current.human_action = None
                 return current
 
             broker_grant = None
             broker_route = None
             lease_id = None
             if getattr(self, "mutation_broker_enabled", False):
-                broker_route = self._broker_route("fix")
+                route_key = "fix-local" if fix_host == LOCAL_IMPLEMENTATION else "fix-chatgpt"
+                broker_route = self._broker_route(route_key)
+                if broker_route is None and fix_host == CHATGPT_IMPLEMENTATION:
+                    broker_route = self._broker_route("fix")
                 if not broker_route:
-                    current.residual_reason = "mutation broker is active but no Implementation/fix route is configured"
+                    current.residual_reason = f"mutation broker is active but no {fix_host} Implementation/fix route is configured"
                     current.human_action = None
                     return current
                 try:
@@ -578,6 +604,7 @@ class LifecycleActionsMixin:
                 "pr_number": current.number,
                 "branch": current.branch,
                 "blocked_head": current.head,
+                "implementation_host": fix_host,
                 "task_ids": current.task_ids,
                 "formal_block_review": exact_review if formal_block else None,
                 "pr_owned_ci_failure": current.gate if pr_owned_ci_failure else None,
@@ -606,23 +633,51 @@ class LifecycleActionsMixin:
                 ),
             }
             try:
-                implementation_fixer.dispatch(context)
+                _dispatch_fixer(implementation_fixer, context, host=fix_host)
             except LifecycleError:
                 if lease_id is not None:
                     self._release_lease(
                         current.number, lease_id, reason="implementation/fix dispatcher failed"
                     )
                 raise
-            return self.inspect(self.github.get_pr(current.number))
+            result = self.inspect(self.github.get_pr(current.number))
+            if (
+                broker_grant is not None
+                and broker_route is not None
+                and result.head != current.head
+            ):
+                marker = _route_result_marker(
+                    starting_head=current.head,
+                    new_head=result.head,
+                    host=fix_host,
+                    route=broker_route,
+                    grant=broker_grant,
+                )
+                self.github.add_comment(
+                    current.number,
+                    f"{marker}\nImplementation consumer returned with exact new head `{result.head}`.\n\n— Dish PR lifecycle dispatcher",
+                )
+                result = self.inspect(self.github.get_pr(current.number))
+            return result
 
         if current.state == LifecycleState.REVIEW_READY:
             review_class = current.review_class or "substantive"
-            if review_class in {"light", "focused", "mechanical"} and local_reviewer and local_reviewer.command:
+            raw_pr = self.github.get_pr(current.number)
+            review_host_witness = implementation_host_witness(
+                raw_pr, self.github.get_comments(current.number), current_head=current.head
+            )
+            if (
+                review_class in {"light", "focused", "mechanical"}
+                and review_host_witness == CHATGPT_IMPLEMENTATION
+                and local_reviewer
+                and local_reviewer.command
+            ):
                 lease_id = self._post_lease(current, phase="review", review_class=review_class)
                 review_context = current.json()
                 review_context["review_execution"] = {
                     "role": "Review",
                     "host": "local",
+                    "implementation_host_witness": review_host_witness,
                     "local_review_evidence_capable": True,
                     "routing": {
                         "review_evidence": "execute directly when within Review authority",

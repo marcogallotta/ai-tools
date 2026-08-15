@@ -38,6 +38,8 @@ LOCAL_COMPLETION_MARKER = "dish-local-completion:v1"
 HUMAN_NOTICE_MARKER = "dish-human-notice:v1"
 REVIEW_ROUTE_MARKER = "dish-review-route:v1"
 IMPLEMENTATION_CONTINUATION_MARKER = "dish-implementation-continuation:v1"
+IMPLEMENTATION_HOST_WITNESS_MARKER = "dish-implementation-host-witness:v1"
+IMPLEMENTATION_ROUTE_RESULT_MARKER = "dish-implementation-route-result:v1"
 EXTERNAL_DEPENDENCY_MARKER = "dish-external-dependency:v1"
 CI_FAILURE_OWNERSHIP_MARKER = "dish-ci-failure-ownership:v1"
 DISPATCH_OWNER = "pr-lifecycle"
@@ -633,3 +635,35 @@ class ImplementationFixDispatcher:
                 f"implementation/fix dispatcher failed with exit {completed.returncode}"
                 f"{': ' + detail if detail else ''}"
             )
+
+
+class ImplementationFixRouter:
+    """Select one configured Implementation consumer without cross-host fallback."""
+
+    def __init__(
+        self,
+        *,
+        chatgpt_command: str | None,
+        local_command: str | None,
+        legacy_error: str | None = None,
+    ) -> None:
+        self.chatgpt = ImplementationFixDispatcher(chatgpt_command)
+        self.local = ImplementationFixDispatcher(local_command)
+        self.legacy_error = legacy_error
+
+    @property
+    def command(self) -> str | None:
+        return self.chatgpt.command or self.local.command
+
+    def command_for(self, host: str) -> str | None:
+        if host == "CHATGPT_IMPLEMENTATION":
+            return self.chatgpt.command
+        if host == "LOCAL_IMPLEMENTATION":
+            return self.local.command
+        return None
+
+    def dispatch(self, context: dict[str, Any], *, host: str) -> None:
+        if self.legacy_error and self.command_for(host) is None:
+            raise LifecycleError(self.legacy_error)
+        dispatcher = self.chatgpt if host == "CHATGPT_IMPLEMENTATION" else self.local
+        dispatcher.dispatch(context)

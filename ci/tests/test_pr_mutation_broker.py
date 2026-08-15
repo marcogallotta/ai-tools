@@ -544,3 +544,47 @@ def test_integration_reconcile_is_unavailable_without_proven_bounded_need():
         request, lifecycle=lifecycle, reviews=reviews, live_main_sha=MAIN,
         integration_authority=True, current_grant=None,
     )
+
+
+def test_local_fix_route_rechecks_exact_local_only_review_classification():
+    request = broker.parse_request_comment(request_comment(action="fix", review=77, route="local-implementation"))
+    lifecycle = lifecycle_for(broker.LifecycleState.CHANGES_REQUESTED)
+    route_policy = {
+        "local-implementation": {"role": "implementation", "actions": ["fix"], "host": "local"}
+    }
+    unproven = [{
+        "id": 77,
+        "state": "COMMENTED",
+        "commit_id": HEAD,
+        "body": f"VERDICT: BLOCK\nTESTS TO RUN: NONE.\nReviewed head: {HEAD}",
+        "submitted_at": NOW.isoformat(),
+    }]
+    with pytest.raises(broker.BrokerError, match="local Implementation fix route requires"):
+        broker.validate_lifecycle_eligibility(
+            request,
+            lifecycle=lifecycle,
+            reviews=unproven,
+            live_main_sha=MAIN,
+            integration_authority=False,
+            current_grant=None,
+            route_policy=route_policy,
+        )
+
+    proven = [{
+        **unproven[0],
+        "body": (
+            "VERDICT: BLOCK\n"
+            "LOCAL IMPLEMENTATION COMPLETION REQUIRED: IMPLEMENTATION / PUBLICATION — "
+            "hosted publication cannot write governed path; fallbacks exhausted: connector update, Git data API\n"
+            f"TESTS TO RUN: NONE.\nReviewed head: {HEAD}"
+        ),
+    }]
+    broker.validate_lifecycle_eligibility(
+        request,
+        lifecycle=lifecycle,
+        reviews=proven,
+        live_main_sha=MAIN,
+        integration_authority=False,
+        current_grant=None,
+        route_policy=route_policy,
+    )

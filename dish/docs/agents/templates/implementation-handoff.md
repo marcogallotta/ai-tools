@@ -18,7 +18,16 @@ Base SHA: <exact 40-char sha>
 Existing PR: <#number or none>
 Expected PR head: <exact 40-char sha when Existing PR is set; otherwise none>
 Assignment class: <implementation | fix | local implementation completion>
+Implementation host: <CHATGPT_IMPLEMENTATION | LOCAL_IMPLEMENTATION>
 ```
+
+When pre-PR orchestration launches the writer and later Review routing will depend on host provenance, persist the launcher-bound exact-head witness on the PR once that head exists:
+
+```text
+<!-- dish-implementation-host-witness:v1 head=<exact-sha> host=<chatgpt|local> source=orchestration launcher=<durable-launcher-id> -->
+```
+
+The marker is routing evidence only. It does not grant branch/write/Review authority and must not be self-invented by the implementation execution. Post-PR fix provenance is instead produced by the lifecycle dispatcher after a #95 broker-proven consumer returns a new exact head.
 
 The repository + Asana task GID + authorized branch + existing-PR/expected-head tuple is one
 assignment identity. A matching task on another branch or PR is **not authorization** to adopt,

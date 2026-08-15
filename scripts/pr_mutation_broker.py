@@ -25,6 +25,7 @@ import zipfile
 
 from pr_lifecycle_owner import owning_task_identity_from_pr
 from pr_lifecycle_support import FULL_SHA_RE, TASK_GID_RE, LifecycleError, LifecycleState
+from pr_lifecycle_host_routing import LOCAL_IMPLEMENTATION, implementation_host_for_review
 import pr_gate
 
 REQUEST_MARKER = "dish-mutation-request:v1"
@@ -620,7 +621,12 @@ def route_policy_from_json(raw: str | None) -> dict[str, dict[str, Any]]:
         normalized = [str(action).lower() for action in actions]
         if any(action not in MUTATION_ACTIONS for action in normalized):
             raise BrokerError(f"broker route {route!r} declares unsupported action")
+        host = str(config.get("host") or ("chatgpt" if role == "implementation" else "")).lower()
+        if role == "implementation" and host not in {"chatgpt", "local"}:
+            raise BrokerError(f"broker implementation route {route!r} must declare host=chatgpt|local")
         out[route] = {"role": role, "actions": normalized}
+        if host:
+            out[route]["host"] = host
     return out
 
 
@@ -907,6 +913,7 @@ def validate_lifecycle_eligibility(
     live_main_sha: str,
     integration_authority: bool,
     current_grant: GrantState | None,
+    route_policy: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> None:
     """Consume the existing lifecycle decision; never manufacture role/lifecycle authority here."""
     if request.action in {"release", "complete"}:
@@ -941,6 +948,15 @@ def validate_lifecycle_eligibility(
             raise BrokerError("fix request is not bound to the current exact-head formal Review id")
         if formal_block and request.review_id is None:
             raise BrokerError("formal BLOCK fix admission requires exact (head, block_review_id) identity")
+        policy = route_policy or {}
+        route_config = policy.get(request.route) if isinstance(policy, Mapping) else None
+        route_host = str(route_config.get("host") or "chatgpt") if isinstance(route_config, Mapping) else "chatgpt"
+        if route_host == "local":
+            if not formal_block or implementation_host_for_review(exact_review) != LOCAL_IMPLEMENTATION:
+                raise BrokerError(
+                    "local Implementation fix route requires exact Review classification proving the unavailable "
+                    "remote capability and exhausted fallbacks"
+                )
         return
 
     if request.action in {"integration-reconcile", "merge"}:
@@ -1036,6 +1052,7 @@ def prepare_broker_event(
         live_main_sha=live_main_sha,
         integration_authority=bool(engine.integration_authority),
         current_grant=current,
+        route_policy=route_policy,
     )
 
     issued = now or _now()
