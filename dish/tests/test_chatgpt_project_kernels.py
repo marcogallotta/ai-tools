@@ -49,16 +49,19 @@ def test_missing_repository_bootstrap_fails_closed():
 
 def test_current_edge_requires_exact_rule_classification():
  m,s=kernels.load_canonical(); bad=copy.deepcopy(m); edge=next(x for x in bad['change_history'] if x['to_version']==bad['canonical_version'])
- edge['changes']=edge['changes'][1:]
+ edge['changes']=[x for x in edge['changes'] if x['rule_id']!='canonical-version-gate']
  with pytest.raises(kernels.KernelError,match='classification mismatch'): kernels._validate_current_edge_classification(bad,s)
+ drift=kernels.classify_project_drift(edge['from_version'],'review','review-write',manifest=bad,source=s)
+ assert drift['state']=='integrity_error' and drift['block'] and not drift['resync_required']
 
 def test_classified_stable_rule_removal_is_representable_and_unknown_ids_still_fail():
  _,s=kernels.load_canonical(); removed=copy.deepcopy(s)
  removed['roles']['review']['rules']=[r for r in removed['roles']['review']['rules'] if r['id']!='review-formal-comment']
  prior_shared={x['id']:kernels._rule_fingerprint(x) for x in kernels._rules(s['shared_rules'],'shared_rules')}
  prior_roles={role:{x['id']:kernels._rule_fingerprint(x) for x in kernels._rules(s['roles'][role]['rules'],f'roles.{role}.rules')} for role in s['roles']}
- edge={'from_version':'v1','to_version':'v2','changes':[_change('review-formal-comment','review','breaking','review-write','lifecycle')],'from_rule_fingerprints':{'_shared':prior_shared,'_roles':prior_roles},'from_renderer_fingerprint':kernels.renderer_fingerprint()}
- m={'canonical_version':'v2','change_history':[edge]}
+ edge={'from_version':'v1','to_version':'v2','changes':[_change('review-formal-comment','review','additive','review-write','lifecycle')],'from_rule_fingerprints':{'_shared':prior_shared,'_roles':prior_roles},'from_renderer_fingerprint':kernels.renderer_fingerprint()}
+ legacy={'from_version':'v0','to_version':'v1','changes':[_change('review-action-handoff','review','compatible','handoff','presentation')]}
+ m={'canonical_version':'v2','change_history':[legacy,edge],'legacy_bootstrap_floor':{'first_drift_aware_version':'v1','pre_floor_versions':['v0'],'impact':'breaking','roles':['*'],'action_boundaries':['*'],'break_proof':{'prior_kernel_identity':'legacy','counterexample':'legacy mismatch stop','git_reconciliation_failure':'legacy cannot fold history','migration':'resync','rollback':'disable legacy','evidence_ref':'test'},'marco_approved':True,'marco_approval_ref':'test:approval'}}
  unclassified=copy.deepcopy(m); unclassified['change_history'][0]['changes']=[]
  with pytest.raises(kernels.KernelError,match='requires changes|classification mismatch'):
   kernels.validate_change_history(unclassified,removed)
@@ -72,7 +75,7 @@ def test_generated_kernels_current_bound_and_within_budget():
  for role,p in kernels.generated_paths(m,s).items():
   text=p.read_text(); assert len(text)<=m['max_kernel_chars']; assert f"PROJECT_CANONICAL_VERSION: {m['canonical_version']}" in text
   assert text.index('PROJECT_REPOSITORY: marcogallotta/ai-tools')<text.index('Startup:')
-  assert 'Version mismatch triggers manifest `change_history`' in text
+  assert 'Mismatch alone never blocks' in text and '?/3 integrity error' in text
 
 def test_development_workflow_context_preload_is_role_index_driven_and_read_only():
  m,s=kernels.load_canonical(); deps=kernels.context_dependencies(s,'development-workflow'); assert deps is not None
@@ -138,34 +141,17 @@ def test_fresh_chat_ids_cannot_be_reused():
  p=_passing(); p['results'][1]['fresh_chat_id']=p['results'][0]['fresh_chat_id']
  with pytest.raises(kernels.KernelError,match='reused fresh_chat_id'): kernels.evaluate_behavior_results(p)
 
-def test_breaking_drift_blocks_only_affected_role_and_boundary():
- _,s=kernels.load_canonical(); m=_manifest('v2',[{'from_version':'v1','to_version':'v2','changes':[_change('review-formal-comment','review','breaking','review-write','lifecycle')]}])
- assert kernels.classify_project_drift('v1','review','review-write',manifest=m,source=s)['block'] is True
- assert kernels.classify_project_drift('v1','review','handoff',manifest=m,source=s)['block'] is False
- assert kernels.classify_project_drift('v1','implementation','role-critical-write',manifest=m,source=s)['impact']=='unrelated'
 
-def test_additive_compatible_and_unrelated_drift_continue():
- _,s=kernels.load_canonical(); m=_manifest('v2',[{'from_version':'v1','to_version':'v2','changes':[_change('fallback-surface','implementation','additive','handoff','evidence'),_change('review-action-handoff','review','compatible','handoff','presentation')]}])
- d=kernels.classify_project_drift('v1','implementation','role-critical-write',manifest=m,source=s); assert not d['block'] and d['impact']=='additive'
- d=kernels.classify_project_drift('v1','review','handoff',manifest=m,source=s); assert not d['block'] and d['impact']=='compatible'
- d=kernels.classify_project_drift('v1','workflow','role-critical-write',manifest=m,source=s); assert not d['block'] and d['impact']=='unrelated'
 
-def test_skipped_versions_fold_and_highest_relevant_impact_wins():
- _,s=kernels.load_canonical(); m=_manifest('v3',[{'from_version':'v1','to_version':'v2','changes':[_change('fallback-surface','integration','additive','merge','evidence')]},{'from_version':'v2','to_version':'v3','changes':[_change('integration-reviewed-head','integration','breaking','merge','safety')]}])
- d=kernels.classify_project_drift('v1','integration','merge',manifest=m,source=s); assert d['block'] and d['impact']=='breaking' and len(d['changes'])==2
 
-def test_missing_version_lineage_fails_closed():
- _,s=kernels.load_canonical(); m=_manifest('v3',[{'from_version':'v2','to_version':'v3','changes':[_change('fallback-surface','implementation','additive','handoff','evidence')]}])
- with pytest.raises(kernels.KernelError,match='does not cover'): kernels.classify_project_drift('v1','implementation','role-critical-write',manifest=m,source=s)
 
-def test_unknown_unclassified_changes_fail_closed_by_surface():
- assert kernels._impact({'surface':'authority'})=='breaking'; assert kernels._impact({'surface':'safety'})=='breaking'; assert kernels._impact({'surface':'presentation'})=='compatible'
 
 def test_task_required_drift_eval_cases_are_present_and_scoped():
  by={s['id']:s for s in kernels._evals()}
  assert by['compatible-wording-drift']['roles']==['implementation']; assert by['unrelated-role-drift']['roles']==['implementation']
  assert by['review-breaking-completion-drift']['roles']==['review']; assert by['integration-breaking-merge-drift']['roles']==['integration']
  assert 'fold_all_skipped_versions' in by['skipped-version-breaking-drift']['required_actions']
+ assert {'project-drift-current-silent','project-drift-integrity-error','project-drift-pre-d96-legacy','project-drift-v708-review-compatible','project-drift-self-compatible'}<=set(by)
 
 def test_role_and_publication_boundaries_remain_high_salience():
  _,s=kernels.load_canonical(); impl=' '.join(x['text'] for x in kernels.effective_rules(s,'implementation')); rev=' '.join(x['text'] for x in kernels.effective_rules(s,'review')); integ=' '.join(x['text'] for x in kernels.effective_rules(s,'integration'))
@@ -235,3 +221,129 @@ def test_fixture_mismatch_recurrence_matrix_covers_escalation_and_non_escalation
  supported=_scenario('supported-operation-stays-local-system-access')
  assert 'classify_local_system_access' in supported['required_actions']
  assert 'classify_implementation_required' in supported['forbidden_actions']
+
+def _prior_fingerprints(source):
+ return {
+  '_shared':{x['id']:kernels._rule_fingerprint(x) for x in kernels._rules(source['shared_rules'],'shared_rules')},
+  '_roles':{role:{x['id']:kernels._rule_fingerprint(x) for x in kernels._rules(source['roles'][role]['rules'],f'roles.{role}.rules')} for role in source['roles']},
+ }
+
+def _synthetic_transition(*,impact='compatible',proof=True):
+ m,s=kernels.load_canonical(); prior=copy.deepcopy(s); current=copy.deepcopy(s)
+ target=next(r for r in current['roles']['implementation']['rules'] if r['id']=='implementation-durable-git')
+ target['text'] += ' Synthetic transition semantics.'
+ change=_change('implementation-durable-git','implementation',impact,'role-critical-write','lifecycle')
+ if impact=='breaking' and proof:
+  change['break_proof']={
+   'from_version':m['canonical_version'],'to_version':'synthetic-v2','roles':['implementation'],'action_boundaries':['role-critical-write'],
+   'prior_kernel_identity':m['kernel_identity_sha256'],'counterexample':'Old bootstrap authorizes an operation now proven unsafe.',
+   'git_reconciliation_failure':'Reading current Git cannot repair the stale bootstrap authorization.',
+   'migration':'Resync the affected Implementation Project before this boundary.','rollback':'Keep the old Project out of role-critical writes.',
+   'evidence_ref':'test:synthetic-hard-break'}
+  change['marco_approved']=True; change['marco_approval_ref']='asana:test:exact-scope-approval'
+ sm=copy.deepcopy(m); sm['canonical_version']='synthetic-v2'; sm['change_history']=copy.deepcopy(m['change_history'])+[{
+  'from_version':m['canonical_version'],'to_version':'synthetic-v2','changes':[change],
+  'from_rule_fingerprints':_prior_fingerprints(prior),'from_renderer_fingerprint':kernels.renderer_fingerprint(),
+ }]
+ return sm,current,m['canonical_version']
+
+def test_current_project_is_silent_and_no_zero_prefix():
+ m,s=kernels.load_canonical(); d=kernels.classify_project_drift(m['canonical_version'],'implementation','handoff',manifest=m,source=s)
+ assert d['state']=='current' and d['indicator'] is None and d['drift_level']==0
+ ok,message=kernels.version_status(m['canonical_version'],'implementation','handoff')
+ assert ok is True and message=='' and '0/3' not in message
+
+def test_d96_plus_additive_drift_continues_without_resync():
+ m,s=kernels.load_canonical(); parent=m['change_history'][-1]['from_version']
+ d=kernels.classify_project_drift(parent,'implementation','handoff',manifest=m,source=s)
+ assert not d['block'] and not d['resync_required'] and d['drift_level']==2
+ assert d['indicator']=='PROJECT SETTINGS: OUTDATED · DRIFT 2/3'
+
+def test_v708_review_write_is_nonblocking_and_uses_current_authority():
+ m,s=kernels.load_canonical(); d=kernels.classify_project_drift('dish-chatgpt-projects-v2-708fb9a9a9bc','review','review-write',manifest=m,source=s)
+ assert d['state']=='outdated' and not d['block'] and not d['resync_required']
+ assert d['drift_level'] in {1,2} and d['indicator'].startswith('PROJECT SETTINGS: OUTDATED · DRIFT ')
+
+def test_pre_d96_fixture_proves_unconditional_mismatch_stop():
+ pre_d96_fixture = """PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-b6a326f98ad4
+Startup: compare its `canonical_version` with `dish-chatgpt-projects-v2-b6a326f98ad4`. If different, report `PROJECT INSTRUCTIONS STALE` with both versions and make no role-critical state change until resynchronized.
+- A mismatch means `PROJECT INSTRUCTIONS STALE`; stop role-critical changes until resynchronized."""
+ assert 'If different' in pre_d96_fixture and 'make no role-critical state change until resynchronized' in pre_d96_fixture
+ assert 'A mismatch means `PROJECT INSTRUCTIONS STALE`; stop role-critical changes until resynchronized.' in pre_d96_fixture
+ assert 'fold `change_history`' not in pre_d96_fixture
+
+def test_pre_d96_is_explicit_legacy_bootstrap_hard_break():
+ m,s=kernels.load_canonical(); d=kernels.classify_project_drift('dish-chatgpt-projects-v2-b6a326f98ad4','implementation','role-critical-write',manifest=m,source=s)
+ assert d['state']=='legacy_hard_break' and d['legacy_bootstrap_incompatibility'] is True
+ assert d['block'] and d['resync_required'] and d['drift_level']==3
+ assert d['indicator']=='PROJECT SETTINGS: HARD BREAK · DRIFT 3/3'
+
+def test_invalid_or_unknown_drift_routes_to_integrity_error_without_resync():
+ m,s=kernels.load_canonical(); d=kernels.classify_project_drift('unknown-version','review','review-write',manifest=m,source=s)
+ assert d['state']=='integrity_error' and d['block'] and not d['resync_required']
+ assert d['indicator']=='PROJECT SETTINGS: INTEGRITY ERROR · DRIFT ?/3'
+ assert d['repair']=='repository-authority'
+
+def test_malformed_unrelated_history_only_blocks_the_affected_action():
+ m,s=kernels.load_canonical(); m=copy.deepcopy(m); old=None
+ for edge in m['change_history']:
+  for change in edge['changes']:
+   if change.get('rule_id')=='coordinator-live-scan' and 'status' in change.get('action_boundaries',[]):
+    change.pop('impact'); old=edge['from_version']; break
+  if old:break
+ unrelated=kernels.classify_project_drift(old,'review','review-write',manifest=m,source=s)
+ affected=kernels.classify_project_drift(old,'coordinator','status',manifest=m,source=s)
+ assert not unrelated['block'] and unrelated['state']!='integrity_error'
+ assert affected['state']=='integrity_error' and affected['block'] and not affected['resync_required']
+
+def test_proven_breaking_blocks_only_exact_role_and_action():
+ m,s,old=_synthetic_transition(impact='breaking',proof=True)
+ d=kernels.classify_project_drift(old,'implementation','role-critical-write',manifest=m,source=s)
+ assert d['state']=='hard_break' and d['block'] and d['resync_required'] and d['drift_level']==3
+ other=kernels.classify_project_drift(old,'implementation','handoff',manifest=m,source=s)
+ assert not other['block'] and not other['resync_required'] and other['drift_level']==1
+ role=kernels.classify_project_drift(old,'review','review-write',manifest=m,source=s)
+ assert not role['block'] and role['drift_level']==1
+
+def test_unproved_breaking_is_integrity_error_not_hard_break():
+ m,s,old=_synthetic_transition(impact='breaking',proof=False)
+ d=kernels.classify_project_drift(old,'implementation','role-critical-write',manifest=m,source=s)
+ assert d['state']=='integrity_error' and d['block'] and not d['resync_required']
+ assert d['indicator']=='PROJECT SETTINGS: INTEGRITY ERROR · DRIFT ?/3'
+
+def test_retained_drift_aware_history_has_no_unproved_breaking():
+ m,_=kernels.load_canonical(); floor=m['legacy_bootstrap_floor']['first_drift_aware_version']
+ path=kernels._change_path(m,floor)
+ assert path
+ for edge in path:
+  for change in edge['changes']:
+   if change['impact']=='breaking':
+    kernels._validate_breaking(edge,change)
+
+def test_historical_reclassification_has_machine_readable_provenance():
+ m,_=kernels.load_canonical(); corrected=[]
+ for edge in m['change_history']:
+  for change in edge['changes']:
+   if 'historical_correction' in change:
+    kernels._validate_correction(change); corrected.append(change)
+ assert corrected and all(c['historical_correction']['previous_impact']=='breaking' for c in corrected)
+
+def test_self_transition_is_nonblocking_for_every_role_and_action():
+ m,s=kernels.load_canonical(); parent=m['change_history'][-1]['from_version']
+ boundaries={'startup','status','dispatch','handoff','role-critical-write','review-write','merge','analysis'}
+ for role in s['roles']:
+  for boundary in boundaries:
+   d=kernels.classify_project_drift(parent,role,boundary,manifest=m,source=s)
+   assert d['state']=='outdated' and not d['block'] and not d['resync_required'], (role,boundary,d)
+   assert d['drift_level'] in {1,2}
+
+def test_generated_digest_integrity_is_strict_only_for_current_generation():
+ m,s=kernels.load_canonical(); current=kernels.classify_project_drift(m['canonical_version'],'review','status',manifest=m,source=s,actual_generated_sha256='wrong')
+ assert current['state']=='integrity_error' and not current['resync_required']
+ old=kernels.classify_project_drift('dish-chatgpt-projects-v2-708fb9a9a9bc','review','review-write',manifest=m,source=s,actual_generated_sha256='historical-digest')
+ assert old['state']=='outdated' and not old['block']
+
+def test_impact_is_explicit_and_never_inferred_from_rule_criticality():
+ for surface in ('authority','safety','presentation'):
+  with pytest.raises(kernels.KernelError,match='explicit transition impact'):
+   kernels._impact({'surface':surface})

@@ -95,6 +95,8 @@ A successor should be able to continue from:
 
 If Asana or the live delta is unavailable, repository HEAD remains durable truth but transient orchestration may be missing. Ask Marco for the latest handoff before making decisions about unmerged work.
 
+On every fresh or replacement Coordinator session, before ordinary status conclusions, next-work selection, or dispatch, reconcile maintained Ready / In Progress / Review / Blocked state needed for the decision, stale handoffs and owned queue inconsistencies, audit governance and the latest audit round, and whether an audit is due from cadence/prior yield/engineering movement/material authority or process migration. Surface due-but-unsent, active, incomplete, or returned audits before ordinary dispatch. Reuse maintained Asana/dispatcher truth and keep the fast path narrow unless drift is detected; do not create a scheduler, second queue, or parallel lifecycle.
+
 ## Asana live coordination
 
 The adopted coordination projects are:
@@ -199,6 +201,10 @@ Marco may explicitly authorize an emergency direct-to-`main` commit for a specif
 Marco is the only human driving the project. Request his judgment only when agents cannot determine correctness from available authority/evidence or when the next action genuinely requires a human tradeoff, product judgment, risk acceptance, priority choice, or other Marco-only decision.
 
 Do not escalate routine implementation/review uncertainty merely because it is difficult. Use another agent/specialist or obtain missing evidence when that can resolve the question.
+
+Use judgment rather than a score or fixed approval rubric to decide when consequential work needs Human Review. On the owning Asana task always record `HUMAN REVIEW REQUIRED` or `HUMAN REVIEW NOT REQUIRED`. When required, also record exactly one of `PENDING`, `COMPLETE`, or `INADEQUATE`; reviewer identity and independent provenance; date/time; the reviewed artifact, PR/head, or design state; and a concise decision/result. `INADEQUATE` is distinct from `PENDING`.
+
+Before treating required Human Review as satisfied, establish from durable evidence that an identifiable human actually reviewed the current question/artifact and adequately covered its scope. Chat-only statements, workflow status, agent assertions, or authenticated-account attribution alone are insufficient. `PENDING` or `INADEQUATE` remains blocked from the consequential merge/activation decision until corrected or Marco explicitly overrides that gate. This is durable notation plus judgment, not a scoring engine, approval service, or review database.
 
 Every human request must contain:
 

@@ -21,16 +21,30 @@ The generated role Markdown files are copyable Project-instruction text. Do not 
 
 ## Version and drift control
 
-Each generated kernel declares `PROJECT_CANONICAL_VERSION`. A mismatch is a trigger to inspect semantic drift, not a blocker by itself. The Project reads `manifest.json`, folds every `change_history` transition from its declared version to current, then scopes changes to its role and current action boundary.
+Each generated kernel declares `PROJECT_CANONICAL_VERSION`. Exact-current Projects emit no Project-settings prefix. A version mismatch is only a trigger to inspect semantic history; it never blocks by itself. The Project folds every manifest transition from its declared version to current, then scopes each change to the exact role and action boundary before deciding.
 
-- **BREAKING**: stop only when the change affects this role and current action boundary; resynchronize the affected Project before that action.
-- **ADDITIVE**: continue under current repository authority, apply the new rule when its boundary is reached, and defer Project resync to a natural boundary.
-- **COMPATIBLE**: continue; wording, examples, diagnostics, and output-shape improvements do not hard-stop work.
-- **UNRELATED**: a change for another Project/role does not block or require resync for this Project.
+The user-facing state is deterministic:
 
-Skipped versions are folded transitively and the highest relevant impact wins. A missing history chain fails closed before role-critical writes. Explicitly unclassified authority/safety/lifecycle changes also fail closed; an unclassified presentation-only change is treated as compatible rather than automatically breaking.
+- `PROJECT SETTINGS: OUTDATED · DRIFT 1/3` — only COMPATIBLE or UNRELATED drift applies. Continue under current repository authority; Project resync is not required.
+- `PROJECT SETTINGS: OUTDATED · DRIFT 2/3` — at least one applicable ADDITIVE change exists and no proven BREAKING incompatibility applies. Continue, applying the additive rule at its boundary; Project resync is not required.
+- `PROJECT SETTINGS: HARD BREAK · DRIFT 3/3` — an applicable BREAKING incompatibility is proven for the exact prior Project version, role, and action. Stop only that affected action and follow the approved migration/resynchronization path.
+- `PROJECT SETTINGS: INTEGRITY ERROR · DRIFT ?/3` — the history is missing/malformed/unclassifiable, or a claimed BREAKING transition lacks its required incompatibility proof. Fail closed only the affected action for **repository-authority repair**. Do not tell the operator to resynchronize the Project as a substitute for fixing repository metadata.
 
-The model is not asked to hash hidden UI instruction text. Repository validation binds the source, rendered instruction set, and rule-impact metadata; the live comparison uses the visible canonical version plus the manifest change chain.
+`resync_required` is therefore true only for an applicable proof-backed `DRIFT 3/3` transition (including the approved legacy bootstrap floor below). ADDITIVE, COMPATIBLE, UNRELATED, and INTEGRITY states never set it.
+
+### BREAKING proof and compatibility-first rule
+
+For drift-aware Projects, `impact: breaking` is exceptional. A retained BREAKING change must include machine-readable `break_proof` that names the exact prior Project version, exact roles and action boundaries, a concrete unsafe/uninterpretable old-kernel counterexample, why current Git authority cannot reconcile it safely, the approved migration/resync path, rollback path, and durable approval reference. The proof scope must exactly match the manifest change scope.
+
+If the existing drift-aware kernel can safely load current Git authority and apply the new policy, a compatibility shim or nonblocking classification is mandatory instead of BREAKING. A historical change that was previously labeled BREAKING but fails that standard is reclassified with machine-readable `historical_correction` provenance (`previous_impact`, `provenance_ref`, and reason); history is not silently rewritten.
+
+### Semantic-history floor
+
+`dish-chatgpt-projects-v2-d96ab5f0588d` is the approved semantic-history floor: it is the first Project generation that can fold repository drift semantically. Projects older than that floor retain the legacy bootstrap hard break because their old mismatch logic cannot safely consume the semantic history mechanism itself. The manifest records the migration, rollback, and authority for that exception. Moving the floor later is itself a breaking change and requires the same proof discipline.
+
+Skipped versions are folded transitively. Known unrelated role/action changes are ignored before impact parsing, so malformed metadata for a demonstrably unrelated scoped change does not block another action; malformed scope that cannot be safely localized remains an integrity error.
+
+The model is not asked to hash hidden UI instruction text. Repository validation binds the source, rendered instruction set, rule-impact metadata, compatibility configuration, and current transition fingerprints; the live comparison uses the visible canonical version plus the manifest history.
 
 Commands from the repository root:
 
@@ -44,7 +58,7 @@ python3 dish/scripts/chatgpt_project_kernels.py eval --runner-command '<fresh-ch
 python3 dish/scripts/chatgpt_project_kernels.py version --project-version <declared-version> --role <role-key> --action-boundary <boundary>
 ```
 
-`check` validates source/rendered-version binding, current role topology, generated files, character budget, and the complete approved eval contract set. It does **not** report behavioral adherence. `prepare-eval` emits oracle-free cases containing the exact current Project kernel and prompt. `eval` then judges structured results from one newly created ChatGPT Project chat per case, either from a recorded result bundle or from an operator-supplied runner command that is invoked separately for every case.
+`check` validates source/rendered-version binding, current role topology, generated files, character budget, semantic-history configuration, current-edge classifications, proof/correction metadata, and the complete approved eval contract set. It does **not** report behavioral adherence. `prepare-eval` emits oracle-free cases containing the exact current Project kernel and prompt. `eval` judges structured results from one newly created ChatGPT Project chat per case, either from a recorded result bundle or from an operator-supplied runner command invoked separately for every case.
 
 The behavior-v2 runner protocol separates the assistant's declared outcome/actions from **runner-observed evidence**. For scenarios that require external side effects, `evals.json` contains a hidden observation oracle. The runner must capture actual tool-layer events such as capability discovery, a durable GitHub write, and authoritative readback, including exact PR/head/write identity where required. Assistant-authored text such as “I submitted the review” is never observation evidence. The evaluator rejects missing, wrong-head, wrong-transport, mismatched-write, or out-of-order evidence even when the assistant declares every expected action label.
 
@@ -52,13 +66,13 @@ A runner is therefore part of the trusted eval boundary: it must instrument the 
 
 ## Acceptance and rollout policy
 
-The repository keeps the complete approved matrix — 49 scenarios / 73 role-expanded cases — as deterministic harness coverage. `prepare-eval` emits all 73 cases, and action-bearing cases keep their machine-verifiable observation requirements.
+The repository keeps the complete approved matrix — currently 70 scenarios / 112 role-expanded cases — as deterministic harness coverage. `prepare-eval` emits the full matrix, and action-bearing cases keep their machine-verifiable observation requirements.
 
-The **complete live 73-case run is an automated/periodic regression target, not a mandatory manual merge gate**. Absence of an authorized fresh-Project runner or full live result bundle does not by itself make a repository change unreviewable or require manual recreation of the matrix.
+The **complete live matrix run is an automated/periodic regression target, not a mandatory manual merge gate**. Absence of an authorized fresh-Project runner or full live result bundle does not by itself make a repository change unreviewable or require manual recreation of the matrix.
 
 Repository changes land on governed repository evidence and exact-head review requirements. When an automated live runner is available, use the full matrix for periodic regression and record failures as concrete follow-up defects.
 
-Project UI resync scope follows the manifest's affected roles and impact. A relevant BREAKING change requires resync of only the affected Project(s) before the affected action; ADDITIVE changes defer resync; COMPATIBLE and UNRELATED changes do not hard-stop work. Audit is a new Project boundary in this version. Existing Projects follow the manifest edge: roles with relevant BREAKING changes must resynchronize before the affected action; ADDITIVE-only changes may wait for a natural boundary. Future ordinary role-policy changes fetched from live Git authority do not imply an all-Project resync.
+Project UI resync scope follows the manifest's exact role/action classification and proof. Only proof-backed applicable BREAKING drift (or the approved pre-semantic-history legacy floor) requires resync before the affected action. ADDITIVE, COMPATIBLE, and UNRELATED changes continue without resync; INTEGRITY ERROR requires repository-authority repair rather than Project resync. Future ordinary role-policy changes fetched from live Git authority do not imply an all-Project resync.
 
 If a real ChatGPT Project rollout boundary genuinely needs live smoke validation, keep it deliberately small: at most one representative decision-only case and one representative action-bearing case on a safe/disposable test surface. The purpose is to confirm Project wiring and tool-observation instrumentation, **not** to claim exhaustive model-behavior certification. Such a smoke must be explicitly justified by the rollout risk; it is not a standing requirement for every kernel change.
 

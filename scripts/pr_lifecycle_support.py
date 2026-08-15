@@ -95,8 +95,8 @@ STATE_LABELS: dict[LifecycleState, str] = {
     LifecycleState.CHANGES_REQUESTED: "CHANGES REQUESTED / FIX IN PROGRESS",
     LifecycleState.REVIEW_PASSED: "REVIEW PASSED / EVALUATING GATES",
     LifecycleState.LOCAL_IMPLEMENTATION_REQUIRED: "LOCAL IMPLEMENTATION COMPLETION REQUIRED",
-    LifecycleState.LOCAL_CERTIFICATION_REQUIRED: "LOCAL CERTIFICATION REQUIRED",
-    LifecycleState.WAITING_CI: "WAITING CI / CERTIFICATION",
+    LifecycleState.LOCAL_CERTIFICATION_REQUIRED: "REVIEW PASSED / LOCAL INTEGRATION CERTIFICATION REQUIRED",
+    LifecycleState.WAITING_CI: "REVIEW PASSED / CERTIFICATION PENDING",
     LifecycleState.WAITING_EXTERNAL_DEPENDENCY: "WAITING ON EXTERNAL DEPENDENCY",
     LifecycleState.INTEGRATION_READY: "INTEGRATION READY",
     LifecycleState.MERGING: "MERGING / INTEGRATION IN PROGRESS",
@@ -418,6 +418,10 @@ class WorkspaceAgentDispatcher:
             f"Repository: {repository}. PR: {pr_url} (#{pr_number}). "
             f"Exact current head SHA: {head}. Review type: {review_class}.{domain_hint} "
             f"Owning Asana task identity: {task_identity}. "
+            "Execution host: ChatGPT remote Review. Inspect role authority separately from host capability. "
+            "If Review-authorized evidence genuinely requires a local-only capability, put the complete exact-head "
+            "handoff on the PR for a local Review agent before any human notice; semantic fixes belong to "
+            "Implementation and Integration-only actions belong to Integration, never to a generic local agent. "
             "Read and follow the current repository dish/docs/agents/review.md contract. "
             "Re-read the PR head before submitting. The authoritative completion artifact must be a formal "
             "GitHub COMMENT review anchored to this exact head with VERDICT: MERGE or VERDICT: BLOCK; "

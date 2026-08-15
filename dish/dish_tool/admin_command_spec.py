@@ -7,6 +7,7 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class AdminCommandSpec:
     name: str
+    presentation: str = "detail"
     lease_free: bool = False
     resolve_operation_target: bool = False
     operation_scoped: bool = False
@@ -16,13 +17,17 @@ class AdminCommandSpec:
 def _spec(
     name: str,
     *,
+    presentation: str = "detail",
     lease_free: bool = False,
     resolve_operation: bool = False,
     operation_scoped: bool = False,
     run_id: bool = False,
 ) -> AdminCommandSpec:
+    if presentation not in {"primary", "detail", "compatibility"}:
+        raise ValueError(f"invalid admin command presentation tier: {presentation}")
     return AdminCommandSpec(
         name=name,
+        presentation=presentation,
         lease_free=lease_free,
         resolve_operation_target=resolve_operation,
         operation_scoped=operation_scoped,
@@ -33,20 +38,20 @@ def _spec(
 ADMIN_COMMAND_SPECS = {
     spec.name: spec
     for spec in (
-        _spec("queue", lease_free=True),
-        _spec("issues", lease_free=True),  # hidden compatibility alias
-        _spec("attention", lease_free=True),  # hidden compatibility alias
-        _spec("audit", lease_free=True),
-        _spec("active", lease_free=True),
-        _spec("active-leases", lease_free=True),  # hidden compatibility alias
-        _spec("review-queue", lease_free=True),  # hidden compatibility/detail view
+        _spec("queue", presentation="primary", lease_free=True),
+        _spec("issues", presentation="compatibility", lease_free=True),
+        _spec("attention", presentation="compatibility", lease_free=True),
+        _spec("audit", presentation="primary", lease_free=True),
+        _spec("active", presentation="primary", lease_free=True),
+        _spec("active-leases", presentation="compatibility", lease_free=True),
+        _spec("review-queue", presentation="detail", lease_free=True),
         _spec("review-inspect", lease_free=True),
         _spec("review-approve", operation_scoped=True),
         _spec("review-reject", operation_scoped=True),
-        _spec("inspect", lease_free=True),
-        _spec("kill", lease_free=True),
-        _spec("kill-all", lease_free=True),
-        _spec("kill-all-expired", lease_free=True),
+        _spec("inspect", presentation="primary", lease_free=True),
+        _spec("kill", presentation="primary", lease_free=True),
+        _spec("kill-all", presentation="primary", lease_free=True),
+        _spec("kill-all-expired", presentation="primary", lease_free=True),
         _spec("holds", lease_free=True),
         _spec("recover", resolve_operation=True, operation_scoped=True),
         _spec(
@@ -103,4 +108,14 @@ LEASE_FREE_ADMIN_COMMANDS = frozenset(
 )
 RUN_ID_ADMIN_COMMANDS = frozenset(
     name for name, spec in ADMIN_COMMAND_SPECS.items() if spec.run_id_field
+)
+
+PRIMARY_ADMIN_COMMANDS = frozenset(
+    name for name, spec in ADMIN_COMMAND_SPECS.items() if spec.presentation == "primary"
+)
+DETAIL_ADMIN_COMMANDS = frozenset(
+    name for name, spec in ADMIN_COMMAND_SPECS.items() if spec.presentation == "detail"
+)
+COMPATIBILITY_ADMIN_COMMANDS = frozenset(
+    name for name, spec in ADMIN_COMMAND_SPECS.items() if spec.presentation == "compatibility"
 )
