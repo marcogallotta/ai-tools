@@ -283,6 +283,25 @@ def canonical_diff(before, after) -> dict[str, tuple[str, str]]:
     }
 
 
+def canonical_body_changed(before, after) -> bool:
+    """Return whether prepare's signed-baseline canonical body changed.
+
+    This is the legacy Step 6 applicability boundary for
+    ``material_classification``.  Keep it shared so PostgreSQL parity does not
+    grow a second body-diff oracle.
+    """
+
+    return (
+        before.title != after.title
+        or before.recognition != after.recognition
+        or before.introduction != after.introduction
+        or dict(before.sections) != dict(after.sections)
+        or before.planning_brief.values != after.planning_brief.values
+        or before.decisions != after.decisions
+        or before.research_basis != after.research_basis
+    )
+
+
 def _signature(pattern: re.Pattern[str], text: str) -> tuple[str, ...]:
     return tuple(sorted({m.group(0).casefold().replace(" ", "") for m in pattern.finditer(text)}))
 
