@@ -100,6 +100,18 @@ The normal repository lifecycle is:
 
 The Development Workflow specialist maintains and improves that lifecycle but does not silently weaken it.
 
+### Comparison compatibility and ownership escalation
+
+Comparison/qualification tooling must not keep bouncing an impossible mismatch through fixture repair. Before fixture/data reconciliation begins, prove the proposed target state satisfies every compared system's own health/validity requirements; disposability is not an exemption from minimum health. If the common target is incompatible, stop fixture work.
+
+For the still-required gate, apply these three rules through the existing lifecycle/dispatch machinery:
+
+1. **Compatibility preflight:** establish each side's minimum healthy/valid state and prove a common target can satisfy all sides before attempting fixture/data repair.
+2. **Ownership escalation:** when no existing supported operation can satisfy the gate and the missing path is a new or changed repository capability, classify **IMPLEMENTATION REQUIRED** immediately. Do not leave it as local operations, fixture repair, or deferred design. Conversely, when an existing supported operation safely reaches the target, classify the residual work **LOCAL SYSTEM ACCESS** rather than Implementation.
+3. **Blocker consistency:** a blocker may be `deferred`/`not required` only after proving the active gate can pass without it. If the gate still depends on that blocker, keep it active with the correct owner. A separate fix for another comparator defect cannot silently clear it.
+
+When escalation is required, the human rendering uses the canonical action-first lifecycle contract: the first sentence is `This needs an Implementation fix: <one-sentence scope>.` Diagnosis follows only after the action. Continue to use the repository-owned dispatcher and canonical Implementation handoff; this rule creates no new scheduler, queue, or lifecycle authority. If root-cause/Five Whys analysis is requested, use the canonical shared Five Whys procedure; do not duplicate that method here.
+
 Invariants:
 
 - implementation reaches Review only as durable Git identity: branch + commit + PR + exact current head SHA;

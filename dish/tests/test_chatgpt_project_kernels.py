@@ -112,11 +112,11 @@ def test_development_workflow_incident_evals_require_cross_role_and_fallback_con
 
 def test_eval_contract_matrix_and_oracle_free_prepared_cases():
  ids=kernels.validate_eval_contracts(); assert set(ids)==kernels.REQUIRED_EVAL_IDS
- b=kernels.prepare_eval_bundle(); assert len(b['cases'])==73
+ b=kernels.prepare_eval_bundle(); assert len(b['cases'])==sum(len(q['roles']) for q in kernels._evals())
  assert all(kernels.ORACLE_FIELDS.isdisjoint(c) for c in b['cases'])
  by={c['case_id']:c for c in b['cases']}; assert by['configured-repository-pr-routing::review']['prompt']=='review PR31'; assert by['configured-repository-pr-routing::integration']['prompt']=='merge PR34'
 
-def test_behavior_evaluator_accepts_complete_matrix(): assert len(kernels.evaluate_behavior_results(_passing()))==73
+def test_behavior_evaluator_accepts_complete_matrix(): assert len(kernels.evaluate_behavior_results(_passing()))==sum(len(q['roles']) for q in kernels._evals())
 
 def test_repository_routing_requires_observed_configured_connector_read():
  p=_passing(); _result(p,'configured-repository-pr-routing::review')['runner_observations']=[]
@@ -200,3 +200,38 @@ def test_c1_standing_contracts_preserve_authority_and_capture_surfaces():
  assert 'Observing a quiet state is not isolation' in dw and 'mechanically enforced admission/fencing boundary' in dw
  idx=(DISH_ROOT/'docs'/'agents'/'index.md').read_text()
  assert 'Authenticated-account metadata' in idx and 'not that Marco physically performed or approved' in idx
+
+def test_fixture_mismatch_standing_contracts_stop_impossible_repair_and_escalate_owner():
+ coordinator=(DISH_ROOT/'docs'/'agents'/'coordinator.md').read_text()
+ workflow=(DISH_ROOT/'docs'/'agents'/'development-workflow.md').read_text()
+ for text in (coordinator,workflow):
+  assert 'Compatibility preflight' in text
+  assert 'Ownership escalation' in text
+  assert 'Blocker consistency' in text
+  assert 'IMPLEMENTATION REQUIRED' in text
+  assert 'LOCAL SYSTEM ACCESS' in text
+  assert 'deferred' in text and 'not required' in text
+  assert 'This needs an Implementation fix: <one-sentence scope>.' in text
+  assert 'Five Whys' in text
+ assert 'disposable never waives' in coordinator
+ assert 'disposability is not an exemption' in workflow
+ assert 'do not create another queue, scheduler, or lifecycle controller' in coordinator
+ assert 'creates no new scheduler, queue, or lifecycle authority' in workflow
+
+
+def test_fixture_mismatch_recurrence_matrix_covers_escalation_and_non_escalation():
+ incompatible=_scenario('comparison-incompatible-target-escalates-implementation')
+ assert {'check_all_compared_system_health_requirements','reject_incompatible_common_target','stop_fixture_repair','classify_implementation_required','keep_required_blocker_active'}<=set(incompatible['required_actions'])
+ assert {'continue_fixture_repair','classify_local_system_access','defer_required_capability'}<=set(incompatible['forbidden_actions'])
+ deferred=_scenario('active-gate-blocker-cannot-be-deferred')
+ assert {'mark_required_blocker_deferred','mark_required_blocker_not_required'}<=set(deferred['forbidden_actions'])
+ disposable=_scenario('disposable-fixture-still-needs-health')
+ assert 'treat_disposability_as_health_override' in disposable['forbidden_actions']
+ separate=_scenario('separate-pr-does-not-clear-independent-blocker')
+ assert 'mark_independent_blocker_resolved' in separate['forbidden_actions']
+ human=_scenario('implementation-escalation-is-action-first')
+ assert 'begin_with_implementation_fix_sentence' in human['required_actions']
+ assert 'diagnosis_before_action' in human['forbidden_actions']
+ supported=_scenario('supported-operation-stays-local-system-access')
+ assert 'classify_local_system_access' in supported['required_actions']
+ assert 'classify_implementation_required' in supported['forbidden_actions']
