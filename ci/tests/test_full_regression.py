@@ -98,6 +98,17 @@ def test_workflow_contract_is_independent_force_all_diagnostic_backstop():
     )
 
 
+def test_workflow_installs_pglite_dependencies_before_python_control_plane_lane():
+    workflow = WORKFLOW.read_text()
+    install = "Install PGlite Node dependencies"
+    lane = "Run Python/control-plane group"
+    assert install in workflow
+    assert "--phase pglite-node-dependencies --" in workflow
+    assert "cd dish/tests/postgresql/pglite" in workflow
+    assert "npm ci --no-audit --no-fund" in workflow
+    assert workflow.index(install) < workflow.index(lane)
+
+
 def test_unchanged_success_dedupes_scheduled_only():
     runs = {"workflow_runs": [{"id": 100, "status": "completed", "conclusion": "success", "head_sha": SHA}]}
     scheduled = fr.decide_run(runs_payload=runs, main_sha=SHA, event="schedule", current_run_id="101")

@@ -17,7 +17,7 @@ from dish_pg.release import ALEMBIC_HEAD
 from tests.support.postgresql.core import ROOT, _bootstrap_registry, _import_one, _uuid_stream
 from dish_pg import candidate_manifest_models as manifest_models
 from dish_pg import stage5_models as tx
-from dish_pg.candidate_manifest import revalidate_candidate_manifest
+from dish_pg.candidate_manifest import build_candidate_manifest, revalidate_candidate_manifest
 from tests.support.postgresql.release import HASH_A, _prepare_candidate, _record_final_closure
 from tests.support.postgresql.workflow import NOW, _next
 
@@ -37,6 +37,12 @@ def _validated_candidate(session: Session):
     service, candidate_id = _prepare_candidate(session, ids, context, task.task_id)
     bundle = service.build_evidence_bundle(candidate_id=candidate_id, bundle_kind="release_candidate", built_at=NOW)
     service.validate_candidate(candidate_id=candidate_id, evidence_bundle_id=bundle.bundle_id, validated_at=NOW + timedelta(minutes=1))
+    build_candidate_manifest(
+        session,
+        uuid_factory=lambda: _next(ids),
+        candidate=service._candidate(candidate_id),
+        built_at=NOW + timedelta(minutes=1),
+    )
     return ids, candidate_id, bundle.bundle_id
 
 
