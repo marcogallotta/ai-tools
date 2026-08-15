@@ -124,6 +124,11 @@ def test_parallel_safe_workers_use_invoking_environment_and_exact_selection(monk
 
     main = namespace["main"]
     monkeypatch.setitem(main.__globals__, "_xdist_preflight", lambda: 0)
+    monkeypatch.setitem(
+        main.__globals__,
+        "require_parallel_safe_qualification",
+        lambda selected: tuple(selected),
+    )
     monkeypatch.setitem(main.__globals__, "_run_phase", fake_run)
 
     assert main(

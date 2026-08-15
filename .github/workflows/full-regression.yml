@@ -163,6 +163,19 @@ jobs:
             --phase setup-node \
             --outcome '${{ steps.setup-node.outcome }}'
 
+      - name: Install PGlite Node dependencies
+        if: always() && steps.decision.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          python3 scripts/full_regression.py run-phase \
+            --output-dir "$FULL_REGRESSION_OUTPUT" \
+            --phase pglite-node-dependencies -- \
+            bash -lc '
+              set -euo pipefail
+              cd dish/tests/postgresql/pglite
+              npm ci --no-audit --no-fund
+            '
+
       # Adapter seam: the command following `--` can be replaced by Agent C's shared lane runner.
       # This workflow owns force-all/continue/evidence semantics, not final lane command semantics.
       - name: Run Python/control-plane group

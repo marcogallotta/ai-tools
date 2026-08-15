@@ -151,6 +151,28 @@ REVIEWED_PRIVATE_FAULT_SEAMS = {
     ("postgresql/test_runtime_wiring_rehearsal.py", "_run_configured_service"): (
         "Legacy configured-service dispatch boundary for wiring selection tests."
     ),
+    ("postgresql/test_production_reset.py", "_database_exists"): (
+        "Database-existence boundary for production-reset recreate and resume fencing tests."
+    ),
+    ("postgresql/test_production_reset.py", "_load_database_definition"): (
+        "Catalog-definition capture boundary for production-reset recreate ordering tests."
+    ),
+    ("postgresql/test_production_reset.py", "_maintenance_actor_identity"): (
+        "Maintenance-role identity boundary for production-reset authorization tests."
+    ),
+    ("postgresql/test_production_reset.py", "_load_reset_guard"): (
+        "Production-reset guard identity boundary for reset lineage and resume mismatch tests."
+    ),
+    ("postgresql/test_production_reset.py", "_check_non_session_drop_blockers"): (
+        "Non-session drop-blocker boundary for deterministic production-reset recreate ordering tests."
+    ),
+    ("postgresql/test_production_reset.py", "_active_sessions"): (
+        "Active-session discovery boundary for deterministic production-reset recreate ordering tests."
+    ),
+    ("postgresql/test_test_generation_rollover.py", "_prepare_candidate"): (
+        "First-admission candidate fixture boundary used to construct a same-shape non-incident "
+        "candidate for rollover signature refusal."
+    ),
     ("postgresql/native/test_routine_migration.py", "_repository_script"): (
         "Alembic repository-graph fault-injection boundary used to prove a known "
         "non-ancestor database revision fails before mutation."

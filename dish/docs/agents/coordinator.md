@@ -170,8 +170,6 @@ A lifecycle dispatcher must be able to classify `LOCAL IMPLEMENTATION COMPLETION
 
 Every repository-changing Implementation/fix dispatch uses the single canonical handoff contract at [`templates/implementation-handoff.md`](templates/implementation-handoff.md). Coordinator must supply its full assignment identity and must not dispatch from a same-task branch/PR match alone.
 
-Before ordinary Implementation/fix dispatch, query the repository-owned global Implementation-claim guard for the owning Asana task. No durable claim lineage means a fresh acquisition may proceed. Any existing generation is **not** ordinary-dispatchable: active/unsynchronized state blocks immediately, while release/replacement/continuation requires an explicit exact-generation handoff. If the claim service/readback is unavailable or Asana synchronization is unresolved, fail closed; never infer a free writer from a stale `Ready` section.
-
 Day-one rules for new work:
 
 - agent-created implementation branches use `agent/<short-task-slug>` unless an explicit handoff establishes another convention;

@@ -189,10 +189,6 @@ class AsanaBackend(Protocol):
     def get_task(self, gid: str) -> dict[str, Any]: ...
 
 
-class ImplementationClaimGuardBackend(Protocol):
-    def dispatch_guard(self, task_gid: str) -> dict[str, Any]: ...
-
-
 class JSONHTTPClient:
     def __init__(self, *, timeout: float = 30.0) -> None:
         self.timeout = timeout
@@ -322,61 +318,6 @@ class GitHubREST:
         if not isinstance(value, dict):
             raise LifecycleError("GitHub merge response was not an object")
         return value
-
-
-class ImplementationClaimREST:
-    """Read the repository-owned global Implementation claim before writable dispatch."""
-
-    def __init__(
-        self,
-        url: str,
-        token: str,
-        repository: str,
-        *,
-        http: JSONHTTPClient | None = None,
-    ) -> None:
-        base = str(url or "").rstrip("/")
-        if not base or not token:
-            raise LifecycleError("global Implementation claim service URL/token are required")
-        if not base.startswith("https://") and not (
-            os.getenv("DISH_IMPLEMENTATION_CLAIM_ALLOW_HTTP") == "1" and base.startswith("http://")
-        ):
-            raise LifecycleError("global Implementation claim service URL must use HTTPS")
-        self.url = base + "/v1/claim"
-        self.repository = repository
-        self.http = http or JSONHTTPClient()
-        self.headers = {
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "User-Agent": "dish-pr-lifecycle/1",
-        }
-
-    def dispatch_guard(self, task_gid: str) -> dict[str, Any]:
-        try:
-            _, _, value = self.http.request(
-                "POST",
-                self.url,
-                headers=self.headers,
-                body={
-                    "action": "dispatch-guard",
-                    "repository": self.repository,
-                    "task_gid": str(task_gid),
-                },
-            )
-        except (HTTPError, LifecycleError) as exc:
-            raise LifecycleError(f"global Implementation claim guard unavailable: {exc}") from exc
-        if not isinstance(value, dict) or value.get("ok") is not True:
-            raise LifecycleError("global Implementation claim guard returned an invalid response")
-        claim = value.get("claim")
-        if claim is not None and not isinstance(claim, dict):
-            raise LifecycleError("global Implementation claim guard returned an invalid claim")
-        return {
-            "task_gid": str(task_gid),
-            "dispatchable": bool(value.get("dispatchable")),
-            "reason": str(value.get("reason") or ""),
-            "claim": dict(claim) if claim is not None else None,
-        }
 
 
 class AsanaREST:

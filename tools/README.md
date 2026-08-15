@@ -131,14 +131,9 @@ The suite runs in `tools/.venv` (it has `pytest` installed alongside the SDK, pe
 
 ## `tools/agent-worktree`
 
-`agent-worktree` is the stdlib-only local lifecycle boundary for Claude Code/Codex Implementation
-work in this repository. Cross-host writer authority is the repository-owned global Implementation
-claim service; `agent-worktree claim` obtains/validates that durable generation first, then layers
-task/branch/PR OS locks and task-owned linked-worktree management underneath it. There is intentionally
-no separate host ownership authority or `git-sync`/`sync-main` workflow.
-
-Production clients require `DISH_IMPLEMENTATION_CLAIM_URL` and `DISH_IMPLEMENTATION_CLAIM_TOKEN`;
-see `ci/implementation-claim-service.md`. The direct SQLite claim adapter is test-only.
+`agent-worktree` is the stdlib-only, host-independent lifecycle boundary for local Claude Code/Codex
+implementation work in this repository. It combines task-owned linked-worktree/branch management with
+origin freshness; there is intentionally no separate `git-sync`/`sync-main` workflow.
 
 The tool must be invoked from the real `marcogallotta/ai-tools` primary or linked checkout. It binds
 the resolved Git executable, verifies exact top-level/git-dir/common-dir/worktree-registry identity,
@@ -166,21 +161,17 @@ match authoritative origin; a moved target is a stale handoff, not permission to
 base automatically.
 
 ```sh
-tools/agent-worktree claim \
+tools/agent-worktree start \
   --task <task_gid> \
   --branch agent/<short-task-slug> \
+  --base-ref refs/heads/main \
   --base <exact-40-char-sha> \
-  --agent-id <local-agent-id> \
-  -- \
-  tools/agent-worktree start \
-    --task <task_gid> \
-    --branch agent/<short-task-slug> \
-    --base-ref refs/heads/main \
-    --base <exact-40-char-sha> \
-    --agent-id <local-agent-id>
+  --agent-id <local-agent-id>
+
+tools/agent-worktree exec --task <task_gid> -- <agent-command>
 ```
 
-The outer claim must remain active while writer subcommands/agent commands run. `start` serializes first creation with a task-scoped local lock. It refuses branch/path/task-state
+`start` serializes first creation with a task-scoped local lock. It refuses branch/path/task-state
 collisions, an owned branch checked out elsewhere, an existing remote owned branch without matching
 state, detached ownership, and stale/missing/ambiguous origin evidence. If the exact base object is
 missing locally, it uses a no-destination `fetch --no-write-fetch-head` shape and proves the object
@@ -191,9 +182,15 @@ exists without moving local `main` or another task branch.
 When a ChatGPT-created `agent/*` PR branch already exists on verified origin but has no local task
 state, an orchestrator can hand its exact identity to a local agent without bypassing this lifecycle:
 
-Adoption is likewise wrapped by `tools/agent-worktree claim`, with the exact base plus PR number/head
-passed to the outer claim before the `adopt` subcommand runs. The canonical command shape lives in
-`dish/docs/agents/templates/implementation-handoff.md`.
+```sh
+tools/agent-worktree adopt \
+  --task <task_gid> \
+  --branch agent/<existing-pr-branch> \
+  --base-ref refs/heads/main \
+  --base <original-authoring-base-sha> \
+  --expected-head <exact-current-remote-pr-head> \
+  --agent-id <local-agent-id>
+```
 
 `adopt` is a fail-closed first-state operation, not arbitrary branch takeover. It requires no existing
 task state or local branch, verifies the canonical repository and remote branch, requires the supplied
@@ -216,13 +213,10 @@ Resume re-verifies the task record against the actual worktree/common-dir/git-di
 HEAD, then observes origin at that explicit boundary. Dirty files/index are preserved. The tool never
 automatically resets, checks out, merges, or rebases the owned branch. A target `main` movement after
 creation is reported only. Local-ahead owned work is normal; remote-ahead or divergent owned branches
-fail closed for explicit recovery. `--takeover` is only a provenance update after an explicit orchestration handoff; the outer claim also
-requires `--expected-global-claim`, `--takeover-reason`, and `--liveness-evidence`, plus the exact local
-`--expected-claim`. The local generation is checked under OS locks before global CAS, so a failed local
-takeover cannot move cross-host ownership.
+fail closed for explicit recovery. `--takeover` is only a provenance update after an explicit
+orchestration handoff; it does not infer that the previous agent died.
 
-`status` is local/read-only and does not contact origin; its JSON claim block exposes both the local
-`claim_id` and durable `global_claim_id`.
+`status` is local/read-only and does not contact origin.
 
 ### Publish and handoff
 
@@ -231,12 +225,9 @@ tools/agent-worktree publish --task <task_gid>
 tools/agent-worktree verify-handoff --task <task_gid>
 ```
 
-Before `git push`, publish revalidates the exact durable global generation and journals one
-expected-head publication intent. It then pushes only
+Publish pushes only
 `refs/heads/<owned-branch>:refs/heads/<owned-branch>` to the verified origin URL, without force or
-implicit push-target inference, and completes the journal only after remote readback equals local
-`HEAD`. A stale generation is rejected before push; an ambiguous push result is reconciled rather than
-blindly retried.
+implicit push-target inference, then requires the remote owned head to equal local `HEAD`.
 `verify-handoff` refuses dirty or unpublished/mismatched state and reports the stored authoring base,
 local implementation head, remote owned head, and current target head separately. A moved target is
 not an automatic rebase instruction.

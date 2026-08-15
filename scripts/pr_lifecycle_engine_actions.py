@@ -116,75 +116,6 @@ class LifecycleActionsMixin:
             authoritative.residual_reason = "merge API returned success but authoritative PR readback is not merged"
         return authoritative
 
-    def _implementation_claim_dispatch_context(
-        self, pr: PRLifecycle
-    ) -> dict[str, Any]:
-        if self.implementation_claim_guard is None:
-            raise LifecycleError(
-                "global Implementation claim guard is not configured; writable dispatch fails closed"
-            )
-        if len(pr.task_ids) != 1:
-            raise LifecycleError(
-                "writable Implementation dispatch requires exactly one owning Asana task"
-            )
-        task_gid = pr.task_ids[0]
-        try:
-            guard = self.implementation_claim_guard.dispatch_guard(task_gid)
-        except Exception as exc:
-            if isinstance(exc, LifecycleError):
-                raise
-            raise LifecycleError(
-                f"global Implementation claim guard unavailable for task {task_gid}: {exc}"
-            ) from exc
-        claim = guard.get("claim")
-        if claim is None:
-            if guard.get("dispatchable") is not True:
-                raise LifecycleError(
-                    f"global Implementation claim guard denied fresh acquisition for task {task_gid}"
-                )
-            return {
-                "task_gid": task_gid,
-                "mode": "acquire",
-                "expected_claim_id": None,
-                "claim": None,
-            }
-        if not isinstance(claim, dict):
-            raise LifecycleError("global Implementation claim guard returned invalid claim state")
-        if claim.get("asana_sync_state") != "synced":
-            raise LifecycleError(
-                f"global Implementation claim {claim.get('claim_id')} has unresolved Asana synchronization"
-            )
-        if claim.get("branch") not in (None, pr.branch):
-            raise LifecycleError(
-                f"global Implementation claim is bound to branch {claim.get('branch')!r}, not {pr.branch!r}"
-            )
-        if claim.get("pr_number") not in (None, pr.number):
-            raise LifecycleError(
-                f"global Implementation claim is bound to PR #{claim.get('pr_number')}, not PR #{pr.number}"
-            )
-        if claim.get("pr_number") == pr.number and claim.get("pr_head") not in (None, pr.head):
-            raise LifecycleError(
-                "global Implementation claim exact PR head does not match the lifecycle dispatch head"
-            )
-        state = claim.get("state")
-        if state in {"claimed", "publishing"}:
-            raise LifecycleError(
-                f"global Implementation claim {claim.get('claim_id')} is still actively writable; duplicate dispatch denied"
-            )
-        if state not in {"review-ready", "released"}:
-            raise LifecycleError(
-                f"global Implementation claim state {state!r} is not an authorized continuation/takeover boundary"
-            )
-        claim_id = claim.get("claim_id")
-        if not isinstance(claim_id, str) or not claim_id:
-            raise LifecycleError("global Implementation claim is missing its exact claim_id")
-        return {
-            "task_gid": task_gid,
-            "mode": "takeover",
-            "expected_claim_id": claim_id,
-            "claim": claim,
-        }
-
     def dispatch_one(
         self,
         pr: PRLifecycle,
@@ -231,7 +162,6 @@ class LifecycleActionsMixin:
                 )
                 return current
 
-            global_claim = self._implementation_claim_dispatch_context(current)
             lease_id = self._post_lease(current, phase="fix")
             reread = self.inspect(self.github.get_pr(current.number))
             if reread.head != current.head or reread.state != LifecycleState.CHANGES_REQUESTED:
@@ -251,10 +181,8 @@ class LifecycleActionsMixin:
                 "formal_block_review": exact_review if formal_block else None,
                 "pr_owned_ci_failure": current.gate if pr_owned_ci_failure else None,
                 "lifecycle": reread.json(),
-                "global_implementation_claim": global_claim,
                 "instruction": (
                     "Follow the current repository Implementation contract. Update the existing PR/branch, "
-                    "acquire or exact-generation-take over the supplied global Implementation claim before semantic work, "
                     "treat blocked_head as the exact review identity, re-read GitHub before semantic work, "
                     + (
                         "fix the PR-owned exact-head required CI failure, and return the new exact PR head; "
