@@ -95,6 +95,7 @@ def test_test_service_is_pg_authority_and_legacy_oracle_is_isolated() -> None:
 
     assert oracle["DISH_AUTHORITY_BACKEND"] == "legacy"
     assert oracle["DISH_TEST_COMPARATOR_DISPOSABLE"] == "1"
+    assert oracle["DISH_COOKING_PROJECT_GID"] == "1216693403164366"
     assert oracle["DISH_SERVICE_PORT"] == "8795"
     assert oracle["DISH_ACTION_PORT"] == "8796"
     assert oracle["DISH_DARK_LAUNCH_MODE"] == "off"

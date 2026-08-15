@@ -31,6 +31,7 @@ DEFAULT_ORACLE_HEALTH_URL = "http://127.0.0.1:8795/health"
 DEFAULT_EVIDENCE_DIR = Path("/home/marco/.local/state/dish/test/comparator-evidence")
 DEFAULT_AUTHORITY_ENV = Path("/home/marco/.config/dish-service/test.env")
 DEFAULT_ORACLE_ENV = Path("/home/marco/.config/dish-service/test-legacy.env")
+DISPOSABLE_ORACLE_PROJECT_GID = "1216693403164366"
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 _TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$")
@@ -106,11 +107,17 @@ def _require(values: Mapping[str, str], key: str, expected: str | None = None) -
 
 
 def _require_state_path(value: str, *, root: Path, field: str) -> None:
-    observed = Path(value).expanduser()
+    raw = Path(value).expanduser()
+    if not raw.is_absolute():
+        raise ComparatorError(f"{field} must be an absolute path under {root}, observed {raw}")
+    canonical_root = root.expanduser().resolve(strict=False)
+    observed = raw.resolve(strict=False)
     try:
-        observed.relative_to(root)
+        observed.relative_to(canonical_root)
     except ValueError as exc:
-        raise ComparatorError(f"{field} must stay under {root}, observed {observed}") from exc
+        raise ComparatorError(
+            f"{field} must stay under {canonical_root} after canonicalization, observed {observed}"
+        ) from exc
 
 
 def _database_name_from_url(database_url: str) -> str:
@@ -150,7 +157,7 @@ def validate_target_environments(authority_env: Mapping[str, str], oracle_env: M
     _require(oracle_env, "DISH_ACTION_BIND", "127.0.0.1")
     _require(oracle_env, "DISH_SERVICE_PORT", "8795")
     _require(oracle_env, "DISH_ACTION_PORT", "8796")
-    _require(oracle_env, "DISH_COOKING_PROJECT_GID")
+    _require(oracle_env, "DISH_COOKING_PROJECT_GID", DISPOSABLE_ORACLE_PROJECT_GID)
     _require_state_path(
         _require(oracle_env, "DISH_DB_PATH"),
         root=Path("/home/marco/.local/state/dish/test-legacy"),
@@ -359,11 +366,18 @@ def _route_preflight(authority: TargetConfig, oracle: TargetConfig, *, run_id: s
     oracle_data = oracle_sections.get("data", {})
     authority_project_gid = authority_data.get("project_gid") if isinstance(authority_data, Mapping) else None
     oracle_project_gid = oracle_data.get("project_gid") if isinstance(oracle_data, Mapping) else None
-    expected_oracle_project_gid = oracle.env["DISH_COOKING_PROJECT_GID"]
+    expected_oracle_project_gid = DISPOSABLE_ORACLE_PROJECT_GID
+    configured_oracle_project_gid = str(oracle.env.get("DISH_COOKING_PROJECT_GID", "")).strip()
     if authority_project_gid is not None:
         raise ComparatorError("default TEST Action route returned legacy project identity; refusing comparator mutations")
+    if configured_oracle_project_gid != expected_oracle_project_gid:
+        raise ComparatorError(
+            "legacy comparator environment is not bound to the repository-designated disposable TEST project"
+        )
     if str(oracle_project_gid or "") != expected_oracle_project_gid:
-        raise ComparatorError("legacy comparator Action route project identity does not match its disposable environment")
+        raise ComparatorError(
+            "legacy comparator Action route is not bound to the repository-designated disposable TEST project"
+        )
 
     return {
         "authority_health": {"backend": authority_health.get("backend"), "profile": authority_health.get("profile"), "startup_ready": authority_health.get("startup_ready"), "identity": authority_health.get("identity"), "isolation": isolation},

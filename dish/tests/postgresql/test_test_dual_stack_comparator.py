@@ -35,7 +35,7 @@ def _envs() -> tuple[dict[str, str], dict[str, str]]:
         "DISH_ACTION_BIND": "127.0.0.1",
         "DISH_SERVICE_PORT": "8795",
         "DISH_ACTION_PORT": "8796",
-        "DISH_COOKING_PROJECT_GID": "1216693403164366",
+        "DISH_COOKING_PROJECT_GID": comparator.DISPOSABLE_ORACLE_PROJECT_GID,
         "DISH_DB_PATH": "/home/marco/.local/state/dish/test-legacy/shared.sqlite3",
         "DISH_SERVICE_BACKUP_DIR": "/home/marco/.local/state/dish/test-legacy/backups",
         "DISH_SERVICE_ACTION_TOKEN": "oracle-token",
@@ -76,6 +76,37 @@ def test_authority_rejects_asana_and_oracle_requires_disposable_isolation() -> N
     oracle["DISH_DB_PATH"] = "/home/marco/.local/state/dish/test/shared.sqlite3"
     with pytest.raises(comparator.ComparatorError, match="test-legacy"):
         comparator.validate_target_environments(authority, oracle)
+
+
+def test_oracle_rejects_dotdot_escape_from_disposable_state_root() -> None:
+    authority, oracle = _envs()
+    oracle["DISH_DB_PATH"] = "/home/marco/.local/state/dish/test-legacy/../test/shared.sqlite3"
+    with pytest.raises(comparator.ComparatorError, match="after canonicalization"):
+        comparator.validate_target_environments(authority, oracle)
+
+
+def test_route_preflight_rejects_wrong_self_consistent_oracle_project(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    authority, oracle = _targets()
+    wrong_project_gid = "1210000000000000"
+    oracle.env["DISH_COOKING_PROJECT_GID"] = wrong_project_gid
+    responses = {
+        authority.health_url: (200, {"ok": True, "backend": "postgresql", "profile": "test", "isolation": {"asana_environment_keys": []}}),
+        oracle.health_url: (200, {"ok": True, "asana": {"ok": True}}),
+        authority.action_base + "/openapi/action.json": (200, {"paths": {"/v1/action/sections": {}}}),
+        oracle.action_base + "/openapi/action.json": (200, {"paths": {"/v1/action/sections": {}}}),
+    }
+    monkeypatch.setattr(comparator, "_request_json", lambda url, **_kwargs: responses[url])
+    monkeypatch.setattr(
+        comparator,
+        "_command_request",
+        lambda target, **_kwargs: {
+            "data": {"project_gid": None if target.name == "authority" else wrong_project_gid}
+        },
+    )
+    with pytest.raises(comparator.ComparatorError, match="repository-designated disposable TEST project"):
+        comparator._route_preflight(authority, oracle, run_id="run")
 
 
 def test_normalization_removes_declared_identity_timestamp_and_uuid_noise() -> None:
@@ -152,6 +183,6 @@ def test_route_preflight_rejects_legacy_identity_on_default_test_route(monkeypat
         oracle.action_base + "/openapi/action.json": (200, {"paths": {"/v1/action/sections": {}}}),
     }
     monkeypatch.setattr(comparator, "_request_json", lambda url, **_kwargs: responses[url])
-    monkeypatch.setattr(comparator, "_command_request", lambda target, **_kwargs: {"data": {"project_gid": "legacy" if target.name == "authority" else "1216693403164366"}})
+    monkeypatch.setattr(comparator, "_command_request", lambda target, **_kwargs: {"data": {"project_gid": "legacy" if target.name == "authority" else comparator.DISPOSABLE_ORACLE_PROJECT_GID}})
     with pytest.raises(comparator.ComparatorError, match="default TEST Action route returned legacy project identity"):
         comparator._route_preflight(authority, oracle, run_id="run")
