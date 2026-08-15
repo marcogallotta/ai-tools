@@ -95,8 +95,8 @@ STATE_LABELS: dict[LifecycleState, str] = {
     LifecycleState.CHANGES_REQUESTED: "CHANGES REQUESTED / FIX IN PROGRESS",
     LifecycleState.REVIEW_PASSED: "REVIEW PASSED / EVALUATING GATES",
     LifecycleState.LOCAL_IMPLEMENTATION_REQUIRED: "LOCAL IMPLEMENTATION COMPLETION REQUIRED",
-    LifecycleState.LOCAL_CERTIFICATION_REQUIRED: "LOCAL CERTIFICATION REQUIRED",
-    LifecycleState.WAITING_CI: "WAITING CI / CERTIFICATION",
+    LifecycleState.LOCAL_CERTIFICATION_REQUIRED: "REVIEW PASSED / LOCAL INTEGRATION CERTIFICATION REQUIRED",
+    LifecycleState.WAITING_CI: "REVIEW PASSED / CERTIFICATION PENDING",
     LifecycleState.WAITING_EXTERNAL_DEPENDENCY: "WAITING ON EXTERNAL DEPENDENCY",
     LifecycleState.INTEGRATION_READY: "INTEGRATION READY",
     LifecycleState.MERGING: "MERGING / INTEGRATION IN PROGRESS",
@@ -182,6 +182,8 @@ class GitHubBackend(Protocol):
     def get_combined_status(self, sha: str) -> dict[str, Any]: ...
     def get_workflow_runs(self) -> dict[str, Any]: ...
     def add_comment(self, number: int, body: str) -> dict[str, Any]: ...
+    def close_pr(self, number: int) -> dict[str, Any]: ...
+    def get_branch(self, branch: str) -> dict[str, Any] | None: ...
     def merge(self, number: int, *, expected_head: str, method: str) -> dict[str, Any]: ...
 
 
@@ -308,6 +310,26 @@ class GitHubREST:
             raise LifecycleError("GitHub comment response was not an object")
         return value
 
+    def close_pr(self, number: int) -> dict[str, Any]:
+        _, _, value = self.http.request(
+            "PATCH", self._url(f"pulls/{number}"), headers=self.headers, body={"state": "closed"}
+        )
+        if not isinstance(value, dict):
+            raise LifecycleError("GitHub close pull request response was not an object")
+        return value
+
+    def get_branch(self, branch: str) -> dict[str, Any] | None:
+        encoded = urlparse.quote(branch, safe="")
+        try:
+            _, _, value = self.http.request("GET", self._url(f"branches/{encoded}"), headers=self.headers)
+        except HTTPError as exc:
+            if exc.status == 404:
+                return None
+            raise
+        if not isinstance(value, dict):
+            raise LifecycleError("GitHub branch response was not an object")
+        return value
+
     def merge(self, number: int, *, expected_head: str, method: str) -> dict[str, Any]:
         _, _, value = self.http.request(
             "PUT",
@@ -327,7 +349,7 @@ class AsanaREST:
         self.headers = {"Authorization": f"Bearer {token}", "User-Agent": "dish-pr-lifecycle/1"}
 
     def get_task(self, gid: str) -> dict[str, Any]:
-        query = urlparse.urlencode({"opt_fields": "gid,name,completed,modified_at,permalink_url"})
+        query = urlparse.urlencode({"opt_fields": "gid,name,notes,completed,completed_at,modified_at,permalink_url"})
         _, _, value = self.http.request("GET", f"{self.api_root}/tasks/{gid}?{query}", headers=self.headers)
         if not isinstance(value, dict) or not isinstance(value.get("data"), dict):
             raise LifecycleError(f"Asana task {gid} response was not an object")
@@ -396,6 +418,10 @@ class WorkspaceAgentDispatcher:
             f"Repository: {repository}. PR: {pr_url} (#{pr_number}). "
             f"Exact current head SHA: {head}. Review type: {review_class}.{domain_hint} "
             f"Owning Asana task identity: {task_identity}. "
+            "Execution host: ChatGPT remote Review. Inspect role authority separately from host capability. "
+            "If Review-authorized evidence genuinely requires a local-only capability, put the complete exact-head "
+            "handoff on the PR for a local Review agent before any human notice; semantic fixes belong to "
+            "Implementation and Integration-only actions belong to Integration, never to a generic local agent. "
             "Read and follow the current repository dish/docs/agents/review.md contract. "
             "Re-read the PR head before submitting. The authoritative completion artifact must be a formal "
             "GitHub COMMENT review anchored to this exact head with VERDICT: MERGE or VERDICT: BLOCK; "

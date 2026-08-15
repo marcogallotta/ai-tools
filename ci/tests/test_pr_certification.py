@@ -38,7 +38,15 @@ def event(*, body: str, candidate: str = CANDIDATE, head: str = CANDIDATE):
     }
 
 
-def plan(*, groups: list[str], lanes: list[str], dish_selector=None, force_full=False, repo=False):
+def plan(
+    *,
+    groups: list[str],
+    lanes: list[str],
+    dish_selector=None,
+    native_postgresql=None,
+    force_full=False,
+    repo=False,
+):
     classifications = []
     if repo:
         classifications.append({"path": "scripts/example.py", "scope": "repository", "classification": "root-scripts"})
@@ -48,6 +56,11 @@ def plan(*, groups: list[str], lanes: list[str], dish_selector=None, force_full=
         "dish_selector": dish_selector or {"focused_tests": [], "lanes": []},
         "selected_groups": groups,
         "selected_lanes": lanes,
+        "native_postgresql": native_postgresql or (
+            {"mode": "full", "test_files": [], "reason": "test"}
+            if "native-postgresql" in groups
+            else {"mode": "none", "test_files": [], "reason": "not-selected"}
+        ),
         "force_full": force_full,
     }
 
@@ -98,6 +111,44 @@ def test_exact_changed_paths_include_both_sides_of_rename(tmp_path: Path):
 def test_execution_spec_contains_only_planner_selected_groups(groups, lanes, expected):
     spec = module.build_execution_spec(plan(groups=groups, lanes=lanes, repo=True), plan_digest="f" * 64)
     assert set(spec["required_groups"]) == expected
+
+
+def test_native_execution_spec_preserves_planner_focused_test_files():
+    spec = module.build_execution_spec(
+        plan(
+            groups=["native-postgresql"],
+            lanes=["native PostgreSQL certification"],
+            native_postgresql={
+                "mode": "focused",
+                "test_files": ["tests/postgresql/native/test_migration_status.py"],
+                "reason": "dish-selector-native-bindings",
+            },
+        ),
+        plan_digest="a" * 64,
+    )
+    argv = spec["required_groups"]["native-postgresql"][0]["argv"]
+    assert argv[argv.index("--test-file") + 1] == "tests/postgresql/native/test_migration_status.py"
+
+
+def test_native_postgresql_execution_spec_uses_structured_bounded_waivers():
+    spec = module.build_execution_spec(
+        plan(groups=["native-postgresql"], lanes=["native PostgreSQL certification"]),
+        plan_digest="f" * 64,
+    )
+    argv = spec["required_groups"]["native-postgresql"][0]["argv"]
+    values = [argv[index + 1] for index, value in enumerate(argv) if value == "--waive-skip"]
+    assert len(values) == 4
+    records = [json.loads(value) for value in values]
+    assert all(set(record) == {
+        "nodeid",
+        "expected_reason_sha256",
+        "owner_task_gid",
+        "review_by",
+        "justification",
+    } for record in records)
+    assert {record["owner_task_gid"] for record in records} == {"1217428310522281"}
+    assert {record["review_by"] for record in records} == {"2026-09-07"}
+    assert all(len(record["expected_reason_sha256"]) == 64 for record in records)
 
 
 def test_full_plan_materializes_all_four_groups_and_unselected_groups_are_absent():

@@ -60,6 +60,7 @@ A domain label alone never justifies a second AI-reviewer dependency: the purpor
 ## Evidence and integration gates
 
 Treat implementation-agent test evidence as evidence; rerun only for a concrete review reason. Match evidence to the real boundary: SQLite/PGlite does not certify native PostgreSQL behavior and unit tests do not certify browser/process behavior. Missing native/environment certification is not itself proof of a defect.
+If Review requires evidence beyond the governed selector/implementation record, name the concrete missing guarantee and the exact stable command that would establish it. When no additional local/environment certification is missing, record `TESTS TO RUN: NONE`; do not request a broad/full suite as a generic safety ritual.
 
 Ordinary CI must certify the exact source PR head SHA. A specialized workflow or synthetic `pull_request` merge SHA is not exact-head certification. Missing, pending, or failed ordinary CI is Integration evidence/ownership state, not a reason to delay substantive Review or rewrite the semantic verdict. Review does not require the branch to be synchronized with current `main` before reviewing the exact current PR head merely because `main` moved. Require a newer base first only when the movement creates a known semantic dependency that makes the current review question invalid.
 
@@ -77,62 +78,62 @@ Put the complete decision packet on the PR: exact decision, minimum evidence, co
 
 ## Final human handoff
 
-The human notification contains only current status, exact next action, and the one-sentence reason/blocker allowed by the chosen format. It must match exactly one of these shapes, with no preamble, epilogue, verdict dump, SHA list, test log, findings list, implementation narrative, or review reasoning:
+Keep substantive Review evidence on the PR. Human output states the lifecycle result and one exact action only; successful Review must not be hidden behind a generic dependency label.
+
+Use these meanings:
+
+- `REVIEW PASSED`: a formal exact-head `VERDICT: MERGE` exists, but an Integration gate still remains. Name the exact pending gate. Ordinary hosted exact-head certification pending uses `Action: none.`; it is not `WAITING ON DEPENDENCY` and not yet `INTEGRATION READY`.
+- `INTEGRATION READY`: Review passed and every required implementation, local/environment, CI/certification, ordering, and mergeability gate is green. Review itself does not merge; bounded Integration may continue only where separately authorized.
+- `LOCAL REVIEW REQUIRED`: Review-authorized evidence genuinely requires a local-only capability that this remote Review host lacks. Put the complete exact-head handoff on the PR before notifying Marco, then route specifically to a local **Review** agent. A local Review host that already has the required capability executes that Review evidence directly instead of handing it to another local agent.
+- `LOCAL IMPLEMENTATION COMPLETION REQUIRED`: semantic/source correction belongs to Implementation, regardless of whether the reviewer is local or remote. Put the complete fix handoff on the PR and route to Implementation; Review never fixes it.
+- `LOCAL INTEGRATION CERTIFICATION REQUIRED`: the exact reviewed head passed semantic Review and only an Integration-authorized local certification/action remains. Put the complete exact-head handoff on the PR and route to Integration; locality never grants Review Integration authority.
+- `BLOCKED`: the exact head cannot receive `VERDICT: MERGE` and no mechanically routable agent action above resolves it. Put the detailed blocker on the PR and give one exact action/reason.
+- `WAITING ON DEPENDENCY`: reserve for a genuine external task/PR/dependency whose change is itself the salient prerequisite. Ordinary post-Review CI/certification progression is `REVIEW PASSED`, not this state.
+- `MERGED`: only after authorized Integration has merged the exact reviewed/certified head and authoritative GitHub readback proves the merge SHA.
+
+Examples:
 
 ```text
-READY FOR MERGE
-
-PR #X is ready for merge.
-Reason: Review passed, no local work required.
+REVIEW PASSED
+PR #X passed exact-head Review.
+Waiting for: GitHub exact-head certification.
+Action: none.
 ```
 
 ```text
-LOCAL AGENT REQUIRED
-
-PR #X requires local agent.
-
-Action:
-<exact command/task for local agent>
-
-Effort:
-Small / Medium / Large
+INTEGRATION READY
+PR #X passed Review and all required gates.
+Action: Integration may merge the exact reviewed head.
 ```
 
 ```text
-BLOCKED
-
-PR #X blocked.
-
-Action:
-<what needs to happen>
-
-Reason:
-<one sentence>
+LOCAL REVIEW REQUIRED
+PR #X needs local Review evidence.
+Action: give PR #X to a local Review agent; full handoff is on the PR.
 ```
 
 ```text
-WAITING ON DEPENDENCY
-
-PR #X waiting on:
-<dependency>
-
-Owner:
-<task/PR>
+LOCAL IMPLEMENTATION COMPLETION REQUIRED
+PR #X needs a semantic fix.
+Action: give PR #X to an Implementation agent; full handoff is on the PR.
 ```
 
-Status rules:
+```text
+LOCAL INTEGRATION CERTIFICATION REQUIRED
+PR #X passed Review and needs local Integration certification.
+Action: give PR #X to a local Integration agent; full handoff is on the PR.
+```
 
-- `READY FOR MERGE`: durable `VERDICT: MERGE`; formal review verified on exact current head; no local/environment work remains; current GitHub/Asana authority exposes no unresolved integration gate/dependency. This hands off to the existing Integration lifecycle. **Review does not merge or integrate the PR.**
-- `LOCAL AGENT REQUIRED`: only when the exact remaining step genuinely requires a local-only tool/environment boundary. Never consume a local agent merely because Review found a fix, a preferred GitHub action is unavailable, or repository context was initially missing. Provide one exact command/task and `Small`, `Medium`, or `Large` effort.
-- `BLOCKED`: exact head cannot receive `VERDICT: MERGE` and the next action is not specifically a local-agent run. Put the detailed blocker/fix handoff on the PR; chat gives one next operation and one-sentence reason.
-- `WAITING ON DEPENDENCY`: no action on this PR is appropriate until a named task, PR, CI/certification result, or other durable dependency changes. Name it and its owning task/PR.
+Host capability and role authority are separate. Before emitting any local-work state, inspect both: if the current local Review host can perform the required **Review-authorized** evidence, perform it directly; if the missing action changes semantics, route to Implementation; if it is Integration-only, route to Integration. Never use generic `LOCAL AGENT REQUIRED` wording when the missing role/action is determinable.
 
-If `VERDICT: MERGE` exists but an integration gate, certification, or dependency remains, do not ask Marco to interpret the review; select the applicable local/dependency status. `VERDICT: MERGE` is not terminal queue state: the dispatcher re-reads the exact head and evaluates local work, CI/certification, ordering, mergeability, and Integration authority/capability. When every gate is green and the active workflow has explicit bounded Integration authority, it may compose the mechanical Integration contract; that does not grant Review Integration authority. The human message remains `READY FOR MERGE`.
-
-This routing changes communication/state-transition behavior only. It does not expand Review authority, permit Review to implement fixes, or transfer Integration authority.
+`VERDICT: MERGE` is not terminal queue state: the dispatcher re-reads the exact head and evaluates local work, CI/certification, ordering, mergeability, and Integration authority/capability. This routing changes communication/state-transition behavior only; it does not expand Review authority or transfer Integration authority.
 
 ## Blocker fixes and recheck
 
 If a fix is required, put the blocker and complete standalone fix-agent handoff on the PR: blocked PR/branch/head, failure mechanism, required change, scope/non-goals, invariants, expected evidence, and required new head SHA. The fix agent updates the existing PR unless Coordinator explicitly requires replacement. Record exactly one after-fix disposition: `FOCUSED RECHECK`, `MECHANICAL CHECK ONLY`, `DOMAIN DEEP RECHECK`, or `NORMAL MERGE REVIEW`. `DOMAIN DEEP RECHECK` (legacy `NEW SPECIALIST REVIEW`) stays inside this same Review workflow; it never hands off to a second AI reviewer.
 
 After an isolated blocker fix, normally perform a focused recheck on the new exact head rather than a fresh broad review. Reopen broader review only when the fix materially changes the previously accepted design or exposes a new merge-critical uncertainty.
+
+## Development friction and non-blocking debt
+
+Apply the inherited contributor-base contracts: repository friction is discoverable/dedupe-first and logged without creating a second queue or urgency; relevant non-blocking code smells are deduped/logged to the Code Smells surface and the assigned scope continues. True current-task blockers stay on the active task/PR.

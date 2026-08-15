@@ -102,6 +102,8 @@ class TestPlan:
     traits: tuple[str, ...]
     focused_tests: tuple[str, ...]
     lanes: tuple[str, ...]
+    native_postgresql_test_files: tuple[str, ...]
+    native_postgresql_fully_bound: bool
     commands: tuple[str, ...]
     parallel_safe_eligible: bool
     parallel_workers: int | None
@@ -201,6 +203,33 @@ def _focused_command(tests: Iterable[str]) -> str | None:
     return ".venv/bin/python -m pytest -q " + " ".join(shlex.quote(test) for test in ordered)
 
 
+def _native_postgresql_test_files(tests: Iterable[str]) -> set[str]:
+    return {
+        test
+        for test in tests
+        if test.startswith("tests/postgresql/native/test_") and test.endswith(".py")
+    }
+
+
+def _row_native_postgresql_test_files(row: PolicyRow) -> set[str]:
+    tests = set(row.direct_owner_tests) | set(row.critical_contract_tests)
+    if row.kind == "test":
+        tests.add(row.path)
+    return _native_postgresql_test_files(tests)
+
+
+def _native_postgresql_command(
+    test_files: Iterable[str], *, fully_bound: bool
+) -> str:
+    command = LANE_COMMANDS["native PostgreSQL certification"]
+    native_files = sorted(set(test_files))
+    if not fully_bound or not native_files:
+        return command
+    return command + " " + " ".join(
+        f"--test-file {shlex.quote(test_file)}" for test_file in native_files
+    )
+
+
 def _ordered_lanes(lanes: set[str]) -> tuple[str, ...]:
     known = [lane for lane in LANE_ORDER if lane in lanes]
     unknown = sorted(lanes - set(LANE_ORDER) - FOCUSED_LANES)
@@ -211,6 +240,8 @@ def _commands(
     focused_tests: set[str],
     lanes: set[str],
     *,
+    native_postgresql_test_files: set[str],
+    native_postgresql_fully_bound: bool,
     focused_override: str | None = None,
 ) -> tuple[str, ...]:
     commands: list[str] = []
@@ -219,7 +250,13 @@ def _commands(
         commands.append(focused)
     seen: set[str] = set(commands)
     for lane in _ordered_lanes(lanes):
-        command = LANE_COMMANDS.get(lane)
+        command = (
+            _native_postgresql_command(
+                native_postgresql_test_files, fully_bound=native_postgresql_fully_bound
+            )
+            if lane == "native PostgreSQL certification"
+            else LANE_COMMANDS.get(lane)
+        )
         if command and command not in seen:
             commands.append(command)
             seen.add(command)
@@ -253,6 +290,8 @@ def build_plan(
     rows: list[PolicyRow] = [policy.get(path) or fallback[path] for path in normalized]
     focused_tests: set[str] = set()
     lanes = set(requested_lanes)
+    native_postgresql_test_files: set[str] = set()
+    native_postgresql_fully_bound = "native PostgreSQL certification" not in requested_lanes
     classes: set[str] = set()
     traits: set[str] = set()
     reviews: list[ConditionalReview] = []
@@ -269,9 +308,16 @@ def build_plan(
         focused_tests.update(row.critical_contract_tests)
         if row.kind == "test":
             focused_tests.add(row.path)
-        lanes.update(row.default_lanes)
+        row_lanes = set(row.default_lanes)
         if row.shared_infrastructure_scope in CONSUMER_SCOPE_USES_LANES:
-            lanes.update(row.consumer_lanes)
+            row_lanes.update(row.consumer_lanes)
+        lanes.update(row_lanes)
+        if "native PostgreSQL certification" in row_lanes:
+            row_native_tests = _row_native_postgresql_test_files(row)
+            if row_native_tests:
+                native_postgresql_test_files.update(row_native_tests)
+            else:
+                native_postgresql_fully_bound = False
         if row.escalation_predicates or row.conditional_escalations:
             reviews.append(
                 ConditionalReview(
@@ -300,7 +346,15 @@ def build_plan(
         traits=tuple(sorted(traits)),
         focused_tests=tuple(sorted(focused_tests)),
         lanes=tuple(sorted(lanes)),
-        commands=_commands(focused_tests, lanes, focused_override=focused_override),
+        native_postgresql_test_files=tuple(sorted(native_postgresql_test_files)),
+        native_postgresql_fully_bound=native_postgresql_fully_bound,
+        commands=_commands(
+            focused_tests,
+            lanes,
+            native_postgresql_test_files=native_postgresql_test_files,
+            native_postgresql_fully_bound=native_postgresql_fully_bound,
+            focused_override=focused_override,
+        ),
         parallel_safe_eligible=parallel_eligible,
         parallel_workers=parallel_workers,
         parallel_acceleration_used=parallel_used,
@@ -372,12 +426,10 @@ def discover_git_paths(
         raise PolicyError("--base and --staged are mutually exclusive")
     if base:
         raw = _git_lines(git_root, ["diff", "--name-only", "--diff-filter=ACMRD", base])
-        raw.update(_git_lines(git_root, ["ls-files", "--others", "--exclude-standard"]))
     elif staged:
         raw = _git_lines(git_root, ["diff", "--cached", "--name-only", "--diff-filter=ACMRD"])
     else:
         raw = _git_lines(git_root, ["diff", "HEAD", "--name-only", "--diff-filter=ACMRD"])
-        raw.update(_git_lines(git_root, ["ls-files", "--others", "--exclude-standard"]))
 
     scoped: set[str] = set()
     ignored: set[str] = set()

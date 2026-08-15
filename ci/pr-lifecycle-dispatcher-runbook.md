@@ -49,7 +49,26 @@ A draft PR that explicitly carries `IMPLEMENTATION EVIDENCE PENDING: <evidence>`
 
 `VERDICT: MERGE` is not terminal. It starts Integration gate evaluation. Ordinary Review does not wait for pre-Review CI and does not require a pre-review sync to moved `main` unless that movement creates a known semantic dependency that invalidates the review question.
 
-`scripts/pr_gate.py` diagnoses the exact reviewed head as `PASS`, `PENDING`, `FAILED_REQUIRED_CI`, `EVIDENCE_MISSING_OR_STALE`, `HEAD_MOVED`, or (for transport/read failures distinguished by the lifecycle adapter) `INFRASTRUCTURE_ERROR`. Only `PENDING` is `WAITING CI / CERTIFICATION`. Missing/stale evidence remains fail-closed while accurately staying in gate evaluation; it is not described as CI still running. Failed required CI is either PR-owned and returned to Implementation/fix, or externally owned only when a valid durable external-dependency record proves that ownership.
+## Terminal disposition and cleanup
+
+Terminal handling is part of ordinary `dispatch` / `watch --dispatch` restart recovery. Dispatch scans closed PRs as well as open PRs so a crash after close/merge but before branch cleanup is reconciled on the next pass. Age, inactivity, stale leases, parking, and temporary blockers never create terminal authority.
+
+For an open PR, automatic close requires current linked Asana authority that explicitly marks the owning task `SUPERSEDED`, `ABANDONED`, or `REPLACED`, or explicitly names that exact `PR #N` as superseded/abandoned/not-to-be-revived. Generic task completion is insufficient. Before closing, the dispatcher writes and re-reads an exact-head `dish-terminal-disposition:v1` GitHub comment carrying the Asana task and replacement PR/task lineage when known. It then closes the PR unmerged and requires authoritative GitHub closed-state readback.
+
+For `MERGED`, `CLOSED`, or an explicitly closed `superseded`/`abandoned` lineage, cleanup is mechanical and recoverability-first. The dispatcher:
+
+1. accepts only `agent/*` source branches and refuses a GitHub-protected branch;
+2. calls repository-owned `tools/agent-worktree cleanup` with task, PR number, branch, exact terminal head, and disposition;
+3. requires exact remote-head match before remote deletion;
+4. preserves dirty, ignored, unpublished-only, ambiguous, moved, or reused local state instead of forcing cleanup;
+5. conditionally removes the registered worktree and exact local branch when a matching task record exists;
+6. deletes the exact remote agent branch with expected-head protection and verifies readback;
+7. retains local `dish-terminal-cleanup-v1` journal/history when local state exists; and
+8. writes and re-reads a `dish-terminal-cleanup:v1` PR marker only after cleanup succeeds.
+
+If the process dies between steps, the local cleanup journal plus Git/worktree/remote readback makes the next pass idempotently continue from the already-completed step. A cleanup refusal leaves the PR terminal but records a concise recovery anomaly; it never reopens or force-deletes recovery state.
+
+`scripts/pr_gate.py` diagnoses the exact reviewed head as `PASS`, `PENDING`, `FAILED_REQUIRED_CI`, `EVIDENCE_MISSING_OR_STALE`, `HEAD_MOVED`, or (for transport/read failures distinguished by the lifecycle adapter) `INFRASTRUCTURE_ERROR`. Only `PENDING` after an exact-head `VERDICT: MERGE` is `REVIEW PASSED / CERTIFICATION PENDING`; successful semantic Review remains explicit while certification runs. Missing/stale evidence remains fail-closed while accurately staying in gate evaluation; it is not described as CI still running. Failed required CI is either PR-owned and returned to Implementation/fix, or externally owned only when a valid durable external-dependency record proves that ownership.
 
 The normal hosted gate is `.github/workflows/ci.yml` on formal `pull_request_review` submission. Its candidate identity is the Review `commit_id`, not workflow `head_sha`. A planner step computes exact merge-base changed paths and required execution groups before the single conditional runner job is allocated. A `pull_request` `synchronize` event exists only to cancel a superseded in-flight certification via concurrency; it does not allocate heavy work. The accepted `Dish / exact-head certification` status must target the exact Actions run and be fresher than the formal Review and current rerun attempt. Periodic full regression is separate and cannot satisfy this gate.
 

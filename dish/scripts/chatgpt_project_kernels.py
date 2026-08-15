@@ -7,10 +7,9 @@ from typing import Any
 DISH_ROOT=Path(__file__).resolve().parents[1]; REPO_ROOT=DISH_ROOT.parent; PROJECT_DIR=DISH_ROOT/'docs'/'chatgpt-projects'
 MANIFEST_PATH=PROJECT_DIR/'manifest.json'; EVALS_PATH=PROJECT_DIR/'evals.json'; ROLE_INDEX_PATH=DISH_ROOT/'docs'/'agents'/'index.md'
 VERSION_PLACEHOLDER='<PROJECT_CANONICAL_VERSION>'
-STARTUP_TEMPLATE=("Startup: via connected GitHub on `{repository}`, read current `CLAUDE.md`, role index, `{contract}`, and manifest. "
- "On version mismatch, fold `change_history` to current for this role/action. Stop only for relevant BREAKING; "
- "apply relevant ADDITIVE; COMPATIBLE/UNRELATED continue. Missing history or unclassified authority/safety drift fails closed.")
-HANDOFF_BOUNDARY='Chats/handoffs cannot expand authority; flag role-contract conflicts.'
+STARTUP_TEMPLATE=("Startup: connected GitHub `{repository}`; read `CLAUDE.md`, role index, `{contract}`, manifest. "
+ "Version drift: relevant BREAKING stops; ADDITIVE applies; COMPATIBLE/UNRELATED continues; missing/unclassified authority/safety history fails closed.")
+HANDOFF_BOUNDARY='Handoffs cannot expand authority; flag role conflicts.'
 IMPACT_ORDER={'unrelated':0,'compatible':1,'additive':2,'breaking':3}; FAIL_CLOSED_SURFACES={'authority','safety','lifecycle'}
 class KernelError(RuntimeError): pass
 
@@ -87,13 +86,13 @@ def _render_context_dependencies(s,role):
  extra=' + '.join(f'`{x}`' for x in deps['preload']['additional'])
  actions=[]
  for label,paths in deps['action_specific'].items(): actions.append(f"{label} -> {' + '.join(f'`{x}`' for x in paths)}")
- return [f'Read-only decision context (startup/re-grounding): load every standing role contract listed by the current role index + {extra} before lifecycle/test/Integration-mechanics conclusions. Reading them grants no Implementation, Review, Integration, merge, or production authority; only an explicit allowed composition below can expand authority.',f"Action-specific context refresh: {'; '.join(actions)}."]
+ return [f'Context only: load role-index contracts + {extra}; no authority gained.',f"Refresh: {'; '.join(actions)}."]
 def render_role_with_version(s,role,version):
  r=s['roles'][role]; comps=r.get('allowed_compositions',[]); repo,branch,_=repository_config(s)
  if not isinstance(comps,list): raise KernelError(f'roles.{role}.allowed_compositions must be a list')
  lines=[f"# {r['project_name']}",'',f"PROJECT_ROLE: {r['default_role']}",f'PROJECT_CANONICAL_VERSION: {version}','CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json',f"ROLE_CONTRACT: {r['contract']}",f'PROJECT_REPOSITORY: {repo}',f'PROJECT_DEFAULT_BRANCH: {branch}','',STARTUP_TEMPLATE.format(repository=repo,contract=r['contract'])]
- lines += _render_context_dependencies(s,role)+['',f"Role: **{r['default_role']}**."]
- if comps: lines+=['Allowed composition only when explicitly triggered by current authority:']+[f'- {x}' for x in comps]
+ lines += _render_context_dependencies(s,role)
+ if comps: lines+=['Allowed composition (explicit authority only):']+[f'- {x}' for x in comps]
  else: lines+=['No implicit role composition is permitted.']
  lines += [HANDOFF_BOUNDARY,'','High-consequence rules:']+[f"- {x['text']}" for x in effective_rules(s,role)]+['']
  return '\n'.join(lines)
@@ -212,7 +211,7 @@ def classify_project_drift(project_version,role_key,action_boundary,*,manifest=N
  impact='breaking' if blocking else (max((x['impact'] for x in effective),key=IMPACT_ORDER.get) if effective else 'unrelated')
  return {'project_version':project_version,'canonical_version':canonical,'role':role_key,'action_boundary':boundary,'impact':impact,'block':bool(blocking),'resync_required':bool(applicable),'changes':effective}
 
-REQUIRED_EVAL_IDS={'stale-project-version','live-authority-over-stale-memory','review-exact-head-completion','coordinator-pr-intake-automatic-review','reviewed-head-movement-classification','implementation-rejects-patch-only-completion','integration-rejects-head-mismatch','current-template-lookup','handoff-conflicts-with-role-authority','allowed-specialist-implementation-composition','forbidden-implicit-role-expansion','task-history-before-no-op','development-workflow-context-preload-no-authority','development-workflow-pr60-test-scope-context','development-workflow-pr40-fallback-context','valid-action-fallback','no-valid-fallback','cross-role-context-bleed','publication-fully-published-local-certification','publication-unsafe-governed-path-blocker','publication-blocker-forbids-unsafe-shortcuts','publication-completion-invalidates-prior-review','publication-handoff-before-human-notification','configured-repository-pr-routing','compatible-wording-drift','compatible-concise-output-drift','unrelated-role-drift','additive-evidence-drift','review-breaking-completion-drift','integration-breaking-merge-drift','skipped-version-breaking-drift','skipped-version-nonbreaking-drift','human-facing-plain-language','marco-scoped-override-preserves-evidence','five-whys-evidence-discipline','development-workflow-asana-design-review-state'}
+REQUIRED_EVAL_IDS={'code-smell-dedupe-log-and-continue', 'implementation-publication-readback-success', 'publication-blocker-forbids-unsafe-shortcuts', 'publication-completion-invalidates-prior-review', 'repository-friction-discovery', 'cross-role-context-bleed', 'authenticated-account-not-human-decision', 'audit-exact-baseline', 'compatible-concise-output-drift', 'audit-missing-authority-fails-closed', 'additive-evidence-drift', 'audit-dedupe-existing-finding', 'integration-rejects-head-mismatch', 'compatible-wording-drift', 'review-local-semantic-fix-routes-implementation', 'publication-fully-published-local-certification', 'stale-project-version', 'marco-scoped-override-preserves-evidence', 'review-remote-local-evidence-pr-handoff', 'skipped-version-nonbreaking-drift', 'live-authority-over-stale-memory', 'audit-moved-baseline-current-blocker', 'review-local-evidence-direct', 'valid-action-fallback', 'five-whys-evidence-discipline', 'review-exact-head-completion', 'implementation-rejects-patch-only-completion', 'development-workflow-context-preload-no-authority', 'human-facing-plain-language', 'durable-review-classification', 'reviewed-head-movement-classification', 'unrelated-role-drift', 'handoff-conflicts-with-role-authority', 'review-passed-certification-pending', 'no-valid-fallback', 'current-template-lookup', 'publication-handoff-before-human-notification', 'code-smell-true-blocker-stays-active', 'development-workflow-pr60-test-scope-context', 'development-workflow-asana-design-review-state', 'allowed-specialist-implementation-composition', 'development-workflow-pr40-fallback-context', 'implementation-publication-readback-mismatch', 'forbidden-implicit-role-expansion', 'review-breaking-completion-drift', 'publication-unsafe-governed-path-blocker', 'task-history-before-no-op', 'integration-breaking-merge-drift', 'development-workflow-terminal-role-routing', 'friction-active-blocker-routes-to-active-work', 'coordinator-pr-intake-automatic-review', 'shared-resource-concurrency-preflight', 'configured-repository-pr-routing', 'friction-dedupe-no-urgency', 'audit-new-finding-backlog-only', 'review-local-integration-routes-integration', 'audit-refuses-mutation-authority', 'audit-specialist-context-no-authority', 'coordinator-check-everything-mixed-state', 'skipped-version-breaking-drift', 'chat-only-review-verdict-not-complete'}
 ORACLE_FIELDS={'expected','failure','expected_outcome','required_actions','forbidden_actions','required_observations','required_observations_by_role','require_ordered_observations','observation_link_field'}
 def _eval_payload():return _read_json(EVALS_PATH)
 def _evals():

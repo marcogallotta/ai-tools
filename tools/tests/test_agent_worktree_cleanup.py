@@ -10,18 +10,25 @@ import pytest
 from agent_worktree_support import GIT, SCRIPT, Harness, assert_error, git, git_out, h, payload, run
 
 @pytest.mark.parametrize("disposition", ["merged", "closed", "abandoned", "superseded"])
-def test_cleanup_known_dispositions_remove_only_clean_recoverable_worktree_and_retain_branch_state(h: Harness, disposition: str) -> None:
+def test_cleanup_known_dispositions_remove_clean_recoverable_worktree_and_exact_branches(h: Harness, disposition: str) -> None:
     task = {"merged": "1050", "closed": "1051", "abandoned": "1052", "superseded": "1053"}[disposition]
     branch = f"agent/cleanup-{disposition}"
     h.start(task=task, branch=branch)
     local = h.commit_local(task, disposition)
     h.tool("publish", "--task", task, "--json")
-    data = payload(h.tool("cleanup", "--task", task, "--disposition", disposition, "--json"))
-    assert data["worktree_removed"] is True and data["branch_retained"] is True
+    data = payload(h.tool(
+        "cleanup", "--task", task, "--branch", branch, "--expected-head", local,
+        "--pr-number", "42", "--disposition", disposition, "--json"
+    ))
+    assert data["worktree_removed"] is True
+    assert data["local_branch_removed"] is True
+    assert data["remote_branch_removed"] is True
     assert not h.wt(task).exists()
-    assert git_out(h.primary, "rev-parse", f"refs/heads/{branch}") == local
+    assert git(h.primary, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode == 1
+    assert git(h.origin, "show-ref", "--verify", "--quiet", f"refs/heads/{branch}", check=False).returncode == 1
     state = h.state(task)
     assert state["lifecycle"] == disposition and state["local_head"] == local
+    assert state["terminal_cleanup"]["complete"] is True
 
 
 def test_cleanup_refuses_dirty_only_recovery_copy_remote_ahead_and_divergence(h: Harness) -> None:
@@ -42,7 +49,7 @@ def test_cleanup_refuses_dirty_only_recovery_copy_remote_ahead_and_divergence(h:
     h.tool("publish", "--task", "1062", "--json")
     h.remote_branch_commit("agent/cleanup-remote-ahead", "cleanup remote ahead")
     result = h.tool("cleanup", "--task", "1062", "--disposition", "closed", "--json", check=False)
-    assert_error(result, "REMOTE_AHEAD")
+    assert_error(result, "EXPECTED_HEAD_MISMATCH")
 
     h.start(task="1063", branch="agent/cleanup-divergent")
     h.tool("publish", "--task", "1063", "--json")
@@ -50,7 +57,7 @@ def test_cleanup_refuses_dirty_only_recovery_copy_remote_ahead_and_divergence(h:
     h.commit_local("1063", "cleanup local divergent")
     h.remote_branch_commit("agent/cleanup-divergent", "cleanup remote divergent", start=remote_base)
     result = h.tool("cleanup", "--task", "1063", "--disposition", "closed", "--json", check=False)
-    assert_error(result, "REMOTE_DIVERGED")
+    assert_error(result, "ONLY_RECOVERY_COPY")
 
 
 def test_cleanup_refuses_ignored_task_local_content_and_preserves_worktree(h: Harness) -> None:
@@ -109,3 +116,95 @@ def test_status_is_read_only_and_exec_enters_exact_owned_path(h: Harness) -> Non
     assert h.state_path().read_bytes() == before
     result = h.tool("exec", "--task", "1001", "--", "pwd")
     assert result.stdout.strip() == str(h.wt())
+
+
+def _terminal_args(task: str, branch: str, head: str, disposition: str = "closed") -> list[str]:
+    return [
+        "cleanup", "--task", task, "--branch", branch, "--expected-head", head,
+        "--pr-number", "42", "--disposition", disposition, "--json",
+    ]
+
+
+def test_cleanup_expected_head_mismatch_refuses_before_any_mutation(h: Harness) -> None:
+    task = "1080"
+    branch = "agent/cleanup-head-moved"
+    h.start(task=task, branch=branch)
+    head = h.commit_local(task, "published terminal")
+    h.tool("publish", "--task", task, "--json")
+    moved = h.remote_branch_commit(branch, "remote reused")
+    assert moved != head
+
+    result = h.raw_tool(*_terminal_args(task, branch, head), check=False)
+    assert_error(result, "EXPECTED_HEAD_MISMATCH")
+    assert h.wt(task).exists()
+    assert git_out(h.primary, "rev-parse", f"refs/heads/{branch}") == head
+    assert git_out(h.origin, "rev-parse", f"refs/heads/{branch}") == moved
+    assert h.state(task)["lifecycle"] == "active"
+
+
+def test_cleanup_restart_reconciles_crash_after_worktree_remove(h: Harness) -> None:
+    task = "1081"
+    branch = "agent/cleanup-restart-worktree"
+    h.start(task=task, branch=branch)
+    head = h.commit_local(task, "terminal")
+    h.tool("publish", "--task", task, "--json")
+    state = h.state(task)
+    state["lifecycle"] = "closed"
+    state["disposition"] = "closed"
+    state["terminal_cleanup"] = {
+        "schema": "dish-terminal-cleanup-v1", "task_gid": task, "pr_number": 42,
+        "disposition": "closed", "branch": branch, "expected_head": head,
+        "started_at": "2026-08-14T00:00:00+00:00", "worktree_removed": False,
+        "local_branch_removed": False, "remote_branch_removed": False, "complete": False,
+    }
+    h.state_path(task).write_text(json.dumps(state) + "\n", encoding="utf-8")
+    git(h.primary, "worktree", "unlock", str(h.wt(task)))
+    git(h.primary, "worktree", "remove", str(h.wt(task)))
+
+    data = payload(h.raw_tool(*_terminal_args(task, branch, head)))
+    assert data["worktree_removed"] is True
+    assert data["local_branch_removed"] is True
+    assert data["remote_branch_removed"] is True
+    assert h.state(task)["terminal_cleanup"]["complete"] is True
+
+
+def test_cleanup_restart_reconciles_crash_after_local_branch_delete(h: Harness) -> None:
+    task = "1082"
+    branch = "agent/cleanup-restart-branch"
+    h.start(task=task, branch=branch)
+    head = h.commit_local(task, "terminal")
+    h.tool("publish", "--task", task, "--json")
+    state = h.state(task)
+    state["lifecycle"] = "closed"
+    state["disposition"] = "closed"
+    state["terminal_cleanup"] = {
+        "schema": "dish-terminal-cleanup-v1", "task_gid": task, "pr_number": 42,
+        "disposition": "closed", "branch": branch, "expected_head": head,
+        "started_at": "2026-08-14T00:00:00+00:00", "worktree_removed": True,
+        "local_branch_removed": False, "remote_branch_removed": False, "complete": False,
+    }
+    h.state_path(task).write_text(json.dumps(state) + "\n", encoding="utf-8")
+    git(h.primary, "worktree", "unlock", str(h.wt(task)))
+    git(h.primary, "worktree", "remove", str(h.wt(task)))
+    git(h.primary, "update-ref", "-d", f"refs/heads/{branch}", head)
+
+    data = payload(h.raw_tool(*_terminal_args(task, branch, head)))
+    assert data["worktree_removed"] is True
+    assert data["local_branch_removed"] is True
+    assert data["remote_branch_removed"] is True
+    assert h.state(task)["terminal_cleanup"]["complete"] is True
+
+
+def test_cleanup_is_idempotent_after_complete_terminal_cleanup(h: Harness) -> None:
+    task = "1083"
+    branch = "agent/cleanup-idempotent"
+    h.start(task=task, branch=branch)
+    head = h.commit_local(task, "terminal")
+    h.tool("publish", "--task", task, "--json")
+    first = payload(h.raw_tool(*_terminal_args(task, branch, head)))
+    second = payload(h.raw_tool(*_terminal_args(task, branch, head)))
+    assert first["remote_branch_removed"] is True
+    assert second["worktree_removed"] is True
+    assert second["local_branch_removed"] is True
+    assert second["remote_branch_removed"] is True
+    assert h.state(task)["terminal_cleanup"]["complete"] is True

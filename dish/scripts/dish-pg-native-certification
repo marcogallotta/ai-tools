@@ -3,18 +3,22 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import ipaddress
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from sqlalchemy import create_engine, text
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -42,6 +46,45 @@ def _without_pg_env() -> dict[str, str]:
     return {key: value for key, value in os.environ.items() if not key.startswith("PG")}
 
 
+def _probe_canonical_local_role_capabilities() -> dict[str, object]:
+    engine = create_engine(CANONICAL_LOCAL_POSTGRESQL_DSN, future=True, pool_pre_ping=True)
+    try:
+        with engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    """
+                    SELECT current_user AS role,
+                           rolcreatedb AS createdb,
+                           rolcreaterole AS createrole
+                    FROM pg_roles
+                    WHERE rolname = current_user
+                    """
+                )
+            ).mappings().one()
+    except Exception as exc:
+        raise LocalPostgreSQLUnavailable(
+            f"canonical local role capability probe failed: {type(exc).__name__}: {exc}"
+        ) from exc
+    finally:
+        engine.dispose()
+
+    role = str(row["role"])
+    createdb = bool(row["createdb"])
+    createrole = bool(row["createrole"])
+    if role != "dish_test":
+        raise LocalPostgreSQLUnavailable(f"canonical local role mismatch: role={role!r}")
+    missing = [
+        capability
+        for capability, present in (("CREATEDB", createdb), ("CREATEROLE", createrole))
+        if not present
+    ]
+    if missing:
+        raise LocalPostgreSQLUnavailable(
+            "canonical local role capabilities missing: " + ", ".join(missing)
+        )
+    return {"role": role, "createdb": createdb, "createrole": createrole}
+
+
 def _probe_canonical_local_postgresql() -> dict[str, object]:
     try:
         identity = probe_native_postgresql(CANONICAL_LOCAL_POSTGRESQL_DSN)
@@ -55,7 +98,8 @@ def _probe_canonical_local_postgresql() -> dict[str, object]:
             raise LocalPostgreSQLUnavailable(
                 f"canonical local identity is not loopback: address={address!r}"
             )
-        return {**identity.as_dict(), "role": "dish_test"}
+        capabilities = _probe_canonical_local_role_capabilities()
+        return {**identity.as_dict(), **capabilities}
     except LocalPostgreSQLUnavailable:
         raise
     except Exception as exc:
@@ -98,12 +142,12 @@ def _provision_canonical_local_postgresql() -> None:
     statements = (
         "DROP DATABASE IF EXISTS dish_test;",
         "DROP ROLE IF EXISTS dish_test;",
-        "CREATE ROLE dish_test LOGIN PASSWORD '0ddca88b81a8bf1a15d84caa78efd7b3' CREATEDB;",
+        "CREATE ROLE dish_test LOGIN PASSWORD '0ddca88b81a8bf1a15d84caa78efd7b3' CREATEDB CREATEROLE;",
         "CREATE DATABASE dish_test OWNER dish_test;",
     )
     command = [
-        sudo, "-n", "-u", "postgres", "--", psql, "-X", "-w", "-p", "5432", "-d",
-        "postgres", "-v", "ON_ERROR_STOP=1", "-q",
+        sudo, "-n", "-u", "postgres", "--", psql, "-X", "-w", "-h", "localhost",
+        "-p", "5432", "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-q",
     ]
     for statement in statements:
         command.extend(("-c", statement))
@@ -161,8 +205,18 @@ def _parser() -> argparse.ArgumentParser:
         "--waive-skip",
         action="append",
         default=[],
-        metavar="NODEID=REASON",
-        help="explicitly waive one required native test skip with a nonblank reason",
+        metavar="JSON",
+        help=(
+            "explicit structured waiver for one required native test skip; "
+            "requires nodeid, expected_reason_sha256, owner_task_gid, review_by, justification"
+        ),
+    )
+    parser.add_argument(
+        "--test-file",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="governed focused native PostgreSQL test file; repeatable",
     )
     return parser
 
@@ -183,16 +237,130 @@ def _write_atomic(path: Path, value: Any) -> None:
         temp.unlink(missing_ok=True)
 
 
-def _parse_waivers(values: list[str]) -> dict[str, str]:
-    waivers: dict[str, str] = {}
+WAIVER_FIELDS = frozenset(
+    {"nodeid", "expected_reason_sha256", "owner_task_gid", "review_by", "justification"}
+)
+
+
+def _parse_waivers(
+    values: list[str], *, today: date | None = None
+) -> dict[str, dict[str, str]]:
+    current_date = today or datetime.now(timezone.utc).date()
+    waivers: dict[str, dict[str, str]] = {}
     for value in values:
-        nodeid, separator, reason = value.partition("=")
-        if not separator or not nodeid.strip() or not reason.strip():
-            raise ValueError("--waive-skip must be NODEID=REASON with a nonblank reason")
+        try:
+            payload = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError("--waive-skip must be a JSON object") from exc
+        if not isinstance(payload, dict):
+            raise ValueError("--waive-skip must be a JSON object")
+        missing = sorted(WAIVER_FIELDS - set(payload))
+        unknown = sorted(set(payload) - WAIVER_FIELDS)
+        if missing or unknown:
+            details = []
+            if missing:
+                details.append("missing " + ", ".join(missing))
+            if unknown:
+                details.append("unknown " + ", ".join(unknown))
+            raise ValueError("invalid --waive-skip fields: " + "; ".join(details))
+        normalized: dict[str, str] = {}
+        for field in WAIVER_FIELDS:
+            field_value = payload[field]
+            if not isinstance(field_value, str) or not field_value.strip():
+                raise ValueError(f"--waive-skip field {field} must be a nonblank string")
+            normalized[field] = field_value.strip()
+        nodeid = normalized["nodeid"]
+        signature = normalized["expected_reason_sha256"]
+        if re.fullmatch(r"[0-9a-f]{64}", signature) is None:
+            raise ValueError(
+                f"skip waiver for {nodeid} has invalid expected_reason_sha256"
+            )
+        if not normalized["owner_task_gid"].isdigit():
+            raise ValueError(f"skip waiver for {nodeid} has invalid owner_task_gid")
+        try:
+            review_by = date.fromisoformat(normalized["review_by"])
+        except ValueError as exc:
+            raise ValueError(f"skip waiver for {nodeid} has invalid review_by date") from exc
+        if review_by <= current_date:
+            raise ValueError(
+                f"skip waiver for {nodeid} is review-due or expired ({review_by.isoformat()})"
+            )
         if nodeid in waivers:
             raise ValueError(f"duplicate skip waiver for {nodeid}")
-        waivers[nodeid] = reason.strip()
+        waivers[nodeid] = normalized
     return waivers
+
+
+def _skip_reason_text(raw: object) -> str:
+    if not isinstance(raw, str):
+        return ""
+    value: object = raw.strip()
+    try:
+        value = ast.literal_eval(value)
+    except (SyntaxError, ValueError):
+        pass
+    if isinstance(value, tuple) and len(value) >= 3 and isinstance(value[2], str):
+        reason = value[2].strip()
+    elif isinstance(value, str):
+        reason = value.strip()
+    else:
+        reason = raw.strip()
+    return reason.removeprefix("Skipped: ").strip()
+
+
+def _skip_reason_signature(raw: object) -> str:
+    return hashlib.sha256(_skip_reason_text(raw).encode("utf-8")).hexdigest()
+
+
+def _evaluate_waivers(
+    *, waivers: dict[str, dict[str, str]], skipped: set[str], skip_reasons: dict[str, object]
+) -> dict[str, object]:
+    reason_signatures = {
+        nodeid: _skip_reason_signature(skip_reasons.get(nodeid, ""))
+        for nodeid in sorted(skipped)
+    }
+    waived_skips: list[str] = []
+    reason_mismatches: list[dict[str, str]] = []
+    for nodeid in sorted(skipped & set(waivers)):
+        expected = waivers[nodeid]["expected_reason_sha256"]
+        observed = reason_signatures[nodeid]
+        if observed == expected:
+            waived_skips.append(nodeid)
+        else:
+            reason_mismatches.append(
+                {
+                    "nodeid": nodeid,
+                    "expected_reason_sha256": expected,
+                    "observed_reason_sha256": observed,
+                }
+            )
+    waived = set(waived_skips)
+    return {
+        "skip_reason_signatures": reason_signatures,
+        "waived_skips": waived_skips,
+        "waiver_reason_mismatches": reason_mismatches,
+        "unwaived_skips": sorted(skipped - waived),
+        "unused_waivers": sorted(set(waivers) - skipped),
+    }
+
+
+def _parse_test_files(values: list[str], inventory: tuple[str, ...]) -> tuple[str, ...]:
+    requested = tuple(sorted(set(value.strip() for value in values if value.strip())))
+    inventory_files = {nodeid.split("::", 1)[0] for nodeid in inventory}
+    for value in requested:
+        path = Path(value)
+        if (
+            path.is_absolute()
+            or ".." in path.parts
+            or not value.startswith("tests/postgresql/native/test_")
+            or path.suffix != ".py"
+        ):
+            raise ValueError(
+                "--test-file must be a canonical governed tests/postgresql/native/test_*.py path"
+            )
+        if value not in inventory_files:
+            raise ValueError(f"--test-file is not in the governed native inventory: {value}")
+    return requested
 
 
 def _run(command: list[str], *, env: dict[str, str]) -> dict[str, Any]:
@@ -216,13 +384,24 @@ def _run(command: list[str], *, env: dict[str, str]) -> dict[str, Any]:
     }
 
 
-def _base_report(*, dsn: str, waivers: dict[str, str], inventory: tuple[str, ...]) -> dict[str, Any]:
+def _base_report(
+    *,
+    dsn: str,
+    waivers: dict[str, dict[str, str]],
+    inventory: tuple[str, ...],
+    required_inventory: tuple[str, ...],
+    test_files: tuple[str, ...],
+) -> dict[str, Any]:
     return {
         "format": "dish-native-postgresql-certification-report-v1",
         "recorded_at": datetime.now(timezone.utc).isoformat(),
         "certification_scope": "native_postgresql",
+        "selection_mode": "focused" if test_files else "full",
+        "selected_test_files": list(test_files),
         "inventory": list(inventory),
         "inventory_count": len(inventory),
+        "required_inventory": list(required_inventory),
+        "required_inventory_count": len(required_inventory),
         "dsn": redacted_dsn(dsn),
         "skip_waivers": waivers,
         "source_contract_acceptance": False,
@@ -241,7 +420,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     if args.ensure_local_postgresql:
-        if args.output is not None or args.dsn is not None or args.waive_skip or args.python != sys.executable:
+        if (
+            args.output is not None
+            or args.dsn is not None
+            or args.waive_skip
+            or args.test_file
+            or args.python != sys.executable
+        ):
             parser.error("--ensure-local-postgresql cannot be combined with certification options")
         result = ensure_canonical_local_postgresql()
         if args.json:
@@ -260,12 +445,29 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     inventory = discover_native_postgresql_inventory(ROOT)
+    try:
+        test_files = _parse_test_files(args.test_file, inventory)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    required_inventory = tuple(
+        nodeid
+        for nodeid in inventory
+        if not test_files or nodeid.split("::", 1)[0] in set(test_files)
+    )
+    if not required_inventory:
+        raise SystemExit("native PostgreSQL selection resolved to an empty governed inventory")
     unknown_waivers = sorted(set(waivers) - set(inventory))
     if unknown_waivers:
         raise SystemExit("skip waivers are not in the governed inventory: " + ", ".join(unknown_waivers))
 
     dsn = args.dsn or postgresql_dsn()
-    report = _base_report(dsn=dsn, waivers=waivers, inventory=inventory)
+    report = _base_report(
+        dsn=dsn,
+        waivers=waivers,
+        inventory=inventory,
+        required_inventory=required_inventory,
+        test_files=test_files,
+    )
     try:
         identity = probe_native_postgresql(dsn)
     except NativePostgreSQLUnavailable as exc:
@@ -275,14 +477,14 @@ def main(argv: list[str] | None = None) -> int:
                 "environment_error": str(exc),
                 "identity": None,
                 "tests": {
-                    "selected": len(inventory),
+                    "selected": len(required_inventory),
                     "executed": 0,
                     "passed": 0,
                     "failed": 0,
                     "errors": 0,
                     "skipped": 0,
-                    "unavailable": len(inventory),
-                    "unavailable_nodeids": list(inventory),
+                    "unavailable": len(required_inventory),
+                    "unavailable_nodeids": list(required_inventory),
                 },
                 "native_postgresql_certified": False,
             }
@@ -319,8 +521,13 @@ def main(argv: list[str] | None = None) -> int:
             str(junit_report),
             "-q",
         ]
+        if test_files:
+            for test_file in test_files:
+                command.extend(("--dish-internal-native-test-file", test_file))
         env = os.environ.copy()
         env["DISH_TEST_POSTGRESQL_DSN"] = dsn
+        if test_files:
+            env["DISH_INTERNAL_GOVERNED_RUNNER"] = "1"
         run = _run(command, env=env)
         if pytest_report.is_file():
             pytest_payload = json.loads(pytest_report.read_text(encoding="utf-8"))
@@ -344,12 +551,18 @@ def main(argv: list[str] | None = None) -> int:
 
     tests = pytest_payload["tests"]
     selected = set(tests.get("selected_nodeids", []))
-    expected = set(inventory)
+    expected = set(required_inventory)
     inventory_missing = sorted(expected - selected)
     inventory_unexpected = sorted(selected - expected)
     skipped = set(tests.get("skipped_nodeids", []))
-    unwaived_skips = sorted(skipped - set(waivers))
-    unused_waivers = sorted(set(waivers) - skipped)
+    waiver_evidence = _evaluate_waivers(
+        waivers=waivers,
+        skipped=skipped,
+        skip_reasons=dict(tests.get("skip_reasons", {})),
+    )
+    unwaived_skips = waiver_evidence["unwaived_skips"]
+    unused_waivers = waiver_evidence["unused_waivers"]
+    waiver_reason_mismatches = waiver_evidence["waiver_reason_mismatches"]
     identity_matches = pytest_payload.get("identity") == identity.as_dict()
     certified = (
         run["exit_code"] == 0
@@ -359,6 +572,8 @@ def main(argv: list[str] | None = None) -> int:
         and int(tests.get("failed", 0)) == 0
         and int(tests.get("errors", 0)) == 0
         and not unwaived_skips
+        and not unused_waivers
+        and not waiver_reason_mismatches
         and identity_matches
     )
     report.update(
@@ -370,6 +585,9 @@ def main(argv: list[str] | None = None) -> int:
             "tests": tests,
             "inventory_missing": inventory_missing,
             "inventory_unexpected": inventory_unexpected,
+            "skip_reason_signatures": waiver_evidence["skip_reason_signatures"],
+            "waived_skips": waiver_evidence["waived_skips"],
+            "waiver_reason_mismatches": waiver_reason_mismatches,
             "unwaived_skips": unwaived_skips,
             "unused_waivers": unused_waivers,
             "pytest": run,

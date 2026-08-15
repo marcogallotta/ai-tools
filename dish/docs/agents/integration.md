@@ -52,8 +52,8 @@ For local integration work:
 - never test or reconcile a candidate in a dirty shared `main` worktree;
 - use a dedicated worktree/temporary integration branch when local isolation is required;
 - do not reuse stale/merged/abandoned branches for unrelated work;
-- cleanup after confirmed landing is manual day-one hygiene;
-- cleanup automation is future work;
+- terminal implementation-lineage cleanup is owned by the repository PR lifecycle controller after authoritative landing/disposition;
+- Integration does not force-delete implementation recovery state when that controller refuses;
 - never delete the only recoverable copy of unlanded work.
 
 ## Verify review identity before integration
@@ -74,6 +74,7 @@ Do not rely on a stale approval attached only to the PR number or branch name. I
 ## Checks and certification
 
 Run the exact `TESTS TO RUN` from the coordinator/reviewer handoff when integration still requires local/environment-specific certification. Do not replace the requested command with a weaker substitute and do not claim evidence that did not run.
+`TESTS TO RUN: NONE` is literal: Integration does not invent a blanket suite or create a local test worktree solely for reassurance when the governed exact-head evidence has no remaining certification requirement.
 
 When the selected command is `scripts/dish-test-lane native-concurrency`, an unset PostgreSQL environment variable is not by itself an unavailable environment. The lane first honors an explicit `DISH_TEST_POSTGRESQL_DSN` or `DISH_PG_TEST_URL`, then exhausts the repository-owned canonical local `localhost:5432` `dish_test` helper mode in `dish-pg-native-certification` using bounded non-interactive privilege. Treat exit status 3 as `UNAVAILABLE` only after that helper has returned the exact residual reason. This local fallback is fenced to the disposable local role/database; it does not authorize selecting shared TEST, PROD, a remote host, or a generic certification default.
 
@@ -155,7 +156,7 @@ After remote landing is verified:
 - confirm the guarded local target-branch synchronization completed or was left untouched and reported pending;
 - local temporary integration worktrees/branches may be removed when safe;
 - the implementation branch may be deleted when the PR is merged/closed and no recoverability need remains;
-- stale-branch cleanup remains manual for day one; cleanup automation is future work.
+- eligible terminal implementation branches are cleaned by the repository PR lifecycle controller with exact-head/recoverability guards; residual or ambiguous cleanup remains manual and must not be forced.
 
 Do not delete an unlanded or superseded branch if it is still needed for provenance/recovery.
 
@@ -176,3 +177,7 @@ Return:
 11. any missing certification, semantic conflict, stale approval, push/merge race, or other reason integration stopped.
 
 Use `PR merged` only when GitHub reports that state. Otherwise use the exact exceptional outcome, such as `landed out-of-band and closed`. Deployment/runtime state remains separate.
+
+## Development friction and non-blocking debt
+
+Apply the inherited contributor-base contracts: repository friction is discoverable/dedupe-first and logged without creating a second queue or urgency; relevant non-blocking code smells are deduped/logged to the Code Smells surface and the assigned scope continues. True current-task blockers stay on the active task/PR.

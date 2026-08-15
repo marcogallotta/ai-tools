@@ -76,6 +76,17 @@ For new work:
 
 The ready-for-review transition is the author's explicit handoff from AUTHORING to REVIEW-READY. PR-triggered ordinary CI starts from this review-ready state and may complete while review proceeds; any CI still pending at the transition must be named as pending integration evidence rather than claimed as passed.
 
+### Authoritative publication/readback gate
+
+Never report `published`, `PR created`, or `REVIEW-READY` from intended/local state alone. Before claiming those states, authoritative GitHub readback must prove all of the following for the intended implementation identity:
+
+- the remote owned branch exists at the exact intended implementation head;
+- a real GitHub PR exists with an authoritative PR number/URL;
+- PR readback names the expected owned branch and the exact same head;
+- after the ready-for-review transition, PR readback reports `draft=false` on that same exact head.
+
+A local commit, verified bundle, patch, sandbox/HTML artifact, intended PR URL, successful local tests, or attempted/ambiguous publication is not a GitHub PR and cannot satisfy this gate. Missing or mismatched branch/PR/head/readback means Implementation publication is incomplete. Use the existing publication-blocker/durable-handoff path (or the owning Asana task when no PR can yet exist) before the concise human notification; do not emit `PR: N/A` / `head: N/A` as a terminal repository handoff.
+
 The PR is the review surface. Do not create a patch file or patch-only handoff for new work.
 
 ### Durable review context in the PR
@@ -211,7 +222,7 @@ A venv is not part of the handoff by default. Build/use the environment accordin
 
 Ordinary PR CI is exact-head evidence: on `pull_request`, candidate identity is the source PR head SHA, not the synthetic merge `GITHUB_SHA`. Required ordinary CI must test that exact source head and publish the repository-defined exact-head status/evidence for it. Manual/native evidence remains valid only for guarantees not automated by CI and must record the exact candidate SHA.
 
-Do not rerun large suites merely to produce volume when existing focused evidence plus governed lanes establish the changed behavior, but follow repository requirements for completed change blocks.
+Do not rerun large suites merely to produce volume when existing focused evidence plus governed lanes establish the changed behavior. Completion or handoff does not itself add a blanket suite: execute the governed selector union plus any concrete semantic boundary, exact PR-local certification marker, or explicitly named review/task evidence requirement.
 
 ## Migration from patch handoffs
 
@@ -240,3 +251,7 @@ Return enough information for the coordinator/reviewer to proceed without recons
 Do not describe work as merged, landed, deployed, or activated unless you actually have authoritative evidence of that state.
 
 If you are returning a fix requested by a reviewer, update the existing PR unless the coordinator explicitly requires a replacement PR, address the reviewer's exact blocker scope, identify any additional semantic changes, and return the new exact PR head SHA.
+
+## Development friction and non-blocking debt
+
+Apply the inherited contributor-base contracts: repository friction is discoverable/dedupe-first and logged without creating a second queue or urgency; relevant non-blocking code smells are deduped/logged to the Code Smells surface and the assigned scope continues. True current-task blockers stay on the active task/PR.
