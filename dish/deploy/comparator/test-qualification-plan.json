@@ -8,6 +8,11 @@
       "mutating": false,
       "arguments": {"agent": "gpt"},
       "compare": {
+        "projection": {
+          "ok": "/ok",
+          "command": "/command",
+          "sections": "/data/sections"
+        },
         "drop_keys": [
           "external_id", "external_system", "gid", "ordinal", "project_gid", "project_id",
           "registry_revision", "registry_version_id", "section_gid", "section_id", "workflow_role"
