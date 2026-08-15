@@ -16,9 +16,15 @@ from tests.support.postgresql.certification import (
     probe_native_postgresql,
     redacted_dsn,
 )
+from test_selection.execution_guard import require_safe_test_checkout
 
 pytestmark = pytest.mark.smoke
 ROOT = Path(__file__).resolve().parents[2]
+CANDIDATE_HEAD = require_safe_test_checkout(ROOT)
+
+
+def _cert_args(*args: str) -> list[str]:
+    return ["--expected-head", CANDIDATE_HEAD, *args]
 
 TEST_NODEID = "tests/postgresql/native/test_governed_waiver.py::test_governed_skip"
 PASS_NODEID = "tests/postgresql/native/test_governed_waiver.py::test_governed_pass"
@@ -117,7 +123,7 @@ def _run_fake_certification(
         "_write_atomic",
         lambda path, value: captured.update(path=path, report=value),
     )
-    argv = ["--output", str(tmp_path / "native.json")]
+    argv = _cert_args("--output", str(tmp_path / "native.json"))
     for waiver in waivers:
         argv.extend(("--waive-skip", waiver))
     result = main(argv)
@@ -187,7 +193,7 @@ def test_native_certification_reports_unavailable_without_masquerading(
         "_write_atomic",
         lambda path, value: captured.update(path=path, report=value),
     )
-    assert main(["--output", str(tmp_path / "native.json")]) == 3
+    assert main(_cert_args("--output", str(tmp_path / "native.json"))) == 3
     report = captured["report"]
     assert isinstance(report, dict)
     assert report["status"] == "unavailable"
@@ -213,7 +219,7 @@ def test_native_certification_focused_selection_reports_only_required_inventory(
         lambda path, value: captured.update(path=path, report=value),
     )
     test_file = "tests/postgresql/native/test_migration_status.py"
-    assert main(["--output", str(tmp_path / "native.json"), "--test-file", test_file]) == 3
+    assert main(_cert_args("--output", str(tmp_path / "native.json"), "--test-file", test_file)) == 3
     report = captured["report"]
     assert isinstance(report, dict)
     required = [
@@ -286,7 +292,7 @@ def test_native_certification_rejects_zero_executed_tests(
         "_write_atomic",
         lambda path, value: captured.update(path=path, report=value),
     )
-    assert main(["--output", str(tmp_path / "native.json")]) == 2
+    assert main(_cert_args("--output", str(tmp_path / "native.json"))) == 2
     report = captured["report"]
     assert isinstance(report, dict)
     assert report["native_postgresql_certified"] is False
@@ -376,12 +382,12 @@ def test_native_certification_rejects_structured_waiver_for_unknown_node(
     unknown = "tests/postgresql/native/test_unknown.py::test_unknown"
     with pytest.raises(SystemExit, match="not in the governed inventory"):
         main(
-            [
+            _cert_args(
                 "--output",
                 str(tmp_path / "native.json"),
                 "--waive-skip",
                 _waiver(unknown, "unknown reason"),
-            ]
+            )
         )
 
 

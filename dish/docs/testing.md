@@ -509,6 +509,7 @@ Run the governed native inventory with:
 ```sh
 DISH_TEST_POSTGRESQL_DSN='postgresql+psycopg://...' \
   .venv/bin/python scripts/dish-pg-native-certification \
+  --expected-head <reviewed-head-sha> \
   --output .test-artifacts/native-postgresql/report.json
 ```
 

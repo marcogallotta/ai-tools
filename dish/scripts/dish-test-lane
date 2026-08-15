@@ -16,6 +16,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from test_selection.execution_guard import (  # noqa: E402
+    TestExecutionRefused,
+    require_safe_test_checkout,
+)
 from test_selection.model import PolicyError  # noqa: E402
 from test_selection.parallel import (  # noqa: E402
     PARALLEL_SAFE_TEST_FILES,
@@ -437,6 +441,12 @@ def main(argv: list[str] | None = None) -> int:
         for phase in phases:
             print(f"{phase.name}: {_display(phase.command)}")
         return 0
+
+    try:
+        require_safe_test_checkout(ROOT)
+    except TestExecutionRefused as exc:
+        print(f"REFUSED: {exc}", file=sys.stderr)
+        return 4
 
     if args.lane == "parallel-safe" and args.workers is not None:
         if any("-n" in phase.command for phase in phases):
