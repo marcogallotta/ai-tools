@@ -14,6 +14,7 @@ from dish_pg.revise_section_registry import (
     ReviseSectionRegistryError,
     ReviseTestSectionRegistryMembershipError,
     TEST_DATABASE_NAME,
+    _revise_test_section_registry_membership_transaction,
     require_test_database_url,
     revise_section_registry,
     revise_test_section_registry_membership,
@@ -43,7 +44,7 @@ def _call(session, ids, context, **overrides):
         "uuid_factory": lambda: next(ids),
     }
     values.update(overrides)
-    return revise_test_section_registry_membership(session, **values)
+    return _revise_test_section_registry_membership_transaction(session, **values)
 
 
 def _counts(session):
@@ -132,6 +133,30 @@ def test_test_membership_revision_exact_retry_is_safe(workflow_db) -> None:
         assert retry["service_run_id"] == first["service_run_id"]
         assert retry["after"] == first["after"]
         assert _counts(session) == after_first
+
+
+def test_test_membership_revision_primitive_refuses_non_postgresql_session_before_mutation(workflow_db) -> None:
+    factory, ids, context, _task_id = workflow_db
+    with session_scope(factory) as session:
+        before = _counts(session)
+        with pytest.raises(ReviseTestSectionRegistryMembershipError, match="requires PostgreSQL"):
+            revise_test_section_registry_membership(
+                session,
+                target_database_name=TEST_DATABASE_NAME,
+                expected_generation_id=context["generation_id"],
+                expected_registry_version_id=context["registry_version_id"],
+                expected_registry_revision=1,
+                research_queue_section_gid=GIDS[0],
+                verification_queue_section_gid=GIDS[1],
+                sourcing_section_gid=GIDS[2],
+                reference_section_gid=GIDS[3],
+                owner_id="Marco",
+                agent="marco",
+                now=NOW,
+                uuid_factory=lambda: next(ids),
+            )
+        assert _counts(session) == before
+        assert _active(session, context["generation_id"]) == (context["registry_version_id"], 1)
 
 
 def test_test_membership_revision_refuses_non_test_targets(workflow_db) -> None:

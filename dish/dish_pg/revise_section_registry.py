@@ -456,7 +456,42 @@ def revise_test_section_registry_membership(
     now: datetime,
     uuid_factory=uuid.uuid4,
 ) -> dict[str, Any]:
-    """Create and activate one exact four-section successor registry in TEST."""
+    """Create and activate one exact four-section successor registry in connected TEST."""
+    _require_connected_test(session)
+    return _revise_test_section_registry_membership_transaction(
+        session,
+        target_database_name=target_database_name,
+        expected_generation_id=expected_generation_id,
+        expected_registry_version_id=expected_registry_version_id,
+        expected_registry_revision=expected_registry_revision,
+        research_queue_section_gid=research_queue_section_gid,
+        verification_queue_section_gid=verification_queue_section_gid,
+        sourcing_section_gid=sourcing_section_gid,
+        reference_section_gid=reference_section_gid,
+        owner_id=owner_id,
+        agent=agent,
+        now=now,
+        uuid_factory=uuid_factory,
+    )
+
+
+def _revise_test_section_registry_membership_transaction(
+    session,
+    *,
+    target_database_name: str,
+    expected_generation_id: uuid.UUID,
+    expected_registry_version_id: uuid.UUID,
+    expected_registry_revision: int,
+    research_queue_section_gid: str,
+    verification_queue_section_gid: str,
+    sourcing_section_gid: str,
+    reference_section_gid: str,
+    owner_id: str,
+    agent: str,
+    now: datetime,
+    uuid_factory=uuid.uuid4,
+) -> dict[str, Any]:
+    """Apply the membership transaction after the connected TEST fence has passed."""
     if target_database_name != TEST_DATABASE_NAME:
         raise ReviseTestSectionRegistryMembershipError(
             f"operation requires exact TEST target {TEST_DATABASE_NAME!r}"
