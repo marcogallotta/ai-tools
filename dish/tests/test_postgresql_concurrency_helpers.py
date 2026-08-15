@@ -302,7 +302,11 @@ def test_native_concurrency_lane_is_explicit_first_and_local_helper_is_canonical
         stdout = json.dumps({"status": "ready", "dsn": fixed})
         stderr = ""
     monkeypatch.setattr(lane["subprocess"], "run", lambda *args, **kwargs: Ready())
-    assert lane["_bootstrap_native_postgresql_env"]({}) == {"DISH_TEST_POSTGRESQL_DSN": fixed}
+    expected_head = "a" * 40
+    assert lane["_bootstrap_native_postgresql_env"]({"DISH_EXPECTED_HEAD": expected_head}) == {
+        "DISH_EXPECTED_HEAD": expected_head,
+        "DISH_TEST_POSTGRESQL_DSN": fixed,
+    }
 
     class Bad:
         returncode = 0
@@ -310,7 +314,7 @@ def test_native_concurrency_lane_is_explicit_first_and_local_helper_is_canonical
         stderr = ""
     monkeypatch.setattr(lane["subprocess"], "run", lambda *args, **kwargs: Bad())
     with pytest.raises(RuntimeError, match="failed closed"):
-        lane["_bootstrap_native_postgresql_env"]({})
+        lane["_bootstrap_native_postgresql_env"]({"DISH_EXPECTED_HEAD": expected_head})
 
     helper = runpy.run_path(str(ROOT / "scripts" / "dish-pg-native-certification"))
     monkeypatch.setitem(helper["main"].__globals__, "ensure_canonical_local_postgresql", lambda: pytest.fail("parser must reject target injection first"))
