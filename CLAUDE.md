@@ -14,6 +14,12 @@ Standing role contracts contain stable policy so task handoffs can stay short an
 
 For exact-reviewed-PR-head integration, local integration certification, commit/promotion to `main`, push verification, or integration-worktree cleanup, follow the dedicated Integration agent contract in `dish/docs/agents/integration.md`. Implementation/fix agents do not inherit final integration authority merely because they produced the implementation.
 
+## Marco-facing workflow policy
+
+Anything shown directly to Marco must explain the workflow state and next action in plain English rather than relying on internal codenames or unexplained process shorthand. Technical IDs may be included when useful, but they do not carry the meaning by themselves.
+
+Marco's explicit scoped `override` of a named Dish process/workflow/test/review/Integration gate is authoritative for that scope. When the active gate is already clear, a terse follow-up such as `override`, `go`, `do not run tests`, or `mark in PR override` is sufficient: execute the override first and record the waived gate second. Preserve raw evidence truthfully; a failure does not become a PASS, and the lifecycle record separately states `GATE WAIVED BY MARCO OVERRIDE`. Do not extend the waiver beyond the named scope; genuine platform/system constraints remain non-overridable.
+
 ## Dish safety and environments
 
 - Genuine work uses production. Test is only for experiments, rehearsals, destructive testing, or Marco's explicit request. Confirm the target before an ambiguous mutation.
@@ -54,15 +60,15 @@ For ChatGPT agents, use the connected GitHub integration as source/history autho
 
 For recurring ChatGPT Dish role Projects, the canonical concise Project kernels and version manifest live in [`dish/docs/chatgpt-projects/`](dish/docs/chatgpt-projects/README.md). At the first substantive action, compare the Project-declared `PROJECT_CANONICAL_VERSION` with the current repository manifest. On mismatch, report `PROJECT INSTRUCTIONS STALE` and make no role-critical state change until the Project instructions are resynchronized. Project kernels bootstrap critical gates; they never replace the current role index or standing role contract.
 
-For substantial repository-changing work, use the repository bundle first:
+For substantial repository/system reasoning that can affect a consequential Dish decision, use the repository bundle first. Tiny targeted lookups that do not support such reasoning are exempt:
 
 - resolve the intended current `refs/heads/main` SHA and repository identity from GitHub authority;
 - retrieve the exact matching Actions artifact named `repository-bundle-<SHA>`; never substitute a stale/newer/older bundle;
 - materialize the artifact in the runtime and run `scripts/repository_bundle.py verify` against the authoritative repository full name/numeric identity, exact SHA, and `refs/heads/main`;
-- use the verified local clone for `git log`, `git diff`, search/grep, tests, and local branch/commit preparation;
+- use the verified local clone for `git log`, `git diff`, search/grep, tests, and local branch/commit preparation; for stacked/PR work, overlay the exact current branch/PR delta from GitHub authority because v1 bundles remain `main`-only;
 - fail closed if connector retrieval, materialization, checksum/manifest verification, `git bundle verify`, advertised-main validation, or cloned-HEAD validation fails.
 
-The publication and verification contract, cadence, retention, and v1 main-only scope are in [`ci/repository-bundle.md`](ci/repository-bundle.md). GitHub Connect remains the live path for PR state, remote metadata, and small targeted source retrieval. Unless authenticated Git transport is deliberately added later, publish branch/commit/PR state through connector-native GitHub operations rather than assuming the verified clone can push.
+The publication and verification contract, cadence, retention, and v1 main-only scope are in [`ci/repository-bundle.md`](ci/repository-bundle.md). The bundle is read-only context: GitHub Connect remains live source/history/PR/review authority and Asana remains orchestration authority. Current-state decisions still require those live reads. Unless authenticated Git transport is deliberately added later, publish branch/commit/PR state through connector-native GitHub operations rather than assuming the verified clone can push.
 
 Bootstrap Python runtime dependencies from the authoritative GitHub-built dependency bundle rather than asking Marco to upload a virtual environment or bundle manually:
 

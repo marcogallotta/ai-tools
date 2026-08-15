@@ -9,13 +9,14 @@
       ],
       "contract": "dish/docs/agents/coordinator.md",
       "default_role": "Coordinator",
-      "project_name": "Dish — Coordinator",
+      "project_name": "Dish \u2014 Coordinator",
       "rules": [
         {
           "id": "coordinator-live-scan",
-          "text": "For status/dispatch/blocker decisions, read live GitHub/Asana. `LOCAL IMPLEMENTATION COMPLETION REQUIRED` is durable PR publication-blocker state: route only its missing branch delta; never classify it as local certification.",
+          "text": "Fresh/replacement Coordinator, before ordinary status/dispatch: reconcile maintained Ready/In Progress/Review/Blocked, stale handoffs/queue drift, and audit due/active/incomplete/returned state; surface due audits before next work. Reuse Asana/dispatcher truth; no scheduler/second queue. Route `LOCAL IMPLEMENTATION COMPLETION REQUIRED` only to missing branch delta.",
           "impact": "breaking",
           "action_boundaries": [
+            "status",
             "dispatch",
             "handoff"
           ],
@@ -32,7 +33,7 @@
         },
         {
           "id": "repository-friction-capture",
-          "text": "Discover `Dish — Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.",
+          "text": "Discover `Dish \u2014 Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.",
           "impact": "additive",
           "action_boundaries": [
             "role-critical-write",
@@ -42,7 +43,7 @@
         },
         {
           "id": "durable-review-state",
-          "text": "Research/design/readiness work distinguishes IMPLEMENTATION READY from AGENT REVIEW, AGENT RE-REVIEW, HUMAN REVIEW, and HUMAN APPROVAL/DECISION; review-required work records exact question/baseline/dependency and a durable Asana verdict. Chat-only review is incomplete and review does not grant Implementation/Integration authority.",
+          "text": "Coordinator judges required Human Review from durable owning-task evidence: identifiable human, current artifact/question, adequate scope; chat/actor/agent claims alone fail. Preserve REQUIRED/NOT REQUIRED and PENDING/COMPLETE/INADEQUATE; INADEQUATE is distinct from PENDING. Review grants no Implementation/Integration authority.",
           "impact": "breaking",
           "action_boundaries": [
             "dispatch",
@@ -89,7 +90,7 @@
       },
       "contract": "dish/docs/agents/development-workflow.md",
       "default_role": "Development Workflow specialist",
-      "project_name": "Dish — Development Workflow",
+      "project_name": "Dish \u2014 Development Workflow",
       "rules": [
         {
           "id": "development-workflow-boundary",
@@ -99,15 +100,6 @@
             "role-critical-write"
           ],
           "surface": "authority"
-        },
-        {
-          "id": "development-workflow-live-lane",
-          "text": "`Dish — Development Workflow` is live Asana authority; Git/PR/runtime remain distinct. Missing safe branch write is `PUBLICATION BLOCKER` / `LOCAL IMPLEMENTATION COMPLETION REQUIRED`, with complete PR handoff before human notice.",
-          "impact": "breaking",
-          "action_boundaries": [
-            "handoff"
-          ],
-          "surface": "lifecycle"
         },
         {
           "id": "development-workflow-context-preload",
@@ -121,7 +113,7 @@
         },
         {
           "id": "repository-friction-capture",
-          "text": "Discover `Dish — Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.",
+          "text": "Discover `Dish \u2014 Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.",
           "impact": "additive",
           "action_boundaries": [
             "role-critical-write",
@@ -131,7 +123,7 @@
         },
         {
           "id": "code-smell-debt-capture",
-          "text": "For material non-blocking code debt, dedupe first in `Dish — Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.",
+          "text": "For material non-blocking code debt, dedupe first in `Dish \u2014 Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.",
           "impact": "additive",
           "action_boundaries": [
             "role-critical-write",
@@ -141,7 +133,7 @@
         },
         {
           "id": "durable-review-state",
-          "text": "Research/design/readiness work distinguishes IMPLEMENTATION READY from AGENT REVIEW, AGENT RE-REVIEW, HUMAN REVIEW, and HUMAN APPROVAL/DECISION; review-required work records exact question/baseline/dependency and a durable Asana verdict. Chat-only review is incomplete and review does not grant Implementation/Integration authority.",
+          "text": "Human Review on owning task preserves REQUIRED/NOT REQUIRED; if required, PENDING/COMPLETE/INADEQUATE + question/baseline/dependency/provenance. Chat-only incomplete; no Implementation/Integration authority.",
           "impact": "breaking",
           "action_boundaries": [
             "dispatch",
@@ -151,10 +143,11 @@
         },
         {
           "id": "development-workflow-friction-triage",
-          "text": "Include Friction `Inbox` in startup/re-ground/status sweeps; dedupe first, route active blockers to the active task/PR, otherwise triage evidence/owner/next action. Age/repetition does not manufacture urgency and Friction is not a competing queue authority.",
-          "impact": "additive",
+          "text": "Fresh/replacement Development Workflow before ordinary status/dispatch: reconcile lane queue, stale handoffs/Friction, audit due/active/incomplete/returned state; surface due audits before next work. Reuse Asana/dispatcher truth; no scheduler/second queue.",
+          "impact": "breaking",
           "action_boundaries": [
             "status",
+            "dispatch",
             "handoff"
           ],
           "surface": "lifecycle"
@@ -167,6 +160,25 @@
             "role-critical-write"
           ],
           "surface": "safety"
+        },
+        {
+          "id": "development-workflow-live-lane",
+          "text": "`Dish \u2014 Development Workflow` is live Asana authority; Git/PR/runtime stay distinct. Dispatcher keeps `REVIEW PASSED` while gates remain, routes local work by role, puts durable PR handoff/readback before human notice, and claims publication/ready/merged only from GitHub readback. Missing safe publication is `PUBLICATION BLOCKER`.",
+          "impact": "breaking",
+          "action_boundaries": [
+            "handoff"
+          ],
+          "surface": "lifecycle"
+        },
+        {
+          "id": "development-workflow-asana-design-review-state",
+          "text": "Design/review is canonical after design + verdict/amendments are persisted/read back on its Asana task; amendments go in notes; stale chat never overrides.",
+          "impact": "breaking",
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "surface": "lifecycle"
         }
       ]
     },
@@ -176,18 +188,8 @@
       ],
       "contract": "dish/docs/agents/implementation.md",
       "default_role": "Implementation",
-      "project_name": "Dish — Implementation",
+      "project_name": "Dish \u2014 Implementation",
       "rules": [
-        {
-          "id": "implementation-durable-git",
-          "text": "Implementation is incomplete until the complete intended surface is durably published on an owned branch + commit + PR + exact head. Missing safe branch write means `PUBLICATION BLOCKER` / `LOCAL IMPLEMENTATION COMPLETION REQUIRED`, never local certification; put the full PR handoff there before notifying Marco.",
-          "impact": "breaking",
-          "action_boundaries": [
-            "handoff",
-            "role-critical-write"
-          ],
-          "surface": "lifecycle"
-        },
         {
           "id": "implementation-no-self-review-integration",
           "text": "Do not self-review/integrate semantic work; return exact PR/head/evidence for independent Review/Integration.",
@@ -200,7 +202,7 @@
         },
         {
           "id": "repository-friction-capture",
-          "text": "Discover `Dish — Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.",
+          "text": "Discover `Dish \u2014 Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.",
           "impact": "additive",
           "action_boundaries": [
             "role-critical-write",
@@ -210,11 +212,21 @@
         },
         {
           "id": "code-smell-debt-capture",
-          "text": "For material non-blocking code debt, dedupe first in `Dish — Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.",
+          "text": "For material non-blocking code debt, dedupe first in `Dish \u2014 Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.",
           "impact": "additive",
           "action_boundaries": [
             "role-critical-write",
             "review-write"
+          ],
+          "surface": "lifecycle"
+        },
+        {
+          "id": "implementation-durable-git",
+          "text": "Implementation is incomplete until the intended surface is on an owned branch + commit + real GitHub PR + exact head. Before claiming `published`/`PR created`/`REVIEW-READY`, authoritative GitHub readback must prove remote branch head, real PR number/URL/branch/head, and `draft=false` after ready transition. Missing/mismatched readback is `PUBLICATION BLOCKER` / `LOCAL IMPLEMENTATION COMPLETION REQUIRED`; local/sandbox artifacts never substitute, and durable PR/Asana handoff precedes human notice.",
+          "impact": "breaking",
+          "action_boundaries": [
+            "handoff",
+            "role-critical-write"
           ],
           "surface": "lifecycle"
         }
@@ -224,7 +236,7 @@
       "allowed_compositions": [],
       "contract": "dish/docs/agents/integration.md",
       "default_role": "Integration",
-      "project_name": "Dish — Integration",
+      "project_name": "Dish \u2014 Integration",
       "rules": [
         {
           "id": "integration-reviewed-head",
@@ -246,7 +258,7 @@
         },
         {
           "id": "repository-friction-capture",
-          "text": "Discover `Dish — Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.",
+          "text": "Discover `Dish \u2014 Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.",
           "impact": "additive",
           "action_boundaries": [
             "role-critical-write",
@@ -256,7 +268,7 @@
         },
         {
           "id": "code-smell-debt-capture",
-          "text": "For material non-blocking code debt, dedupe first in `Dish — Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.",
+          "text": "For material non-blocking code debt, dedupe first in `Dish \u2014 Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.",
           "impact": "additive",
           "action_boundaries": [
             "role-critical-write",
@@ -272,11 +284,11 @@
       ],
       "contract": "dish/docs/agents/postgresql-dark-launch.md",
       "default_role": "PostgreSQL / Dark Launch specialist",
-      "project_name": "Dish — PostgreSQL / Dark Launch",
+      "project_name": "Dish \u2014 PostgreSQL / Dark Launch",
       "rules": [
         {
           "id": "postgresql-live-lane",
-          "text": "`Dish — PostgreSQL / Dark Launch` is this lane’s live Asana authority. Direct runtime/database evidence remains separate when deployed identity or behavior matters.",
+          "text": "`Dish \u2014 PostgreSQL / Dark Launch` is this lane\u2019s live Asana authority. Direct runtime/database evidence remains separate when deployed identity or behavior matters.",
           "impact": "breaking",
           "action_boundaries": [
             "role-critical-write"
@@ -294,7 +306,7 @@
         },
         {
           "id": "repository-friction-capture",
-          "text": "Discover `Dish — Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.",
+          "text": "Discover `Dish \u2014 Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.",
           "impact": "additive",
           "action_boundaries": [
             "role-critical-write",
@@ -304,7 +316,7 @@
         },
         {
           "id": "code-smell-debt-capture",
-          "text": "For material non-blocking code debt, dedupe first in `Dish — Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.",
+          "text": "For material non-blocking code debt, dedupe first in `Dish \u2014 Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.",
           "impact": "additive",
           "action_boundaries": [
             "role-critical-write",
@@ -318,7 +330,7 @@
       "allowed_compositions": [],
       "contract": "dish/docs/agents/review.md",
       "default_role": "Review",
-      "project_name": "Dish — Review",
+      "project_name": "Dish \u2014 Review",
       "rules": [
         {
           "id": "review-exact-head",
@@ -357,26 +369,8 @@
           "surface": "routing"
         },
         {
-          "id": "review-action-handoff",
-          "text": "Keep details on PR. Final human message uses one `review.md` status: `READY FOR MERGE` / `LOCAL AGENT REQUIRED` / `BLOCKED` / `WAITING ON DEPENDENCY`; no review dump.",
-          "impact": "compatible",
-          "action_boundaries": [
-            "handoff"
-          ],
-          "surface": "presentation"
-        },
-        {
-          "id": "review-integration-boundary",
-          "text": "`READY FOR MERGE` hands off to Integration; Review does not merge.",
-          "impact": "breaking",
-          "action_boundaries": [
-            "merge"
-          ],
-          "surface": "authority"
-        },
-        {
           "id": "repository-friction-capture",
-          "text": "Discover `Dish — Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.",
+          "text": "Discover `Dish \u2014 Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.",
           "impact": "additive",
           "action_boundaries": [
             "role-critical-write",
@@ -386,13 +380,41 @@
         },
         {
           "id": "code-smell-debt-capture",
-          "text": "For material non-blocking code debt, dedupe first in `Dish — Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.",
+          "text": "For material non-blocking code debt, dedupe first in `Dish \u2014 Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.",
           "impact": "additive",
           "action_boundaries": [
             "role-critical-write",
             "review-write"
           ],
           "surface": "lifecycle"
+        },
+        {
+          "id": "review-action-handoff",
+          "text": "Keep details on PR. Human state distinguishes `REVIEW PASSED` while certification/Integration gates remain, `INTEGRATION READY` when all gates are green, role-specific local Review/Implementation/Integration actions, genuine `WAITING ON DEPENDENCY`, `BLOCKED`, and `MERGED`; never hide passed Review behind generic dependency wording.",
+          "impact": "breaking",
+          "action_boundaries": [
+            "handoff"
+          ],
+          "surface": "lifecycle"
+        },
+        {
+          "id": "review-integration-boundary",
+          "text": "Review never gains Implementation/Integration authority. `INTEGRATION READY` hands off to Integration; `MERGED` requires authorized Integration plus authoritative GitHub readback.",
+          "impact": "breaking",
+          "action_boundaries": [
+            "merge"
+          ],
+          "surface": "authority"
+        },
+        {
+          "id": "review-host-role-routing",
+          "text": "Host capability and role authority are separate: local Review performs Review-authorized local evidence directly when capable; semantic fixes route to Implementation; Integration-only work routes to Integration. Remote Review needing local Review evidence writes the complete exact-head PR handoff before the concise role-specific human action; never route generically to a local agent.",
+          "impact": "breaking",
+          "action_boundaries": [
+            "handoff",
+            "role-critical-write"
+          ],
+          "surface": "authority"
         }
       ]
     },
@@ -402,11 +424,11 @@
       ],
       "contract": "dish/docs/agents/workflow.md",
       "default_role": "Workflow specialist",
-      "project_name": "Dish — Workflow Specialist",
+      "project_name": "Dish \u2014 Workflow Specialist",
       "rules": [
         {
           "id": "workflow-live-lane",
-          "text": "`Dish — Workflow` is this lane’s live Asana authority. Keep iteration state current there; do not infer deployed identity from GitHub HEAD or Asana.",
+          "text": "`Dish \u2014 Workflow` is this lane\u2019s live Asana authority. Keep iteration state current there; do not infer deployed identity from GitHub HEAD or Asana.",
           "impact": "breaking",
           "action_boundaries": [
             "role-critical-write"
@@ -424,7 +446,7 @@
         },
         {
           "id": "repository-friction-capture",
-          "text": "Discover `Dish — Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.",
+          "text": "Discover `Dish \u2014 Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.",
           "impact": "additive",
           "action_boundaries": [
             "role-critical-write",
@@ -434,7 +456,7 @@
         },
         {
           "id": "code-smell-debt-capture",
-          "text": "For material non-blocking code debt, dedupe first in `Dish — Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.",
+          "text": "For material non-blocking code debt, dedupe first in `Dish \u2014 Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.",
           "impact": "additive",
           "action_boundaries": [
             "role-critical-write",
@@ -448,7 +470,7 @@
       "allowed_compositions": [],
       "contract": "dish/docs/agents/audit.md",
       "default_role": "Audit",
-      "project_name": "Dish — Audit",
+      "project_name": "Dish \u2014 Audit",
       "rules": [
         {
           "id": "audit-authority-boundary",
@@ -520,7 +542,7 @@
     },
     {
       "id": "live-authority",
-      "text": "Before current-state, ownership, process, dispatch, or completion conclusions, read relevant live GitHub and Asana authority; do not rely on stale remembered/user-reported state.",
+      "text": "Verified exact-current-main `repository-bundle-<SHA>` precedes substantial work; tiny lookups exempt. Context only; current-state/ownership/process/dispatch/completion require live GitHub/Asana reads.",
       "impact": "breaking",
       "action_boundaries": [
         "*"
@@ -601,7 +623,7 @@
     },
     {
       "id": "decision-provenance",
-      "text": "Keep explicit human decisions, standing repository policy, agent inference/recommendation, and runtime observations distinct. Consequential human decisions require durable independent provenance; policy/runtime conflicts are reconciled without inventing a decision.",
+      "text": "Keep human decisions/policy/agent inference/runtime distinct. Use judgment, no scoring, to flag Human Review. Owning Asana task: HUMAN REVIEW REQUIRED or NOT REQUIRED; if required, PENDING/COMPLETE/INADEQUATE + reviewer identity/provenance, date/time, reviewed artifact/PR/head/design, decision/result. PENDING/INADEQUATE blocks consequential merge/activation absent Marco override.",
       "impact": "breaking",
       "action_boundaries": [
         "*"
@@ -611,6 +633,34 @@
     {
       "id": "authenticated-account-provenance",
       "text": "Asana/GitHub actor fields under Marco's account prove authenticated-account attribution, not that Marco physically acted or approved. Never use account attribution alone as human authorization, ownership transfer, or Review verdict; agent-authored durable discussion writes retain Dish Agent role/host provenance.",
+      "impact": "breaking",
+      "action_boundaries": [
+        "*"
+      ],
+      "surface": "authority"
+    },
+    {
+      "id": "five-whys-shared-method",
+      "text": "Five Whys/root-cause: follow `dish/docs/agents/five-whys.md`; classify evidence/unknowns; do not stop at blame.",
+      "impact": "additive",
+      "action_boundaries": [
+        "analysis",
+        "handoff"
+      ],
+      "surface": "evidence"
+    },
+    {
+      "id": "human-facing-plain-language",
+      "text": "Marco-facing workflow: plain English; explain IDs/codenames.",
+      "impact": "compatible",
+      "action_boundaries": [
+        "handoff"
+      ],
+      "surface": "presentation"
+    },
+    {
+      "id": "marco-scoped-override",
+      "text": "Marco scoped gate override: honor; preserve evidence; record `GATE WAIVED BY MARCO OVERRIDE`; no scope/platform expansion.",
       "impact": "breaking",
       "action_boundaries": [
         "*"

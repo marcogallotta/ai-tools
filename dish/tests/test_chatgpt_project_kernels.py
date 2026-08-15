@@ -22,6 +22,16 @@ def _obs(sid,role):
   {'seq':3,'kind':'human_notification','operation':'control_plane_message','pr':52,'action':'local_implementation_completion','details_location':'pull_request'}]
  if sid=='configured-repository-pr-routing':
   return [{'seq':1,'kind':'connector_read','operation':'pull_request_read','connector':'GitHub','repository':'marcogallotta/ai-tools','pr':31 if role=='review' else 34}]
+ if sid=='review-remote-local-evidence-pr-handoff': return [
+  {'seq':1,'kind':'tool','operation':'write_exact_head_pr_handoff','pr_number':61},
+  {'seq':2,'kind':'tool','operation':'verify_pr_handoff_readback','pr_number':61},
+  {'seq':3,'kind':'message','operation':'route_to_local_review','pr_number':61}]
+ if sid=='implementation-publication-readback-success': return [
+  {'seq':1,'kind':'tool','operation':'verify_remote_branch_exact_head','pr_number':62},
+  {'seq':2,'kind':'tool','operation':'verify_real_pr_identity','pr_number':62},
+  {'seq':3,'kind':'tool','operation':'verify_pr_branch_and_head','pr_number':62},
+  {'seq':4,'kind':'tool','operation':'verify_ready_readback','pr_number':62},
+  {'seq':5,'kind':'message','operation':'report_review_ready','pr_number':62}]
  return []
 def _passing():
  m,_=kernels.load_canonical(); results=[]
@@ -49,7 +59,7 @@ def test_missing_repository_bootstrap_fails_closed():
 
 def test_current_edge_requires_exact_rule_classification():
  m,s=kernels.load_canonical(); bad=copy.deepcopy(m); edge=next(x for x in bad['change_history'] if x['to_version']==bad['canonical_version'])
- edge['changes']=edge['changes'][1:]
+ edge['changes']=[x for x in edge['changes'] if x['rule_id']!='coordinator-live-scan']
  with pytest.raises(kernels.KernelError,match='classification mismatch'): kernels._validate_current_edge_classification(bad,s)
 
 def test_classified_stable_rule_removal_is_representable_and_unknown_ids_still_fail():
@@ -83,10 +93,10 @@ def test_development_workflow_context_preload_is_role_index_driven_and_read_only
  assert deps['action_specific']['dispatcher/Integration mechanics']==['ci/pr-lifecycle-dispatcher-runbook.md']
  assert deps['action_specific']['native-PostgreSQL workflow mechanics']==['dish/docs/testing.md','dish/docs/architecture/postgresql-runtime.md']
  text=kernels.render_role(m,s,'development-workflow')
- assert text.index('Startup:')<text.index('Read-only decision context (startup/re-grounding):')
- assert 'load every standing role contract listed by the current role index' in text
+ assert text.index('Startup:')<text.index('Context only: load role-index contracts')
+ assert 'Context only: load role-index contracts' in text
  assert '`dish/docs/agents/contributor-base.md`' in text
- assert 'grants no Implementation, Review, Integration, merge, or production authority' in text
+ assert 'no authority gained' in text
  comps=s['roles']['development-workflow']['allowed_compositions']; assert len(comps)==1 and 'implementation.md' in comps[0]
  assert 'review.md' not in comps[0] and 'integration.md' not in comps[0]
 
@@ -112,11 +122,11 @@ def test_development_workflow_incident_evals_require_cross_role_and_fallback_con
 
 def test_eval_contract_matrix_and_oracle_free_prepared_cases():
  ids=kernels.validate_eval_contracts(); assert set(ids)==kernels.REQUIRED_EVAL_IDS
- b=kernels.prepare_eval_bundle(); assert len(b['cases'])==73
+ b=kernels.prepare_eval_bundle(); assert len(b['cases'])==sum(len(q['roles']) for q in kernels._evals())
  assert all(kernels.ORACLE_FIELDS.isdisjoint(c) for c in b['cases'])
  by={c['case_id']:c for c in b['cases']}; assert by['configured-repository-pr-routing::review']['prompt']=='review PR31'; assert by['configured-repository-pr-routing::integration']['prompt']=='merge PR34'
 
-def test_behavior_evaluator_accepts_complete_matrix(): assert len(kernels.evaluate_behavior_results(_passing()))==73
+def test_behavior_evaluator_accepts_complete_matrix(): assert len(kernels.evaluate_behavior_results(_passing()))==sum(len(q['roles']) for q in kernels._evals())
 
 def test_repository_routing_requires_observed_configured_connector_read():
  p=_passing(); _result(p,'configured-repository-pr-routing::review')['runner_observations']=[]
@@ -169,7 +179,7 @@ def test_task_required_drift_eval_cases_are_present_and_scoped():
 
 def test_role_and_publication_boundaries_remain_high_salience():
  _,s=kernels.load_canonical(); impl=' '.join(x['text'] for x in kernels.effective_rules(s,'implementation')); rev=' '.join(x['text'] for x in kernels.effective_rules(s,'review')); integ=' '.join(x['text'] for x in kernels.effective_rules(s,'integration'))
- assert 'owned branch + commit + PR + exact head' in impl and 'Do not self-review/integrate' in impl
+ assert 'owned branch + commit + real GitHub PR + exact head' in impl and 'Do not self-review/integrate' in impl
  assert 'formal GitHub `COMMENT` verdict' in rev and 'Review does not implement fixes' in rev
  assert 'current head must equal the exact reviewed/certified head' in integ
 
@@ -200,3 +210,45 @@ def test_c1_standing_contracts_preserve_authority_and_capture_surfaces():
  assert 'Observing a quiet state is not isolation' in dw and 'mechanically enforced admission/fencing boundary' in dw
  idx=(DISH_ROOT/'docs'/'agents'/'index.md').read_text()
  assert 'Authenticated-account metadata' in idx and 'not that Marco physically performed or approved' in idx
+
+
+def test_shared_human_language_override_and_host_policy_are_deterministic():
+ m,s=kernels.load_canonical()
+ for role in s['roles']:
+  text=kernels.render_role(m,s,role)
+  assert 'plain English' in text
+  assert 'GATE WAIVED BY MARCO OVERRIDE' in text
+ plain=_scenario('human-facing-plain-language')
+ assert {'use_unexplained_internal_codename','make_identifier_carry_meaning'}<=set(plain['forbidden_actions'])
+ override=_scenario('marco-scoped-override-preserves-evidence')
+ assert {'rerun_waived_tests','convert_failure_to_pass','demand_override_syntax','ask_confirmation_again'}<=set(override['forbidden_actions'])
+ for host in (DISH_ROOT.parent/'CLAUDE.md',DISH_ROOT.parent/'AGENTS.md'):
+  policy=host.read_text()
+  assert 'plain English' in policy and 'GATE WAIVED BY MARCO OVERRIDE' in policy
+
+
+def test_five_whys_is_one_evidence_grounded_shared_method():
+ index=(DISH_ROOT/'docs'/'agents'/'index.md').read_text()
+ method=(DISH_ROOT/'docs'/'agents'/'five-whys.md').read_text()
+ assert 'Shared analysis methods' in index and '[`five-whys.md`](five-whys.md)' in index
+ assert '**VERIFIED FACT**' in method
+ assert '**TESTED/REJECTED ALTERNATIVE**' in method
+ assert '**HYPOTHESIS/UNKNOWN**' in method
+ assert 'heuristic, not a required count' in method and 'Branch into multiple causal chains' in method
+ assert 'Do not stop at individual blame' in method and 'Keep cause and countermeasure separate' in method
+ for heading in ('Problem statement / observed failure','Root cause(s)','Detection / escape failure','Rejected alternatives / contrary evidence','Verification / recurrence-prevention test','Remaining uncertainty','Owner / next action'):
+  assert heading in method
+ for anti in ('five unrelated reasons','five restatements of the same symptom','speculation presented as fact','treating exactly five questions as mandatory','calling chronology or correlation a cause without evidence'):
+  assert anti in method
+ scenario=_scenario('five-whys-evidence-discipline')
+ assert {'force_exactly_five','stop_at_human_blame','present_hypothesis_as_fact','reverse_engineer_cause_from_solution'}<=set(scenario['forbidden_actions'])
+
+
+def test_development_workflow_uses_owning_asana_task_as_design_review_state():
+ role=(DISH_ROOT/'docs'/'agents'/'development-workflow.md').read_text()
+ assert 'owning Asana task is the durable canonical design/review artifact' in role
+ assert 'persist the complete proposed design' in role and 'read it back' in role
+ assert 'fold the accepted/current design into task notes' in role
+ assert 'stale copied chat subset never overrides newer Asana task state' in role
+ scenario=_scenario('development-workflow-asana-design-review-state')
+ assert {'dispatch_from_chat_only_design','let_stale_chat_override_asana','claim_durable_without_readback'}<=set(scenario['forbidden_actions'])
