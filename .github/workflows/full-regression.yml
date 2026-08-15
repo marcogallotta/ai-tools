@@ -2,6 +2,9 @@ name: Full regression
 run-name: Full regression / ${{ github.sha }} / ${{ github.event_name }}
 
 on:
+  push:
+    branches:
+      - main
   schedule:
     # Deliberately off the top of the hour; scheduled workflows run latest default-branch code.
     - cron: '17 2 * * *'
@@ -18,7 +21,7 @@ permissions:
 
 concurrency:
   group: dish-full-regression-main
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   full-regression:

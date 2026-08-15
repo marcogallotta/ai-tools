@@ -4,9 +4,9 @@ The periodic full regression is a selector-quality backstop. It is **not** an In
 
 ## Trigger and duplicate suppression
 
-`.github/workflows/full-regression.yml` runs approximately nightly at minute 17, deliberately away from the top of the hour, and supports `workflow_dispatch` for Coordinator-triggered extra runs after unusually high merge volume or a high-risk batch. Manual dispatch always performs the full run.
+`.github/workflows/full-regression.yml` runs on every push to `main`, approximately nightly at minute 17 as a fallback, and by `workflow_dispatch` for Coordinator-triggered diagnostic runs. Main-push and manual runs always perform the full run. The workflow uses one `dish-full-regression-main` concurrency group with `cancel-in-progress: true`, so a newer `main` supersedes an older in-progress health run instead of building a stale queue.
 
-Scheduled execution is bound to the workflow event's exact `main` SHA. Before expensive setup, the workflow reads prior completed runs. If the same `main` SHA already has a successful completed full-regression run, the scheduled run exits cheaply. A failing full result is not deduplicated: unchanged failing `main` is eligible to run again, while Coordinator can always request an additional manual run.
+Execution is bound to the workflow event's exact `main` SHA. Before expensive setup, the workflow reads prior completed runs. Only scheduled execution deduplicates an unchanged `main`: if the same SHA already has a successful completed full-regression run, the scheduled run exits cheaply. A failing full result is not deduplicated, and push/manual runs are never deduplicated.
 
 ## Execution and evidence
 

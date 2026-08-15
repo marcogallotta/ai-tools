@@ -86,8 +86,9 @@ def _miss(*, failure_id: str = "lane:browser-acceptance:test-browser:deadbeefdea
 def test_workflow_contract_is_independent_force_all_diagnostic_backstop():
     workflow = WORKFLOW.read_text()
     prefix = workflow.split("permissions:", 1)[0]
+    assert "push:" in prefix and "- main" in prefix
     assert "cron: '17 2 * * *'" in prefix and "workflow_dispatch:" in prefix
-    assert "pull_request:" not in prefix and "push:" not in prefix
+    assert "pull_request:" not in prefix
     assert "scripts/pr_gate.py" not in workflow
     for lane in fr.LANES:
         assert f"--lane {lane} --" in workflow
@@ -102,10 +103,22 @@ def test_unchanged_success_dedupes_scheduled_only():
     runs = {"workflow_runs": [{"id": 100, "status": "completed", "conclusion": "success", "head_sha": SHA}]}
     scheduled = fr.decide_run(runs_payload=runs, main_sha=SHA, event="schedule", current_run_id="101")
     manual = fr.decide_run(runs_payload=runs, main_sha=SHA, event="workflow_dispatch", current_run_id="101")
+    pushed = fr.decide_run(runs_payload=runs, main_sha=SHA, event="push", current_run_id="101")
     assert scheduled["should_run"] is False and scheduled["equivalent_success_run_id"] == "100"
     assert manual["should_run"] is True
+    assert pushed["should_run"] is True
     runs["workflow_runs"][0]["conclusion"] = "failure"
     assert fr.decide_run(runs_payload=runs, main_sha=SHA, event="schedule", current_run_id="101")["should_run"] is True
+
+
+def test_main_push_full_regression_converges_on_latest_main():
+    workflow = WORKFLOW.read_text()
+    prefix = workflow.split("permissions:", 1)[0]
+    assert "push:" in prefix
+    assert "branches:\n      - main" in prefix
+    concurrency = workflow.split("concurrency:", 1)[1].split("jobs:", 1)[0]
+    assert "group: dish-full-regression-main" in concurrency
+    assert "cancel-in-progress: true" in concurrency
 
 
 def test_failed_lane_records_but_does_not_fail_fast(tmp_path: Path):
