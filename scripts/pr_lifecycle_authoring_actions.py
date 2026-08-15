@@ -31,6 +31,7 @@ class LifecycleAuthoringActionsMixin:
         workspace: WorkspaceAgentDispatcher | None,
         local_reviewer: LocalReviewDispatcher | None,
         implementation_fixer: ImplementationFixDispatcher | None = None,
+        terminal_cleaner=None,
         notify: Callable[[str], None] | None = None,
     ) -> PRLifecycle:
         notify = notify or (lambda _: None)
@@ -41,6 +42,7 @@ class LifecycleAuthoringActionsMixin:
                 workspace=workspace,
                 local_reviewer=local_reviewer,
                 implementation_fixer=implementation_fixer,
+                terminal_cleaner=terminal_cleaner,
                 notify=notify,
             )
 

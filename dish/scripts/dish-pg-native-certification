@@ -16,6 +16,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import create_engine, text
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -42,6 +44,45 @@ def _without_pg_env() -> dict[str, str]:
     return {key: value for key, value in os.environ.items() if not key.startswith("PG")}
 
 
+def _probe_canonical_local_role_capabilities() -> dict[str, object]:
+    engine = create_engine(CANONICAL_LOCAL_POSTGRESQL_DSN, future=True, pool_pre_ping=True)
+    try:
+        with engine.connect() as connection:
+            row = connection.execute(
+                text(
+                    """
+                    SELECT current_user AS role,
+                           rolcreatedb AS createdb,
+                           rolcreaterole AS createrole
+                    FROM pg_roles
+                    WHERE rolname = current_user
+                    """
+                )
+            ).mappings().one()
+    except Exception as exc:
+        raise LocalPostgreSQLUnavailable(
+            f"canonical local role capability probe failed: {type(exc).__name__}: {exc}"
+        ) from exc
+    finally:
+        engine.dispose()
+
+    role = str(row["role"])
+    createdb = bool(row["createdb"])
+    createrole = bool(row["createrole"])
+    if role != "dish_test":
+        raise LocalPostgreSQLUnavailable(f"canonical local role mismatch: role={role!r}")
+    missing = [
+        capability
+        for capability, present in (("CREATEDB", createdb), ("CREATEROLE", createrole))
+        if not present
+    ]
+    if missing:
+        raise LocalPostgreSQLUnavailable(
+            "canonical local role capabilities missing: " + ", ".join(missing)
+        )
+    return {"role": role, "createdb": createdb, "createrole": createrole}
+
+
 def _probe_canonical_local_postgresql() -> dict[str, object]:
     try:
         identity = probe_native_postgresql(CANONICAL_LOCAL_POSTGRESQL_DSN)
@@ -55,7 +96,8 @@ def _probe_canonical_local_postgresql() -> dict[str, object]:
             raise LocalPostgreSQLUnavailable(
                 f"canonical local identity is not loopback: address={address!r}"
             )
-        return {**identity.as_dict(), "role": "dish_test"}
+        capabilities = _probe_canonical_local_role_capabilities()
+        return {**identity.as_dict(), **capabilities}
     except LocalPostgreSQLUnavailable:
         raise
     except Exception as exc:
@@ -98,11 +140,12 @@ def _provision_canonical_local_postgresql() -> None:
     statements = (
         "DROP DATABASE IF EXISTS dish_test;",
         "DROP ROLE IF EXISTS dish_test;",
-        "CREATE ROLE dish_test LOGIN PASSWORD '0ddca88b81a8bf1a15d84caa78efd7b3' CREATEDB;",
+        "CREATE ROLE dish_test LOGIN PASSWORD '0ddca88b81a8bf1a15d84caa78efd7b3' CREATEDB CREATEROLE;",
         "CREATE DATABASE dish_test OWNER dish_test;",
     )
     command = [
-        sudo, "-n", "-u", "postgres", "--", psql, "-X", "-w", "-p", "5432", "-d",
+        sudo, "-n", "-u", "postgres", "--", psql, "-X", "-w", "-h", "localhost",
+        "-p", "5432", "-d",
         "postgres", "-v", "ON_ERROR_STOP=1", "-q",
     ]
     for statement in statements:

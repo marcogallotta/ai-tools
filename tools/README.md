@@ -243,10 +243,16 @@ tools/agent-worktree cleanup --task <task_gid> --disposition abandoned
 tools/agent-worktree cleanup --task <task_gid> --disposition superseded
 ```
 
-Cleanup refuses dirty state, remote-ahead/divergent ambiguity, and any local implementation head that
-would become unrecoverable. It unlocks only immediately before a non-force `git worktree remove`,
-retains the local branch as a recovery pointer, and retains the task record with its historical
-disposition. The tool never treats the supplied disposition flag as proof of PR/task state; the
-caller is responsible for establishing that state from current GitHub/Asana authority first.
+Cleanup refuses dirty/ignored task-local state, unpublished-only recovery state, ambiguous worktree/branch
+identity, and any explicit terminal head that no longer matches the remote `agent/*` branch. The terminal
+controller supplies the exact PR number, branch, and head; cleanup journals each destructive step before
+continuing, removes the linked worktree non-force, conditionally deletes the exact local branch, and deletes
+the exact remote `agent/*` branch with `--force-with-lease` expected-head protection. It verifies each
+applicable deletion and retains the task record with `dish-terminal-cleanup-v1` historical provenance so a
+restart can reconcile a crash between steps. Merged work may use the current target branch as recovery;
+closed/abandoned/superseded work must remain recoverable from the terminal owned branch until deletion.
+The tool never treats the supplied disposition flag as proof of PR/task state; the caller must establish
+terminal authority from current GitHub/Asana state first. Default, protected, non-`agent/*`, moved, or reused
+remote refs are never eligible for automatic terminal deletion.
 
 All non-`exec` commands accept `--json` for machine-readable output.

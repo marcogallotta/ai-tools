@@ -291,3 +291,17 @@ Keep `Dish — Development Workflow` current while working, not only at handoff 
 Before ending a substantial session or yielding the role, ensure every material in-flight development-system state change is represented in the project with exact Git/PR identity where relevant.
 
 A successor should not need the previous conversation to understand the development workflow's current state.
+
+## Friction Inbox triage
+
+`Dish — Development Workflow Friction` (`1217443500915644`) is the canonical friction capture surface. Include its `Inbox` in fresh-start, re-grounding, status, and explicit triage sweeps. Dedupe first against Friction and active `Dish — Development Workflow` work. If the friction blocks active work, update the active task/PR instead of creating a parallel blocker. Otherwise record evidence, next owner/action, and triage it without manufacturing urgency; age/repetition alone never raises priority. Move information/no-action items to `Triaged`; completed fixes to `Done`; do not move an item out of `Inbox` until it has actually been triaged.
+
+Repository-modifying roles use the contributor-base `notice -> dedupe -> log/update -> continue` contract. This capture surface does not become a second dispatch or lifecycle authority.
+
+## Durable review classification and verdicts
+
+Research/design/readiness work must durably distinguish `IMPLEMENTATION READY` from `AGENT REVIEW`, `AGENT RE-REVIEW`, `HUMAN REVIEW`, and `HUMAN APPROVAL/DECISION`. A review-required task records the exact review question, baseline/artifact, and dependency needed to continue. The verdict is written back to Asana; a chat-only verdict is not review completion. A completed review does not itself grant Implementation, formal PR Review, Integration, merge, or runtime authority.
+
+## Shared-resource concurrency preflight
+
+Before changing shared infrastructure availability or capacity, identify concurrent producer classes and state the non-interference invariants before choosing a mechanism. Observing a quiet state is not isolation. Open capacity only when a mechanically enforced admission/fencing boundary keeps non-target producers unable to consume it for the whole operational window, or when Marco explicitly authorizes a stop-the-world override.
