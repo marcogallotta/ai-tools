@@ -277,7 +277,8 @@ def test_planner_can_select_supported_parallel_command_for_reviewed_focus(
     )
 
     assert plan.commands == (
-        ".venv/bin/python scripts/dish-test-lane parallel-safe --workers 4 "
+        ".venv/bin/python scripts/dish-test-lane parallel-safe --expected-head "
+        "'<reviewed-head-sha>' --workers 4 "
         "--test-file tests/test_commands.py",
     )
     assert plan.parallel_acceleration_used is True
@@ -298,7 +299,8 @@ def test_parallel_safe_focus_does_not_parallelize_governed_lanes(
     )
 
     assert plan.commands == (
-        ".venv/bin/python scripts/dish-test-lane parallel-safe --workers 4 "
+        ".venv/bin/python scripts/dish-test-lane parallel-safe --expected-head "
+        "'<reviewed-head-sha>' --workers 4 "
         "--test-file tests/test_commands.py",
         ".venv/bin/python -m pytest --database-boundary",
     )

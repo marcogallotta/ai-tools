@@ -8,7 +8,14 @@ from pathlib import Path
 
 import pytest
 
+from test_selection.execution_guard import require_safe_test_checkout
+
 ROOT = Path(__file__).resolve().parents[1]
+EXPECTED_HEAD = require_safe_test_checkout(ROOT)
+
+
+def _lane_args(*args: str) -> list[str]:
+    return [*args, "--expected-head", EXPECTED_HEAD]
 
 
 def _namespace():
@@ -74,11 +81,58 @@ def test_lane_stops_at_exact_failing_phase(monkeypatch) -> None:
 
     main = namespace["main"]
     monkeypatch.setitem(main.__globals__, "_run_phase", fake_run)
-    assert main(["schema-migrations"]) == 7
+    assert main(_lane_args("schema-migrations")) == 7
     assert calls == [
         "focused schema and migration contracts",
         "SQLite database-boundary migration evidence",
     ]
+
+
+def test_lane_rejects_stale_head_before_preflight_or_execution(monkeypatch) -> None:
+    namespace = _namespace()
+    main = namespace["main"]
+    monkeypatch.setitem(
+        main.__globals__,
+        "_run_phase",
+        lambda *_args, **_kwargs: pytest.fail("test phase must not start"),
+    )
+    monkeypatch.setitem(
+        main.__globals__,
+        "_xdist_preflight",
+        lambda: pytest.fail("xdist preflight must not start"),
+    )
+
+    assert main(["parallel-safe", "--expected-head", "b" * 40, "--workers", "4"]) == 4
+
+
+def test_native_bootstrap_forwards_exact_candidate_head(monkeypatch) -> None:
+    namespace = _namespace()
+    captured = {}
+
+    class Completed:
+        returncode = 0
+        stdout = json.dumps(
+            {
+                "status": "ready",
+                "dsn": (
+                    "postgresql+psycopg://dish_test:0ddca88b81a8bf1a15d84caa78efd7b3"
+                    "@localhost:5432/dish_test"
+                ),
+            }
+        )
+
+    def fake_run(command, **_kwargs):
+        captured["command"] = command
+        return Completed()
+
+    monkeypatch.setattr(namespace["subprocess"], "run", fake_run)
+    namespace["_bootstrap_native_postgresql_env"]({"DISH_EXPECTED_HEAD": EXPECTED_HEAD})
+    assert captured["command"][1:4] == [
+        "scripts/dish-pg-native-certification",
+        "--ensure-local-postgresql",
+        "--expected-head",
+    ]
+    assert captured["command"][4] == EXPECTED_HEAD
 
 
 def test_native_lane_reports_unavailable_before_running(monkeypatch, capsys) -> None:
@@ -99,7 +153,7 @@ def test_parallel_safe_can_run_serially_and_rejects_unreviewed_files(monkeypatch
 
     main = namespace["main"]
     monkeypatch.setitem(main.__globals__, "_run_phase", fake_run)
-    assert main(["parallel-safe", "--test-file", "tests/test_commands.py"]) == 0
+    assert main(_lane_args("parallel-safe", "--test-file", "tests/test_commands.py")) == 0
     assert "-n" not in commands[-1]
     assert commands[-1][-1] == "tests/test_commands.py"
 
@@ -132,13 +186,13 @@ def test_parallel_safe_workers_use_invoking_environment_and_exact_selection(monk
     monkeypatch.setitem(main.__globals__, "_run_phase", fake_run)
 
     assert main(
-        [
+        _lane_args(
             "parallel-safe",
             "--workers",
             "4",
             "--test-file",
             "tests/test_commands.py",
-        ]
+        )
     ) == 0
     command = commands[-1]
     assert command[:10] == (
@@ -178,7 +232,7 @@ def test_diagnostic_mode_changes_output_only_not_pytest_selection(monkeypatch) -
     monkeypatch.setitem(main.__globals__, "_run_phase", fake_run)
     expected_files = tuple(namespace["LANES"]["release-cutover"][0].command[4:])
 
-    assert main(["release-cutover", "--diagnose"]) == 0
+    assert main(_lane_args("release-cutover", "--diagnose")) == 0
     command = commands[-1]
     assert "-q" not in command
     assert command[-2:] == ("-vv", "--durations=20")
@@ -284,7 +338,7 @@ def test_parallel_safe_drift_blocks_explicit_workers_but_keeps_serial_diagnosis_
     namespace = _namespace()
     monkeypatch.setitem(namespace["main"].__globals__, "_run_phase", fake_run)
     assert namespace["main"](
-        ["parallel-safe", "--test-file", "tests/test_commands.py"]
+        _lane_args("parallel-safe", "--test-file", "tests/test_commands.py")
     ) == 0
     assert "-n" not in commands[-1]
     assert commands[-1][-1] == "tests/test_commands.py"
@@ -309,7 +363,7 @@ def test_full_parallel_safe_inventory_partitions_drift_to_serial_fallback(monkey
     monkeypatch.setitem(namespace["main"].__globals__, "_xdist_preflight", lambda: 0)
     monkeypatch.setitem(namespace["main"].__globals__, "_run_phase", fake_run)
 
-    assert namespace["main"](["parallel-safe", "--workers", "4"]) == 0
+    assert namespace["main"](_lane_args("parallel-safe", "--workers", "4")) == 0
     assert len(commands) == 2
     assert ("-n", "4", "--dist", "loadfile") == commands[0][5:9]
     assert commands[0][-1] == "tests/test_commands.py"

@@ -424,11 +424,10 @@ def _finalize(report: dict[str, Any]) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
+    if args.expected_head is None:
+        parser.error("--expected-head is required before bootstrap or certification")
     try:
-        require_safe_test_checkout(
-            ROOT,
-            expected_head=None if args.ensure_local_postgresql else args.expected_head,
-        )
+        require_safe_test_checkout(ROOT, expected_head=args.expected_head)
     except TestExecutionRefused as exc:
         print(f"REFUSED: {exc}", file=sys.stderr)
         return 4
@@ -453,8 +452,6 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--json requires --ensure-local-postgresql")
     if args.output is None:
         parser.error("--output is required for certification")
-    if args.expected_head is None:
-        parser.error("--expected-head is required for certification")
     try:
         waivers = _parse_waivers(args.waive_skip)
     except ValueError as exc:

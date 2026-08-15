@@ -202,6 +202,18 @@ def test_native_certification_reports_unavailable_without_masquerading(
     assert report["tests"]["unavailable"] == len(discover_native_postgresql_inventory(ROOT))
 
 
+def test_local_bootstrap_rejects_stale_head_before_provision(monkeypatch) -> None:
+    namespace = runpy.run_path(str(ROOT / "scripts" / "dish-pg-native-certification"))
+    main = namespace["main"]
+    monkeypatch.setitem(
+        main.__globals__,
+        "ensure_canonical_local_postgresql",
+        lambda: pytest.fail("PostgreSQL bootstrap must not start"),
+    )
+
+    assert main(["--ensure-local-postgresql", "--expected-head", "b" * 40]) == 4
+
+
 def test_native_certification_focused_selection_reports_only_required_inventory(
     monkeypatch, tmp_path: Path
 ) -> None:
