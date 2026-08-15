@@ -172,6 +172,11 @@ def test_composite_action_keeps_all_heavy_setup_conditional() -> None:
     assert "uses: actions/setup-node@v6" in action
     assert "uses: ./.github/actions/setup-python-bundle" in action
     assert "postgres:17.10" in action
+    assert "POSTGRES_USER=ai_tools_ci_admin" in action
+    assert "CREATE ROLE ai_tools_ci LOGIN PASSWORD 'ci-only-password' CREATEDB CREATEROLE NOSUPERUSER" in action
+    assert "ALTER DATABASE dish_ai_tools_ci_test OWNER TO ai_tools_ci" in action
+    assert "DISH_TEST_POSTGRESQL_DSN=postgresql+psycopg://ai_tools_ci:ci-only-password" in action
+    assert "DISH_TEST_POSTGRESQL_RESET_DSN=postgresql+psycopg://ai_tools_ci_admin:ci-admin-only-password" in action
     assert "playwright install --with-deps chromium" in action
     assert "npm ci --no-audit --no-fund" in action
     assert "working-directory: dish/tests/postgresql/pglite" in action
