@@ -1,0 +1,103 @@
+name: B1 mixed native selector review-blocker fix
+
+on:
+  push:
+    branches:
+      - agent/b1-selector-correctness
+    paths:
+      - '.github/workflows/b1-review-blocker-fix.yml'
+
+permissions:
+  contents: write
+
+env:
+  EXPECTED_PARENT: dab98ad565bc22552261e6cd4ba94c91d474a9c3
+
+jobs:
+  fix:
+    if: contains(github.event.head_commit.message, '[b1-review-blocker-fix]')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/b1-selector-correctness
+          fetch-depth: 0
+
+      - name: Verify exact transport lineage
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
+
+      - name: Apply exact review-blocker patches
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          apply_blob() {
+            sha="$1"
+            out="/tmp/$sha.patch"
+            gh api "repos/$GITHUB_REPOSITORY/git/blobs/$sha" --jq .content | tr -d '\n' | base64 -d > "$out"
+            test "$(git hash-object "$out")" = "$sha"
+            git apply --check "$out"
+            git apply "$out"
+          }
+          apply_blob 9fd13eb59f5aefd9d312fb4e525396c5ba9235be
+          apply_blob ff00ae3059348f2effc7c726ccdcd9913d0e6d8b
+          apply_blob 85be6f57c55d0641f6f8492568cc314fec37ecc8
+          apply_blob 588ebb5307008305c7a9f005d65dabbc6894daf7
+          test "$(git diff --name-only | sort)" = "$(printf '%s\n' \
+            ci/tests/test_integration_certification_plan.py \
+            dish/test_selection/planner.py \
+            dish/tests/test_dish_test_plan.py \
+            scripts/integration_certification_plan.py | sort)"
+          test "$(git hash-object dish/test_selection/planner.py)" = 148d1fa40650054117d2b272ff83ca858689ca32
+          test "$(git hash-object scripts/integration_certification_plan.py)" = 948be7e799a2a3dfb2f353bf6984206a59dc9681
+          test "$(git hash-object dish/tests/test_dish_test_plan.py)" = 07aac45380d8fb1ae8852acb26b424a433fd4640
+          test "$(git hash-object ci/tests/test_integration_certification_plan.py)" = 2cf0d471b3f30b42fea4c0fc7d9fd9b9a91f2d18
+
+      - name: Resolve canonical Python version
+        id: py
+        shell: bash
+        run: python3 scripts/dependency_bundle.py expected --repo-root "$GITHUB_WORKSPACE" --github-output "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ steps.py.outputs.python_version }}
+
+      - name: Recreate canonical Python environments
+        uses: ./.github/actions/setup-python-bundle
+        with:
+          github-token: ${{ github.token }}
+          include-flake: false
+
+      - name: Run recorded focused recheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          dish/.venv/bin/python -m pytest -q ci/tests/test_integration_certification_plan.py
+          cd dish
+          .venv/bin/python -m pytest -q tests/test_dish_test_plan.py
+
+      - name: Verify diff hygiene
+        shell: bash
+        run: git diff --check
+
+      - name: Publish fix and remove transport
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/b1-review-blocker-fix.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add \
+            dish/test_selection/planner.py \
+            scripts/integration_certification_plan.py \
+            dish/tests/test_dish_test_plan.py \
+            ci/tests/test_integration_certification_plan.py
+          git diff --cached --check
+          git commit -m 'Fail closed mixed native PostgreSQL selector impact'
+          git push origin HEAD:agent/b1-selector-correctness
