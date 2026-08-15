@@ -23,7 +23,11 @@ from tests.support.postgresql.command import _add_destination_section
 from tests.support.postgresql.workflow import NOW, workflow_db
 
 SECRET = b"registry-membership-regression-secret!"
-GIDS = ("1217084805070731", "1217084805070799", "1217084805070800", "1217084805070801")
+# The bootstrap fixture intentionally starts Research Queue on a different external
+# identity (1217084805070731).  This target therefore exercises the TEST repair
+# case where the governed Research section and its task placements must be kept
+# while its stale predecessor Asana alias is replaced by the exact live identity.
+GIDS = ("1217084805070732", "1217084805070799", "1217084805070800", "1217084805070801")
 NAMES = ("Research Queue", "Verification Queue", "Sourcing", "Reference")
 PLAN = Path(__file__).resolve().parents[2] / "deploy/comparator/test-qualification-plan.json"
 
@@ -75,6 +79,17 @@ def test_test_membership_revision_creates_exact_four_preserves_history_and_match
             models.SectionRegistryEntry.registry_version_id == context["registry_version_id"]
         )))
         old_snapshot = [(x.section_id, x.ordinal, x.display_name, x.workflow_role) for x in old_entries]
+        old_alias = session.scalar(select(models.SectionExternalAlias).where(
+            models.SectionExternalAlias.section_id == context["section_id"],
+            models.SectionExternalAlias.external_id == "1217084805070731",
+        ))
+        assert old_alias is not None and old_alias.state == "active"
+        placement = session.get(
+            models.CurrentTaskSectionPlacement, (context["generation_id"], _task_id)
+        )
+        assert placement is not None
+        placement_event_id = placement.latest_event_id
+        placement_revision = placement.placement_revision
         result = _call(session, ids, context)
         assert result["changed"] is True
         assert result["before"] == {"registry_version_id": str(context["registry_version_id"]), "registry_revision": 1}
@@ -91,6 +106,35 @@ def test_test_membership_revision_creates_exact_four_preserves_history_and_match
         )))
         assert [(x.section_id, x.ordinal, x.display_name, x.workflow_role) for x in historical] == old_snapshot
 
+        session.refresh(old_alias)
+        assert old_alias.state == "retired"
+        assert old_alias.retired_at is not None
+        assert old_alias.retired_at.replace(tzinfo=NOW.tzinfo) == NOW
+        replacement_alias = session.scalar(select(models.SectionExternalAlias).where(
+            models.SectionExternalAlias.external_id == GIDS[0],
+            models.SectionExternalAlias.state == "active",
+        ))
+        assert replacement_alias is not None
+        assert replacement_alias.section_id == context["section_id"]
+
+        session.refresh(placement)
+        assert placement.section_id == context["section_id"]
+        assert placement.registry_version_id == uuid.UUID(result["after"]["registry_version_id"])
+        assert placement.latest_event_id != placement_event_id
+        assert placement.placement_revision == placement_revision + 1
+        placement_event = session.get(models.TaskSectionPlacementEvent, placement.latest_event_id)
+        assert placement_event is not None
+        assert placement_event.section_id == context["section_id"]
+        assert placement_event.registry_version_id == placement.registry_version_id
+        assert placement_event.provenance_route == "import"
+        assert placement_event.import_run_id == uuid.UUID(result["import_run_id"])
+        head = session.get(models.TaskAuthorityHead, (context["generation_id"], _task_id))
+        assert head is not None and head.placement_revision == placement.placement_revision
+        task_page = PostgresReadModel(session, cursor_secret=SECRET).section_tasks(
+            section_reference=GIDS[0]
+        )
+        assert [item.task_id for item in task_page.items] == [_task_id]
+
         authority = {"ok": True, "command": "sections", "data": {"sections": sections}}
         legacy = {"ok": True, "command": "sections", "data": {"sections": [
             {"gid": gid, "name": name} for gid, name in zip(GIDS, NAMES, strict=True)
@@ -99,6 +143,22 @@ def test_test_membership_revision_creates_exact_four_preserves_history_and_match
         drop_keys = frozenset(scenario["compare"]["drop_keys"])
         assert comparator.normalize_value(authority, drop_keys=drop_keys) == comparator.normalize_value(legacy, drop_keys=drop_keys)
 
+
+def test_test_membership_revision_refuses_true_current_membership_removal(workflow_db) -> None:
+    factory, ids, context, _task_id = workflow_db
+    with session_scope(factory) as session:
+        section = session.get(models.GovernedSection, context["section_id"])
+        assert section is not None
+        section.logical_name = "Unexpected Existing Section"
+        session.flush()
+        before = _counts(session)
+        with pytest.raises(
+            ReviseTestSectionRegistryMembershipError,
+            match="membership revision refuses to remove existing registry sections",
+        ):
+            _call(session, ids, context)
+        assert _counts(session) == before
+        assert _active(session, context["generation_id"]) == (context["registry_version_id"], 1)
 
 def test_test_membership_revision_stale_generation_refuses_without_mutation(workflow_db) -> None:
     factory, ids, context, _task_id = workflow_db

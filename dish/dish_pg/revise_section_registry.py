@@ -552,18 +552,65 @@ def _revise_test_section_registry_membership_transaction(
 
     predecessor_revision = active.registry_revision
     project_id, current = _current_membership(session, current_version.registry_version_id)
-    target_ids = {target["external_id"] for target in targets}
-    if not set(current).issubset(target_ids):
+    target_names = {target["display_name"] for target in targets}
+    unexpected_current = {
+        external_id
+        for external_id, (section, _entry) in current.items()
+        if section.logical_name not in target_names
+    }
+    if unexpected_current:
         raise ReviseTestSectionRegistryMembershipError(
             "membership revision refuses to remove existing registry sections: "
-            + ", ".join(sorted(set(current) - target_ids))
+            + ", ".join(sorted(unexpected_current))
         )
     project = session.get(models.GovernedProject, project_id)
     if project is None or project.lifecycle != "active":
         raise ReviseTestSectionRegistryMembershipError("active registry project is not active")
     project_alias = _single_active_alias(session, kind="project", internal_id=project_id)
 
+    current_by_name = {
+        section.logical_name: (external_id, section, entry)
+        for external_id, (section, entry) in current.items()
+    }
+    current_section_ids = {section.section_id for section, _entry in current.values()}
+    placement_statement = (
+        select(models.CurrentTaskSectionPlacement)
+        .where(models.CurrentTaskSectionPlacement.generation_id == generation.generation_id)
+        .order_by(models.CurrentTaskSectionPlacement.task_id)
+    )
+    if session.get_bind().dialect.name == "postgresql":
+        placement_statement = placement_statement.with_for_update()
+    current_placements = tuple(session.scalars(placement_statement))
+    head_statement = (
+        select(models.TaskAuthorityHead)
+        .where(models.TaskAuthorityHead.generation_id == generation.generation_id)
+        .order_by(models.TaskAuthorityHead.task_id)
+    )
+    if session.get_bind().dialect.name == "postgresql":
+        head_statement = head_statement.with_for_update()
+    heads_by_task = {head.task_id: head for head in session.scalars(head_statement)}
+    if set(heads_by_task) != {placement.task_id for placement in current_placements}:
+        raise ReviseTestSectionRegistryMembershipError(
+            "current TEST task placement authority is incomplete"
+        )
+    invalid_placements = [
+        placement
+        for placement in current_placements
+        if placement.registry_version_id != current_version.registry_version_id
+        or (
+            placement.section_id is not None
+            and placement.section_id not in current_section_ids
+        )
+        or heads_by_task.get(placement.task_id) is None
+        or heads_by_task[placement.task_id].placement_revision != placement.placement_revision
+    ]
+    if invalid_placements:
+        raise ReviseTestSectionRegistryMembershipError(
+            "current TEST task placement is not bound to the active predecessor registry"
+        )
+
     resolved: list[tuple[models.GovernedSection | None, dict[str, Any]]] = []
+    alias_replacements: list[tuple[models.SectionExternalAlias, dict[str, Any]]] = []
     for target in targets:
         section = _find_section(session, external_id=target["external_id"])
         if section is not None:
@@ -572,16 +619,28 @@ def _revise_test_section_registry_membership_transaction(
                     f"Asana section {target['external_id']} does not match the expected governed section"
                 )
         else:
-            by_name = session.scalar(
-                select(models.GovernedSection).where(
-                    models.GovernedSection.project_id == project_id,
-                    models.GovernedSection.logical_name == target["display_name"],
+            current_match = current_by_name.get(target["display_name"])
+            if current_match is not None:
+                predecessor_external_id, section, _entry = current_match
+                predecessor_alias = _single_active_alias(
+                    session, kind="section", internal_id=section.section_id
                 )
-            )
-            if by_name is not None:
-                raise ReviseTestSectionRegistryMembershipError(
-                    f"{target['display_name']} already exists without the supplied exact Asana identity"
+                if predecessor_alias.external_id != predecessor_external_id:
+                    raise ReviseTestSectionRegistryMembershipError(
+                        "active registry section identity changed during membership revision"
+                    )
+                alias_replacements.append((predecessor_alias, target))
+            else:
+                by_name = session.scalar(
+                    select(models.GovernedSection).where(
+                        models.GovernedSection.project_id == project_id,
+                        models.GovernedSection.logical_name == target["display_name"],
+                    )
                 )
+                if by_name is not None:
+                    raise ReviseTestSectionRegistryMembershipError(
+                        f"{target['display_name']} already exists without the supplied exact Asana identity"
+                    )
         resolved.append((section, target))
 
     if len(current) == 4 and all(section is not None for section, _ in resolved):
@@ -713,6 +772,24 @@ def _revise_test_section_registry_membership_transaction(
     )
 
     registry = RegistryRepository(session)
+    for predecessor_alias, target in alias_replacements:
+        predecessor_alias.state = "retired"
+        predecessor_alias.retired_at = now
+        session.flush()
+        registry.add_section_alias(
+            models.SectionExternalAlias(
+                alias_id=uuid_factory(),
+                section_id=predecessor_alias.section_id,
+                external_system="asana",
+                external_id=target["external_id"],
+                origin="imported",
+                import_run_id=import_run_id,
+                projection_event_id=None,
+                state="active",
+                created_at=now,
+                retired_at=None,
+            )
+        )
     for original, (section, target) in zip(resolved, final, strict=True):
         if original[0] is not None:
             continue
@@ -755,6 +832,38 @@ def _revise_test_section_registry_membership_transaction(
             for section, target in final
         ),
     )
+    placement_rebindings: list[
+        tuple[models.CurrentTaskSectionPlacement, models.TaskAuthorityHead, uuid.UUID, int]
+    ] = []
+    for placement in current_placements:
+        head = heads_by_task[placement.task_id]
+        revision = head.placement_revision + 1
+        event_id = uuid_factory()
+        session.add(
+            models.TaskSectionPlacementEvent(
+                placement_event_id=event_id,
+                generation_id=generation.generation_id,
+                task_id=placement.task_id,
+                section_id=placement.section_id,
+                registry_version_id=new_version_id,
+                event_kind="placed" if placement.section_id is not None else "cleared",
+                placement_revision=revision,
+                provenance_route="import",
+                import_run_id=import_run_id,
+                command_execution_id=None,
+                occurred_at=now,
+            )
+        )
+        placement_rebindings.append((placement, head, event_id, revision))
+    session.flush()
+    for placement, head, event_id, revision in placement_rebindings:
+        placement.registry_version_id = new_version_id
+        placement.latest_event_id = event_id
+        placement.placement_revision = revision
+        placement.updated_at = now
+        head.placement_revision = revision
+        head.updated_at = now
+    session.flush()
     registry.activate_registry(
         activation=models.SectionRegistryActivation(
             registry_activation_id=activation_id,
