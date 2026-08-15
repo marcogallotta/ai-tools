@@ -78,6 +78,17 @@ def test_runtime_requirements_are_derived_only_from_selected_groups(tmp_path: Pa
         "flake": False,
     }
 
+    python_control_plane = module.load_execution_spec(
+        _write_spec(tmp_path, {"python-control-plane": _command("python")})
+    )
+    assert module.setup_requirements(python_control_plane) == {
+        "python": True,
+        "node": True,
+        "postgresql": False,
+        "chromium": False,
+        "flake": False,
+    }
+
 
 def test_execution_is_deterministic_and_fail_fast_with_complete_group_evidence(tmp_path: Path) -> None:
     module = _module()
@@ -162,13 +173,15 @@ def test_composite_action_keeps_all_heavy_setup_conditional() -> None:
     assert "uses: ./.github/actions/setup-python-bundle" in action
     assert "postgres:17.10" in action
     assert "playwright install --with-deps chromium" in action
+    assert "npm ci --no-audit --no-fund" in action
+    assert "working-directory: dish/tests/postgresql/pglite" in action
 
     python_if = "if: steps.runtime.outputs.python == 'true'"
     node_if = "if: steps.runtime.outputs.node == 'true'"
     pg_if = "if: steps.runtime.outputs.postgresql == 'true'"
     chromium_if = "if: steps.runtime.outputs.chromium == 'true'"
     assert action.count(python_if) >= 3
-    assert action.count(node_if) == 1
+    assert action.count(node_if) == 2
     assert action.count(pg_if) == 1
     assert action.count(chromium_if) == 1
     assert "runs-on:" not in action
