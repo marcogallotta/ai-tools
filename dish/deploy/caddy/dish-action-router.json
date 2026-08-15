@@ -1,61 +1,31 @@
 {
-  "admin": {
-    "listen": "127.0.0.1:2019"
-  },
-  "apps": {
-    "http": {
-      "servers": {
-        "dish_action_router": {
-          "automatic_https": {
-            "disable": true
-          },
-          "listen": [
-            "127.0.0.1:8786"
-          ],
-          "routes": [
-            {
-              "match": [
-                {
-                  "path": [
-                    "/test/openapi/action.json",
-                    "/test/v1/action/*"
-                  ]
-                }
-              ],
-              "handle": [
-                {
-                  "handler": "rewrite",
-                  "strip_path_prefix": "/test"
-                },
-                {
-                  "@id": "dish_action_test_proxy",
-                  "handler": "reverse_proxy",
-                  "upstreams": [
-                    {
-                      "dial": "127.0.0.1:8766"
-                    }
-                  ]
-                }
-              ],
-              "terminal": true
-            },
-            {
-              "handle": [
-                {
-                  "@id": "dish_action_prod_proxy",
-                  "handler": "reverse_proxy",
-                  "upstreams": [
-                    {
-                      "dial": "127.0.0.1:8776"
-                    }
-                  ]
-                }
-              ],
-              "terminal": true
-            }
-          ]
-        }
+  "admin": {"listen": "127.0.0.1:2019"},
+  "apps": {"http": {"servers": {"dish_action_router": {
+    "automatic_https": {"disable": true},
+    "listen": ["127.0.0.1:8786"],
+    "routes": [
+      {
+        "match": [{"path": ["/test-legacy/openapi/action.json", "/test-legacy/v1/action/*"]}],
+        "handle": [
+          {"handler": "rewrite", "strip_path_prefix": "/test-legacy"},
+          {"@id": "dish_action_test_legacy_proxy", "handler": "reverse_proxy", "upstreams": [{"dial": "127.0.0.1:8796"}]}
+        ],
+        "terminal": true
+      },
+      {
+        "match": [{"path": ["/test/openapi/action.json", "/test/v1/action/*"]}],
+        "handle": [
+          {"handler": "rewrite", "strip_path_prefix": "/test"},
+          {"@id": "dish_action_test_proxy", "handler": "reverse_proxy", "upstreams": [{"dial": "127.0.0.1:8766"}]}
+        ],
+        "terminal": true
+      },
+      {
+        "handle": [
+          {"@id": "dish_action_prod_proxy", "handler": "reverse_proxy", "upstreams": [{"dial": "127.0.0.1:8776"}]}
+        ],
+        "terminal": true
       }
-    }
-  }
+    ]
+  }}}}
 }

@@ -84,6 +84,20 @@ class SectionPageFacts:
     has_more: bool
 
 
+@dataclass(frozen=True, slots=True)
+class SearchFact:
+    task_id: UUID
+    title: str
+    section_label: str
+    project_label: str
+
+
+@dataclass(frozen=True, slots=True)
+class SearchFacts:
+    results: tuple[SearchFact, ...]
+    truncated: bool
+
+
 class FrontendBoardQuery:
     """Bounded factual board reads over the currently active PG generation."""
 
@@ -157,6 +171,52 @@ class FrontendBoardQuery:
         if len(rows) > max_cards:
             raise BoardReadUnavailable("frontend active-card capacity exceeded")
         return tuple(self._card_fact(row) for row in rows)
+
+    def search_titles(
+        self,
+        *,
+        query: str,
+        projection_delay: timedelta,
+        max_results: int,
+    ) -> SearchFacts:
+        """Return bounded active-board title matches from the full corpus."""
+        if not query:
+            raise ValueError("search query must be non-empty")
+        if max_results <= 0:
+            raise ValueError("max_results must be positive")
+        context = self.context()
+        normalized = query.lower()
+        rows = list(
+            self.session.execute(
+                self._base_card_statement(
+                    context=context,
+                    projection_delay=projection_delay,
+                )
+                .where(
+                    func.lower(models.ContentVersion.title).contains(
+                        normalized,
+                        autoescape=True,
+                    )
+                )
+                .order_by(
+                    func.lower(models.ContentVersion.title),
+                    models.DishTask.task_id,
+                )
+                .limit(max_results + 1)
+            ).mappings()
+        )
+        return SearchFacts(
+            results=tuple(
+                SearchFact(
+                    task_id=row["task_id"],
+                    title=row["title"],
+                    section_label=row["section_label"],
+                    project_label=row["project_label"],
+                )
+                for row in rows[:max_results]
+            ),
+            truncated=len(rows) > max_results,
+        )
 
     def continuation(
         self,
@@ -458,6 +518,24 @@ class FrontendBoardQuery:
                 models.SectionRegistryEntry.ordinal.label("section_ordinal"),
                 task_id.label("task_id"),
                 models.ContentVersion.title.label("title"),
+                case(
+                    (
+                        and_(
+                            models.SectionRegistryEntry.display_name.like("Imported section %"),
+                            models.SectionRegistryEntry.workflow_role == "research_queue",
+                        ),
+                        literal("Research Queue"),
+                    ),
+                    (
+                        and_(
+                            models.SectionRegistryEntry.display_name.like("Imported section %"),
+                            models.SectionRegistryEntry.workflow_role == "verification_queue",
+                        ),
+                        literal("Verification Queue"),
+                    ),
+                    else_=models.SectionRegistryEntry.display_name,
+                ).label("section_label"),
+                models.GovernedProject.logical_name.label("project_label"),
                 sort_title.label("sort_title"),
                 models.DishTask.existence_state.label("existence_state"),
                 workflow.WorkflowOperation.kind.label("operation_kind"),

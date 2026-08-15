@@ -67,6 +67,8 @@ Refresh action-specific authority immediately before the relevant decision:
 
 The Project kernel carries the concise startup/re-grounding dependency declaration. This standing contract carries the same requirement for local/replacement agents; neither host may narrow the preload because conversation history happens to contain one visible downstream contract.
 
+At every fresh or replacement Development Workflow session, before ordinary status conclusions, next-work selection, or dispatch, reconcile the maintained lane Ready / In Progress / Review / Blocked state, stale handoffs and Friction inconsistencies, audit governance/latest audit round, and whether an audit is due from cadence/prior yield/engineering movement/material authority or process migration. Surface due-but-unsent, active, incomplete, or returned audits before ordinary dispatch. Reuse maintained Asana/dispatcher truth; keep the fast path narrow unless drift is detected; do not create a scheduler, second queue, or parallel lifecycle.
+
 ## Asana lifecycle
 
 Use the Development Workflow project lifecycle:
@@ -90,6 +92,18 @@ For every active task, keep notes as the current takeover snapshot, including th
 
 Use comments for meaningful chronology. After a comment changes current truth, fold the resulting current state back into task notes when needed.
 
+## Canonical Asana design and review state
+
+For Development Workflow design/research work, the owning Asana task is the durable canonical design/review artifact. Chat is transport, not authority.
+
+- Before design review dispatch, persist the complete proposed design in the owning task and read it back. A chat-only design is not review-ready.
+- The review handoff names the owning task plus the review role/question. The reviewer reads the live task as canonical input rather than a copied chat subset.
+- Persist the review verdict, blockers, and amendments to that same task and verify the write. If review amends the design, fold the accepted/current design into task notes; comments remain chronology, not the current design source.
+- Before Implementation dispatch, ensure the task notes contain the accepted current design. The handoff names the owning task and current repository authority; it must not substitute a partial copied design.
+- A chat-only design/review result remains incomplete until persisted and read back. A stale copied chat subset never overrides newer Asana task state.
+
+These durability rules change process state only; they do not expand semantic design, Review, Implementation, or Integration authority.
+
 ## Canonical repository lifecycle
 
 Repository-changing Implementation/fix dispatch policy is defined once in the canonical handoff contract at [`templates/implementation-handoff.md`](templates/implementation-handoff.md). Development Workflow tooling and handoffs must consume that source rather than maintaining a parallel template.
@@ -99,6 +113,18 @@ The normal repository lifecycle is:
 > implementation branch + commit -> GitHub pull request -> review of the exact PR head -> integration of that reviewed head
 
 The Development Workflow specialist maintains and improves that lifecycle but does not silently weaken it.
+
+### Comparison compatibility and ownership escalation
+
+Comparison/qualification tooling must not keep bouncing an impossible mismatch through fixture repair. Before fixture/data reconciliation begins, prove the proposed target state satisfies every compared system's own health/validity requirements; disposability is not an exemption from minimum health. If the common target is incompatible, stop fixture work.
+
+For the still-required gate, apply these three rules through the existing lifecycle/dispatch machinery:
+
+1. **Compatibility preflight:** establish each side's minimum healthy/valid state and prove a common target can satisfy all sides before attempting fixture/data repair.
+2. **Ownership escalation:** when no existing supported operation can satisfy the gate and the missing path is a new or changed repository capability, classify **IMPLEMENTATION REQUIRED** immediately. Do not leave it as local operations, fixture repair, or deferred design. Conversely, when an existing supported operation safely reaches the target, classify the residual work **LOCAL SYSTEM ACCESS** rather than Implementation.
+3. **Blocker consistency:** a blocker may be `deferred`/`not required` only after proving the active gate can pass without it. If the gate still depends on that blocker, keep it active with the correct owner. A separate fix for another comparator defect cannot silently clear it.
+
+When escalation is required, the human rendering uses the canonical action-first lifecycle contract: the first sentence is `This needs an Implementation fix: <one-sentence scope>.` Diagnosis follows only after the action. Continue to use the repository-owned dispatcher and canonical Implementation handoff; this rule creates no new scheduler, queue, or lifecycle authority. If root-cause/Five Whys analysis is requested, use the canonical shared Five Whys procedure; do not duplicate that method here.
 
 Invariants:
 
@@ -178,11 +204,11 @@ A submitted GitHub review on the exact head supersedes the claim. Independent sp
 
 Routine lifecycle observation belongs to one repository-owned dispatcher, `scripts/pr_lifecycle.py`, rather than to Marco, Coordinator chat, or multiple agents racing independent poll loops. The dispatcher is disposable process state: every restart reconstructs truth from GitHub PR metadata, formal reviews, structured lease comments, exact-head CI evidence, local-work markers, and linked Asana identity. It has no authoritative queue database.
 
-Its derived queue distinguishes authoring/implementation, review-ready, review-in-progress, changes-requested/fix, review-passed/evaluating-gates, local implementation completion, local certification, waiting CI/certification, Integration-ready, merging, merged, and closed/superseded. `VERDICT: MERGE` is a gate-evaluation transition, never terminal.
+Its derived queue distinguishes authoring/implementation, review-ready, review-in-progress, changes-requested/fix, review-passed/evaluating-gates, local Implementation completion, local Review evidence, local Integration certification, review-passed/certification-pending, genuine external dependency, Integration-ready, merging, merged, and closed/superseded. `VERDICT: MERGE` is a gate-evaluation transition, never terminal. Successful Review remains visible as `REVIEW PASSED` while ordinary exact-head certification or another Integration gate is pending; `WAITING ON DEPENDENCY` is reserved for a genuine external dependency.
 
-Routing is deliberately bounded: cheap mechanical/focused/light Review may use a configured local reviewer; ordinary semantic Review and domain-deep Review both prefer the same published ChatGPT Review Workspace Agent, with a `domain:<name>` class only deepening that Workspace Agent's scrutiny inside the one formal Review rather than selecting a different reviewer. Workspace Agent requests are idempotent per repository + PR + exact head + review class, but only a formal exact-head GitHub Review advances semantic state.
+Routing is deliberately bounded and role+host aware: cheap mechanical/focused/light Review may use a configured local reviewer; ordinary semantic Review and domain-deep Review both prefer the same published ChatGPT Review Workspace Agent. A local Review host performs Review-authorized local evidence directly when capable; a semantic/source change routes to Implementation; an Integration-only certification/action routes to Integration. A remote reviewer that genuinely needs local Review evidence first writes the complete exact-head PR handoff, then emits the concise role-specific human action. Locality never grants another role's authority. Workspace Agent requests are idempotent per repository + PR + exact head + review class, but only a formal exact-head GitHub Review advances semantic state.
 
-After exact-head `BLOCK`, the existing implementation/fix ownership path consumes the durable queue transition and updates the same PR branch; Marco does not forward the review transcript. After exact-head `MERGE`, the dispatcher evaluates local work and Integration gates. It writes any required local handoff to the PR before a concise human action message. If all gates are green and explicit bounded Integration authority/capability is configured, it may mechanically merge the expected exact head and reports `MERGED` only after GitHub readback. Tool capability alone never grants that authority.
+After exact-head `BLOCK`, the existing implementation/fix ownership path consumes the durable queue transition and updates the same PR branch; Marco does not forward the review transcript. After exact-head `MERGE`, the dispatcher evaluates local work and Integration gates. It writes and re-reads any required local handoff on the PR before a concise human action message. If all gates are green and explicit bounded Integration authority/capability is configured, it may mechanically merge the expected exact head and reports `MERGED` only after GitHub readback. Likewise, Implementation publication/review-ready claims require authoritative remote branch + real PR + exact-head readback; intended/local artifacts never substitute. Tool capability alone never grants authority.
 
 Operational commands and marker formats are in [`../../../ci/pr-lifecycle-dispatcher-runbook.md`](../../../ci/pr-lifecycle-dispatcher-runbook.md).
 

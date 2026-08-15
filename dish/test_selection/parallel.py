@@ -423,6 +423,8 @@ def parallel_safe_command(test_files: Iterable[str], *, workers: int) -> str:
         ".venv/bin/python",
         "scripts/dish-test-lane",
         "parallel-safe",
+        "--expected-head",
+        "<reviewed-head-sha>",
         "--workers",
         str(workers),
     ]

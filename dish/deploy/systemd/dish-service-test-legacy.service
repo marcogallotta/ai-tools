@@ -1,0 +1,32 @@
+[Unit]
+Description=Dish workflow service (disposable TEST legacy comparator oracle)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+Conflicts=dish-service.service
+
+[Service]
+Type=notify
+User=marco
+WorkingDirectory=/home/marco/ai-tools/dish
+EnvironmentFile=/home/marco/.config/dish-service/test-legacy.env
+ExecStart=/home/marco/ai-tools/dish/dish-service
+Restart=on-failure
+RestartPreventExitStatus=78
+RestartSec=5
+TimeoutStopSec=10min
+NoNewPrivileges=true
+UMask=0077
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/marco/.local/state/dish/test-legacy
+
+[Install]
+WantedBy=multi-user.target

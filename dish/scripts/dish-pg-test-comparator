@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+"""Compare PostgreSQL-authoritative TEST with the disposable legacy oracle."""
+from __future__ import annotations
+
+import argparse
+import json
+from pathlib import Path
+
+from dish_pg.test_comparator import (
+    DEFAULT_AUTHORITY_ACTION_BASE,
+    DEFAULT_AUTHORITY_ENV,
+    DEFAULT_AUTHORITY_HEALTH_URL,
+    DEFAULT_EVIDENCE_DIR,
+    DEFAULT_ORACLE_ACTION_BASE,
+    DEFAULT_ORACLE_ENV,
+    DEFAULT_ORACLE_HEALTH_URL,
+    ComparatorError,
+    load_plan,
+    load_targets,
+    run_comparison,
+)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    root = Path(__file__).resolve().parents[1]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--plan", type=Path, default=root / "deploy/comparator/test-qualification-plan.json")
+    parser.add_argument("--authority-env", type=Path, default=DEFAULT_AUTHORITY_ENV)
+    parser.add_argument("--oracle-env", type=Path, default=DEFAULT_ORACLE_ENV)
+    parser.add_argument("--authority-action-base", default=DEFAULT_AUTHORITY_ACTION_BASE)
+    parser.add_argument("--oracle-action-base", default=DEFAULT_ORACLE_ACTION_BASE)
+    parser.add_argument("--authority-health-url", default=DEFAULT_AUTHORITY_HEALTH_URL)
+    parser.add_argument("--oracle-health-url", default=DEFAULT_ORACLE_HEALTH_URL)
+    parser.add_argument("--evidence-dir", type=Path, default=DEFAULT_EVIDENCE_DIR)
+    parser.add_argument(
+        "--allow-mutating-scenarios",
+        action="store_true",
+        help="run curated mutation scenarios after disposable-oracle preflight; required for full qualification",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        plan = load_plan(args.plan)
+        authority, oracle = load_targets(
+            authority_env_path=args.authority_env,
+            oracle_env_path=args.oracle_env,
+            authority_action_base=args.authority_action_base,
+            oracle_action_base=args.oracle_action_base,
+            authority_health_url=args.authority_health_url,
+            oracle_health_url=args.oracle_health_url,
+        )
+        outcome = run_comparison(
+            plan=plan,
+            authority=authority,
+            oracle=oracle,
+            evidence_dir=args.evidence_dir,
+            allow_mutating_scenarios=args.allow_mutating_scenarios,
+        )
+    except ComparatorError as exc:
+        print(json.dumps({"status": "error", "error": str(exc)}, sort_keys=True))
+        return 2
+    summary = {
+        "status": outcome.report["status"],
+        "mismatch_count": outcome.report["mismatch_count"],
+        "skipped_count": outcome.report["skipped_count"],
+        "full_qualification": outcome.report["full_qualification"],
+        "qualification_passed": outcome.report["qualification_passed"],
+        "evidence_path": str(outcome.evidence_path),
+    }
+    print(json.dumps(summary, sort_keys=True))
+    return 0 if outcome.mismatch_count == 0 else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

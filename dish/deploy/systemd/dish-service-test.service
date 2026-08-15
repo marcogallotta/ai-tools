@@ -1,8 +1,8 @@
 [Unit]
-Description=Dish workflow service (test)
-After=network-online.target tailscaled.service
-Wants=network-online.target
-Conflicts=dish-service.service
+Description=Dish workflow service (test PostgreSQL authority)
+After=network-online.target tailscaled.service dish-postgres-test.service
+Wants=network-online.target dish-postgres-test.service
+Conflicts=dish-service.service dish-shadow-worker-test.service
 
 [Service]
 Type=notify

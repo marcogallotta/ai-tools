@@ -135,10 +135,32 @@ class LifecycleActionsMixin:
             return False
         key = _handoff_key(work.kind, pr.head, work.instruction)
         marker = f"<!-- {LOCAL_HANDOFF_MARKER} kind={work.kind} head={pr.head} key={key} -->"
-        label = "LOCAL CERTIFICATION REQUIRED" if work.kind == "certification" else "LOCAL IMPLEMENTATION COMPLETION REQUIRED"
+        if work.kind == "certification":
+            label = "LOCAL INTEGRATION CERTIFICATION REQUIRED"
+            role = "Integration"
+        else:
+            label = "LOCAL IMPLEMENTATION COMPLETION REQUIRED"
+            role = "Implementation"
+        gate_context = ""
+        if (
+            work.kind == "certification"
+            and pr.gate
+            and pr.gate.get("diagnosis") == pr_gate.GateDiagnosis.PENDING.value
+        ):
+            context = pr.gate.get("required_status_context") or pr_gate.REQUIRED_ORDINARY_CI_CONTEXT
+            reason = pr.gate.get("reason") or "exact-head CI is still pending"
+            gate_context = (
+                f"Remaining exact-head CI gate: `{context}` — PENDING.\n"
+                f"CI state: {reason}\n\n"
+                "Integration owns both remaining gates on this exact head: run/poll the local certification "
+                "and poll the CI gate. If either fails, record the exact evidence and route any semantic fix "
+                "to Implementation.\n\n"
+            )
         body = (
             f"{marker}\n{label} — exact head `{pr.head}`\n\n"
+            f"Role: {role}\n\n"
             f"Action: `{work.instruction}`\n\n"
+            f"{gate_context}"
             "This handoff is exact-head scoped. A head change invalidates it and requires the normal review/recheck path.\n\n"
             "— Dish PR lifecycle dispatcher"
         )
@@ -318,8 +340,19 @@ class LifecycleActionsMixin:
             review_class = current.review_class or "substantive"
             if review_class in {"light", "focused", "mechanical"} and local_reviewer and local_reviewer.command:
                 lease_id = self._post_lease(current, phase="review", review_class=review_class)
+                review_context = current.json()
+                review_context["review_execution"] = {
+                    "role": "Review",
+                    "host": "local",
+                    "local_review_evidence_capable": True,
+                    "routing": {
+                        "review_evidence": "execute directly when within Review authority",
+                        "semantic_fix": "Implementation",
+                        "integration_action": "Integration",
+                    },
+                }
                 try:
-                    local_reviewer.dispatch(current.json())
+                    local_reviewer.dispatch(review_context)
                 except LifecycleError:
                     self._release_lease(current.number, lease_id, reason="bounded local reviewer failed")
                     raise
@@ -387,13 +420,20 @@ class LifecycleActionsMixin:
             # Notification occurs only after durable handoff is confirmed by re-read.
             pending = [item for item in current.local_work if item.get("required") and not item.get("completed")]
             if pending and all(item.get("handoff_present") for item in pending):
-                kind = "local certification" if pending[0]["kind"] == "certification" else "local implementation completion"
-                action = pending[0].get("instruction") or "follow the PR handoff"
+                if pending[0]["kind"] == "certification":
+                    action = (
+                        f"give PR #{current.number} to a local Integration agent for exact-head certification; "
+                        "full handoff is on the PR"
+                    )
+                    message = f"PR #{current.number} — REVIEW PASSED; local Integration certification required. Action: {action}"
+                else:
+                    action = f"give PR #{current.number} to a local Implementation agent; full handoff is on the PR"
+                    message = f"PR #{current.number} — local Implementation completion required. Action: {action}"
                 self._notify_once(
                     current,
                     kind=f"local-{pending[0]['kind']}",
                     action=action,
-                    message=f"PR #{current.number} — {kind} required. Action: {action}",
+                    message=message,
                     notify=notify,
                 )
             return current

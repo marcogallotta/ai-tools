@@ -15,7 +15,7 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 
 from dish_pg.frontend_board_query import BoardReadUnavailable
 from dish_pg.frontend_detail_query import TaskDetailIneligible
-from dish_service.frontend_board import BoardCapacityExceeded, BoardConfigurationInvalid
+from dish_service.frontend_board import BoardCapacityExceeded, BoardConfigurationInvalid, MAX_SEARCH_QUERY_LENGTH
 from dish_service.frontend_contract import FRONTEND_CONTRACT_VERSION
 from dish_service.frontend_detail import DetailCapacityExceeded, TaskNotFound
 from dish_service.frontend_tokens import CursorInvalid, CursorStale
@@ -30,6 +30,8 @@ class LocalBoardBackend(Protocol):
     def bootstrap(self) -> dict[str, Any]: ...
 
     def admin(self) -> dict[str, Any]: ...
+
+    def search(self, query: str) -> dict[str, Any]: ...
 
     def continuation(self, *, section_route_id: str, cursor: str) -> dict[str, Any]: ...
 
@@ -91,6 +93,9 @@ class FrontendLocalRequestHandler(BaseHTTPRequestHandler):
         parsed = urlsplit(self.path)
         if parsed.path == "/frontend/board":
             self._board(parsed.query)
+            return
+        if parsed.path == "/frontend/search":
+            self._search(parsed.query)
             return
         if parsed.path == "/frontend/admin":
             self._admin(parsed.query)
@@ -176,6 +181,27 @@ class FrontendLocalRequestHandler(BaseHTTPRequestHandler):
                 "internal_error",
                 "Board data could not be loaded.",
             )
+
+    def _search(self, query: str) -> None:
+        if not self._require_contract():
+            return
+        values = parse_qsl(query, keep_blank_values=True)
+        if (
+            len(values) != 1
+            or values[0][0] != "q"
+            or not 1 <= len(values[0][1].strip()) <= MAX_SEARCH_QUERY_LENGTH
+        ):
+            self._write_api_error(HTTPStatus.BAD_REQUEST, "request_invalid", "Search request is invalid.")
+            return
+        try:
+            self._write_api_json(HTTPStatus.OK, self.server.backend.search(values[0][1]))
+        except BoardConfigurationInvalid:
+            self._write_api_error(HTTPStatus.SERVICE_UNAVAILABLE, "board_configuration_invalid", "Board configuration is invalid.")
+        except BoardReadUnavailable:
+            self._write_api_error(HTTPStatus.SERVICE_UNAVAILABLE, "service_unavailable", "Search is temporarily unavailable.")
+        except Exception as exc:
+            LOG.error("local frontend search failed type=%s", type(exc).__name__)
+            self._write_api_error(HTTPStatus.SERVICE_UNAVAILABLE, "internal_error", "Search could not be completed.")
 
     def _admin(self, query: str) -> None:
         if not self._require_contract():

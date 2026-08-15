@@ -244,6 +244,8 @@ def test_checked_in_contract_documents_current_access_and_deployment():
     assert "--https=8444" in tailscale and "--https=443" in tailscale
     assert "port 443 is free" in tailscale and "do not overwrite" in tailscale
     assert "127.0.0.1:8765" in tailscale and "127.0.0.1:8766" in tailscale
+    assert "127.0.0.1:8795" in tailscale and "127.0.0.1:8796" in tailscale
+    assert "/test-legacy/" in tailscale and "Never import this schema as an ordinary GPT Action" in tailscale
     assert "1216693403164366" in rehearsal
     assert "Do not run this against production Cooking" in rehearsal
     assert "https://laptop.tail46f0b9.ts.net/openapi/action.json" in action_guide

@@ -28,6 +28,8 @@ from importlib.machinery import SourceFileLoader
 
 import pytest
 
+from test_selection.execution_guard import TestExecutionRefused, require_safe_test_checkout
+
 CLI_PATH = pathlib.Path(__file__).resolve().parent.parent.parent / "tools" / "asana"
 
 REQUIRED_DATABASE_BOUNDARY_CATEGORIES = {
@@ -50,6 +52,13 @@ REQUIRED_SMOKE_INVARIANTS = {
     "invariant_backup_restore",
     "invariant_workflow_action_authority",
 }
+
+
+def pytest_sessionstart(session):
+    try:
+        require_safe_test_checkout(pathlib.Path(__file__).resolve().parents[1])
+    except TestExecutionRefused as exc:
+        raise pytest.UsageError(f"REFUSED: {exc}") from exc
 
 
 def pytest_addoption(parser):

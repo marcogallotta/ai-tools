@@ -567,7 +567,7 @@ class PostgresRuntimeService:
             data["request_replayed"] = payload.pop("request_replayed")
             payload["data"] = data
             return payload
-        except CommandPortError as exc:
+        except (CommandPortError, WorkflowAuthorityError) as exc:
             raise DishRuleError(
                 "CONFLICT",
                 str(exc),

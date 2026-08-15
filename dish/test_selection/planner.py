@@ -65,6 +65,7 @@ LANE_COMMANDS = {
     "native PostgreSQL certification": (
         "DISH_TEST_POSTGRESQL_DSN='postgresql+psycopg://...' "
         ".venv/bin/python scripts/dish-pg-native-certification "
+        "--expected-head '<reviewed-head-sha>' "
         "--output .test-artifacts/native-postgresql/report.json"
     ),
     "default mutation sample": ".venv/bin/python -m tests.mutation_runner",

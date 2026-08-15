@@ -38,10 +38,22 @@ def test_operational_reports_distinguish_recovery_and_movement_purpose():
     assert "invalid_final_movement_semantics" in reports
 
 REVIEW_FINAL_STATUSES = (
-    "READY FOR MERGE",
-    "LOCAL AGENT REQUIRED",
+    "REVIEW PASSED",
+    "INTEGRATION READY",
+    "LOCAL REVIEW REQUIRED",
+    "LOCAL IMPLEMENTATION COMPLETION REQUIRED",
+    "LOCAL INTEGRATION CERTIFICATION REQUIRED",
     "BLOCKED",
     "WAITING ON DEPENDENCY",
+    "MERGED",
+)
+
+REVIEW_STATUSES_WITH_WORKED_EXAMPLES = (
+    "REVIEW PASSED",
+    "INTEGRATION READY",
+    "LOCAL REVIEW REQUIRED",
+    "LOCAL IMPLEMENTATION COMPLETION REQUIRED",
+    "LOCAL INTEGRATION CERTIFICATION REQUIRED",
 )
 
 
@@ -54,36 +66,31 @@ def _validate_review_handoff(message: str) -> str:
     assert status in REVIEW_FINAL_STATUSES
     assert "VERDICT:" not in message
     assert "Findings:" not in message
-    if status == "READY FOR MERGE":
-        assert "Reason: Review passed, no local work required." in message
-        return "handoff to Integration"
-    if status == "LOCAL AGENT REQUIRED":
-        assert "\nAction:\n" in message
-        assert "\nEffort:\n" in message
-        return message.split("\nAction:\n", 1)[1].split("\n\nEffort:\n", 1)[0]
-    if status == "BLOCKED":
-        assert "\nAction:\n" in message
-        assert "\nReason:\n" in message
-        return message.split("\nAction:\n", 1)[1].split("\n\nReason:\n", 1)[0]
-    assert "\nOwner:\n" in message
-    return message.split("\nPR #", 1)[1].split(" waiting on:\n", 1)[1].split("\n\nOwner:\n", 1)[0]
+    if status not in ("MERGED", "WAITING ON DEPENDENCY"):
+        assert "Action:" in message
+    return status
 
 
-def test_review_contract_exposes_only_four_action_handoff_statuses():
+def test_review_contract_exposes_the_canonical_final_handoff_statuses():
     contract = _review_contract_text()
     for status in REVIEW_FINAL_STATUSES:
+        assert f"`{status}`" in contract
+    for status in REVIEW_STATUSES_WITH_WORKED_EXAMPLES:
         assert f"```text\n{status}\n" in contract
-    assert "Review does not merge or integrate the PR." in contract
+    assert "Review itself does not merge" in contract
     assert "canonical repository is `marcogallotta/ai-tools`" in contract
-    assert "no preamble, epilogue, verdict dump" in contract
+    assert "Human output states the lifecycle result and one exact action only" in contract
 
 
 def test_review_completion_handoffs_are_actionable_without_review_dump():
     examples = (
-        "READY FOR MERGE\n\nPR #40 is ready for merge.\nReason: Review passed, no local work required.",
-        "LOCAL AGENT REQUIRED\n\nPR #40 requires local agent.\n\nAction:\nrun exact-check\n\nEffort:\nSmall",
-        "BLOCKED\n\nPR #40 blocked.\n\nAction:\nfix the PR-resident blocker\n\nReason:\nExact head fails the review invariant.",
-        "WAITING ON DEPENDENCY\n\nPR #40 waiting on:\nordinary exact-head CI\n\nOwner:\nPR #40",
+        "REVIEW PASSED\nPR #40 passed exact-head Review.\nWaiting for: GitHub exact-head certification.\nAction: none.",
+        "INTEGRATION READY\nPR #40 passed Review and all required gates.\nAction: Integration may merge the exact reviewed head.",
+        "LOCAL REVIEW REQUIRED\nPR #40 needs local Review evidence.\nAction: give PR #40 to a local Review agent; full handoff is on the PR.",
+        "LOCAL IMPLEMENTATION COMPLETION REQUIRED\nPR #40 needs a semantic fix.\nAction: give PR #40 to an Implementation agent; full handoff is on the PR.",
+        "LOCAL INTEGRATION CERTIFICATION REQUIRED\nPR #40 passed Review and needs local Integration certification.\nAction: give PR #40 to a local Integration agent; full handoff is on the PR.",
+        "BLOCKED\nPR #40 blocked.\nAction: fix the PR-resident blocker\nReason: exact head fails the review invariant.",
+        "WAITING ON DEPENDENCY\nPR #40 waiting on:\nordinary exact-head CI\nOwner: PR #40",
     )
     assert [_validate_review_handoff(message) for message in examples]
 

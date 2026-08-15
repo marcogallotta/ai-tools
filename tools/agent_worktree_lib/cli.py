@@ -7,6 +7,7 @@ from .operations import emit
 from .ownership import claim_status, command_claim, require_active_claim
 from .publish_cleanup import command_cleanup, command_exec, command_publish, command_verify_handoff
 from .start_resume import command_adopt, command_resume, command_start, command_status
+from .supersession import command_supersede
 from .state import load_task_state
 
 def add_json_flag(parser: argparse.ArgumentParser) -> None:
@@ -48,6 +49,24 @@ def build_parser() -> argparse.ArgumentParser:
     adopt.add_argument("--agent-id")
     adopt.add_argument("--repo", default=".", help="existing checkout/worktree used to identify the shared repository")
     add_json_flag(adopt)
+
+    supersede = sub.add_parser("supersede", help="explicitly preserve one superseded task lineage and activate its authorized replacement")
+    supersede.add_argument("--task", required=True)
+    supersede.add_argument("--old-branch", required=True)
+    supersede.add_argument("--old-head", required=True)
+    supersede.add_argument("--branch", required=True, help="authorized replacement agent/* branch")
+    supersede.add_argument("--base-ref", required=True, help="replacement authoring base ref")
+    supersede.add_argument("--base", required=True, help="replacement authoring base SHA")
+    supersede.add_argument("--expected-head", required=True, help="exact replacement remote branch head")
+    supersede.add_argument("--pr-number", required=True, type=int)
+    supersede.add_argument("--pr-head", required=True)
+    supersede.add_argument("--pr-lease-state", required=True, choices=("active", "none"))
+    supersede.add_argument("--pr-lease-id")
+    supersede.add_argument("--agent-id", required=True)
+    supersede.add_argument("--reason", required=True)
+    supersede.add_argument("--provenance", required=True)
+    supersede.add_argument("--repo", default=".", help="existing checkout/worktree used to identify the shared repository")
+    add_json_flag(supersede)
 
     resume = sub.add_parser("resume", help="verify and resume preserved task-owned implementation state")
     resume.add_argument("--task", required=True)
@@ -102,6 +121,8 @@ def main(argv: list[str] | None = None) -> int:
                     "adopt expected head does not match the exact PR head bound to the live dispatch claim",
                 )
             payload = command_adopt(args, runner)
+        elif args.command == "supersede":
+            payload = command_supersede(args, runner)
         elif args.command == "resume":
             state = load_task_state(args.task)
             require_active_claim(

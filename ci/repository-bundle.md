@@ -1,6 +1,6 @@
 # Repository bundle policy
 
-Repository bundles are a ChatGPT-only bootstrap/cache for substantial repository-changing work. GitHub remains the source/history authority; a bundle is accepted only after the intended current `main` SHA has been resolved from GitHub and every bundle identity check succeeds.
+Repository bundles are a ChatGPT-only bootstrap/cache for substantial consequential repository/system reasoning. GitHub remains the source/history authority; a bundle is accepted only after the intended current `main` SHA has been resolved from GitHub and every bundle identity check succeeds.
 
 ## v1 scope and identity
 
@@ -28,18 +28,18 @@ Repository-bundle publication has no pull-request trigger. PR exact-head readine
 
 ## ChatGPT bootstrap order
 
-For substantial repository work, ChatGPT agents must:
+Before substantial consequential repository/system reasoning, ChatGPT agents must:
 
 1. resolve the intended current `refs/heads/main` SHA and repository identity through GitHub authority;
 2. locate the exact `repository-bundle-<SHA>` Actions artifact; never substitute a nearby/newer/older bundle;
 3. download the artifact through the GitHub connector and materialize/extract its ZIP in the runtime;
 4. run `scripts/repository_bundle.py verify` with the authoritative repository full name/numeric ID, exact SHA, and `refs/heads/main`;
-5. use the verified clone for `git log`, `git diff`, grep/search, tests, and local branch/commit preparation.
+5. use the verified clone for `git log`, `git diff`, grep/search, tests, and local branch/commit preparation; for stacked/PR work, overlay the exact current branch/PR delta from GitHub authority because v1 bundles remain `main`-only.
 
 `verify` checks manifest schema and filenames, repository identity, exact source SHA/ref, the external checksum, bundle SHA-256, `git bundle list-heads`, `git bundle verify`, advertised `main`, cloned `HEAD`, cloned `main`, and cloned `origin/main`. Only after those checks does it stamp the clone's `origin` URL back to the canonical GitHub repository URL.
 
 If the exact artifact is missing, expired, stale, mismatched, corrupt, or cannot be materialized, stop and report that capability gap. Do not reconstruct a substantial change file-by-file from a different bundle or silently treat the cache as authority.
 
-GitHub Connect remains the live path for PR state, remote metadata, and small targeted retrievals. Unless authenticated Git transport is deliberately added later, publishing branch/commit/PR state remains connector-native.
+Tiny targeted lookups may use GitHub Connect directly. The verified bundle is read-only context: GitHub remains live source/history/PR/review authority and Asana remains orchestration authority; current-state conclusions still require those live reads. Unless authenticated Git transport is deliberately added later, publishing branch/commit/PR state remains connector-native.
 
 Claude Code and Codex do not use this path: they continue from their authoritative local checkout/worktree and host-native Git tooling.

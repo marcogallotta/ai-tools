@@ -192,6 +192,18 @@ REVIEWED_PRIVATE_FAULT_SEAMS = {
     ("test_shadow_capture.py", "_execute_locked"): (
         "Shadow-spool locked execution boundary."
     ),
+    ("postgresql/test_native_postgresql_certification_lane.py", "_git"): (
+        "Repository identity boundary for certification-entrypoint refusal tests."
+    ),
+    ("test_dish_test_lane.py", "_git"): (
+        "Repository identity boundary for governed lane refusal tests."
+    ),
+    ("test_test_execution_guard.py", "_protected_primary_root"): (
+        "Protected-primary identity boundary for checkout-admission tests."
+    ),
+    ("test_test_execution_guard.py", "_git"): (
+        "Repository identity boundary for checkout-admission tests."
+    ),
     ("postgresql/test_postgres_runtime_validation_http.py", "__init__"): (
         "Non-construction guard proving the canonical PostgreSQL Action HTTP path never"
         " constructs AsanaBackend."
@@ -200,6 +212,20 @@ REVIEWED_PRIVATE_FAULT_SEAMS = {
         "Non-construction guard proving PostgreSQL safe-reclaim and proposal-apply command"
         " paths never construct AsanaBackend."
     ),
+    ("postgresql/test_test_dual_stack_comparator.py", "_request_json"): (
+    "HTTP transport boundary for deterministic comparator health/OpenAPI preflight tests."
+),
+    ("postgresql/test_test_dual_stack_comparator.py", "_command_request"): (
+    "Action command transport boundary for deterministic route-identity and comparator scenario tests."
+),
+    ("postgresql/test_test_dual_stack_comparator.py", "_route_preflight"): (
+    "Comparator preflight stub used only by scenario/evidence tests; isolation preflight has dedicated contract coverage."
+),
+    ("postgresql/test_test_dual_stack_comparator.py", "_register_mutating_authority_run"): (
+        "TEST-only authority-run registration boundary: read-only comparisons must not register "
+        "a run, while response-comparison scenarios isolate registration from transport parity."
+    ),
+
 }
 
 

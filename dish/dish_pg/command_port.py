@@ -4716,11 +4716,45 @@ class PostgresCommandPort:
         assert task is not None
         return self._prepare(call, generation, binding, execution, task, self._ensure_migration_operation(call, generation, binding, execution, task))
 
-    def _ensure_migration_operation(self, call, _generation, _binding, execution, task):
-        operation = self.session.scalar(select(wf.WorkflowOperation).where(wf.WorkflowOperation.task_id == task.task_id, wf.WorkflowOperation.lifecycle == "open"))
+    def _ensure_migration_operation(self, call, generation, _binding, execution, task):
+        statement = select(wf.WorkflowOperation).where(
+            wf.WorkflowOperation.generation_id == generation.generation_id,
+            wf.WorkflowOperation.task_id == task.task_id,
+            wf.WorkflowOperation.lifecycle == "open",
+        )
+        if self.session.get_bind().dialect.name == "postgresql":
+            statement = statement.with_for_update()
+        operation = self.session.scalar(
+            statement.execution_options(populate_existing=True)
+        )
+        if operation is not None and operation.kind != "migration":
+            raise CommandRuleError(
+                "CONFLICT",
+                "task already has an open operation",
+                data={
+                    "blocking_operation_id": str(operation.operation_id),
+                    "blocking_operation_kind": operation.kind,
+                    "blocking_operation_phase": operation.phase,
+                },
+            )
         if operation is None:
-            operation = self.workflow.create_operation(operation_id=self.uuid_factory(), execution_id=execution.execution_id, task_id=task.task_id, kind="migration", phase="prepare_required", persisted_actions=["prepare"], created_at=call.now)
-            self.workflow.repo.capture_operation_fence(execution_id=execution.execution_id, operation_id=operation.operation_id, at=call.now)
+            operation = self.workflow.create_operation(
+                operation_id=self.uuid_factory(),
+                execution_id=execution.execution_id,
+                task_id=task.task_id,
+                kind="migration",
+                phase="prepare_required",
+                persisted_actions=["prepare"],
+                created_at=call.now,
+            )
+        else:
+            execution.operation_id = operation.operation_id
+            self.session.flush()
+        self.workflow.repo.capture_operation_fence(
+            execution_id=execution.execution_id,
+            operation_id=operation.operation_id,
+            at=call.now,
+        )
         return operation
 
     def _settle_planning(self, call, _generation, _binding, _execution, _task, _operation) -> dict[str, Any]:

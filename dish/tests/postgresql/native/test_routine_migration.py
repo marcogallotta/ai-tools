@@ -271,10 +271,21 @@ def test_evidence_is_redacted_and_binds_environment_source_and_heads(core_db, tm
     assert evidence["expected_revision"] == ALEMBIC_HEAD
     assert evidence["final_revisions"] == [PREVIOUS_HEAD]
     assert evidence["result"] == "pending"
-    password = make_url(dsn).password
-    combined = (tmp_path / "redaction.json").read_text(encoding="utf-8") + capsys.readouterr().out + capsys.readouterr().err
+    url = make_url(dsn)
+    password = url.password
+    captured = capsys.readouterr()
+    combined = (
+        (tmp_path / "redaction.json").read_text(encoding="utf-8")
+        + captured.out
+        + captured.err
+    )
+    assert url.render_as_string(hide_password=False) not in combined
     if password:
-        assert str(password) not in combined
+        # The canonical TEST password may be a short word (for example ``dish``),
+        # which legitimately appears in non-secret evidence keys such as ``dish_release``.
+        # Check credential-bearing userinfo rather than raw substring absence. Plain
+        # secret-text redaction is covered by the injected ``must-not-leak`` case above.
+        assert f":{password}@" not in combined
     assert (tmp_path / "redaction.json").stat().st_mode & 0o077 == 0
 
 
