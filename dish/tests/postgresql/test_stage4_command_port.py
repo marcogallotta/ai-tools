@@ -25,6 +25,7 @@ from dish_pg.planner import (
 from dish_pg.protocol import AuthenticationError, PostgresProtocolService, ScopedBearerAuthenticator
 from dish_pg.read_model import InvalidCursor
 from dish_pg.transition import ProjectionService
+from dish_pg.workflow import WorkflowAuthorityService
 from dish_tool.workflow_policy import WorkflowSnapshot, legal_actions
 from tests.support.canonical import TASK
 from tests.support.postgresql.core import _import_one
@@ -37,10 +38,179 @@ from tests.support.postgresql.command import (
     _start_initial,
     _start_verification,
 )
-from tests.support.postgresql.workflow import NOW, _next, _register_run, workflow_db
+from tests.support.postgresql.workflow import (
+    NOW,
+    _claimed_execution,
+    _next,
+    _register_run,
+    workflow_db,
+)
 
 SECRET = b"stage-4-cursor-secret-32-bytes!!"
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def _create_open_operation(session, ids, context, task_id, *, kind: str):
+    execution_id = _claimed_execution(
+        session, ids, context, task_id, command_name="migrate"
+    )
+    workflow = WorkflowAuthorityService(session, uuid_factory=lambda: _next(ids))
+    workflow.repo.capture_task_fence(
+        execution_id=execution_id,
+        generation_id=context["generation_id"],
+        task_id=task_id,
+        at=NOW,
+    )
+    operation = workflow.create_operation(
+        operation_id=_next(ids),
+        execution_id=execution_id,
+        task_id=task_id,
+        kind=kind,
+        phase="prepare_required",
+        persisted_actions=["prepare"],
+        created_at=NOW,
+    )
+    return operation
+
+
+def _move_operation_to_retired_generation(session, ids, operation):
+    generation_id = _next(ids)
+    session.add(
+        models.AuthorityGeneration(
+            generation_id=generation_id,
+            predecessor_generation_id=None,
+            creation_reason="initial_cutover",
+            external_restore_control_id=None,
+            schema_head="0032_imported_operation_history",
+            dish_release="dish-42619b9",
+            status="retired",
+            created_at=NOW,
+            retired_at=NOW,
+        )
+    )
+    session.flush()
+    operation.generation_id = generation_id
+    session.flush()
+    return generation_id
+
+
+def _ensure_migration_operation(port, ids, context, task_id):
+    execution_id = _claimed_execution(
+        port.session, ids, context, task_id, command_name="migrate"
+    )
+    execution = port.session.get(wf.CommandExecution, execution_id)
+    port.workflow.repo.capture_task_fence(
+        execution_id=execution_id,
+        generation_id=context["generation_id"],
+        task_id=task_id,
+        at=NOW,
+    )
+    generation = port.session.get(
+        models.AuthorityGeneration, context["generation_id"]
+    )
+    task = port.session.get(models.DishTask, task_id)
+    operation = port._ensure_migration_operation(
+        _call(
+            "migrate",
+            run_id=_next(ids),
+            request_id=_next(ids),
+            principal="admin",
+        ),
+        generation,
+        None,
+        execution,
+        task,
+    )
+    return execution, operation
+
+
+def test_migrate_does_not_reuse_unrelated_open_operation(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        unrelated = _create_open_operation(
+            session, ids, context, task_id, kind="initial"
+        )
+        stale_generation_id = _move_operation_to_retired_generation(
+            session, ids, unrelated
+        )
+        port = _port(session, ids)
+
+        execution, operation = _ensure_migration_operation(
+            port, ids, context, task_id
+        )
+
+        assert operation.operation_id != unrelated.operation_id
+        assert operation.kind == "migration"
+        assert operation.generation_id == context["generation_id"]
+        assert unrelated.generation_id == stale_generation_id
+        fence = session.get(wf.OperationExecutionFence, execution.execution_id)
+        assert fence is not None
+        assert fence.operation_id == operation.operation_id
+
+
+def test_migrate_ignores_stale_generation_migration_operation(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        stale = _create_open_operation(
+            session, ids, context, task_id, kind="migration"
+        )
+        stale_generation_id = _move_operation_to_retired_generation(
+            session, ids, stale
+        )
+        port = _port(session, ids)
+
+        execution, operation = _ensure_migration_operation(
+            port, ids, context, task_id
+        )
+
+        assert operation.operation_id != stale.operation_id
+        assert operation.generation_id == context["generation_id"]
+        assert stale.generation_id == stale_generation_id
+        assert execution.operation_id == operation.operation_id
+
+
+def test_migrate_reuses_valid_active_generation_operation_and_fences_execution(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        existing = _create_open_operation(
+            session, ids, context, task_id, kind="migration"
+        )
+        port = _port(session, ids)
+
+        execution, operation = _ensure_migration_operation(
+            port, ids, context, task_id
+        )
+
+        assert operation.operation_id == existing.operation_id
+        assert execution.operation_id == existing.operation_id
+        fence = session.get(wf.OperationExecutionFence, execution.execution_id)
+        assert fence is not None
+        assert fence.operation_id == existing.operation_id
+        assert fence.expected_operation_revision == existing.operation_revision
+        assert fence.expected_phase == existing.phase
+
+
+def test_migrate_creates_and_fences_operation_when_none_exists(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port = _port(session, ids)
+
+        execution, operation = _ensure_migration_operation(
+            port, ids, context, task_id
+        )
+
+        assert operation.kind == "migration"
+        assert operation.lifecycle == "open"
+        assert operation.phase == "prepare_required"
+        assert operation.generation_id == context["generation_id"]
+        assert operation.task_id == task_id
+        assert operation.creation_execution_id == execution.execution_id
+        assert execution.operation_id == operation.operation_id
+        fence = session.get(wf.OperationExecutionFence, execution.execution_id)
+        assert fence is not None
+        assert fence.operation_id == operation.operation_id
 
 
 def test_stage4_postgresql_action_path_contract() -> None:
