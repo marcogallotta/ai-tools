@@ -159,6 +159,49 @@ def test_test_membership_revision_primitive_refuses_non_postgresql_session_befor
         assert _active(session, context["generation_id"]) == (context["registry_version_id"], 1)
 
 
+def test_test_membership_revision_primitive_refuses_connected_non_test_postgresql_before_mutation() -> None:
+    class _Dialect:
+        name = "postgresql"
+
+    class _Bind:
+        dialect = _Dialect()
+
+    class _Session:
+        bind = _Bind()
+
+        def __init__(self) -> None:
+            self.scalar_calls = 0
+
+        def scalar(self, statement):
+            self.scalar_calls += 1
+            assert str(statement) == "SELECT current_database()"
+            return "dish_stage_a_prod"
+
+        def __getattr__(self, name):
+            raise AssertionError(f"mutation access after target fence: {name}")
+
+    session = _Session()
+    with pytest.raises(
+        ReviseTestSectionRegistryMembershipError,
+        match="connected database must be exact TEST database",
+    ):
+        revise_test_section_registry_membership(
+            session,
+            target_database_name=TEST_DATABASE_NAME,
+            expected_generation_id=uuid.uuid4(),
+            expected_registry_version_id=uuid.uuid4(),
+            expected_registry_revision=1,
+            research_queue_section_gid=GIDS[0],
+            verification_queue_section_gid=GIDS[1],
+            sourcing_section_gid=GIDS[2],
+            reference_section_gid=GIDS[3],
+            owner_id="Marco",
+            agent="marco",
+            now=NOW,
+        )
+    assert session.scalar_calls == 1
+
+
 def test_test_membership_revision_refuses_non_test_targets(workflow_db) -> None:
     for url, match in (
         ("postgresql+psycopg://dish@localhost/dish_stage_a_dev", "exact TEST database"),
