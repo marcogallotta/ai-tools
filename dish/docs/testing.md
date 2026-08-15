@@ -164,22 +164,25 @@ a separate backstop in `.github/workflows/full-regression.yml`; it is not ordina
 
 ## Autonomous changed-path selection
 
-For every Dish code or test change, start with the complete changed-path set:
+For every Dish code or test change, start with the complete Git-tracked changed-path delta:
 
 ```sh
-# All changes from a branch base through the current working tree.
+# All tracked changes from a branch base through the current index/working tree.
 .venv/bin/python scripts/dish-test-plan --base <revision>
 
-# Or an explicit path set while iterating.
+# Or an explicit path set while iterating, including a newly authored path before it is tracked.
 .venv/bin/python scripts/dish-test-plan \
   --path dish_tool/example.py \
   --path tests/test_example.py
 ```
 
 The command reads `test_selection/ownership.csv`, takes the union across mixed changes, and prints
-focused owner tests plus governed lane commands. For Git-based planning it also reads the map at the
-base revision so deleted paths retain their prior test ownership. The map is a strong current-HEAD
-prior; it does not replace semantic review. Frontend evidence is split into independent governed
+focused owner tests plus governed lane commands. Automatic discovery and ownership-map validation use
+Git tracked/index state, not incidental ignored or generated filesystem materialization, so policy truth
+is identical whether ignored build output happens to exist locally or not. For Git-based planning it
+also reads the map at the base revision so deleted paths retain their prior test ownership. Explicit
+`--path` remains the supported way to classify a newly authored path before it is tracked. The map is a
+strong current-HEAD prior; it does not replace semantic review. Frontend evidence is split into independent governed
 `frontend static/tooling` and `browser acceptance` lanes, and production/config PostgreSQL rows marked
 `native-pg` select `native PostgreSQL certification` rather than relying on advisory follow-up. An agent
 must evaluate the actual invariant, authority, durable state, external effect, transaction boundary, and
@@ -341,17 +344,17 @@ with exit status 3 and the residual reason.
 
 `operational-certification` still requires explicit `DISH_PG_TEST_URL`. Missing infrastructure is
 reported as unavailable, never as a pass. These commands complement, rather than replace,
-changed-path focused tests and the ordinary full-suite integration checkpoint.
+changed-path focused tests and any additional governed evidence selected for the exact candidate.
 
 The canonical local target is the disposable role/database on the system-wide PG17 cluster from the
 "Local PostgreSQL 17 server binaries" section below. The lane normally provisions it automatically.
 For a manual non-interactive reset equivalent to the helper's bounded path:
 
 ```sh
-sudo -n -u postgres psql -X -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "DROP DATABASE IF EXISTS dish_test;"
-sudo -n -u postgres psql -X -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "DROP ROLE IF EXISTS dish_test;"
-sudo -n -u postgres psql -X -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "CREATE ROLE dish_test LOGIN PASSWORD '0ddca88b81a8bf1a15d84caa78efd7b3' CREATEDB;"
-sudo -n -u postgres psql -X -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE dish_test OWNER dish_test;"
+sudo -n -u postgres psql -X -h localhost -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "DROP DATABASE IF EXISTS dish_test;"
+sudo -n -u postgres psql -X -h localhost -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "DROP ROLE IF EXISTS dish_test;"
+sudo -n -u postgres psql -X -h localhost -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "CREATE ROLE dish_test LOGIN PASSWORD '0ddca88b81a8bf1a15d84caa78efd7b3' CREATEDB CREATEROLE;"
+sudo -n -u postgres psql -X -h localhost -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE dish_test OWNER dish_test;"
 ```
 
 The fixed local DSN is:
@@ -363,6 +366,9 @@ export DISH_PG_TEST_URL="$DISH_TEST_POSTGRESQL_DSN"
 
 The native branch of `tests/support/postgresql/core.py` drops and recreates the disposable `public`
 schema before each test, so the role only needs ordinary ownership of `dish_test`, not superuser.
+The canonical local role requires both `CREATEDB` and `CREATEROLE` because governed native fixtures
+create and drop throwaway databases and roles; it does not require superuser. The canonical helper
+verifies both capabilities before treating an existing local target as ready.
 
 `parallel-safe` is an explicit allowlist, not a general pytest mode. The exact 565-test inventory
 passed static isolation review and three clean runs each at `-n 2`, `-n 4`, and `-n 8` on 2026-08-08.
@@ -446,14 +452,19 @@ The planner may emit any of these separately reported lanes:
 .venv/bin/python -m pytest
 ```
 
-The ordinary full suite is mandatory at concrete integration checkpoints, not after every scoped
-edit:
+Completion, handoff, Review, or Integration does not by itself add the ordinary full suite. Execute
+the complete governed selector union for the exact changed-path set. Broad/full evidence is added only
+when the selector or another explicit authority names the concrete guarantee it is needed to certify,
+including:
 
-- before merge or integration of a completed change block;
-- before a final staged archive;
-- after conflict resolution affecting shared code;
-- after global selector, fixture, dependency, marker, or runner-policy changes;
-- before release or cutover certification.
+- unknown/unclassified paths or unresolved selector/semantic uncertainty that fail closed;
+- global selector, fixture, dependency, marker, collection, or governed-runner policy changes;
+- conflict resolution whose changed surface selects broad/full evidence;
+- an exact task/review gate that states the missing guarantee and stable command;
+- release or cutover certification where the repository policy explicitly requires full evidence.
+
+A merge/integration checkpoint with `TESTS TO RUN: NONE` is literal and does not invent a blanket suite.
+Periodic/full regression remains a separate health backstop rather than routine per-change evidence.
 
 Authoritative first attempts never rerun failures automatically. Preserve and report the first
 result. One lane-level retry is allowed only for a narrowly proven infrastructure signature such as
