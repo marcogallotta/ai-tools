@@ -250,10 +250,23 @@ def build_execution_spec(plan: dict[str, object], *, plan_digest: str) -> dict[s
             _command("frontend static", ("npm", "--prefix", "dish/frontend", "run", "check:static"))
         ]
     if "native-postgresql" in selected:
+        native = plan.get("native_postgresql")
+        if not isinstance(native, dict):
+            raise PRCertificationError("planner output is missing native_postgresql selection")
+        mode = native.get("mode")
+        test_files = native.get("test_files")
+        if mode not in {"focused", "full"} or not isinstance(test_files, list):
+            raise PRCertificationError("planner native_postgresql selection is invalid")
+        if mode == "full" and test_files:
+            raise PRCertificationError("full native_postgresql selection must not name test files")
+        if mode == "focused" and not test_files:
+            raise PRCertificationError("focused native_postgresql selection must name test files")
         argv = [
             "dish/.venv/bin/python", "dish/scripts/dish-pg-native-certification",
             "--output", ".test-artifacts/native-postgresql/report.json",
         ]
+        for test_file in test_files:
+            argv.extend(("--test-file", str(test_file)))
         for waiver in NATIVE_WAIVERS:
             argv.extend(("--waive-skip", waiver))
         groups["native-postgresql"] = [_command("native PostgreSQL certification", argv)]
