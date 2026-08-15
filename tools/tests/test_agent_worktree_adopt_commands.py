@@ -9,7 +9,7 @@ def test_adopt_uses_only_expected_local_git_commands() -> None:
     tree = ast.parse(source)
     commands: list[list[str]] = []
     for node in tree.body:
-        if not isinstance(node, ast.FunctionDef) or node.name not in {"_rollback_local_adoption", "command_adopt"}:
+        if not isinstance(node, ast.FunctionDef) or node.name not in {"_rollback_local_adoption", "_validate_adoption_remote", "_adopt_remote_branch_locked", "command_adopt"}:
             continue
         for call in ast.walk(node):
             if not isinstance(call, ast.Call):

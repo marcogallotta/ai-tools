@@ -192,13 +192,21 @@ def claim_status(task_gid: str) -> dict[str, Any]:
     }
 
 
-def _normalize_pr(args: argparse.Namespace) -> dict[str, Any] | None:
-    number = args.pr_number
-    head = args.pr_head
-    lease_state = args.pr_lease_state
-    lease_id = args.pr_lease_id
+def normalize_pr_identity(
+    number: int | None,
+    head: str | None,
+    lease_state: str | None,
+    lease_id: str | None,
+    *,
+    required: bool = False,
+) -> dict[str, Any] | None:
     supplied = [number is not None, head is not None, lease_state is not None, lease_id is not None]
     if not any(supplied):
+        if required:
+            fail(
+                "PR_LEASE_VISIBILITY_REQUIRED",
+                "replacement PR identity requires --pr-number, --pr-head, and --pr-lease-state",
+            )
         return None
     if number is None or head is None or lease_state is None:
         fail(
@@ -213,6 +221,50 @@ def _normalize_pr(args: argparse.Namespace) -> dict[str, Any] | None:
     if lease_state == "none" and lease_id is not None:
         fail("PR_LEASE_VISIBILITY_AMBIGUOUS", "--pr-lease-id cannot be supplied when --pr-lease-state=none")
     return {"number": number, "head": head, "lease_state": lease_state, "lease_id": lease_id}
+
+
+def _normalize_pr(args: argparse.Namespace) -> dict[str, Any] | None:
+    return normalize_pr_identity(
+        args.pr_number, args.pr_head, args.pr_lease_state, args.pr_lease_id
+    )
+
+
+def lineage_claim_locks(
+    task_gid: str,
+    branches: list[str],
+    pr_numbers: list[int] | None = None,
+) -> "_HeldClaimLocks":
+    paths = [task_claim_lock_path(task_gid)]
+    paths.extend(branch_claim_lock_path(branch) for branch in branches)
+    paths.extend(pr_claim_lock_path(number) for number in (pr_numbers or []))
+    return _HeldClaimLocks(paths)
+
+
+def remove_archived_claim(
+    task_gid: str,
+    archived_claim: dict[str, Any] | None,
+    expected_branch: str,
+) -> None:
+    path = claim_path(task_gid)
+    if not path.exists():
+        return
+    current = read_claim(task_gid)
+    if current is None:
+        return
+    if archived_claim is None:
+        fail("SUPERSESSION_CLAIM_CHANGED", "a task ownership claim appeared after supersession terminalization")
+    if (
+        current.get("token") != archived_claim.get("token")
+        or current.get("branch") != expected_branch
+        or current.get("agent_id") != archived_claim.get("agent_id")
+    ):
+        fail("SUPERSESSION_CLAIM_CHANGED", "task ownership claim changed from the archived old-lineage claim")
+    path.unlink()
+    dir_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
 
 
 def _reconcile_existing(
