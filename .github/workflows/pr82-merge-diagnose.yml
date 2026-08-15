@@ -1,0 +1,35 @@
+name: PR82 merge diagnose
+on:
+  push:
+    branches: [agent/d1-durable-review-routing]
+permissions:
+  contents: read
+jobs:
+  diagnose:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/d1-durable-review-routing
+          fetch-depth: 0
+      - name: Diagnose merge with current main
+        shell: bash
+        run: |
+          set +e
+          git fetch origin main
+          git config user.name 'Dish Agent Integration (diagnostic)'
+          git config user.email 'dish-agent@users.noreply.github.com'
+          git merge --no-commit --no-ff origin/main
+          rc=$?
+          echo "MERGE_RC=$rc"
+          echo '--- UNMERGED FILES ---'
+          git diff --name-only --diff-filter=U
+          echo '--- STATUS ---'
+          git status --short
+          echo '--- CONFLICT HUNKS ---'
+          for f in $(git diff --name-only --diff-filter=U); do
+            echo "===== $f ====="
+            git diff -- "$f" | sed -n '1,260p'
+          done
+          exit 0
