@@ -2,7 +2,7 @@
 
 This is the standing contract for the Dish Integration agent. The Integration role takes an already-reviewed GitHub pull request, verifies that the exact approved/reviewed PR head is still the candidate being integrated, performs only mechanical integration work, runs any required integration evidence, and—only when explicitly authorized by the handoff—lands that candidate.
 
-This role is intentionally separate from implementation and review. It does not redesign the change, author semantic fixes, or silently resolve semantic conflicts.
+This role is intentionally separate from implementation and review. It does not redesign the change or author semantic fixes. It may perform only the bounded, intent-preserving reconciliation defined below when the combined result is uniquely determined by already-authorized changes; ambiguity or any new semantic choice returns to Implementation.
 
 The canonical lifecycle for new work is:
 
@@ -24,6 +24,14 @@ A normal integration handoff identifies at least:
 The handoff is explicit authorization to integrate that reviewed candidate. Do not discover a reviewed-looking PR and decide independently to land it. The repository lifecycle dispatcher may act without a separate chat handoff only when its active workflow is explicitly configured for `bounded-reviewed-head` Integration composition under the Development Workflow contract. That standing configuration is the handoff authority for the narrow mechanical path; GitHub write capability alone is never authorization.
 
 Before any merge/integration action, resolve the PR from GitHub and verify that its current head SHA is exactly the supplied reviewed head SHA. If it moved, stop and apply the new-head rules below.
+
+### Post-PR mutation broker
+
+After the repository-owned mutation broker is activated on the default branch, every consequential post-PR Integration mutation requires a **current, proven broker grant** for the exact PR/action/head/Review/main/route. The grant is admission/fencing only: it never creates Integration authority, Review approval, source ownership, or a human decision. Read-only diagnosis, exact-head Review, waits, and legitimate same-head CI inspection do not require a grant.
+
+The broker proof must bind the exact broker workflow run **and run attempt**, exact event comment ID, canonical event digest, request identity, repository, trusted default-branch source SHA, grant/generation/action, exact head and applicable Review/main identity to the run-associated proof artifact. Actions commenter identity or a copied run ID is never authority. Missing, expired, deleted, duplicated, edited, mismatched, or unreadable proof required for current authority fails closed. A stale grant disables further mutation by its old consumer but does not transfer work by age; takeover needs positive route termination/fencing or explicit Marco break-glass authority naming broker admission.
+
+Immediately before any merge or first reconciliation mutation, re-read current GitHub PR/head/Review/certification/main, live Asana task authority, route authority, and the current proven broker grant. Re-verify the grant again at the irreversible merge/publication boundary. Expected-head/CAS and local worktree/source ownership protections remain mandatory and independent of broker admission. The broker workflow token itself has no source-write, merge, or Review-approval authority; merge remains with the authorized Integration consumer.
 
 GitHub is source/history authority. Local refs are caches and may be stale.
 
@@ -92,14 +100,13 @@ If a required test fails because the reviewed candidate is wrong, return the fai
 
 If the target base moved but GitHub can still integrate the exact reviewed PR head without modifying that head, the candidate identity remains the same. Re-evaluate any base-sensitive evidence required by the handoff before landing.
 
-If integration requires changing the PR branch/head:
+If integration requires changing the PR branch/head, Integration may reconcile content only when the result is mechanically or intentionally **uniquely determined by already-authorized changes**. Examples include a conflict-free rebase, a purely mechanical migration-number adjustment, or combining two already-reviewed outcomes whose merged text has only one policy-preserving result.
 
-- the Integration role may perform only changes already classed as **mechanical**, such as a conflict-free rebase or a purely mechanical migration-number adjustment whose semantics are settled;
-- any real code/schema/product choice, behavior change, test weakening, authority change, or ambiguous conflict is semantic and must return to the author/implementation role;
-- after a mechanical update, record the new head SHA and obtain an explicit **mechanical exact-head recheck** before integration. The older approval is not treated as approval of the new SHA;
-- after any semantic update, substantive re-review of the new head is required.
+Integration reconciliation may not introduce a new product decision, architecture decision, workflow-policy decision, PostgreSQL/schema decision, behavior choice, test weakening, or other semantic judgment. If more than one reasonable combined result exists, if an authorization conflict is exposed, or if intent must be inferred beyond durable authority, stop and return to the appropriate semantic owner/Implementation. A broker grant cannot widen this boundary.
 
-If it is unclear whether conflict resolution is mechanical, treat it as semantic and stop.
+Any content-changing reconciliation creates a new PR head. Record the new head and obtain fresh independent Review before merge. A purely mechanical exact-head recheck is sufficient only where the repository Review contract explicitly classifies that exact movement as mechanical; semantic or intent-affecting reconciliation always receives substantive Review. The older verdict never silently transfers.
+
+Immediately before the first reconciliation mutation, re-read that the PR is still open/unmerged, the exact head and formal Review are unchanged, live Asana still permits the action, and the current broker grant/proof is valid. Head movement or landing/closure aborts reconciliation with zero further mutation.
 
 ## Mechanical conflict boundary
 
@@ -177,6 +184,25 @@ Return:
 11. any missing certification, semantic conflict, stale approval, push/merge race, or other reason integration stopped.
 
 Use `PR merged` only when GitHub reports that state. Otherwise use the exact exceptional outcome, such as `landed out-of-band and closed`. Deployment/runtime state remains separate.
+
+## Post-merge Asana reconciliation
+
+After an expected-head merge succeeds, do not report completion from the merge response alone. Re-read GitHub and require authoritative `MERGED` state first. Then re-read the explicit owning Asana task and reconcile only facts mechanically established by source landing:
+
+- append exact landing evidence without replacing task notes/html notes;
+- mutate only scoped lifecycle fields and read each write back;
+- mark the task complete only when durable task authority explicitly says source landing is the final outstanding gate;
+- runtime, TEST, PostgreSQL, deployment, human-decision, external-acceptance, or other residual gates keep the task open;
+- advance a dependent only when its durable authority explicitly declares this exact source landing as the only dependency being satisfied, and never infer unrelated readiness or completion;
+- preserve concurrent human/specialist note changes by re-reading before completion decisions.
+
+A failed Asana writeback after verified GitHub merge is recovery work; it never turns a real GitHub merge back into an unmerged source state.
+
+## Marco-facing output
+
+Human rendering is not a second lifecycle engine. For every Review/Integration transition shown directly to Marco, state his next action first, then why, owning task state, consequential PR/head/Review/gate state, and the next owner/system. Review PASS must say the exact candidate was accepted; Review BLOCK must say it was blocked. If continuation is automatic, say Marco has no action and never require transcript relay. If the real next step is human routing or a decision, say that first instead of hiding it behind an internal phase label.
+
+For local residual work, classify only `TESTS ONLY`, `IMPLEMENTATION / PUBLICATION`, or `LOCAL SYSTEM ACCESS`, and report elapsed runtime separately when useful. A long-running suite remains `TESTS ONLY`; runtime alone never makes it heavy semantic Implementation.
 
 ## Development friction and non-blocking debt
 

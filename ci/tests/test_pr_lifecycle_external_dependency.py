@@ -127,8 +127,9 @@ def test_malformed_external_record_fails_closed_without_external_ownership():
 
     state = base.engine(gh).inspect(gh.pr)
 
-    assert state.state == pr_lifecycle.LifecycleState.CHANGES_REQUESTED
+    assert state.state == pr_lifecycle.LifecycleState.REVIEW_PASSED
     assert state.gate["diagnosis"] == pr_lifecycle.pr_gate.GateDiagnosis.FAILED_REQUIRED_CI.value
+    assert state.gate["failure_ownership"] == "AMBIGUOUS"
     assert "external dependency marker invalid" in state.residual_reason
 
 
@@ -202,6 +203,16 @@ def test_new_failure_after_resolution_can_be_pr_owned():
     gh.comments = [
         external_dependency_comment(when=base.NOW - timedelta(minutes=1), comment_id=80),
         external_dependency_comment(action="resolved", when=base.NOW, comment_id=81),
+        {
+            "id": 82,
+            "body": (
+                f"<!-- dish-ci-failure-ownership:v1 head={base.HEAD} "
+                "check=Dish%20%2F%20exact-head%20certification classification=PR_OWNED "
+                "evidence=workflow%3A700%2Fjob%3Atest%2Fsignature%3Anew -->"
+            ),
+            "created_at": (base.NOW + timedelta(seconds=1)).isoformat(),
+            "updated_at": (base.NOW + timedelta(seconds=1)).isoformat(),
+        },
     ]
     fixer = FakeFixer()
     lifecycle = base.engine(gh)

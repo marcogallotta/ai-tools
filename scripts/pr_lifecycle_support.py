@@ -39,6 +39,7 @@ HUMAN_NOTICE_MARKER = "dish-human-notice:v1"
 REVIEW_ROUTE_MARKER = "dish-review-route:v1"
 IMPLEMENTATION_CONTINUATION_MARKER = "dish-implementation-continuation:v1"
 EXTERNAL_DEPENDENCY_MARKER = "dish-external-dependency:v1"
+CI_FAILURE_OWNERSHIP_MARKER = "dish-ci-failure-ownership:v1"
 DISPATCH_OWNER = "pr-lifecycle"
 WORKSPACE_API_ROOT = "https://api.chatgpt.com/v1"
 WORKSPACE_RUNS_BETA = "workspace_agent_runs=v1"
@@ -228,6 +229,26 @@ class JSONHTTPClient:
         except urlerror.URLError as exc:
             raise LifecycleError(f"request failed for {url}: {exc.reason}") from exc
 
+    def request_bytes(
+        self,
+        method: str,
+        url: str,
+        *,
+        headers: Mapping[str, str] | None = None,
+    ) -> tuple[int, dict[str, str], bytes]:
+        request_headers = {"Accept": "application/octet-stream"}
+        if headers:
+            request_headers.update(headers)
+        req = urlrequest.Request(url, headers=request_headers, method=method)
+        try:
+            with urlrequest.urlopen(req, timeout=self.timeout) as response:
+                return response.status, dict(response.headers.items()), response.read()
+        except urlerror.HTTPError as exc:
+            raw = exc.read().decode("utf-8", errors="replace")
+            raise HTTPError(exc.code, str(exc.reason or "request failed"), raw[:500]) from exc
+        except urlerror.URLError as exc:
+            raise LifecycleError(f"request failed for {url}: {exc.reason}") from exc
+
 
 class GitHubREST:
     def __init__(
@@ -280,6 +301,18 @@ class GitHubREST:
             raise LifecycleError("GitHub pull request response was not an object")
         return value
 
+    def get_repository_id(self) -> int:
+        _, _, value = self.http.request(
+            "GET", f"{self.api_root}/repos/{self.repository}", headers=self.headers
+        )
+        if not isinstance(value, dict):
+            raise LifecycleError("GitHub repository response was not an object")
+        try:
+            repository_id = int(value["id"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise LifecycleError("GitHub repository response lacks numeric id") from exc
+        return repository_id
+
     def get_comments(self, number: int) -> list[dict[str, Any]]:
         return [dict(item) for item in self._get_paginated(f"issues/{number}/comments")]
 
@@ -308,6 +341,63 @@ class GitHubREST:
         )
         if not isinstance(value, dict):
             raise LifecycleError("GitHub comment response was not an object")
+        return value
+
+    def get_comment(self, comment_id: int) -> dict[str, Any]:
+        _, _, value = self.http.request(
+            "GET", self._url(f"issues/comments/{int(comment_id)}"), headers=self.headers
+        )
+        if not isinstance(value, dict):
+            raise LifecycleError("GitHub issue-comment response was not an object")
+        return value
+
+    def update_comment(self, comment_id: int, body: str) -> dict[str, Any]:
+        _, _, value = self.http.request(
+            "PATCH", self._url(f"issues/comments/{int(comment_id)}"), headers=self.headers, body={"body": body}
+        )
+        if not isinstance(value, dict):
+            raise LifecycleError("GitHub issue-comment update response was not an object")
+        return value
+
+    def collaborator_permission(self, login: str) -> str:
+        encoded = urlparse.quote(login, safe="")
+        _, _, value = self.http.request(
+            "GET", self._url(f"collaborators/{encoded}/permission"), headers=self.headers
+        )
+        if not isinstance(value, dict):
+            raise LifecycleError("GitHub collaborator-permission response was not an object")
+        return str(value.get("permission") or "")
+
+    def get_ref_sha(self, ref: str = "heads/main") -> str:
+        encoded = urlparse.quote(ref, safe="/")
+        _, _, value = self.http.request("GET", self._url(f"git/ref/{encoded}"), headers=self.headers)
+        if not isinstance(value, dict) or not isinstance(value.get("object"), dict):
+            raise LifecycleError("GitHub ref response was not an object")
+        sha = str(value["object"].get("sha") or "").lower()
+        if FULL_SHA_RE.fullmatch(sha) is None:
+            raise LifecycleError("GitHub ref response lacks exact SHA")
+        return sha
+
+    def get_workflow_run_attempt(self, run_id: int, run_attempt: int) -> dict[str, Any]:
+        _, _, value = self.http.request(
+            "GET", self._url(f"actions/runs/{int(run_id)}/attempts/{int(run_attempt)}"), headers=self.headers
+        )
+        if not isinstance(value, dict):
+            raise LifecycleError("GitHub workflow-run attempt response was not an object")
+        return value
+
+    def get_run_artifacts(self, run_id: int) -> list[dict[str, Any]]:
+        _, _, value = self.http.request(
+            "GET", self._url(f"actions/runs/{int(run_id)}/artifacts", {"per_page": 100}), headers=self.headers
+        )
+        if not isinstance(value, dict) or not isinstance(value.get("artifacts"), list):
+            raise LifecycleError("GitHub workflow-run artifacts response was not an object")
+        return [dict(item) for item in value["artifacts"] if isinstance(item, dict)]
+
+    def download_artifact(self, artifact_id: int) -> bytes:
+        _, _, value = self.http.request_bytes(
+            "GET", self._url(f"actions/artifacts/{int(artifact_id)}/zip"), headers=self.headers
+        )
         return value
 
     def close_pr(self, number: int) -> dict[str, Any]:
@@ -349,11 +439,47 @@ class AsanaREST:
         self.headers = {"Authorization": f"Bearer {token}", "User-Agent": "dish-pr-lifecycle/1"}
 
     def get_task(self, gid: str) -> dict[str, Any]:
-        query = urlparse.urlencode({"opt_fields": "gid,name,notes,completed,completed_at,modified_at,permalink_url"})
+        query = urlparse.urlencode({
+            "opt_fields": (
+                "gid,name,notes,completed,completed_at,modified_at,permalink_url,"
+                "dependencies.gid,dependents.gid,memberships.project.gid,memberships.section.gid"
+            )
+        })
         _, _, value = self.http.request("GET", f"{self.api_root}/tasks/{gid}?{query}", headers=self.headers)
         if not isinstance(value, dict) or not isinstance(value.get("data"), dict):
             raise LifecycleError(f"Asana task {gid} response was not an object")
         return dict(value["data"])
+
+    def get_stories(self, gid: str) -> list[dict[str, Any]]:
+        query = urlparse.urlencode({"opt_fields": "gid,text,created_at,created_by.gid"})
+        _, _, value = self.http.request("GET", f"{self.api_root}/tasks/{gid}/stories?{query}", headers=self.headers)
+        if not isinstance(value, dict) or not isinstance(value.get("data"), list):
+            raise LifecycleError(f"Asana task {gid} stories response was not a list")
+        return [dict(item) for item in value["data"] if isinstance(item, dict)]
+
+    def add_comment(self, gid: str, text: str) -> dict[str, Any]:
+        _, _, value = self.http.request(
+            "POST", f"{self.api_root}/tasks/{gid}/stories", headers=self.headers, body={"data": {"text": text}}
+        )
+        if not isinstance(value, dict) or not isinstance(value.get("data"), dict):
+            raise LifecycleError(f"Asana task {gid} comment response was not an object")
+        return dict(value["data"])
+
+    def update_task_fields(self, gid: str, fields: Mapping[str, Any]) -> dict[str, Any]:
+        forbidden = {"notes", "html_notes", "name"} & set(fields)
+        if forbidden:
+            raise LifecycleError(f"post-merge scoped writeback may not replace task prose fields: {sorted(forbidden)}")
+        _, _, value = self.http.request(
+            "PUT", f"{self.api_root}/tasks/{gid}", headers=self.headers, body={"data": dict(fields)}
+        )
+        if not isinstance(value, dict) or not isinstance(value.get("data"), dict):
+            raise LifecycleError(f"Asana task {gid} update response was not an object")
+        return dict(value["data"])
+
+    def remove_dependency(self, task_gid: str, dependency_gid: str) -> None:
+        self.http.request(
+            "DELETE", f"{self.api_root}/tasks/{task_gid}/dependencies/{dependency_gid}", headers=self.headers
+        )
 
 
 @dataclass(frozen=True)

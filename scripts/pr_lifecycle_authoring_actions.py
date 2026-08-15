@@ -47,8 +47,31 @@ class LifecycleAuthoringActionsMixin:
             )
 
         evidence = current.authoring_evidence or "task-scoped authoring evidence"
-        if any(lease.get("phase") in {"implementation", "fix"} for lease in current.active_leases):
+        if not getattr(self, "mutation_broker_enabled", False) and any(
+            lease.get("phase") in {"implementation", "fix"} for lease in current.active_leases
+        ):
             return current
+
+        broker_grant = None
+        broker_route = None
+        if getattr(self, "mutation_broker_enabled", False):
+            broker_route = self._broker_route("implementation")
+            if not broker_route:
+                current.residual_reason = "mutation broker is active but no Implementation continuation route is configured"
+                current.human_action = None
+                return current
+            try:
+                broker_grant = self._broker_grant_for(current, action="implementation", route=broker_route)
+            except LifecycleError as exc:
+                current.residual_reason = str(exc)
+                current.human_action = None
+                return current
+            if broker_grant is None:
+                self._submit_broker_request(current, action="implementation", route=broker_route)
+                reread = self.inspect(self.github.get_pr(current.number))
+                reread.residual_reason = "Implementation continuation mutation request is waiting for the serialized broker"
+                reread.human_action = None
+                return reread
 
         if implementation_fixer is None or not implementation_fixer.command:
             current.residual_reason = (
@@ -69,15 +92,27 @@ class LifecycleAuthoringActionsMixin:
         if reread.head != current.head or reread.state != LifecycleState.IMPLEMENTATION_CONTINUATION_REQUIRED:
             return reread
 
-        lease_id = self._post_lease(reread, phase="implementation")
+        lease_id = None
+        if not getattr(self, "mutation_broker_enabled", False):
+            lease_id = self._post_lease(reread, phase="implementation")
         claimed = self.inspect(self.github.get_pr(current.number))
         if claimed.head != current.head or claimed.state != LifecycleState.IMPLEMENTATION_CONTINUATION_REQUIRED:
-            self._release_lease(
-                current.number,
-                lease_id,
-                reason="authoring state moved before Implementation continuation dispatch",
-            )
+            if lease_id is not None:
+                self._release_lease(
+                    current.number,
+                    lease_id,
+                    reason="authoring state moved before Implementation continuation dispatch",
+                )
             return claimed
+
+        # Re-verify the exact proven grant immediately before dispatch; a stale/deleted
+        # proof is a fail-closed recovery boundary rather than permission to continue.
+        if getattr(self, "mutation_broker_enabled", False):
+            assert broker_route is not None
+            broker_grant = self._broker_grant_for(claimed, action="implementation", route=broker_route)
+            if broker_grant is None:
+                claimed.residual_reason = "Implementation continuation broker grant disappeared before dispatch"
+                return claimed
 
         context = {
             "schema": "dish-pr-implementation-continuation-v1",
@@ -89,6 +124,18 @@ class LifecycleAuthoringActionsMixin:
             "task_ids": current.task_ids,
             "unfinished_authoring_evidence": evidence,
             "lifecycle": claimed.json(),
+            "mutation_grant": (
+                None
+                if broker_grant is None
+                else {
+                    "grant_id": broker_grant.grant_id,
+                    "generation": broker_grant.generation,
+                    "consumer_id": broker_grant.consumer_id,
+                    "route": broker_grant.route,
+                    "starting_head": broker_grant.starting_head,
+                    "event_comment_id": broker_grant.event_comment_id,
+                }
+            ),
             "instruction": (
                 "Follow the current repository Implementation contract. Continue the existing draft PR, "
                 "branch, and owning task; finish only the named authoring evidence, update the durable PR "
@@ -99,10 +146,11 @@ class LifecycleAuthoringActionsMixin:
         try:
             implementation_fixer.dispatch(context)
         except LifecycleError:
-            self._release_lease(
-                current.number,
-                lease_id,
-                reason="Implementation continuation dispatcher failed",
-            )
+            if lease_id is not None:
+                self._release_lease(
+                    current.number,
+                    lease_id,
+                    reason="Implementation continuation dispatcher failed",
+                )
             raise
         return self.inspect(self.github.get_pr(current.number))

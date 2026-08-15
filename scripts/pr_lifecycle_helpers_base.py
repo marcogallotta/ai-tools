@@ -135,6 +135,61 @@ def parse_external_dependency(
     return max(records, key=lambda item: (item.timestamp, item.comment_id, item.marker_index))
 
 
+
+def parse_ci_failure_ownership(
+    comments: Iterable[Mapping[str, Any]], *, current_head: str, check_identity: str
+) -> dict[str, Any]:
+    """Return the newest exact-head durable CI ownership classification.
+
+    Missing or malformed ownership is AMBIGUOUS. The marker is diagnostic/routing
+    evidence only; it never weakens the required CI gate or creates source authority.
+    """
+    records: list[dict[str, Any]] = []
+    allowed = {"PR_OWNED", "PROVEN_CURRENT_MAIN", "INFRASTRUCTURE", "AMBIGUOUS"}
+    for comment in comments:
+        body = str(comment.get("body") or "")
+        for fields in _marker_fields(body, CI_FAILURE_OWNERSHIP_MARKER):
+            if str(fields.get("head") or "").lower() != current_head.lower():
+                continue
+            check = urlparse.unquote(str(fields.get("check") or ""))
+            if check != check_identity:
+                continue
+            classification = str(fields.get("classification") or "").upper()
+            evidence = urlparse.unquote(str(fields.get("evidence") or "")).strip()
+            if classification not in allowed or not evidence:
+                return {
+                    "classification": "AMBIGUOUS",
+                    "evidence": "malformed durable CI ownership marker",
+                    "comment_id": comment.get("id"),
+                }
+            timestamp = _parse_time(comment.get("updated_at") or comment.get("created_at"))
+            if timestamp is None:
+                return {
+                    "classification": "AMBIGUOUS",
+                    "evidence": "CI ownership marker lacks valid timestamp",
+                    "comment_id": comment.get("id"),
+                }
+            try:
+                cid = int(comment.get("id"))
+            except (TypeError, ValueError):
+                cid = -1
+            records.append(
+                {
+                    "classification": classification,
+                    "evidence": evidence,
+                    "comment_id": cid,
+                    "timestamp": timestamp,
+                }
+            )
+    if not records:
+        return {
+            "classification": "AMBIGUOUS",
+            "evidence": "no exact-head durable CI failure ownership classification",
+            "comment_id": None,
+        }
+    newest = max(records, key=lambda item: (item["timestamp"], item["comment_id"]))
+    return {k: v for k, v in newest.items() if k != "timestamp"}
+
 def external_dependency_human_action(record: ExternalDependency) -> str:
     owner = f"PR #{record.owner_pr} / task {record.task_gid}" if record.owner_pr else f"task {record.task_gid}"
     return f"Waiting on {owner}: {record.check}. No action for Marco."

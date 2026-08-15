@@ -212,6 +212,18 @@ After exact-head `BLOCK`, the existing implementation/fix ownership path consume
 
 Operational commands and marker formats are in [`../../../ci/pr-lifecycle-dispatcher-runbook.md`](../../../ci/pr-lifecycle-dispatcher-runbook.md).
 
+## GitHub-native post-PR mutation admission
+
+`scripts/pr_lifecycle.py` remains the sole lifecycle/classification/eligibility engine. The repository-owned `.github/workflows/pr-mutation-broker.yml` is only a serialized GitHub-native admission surface around that engine; it is not a scheduler, queue database, second lifecycle, or role authority. Initial pre-PR authoring remains the normal Implementation branch/worktree/publication path. Read-only diagnosis, Review, waits, and legitimate same-head CI inspection do not require mutation admission.
+
+After activation, post-PR Implementation continuation, fix, Integration reconciliation, merge, renewal, closure/completion, and takeover use one current grant per PR. Broker executions serialize per PR and recompute current GitHub + live Asana authority on every request rather than relying on FIFO. Requests are untrusted optimistic preconditions; consequential task/PR/head/Review/main/route facts are resolved from authority. Repository permission never creates role authority.
+
+Every authoritative grant/renew/close/takeover event is bound to the exact broker run **attempt** and exact event comment through deterministic canonical-event digest plus a uniquely derived run-associated proof artifact. The parser independently verifies exact workflow/source/repository identity, successful attempt, current comment digest, artifact ID/digest/name/content, request/grant identity, and comment ID. Missing, expired, deleted, duplicate, copied, edited, mismatched, or unreadable proof needed for current state fails closed. Staleness never auto-transfers work; replacement requires positive fencing/termination evidence or explicit Marco break-glass authority naming broker admission.
+
+The broker uses trusted current default-branch code and least privilege: source/actions/check/status/PR reads plus PR-comment write, with no source write, merge authority, or Review approval authority. Live Asana reads are required before consequential grant/renew/takeover decisions. Local `tools/agent-worktree` ownership and source expected-head/CAS remain separate hard fences.
+
+Bootstrap is intentionally pre-broker: the first broker workflow/schema/authority landing uses the existing lifecycle. Do not activate broker admission until those surfaces are present on default branch and verified by authoritative readback. If a later broker failure prevents its own repair, bypass requires explicit Marco authority naming broker admission as the waived gate; it does not authorize direct-to-main or waive Review/certification.
+
 ## Review queue and takeover
 
 The Development Workflow specialist owns the mechanics for making pending review work discoverable and replaceable.

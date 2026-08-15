@@ -157,6 +157,16 @@ def test_pr_owned_exact_head_ci_failure_dispatches_fix_without_rewriting_review_
     gh = base.FakeGitHub()
     gh.reviews = [base.review(verdict="MERGE")]
     gh.workflow_runs = base.runs(conclusion="failure")
+    gh.comments = [{
+        "id": 90,
+        "body": (
+            f"<!-- dish-ci-failure-ownership:v1 head={base.HEAD} "
+            "check=Dish%20%2F%20exact-head%20certification classification=PR_OWNED "
+            "evidence=workflow%3A700%2Fjob%3Atest%2Fsignature%3Aexact -->"
+        ),
+        "created_at": base.NOW.isoformat(),
+        "updated_at": base.NOW.isoformat(),
+    }]
     fixer = FakeFixer(gh)
     lifecycle = base.engine(gh)
 
@@ -278,4 +288,6 @@ def test_missing_continuation_consumer_uses_only_required_human_message():
     )
 
     assert result.state == pr_lifecycle.LifecycleState.IMPLEMENTATION_CONTINUATION_REQUIRED
-    assert notices == ["PR #31 still needs Implementation to finish required smoke."]
+    assert len(notices) == 1
+    assert notices[0].startswith("Your next action: PR #31 still needs Implementation to finish required smoke.")
+    assert "IMPLEMENTATION CONTINUATION REQUIRED" in notices[0]
