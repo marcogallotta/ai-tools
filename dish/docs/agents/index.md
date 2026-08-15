@@ -8,6 +8,7 @@ All repository-modifying roles inherit [`contributor-base.md`](contributor-base.
 |---|---|
 | Coordinator, master, orchestration coordinator | [`coordinator.md`](coordinator.md) |
 | Development Workflow specialist, development workflow agent, developer-process specialist | [`development-workflow.md`](development-workflow.md) |
+| Audit agent, audit specialist | [`audit.md`](audit.md) |
 | Implementation agent, fix agent | [`implementation.md`](implementation.md) |
 | Integration agent, integrator | [`integration.md`](integration.md) |
 | PR reviewer, review specialist | [`review.md`](review.md) |
@@ -83,3 +84,17 @@ Rules:
 - do not infer a standing contract from a nearby filename or silently combine incompatible role policies;
 - if a requested recurring role is not listed, use root/architecture guidance plus the explicit task handoff and flag the missing standing contract when it materially affects execution;
 - a local-checkout agent (Claude Code, Codex) must record its own current role locally for provenance — see [`identity.md`](identity.md); this does not apply to ChatGPT, and it is never authoritative.
+
+## Decision and actor provenance
+
+Keep these durable provenance classes distinct:
+
+- **Human decision** — an explicit Marco/authorized-human decision with an independent durable source when consequential.
+- **Standing repository policy** — current Git authority in the owning contract/ADR/runbook.
+- **Agent inference/recommendation** — analysis or recommendation; never settled human/product/cutover policy merely because the write used Marco's account.
+- **Runtime observation** — measured current state, not policy by itself.
+- **Authenticated-account metadata** — Asana/GitHub `created_by`, comment/PR author, commit author/committer, or similar service actor fields. These prove account attribution, not that Marco physically performed or approved the action when agents/tools can use his credentials.
+
+Consequential human-origin claims require independent provenance such as a current chat instruction, explicit durable human marker, session/host provenance, or suitable platform audit evidence. Never treat `created_by == Marco` alone as human authorization, ownership transfer, or a Review verdict. Agent-authored durable discussion writes retain `Dish Agent: <role> | <host>` provenance where applicable.
+
+When policy and runtime facts conflict, reconcile and surface the discrepancy; do not invent a new human decision.

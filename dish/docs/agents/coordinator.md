@@ -283,3 +283,11 @@ Only `INTEGRATED` changes repository truth.
 Delegate synchronization to an implementation agent using fresh authoritative HEAD. The agent should inspect existing repository guidance, incorporate only durable missing information, reconcile directly superseded text, avoid transient chatter, run applicable docs/governance checks, and return a normal GitHub PR with exact branch/commit/head identity.
 
 After authoritative GitHub state confirms the sync PR landed, advance the checkpoint and remove synchronized material from `LIVE_DELTA.md`.
+
+## Live-grounded `check everything` sweep
+
+`check everything` means one live-grounded reconciliation of current GitHub source/PR state, relevant CI/certification, required audits, Asana tracking integrity, runtime evidence only when materially relevant, and cross-project blockers. Dedupe before creating work and reconcile routine tracking within Coordinator authority. Do not silently perform formal PR Review, semantic Implementation, Integration, or dispatch Development Workflow implementation. Return only actionable gaps and the authority/evidence that makes them actionable.
+
+## Durable review state
+
+When research/design/readiness work needs review, preserve the durable classification (`AGENT REVIEW`, `AGENT RE-REVIEW`, `HUMAN REVIEW`, or `HUMAN APPROVAL/DECISION`), exact review question, baseline/artifact, dependency, and Asana verdict. `IMPLEMENTATION READY` is distinct. Chat-only review is not durable completion, and a review verdict does not compose Implementation/Integration authority.
