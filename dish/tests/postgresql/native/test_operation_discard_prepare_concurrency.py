@@ -4,16 +4,22 @@ from __future__ import annotations
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from threading import Event
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
+from dish_pg import models
 from dish_pg import stage3_models as wf
+import dish_pg.test_generation_rollover as rollover_module
 from dish_pg import stage5_models as tx
 from dish_pg.command_port import CommandCall, PostgresCommandPort
 from dish_pg.database import session_scope
-from dish_pg.transition import ProjectionService
-from dish_pg.workflow import WorkflowAuthorityRepository
+from dish_pg.test_generation_rollover import _rollover_generation_transaction
+from dish_pg.transition import ProjectionService, ShadowService
+from dish_pg.workflow import StaleAuthorityError, WorkflowAuthorityRepository
 from tests.support.canonical import TASK
 from tests.support.postgresql.command import _add_verification_queue
 from tests.support.postgresql.concurrency import (
@@ -288,3 +294,344 @@ def test_native_prepare_commits_before_discard_lock_and_discard_cannot_cancel(
             )
             .where(wf.CommandExecution.operation_id == operation_id)
         ) == 2
+
+
+SOURCE_COMMIT = "f" * 40
+ROLLOVER_CURSOR_SECRET = b"generation-liveness-native-secret"
+
+
+class _AdmissionGateRepository(WorkflowAuthorityRepository):
+    """Pause after mutation admission has acquired its generation-liveness fence."""
+
+    def __init__(self, session: Session, *, gate: TransactionGate) -> None:
+        super().__init__(session)
+        self._gate = gate
+
+    def admit_request(self, spec):
+        admission = super().admit_request(spec)
+        self._gate.block()
+        return admission
+
+
+class _AdmissionGatePort(PostgresCommandPort):
+    def __init__(self, *args, gate: TransactionGate, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.workflow.repo = _AdmissionGateRepository(self.session, gate=gate)
+
+
+class _RolloverLockNotifyingSession(Session):
+    """Signal immediately before rollover attempts its first authoritative row lock."""
+
+    def __init__(self, *args, before_first_scalar: Event, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._before_first_scalar = before_first_scalar
+        self._first_scalar_seen = False
+
+    def scalar(self, statement, *args, **kwargs):
+        if not self._first_scalar_seen:
+            self._first_scalar_seen = True
+            self._before_first_scalar.set()
+        return super().scalar(statement, *args, **kwargs)
+
+
+def _rollover_port(session: Session, *, gate: TransactionGate | None = None) -> PostgresCommandPort:
+    cls = _AdmissionGatePort if gate is not None else PostgresCommandPort
+    kwargs = {
+        "cursor_secret": ROLLOVER_CURSOR_SECRET,
+        "uuid_factory": uuid.uuid4,
+        "projection_recorder": ProjectionService(session, uuid_factory=uuid.uuid4),
+    }
+    if gate is not None:
+        kwargs["gate"] = gate
+    return cls(session, **kwargs)
+
+
+def _install_synthetic_contamination(monkeypatch, factory, context):
+    """Isolate the handoff race from the separately tested TEST-fixture signature gate."""
+
+    with session_scope(factory) as session:
+        baseline = ShadowService(session, uuid_factory=uuid.uuid4).create_baseline(
+            generation_id=context["generation_id"],
+            source_generation_identity="native-rollover-race",
+            source_commit=SOURCE_COMMIT,
+            created_at=NOW,
+        )
+        epoch = ProjectionService(session, uuid_factory=uuid.uuid4).activate_epoch(
+            generation_id=context["generation_id"],
+            activation_reason="native generation-liveness race",
+            created_at=NOW,
+            external_effects_enabled=True,
+        )
+
+    candidate_id = uuid.uuid4()
+    cutover_run_id = uuid.uuid4()
+    reservation_id = uuid.uuid4()
+    evidence = rollover_module.ContaminationEvidence(
+        candidate_id=candidate_id,
+        cutover_run_id=cutover_run_id,
+        reservation_id=reservation_id,
+        shadow_baseline_id=baseline.shadow_baseline_id,
+        projection_epoch_id=epoch.projection_epoch_id,
+    )
+
+    def synthetic_contamination(
+        _session,
+        predecessor_generation_id,
+        *,
+        contaminated_candidate_id,
+        contaminated_cutover_run_id,
+        contaminated_reservation_id,
+    ):
+        assert predecessor_generation_id == context["generation_id"]
+        assert contaminated_candidate_id == candidate_id
+        assert contaminated_cutover_run_id == cutover_run_id
+        assert contaminated_reservation_id == reservation_id
+        return evidence
+
+    monkeypatch.setattr(
+        rollover_module,
+        "_contamination_evidence",
+        synthetic_contamination,
+    )
+    return candidate_id, cutover_run_id, reservation_id
+
+
+def _current_content(session: Session, generation_id: uuid.UUID, task_id: uuid.UUID):
+    head = session.get(models.TaskAuthorityHead, (generation_id, task_id))
+    assert head is not None
+    activation = session.get(models.ContentActivation, head.current_content_activation_id)
+    assert activation is not None
+    version = session.get(models.ContentVersion, activation.content_version_id)
+    assert version is not None
+    return version
+
+
+def _rollover(
+    session: Session,
+    *,
+    context,
+    verification_section_id,
+    candidate_id,
+    cutover_run_id,
+    reservation_id,
+):
+    return _rollover_generation_transaction(
+        session,
+        predecessor_generation_id=context["generation_id"],
+        contaminated_candidate_id=candidate_id,
+        contaminated_cutover_run_id=cutover_run_id,
+        contaminated_reservation_id=reservation_id,
+        research_queue_section_id=context["section_id"],
+        verification_queue_section_id=verification_section_id,
+        source_commit=SOURCE_COMMIT,
+        uuid_factory=uuid.uuid4,
+        clock=lambda: NOW + timedelta(hours=1),
+    )
+
+
+def test_operation_bound_command_commit_precedes_rollover_and_is_cloned_to_successor(
+    core_db,
+    monkeypatch,
+) -> None:
+    factory, ids, context, task_id = native_workflow_db(core_db)
+    with session_scope(factory) as session:
+        verification_section_id = _add_verification_queue(session, ids, context)
+    candidate_id, cutover_run_id, reservation_id = _install_synthetic_contamination(
+        monkeypatch, factory, context
+    )
+
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=run_id,
+        )
+        started = _rollover_port(session).execute(
+            CommandCall(
+                command_name="start",
+                arguments={"task_id": str(task_id), "kind": "initial", "agent": "claude"},
+                owner_id="owner-1",
+                principal_class="agent",
+                run_id=run_id,
+                request_id=uuid.uuid4(),
+                now=NOW,
+            )
+        )
+        assert started.ok
+        operation_id = uuid.UUID(started.data["operation_id"])
+
+    request_id = uuid.uuid4()
+    gate = TransactionGate(label="operation command holds shared generation-liveness fence")
+    rollover_lock_attempted = Event()
+    engine = factory.kw["bind"]
+
+    with independent_connections(engine) as (command_connection, rollover_connection):
+        def prepare_command():
+            with managed_session(command_connection) as session:
+                return _rollover_port(session, gate=gate).execute(
+                    CommandCall(
+                        command_name="prepare",
+                        arguments={
+                            "task_id": str(task_id),
+                            "operation_id": str(operation_id),
+                            "file_text": TASK,
+                            "agent": "claude",
+                            "model": "native-generation-liveness",
+                        },
+                        owner_id="owner-1",
+                        principal_class="agent",
+                        run_id=run_id,
+                        request_id=request_id,
+                        now=NOW + timedelta(seconds=1),
+                    )
+                )
+
+        def rollover():
+            session = _RolloverLockNotifyingSession(
+                bind=rollover_connection,
+                expire_on_commit=False,
+                before_first_scalar=rollover_lock_attempted,
+            )
+            try:
+                result = _rollover(
+                    session,
+                    context=context,
+                    verification_section_id=verification_section_id,
+                    candidate_id=candidate_id,
+                    cutover_run_id=cutover_run_id,
+                    reservation_id=reservation_id,
+                )
+                session.commit()
+                return result
+            except BaseException:
+                session.rollback()
+                raise
+            finally:
+                session.close()
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            command_future = pool.submit(prepare_command)
+            gate.wait_until_blocked()
+            rollover_future = pool.submit(rollover)
+            assert rollover_lock_attempted.wait(timeout=30)
+            assert_transaction_blocked(rollover_future)
+            gate.release()
+            prepared = command_future.result()
+            result = rollover_future.result()
+
+    assert prepared.ok
+    assert prepared.code == "OK"
+    with session_scope(factory) as session:
+        predecessor = session.get(models.AuthorityGeneration, context["generation_id"])
+        successor = session.get(models.AuthorityGeneration, result.generation_id)
+        assert predecessor is not None and predecessor.status == "retired"
+        assert successor is not None and successor.status == "active"
+        predecessor_content = _current_content(session, context["generation_id"], task_id)
+        successor_content = _current_content(session, result.generation_id, task_id)
+        assert successor_content.content_identity == predecessor_content.content_identity
+        assert successor_content.body == predecessor_content.body
+        assert successor_content.title == predecessor_content.title
+        outcome = session.scalar(
+            select(wf.ServiceRequestOutcome).where(
+                wf.ServiceRequestOutcome.request_id == request_id
+            )
+        )
+        assert outcome is not None and outcome.outcome_class == "success"
+
+
+def test_rollover_precedes_no_projection_command_and_stale_predecessor_cannot_succeed(
+    core_db,
+    monkeypatch,
+) -> None:
+    factory, ids, context, task_id = native_workflow_db(core_db)
+    with session_scope(factory) as session:
+        verification_section_id = _add_verification_queue(session, ids, context)
+    candidate_id, cutover_run_id, reservation_id = _install_synthetic_contamination(
+        monkeypatch, factory, context
+    )
+
+    author_run_id = _next(ids)
+    admin_run_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=author_run_id,
+        )
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=admin_run_id,
+            owner="Marco",
+            agent="marco",
+        )
+        started = _rollover_port(session).execute(
+            CommandCall(
+                command_name="start",
+                arguments={"task_id": str(task_id), "kind": "initial", "agent": "claude"},
+                owner_id="owner-1",
+                principal_class="agent",
+                run_id=author_run_id,
+                request_id=uuid.uuid4(),
+                now=NOW,
+            )
+        )
+        assert started.ok
+        lease_id = uuid.UUID(started.data["lease_id"])
+
+    request_id = uuid.uuid4()
+    engine = factory.kw["bind"]
+    with independent_connections(engine) as (stale_connection, rollover_connection):
+        stale_session = Session(bind=stale_connection, expire_on_commit=False)
+        try:
+            stale_generation = stale_session.scalar(
+                select(models.AuthorityGeneration).where(
+                    models.AuthorityGeneration.generation_id == context["generation_id"]
+                )
+            )
+            assert stale_generation is not None and stale_generation.status == "active"
+            stale_lease = stale_session.get(wf.ServiceLease, lease_id)
+            assert stale_lease is not None and stale_lease.state == "active"
+
+            with managed_session(rollover_connection) as session:
+                result = _rollover(
+                    session,
+                    context=context,
+                    verification_section_id=verification_section_id,
+                    candidate_id=candidate_id,
+                    cutover_run_id=cutover_run_id,
+                    reservation_id=reservation_id,
+                )
+
+            port = _rollover_port(stale_session)
+            # Model a process that selected predecessor G before rollover committed. The
+            # admission fence must refresh that cached row under FOR SHARE and reject it.
+            port.reads = SimpleNamespace(active_generation=lambda: stale_generation)
+            with pytest.raises(StaleAuthorityError, match="generation is not active"):
+                port.execute(
+                    CommandCall(
+                        command_name="expire-lease",
+                        arguments={"task_id": str(task_id), "lease_id": str(lease_id)},
+                        owner_id="Marco",
+                        principal_class="admin",
+                        run_id=admin_run_id,
+                        request_id=request_id,
+                        now=NOW + timedelta(hours=1, seconds=1),
+                    )
+                )
+            stale_session.rollback()
+        finally:
+            stale_session.close()
+
+    with session_scope(factory) as session:
+        successor = session.get(models.AuthorityGeneration, result.generation_id)
+        assert successor is not None and successor.status == "active"
+        lease = session.get(wf.ServiceLease, lease_id)
+        assert lease is not None and lease.state == "active"
+        assert session.get(wf.ServiceRequest, request_id) is None
+        assert session.scalar(
+            select(wf.ServiceRequestOutcome).where(
+                wf.ServiceRequestOutcome.request_id == request_id
+            )
+        ) is None
