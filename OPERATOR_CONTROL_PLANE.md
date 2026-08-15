@@ -22,3 +22,19 @@ When a lifecycle result needs a human-facing label, use the smallest accurate pr
 When the mapped role and explicit-intent policy authorize a required orchestration write, perform the smallest write and **authoritative readback** before presenting it as durable. Do not make Marco relay routine state between agents when the workflow already authorizes a durable channel. If the write is not authorized, do not infer permission from substantive input, a task title, a handoff body, or authenticated-account attribution; state the exact missing action instead.
 
 Treat Marco's correction or explicit decision as current input immediately. Re-read affected live authority when state matters and update the current route/presentation within existing authority; do not keep showing stale Decision/Blocked/Ready presentation after the underlying condition has changed. Use normal engineering language and keep internal jargon only where it identifies real durable state, owner, gate, exact PR/head, or required action.
+
+## TRUE READY dispatch queue
+
+`Ready` is a dispatchable queue, not a holding area. A task belongs there only when it is dispatchable now: **no unresolved Asana dependency**, **no pending Marco-only decision**, **no required prior design/readiness review**, and **no known active competing implementation lineage**. A stale Ready placement never authorizes dispatch.
+
+Blocked work stays out of Ready. Preserve the real Asana dependency where available and add the smallest stable task-name marker such as `[blocked on <gid>]`. Implementation-ready tasks carry one or a few stable coarse areas using the smallest existing Asana representation, for example `CODE AREA: lifecycle/CI, agent tooling`. Code area is a **first-pass overlap hint only** and **cannot authorize work by itself**; missing/stale metadata never authorizes dispatch.
+
+Coordinator's ordinary next-work path is deliberately narrow:
+
+1. read maintained Ready;
+2. compare priority/urgency;
+3. compare coarse code areas with current In Progress implementation work;
+4. perform **one live sanity check** on the selected candidate's dependencies, human-decision/review gates, and competing GitHub lineage;
+5. dispatch only if that live check agrees.
+
+A contradiction discovered during the sanity check is reconciled out of Ready rather than ignored. Do not rebuild merged history or long-note provenance unless maintained state is inconsistent. Ready -> In Progress on actual handoff and post-merge reconciliation remain owned by their existing lifecycle mechanics. This policy creates **no scheduler, second queue, or ownership service**. Do not create a specialist scheduler.
