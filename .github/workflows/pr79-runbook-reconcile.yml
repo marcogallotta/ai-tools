@@ -15,30 +15,33 @@ jobs:
           fetch-depth: 0
       - name: Reconcile testing runbook mechanically
         run: |
+          git show origin/main:dish/docs/testing.md > dish/docs/testing.md
           python3 - <<'PY'
           import json
           from pathlib import Path
-
           p = Path('dish/docs/testing.md')
           s = p.read_text()
-          old = '''Certification fails when zero tests execute,
-          when inventory identities drift, when setup errors occur, or when a required test skips without an
-          explicit `--waive-skip NODEID=REASON`. The report includes dialect, driver, database, native server
-          version, selected/executed/passed/failed/error/skipped/unavailable counts, duration, and exact node
-          IDs.'''.replace('          ', '')
-          new = '''Certification fails when zero tests execute,
-          when inventory identities drift, when setup errors occur, when a required test skips without a
-          matching structured `--waive-skip` JSON object, or when a configured waiver is unused, malformed,
-          unknown, review-due/expired, or bound to a different skip-reason signature. Each waiver carries the
-          exact node ID, SHA-256 of the expected pytest skip reason, owning Asana task GID, review-by date, and
-          a separate human justification. The signature hashes only the reason text (not pytest's source
-          location/`Skipped:` wrapper), so explanatory prose cannot silently stand in for the observed skip
-          condition. The report includes matched waiver evidence, observed reason signatures, mismatches,
-          unused waivers, dialect, driver, database, native server version, counts, duration, and exact node IDs.'''.replace('          ', '')
+          old = (
+              'Certification fails when zero tests execute,\n'
+              'when inventory identities drift, when setup errors occur, or when a required test skips without an\n'
+              'explicit `--waive-skip NODEID=REASON`. The report includes dialect, driver, database, native server\n'
+              'version, selected/executed/passed/failed/error/skipped/unavailable counts, duration, and exact node\n'
+              'IDs.'
+          )
+          new = (
+              'Certification fails when zero tests execute,\n'
+              'when inventory identities drift, when setup errors occur, when a required test skips without a\n'
+              'matching structured `--waive-skip` JSON object, or when a configured waiver is unused, malformed,\n'
+              'unknown, review-due/expired, or bound to a different skip-reason signature. Each waiver carries the\n'
+              'exact node ID, SHA-256 of the expected pytest skip reason, owning Asana task GID, review-by date, and\n'
+              'a separate human justification. The signature hashes only the reason text (not pytest\'s source\n'
+              'location/`Skipped:` wrapper), so explanatory prose cannot silently stand in for the observed skip\n'
+              'condition. The report includes matched waiver evidence, observed reason signatures, mismatches,\n'
+              'unused waivers, dialect, driver, database, native server version, counts, duration, and exact node IDs.'
+          )
           if old not in s:
-              raise SystemExit('legacy waiver-description block not found')
+              raise SystemExit('legacy waiver-description block not found on current main')
           s = s.replace(old, new, 1)
-
           marker = 'All four skip (with a reason) rather than fail when that variable is\nunset:\n\n```sh'
           replacement = (
               'All four skip (with a reason) rather than fail when that variable is\nunset:\n\n'
@@ -46,38 +49,13 @@ jobs:
               'waivers; a reason change requires a new reviewed signature rather than reusing the node ID:\n\n```sh'
           )
           if marker not in s:
-              raise SystemExit('waiver-example marker not found')
+              raise SystemExit('waiver-example marker not found on current main')
           s = s.replace(marker, replacement, 1)
-
           records = [
-              {
-                  'nodeid': 'tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_database_disconnect_rolls_back_then_recovers_once',
-                  'expected_reason_sha256': 'a73321063eef94cb68f134ff85b48a2a1eda77a2e3d60a5893a40dc8b288ac1b',
-                  'owner_task_gid': '1217428310522281',
-                  'review_by': '2026-09-07',
-                  'justification': 'bare native certification lacks shared TEST Compose control; revisit before enabling external effects',
-              },
-              {
-                  'nodeid': 'tests/postgresql/native/test_process_failure_command.py::test_command_process_disconnect_before_commit_fails_closed_and_recovers',
-                  'expected_reason_sha256': 'b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1',
-                  'owner_task_gid': '1217428310522281',
-                  'review_by': '2026-09-07',
-                  'justification': 'covered by dish-pg-process-failure; bare native certification lacks Compose control',
-              },
-              {
-                  'nodeid': 'tests/postgresql/native/test_process_failure_disconnect.py::test_projection_worker_fails_clearly_across_postgresql_disconnect',
-                  'expected_reason_sha256': 'b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1',
-                  'owner_task_gid': '1217428310522281',
-                  'review_by': '2026-09-07',
-                  'justification': 'covered by dish-pg-process-failure; bare native certification lacks Compose control',
-              },
-              {
-                  'nodeid': 'tests/postgresql/native/test_process_failure_disconnect.py::test_reconciliation_worker_writes_nothing_while_postgresql_is_down',
-                  'expected_reason_sha256': 'b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1',
-                  'owner_task_gid': '1217428310522281',
-                  'review_by': '2026-09-07',
-                  'justification': 'covered by dish-pg-process-failure; bare native certification lacks Compose control',
-              },
+              {'nodeid':'tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_database_disconnect_rolls_back_then_recovers_once','expected_reason_sha256':'a73321063eef94cb68f134ff85b48a2a1eda77a2e3d60a5893a40dc8b288ac1b','owner_task_gid':'1217428310522281','review_by':'2026-09-07','justification':'bare native certification lacks shared TEST Compose control; revisit before enabling external effects'},
+              {'nodeid':'tests/postgresql/native/test_process_failure_command.py::test_command_process_disconnect_before_commit_fails_closed_and_recovers','expected_reason_sha256':'b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1','owner_task_gid':'1217428310522281','review_by':'2026-09-07','justification':'covered by dish-pg-process-failure; bare native certification lacks Compose control'},
+              {'nodeid':'tests/postgresql/native/test_process_failure_disconnect.py::test_projection_worker_fails_clearly_across_postgresql_disconnect','expected_reason_sha256':'b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1','owner_task_gid':'1217428310522281','review_by':'2026-09-07','justification':'covered by dish-pg-process-failure; bare native certification lacks Compose control'},
+              {'nodeid':'tests/postgresql/native/test_process_failure_disconnect.py::test_reconciliation_worker_writes_nothing_while_postgresql_is_down','expected_reason_sha256':'b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1','owner_task_gid':'1217428310522281','review_by':'2026-09-07','justification':'covered by dish-pg-process-failure; bare native certification lacks Compose control'},
           ]
           lines = s.splitlines()
           indexes = [i for i, line in enumerate(lines) if line.startswith('--waive-skip "tests/postgresql/native/')]
@@ -85,7 +63,7 @@ jobs:
               raise SystemExit(f'expected four contiguous legacy waiver lines, found {indexes}')
           rendered = []
           for i, record in enumerate(records):
-              suffix = ' \\' if i < len(records) - 1 else ''
+              suffix = ' \\' if i < 3 else ''
               rendered.append("--waive-skip '" + json.dumps(record, separators=(',', ':')) + "'" + suffix)
           lines[indexes[0]:indexes[-1] + 1] = rendered
           s = '\n'.join(lines) + '\n'
