@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import os
 from pathlib import Path
 import runpy
 import uuid
@@ -24,6 +25,7 @@ ROOT = Path(__file__).resolve().parents[3]
 RESET = ROOT / "scripts/dish-pg-production-reset"
 RESET_ID = "11111111-1111-4111-8111-111111111111"
 OTHER_RESET_ID = "22222222-2222-4222-8222-222222222222"
+RESET_POSTGRESQL_DSN_ENV = "DISH_TEST_POSTGRESQL_RESET_DSN"
 
 
 def _q(value: str) -> str:
@@ -33,16 +35,43 @@ def _q(value: str) -> str:
 @contextmanager
 def _native_reset_fixture(base):
     base_url = make_url(base.sqlalchemy_url)
+    reset_dsn = os.environ.get(RESET_POSTGRESQL_DSN_ENV)
+    if not reset_dsn:
+        pytest.skip(
+            f"requires {RESET_POSTGRESQL_DSN_ENV} for the disposable superuser reset owner"
+        )
+    reset_url = make_url(reset_dsn)
+    if (reset_url.host, reset_url.port, reset_url.database) != (
+        base_url.host,
+        base_url.port,
+        base_url.database,
+    ):
+        pytest.skip(
+            f"requires {RESET_POSTGRESQL_DSN_ENV} to target the same isolated PostgreSQL database"
+        )
     suffix = uuid.uuid4().hex[:8]
     database_name = f"dish_reset_{suffix}"
     observer = f"dish_observer_{suffix}"
     writer = f"dish_writer_{suffix}"
-    admin_engine = base.create_engine()
+    admin_engine = create_engine(reset_url)
     target_engine = None
     try:
         with admin_engine.connect() as raw_connection:
             connection = raw_connection.execution_options(isolation_level="AUTOCOMMIT")
-            owner = str(connection.execute(text("SELECT current_user")).scalar_one())
+            identity = connection.execute(
+                text(
+                    """
+                    SELECT current_user AS role, rolsuper AS superuser
+                    FROM pg_roles
+                    WHERE rolname = current_user
+                    """
+                )
+            ).mappings().one()
+            owner = str(identity["role"])
+            if not bool(identity["superuser"]):
+                pytest.skip(
+                    f"requires {RESET_POSTGRESQL_DSN_ENV} to connect as a PostgreSQL superuser"
+                )
             connection.exec_driver_sql(f"CREATE ROLE {_q(observer)} NOLOGIN")
             connection.exec_driver_sql(f"CREATE ROLE {_q(writer)} NOLOGIN")
             connection.exec_driver_sql(
