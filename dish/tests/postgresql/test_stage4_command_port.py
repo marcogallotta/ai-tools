@@ -124,28 +124,86 @@ def _ensure_migration_operation(port, ids, context, task_id):
     return execution, operation
 
 
-def test_migrate_does_not_reuse_unrelated_open_operation(workflow_db) -> None:
+def test_migrate_reports_active_unrelated_open_operation_conflict(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db
     with session_scope(factory) as session:
         unrelated = _create_open_operation(
             session, ids, context, task_id, kind="initial"
         )
-        stale_generation_id = _move_operation_to_retired_generation(
-            session, ids, unrelated
+        unrelated_before = (
+            unrelated.lifecycle,
+            unrelated.phase,
+            unrelated.operation_revision,
+            list(unrelated.persisted_actions),
+            unrelated.creation_execution_id,
+        )
+        migrate_run = _next(ids)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=migrate_run,
+            owner="marco-admin",
+            agent="marco",
         )
         port = _port(session, ids)
 
-        execution, operation = _ensure_migration_operation(
-            port, ids, context, task_id
+        result = port.execute(
+            _call(
+                "migrate",
+                run_id=migrate_run,
+                request_id=_next(ids),
+                principal="admin",
+                owner="marco-admin",
+                arguments={"task_id": str(task_id)},
+            )
         )
 
-        assert operation.operation_id != unrelated.operation_id
-        assert operation.kind == "migration"
-        assert operation.generation_id == context["generation_id"]
-        assert unrelated.generation_id == stale_generation_id
-        fence = session.get(wf.OperationExecutionFence, execution.execution_id)
-        assert fence is not None
-        assert fence.operation_id == operation.operation_id
+        assert not result.ok
+        assert result.code == "CONFLICT"
+        assert result.http_status == 409
+        assert result.data == {
+            "message": "task already has an open operation",
+            "blocking_operation_id": str(unrelated.operation_id),
+            "blocking_operation_kind": "initial",
+            "blocking_operation_phase": "prepare_required",
+        }
+        session.refresh(unrelated)
+        assert (
+            unrelated.lifecycle,
+            unrelated.phase,
+            unrelated.operation_revision,
+            list(unrelated.persisted_actions),
+            unrelated.creation_execution_id,
+        ) == unrelated_before
+        active_open = list(
+            session.scalars(
+                select(wf.WorkflowOperation).where(
+                    wf.WorkflowOperation.generation_id == context["generation_id"],
+                    wf.WorkflowOperation.task_id == task_id,
+                    wf.WorkflowOperation.lifecycle == "open",
+                )
+            )
+        )
+        assert [operation.operation_id for operation in active_open] == [
+            unrelated.operation_id
+        ]
+        migrate_execution = session.scalar(
+            select(wf.CommandExecution)
+            .where(
+                wf.CommandExecution.generation_id == context["generation_id"],
+                wf.CommandExecution.task_id == task_id,
+                wf.CommandExecution.command_name == "migrate",
+                wf.CommandExecution.execution_id != unrelated.creation_execution_id,
+            )
+            .order_by(wf.CommandExecution.admitted_at.desc())
+            .limit(1)
+        )
+        assert migrate_execution is not None
+        assert migrate_execution.operation_id is None
+        assert (
+            session.get(wf.OperationExecutionFence, migrate_execution.execution_id)
+            is None
+        )
 
 
 def test_migrate_ignores_stale_generation_migration_operation(workflow_db) -> None:

@@ -4307,7 +4307,6 @@ class PostgresCommandPort:
         statement = select(wf.WorkflowOperation).where(
             wf.WorkflowOperation.generation_id == generation.generation_id,
             wf.WorkflowOperation.task_id == task.task_id,
-            wf.WorkflowOperation.kind == "migration",
             wf.WorkflowOperation.lifecycle == "open",
         )
         if self.session.get_bind().dialect.name == "postgresql":
@@ -4315,6 +4314,16 @@ class PostgresCommandPort:
         operation = self.session.scalar(
             statement.execution_options(populate_existing=True)
         )
+        if operation is not None and operation.kind != "migration":
+            raise CommandRuleError(
+                "CONFLICT",
+                "task already has an open operation",
+                data={
+                    "blocking_operation_id": str(operation.operation_id),
+                    "blocking_operation_kind": operation.kind,
+                    "blocking_operation_phase": operation.phase,
+                },
+            )
         if operation is None:
             operation = self.workflow.create_operation(
                 operation_id=self.uuid_factory(),
