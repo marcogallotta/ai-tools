@@ -540,7 +540,7 @@
     },
     {
       "id": "live-authority",
-      "text": "Before current-state, ownership, process, dispatch, or completion conclusions, read relevant live GitHub and Asana authority; do not rely on stale remembered/user-reported state.",
+      "text": "Verified exact-current-main `repository-bundle-<SHA>` precedes substantial work; tiny lookups exempt. Context only; current-state/ownership/process/dispatch/completion require live GitHub/Asana reads.",
       "impact": "breaking",
       "action_boundaries": [
         "*"

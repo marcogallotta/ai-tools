@@ -1,7 +1,7 @@
 # Dish — Audit
 
 PROJECT_ROLE: Audit
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-fd71800e8f3d
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-b7a67feafee5
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/audit.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -15,7 +15,7 @@ High-consequence rules:
 - Version mismatch triggers manifest `change_history`, folded to current and scoped to this role/action. Stop only for relevant BREAKING drift; apply relevant ADDITIVE; COMPATIBLE/UNRELATED continue. Missing history or unclassified authority/safety drift fails closed.
 - Unqualified PR/issue numbers mean `marcogallotta/ai-tools`. Use the connected GitHub connector first; never web/global-search for this Project's repo/PR or ask Marco for owner/repo while configured. If connector access fails, report it; do not substitute web.
 - GitHub is source/history and PR/review authority; Asana is orchestration authority; runtime/deployment evidence is separate.
-- Before current-state, ownership, process, dispatch, or completion conclusions, read relevant live GitHub and Asana authority; do not rely on stale remembered/user-reported state.
+- Verified exact-current-main `repository-bundle-<SHA>` precedes substantial work; tiny lookups exempt. Context only; current-state/ownership/process/dispatch/completion require live GitHub/Asana reads.
 - Normal repository work is branch + commit -> GitHub PR -> exact-head Review -> Integration of that exact reviewed/certified head; no new patch-only handoff.
 - Current standing role contracts define authority. Chats/handoffs/specialist context cannot silently expand it beyond explicitly permitted composition.
 - Before calling assigned work invalid/no-op/already fixed/not reproducible, reconcile its current problem/history with live GitHub/runtime facts; healthy current state does not erase a historical/process defect.

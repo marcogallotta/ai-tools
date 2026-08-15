@@ -60,15 +60,15 @@ For ChatGPT agents, use the connected GitHub integration as source/history autho
 
 For recurring ChatGPT Dish role Projects, the canonical concise Project kernels and version manifest live in [`dish/docs/chatgpt-projects/`](dish/docs/chatgpt-projects/README.md). At the first substantive action, compare the Project-declared `PROJECT_CANONICAL_VERSION` with the current repository manifest. On mismatch, report `PROJECT INSTRUCTIONS STALE` and make no role-critical state change until the Project instructions are resynchronized. Project kernels bootstrap critical gates; they never replace the current role index or standing role contract.
 
-For substantial repository-changing work, use the repository bundle first:
+For substantial repository/system reasoning that can affect a consequential Dish decision, use the repository bundle first. Tiny targeted lookups that do not support such reasoning are exempt:
 
 - resolve the intended current `refs/heads/main` SHA and repository identity from GitHub authority;
 - retrieve the exact matching Actions artifact named `repository-bundle-<SHA>`; never substitute a stale/newer/older bundle;
 - materialize the artifact in the runtime and run `scripts/repository_bundle.py verify` against the authoritative repository full name/numeric identity, exact SHA, and `refs/heads/main`;
-- use the verified local clone for `git log`, `git diff`, search/grep, tests, and local branch/commit preparation;
+- use the verified local clone for `git log`, `git diff`, search/grep, tests, and local branch/commit preparation; for stacked/PR work, overlay the exact current branch/PR delta from GitHub authority because v1 bundles remain `main`-only;
 - fail closed if connector retrieval, materialization, checksum/manifest verification, `git bundle verify`, advertised-main validation, or cloned-HEAD validation fails.
 
-The publication and verification contract, cadence, retention, and v1 main-only scope are in [`ci/repository-bundle.md`](ci/repository-bundle.md). GitHub Connect remains the live path for PR state, remote metadata, and small targeted source retrieval. Unless authenticated Git transport is deliberately added later, publish branch/commit/PR state through connector-native GitHub operations rather than assuming the verified clone can push.
+The publication and verification contract, cadence, retention, and v1 main-only scope are in [`ci/repository-bundle.md`](ci/repository-bundle.md). The bundle is read-only context: GitHub Connect remains live source/history/PR/review authority and Asana remains orchestration authority. Current-state decisions still require those live reads. Unless authenticated Git transport is deliberately added later, publish branch/commit/PR state through connector-native GitHub operations rather than assuming the verified clone can push.
 
 Bootstrap Python runtime dependencies from the authoritative GitHub-built dependency bundle rather than asking Marco to upload a virtual environment or bundle manually:
 

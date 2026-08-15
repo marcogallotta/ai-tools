@@ -1,5 +1,5 @@
 {
-  "canonical_version": "dish-chatgpt-projects-v2-fd71800e8f3d",
+  "canonical_version": "dish-chatgpt-projects-v2-b7a67feafee5",
   "change_history": [
     {
       "changes": [
@@ -1133,6 +1133,105 @@
       },
       "from_version": "dish-chatgpt-projects-v2-097f8bf032be",
       "to_version": "dish-chatgpt-projects-v2-fd71800e8f3d"
+    },
+    {
+      "changes": [
+        {
+          "action_boundaries": [
+            "*"
+          ],
+          "impact": "breaking",
+          "roles": [
+            "*"
+          ],
+          "rule_id": "live-authority",
+          "surface": "authority"
+        }
+      ],
+      "from_renderer_fingerprint": "a158fed8ef045a065b005dd92e4ecb6e5cafeeaf338f341b3e8d0e2e655f8179",
+      "from_rule_fingerprints": {
+        "_roles": {
+          "audit": {
+            "audit-asana-disposition": "f00baca370ae243b2275c6c23315ab196b076fed960057af039abee3f8c2ede0",
+            "audit-authority-boundary": "aac50205ed3c8ac26ddfd1cd0e32184ec28bb8db6c9921ba7452ad5fc1a5f8a1",
+            "audit-exact-baseline": "3a64235b443a09c07250c43499e23c13bcc7404331ba402844a17fa7b3ed5e18",
+            "audit-specialist-context": "1f18706d0812aac531f41e41d5fdd3dcfdd3cf6398d6c79d16e4cc579cc47354"
+          },
+          "coordinator": {
+            "coordinator-check-everything": "0be2ae58fa92d66a043a9144af16233ebbf816812860d041702dd8777be7d389",
+            "coordinator-live-scan": "c625e467bf8cdf9d13ce1e0770855ee2db08f53a99e4b74e0828cee507d674eb",
+            "coordinator-no-implementation-integration": "5131e28f10a1b08733234c64aee75e3fd34682c70cdd8132ca400455bda605da",
+            "durable-review-state": "b0aa4cd94b5a641f2b9628c589d3694b3922e0b119e233ebcfa2b3d014006777",
+            "repository-friction-capture": "67b82f85516f8a4de4012913248af3f20f44df0dd48b597e9b89286f2deafb08"
+          },
+          "development-workflow": {
+            "code-smell-debt-capture": "cc8d29a94eef8c1db388f6ba5842a9d76adfa42bcc59d6668a1a4d954dd85195",
+            "development-workflow-asana-design-review-state": "be6ebb3aae9be41e33df41022b32fab5b1c3c3e93eaa55a77027636136c93920",
+            "development-workflow-boundary": "ef4fcc9a2440b31e9f19cadebef916d2b839da1bbd7d4b371582f6a4efd057a5",
+            "development-workflow-concurrency-preflight": "2cd8c619f462c76ee0bb83bf6abc96585e184862b3724183e221e9891348d6c5",
+            "development-workflow-context-preload": "f3ea09bf155003a1d28ff79aa8777e8f27808131217693cd742aa747f9c748fb",
+            "development-workflow-friction-triage": "2b299ff65e651dc63c935cf1cf073db3617d71fc319d079c2d97727326348587",
+            "development-workflow-live-lane": "f13db4f466006447f032facec1033f0c44969b89dd7959123420c244dbcdda58",
+            "durable-review-state": "b0aa4cd94b5a641f2b9628c589d3694b3922e0b119e233ebcfa2b3d014006777",
+            "repository-friction-capture": "67b82f85516f8a4de4012913248af3f20f44df0dd48b597e9b89286f2deafb08"
+          },
+          "implementation": {
+            "code-smell-debt-capture": "cc8d29a94eef8c1db388f6ba5842a9d76adfa42bcc59d6668a1a4d954dd85195",
+            "implementation-durable-git": "7cd366f819c38c096be1f392d02c78ae565ed4ef272d2455ca729ee8dbd0501d",
+            "implementation-no-self-review-integration": "63cb01f253e328eb323d029f8be7a12fa176fe9c9b9dfcb067b5696cd8bc4f6b",
+            "repository-friction-capture": "67b82f85516f8a4de4012913248af3f20f44df0dd48b597e9b89286f2deafb08"
+          },
+          "integration": {
+            "code-smell-debt-capture": "cc8d29a94eef8c1db388f6ba5842a9d76adfa42bcc59d6668a1a4d954dd85195",
+            "integration-mechanical-only": "d1d607538034d2cf5cda9b5428b6d4ab1a4253a0156def493059f46df1511588",
+            "integration-reviewed-head": "9768f9e6f7e7f636d882c1aa084b3cd652f1547c45c65b191f160608e1014e29",
+            "repository-friction-capture": "67b82f85516f8a4de4012913248af3f20f44df0dd48b597e9b89286f2deafb08"
+          },
+          "postgresql-dark-launch": {
+            "code-smell-debt-capture": "cc8d29a94eef8c1db388f6ba5842a9d76adfa42bcc59d6668a1a4d954dd85195",
+            "postgresql-domain-boundary": "d4f75c442e90a93317aea2d623c74c241b7a1dd1ec1401dadef612fcb8b23433",
+            "postgresql-live-lane": "ec8d50a7c189d7409d0c88e6326549a299ad59fd9e4363fc340a13b092236995",
+            "repository-friction-capture": "67b82f85516f8a4de4012913248af3f20f44df0dd48b597e9b89286f2deafb08"
+          },
+          "review": {
+            "code-smell-debt-capture": "cc8d29a94eef8c1db388f6ba5842a9d76adfa42bcc59d6668a1a4d954dd85195",
+            "repository-friction-capture": "67b82f85516f8a4de4012913248af3f20f44df0dd48b597e9b89286f2deafb08",
+            "review-action-handoff": "e2ea45461bb259b38dab8b943f3c8640fa088161c28e57318d43a684fcd80212",
+            "review-exact-head": "7a148644e6376a9b39ddd0d19ec448f6b880f0dc35372d507fa0276d9657e309",
+            "review-formal-comment": "8dbf6ee167c026d9187336f1f51d3a8ea22ea2a66e36477686693cf66e5b72bb",
+            "review-host-role-routing": "9418ea32970d1fa8082f5dba87cb348da3daf2f1e525fd4f940b48d4c0df75a4",
+            "review-integration-boundary": "6912fc2a53c7139a00255b237da19264e8795d46e95060dc31e4d35755d2c2b2",
+            "review-no-fix": "79c3d749ed5450e948a5251ed9d6738237a05a1236fa4c77fdfba4de076b0404",
+            "review-repository-context": "14bf874b84158ee54e952124d1ae302df3dc0c37cc84a8e1005d3bde2a97bfc6"
+          },
+          "workflow": {
+            "code-smell-debt-capture": "cc8d29a94eef8c1db388f6ba5842a9d76adfa42bcc59d6668a1a4d954dd85195",
+            "repository-friction-capture": "67b82f85516f8a4de4012913248af3f20f44df0dd48b597e9b89286f2deafb08",
+            "workflow-domain-boundary": "4c8ac1be546820eada644836a7b3cf2a9cc6df1130a18c6a93ce9b566482e2b8",
+            "workflow-live-lane": "a2df0dace4dea74e09b3b75b8d73bbf1b18d0a41d4c5cebfd32245821a96d6f0"
+          }
+        },
+        "_shared": {
+          "authenticated-account-provenance": "cdc368b40fa19225dfc14c2d9d3c75ecf16874e568e3ee56e10a1587ae908f78",
+          "authority-separation": "0f8072fef1258740916ae05dc2bd74a40464c67a36833db4225ec76b14ebc848",
+          "canonical-version-gate": "c44632c3ee338c674aaf1ffbab78fb42a85fd34727fc730ca96bea36233420fb",
+          "decision-provenance": "9ea0af54fe8894aa8b55bd7a7b3b17fa9bbccac1483510597bc4a1508ca95a6f",
+          "fail-closed-authority": "a20e3adfab2d4be859460eaa2ae3c8e1ce79071b46732b4a328f1f3bc9a1aebb",
+          "fallback-surface": "399b3a88d3a3bef3bba2a86a51e86efdb0d2e8c336b189aebe83648f3b3bf2ec",
+          "five-whys-shared-method": "b9d5d4f1488c6f12ab43d39094eeb2cbe5aa87db88e1c6dfd36650bfb9127d5c",
+          "human-facing-plain-language": "16d710ab3417259312f031db5b103ab8fde0976e154764cf128c0aab1067f7f4",
+          "live-authority": "f194e47e44a83480217d8279ab56f869385d84018dde7eb92878a4f0988223e0",
+          "marco-scoped-override": "1ee1b6748686389583c7aedcf92a298c87e0d00040084ca67f96aa1cf755d877",
+          "no-direct-main": "eb031310abafcf3a88cb54d3b6c6b91af6f54ad9a98a631172935ae39ac056ab",
+          "project-repository-routing": "2a308edbca0097e6255ea91a0d2069ff269a8dcc95a9cdb76d0d8f666498d01a",
+          "repository-lifecycle": "98162a5b4e2eafccc613779cfb54b30884edfd1e8902c7f0755c61431afc38ed",
+          "role-contract-authority": "90b856b5e0652a1185120f9e31016b15ea51ff707bf0f899ed74cc2af191e427",
+          "task-dismissal-history": "eca2cda3c1d837e5956139de08c8133a75cb6e841dcf7e580063b82531134b51",
+          "write-verification": "e7726aa1b5deb824691f146962a6e521a1de23d0ed664cae3896a414ec865e84"
+        }
+      },
+      "from_version": "dish-chatgpt-projects-v2-fd71800e8f3d",
+      "to_version": "dish-chatgpt-projects-v2-b7a67feafee5"
     }
   ],
   "generated_role_files": {
@@ -1145,10 +1244,10 @@
     "review": "review.md",
     "workflow": "workflow.md"
   },
-  "kernel_identity_sha256": "fd71800e8f3d495e9322c48fe96dcc02795b50604039362e9e922fe03de44f63",
+  "kernel_identity_sha256": "b7a67feafee5e8b263030654f9a341d457f64767afda03ffb101a62d29bd6c6b",
   "max_kernel_chars": 6400,
   "schema_version": 2,
   "source_file": "source.json",
-  "source_sha256": "491c1ee88368bc9eb733e6e20d620c41b1614f3d7dfb063014aeb951aed6034f",
+  "source_sha256": "03a66b46c755466affdf10ab5baca1b027ef424930ca5131fb449727c098aacb",
   "version_namespace": "dish-chatgpt-projects-v2"
 }

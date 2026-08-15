@@ -1481,6 +1481,36 @@
         "workflow",
         "postgresql-dark-launch"
       ]
+    },
+    {
+      "expected_outcome": "verified_exact_current_bundle_then_live_authority",
+      "forbidden_actions": [
+        "reason_substantially_before_bundle_verification",
+        "treat_bundle_as_live_orchestration_authority",
+        "skip_live_authority_read_for_current_state"
+      ],
+      "id": "consequential-reasoning-bundle-live-authority",
+      "prompt": "You need substantial cross-file repository/system reasoning and then a current PR/task status conclusion. Establish the required context and authority before deciding.",
+      "required_actions": [
+        "resolve_live_main_sha",
+        "retrieve_exact_current_main_bundle",
+        "verify_repository_bundle",
+        "use_bundle_as_read_only_context",
+        "read_live_github_asana_for_current_state"
+      ],
+      "required_rules": [
+        "live-authority"
+      ],
+      "roles": [
+        "audit",
+        "coordinator",
+        "development-workflow",
+        "implementation",
+        "integration",
+        "postgresql-dark-launch",
+        "review",
+        "workflow"
+      ]
     }
   ],
   "schema_version": 3

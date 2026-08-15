@@ -736,6 +736,7 @@ tests/test_batch_apply.py,test,1,4,isolated-test,,,none,,exact changed test/modu
 tests/test_cancellation_retry_intent.py,test,1,4,isolated-test,,,none,,exact changed test/module,,
 tests/test_change_start_intent.py,test,1,4,isolated-test,,,none,,exact changed test/module,,
 tests/test_chatgpt_project_kernels.py,test,1,4,isolated-test,,,none,,exact changed test/module,,
+tests/test_chatgpt_project_policy_stack.py,test,1,4,isolated-test,,,none,,exact changed test/module,,
 tests/test_commands.py,test,1,4,isolated-test,,,none,,exact changed test/module,,
 tests/test_committed_success_boundaries.py,test,1,4,isolated-test,,,none,,exact changed test/module,,
 tests/test_compatibility_database_boundary.py,test,1,4,isolated-test; sqlite-boundary,,,none,,SQLite database-boundary; exact changed test/module,,
