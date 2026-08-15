@@ -262,6 +262,35 @@ def _dish_selector_payload(plan: object | None) -> dict[str, object]:
     }
 
 
+def _native_postgresql_selection(
+    *,
+    selected_groups: set[str],
+    force_full: bool,
+    dish_plan: object | None,
+) -> dict[str, object]:
+    if "native-postgresql" not in selected_groups:
+        return {"mode": "none", "test_files": [], "reason": "not-selected"}
+    if force_full:
+        return {"mode": "full", "test_files": [], "reason": "repository-plan-force-full"}
+
+    focused = () if dish_plan is None else dish_plan.focused_tests  # type: ignore[attr-defined]
+    test_files = sorted(
+        {
+            test
+            for test in focused
+            if test.startswith("tests/postgresql/native/test_") and test.endswith(".py")
+        }
+    )
+    if test_files:
+        return {
+            "mode": "focused",
+            "test_files": test_files,
+            "reason": "dish-selector-native-bindings",
+        }
+    # A native semantic lane without exact governed native bindings is not guessed narrower.
+    return {"mode": "full", "test_files": [], "reason": "native-impact-without-test-binding"}
+
+
 def build_repository_plan(
     changed_paths: Iterable[str],
     *,
@@ -377,6 +406,9 @@ def build_repository_plan(
         },
         "selected_lanes": sorted(selected_lanes),
         "selected_groups": sorted(selected_groups, key=group_order.__getitem__),
+        "native_postgresql": _native_postgresql_selection(
+            selected_groups=selected_groups, force_full=force_full, dish_plan=dish_plan
+        ),
         "force_full": force_full,
         "force_full_reasons": sorted(force_reasons),
         "policy_identity": _policy_identity(repo_root, policy_path, schema_path),

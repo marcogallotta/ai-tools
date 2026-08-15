@@ -201,6 +201,22 @@ def _focused_command(tests: Iterable[str]) -> str | None:
     return ".venv/bin/python -m pytest -q " + " ".join(shlex.quote(test) for test in ordered)
 
 
+def _native_postgresql_command(tests: Iterable[str]) -> str:
+    command = LANE_COMMANDS["native PostgreSQL certification"]
+    native_files = sorted(
+        {
+            test
+            for test in tests
+            if test.startswith("tests/postgresql/native/test_") and test.endswith(".py")
+        }
+    )
+    if not native_files:
+        return command
+    return command + " " + " ".join(
+        f"--test-file {shlex.quote(test_file)}" for test_file in native_files
+    )
+
+
 def _ordered_lanes(lanes: set[str]) -> tuple[str, ...]:
     known = [lane for lane in LANE_ORDER if lane in lanes]
     unknown = sorted(lanes - set(LANE_ORDER) - FOCUSED_LANES)
@@ -219,7 +235,11 @@ def _commands(
         commands.append(focused)
     seen: set[str] = set(commands)
     for lane in _ordered_lanes(lanes):
-        command = LANE_COMMANDS.get(lane)
+        command = (
+            _native_postgresql_command(focused_tests)
+            if lane == "native PostgreSQL certification"
+            else LANE_COMMANDS.get(lane)
+        )
         if command and command not in seen:
             commands.append(command)
             seen.add(command)
@@ -372,12 +392,10 @@ def discover_git_paths(
         raise PolicyError("--base and --staged are mutually exclusive")
     if base:
         raw = _git_lines(git_root, ["diff", "--name-only", "--diff-filter=ACMRD", base])
-        raw.update(_git_lines(git_root, ["ls-files", "--others", "--exclude-standard"]))
     elif staged:
         raw = _git_lines(git_root, ["diff", "--cached", "--name-only", "--diff-filter=ACMRD"])
     else:
         raw = _git_lines(git_root, ["diff", "HEAD", "--name-only", "--diff-filter=ACMRD"])
-        raw.update(_git_lines(git_root, ["ls-files", "--others", "--exclude-standard"]))
 
     scoped: set[str] = set()
     ignored: set[str] = set()

@@ -99,6 +99,12 @@ def pytest_addoption(parser):
         help="internal governed-runner exact node selection",
     )
     parser.addoption(
+        "--dish-internal-native-test-file",
+        action="append",
+        default=[],
+        help="internal governed-runner native PostgreSQL test-file selection",
+    )
+    parser.addoption(
         "--dish-internal-inventory-report",
         type=pathlib.Path,
         default=None,
@@ -259,6 +265,7 @@ def _is_complete_repository_collection(config) -> bool:
 def _internal_governed_runner_requested(config) -> bool:
     return bool(
         config.getoption("--dish-internal-governed-node")
+        or config.getoption("--dish-internal-native-test-file")
         or config.getoption("--dish-internal-inventory-report")
     )
 
@@ -270,9 +277,18 @@ def _validate_internal_governed_runner(config) -> None:
         raise pytest.UsageError(
             "internal governed-runner options may be used only by repository lane scripts"
         )
-    if not (config.getoption("--pglite") or config.getoption("--quarantine")):
+    native_files = config.getoption("--dish-internal-native-test-file")
+    if native_files:
+        if not (config.getoption("--native-postgresql") and config.getoption("--postgresql")):
+            raise pytest.UsageError(
+                "internal native test-file selection requires --postgresql --native-postgresql"
+            )
+    if (
+        config.getoption("--dish-internal-governed-node")
+        or config.getoption("--dish-internal-inventory-report")
+    ) and not (config.getoption("--pglite") or config.getoption("--quarantine")):
         raise pytest.UsageError(
-            "internal governed-runner options require --pglite or --quarantine"
+            "internal governed node/inventory options require --pglite or --quarantine"
         )
 
 
@@ -300,6 +316,18 @@ def pytest_collection_modifyitems(config, items):
     selected = _select_items(config, items)
     governed_inventory = sorted(item.nodeid for item in selected)
     config._governed_runner_inventory = governed_inventory
+    native_files = set(config.getoption("--dish-internal-native-test-file"))
+    if native_files:
+        available_files = {item.nodeid.split("::", 1)[0] for item in selected}
+        missing_files = sorted(native_files - available_files)
+        if missing_files:
+            raise pytest.UsageError(
+                "internal native test files are not in the governed inventory: "
+                + ", ".join(missing_files)
+            )
+        selected = [
+            item for item in selected if item.nodeid.split("::", 1)[0] in native_files
+        ]
     internal_node = config.getoption("--dish-internal-governed-node")
     if internal_node is not None:
         exact = [item for item in selected if item.nodeid == internal_node]
