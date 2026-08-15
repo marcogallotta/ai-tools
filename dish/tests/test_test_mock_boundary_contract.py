@@ -200,6 +200,16 @@ REVIEWED_PRIVATE_FAULT_SEAMS = {
         "Non-construction guard proving PostgreSQL safe-reclaim and proposal-apply command"
         " paths never construct AsanaBackend."
     ),
+    ("postgresql/test_test_dual_stack_comparator.py", "_request_json"): (
+    "HTTP transport boundary for deterministic comparator health/OpenAPI preflight tests."
+),
+    ("postgresql/test_test_dual_stack_comparator.py", "_command_request"): (
+    "Action command transport boundary for deterministic route-identity and comparator scenario tests."
+),
+    ("postgresql/test_test_dual_stack_comparator.py", "_route_preflight"): (
+    "Comparator preflight stub used only by scenario/evidence tests; isolation preflight has dedicated contract coverage."
+),
+
 }
 
 
