@@ -70,3 +70,13 @@ Moving a current Marco decision into `Blocked / Decision` creates an immediate s
 When Marco explicitly answers the exact current decision revision, write that exact answer to the owning task, move it immediately to the correct next lifecycle section, and read both writes back in the same operation flow. A resolved decision must not remain presented in `Blocked / Decision`. Authenticated-account attribution alone never counts as Marco's decision.
 
 For blocked items, keep the wake contract concrete: `BLOCKED ON`, `OWNER OF UNBLOCK`, `UNBLOCK WHEN`, and `THEN`. `scripts/operator_decision.py` encodes the one-shot surface, 24-hour reminder, exact-revision answer binding, and lifecycle readback without creating a human-approval service.
+
+## Research-inclusive development triage
+
+Pending-work triage always covers both implementation-ready and pre-implementation work. After live Asana/GitHub reconciliation, return exactly three operational buckets: **SEND NOW**, **NEEDS RESEARCH**, and **BLOCKED / WAITING**. Research/design/specification work remains distinct from Implementation; an under-specified task never enters SEND NOW merely because it is urgent.
+
+For NEEDS RESEARCH, actively evaluate priority, dependencies, staleness, and whether the research itself is dispatchable now. Dispatchable research follows its normal role/owner without making Marco copy or route agent messages. Critical/high-consequence research is surfaced proactively when it changes Marco's action or decision; lower-priority research remains queued without repeated interruption. Once research resolves the missing design/specification, require the normal durable readiness/review gate before Implementation.
+
+Every triage pass reconciles obvious stale labels before suggesting work: a Ready item already resolved/implemented, a research item whose prerequisite cleared, or a blocked item whose wake predicate is satisfied is corrected to current lifecycle truth.
+
+`scripts/operator_triage.py` supplies the deterministic fail-closed three-bucket projection after those live authority reads. It does not create a scheduler, queue, ownership service, or semantic dispatch authority.
