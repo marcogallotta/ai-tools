@@ -4,6 +4,20 @@ This is the operational runbook for Dish tests. It defines the authoritative gat
 flake-detection environment, the evidence required before calling a test flaky, and the temporary
 quarantine rules.
 
+## Navigation
+
+- [Test environments](#test-environments)
+- [Autonomous changed-path selection](#autonomous-changed-path-selection)
+- [Frontend static/tooling and browser acceptance](#frontend-statictooling-and-browser-acceptance)
+- [Named lane commands](#named-lane-commands)
+- [Authoritative first-attempt lanes](#authoritative-first-attempt-lanes)
+- [Flaky-test classifications](#flaky-test-classifications)
+- [Reproducible detection commands](#reproducible-detection-commands)
+- [Failure triage](#failure-triage)
+- [Artifact retention](#artifact-retention)
+- [Generated artifact assurance](#generated-artifact-assurance)
+- [Test support ownership](#test-support-ownership)
+
 ## Test environments
 
 Use repository-local environments. Do not package any environment.
