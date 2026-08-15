@@ -225,7 +225,7 @@ Local refs/checkouts are caches. GitHub remains source/history authority.
 
 The development workflow should make evidence bind to the exact candidate being reviewed/integrated.
 
-Maintain the repository-owned test-selection/planning authority rather than inventing disconnected GitHub-only path rules.
+Maintain the repository-owned test-selection/planning authority rather than inventing disconnected GitHub-only path rules. Its mechanical input is the complete tracked Git delta (including base-side ownership for deleted paths), and validation is derived from tracked/index state rather than ignored or generated filesystem materialization. Development Workflow may correct selector mechanics and policy consistency, but it does not weaken semantic evidence boundaries or invent a blanket suite outside governed selection.
 
 Ordinary CI runs for review-ready PR candidates and explicitly derives candidate identity from `pull_request.head.sha`; `GITHUB_SHA` on `pull_request` is not treated as the review identity. Every test checkout and evidence artifact for exact-head certification uses that candidate SHA.
 
@@ -291,3 +291,17 @@ Keep `Dish — Development Workflow` current while working, not only at handoff 
 Before ending a substantial session or yielding the role, ensure every material in-flight development-system state change is represented in the project with exact Git/PR identity where relevant.
 
 A successor should not need the previous conversation to understand the development workflow's current state.
+
+## Friction Inbox triage
+
+`Dish — Development Workflow Friction` (`1217443500915644`) is the canonical friction capture surface. Include its `Inbox` in fresh-start, re-grounding, status, and explicit triage sweeps. Dedupe first against Friction and active `Dish — Development Workflow` work. If the friction blocks active work, update the active task/PR instead of creating a parallel blocker. Otherwise record evidence, next owner/action, and triage it without manufacturing urgency; age/repetition alone never raises priority. Move information/no-action items to `Triaged`; completed fixes to `Done`; do not move an item out of `Inbox` until it has actually been triaged.
+
+Repository-modifying roles use the contributor-base `notice -> dedupe -> log/update -> continue` contract. This capture surface does not become a second dispatch or lifecycle authority.
+
+## Durable review classification and verdicts
+
+Research/design/readiness work must durably distinguish `IMPLEMENTATION READY` from `AGENT REVIEW`, `AGENT RE-REVIEW`, `HUMAN REVIEW`, and `HUMAN APPROVAL/DECISION`. A review-required task records the exact review question, baseline/artifact, and dependency needed to continue. The verdict is written back to Asana; a chat-only verdict is not review completion. A completed review does not itself grant Implementation, formal PR Review, Integration, merge, or runtime authority.
+
+## Shared-resource concurrency preflight
+
+Before changing shared infrastructure availability or capacity, identify concurrent producer classes and state the non-interference invariants before choosing a mechanism. Observing a quiet state is not isolation. Open capacity only when a mechanically enforced admission/fencing boundary keeps non-target producers unable to consume it for the whole operational window, or when Marco explicitly authorizes a stop-the-world override.

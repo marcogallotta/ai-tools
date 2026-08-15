@@ -108,6 +108,14 @@ def test_dish_paths_delegate_to_existing_selector_without_repo_path_duplication(
     assert plan["force_full"] is False
 
 
+def test_classified_documentation_only_diff_selects_no_execution_group():
+    plan = build(["dish/frontend/README.md"])
+    assert plan["dish_selector"]["lanes"] == []
+    assert plan["selected_groups"] == []
+    assert plan["native_postgresql"]["mode"] == "none"
+    assert plan["force_full"] is False
+
+
 def test_browser_lane_is_adapter_addressable_without_changing_dish_selector_semantics():
     plan = build(
         ["dish/frontend/README.md"],
@@ -118,11 +126,63 @@ def test_browser_lane_is_adapter_addressable_without_changing_dish_selector_sema
     assert plan["force_full"] is False
 
 
-def test_native_postgresql_lane_maps_to_native_execution_group():
+def test_native_postgresql_lane_maps_to_smallest_bound_native_evidence():
     plan = build(["dish/dish_pg/migration_status.py"])
     assert "native PostgreSQL certification" in plan["selected_lanes"]
     assert plan["selected_groups"] == ["native-postgresql"]
+    assert plan["native_postgresql"] == {
+        "mode": "focused",
+        "test_files": ["tests/postgresql/native/test_migration_status.py"],
+        "reason": "dish-selector-native-bindings",
+    }
     assert plan["force_full"] is False
+
+
+def test_changed_native_test_selects_itself_as_native_evidence():
+    plan = build(["dish/tests/postgresql/native/test_migration_status.py"])
+    assert plan["native_postgresql"]["mode"] == "focused"
+    assert "tests/postgresql/native/test_migration_status.py" in plan["native_postgresql"]["test_files"]
+
+
+def test_native_lane_without_exact_binding_fails_closed_to_full_native_only():
+    plan = build(
+        ["dish/frontend/README.md"],
+        semantic_additions=["native PostgreSQL certification"],
+    )
+    assert plan["force_full"] is False
+    assert plan["selected_groups"] == ["native-postgresql"]
+    assert plan["native_postgresql"] == {
+        "mode": "full",
+        "test_files": [],
+        "reason": "native-impact-without-test-binding",
+    }
+
+
+def test_mixed_bound_and_unbound_native_impacts_fail_closed_to_full_native():
+    plan = build(
+        [
+            "dish/dish_pg/migration_status.py",
+            "dish/deploy/systemd/dish-postgres-prod.service",
+        ]
+    )
+    assert plan["force_full"] is False
+    assert plan["native_postgresql"] == {
+        "mode": "full",
+        "test_files": [],
+        "reason": "native-impact-without-test-binding",
+    }
+
+
+def test_all_bound_native_impacts_union_exact_native_test_files():
+    plan = build(["dish/dish_pg/migration_status.py", "dish/dish_pg/importer.py"])
+    assert plan["native_postgresql"] == {
+        "mode": "focused",
+        "test_files": [
+            "tests/postgresql/native/test_importer.py",
+            "tests/postgresql/native/test_migration_status.py",
+        ],
+        "reason": "dish-selector-native-bindings",
+    }
 
 
 def test_unresolved_dish_semantic_predicates_force_full_until_review_disposes_them():
@@ -192,6 +252,24 @@ def test_new_certification_authority_names_force_full(path: str):
 
 
 @pytest.mark.parametrize(
+    ("path", "classification"),
+    [
+        (".github/workflows/ci.yml", "github-control-plane"),
+        ("ci/actions-billing.json", "ci-control-plane"),
+        ("scripts/actions_cost_report.py", "root-scripts"),
+        ("tools/asana", "tools"),
+        ("hooks/agent-reground", "hooks"),
+    ],
+)
+def test_repository_root_development_workflow_surfaces_are_governed(path: str, classification: str):
+    plan = build([path])
+    assert plan["classifications"] == [
+        {"path": path, "scope": "repository", "classification": classification}
+    ]
+    assert "python-control-plane" in plan["selected_groups"]
+
+
+@pytest.mark.parametrize(
     "path",
     [
         "scripts/actions_cost_report.py",
@@ -232,6 +310,11 @@ def test_unknown_repository_path_fails_closed_to_full_certification():
     ]
     assert plan["force_full"] is True
     assert plan["selected_groups"] == ALL_GROUPS
+    assert plan["native_postgresql"] == {
+        "mode": "full",
+        "test_files": [],
+        "reason": "repository-plan-force-full",
+    }
     assert plan["force_full_reasons"] == [
         "unclassified-repository-path:unexpected-surface.bin"
     ]

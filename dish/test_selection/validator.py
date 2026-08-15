@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import json
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -98,34 +99,77 @@ class ValidationResult:
         )
 
 
-def _scoped_paths(repo: Path) -> set[str]:
+def _git_tracked_paths(repo: Path) -> tuple[Path, set[str], set[str]]:
+    """Return git root, repository-relative tracked paths, and paths relative to ``repo``.
+
+    Selection authority is the Git index, never incidental ignored/generated filesystem state.
+    """
+    try:
+        git_root = Path(
+            subprocess.check_output(
+                ["git", "-C", str(repo), "rev-parse", "--show-toplevel"],
+                text=True,
+                stderr=subprocess.STDOUT,
+            ).strip()
+        ).resolve()
+        raw = subprocess.check_output(
+            ["git", "-C", str(git_root), "ls-files", "--cached", "-z"],
+            stderr=subprocess.STDOUT,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        detail = getattr(exc, "output", b"")
+        if isinstance(detail, bytes):
+            detail = detail.decode("utf-8", errors="replace")
+        raise ValueError(f"cannot enumerate Git-tracked ownership universe: {str(detail).strip() or exc}") from exc
+
+    try:
+        repo_prefix = repo.resolve().relative_to(git_root).as_posix()
+    except ValueError as exc:
+        raise ValueError(f"ownership root {repo} is outside Git root {git_root}") from exc
+    if repo_prefix == ".":
+        repo_prefix = ""
+    prefix = f"{repo_prefix}/" if repo_prefix else ""
+    tracked_git = {value.decode("utf-8") for value in raw.split(b"\0") if value}
+    tracked_repo = {
+        path[len(prefix) :]
+        for path in tracked_git
+        if not prefix or path.startswith(prefix)
+    }
+    return git_root, tracked_git, tracked_repo
+
+
+def _scoped_paths(repo: Path, *, tracked_repo: set[str] | None = None) -> set[str]:
+    if tracked_repo is None:
+        _, _, tracked_repo = _git_tracked_paths(repo)
     out: set[str] = set()
-    for root_name in SCOPED_ROOTS:
-        root = repo / root_name
-        if not root.exists():
+    for path in tracked_repo:
+        parts = tuple(Path(path).parts)
+        if not parts:
             continue
-        for path in root.rglob("*"):
-            if not path.is_file():
-                continue
-            rel_parts = path.relative_to(repo).parts
-            if any(part in EXCLUDED_PARTS or part.startswith(".") for part in rel_parts):
-                continue
-            if any(
-                rel_parts[: len(prefix)] == prefix
-                for prefix in EXCLUDED_SCOPED_PREFIXES
-            ):
-                continue
-            out.add(path.relative_to(repo).as_posix())
-    for name in TOP_LEVEL_FILES:
-        if (repo / name).is_file():
-            out.add(name)
+        if len(parts) == 1:
+            if path in TOP_LEVEL_FILES:
+                out.add(path)
+            continue
+        if parts[0] not in SCOPED_ROOTS:
+            continue
+        if any(part in EXCLUDED_PARTS for part in parts[1:]):
+            continue
+        if any(parts[: len(prefix)] == prefix for prefix in EXCLUDED_SCOPED_PREFIXES):
+            continue
+        out.add(path)
     return out
 
 
-def _file_exists(repo: Path, parent: Path, ref: str) -> bool:
-    if ref.startswith("../"):
-        return (parent / ref[3:]).is_file()
-    return (repo / ref).is_file()
+def _tracked_ref_path(repo: Path, git_root: Path, ref: str) -> str:
+    target = (repo / ref).resolve()
+    try:
+        return target.relative_to(git_root).as_posix()
+    except ValueError as exc:
+        raise ValueError(f"mapped reference escapes Git root: {ref!r}") from exc
+
+
+def _file_exists(repo: Path, git_root: Path, tracked_git: set[str], ref: str) -> bool:
+    return _tracked_ref_path(repo, git_root, ref) in tracked_git
 
 
 def _looks_like_test_file(path: str) -> bool:
@@ -147,6 +191,11 @@ def validate_policy(
     errors: list[str] = []
     warnings: list[str] = []
     collected_modules: set[str] | None = None
+
+    try:
+        git_root, tracked_git, tracked_repo = _git_tracked_paths(repo)
+    except ValueError as exc:
+        return ValidationResult(0, 0, collected_nodeids_path is not None, (str(exc),), ())
 
     if collected_nodeids_path is not None:
         try:
@@ -178,7 +227,7 @@ def validate_policy(
                 errors.append(f"missing required columns: {sorted(missing_fields)}")
             rows = list(reader)
     except OSError as exc:
-        return ValidationResult(0, len(_scoped_paths(repo)), collected_modules is not None, (str(exc),), ())
+        return ValidationResult(0, len(_scoped_paths(repo, tracked_repo=tracked_repo)), collected_modules is not None, (str(exc),), ())
 
     paths = [row.get("path", "") for row in rows]
     seen: set[str] = set()
@@ -191,7 +240,7 @@ def validate_policy(
         errors.append(f"duplicate mapped paths: {sorted(duplicates)}")
 
     mapped_repo = {path for path in paths if path and not path.startswith("../")}
-    expected_repo = _scoped_paths(repo)
+    expected_repo = _scoped_paths(repo, tracked_repo=tracked_repo)
     missing_map = sorted(expected_repo - mapped_repo)
     stale_map = sorted(mapped_repo - expected_repo)
     if missing_map:
@@ -218,7 +267,7 @@ def validate_policy(
         if not path:
             errors.append(f"{prefix}: empty path")
             continue
-        if not _file_exists(repo, parent, path):
+        if not _file_exists(repo, git_root, tracked_git, path):
             errors.append(f"{prefix}: mapped path does not exist")
         if primary_class not in CLASS_NAMES:
             errors.append(f"{prefix}: invalid primary_class {primary_class!r}")
@@ -235,7 +284,7 @@ def validate_policy(
 
         for field in REFERENCE_FIELDS:
             for ref in split_field(row.get(field, "")):
-                if not _file_exists(repo, parent, ref):
+                if not _file_exists(repo, git_root, tracked_git, ref):
                     errors.append(f"{prefix}: {field} references missing file {ref!r}")
                 if field in {"direct_owner_tests", "critical_contract_tests"} and not _looks_like_test_file(ref):
                     errors.append(f"{prefix}: {field} must reference an exact test file, got {ref!r}")

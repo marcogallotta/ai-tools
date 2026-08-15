@@ -18,6 +18,7 @@ class LocalIntegrationCertificationMixin:
         workspace,
         local_reviewer,
         implementation_fixer=None,
+        terminal_cleaner=None,
         notify=None,
     ):
         current = self.inspect(self.github.get_pr(pr.number))
@@ -91,7 +92,12 @@ class LocalIntegrationCertificationMixin:
                     and self.integration_authority
                     and self.integration_capable
                 ):
-                    return self._merge_exact_head(reread)
+                    merged = self._merge_exact_head(reread)
+                    if merged.state == LifecycleState.MERGED and terminal_cleaner is not None:
+                        return self._terminal_cleanup(
+                            merged, disposition="merged", terminal_cleaner=terminal_cleaner, notify=notify or (lambda _: None)
+                        )
+                    return merged
                 return reread
 
         return super().dispatch_one(
@@ -99,5 +105,6 @@ class LocalIntegrationCertificationMixin:
             workspace=workspace,
             local_reviewer=local_reviewer,
             implementation_fixer=implementation_fixer,
+            terminal_cleaner=terminal_cleaner,
             notify=notify,
         )

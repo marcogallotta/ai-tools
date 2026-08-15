@@ -2,13 +2,19 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
+from pathlib import Path
 from typing import Any, NoReturn
 
-from .common import DISPOSITIONS, GitRunner, fail, now_utc, require_task_gid
-from .operations import (
-    payload_from_state, record_observation, remote_and_target_observation, remote_ref_sha,
-    remote_relation, resolve_repository_from_state, verify_owned_worktree, ensure_commit_object,
+from .common import (
+    DISPOSITIONS, GitRunner, fail, find_worktree_record, now_utc, require_full_sha,
+    require_task_gid, worktree_records,
 )
+from .operations import (
+    branch_exists, payload_from_state, record_observation, remote_and_target_observation, remote_ref_sha,
+    remote_relation, resolve_repository_from_state, validate_branch, verify_owned_worktree, ensure_commit_object,
+)
+from .repository import discover_repository
 from .state import TaskLock, atomic_write_json, clear_agent_reference, load_task_state, state_path
 from .operations import owner_agent_id
 from .ownership import require_active_claim
@@ -110,80 +116,275 @@ def ignored_untracked_paths(runner: GitRunner, worktree) -> list[str]:
     return [path for path in result.stdout.split("\0") if path]
 
 
+def _checked_out_path(runner: GitRunner, repo, branch: str) -> str | None:
+    ref = f"refs/heads/{branch}"
+    for record in worktree_records(runner, repo.source_top):
+        if record.get("branch") == ref:
+            return record.get("worktree") or "<unknown>"
+    return None
+
+
+def _write_cleanup_progress(task_gid: str, state: dict[str, Any], cleanup: dict[str, Any]) -> None:
+    state["terminal_cleanup"] = cleanup
+    state["last_verified_at"] = now_utc()
+    atomic_write_json(state_path(task_gid), state)
+
+
+def _delete_remote_branch_exact(runner: GitRunner, repo, branch: str, expected_head: str) -> None:
+    ref = f"refs/heads/{branch}"
+    current = remote_ref_sha(runner, repo, ref, allow_missing=True)
+    if current is None:
+        return
+    if current != expected_head:
+        fail(
+            "EXPECTED_HEAD_MISMATCH",
+            f"remote terminal branch moved or was reused: expected {expected_head}, origin has {current}; deletion refused",
+        )
+    result = runner.run(
+        repo.source_top,
+        "push",
+        f"--force-with-lease={ref}:{expected_head}",
+        repo.origin_url,
+        f":{ref}",
+        check=False,
+    )
+    if result.returncode != 0:
+        observed = remote_ref_sha(runner, repo, ref, allow_missing=True)
+        if observed is None:
+            return
+        if observed != expected_head:
+            fail(
+                "EXPECTED_HEAD_MISMATCH",
+                f"remote terminal branch moved during deletion: expected {expected_head}, origin has {observed}; deletion refused",
+            )
+        detail = result.stderr.strip() or result.stdout.strip() or "no command output"
+        fail("REMOTE_DELETE_FAILED", f"expected-head remote branch deletion failed: {detail}")
+    observed = remote_ref_sha(runner, repo, ref, allow_missing=True)
+    if observed is not None:
+        fail("REMOTE_DELETE_VERIFY_FAILED", f"remote branch {ref} still exists at {observed} after deletion")
+
+
 def command_cleanup(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]:
     task_gid = require_task_gid(args.task)
     if args.disposition not in DISPOSITIONS:
         fail("INVALID_DISPOSITION", "cleanup disposition must be merged|closed|abandoned|superseded")
-    _claimed_state(task_gid)
     with TaskLock(task_gid):
-        state = _claimed_state(task_gid)
-        repo = resolve_repository_from_state(runner, state)
-        identity = verify_owned_worktree(runner, repo, state)
-        if identity.dirty:
-            fail("DIRTY_CLEANUP", "cleanup refuses a dirty owned worktree/index")
-        ignored = ignored_untracked_paths(runner, identity.path)
-        if ignored:
-            preview = ", ".join(repr(path) for path in ignored[:3])
-            suffix = "" if len(ignored) <= 3 else f" (+{len(ignored) - 3} more)"
+        state_file = state_path(task_gid)
+        state = load_task_state(task_gid) if state_file.exists() else None
+        if state is not None:
+            # Terminal cleanup must remain restartable after lifecycle leaves active.
+            # Resolve from the explicitly supplied controller checkout, then bind it
+            # back to the durable task record instead of using active-only helpers.
+            repo = discover_repository(runner, Path(args.repo))
+            if repo.common_dir != Path(str(state["git_common_dir"])).resolve():
+                fail("COMMON_DIR_MISMATCH", "terminal cleanup repository common-dir differs from task state")
+            if repo.origin_id != str(state["repository"]["origin_id"]):
+                fail("ORIGIN_IDENTITY", "terminal cleanup repository origin differs from task state")
+            branch = validate_branch(runner, repo.source_top, args.branch or str(state["branch"]))
+            if state["branch"] != branch:
+                fail("BRANCH_MISMATCH", f"task state owns {state['branch']!r}, terminal PR identifies {branch!r}")
+            if args.expected_head:
+                expected_head = require_full_sha(args.expected_head, "terminal expected head")
+            elif branch_exists(runner, repo.source_top, branch):
+                expected_head = require_full_sha(runner.sha(repo.source_top, f"refs/heads/{branch}"), "terminal expected head")
+            else:
+                expected_head = require_full_sha(str(state["local_head"]), "terminal expected head")
+            pr_number = args.pr_number
+            if pr_number is None:
+                stored_url = state.get("pr_url")
+                match = re.search(r"/pull/(\d+)(?:$|[/?#])", str(stored_url or ""))
+                pr_number = int(match.group(1)) if match else 0
+        else:
+            if not args.branch or not args.expected_head or args.pr_number is None:
+                fail("TERMINAL_IDENTITY_REQUIRED", "cleanup without local task state requires --branch, --expected-head, and --pr-number")
+            repo = discover_repository(runner, Path(args.repo))
+            branch = validate_branch(runner, repo.source_top, args.branch)
+            expected_head = require_full_sha(args.expected_head, "terminal expected head")
+            pr_number = args.pr_number
+        if pr_number is not None and pr_number < 0:
+            fail("INVALID_PR", "terminal PR number must be non-negative")
+
+        remote_ref = f"refs/heads/{branch}"
+        remote_head = remote_ref_sha(runner, repo, remote_ref, allow_missing=True)
+        if args.expected_head and remote_head is not None and remote_head != expected_head:
             fail(
-                "IGNORED_CONTENT_CLEANUP",
-                "cleanup refuses ignored task-local content omitted by normal Git status: " + preview + suffix,
+                "EXPECTED_HEAD_MISMATCH",
+                f"remote terminal branch moved or was reused: expected {expected_head}, origin has {remote_head}; cleanup refused",
             )
-        relation, remote_head = remote_relation(runner, repo, state["branch"], identity.head)
-        if relation == "remote-ahead":
-            fail("REMOTE_AHEAD", "cleanup refuses an owned branch whose remote head is ahead; explicit recovery is required")
-        if relation == "divergent":
-            fail("REMOTE_DIVERGED", "cleanup refuses a divergent owned branch; explicit recovery is required")
-        target_head = remote_ref_sha(runner, repo, state["base_ref"])
-        assert target_head is not None
-        target_contains = remote_contains_head(runner, repo, target_head, identity.head)
-        owned_contains = remote_contains_head(runner, repo, remote_head, identity.head)
-        if not owned_contains and not (args.disposition == "merged" and target_contains):
-            fail(
-                "ONLY_RECOVERY_COPY",
-                "cleanup refuses because the local implementation HEAD is not recoverable from the remote owned branch"
-                + (" or current target branch" if args.disposition == "merged" else ""),
-            )
-        # The worktree was created locked by this tool. Unlock only immediately
-        # before a non-force remove. If removal fails, best-effort re-lock it.
-        unlock = runner.run(repo.source_top, "worktree", "unlock", str(identity.path), check=False)
-        if unlock.returncode != 0:
-            fail("CLEANUP_UNLOCK_FAILED", f"could not unlock owned worktree for cleanup: {unlock.stderr.strip()}")
-        remove = runner.run(repo.source_top, "worktree", "remove", str(identity.path), check=False)
-        if remove.returncode != 0:
-            runner.run(
-                repo.source_top,
-                "worktree",
-                "lock",
-                "--reason",
-                f"Dish task {task_gid}; cleanup remove failed",
-                str(identity.path),
-                check=False,
-            )
-            fail("CLEANUP_REMOVE_FAILED", f"non-force worktree removal failed: {remove.stderr.strip()}")
-        state["lifecycle"] = args.disposition
-        state["disposition"] = args.disposition
-        state["disposed_at"] = now_utc()
-        state["last_verified_at"] = now_utc()
-        state["local_head"] = identity.head
-        state["remote_owned_head"] = remote_head
-        state["remote_relation"] = relation
-        state["target_current_head"] = target_head
-        atomic_write_json(state_path(task_gid), state)
-        clear_agent_reference(owner_agent_id(state), task_gid)
+
+        worktree_removed = False
+        local_branch_removed = False
+        cleanup: dict[str, Any] | None = None
+        local_head = expected_head
+        target_head = None
+
+        if state is not None:
+            prior_cleanup = state.get("terminal_cleanup")
+            if prior_cleanup is not None:
+                if not isinstance(prior_cleanup, dict):
+                    fail("STATE_INVALID", "terminal_cleanup state must be an object")
+                if prior_cleanup.get("expected_head") != expected_head or prior_cleanup.get("branch") != branch:
+                    fail("CLEANUP_IDENTITY_MISMATCH", "stored terminal cleanup identity differs from requested PR branch/head")
+                if prior_cleanup.get("pr_number") != pr_number or prior_cleanup.get("disposition") != args.disposition:
+                    fail("CLEANUP_IDENTITY_MISMATCH", "stored terminal cleanup PR/disposition differs from requested terminal identity")
+                cleanup = dict(prior_cleanup)
+
+            worktree_path = Path(str(state["worktree_path"]))
+            record = find_worktree_record(worktree_records(runner, repo.source_top), worktree_path)
+            worktree_exists = worktree_path.exists()
+            if worktree_exists or record is not None:
+                if not worktree_exists or record is None:
+                    fail("WORKTREE_AMBIGUOUS", "task worktree filesystem/registry state disagrees during terminal cleanup")
+                identity = verify_owned_worktree(runner, repo, state)
+                local_head = identity.head
+                if identity.head != expected_head:
+                    fail(
+                        "EXPECTED_HEAD_MISMATCH",
+                        f"local owned HEAD {identity.head} != terminal PR head {expected_head}; cleanup refused",
+                    )
+                if identity.dirty:
+                    fail("DIRTY_CLEANUP", "cleanup refuses a dirty owned worktree/index")
+                ignored = ignored_untracked_paths(runner, identity.path)
+                if ignored:
+                    preview = ", ".join(repr(path) for path in ignored[:3])
+                    suffix = "" if len(ignored) <= 3 else f" (+{len(ignored) - 3} more)"
+                    fail(
+                        "IGNORED_CONTENT_CLEANUP",
+                        "cleanup refuses ignored task-local content omitted by normal Git status: " + preview + suffix,
+                    )
+            elif cleanup is None and state.get("lifecycle") == "active":
+                fail("WORKTREE_MISSING", "active task state points to a missing worktree before terminal cleanup started")
+
+            base_ref = str(state["base_ref"])
+            target_head = remote_ref_sha(runner, repo, base_ref)
+            assert target_head is not None
+            target_contains = remote_contains_head(runner, repo, target_head, expected_head)
+            remote_contains = remote_contains_head(runner, repo, remote_head, expected_head)
+            cleanup_remote_deleted = bool(cleanup and cleanup.get("remote_branch_removed"))
+            if not remote_contains and not cleanup_remote_deleted and not (args.disposition == "merged" and target_contains):
+                fail(
+                    "ONLY_RECOVERY_COPY",
+                    "cleanup refuses because the terminal implementation head is not recoverable from the remote owned branch"
+                    + (" or current target branch" if args.disposition == "merged" else ""),
+                )
+
+            if cleanup is None:
+                cleanup = {
+                    "schema": "dish-terminal-cleanup-v1",
+                    "task_gid": task_gid,
+                    "pr_number": pr_number,
+                    "disposition": args.disposition,
+                    "branch": branch,
+                    "expected_head": expected_head,
+                    "started_at": now_utc(),
+                    "worktree_removed": False,
+                    "local_branch_removed": False,
+                    "remote_branch_removed": False,
+                    "complete": False,
+                }
+                state["lifecycle"] = args.disposition
+                state["disposition"] = args.disposition
+                state["disposed_at"] = state.get("disposed_at") or now_utc()
+                _write_cleanup_progress(task_gid, state, cleanup)
+
+            if worktree_exists:
+                unlock = runner.run(repo.source_top, "worktree", "unlock", str(worktree_path), check=False)
+                if unlock.returncode != 0:
+                    fail("CLEANUP_UNLOCK_FAILED", f"could not unlock owned worktree for cleanup: {unlock.stderr.strip()}")
+                remove = runner.run(repo.source_top, "worktree", "remove", str(worktree_path), check=False)
+                if remove.returncode != 0:
+                    runner.run(
+                        repo.source_top,
+                        "worktree",
+                        "lock",
+                        "--reason",
+                        f"Dish task {task_gid}; cleanup remove failed",
+                        str(worktree_path),
+                        check=False,
+                    )
+                    fail("CLEANUP_REMOVE_FAILED", f"non-force worktree removal failed: {remove.stderr.strip()}")
+                worktree_removed = True
+                cleanup["worktree_removed"] = True
+                cleanup["worktree_removed_at"] = now_utc()
+                _write_cleanup_progress(task_gid, state, cleanup)
+            else:
+                # If a process died after Git removed the worktree but before the
+                # journal fsync, authoritative registry/filesystem absence is the
+                # readback for that completed step.
+                worktree_removed = cleanup is not None
+                if cleanup is not None and not cleanup.get("worktree_removed"):
+                    cleanup["worktree_removed"] = True
+                    cleanup["worktree_removed_at"] = cleanup.get("worktree_removed_at") or now_utc()
+                    _write_cleanup_progress(task_gid, state, cleanup)
+
+            if branch_exists(runner, repo.source_top, branch):
+                checked = _checked_out_path(runner, repo, branch)
+                if checked is not None:
+                    fail("BRANCH_CHECKED_OUT", f"terminal local branch is still checked out at {checked}")
+                local_actual = runner.sha(repo.source_top, f"refs/heads/{branch}")
+                if local_actual != expected_head:
+                    fail(
+                        "EXPECTED_HEAD_MISMATCH",
+                        f"local terminal branch moved or was reused: expected {expected_head}, local has {local_actual}; deletion refused",
+                    )
+                deleted = runner.run(repo.source_top, "update-ref", "-d", f"refs/heads/{branch}", expected_head, check=False)
+                if deleted.returncode != 0:
+                    fail("LOCAL_BRANCH_DELETE_FAILED", f"conditional local branch deletion failed: {deleted.stderr.strip()}")
+                if branch_exists(runner, repo.source_top, branch):
+                    fail("LOCAL_BRANCH_DELETE_VERIFY_FAILED", f"local branch refs/heads/{branch} still exists after deletion")
+                local_branch_removed = True
+                cleanup["local_branch_removed"] = True
+                cleanup["local_branch_removed_at"] = now_utc()
+                _write_cleanup_progress(task_gid, state, cleanup)
+            else:
+                local_branch_removed = cleanup is not None
+                if cleanup is not None and not cleanup.get("local_branch_removed"):
+                    cleanup["local_branch_removed"] = True
+                    cleanup["local_branch_removed_at"] = cleanup.get("local_branch_removed_at") or now_utc()
+                    _write_cleanup_progress(task_gid, state, cleanup)
+        else:
+            # A ChatGPT/native branch may have no local task-worktree record on this
+            # controller host. Exact GitHub PR branch/head identity is sufficient for
+            # remote agent/* cleanup, but absence of local state never authorizes
+            # deleting an unrelated local ref/worktree cache.
+            local_head = expected_head
+
+        _delete_remote_branch_exact(runner, repo, branch, expected_head)
+        remote_removed = remote_ref_sha(runner, repo, remote_ref, allow_missing=True) is None
+        if not remote_removed:
+            fail("REMOTE_DELETE_VERIFY_FAILED", f"remote branch {remote_ref} still exists after terminal cleanup")
+
+        if state is not None:
+            assert cleanup is not None
+            cleanup["remote_branch_removed"] = True
+            cleanup["remote_branch_removed_at"] = cleanup.get("remote_branch_removed_at") or now_utc()
+            cleanup["complete"] = True
+            cleanup["completed_at"] = cleanup.get("completed_at") or now_utc()
+            state["local_head"] = expected_head
+            state["remote_owned_head"] = None
+            state["remote_relation"] = "missing"
+            if target_head is not None:
+                state["target_current_head"] = target_head
+            _write_cleanup_progress(task_gid, state, cleanup)
+            clear_agent_reference(owner_agent_id(state), task_gid)
+
         return {
             "command": "cleanup",
             "ok": True,
             "task_gid": task_gid,
+            "pr_number": pr_number,
             "disposition": args.disposition,
-            "branch": state["branch"],
-            "worktree": state["worktree_path"],
-            "worktree_removed": True,
-            "branch_retained": True,
-            "local_head": identity.head,
-            "remote_owned_head": remote_head,
+            "branch": branch,
+            "expected_head": expected_head,
+            "worktree": str(state["worktree_path"]) if state is not None else None,
+            "worktree_removed": worktree_removed,
+            "local_branch_removed": local_branch_removed,
+            "remote_branch_removed": remote_removed,
+            "local_state_present": state is not None,
+            "local_head": local_head,
+            "remote_owned_head": None,
             "current_target_head": target_head,
-            "state_path": str(state_path(task_gid)),
+            "state_path": str(state_path(task_gid)) if state is not None else None,
         }
 
 

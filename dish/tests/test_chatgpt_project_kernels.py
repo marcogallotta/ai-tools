@@ -49,7 +49,7 @@ def test_missing_repository_bootstrap_fails_closed():
 
 def test_current_edge_requires_exact_rule_classification():
  m,s=kernels.load_canonical(); bad=copy.deepcopy(m); edge=next(x for x in bad['change_history'] if x['to_version']==bad['canonical_version'])
- edge['changes']=[x for x in edge['changes'] if x['rule_id']!='development-workflow-context-preload']
+ edge['changes']=edge['changes'][1:]
  with pytest.raises(kernels.KernelError,match='classification mismatch'): kernels._validate_current_edge_classification(bad,s)
 
 def test_classified_stable_rule_removal_is_representable_and_unknown_ids_still_fail():
@@ -68,7 +68,7 @@ def test_classified_stable_rule_removal_is_representable_and_unknown_ids_still_f
   kernels.validate_change_history(unknown,removed)
 
 def test_generated_kernels_current_bound_and_within_budget():
- m,s=kernels.load_canonical(); results=kernels.render_all(check=True); assert len(results)==7
+ m,s=kernels.load_canonical(); results=kernels.render_all(check=True); assert len(results)==8
  for role,p in kernels.generated_paths(m,s).items():
   text=p.read_text(); assert len(text)<=m['max_kernel_chars']; assert f"PROJECT_CANONICAL_VERSION: {m['canonical_version']}" in text
   assert text.index('PROJECT_REPOSITORY: marcogallotta/ai-tools')<text.index('Startup:')
@@ -76,7 +76,7 @@ def test_generated_kernels_current_bound_and_within_budget():
 
 def test_development_workflow_context_preload_is_role_index_driven_and_read_only():
  m,s=kernels.load_canonical(); deps=kernels.context_dependencies(s,'development-workflow'); assert deps is not None
- expected={'coordinator.md','development-workflow.md','implementation.md','integration.md','review.md','workflow.md','postgresql-dark-launch.md'}
+ expected={'coordinator.md','development-workflow.md','audit.md','implementation.md','integration.md','review.md','workflow.md','postgresql-dark-launch.md'}
  assert kernels.role_index_contracts()==expected
  assert deps['preload']=={'role_index_contracts':True,'additional':['dish/docs/agents/contributor-base.md']}
  assert deps['action_specific']['test-scope decisions']==['dish/docs/testing.md','dish/docs/architecture/testing-boundaries.md']
@@ -112,11 +112,11 @@ def test_development_workflow_incident_evals_require_cross_role_and_fallback_con
 
 def test_eval_contract_matrix_and_oracle_free_prepared_cases():
  ids=kernels.validate_eval_contracts(); assert set(ids)==kernels.REQUIRED_EVAL_IDS
- b=kernels.prepare_eval_bundle(); assert len(b['cases'])==37
+ b=kernels.prepare_eval_bundle(); assert len(b['cases'])==73
  assert all(kernels.ORACLE_FIELDS.isdisjoint(c) for c in b['cases'])
  by={c['case_id']:c for c in b['cases']}; assert by['configured-repository-pr-routing::review']['prompt']=='review PR31'; assert by['configured-repository-pr-routing::integration']['prompt']=='merge PR34'
 
-def test_behavior_evaluator_accepts_complete_matrix(): assert len(kernels.evaluate_behavior_results(_passing()))==37
+def test_behavior_evaluator_accepts_complete_matrix(): assert len(kernels.evaluate_behavior_results(_passing()))==73
 
 def test_repository_routing_requires_observed_configured_connector_read():
  p=_passing(); _result(p,'configured-repository-pr-routing::review')['runner_observations']=[]
@@ -172,3 +172,31 @@ def test_role_and_publication_boundaries_remain_high_salience():
  assert 'owned branch + commit + PR + exact head' in impl and 'Do not self-review/integrate' in impl
  assert 'formal GitHub `COMMENT` verdict' in rev and 'Review does not implement fixes' in rev
  assert 'current head must equal the exact reviewed/certified head' in integ
+
+
+def test_c1_governance_contracts_and_evals_are_mechanical():
+ m,s=kernels.load_canonical()
+ assert 'audit' in s['roles'] and m['generated_role_files']['audit']=='audit.md'
+ audit={r['id'] for r in kernels.effective_rules(s,'audit')}
+ assert {'audit-authority-boundary','audit-exact-baseline','audit-asana-disposition','audit-specialist-context'}<=audit
+ for role in ('coordinator','development-workflow','implementation','integration','review','workflow','postgresql-dark-launch'):
+  assert 'repository-friction-capture' in {r['id'] for r in kernels.effective_rules(s,role)}
+ for role in ('development-workflow','implementation','integration','review','workflow','postgresql-dark-launch'):
+  assert 'code-smell-debt-capture' in {r['id'] for r in kernels.effective_rules(s,role)}
+ assert {'decision-provenance','authenticated-account-provenance'}<={r['id'] for r in kernels.effective_rules(s,'coordinator')}
+ ids={x['id'] for x in kernels._evals()}
+ assert {'audit-exact-baseline','repository-friction-discovery','code-smell-dedupe-log-and-continue','durable-review-classification','coordinator-check-everything-mixed-state','authenticated-account-not-human-decision','shared-resource-concurrency-preflight'}<=ids
+
+
+def test_c1_standing_contracts_preserve_authority_and_capture_surfaces():
+ audit=(DISH_ROOT/'docs'/'agents'/'audit.md').read_text()
+ assert 'read-only for GitHub/source mutation' in audit and 'bounded Asana finding disposition' in audit
+ assert 'may not implement fixes' in audit and 'exact audited GitHub SHA/baseline' in audit
+ base=(DISH_ROOT/'docs'/'agents'/'contributor-base.md').read_text()
+ assert '1217443500915644' in base and 'notice -> dedupe -> log/update -> continue' in base
+ assert '1217443501022227' in base and 'Current blockers remain on the active work surface' in base
+ dw=(DISH_ROOT/'docs'/'agents'/'development-workflow.md').read_text()
+ assert '`AGENT REVIEW`' in dw and '`AGENT RE-REVIEW`' in dw and '`HUMAN APPROVAL/DECISION`' in dw
+ assert 'Observing a quiet state is not isolation' in dw and 'mechanically enforced admission/fencing boundary' in dw
+ idx=(DISH_ROOT/'docs'/'agents'/'index.md').read_text()
+ assert 'Authenticated-account metadata' in idx and 'not that Marco physically performed or approved' in idx

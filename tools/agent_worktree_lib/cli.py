@@ -67,8 +67,12 @@ def build_parser() -> argparse.ArgumentParser:
     handoff.add_argument("--task", required=True)
     add_json_flag(handoff)
 
-    cleanup = sub.add_parser("cleanup", help="conservatively remove the linked worktree after an established disposition")
+    cleanup = sub.add_parser("cleanup", help="conservatively clean an exact terminal task/PR lineage")
     cleanup.add_argument("--task", required=True)
+    cleanup.add_argument("--branch", help="exact terminal agent/* branch bound to the PR; required when no local task state exists")
+    cleanup.add_argument("--expected-head", help="exact terminal PR head SHA; defaults to stored local head only for legacy local cleanup")
+    cleanup.add_argument("--pr-number", type=int, help="terminal PR number retained in cleanup provenance; required for controller cleanup")
+    cleanup.add_argument("--repo", default=".", help="existing checkout/worktree used to identify the shared repository")
     cleanup.add_argument("--disposition", required=True, choices=sorted(DISPOSITIONS))
     add_json_flag(cleanup)
 
