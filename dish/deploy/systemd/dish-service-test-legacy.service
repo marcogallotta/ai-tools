@@ -1,14 +1,14 @@
 [Unit]
-Description=Dish workflow service (test PostgreSQL authority)
-After=network-online.target tailscaled.service dish-postgres-test.service
-Wants=network-online.target dish-postgres-test.service
-Conflicts=dish-service.service dish-shadow-worker-test.service
+Description=Dish workflow service (disposable TEST legacy comparator oracle)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+Conflicts=dish-service.service
 
 [Service]
 Type=notify
 User=marco
 WorkingDirectory=/home/marco/ai-tools/dish
-EnvironmentFile=/home/marco/.config/dish-service/test.env
+EnvironmentFile=/home/marco/.config/dish-service/test-legacy.env
 ExecStart=/home/marco/ai-tools/dish/dish-service
 Restart=on-failure
 RestartPreventExitStatus=78
@@ -26,7 +26,7 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/marco/.local/state/dish/test
+ReadWritePaths=/home/marco/.local/state/dish/test-legacy
 
 [Install]
 WantedBy=multi-user.target
