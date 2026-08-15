@@ -48,3 +48,13 @@ The durable record contains task GID, target role, handoff timestamp, handoff so
 At three hours after the durable handoff timestamp, if there is still no associated PR or other authoritative implementation evidence, surface exactly one `STALE HANDOFF — owner status unknown` observation for that handoff identity. The alert is observability only. It never authorizes duplicate dispatch, replacement, or a second writer. Before any ownership change, re-read live Asana + GitHub and reconcile the existing lineage.
 
 `scripts/operator_handoff.py` encodes the write/readback and idempotent staleness predicates. It uses the existing Asana orchestration surface and GitHub lineage; it creates no queue, admission database, ownership service, or new control plane.
+
+## Handoff executability preflight
+
+Prepared handoff text is **DRAFT** until a terminal executability preflight succeeds. Before presenting any handoff as executable, copy-ready, or ready to send, resolve and read back every mandatory durable task/PR/branch/baseline identity, reject unresolved placeholder/template tokens, and verify the receiving standing role required by the role index. A sentence such as `ROLE: Audit` never changes a destination Project/session's standing authority.
+
+If destination authority is unknown, the handoff is routing-required rather than executable. If the destination is known and incompatible, do not emit it as ready for that destination; return the single routing action, for example `send only to an Audit Project/session`. If a prerequisite requires a durable mutation not authorized by the standing explicit-intent policy, stop at `DRAFT / PREPARATION REQUIRED` and state that one missing action rather than creating it implicitly.
+
+Where execution requires a fresh owning task, including an independent Audit round, verify that exact task exists, matches the required scope/baseline, and is distinct from any separate round before the handoff becomes executable. Two independent audit handoffs therefore require two distinct fresh task identities.
+
+`scripts/handoff_preflight.py` is a transport-neutral fail-closed validator for these already-resolved inputs. It never creates a task, changes standing role authority, or performs a prerequisite write.
