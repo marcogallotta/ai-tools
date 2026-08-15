@@ -1,0 +1,52 @@
+name: PR79 runbook reconcile
+on:
+  push:
+    branches: [agent/native-cert-waiver-governance]
+permissions:
+  contents: write
+jobs:
+  reconcile:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: agent/native-cert-waiver-governance
+          fetch-depth: 0
+      - name: Reconcile testing runbook mechanically
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('dish/docs/testing.md')
+          s = p.read_text()
+          replacements = [
+              (
+                  '''Certification fails when zero tests execute,\nwhen inventory identities drift, when setup errors occur, or when a required test skips without an\nexplicit `--waive-skip NODEID=REASON`. The report includes dialect, driver, database, native server\nversion, selected/executed/passed/failed/error/skipped/unavailable counts, duration, and exact node\nIDs.''',
+                  '''Certification fails when zero tests execute,\nwhen inventory identities drift, when setup errors occur, when a required test skips without a\nmatching structured `--waive-skip` JSON object, or when a configured waiver is unused, malformed,\nunknown, review-due/expired, or bound to a different skip-reason signature. Each waiver carries the\nexact node ID, SHA-256 of the expected pytest skip reason, owning Asana task GID, review-by date, and\na separate human justification. The signature hashes only the reason text (not pytest's source\nlocation/`Skipped:` wrapper), so explanatory prose cannot silently stand in for the observed skip\ncondition. The report includes matched waiver evidence, observed reason signatures, mismatches,\nunused waivers, dialect, driver, database, native server version, counts, duration, and exact node IDs.'''
+              ),
+              (
+                  '''All four skip (with a reason) rather than fail when that variable is\nunset:\n\n```sh''',
+                  '''All four skip (with a reason) rather than fail when that variable is\nunset:\n\nThe accepted 2026-08-07 gap is review-bounded to 2026-09-07. These are the committed structured\nwaivers; a reason change requires a new reviewed signature rather than reusing the node ID:\n\n```sh'''
+              ),
+              (
+                  '''--waive-skip "tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_database_disconnect_rolls_back_then_recovers_once=no runner wires DISH_SECTION1_COMPOSE_JSON to the shared TEST PostgreSQL target; revisit before setting external_effects_enabled=true" \\\n--waive-skip "tests/postgresql/native/test_process_failure_command.py::test_command_process_disconnect_before_commit_fails_closed_and_recovers=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure" \\\n--waive-skip "tests/postgresql/native/test_process_failure_disconnect.py::test_projection_worker_fails_clearly_across_postgresql_disconnect=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure" \\\n--waive-skip "tests/postgresql/native/test_process_failure_disconnect.py::test_reconciliation_worker_writes_nothing_while_postgresql_is_down=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure"''',
+                  '''--waive-skip '{"nodeid":"tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_database_disconnect_rolls_back_then_recovers_once","expected_reason_sha256":"a73321063eef94cb68f134ff85b48a2a1eda77a2e3d60a5893a40dc8b288ac1b","owner_task_gid":"1217428310522281","review_by":"2026-09-07","justification":"bare native certification lacks shared TEST Compose control; revisit before enabling external effects"}' \\\n--waive-skip '{"nodeid":"tests/postgresql/native/test_process_failure_command.py::test_command_process_disconnect_before_commit_fails_closed_and_recovers","expected_reason_sha256":"b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1","owner_task_gid":"1217428310522281","review_by":"2026-09-07","justification":"covered by dish-pg-process-failure; bare native certification lacks Compose control"}' \\\n--waive-skip '{"nodeid":"tests/postgresql/native/test_process_failure_disconnect.py::test_projection_worker_fails_clearly_across_postgresql_disconnect","expected_reason_sha256":"b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1","owner_task_gid":"1217428310522281","review_by":"2026-09-07","justification":"covered by dish-pg-process-failure; bare native certification lacks Compose control"}' \\\n--waive-skip '{"nodeid":"tests/postgresql/native/test_process_failure_disconnect.py::test_reconciliation_worker_writes_nothing_while_postgresql_is_down","expected_reason_sha256":"b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1","owner_task_gid":"1217428310522281","review_by":"2026-09-07","justification":"covered by dish-pg-process-failure; bare native certification lacks Compose control"}''''
+              ),
+          ]
+          for old, new in replacements:
+              if old not in s:
+                  raise SystemExit('expected stale runbook block not found')
+              s = s.replace(old, new, 1)
+          if 'explicit `--waive-skip NODEID=REASON`' in s:
+              raise SystemExit('legacy waiver syntax remains')
+          p.write_text(s)
+          PY
+          git diff --check
+      - name: Commit reconciliation and remove transport
+        run: |
+          git config user.name 'Dish Agent Integration (GitHub Actions)'
+          git config user.email 'dish-agent@users.noreply.github.com'
+          git rm .github/workflows/pr79-runbook-reconcile.yml
+          git add dish/docs/testing.md
+          git commit -m 'Reconcile PR79 runbook with current main'
+          git push origin HEAD:agent/native-cert-waiver-governance
