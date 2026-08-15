@@ -78,7 +78,7 @@ def _native_reset_fixture(base):
                 f"CREATE DATABASE {_q(database_name)} OWNER {_q(owner)} TEMPLATE template0"
             )
 
-        database_url = base_url.set(database=database_name).render_as_string(
+        database_url = reset_url.set(database=database_name).render_as_string(
             hide_password=False
         )
         target_engine = create_engine(database_url)
