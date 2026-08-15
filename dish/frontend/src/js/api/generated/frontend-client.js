@@ -4,6 +4,7 @@ export const FRONTEND_OPERATION_IDS = [
   "frontendLogout",
   "getFrontendAdmin",
   "getFrontendBoard",
+  "getFrontendSearch",
   "getFrontendSectionTasks",
   "getFrontendSession",
   "getFrontendTaskDetail"
@@ -31,6 +32,11 @@ export class GeneratedFrontendClient {
 
   getFrontendBoard(options = {}) {
     const path = "/frontend/board";
+    return this.transport.request({ path, method: "GET", ...options });
+  }
+
+  getFrontendSearch(options = {}) {
+    const path = "/frontend/search";
     return this.transport.request({ path, method: "GET", ...options });
   }
 

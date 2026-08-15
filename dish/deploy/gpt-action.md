@@ -69,11 +69,16 @@ workflow procedure.
   lowercase UUID for one logical call. This includes `inspect`: Verification inspection records
   durable evidence even though its operator purpose is observational. If no Dish envelope is received
   because of a transport/client failure (for example `ClientResponseError`, timeout, or connection
-  reset), retry the exact logical request up to three times after the initial attempt with brief
-  backoff (approximately 2s, 5s, then 10s). Reuse the same `client.run_id` and, when present, the same
-  `client.request_id`; never turn a transport retry into a new logical mutation. As soon as any Dish
-  envelope is received, stop blind transport retries and follow it. Never blindly retry
-  `BACKEND_UNCERTAIN`. Truly read-only Actions that omit request IDs use the same bounded transport
+  reset), do not issue repeated automatic retries in the same assistant/tool loop when real elapsed
+  delay cannot be guaranteed. Preserve the exact logical request unchanged: the same `client.run_id`,
+  the same `client.request_id` when present, the same command, and the same arguments. Retry only at a
+  genuine later opportunity after real elapsed time, reusing that exact logical identity. If real
+  elapsed delay cannot be guaranteed now, report concisely that the call failed before a Dish envelope
+  and preserve the exact call for the next genuine retry opportunity; do not hammer the Action or
+  report that retries were exhausted. As soon as any Dish envelope is received, stop transport retry
+  behavior and follow Dish authority. Never blindly retry `BACKEND_UNCERTAIN`, and never rotate request
+  or run IDs merely to escape a failed or pending call. Do not invent a server-side sleep/timing Action
+  to manufacture delay. Truly read-only Actions that omit request IDs follow the same no-same-turn
   retry rule and retain the same run ID.
 - Treat each Dish result as workflow authority. Follow `allowed_actions`, `service_access`,
   `data.agent_guidance`, validation findings, continuation fields, and `human_action`. Never infer a

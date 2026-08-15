@@ -122,6 +122,18 @@ Rules:
 - record exact GitHub branch, commit, PR URL, current head SHA, and review/integration state when they matter. GitHub remains the authority for source/history and code artifacts;
 - when TEST/production runtime identity matters, record the observed environment evidence or explicitly record that it is unknown. Never substitute repository HEAD for deployed-state evidence.
 
+## Comparison compatibility and blocker ownership
+
+Before classifying a comparison mismatch as fixture/data repair, prove the proposed target state satisfies the health/validity requirements of **every** compared system. A fixture being disposable never waives its own minimum health requirements. If the proposed target cannot keep every side valid, stop fixture repair rather than iterating on data that cannot satisfy the gate.
+
+For a required active gate, classify the residual path from supported capabilities, not from where the mismatch was first observed:
+
+1. **Compatibility preflight:** establish each compared system's own minimum valid/healthy state and prove the proposed common target can satisfy all of them before repair starts. If not, fixture work stops.
+2. **Ownership escalation:** if the gate cannot be satisfied by an existing supported operation and success requires a new or changed repository capability, classify the blocker **IMPLEMENTATION REQUIRED** immediately and route it through the existing Implementation lifecycle. Do not relabel it local operations, fixture repair, or deferred design. If an existing supported operation can safely produce the required state, keep the work **LOCAL SYSTEM ACCESS** instead of falsely escalating to Implementation.
+3. **Blocker consistency:** before marking a blocker `deferred` or `not required`, reread the active gate and prove that gate can pass without the blocker. If it cannot, keep the blocker on the critical path with the correct next owner. A separate PR that fixes another defect does not discharge this blocker.
+
+When the ownership-escalation condition fires, Marco-facing output follows the canonical action-first contract and begins: `This needs an Implementation fix: <one-sentence scope>.` Diagnosis may follow, but not before that action. Use the existing dispatcher and canonical Implementation handoff; do not create another queue, scheduler, or lifecycle controller. Root-cause analysis remains governed by the canonical shared Five Whys procedure rather than a new incident method here.
+
 ## PR intake and review routing
 
 Ordinary review discovery must filter out GitHub draft PRs. `draft=true` means implementation is still AUTHORING even when the PR already exists; do not dispatch it for ordinary review. When the durable PR description names unfinished task-scoped authoring evidence with `IMPLEMENTATION EVIDENCE PENDING: <evidence>`, classify it as **IMPLEMENTATION CONTINUATION REQUIRED** and route the existing PR/branch/task back to Implementation. Do not turn unfinished authoring evidence into a Review, Integration, environment-owner, or local-certification question. A replacement Implementation agent may take it only through an explicit durable ownership handoff on the PR.

@@ -153,6 +153,25 @@ export function mapBoardResponse(value) {
   return { snapshotId: value.snapshot_id, pageSize: value.page_size, sections };
 }
 
+export function mapSearchResponse(value) {
+  exactKeys(value, ["results", "truncated"]);
+  if (!Array.isArray(value.results) || value.results.length > 50 || typeof value.truncated !== "boolean") mismatch();
+  const ids = new Set();
+  const results = value.results.map((raw) => {
+    exactKeys(raw, ["task_id", "title", "project_label", "section_label"]);
+    const id = route(raw.task_id, "task");
+    if (ids.has(id)) mismatch();
+    ids.add(id);
+    return {
+      id,
+      title: boundedString(raw.title, 500),
+      projectLabel: boundedString(raw.project_label, 160),
+      sectionLabel: boundedString(raw.section_label, 160),
+    };
+  });
+  return { results, truncated: value.truncated };
+}
+
 export function mapSectionPageResponse(value, section) {
   exactKeys(value, ["section_id", "continuity_id", "cards", "next_cursor", "notices"]);
   if (route(value.section_id, "section") !== section.id) mismatch();

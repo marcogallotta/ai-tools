@@ -201,6 +201,37 @@ resets, rebases, merges, or pushes. On success the durable task record starts wi
 and remote-owned heads all equal to the verified handed-off head, after which normal
 `resume`/`publish`/`verify-handoff`/`cleanup` behavior is unchanged.
 
+### Supersede an old task lineage explicitly
+
+When current orchestration authority deliberately replaces an older implementation branch with a
+different authorized branch/PR under the same task GID, use the explicit supersession transition:
+
+```sh
+tools/agent-worktree supersede \
+  --task <task_gid> \
+  --old-branch agent/<superseded-branch> \
+  --old-head <exact-superseded-head> \
+  --branch agent/<replacement-pr-branch> \
+  --base-ref refs/heads/main \
+  --base <replacement-authoring-base-sha> \
+  --expected-head <exact-replacement-pr-head> \
+  --pr-number <replacement-pr-number> \
+  --pr-head <exact-replacement-pr-head> \
+  --pr-lease-state none \
+  --agent-id <local-agent-id> \
+  --reason <supersession-reason> \
+  --provenance <authority-reference>
+```
+
+`supersede` is the only cross-lineage task-state transition. Ordinary `start`, `adopt`, `resume`,
+`claim`, takeover, and cleanup keep rejecting branch mismatches. It requires a clean exact old
+worktree, exact old and replacement remote heads, no conflicting live local claim or visible active
+PR lease, and an exact recoverable old remote branch. Before retiring any old local state it durably
+archives the old branch/head/base and ownership provenance with `disposition=superseded`; the old
+remote branch is preserved. Replacement activation reuses the normal adoption validation. A crash
+after old terminalization but before replacement activation leaves `lifecycle=supersession-incomplete`;
+`status` reports that state and only an exact retry of the same `supersede` identity may complete it.
+
 ### Resume and status
 
 ```sh

@@ -44,6 +44,24 @@ def test_background_service_failure_keeps_last_safe_board(acceptance):
     acceptance.assert_clean(allowed_http_errors=[(503, "/frontend/board")])
 
 
+
+def test_search_failure_keeps_board_usable(acceptance):
+    _cards(acceptance)
+    acceptance.login()
+    acceptance.wait_board()
+    acceptance.runtime.search_failure = "unavailable"
+
+    acceptance.page.get_by_label("Search active dishes").fill("alpha")
+    acceptance.page.get_by_role("button", name="Search", exact=True).click()
+    expect(acceptance.page.locator(".board-search__status")).to_contain_text(
+        "Search is temporarily unavailable. The board is still available."
+    )
+    alpha = acceptance.page.locator(f'[data-task-id="{TASK_ALPHA}"]')
+    expect(alpha).to_be_visible()
+    alpha.click()
+    expect(acceptance.page.get_by_role("dialog")).to_be_visible()
+    acceptance.assert_clean(allowed_http_errors=[(503, "/frontend/search")])
+
 def test_contract_mismatch_keeps_last_safe_board_and_requires_reload(acceptance):
     _cards(acceptance)
     acceptance.login()

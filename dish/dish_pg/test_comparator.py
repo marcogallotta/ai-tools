@@ -8,6 +8,7 @@ and persisted as durable comparison evidence.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import re
@@ -22,6 +23,12 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
+from sqlalchemy.exc import SQLAlchemyError
+
+from . import stage3_models as workflow_models
+from .database import DatabaseSettings, create_database_engine, session_factory, session_scope
+from .workflow import WorkflowAuthorityError, WorkflowAuthorityService
+
 PLAN_FORMAT = "dish-test-comparator-plan-v1"
 EVIDENCE_FORMAT = "dish-test-comparator-evidence-v1"
 DEFAULT_AUTHORITY_ACTION_BASE = "http://127.0.0.1:8786/test"
@@ -32,6 +39,9 @@ DEFAULT_EVIDENCE_DIR = Path("/home/marco/.local/state/dish/test/comparator-evide
 DEFAULT_AUTHORITY_ENV = Path("/home/marco/.config/dish-service/test.env")
 DEFAULT_ORACLE_ENV = Path("/home/marco/.config/dish-service/test-legacy.env")
 DISPOSABLE_ORACLE_PROJECT_GID = "1216693403164366"
+COMPARATOR_RUN_OWNER_ID = "gpt-action"
+COMPARATOR_RUN_AGENT = "gpt"
+_COMPARATOR_RUN_CAPABILITY_NAMESPACE = "dish-test-comparator-run-v1"
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 _TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$")
@@ -192,6 +202,120 @@ def load_targets(
         TargetConfig("authority", authority_action_base.rstrip("/"), authority_health_url, _require(authority_env, "DISH_SERVICE_ACTION_TOKEN"), authority_env_path, authority_env),
         TargetConfig("oracle", oracle_action_base.rstrip("/"), oracle_health_url, _require(oracle_env, "DISH_SERVICE_ACTION_TOKEN"), oracle_env_path, oracle_env),
     )
+
+
+def _mutating_authority_generation_id(
+    authority: TargetConfig, *, preflight: Mapping[str, Any]
+) -> uuid.UUID:
+    """Bind direct run registration to the exact TEST authority proved by preflight."""
+
+    _require(authority.env, "DISH_AUTHORITY_BACKEND", "postgresql")
+    _require(authority.env, "DISH_PROFILE", "test")
+    database_url = _require(authority.env, "DISH_PG_DATABASE_URL")
+    expected_database = _require(authority.env, "DISH_PG_EXPECTED_DATABASE_NAME")
+    if _database_name_from_url(database_url) != expected_database or not expected_database.endswith("_test"):
+        raise ComparatorError("PostgreSQL comparator run registration requires the configured _test database")
+
+    expected_generation_text = _require(authority.env, "DISH_PG_EXPECTED_GENERATION_ID")
+    try:
+        expected_generation_id = uuid.UUID(expected_generation_text)
+    except ValueError as exc:
+        raise ComparatorError("DISH_PG_EXPECTED_GENERATION_ID must be a UUID") from exc
+
+    authority_health = preflight.get("authority_health")
+    identity = authority_health.get("identity") if isinstance(authority_health, Mapping) else None
+    if not isinstance(identity, Mapping):
+        raise ComparatorError("PostgreSQL TEST health preflight did not expose authority identity")
+    if identity.get("database") != expected_database:
+        raise ComparatorError("PostgreSQL TEST health database does not match comparator authority environment")
+    if identity.get("generation_status") != "active":
+        raise ComparatorError("PostgreSQL TEST health generation is not active")
+    if str(identity.get("generation_id", "")) != str(expected_generation_id):
+        raise ComparatorError("PostgreSQL TEST health generation does not match comparator authority environment")
+    return expected_generation_id
+
+
+def _comparator_run_capability_digest(*, generation_id: uuid.UUID, run_id: uuid.UUID) -> bytes:
+    material = "\0".join(
+        (
+            _COMPARATOR_RUN_CAPABILITY_NAMESPACE,
+            str(generation_id),
+            COMPARATOR_RUN_OWNER_ID,
+            COMPARATOR_RUN_AGENT,
+            str(run_id),
+        )
+    )
+    return hashlib.sha256(material.encode("utf-8")).digest()
+
+
+def _register_mutating_authority_run(
+    authority: TargetConfig,
+    *,
+    preflight: Mapping[str, Any],
+    run_id: uuid.UUID,
+    registered_at: datetime,
+) -> Mapping[str, Any]:
+    """Register one comparator Action run through canonical PostgreSQL workflow authority."""
+
+    generation_id = _mutating_authority_generation_id(authority, preflight=preflight)
+    capability_digest = _comparator_run_capability_digest(
+        generation_id=generation_id,
+        run_id=run_id,
+    )
+    engine = create_database_engine(
+        DatabaseSettings(url=_require(authority.env, "DISH_PG_DATABASE_URL"))
+    )
+    created = False
+    try:
+        with session_scope(session_factory(engine)) as session:
+            existing = session.get(workflow_models.ServiceRun, run_id)
+            if existing is None:
+                WorkflowAuthorityService(session).register_run(
+                    run_id=run_id,
+                    generation_id=generation_id,
+                    owner_id=COMPARATOR_RUN_OWNER_ID,
+                    agent=COMPARATOR_RUN_AGENT,
+                    capability_digest=capability_digest,
+                    registered_at=registered_at,
+                )
+                created = True
+            elif (
+                existing.generation_id != generation_id
+                or existing.owner_id != COMPARATOR_RUN_OWNER_ID
+                or existing.agent != COMPARATOR_RUN_AGENT
+                or existing.capability_digest != capability_digest
+                or existing.status != "active"
+            ):
+                raise ComparatorError(
+                    "existing comparator run identity is not an active run for the expected TEST generation"
+                )
+            WorkflowAuthorityService(session).repo.require_active_run(
+                generation_id=generation_id,
+                run_id=run_id,
+                owner_id=COMPARATOR_RUN_OWNER_ID,
+            )
+    except ComparatorError:
+        raise
+    except WorkflowAuthorityError as exc:
+        raise ComparatorError(
+            f"PostgreSQL TEST comparator run registration was rejected: {exc}"
+        ) from exc
+    except SQLAlchemyError as exc:
+        raise ComparatorError(
+            "PostgreSQL TEST comparator run registration could not reach workflow authority "
+            f"({type(exc).__name__})"
+        ) from exc
+    finally:
+        engine.dispose()
+
+    return {
+        "mechanism": "WorkflowAuthorityService.register_run",
+        "generation_id": str(generation_id),
+        "run_id": str(run_id),
+        "owner_id": COMPARATOR_RUN_OWNER_ID,
+        "agent": COMPARATOR_RUN_AGENT,
+        "created": created,
+    }
 
 
 def _request_json(
@@ -488,6 +612,19 @@ def run_comparison(
     comparison_run_id = run_id or uuid.uuid4()
     run_id_text = str(comparison_run_id)
     preflight = _route_preflight(authority, oracle, run_id=run_id_text)
+    has_mutating_scenario = any(
+        bool(scenario.get("mutating", False))
+        for scenario in plan["scenarios"]
+        if isinstance(scenario, Mapping)
+    )
+    run_authority = None
+    if allow_mutating_scenarios and has_mutating_scenario:
+        run_authority = _register_mutating_authority_run(
+            authority,
+            preflight=preflight,
+            run_id=comparison_run_id,
+            registered_at=started_at,
+        )
     target_bindings: dict[str, dict[str, Any]] = {"authority": {"run_id": run_id_text}, "oracle": {"run_id": run_id_text}}
     identity_aliases: dict[str, str] = {run_id_text: "<run_id>"}
     results: list[dict[str, Any]] = []
@@ -553,6 +690,10 @@ def run_comparison(
             "oracle_disposable": oracle.env.get("DISH_TEST_COMPARATOR_DISPOSABLE") == "1",
         },
     }
+    if run_authority is not None:
+        report["run_authority"] = normalize_value(
+            run_authority, identity_aliases=identity_aliases
+        )
     stamp = started_at.strftime("%Y%m%dT%H%M%SZ")
     evidence_path = evidence_dir / f"comparison-{stamp}-{run_id_text}.json"
     _atomic_write_json(evidence_path, report)

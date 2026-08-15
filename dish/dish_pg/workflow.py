@@ -22,7 +22,13 @@ from sqlalchemy.orm import Session
 from . import models
 from . import reservation_models as reservations
 from . import stage3_models as wf
+from . import stage5_models as projection_models
 from . import stage6_models as rel
+from .recovery_rehydration import (
+    RECOVERY_QUALIFICATION_REVISION,
+    RECOVERY_READINESS_REVISION,
+    RECOVERY_REHYDRATION_REVISION,
+)
 from .release_history import operation_revocation_history_reconciled
 
 
@@ -503,9 +509,98 @@ class WorkflowAuthorityRepository:
             ).limit(1)
         ) is not None
         if generation.creation_reason == "destructive_restore" and not candidate_exists:
-            raise MutationAdmissionClosed(
-                "restored generation mutation admission requires deliberate reissue control"
+            bootstrap = self.session.scalar(
+                select(models.GenerationBootstrapAuthority).where(
+                    models.GenerationBootstrapAuthority.generation_id == generation.generation_id
+                )
             )
+            rehydration = self.session.scalar(
+                select(models.AppliedMigrationEvent).where(
+                    models.AppliedMigrationEvent.generation_id == spec.generation_id,
+                    models.AppliedMigrationEvent.revision == RECOVERY_REHYDRATION_REVISION,
+                    models.AppliedMigrationEvent.outcome == "repair",
+                )
+            )
+
+            def recovery_lineage_valid(event, route: str) -> bool:
+                details = None if event is None else event.details
+                return (
+                    details is not None
+                    and bootstrap is not None
+                    and details.get("route") == route
+                    and details.get("external_restore_control_id")
+                    == generation.external_restore_control_id
+                    and details.get("predecessor_generation_id")
+                    == str(generation.predecessor_generation_id)
+                    and details.get("successor_generation_id") == str(generation.generation_id)
+                    and details.get("bootstrap_id") == str(bootstrap.bootstrap_id)
+                    and details.get("bootstrap_capability_sha256")
+                    == bootstrap.capability_digest.hex()
+                    and bootstrap.external_control_id
+                    == generation.external_restore_control_id
+                    and details.get("external_effects_enabled") is False
+                )
+
+            if not recovery_lineage_valid(rehydration, RECOVERY_REHYDRATION_REVISION):
+                raise MutationAdmissionClosed(
+                    "restored generation mutation admission requires deliberate reissue control"
+                )
+            qualification = self.session.scalar(
+                select(models.AppliedMigrationEvent).where(
+                    models.AppliedMigrationEvent.generation_id == spec.generation_id,
+                    models.AppliedMigrationEvent.revision == RECOVERY_QUALIFICATION_REVISION,
+                    models.AppliedMigrationEvent.outcome == "repair",
+                )
+            )
+            readiness = self.session.scalar(
+                select(models.AppliedMigrationEvent).where(
+                    models.AppliedMigrationEvent.generation_id == spec.generation_id,
+                    models.AppliedMigrationEvent.revision == RECOVERY_READINESS_REVISION,
+                    models.AppliedMigrationEvent.outcome == "repair",
+                )
+            )
+            qualification_valid = (
+                recovery_lineage_valid(qualification, RECOVERY_QUALIFICATION_REVISION)
+                and qualification.details.get("rehydration_event_id")
+                == str(rehydration.migration_event_id)
+                and qualification.details.get("protocol_release") == spec.protocol_release
+                and qualification.details.get("dish_release") == spec.dish_release
+            )
+            readiness_valid = (
+                recovery_lineage_valid(readiness, RECOVERY_READINESS_REVISION)
+                and qualification_valid
+                and readiness.details.get("rehydration_event_id")
+                == str(rehydration.migration_event_id)
+                and readiness.details.get("qualification_event_id")
+                == str(qualification.migration_event_id)
+                and readiness.details.get("qualification_request_id")
+                == qualification.details.get("request_id")
+                and readiness.details.get("ordinary_mutation_admission_open") is True
+            )
+            if not readiness_valid:
+                epoch = self.session.scalar(
+                    select(projection_models.ProjectionEpoch).where(
+                        projection_models.ProjectionEpoch.generation_id
+                        == generation.generation_id,
+                        projection_models.ProjectionEpoch.status == "active",
+                    )
+                )
+                exact_qualification_request = (
+                    qualification_valid
+                    and epoch is not None
+                    and epoch.external_effects_enabled is False
+                    and qualification.details.get("request_id") == str(spec.request_id)
+                    and qualification.details.get("run_id") == str(spec.run_id)
+                    and qualification.details.get("owner_id") == spec.owner_id
+                    and qualification.details.get("principal_class") == spec.principal_class
+                    and qualification.details.get("command_name") == spec.command_name
+                    and qualification.details.get("canonical_payload_sha256") == payload_sha
+                    and qualification.details.get("ordinary_mutation_admission_open") is False
+                )
+                if not exact_qualification_request:
+                    raise MutationAdmissionClosed(
+                        "restored generation mutation admission is closed pending recovery readiness"
+                    )
         reservation = None
         if candidate_exists:
             control = self.session.get(rel.MutationAdmissionControl, spec.generation_id)
