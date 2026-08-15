@@ -45,11 +45,14 @@ from .recovery_control import (
     RecoveredPhysicalState,
     RestoreControl,
     RestoreControlError,
+    authorize_recovery_qualification,
     load_restore_control,
     migration_revision_sha256,
     promote_restored_generation,
+    record_recovery_readiness,
     rehydrate_restored_generation,
 )
+from .recovery_rehydration import RecoveryQualificationSpec
 from .release import ALEMBIC_HEAD, ReleaseCandidateService
 from .release_evidence import (
     EVIDENCE_ARTIFACT_KINDS,
@@ -112,6 +115,7 @@ TERMINATION_GRACE_SECONDS = 5.0
 SOURCE_IDENTITY_PATHS = (
     "dish_pg/recovery_control.py",
     "dish_pg/recovery_rehearsal.py",
+    "dish_pg/recovery_rehydration.py",
     "dish_pg/workflow.py",
     "dish_pg/bootstrap.py",
     "dish_pg/candidate_manifest.py",
@@ -2344,25 +2348,154 @@ def _exercise_promotion(
             raise RehearsalError(
                 f"rehydrated recovery read failed: {read_result.code} {read_result.data}"
             )
+        try:
+            workflow.admit_request(
+                RequestSpec(
+                    request_id=uuid.uuid4(),
+                    generation_id=control.generation_id,
+                    run_id=current_run.run_id,
+                    owner_id=current_run.owner_id,
+                    principal_class="service",
+                    command_name="section2_unrelated_after_rehydration",
+                    canonical_payload={
+                        "command": "section2_unrelated_after_rehydration",
+                        "arguments": {},
+                        "owner_id": current_run.owner_id,
+                        "run_id": str(current_run.run_id),
+                    },
+                    protocol_release=context.protocol_release,
+                    dish_release=context.dish_release,
+                    admitted_at=utc_now(),
+                )
+            )
+        except MutationAdmissionClosed as exc:
+            faults["rehydration_does_not_open_mutation_admission"] = {
+                "passed": True,
+                "error": str(exc),
+            }
+        else:
+            raise RehearsalError("rehydration opened ordinary mutation admission")
+
+        qualification_request_id = uuid.uuid4()
+        qualification_arguments = {
+            "task_id": str(context.task_id),
+            "reason": "destructive-restore recovery qualification",
+        }
+        qualification_payload = {
+            "command": "reopen-planning",
+            "arguments": qualification_arguments,
+            "owner_id": current_run.owner_id,
+            "run_id": str(current_run.run_id),
+        }
+        qualification = authorize_recovery_qualification(
+            session,
+            control,
+            recovered_state=recovered_state,
+            spec=RecoveryQualificationSpec(
+                request_id=qualification_request_id,
+                run_id=current_run.run_id,
+                owner_id=current_run.owner_id,
+                principal_class="admin",
+                command_name="reopen-planning",
+                canonical_payload=qualification_payload,
+            ),
+        )
+        try:
+            workflow.admit_request(
+                RequestSpec(
+                    request_id=uuid.uuid4(),
+                    generation_id=control.generation_id,
+                    run_id=current_run.run_id,
+                    owner_id=current_run.owner_id,
+                    principal_class="service",
+                    command_name="section2_unrelated_before_readiness",
+                    canonical_payload={
+                        "command": "section2_unrelated_before_readiness",
+                        "arguments": {},
+                        "owner_id": current_run.owner_id,
+                        "run_id": str(current_run.run_id),
+                    },
+                    protocol_release=context.protocol_release,
+                    dish_release=context.dish_release,
+                    admitted_at=utc_now(),
+                )
+            )
+        except MutationAdmissionClosed as exc:
+            faults["qualification_reserves_only_exact_request"] = {
+                "passed": True,
+                "error": str(exc),
+            }
+        else:
+            raise RehearsalError("recovery qualification opened unrelated mutation admission")
+
         write_result = port.execute(
             CommandCall(
                 command_name="reopen-planning",
-                arguments={
-                    "task_id": str(context.task_id),
-                    "reason": "destructive-restore recovery qualification",
-                },
+                arguments=qualification_arguments,
                 owner_id=current_run.owner_id,
                 principal_class="admin",
                 run_id=current_run.run_id,
-                request_id=uuid.uuid4(),
+                request_id=qualification_request_id,
                 now=utc_now(),
                 protocol_release=context.protocol_release,
             )
         )
         if not write_result.ok:
             raise RehearsalError(
-                f"rehydrated recovery write failed: {write_result.code} {write_result.data}"
+                f"qualified recovery write failed: {write_result.code} {write_result.data}"
             )
+        obligation = session.scalar(
+            select(wf.InvocationAuditObligation).where(
+                wf.InvocationAuditObligation.request_id == qualification_request_id
+            )
+        )
+        if obligation is None:
+            raise RehearsalError("qualified recovery write lacks invocation-audit obligation")
+        workflow.repair_invocation_audit(
+            obligation_id=obligation.obligation_id,
+            repair_identity=f"recovery-qualification:{qualification_request_id}",
+            source="postgresql",
+            payload={
+                "request_id": str(qualification_request_id),
+                "qualification_event_id": str(qualification.qualification_event_id),
+            },
+            outcome="fulfilled",
+            recorded_at=utc_now(),
+        )
+        try:
+            workflow.admit_request(
+                RequestSpec(
+                    request_id=uuid.uuid4(),
+                    generation_id=control.generation_id,
+                    run_id=current_run.run_id,
+                    owner_id=current_run.owner_id,
+                    principal_class="service",
+                    command_name="section2_unrelated_after_proof",
+                    canonical_payload={
+                        "command": "section2_unrelated_after_proof",
+                        "arguments": {},
+                        "owner_id": current_run.owner_id,
+                        "run_id": str(current_run.run_id),
+                    },
+                    protocol_release=context.protocol_release,
+                    dish_release=context.dish_release,
+                    admitted_at=utc_now(),
+                )
+            )
+        except MutationAdmissionClosed as exc:
+            faults["critical_write_proof_does_not_open_admission"] = {
+                "passed": True,
+                "error": str(exc),
+            }
+        else:
+            raise RehearsalError("critical write proof opened mutation admission before readiness")
+
+        readiness = record_recovery_readiness(
+            session,
+            control,
+            recovered_state=recovered_state,
+            qualification_request_id=qualification_request_id,
+        )
         successor_epoch = session.scalar(
             select(transition_models.ProjectionEpoch).where(
                 transition_models.ProjectionEpoch.generation_id == control.generation_id,
@@ -2373,9 +2506,11 @@ def _exercise_promotion(
             raise RehearsalError(
                 "rehydration or critical write enabled successor external effects"
             )
-        faults["rehydrated_critical_read_write"] = {
+        faults["qualified_critical_read_write"] = {
             "passed": True,
-            "repair_event_id": str(rehydration.repair_event_id),
+            "rehydration_event_id": str(rehydration.repair_event_id),
+            "qualification_event_id": str(qualification.qualification_event_id),
+            "readiness_event_id": str(readiness.readiness_event_id),
             "task_count": rehydration.task_count,
         }
         old_lease = session.scalar(
@@ -2405,8 +2540,10 @@ def _exercise_promotion(
             "recovery_evidence_sha256": recovered_state.evidence_sha256,
             "current_run_id": str(current_run.run_id),
             "bootstrap_consumed": True,
-            "mutation_admission": "rehydrated_current_authority_read_write_succeeded",
+            "mutation_admission": "recovery_readiness_opened_after_exact_qualification",
             "rehydration": rehydration.as_json(),
+            "qualification": qualification.as_json(),
+            "readiness": readiness.as_json(),
             "old_lease_restored_but_stale": old_lease is not None,
             "old_projection_epoch_status": None if old_epoch is None else old_epoch.status,
             "faults": faults,

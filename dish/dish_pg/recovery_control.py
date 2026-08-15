@@ -27,7 +27,15 @@ from . import models
 from . import stage3_models as wf
 from . import stage5_models as projection_models
 from . import stage6_models as release_models
-from .recovery_rehydration import RECOVERY_REHYDRATION_REVISION, RecoveryRehydrationResult
+from .recovery_rehydration import (
+    RECOVERY_QUALIFICATION_REVISION,
+    RECOVERY_READINESS_REVISION,
+    RECOVERY_REHYDRATION_REVISION,
+    RecoveryQualificationResult,
+    RecoveryQualificationSpec,
+    RecoveryReadinessResult,
+    RecoveryRehydrationResult,
+)
 from .release import ALEMBIC_HEAD
 from .release_evidence import sha256_json
 from .repositories import AuthorityRepository, RegistryRepository
@@ -1011,8 +1019,8 @@ def rehydrate_restored_generation(
     """Reissue only current task authority into an exact promoted restore successor.
 
     Historical workflow ownership and projection/external-effect state remain exclusively in
-    the retired predecessor.  The immutable repair event is the admission gate proving that
-    this exact successor was rehydrated under the exact restore receipt.
+    the retired predecessor.  The immutable repair event proves reconstruction only; it never
+    opens mutation admission. Recovery qualification and readiness are separate transitions.
     """
     predecessor, successor, registry = _validate_rehydration_lineage(
         session, control, recovered_state
@@ -1157,6 +1165,399 @@ def rehydrate_restored_generation(
         transient_state_sha256=transient_sha,
         task_count=len(snapshots),
         rehydrated_at=at,
+        replayed=False,
+    )
+
+
+def _recovery_repair_event(
+    session: Session,
+    generation_id: uuid.UUID,
+    revision: str,
+) -> models.AppliedMigrationEvent | None:
+    return session.scalar(
+        select(models.AppliedMigrationEvent).where(
+            models.AppliedMigrationEvent.generation_id == generation_id,
+            models.AppliedMigrationEvent.revision == revision,
+            models.AppliedMigrationEvent.outcome == "repair",
+        )
+    )
+
+
+def _require_rehydration_authority(
+    session: Session,
+    *,
+    control: RestoreControl,
+    predecessor: models.AuthorityGeneration,
+    successor: models.AuthorityGeneration,
+) -> models.AppliedMigrationEvent:
+    repair = _rehydration_repair_event(session, successor.generation_id)
+    details = None if repair is None else repair.details
+    if (
+        repair is None
+        or details is None
+        or details.get("route") != RECOVERY_REHYDRATION_REVISION
+        or details.get("external_restore_control_id") != control.external_control_id
+        or details.get("predecessor_generation_id") != str(predecessor.generation_id)
+        or details.get("successor_generation_id") != str(successor.generation_id)
+        or details.get("recovery_evidence_sha256") != control.recovery_evidence_sha256
+        or details.get("bootstrap_id") != str(control.bootstrap_id)
+        or details.get("bootstrap_capability_sha256")
+        != control.bootstrap_capability_digest.hex()
+        or details.get("external_effects_enabled") is not False
+    ):
+        raise RestoreControlError(
+            "recovery qualification requires exact completed rehydration authority"
+        )
+    return repair
+
+
+def _validate_qualification_spec(
+    session: Session,
+    *,
+    control: RestoreControl,
+    spec: RecoveryQualificationSpec,
+) -> tuple[wf.ServiceRun, dict[str, Any], str]:
+    run = session.get(wf.ServiceRun, spec.run_id)
+    if (
+        run is None
+        or run.generation_id != control.generation_id
+        or run.owner_id != spec.owner_id
+        or run.status != "active"
+        or run.bootstrap_id != control.bootstrap_id
+        or run.capability_digest != control.bootstrap_capability_digest
+    ):
+        raise RestoreControlError(
+            "recovery qualification requires the exact fresh successor run"
+        )
+    if spec.principal_class not in {"agent", "admin", "verification", "service"}:
+        raise RestoreControlError("recovery qualification principal class is unsupported")
+    if not spec.command_name.strip() or spec.command_name == "read":
+        raise RestoreControlError("recovery qualification requires one exact mutation command")
+    payload = dict(spec.canonical_payload)
+    if (
+        payload.get("command") != spec.command_name
+        or payload.get("owner_id") != spec.owner_id
+        or payload.get("run_id") != str(spec.run_id)
+        or not isinstance(payload.get("arguments"), Mapping)
+    ):
+        raise RestoreControlError(
+            "recovery qualification request payload does not bind the exact command/run identity"
+        )
+    return run, payload, sha256_json(payload)
+
+
+def authorize_recovery_qualification(
+    session: Session,
+    control: RestoreControl,
+    *,
+    recovered_state: RecoveredPhysicalState,
+    spec: RecoveryQualificationSpec,
+    clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+) -> RecoveryQualificationResult:
+    """Reserve exactly one successor mutation for the recovery qualification proof.
+
+    Rehydration remains read-only authority reconstruction.  This transition binds one exact
+    request identity under the same restore receipt; unrelated mutation admission stays closed.
+    """
+    predecessor, successor, _registry = _validate_rehydration_lineage(
+        session, control, recovered_state
+    )
+    rehydration = _require_rehydration_authority(
+        session,
+        control=control,
+        predecessor=predecessor,
+        successor=successor,
+    )
+    _run, payload, payload_sha = _validate_qualification_spec(
+        session, control=control, spec=spec
+    )
+    existing = _recovery_repair_event(
+        session, successor.generation_id, RECOVERY_QUALIFICATION_REVISION
+    )
+    if existing is not None:
+        details = existing.details
+        if (
+            details.get("route") != RECOVERY_QUALIFICATION_REVISION
+            or details.get("external_restore_control_id") != control.external_control_id
+            or details.get("predecessor_generation_id") != str(predecessor.generation_id)
+            or details.get("successor_generation_id") != str(successor.generation_id)
+            or details.get("rehydration_event_id") != str(rehydration.migration_event_id)
+            or details.get("request_id") != str(spec.request_id)
+            or details.get("run_id") != str(spec.run_id)
+            or details.get("owner_id") != spec.owner_id
+            or details.get("principal_class") != spec.principal_class
+            or details.get("command_name") != spec.command_name
+            or details.get("canonical_payload_sha256") != payload_sha
+            or details.get("external_effects_enabled") is not False
+        ):
+            raise RestoreControlError(
+                "existing recovery qualification authority conflicts with exact request identity"
+            )
+        return RecoveryQualificationResult(
+            generation_id=successor.generation_id,
+            qualification_event_id=existing.migration_event_id,
+            request_id=spec.request_id,
+            canonical_payload_sha256=payload_sha,
+            authorized_at=existing.terminal_at,
+            replayed=True,
+        )
+    existing_readiness = _recovery_repair_event(
+        session, successor.generation_id, RECOVERY_READINESS_REVISION
+    )
+    if existing_readiness is not None:
+        raise RestoreControlError(
+            "recovery qualification cannot be replaced after readiness is durable"
+        )
+    if session.get(wf.ServiceRequest, spec.request_id) is not None:
+        raise RestoreControlError(
+            "recovery qualification request identity was already consumed without authorization"
+        )
+    at = clock()
+    if at.tzinfo is None or at.utcoffset() is None:
+        raise RestoreControlError("recovery qualification clock must be timezone-aware")
+    qualification_event_id = _deterministic_rehydration_uuid(
+        control, "recovery-qualification"
+    )
+    code_sha = hashlib.sha256(RECOVERY_QUALIFICATION_REVISION.encode("utf-8")).hexdigest()
+    AuthorityRepository(session).add_migration_event(
+        models.AppliedMigrationEvent(
+            migration_event_id=qualification_event_id,
+            generation_id=successor.generation_id,
+            revision=RECOVERY_QUALIFICATION_REVISION,
+            predecessor_revision=RECOVERY_REHYDRATION_REVISION,
+            migration_code_sha256=code_sha,
+            dish_release=control.dish_release,
+            initiator="dish-pg-recovery-qualification",
+            outcome="repair",
+            started_at=at,
+            terminal_at=at,
+            details={
+                "route": RECOVERY_QUALIFICATION_REVISION,
+                "external_restore_control_id": control.external_control_id,
+                "predecessor_generation_id": str(predecessor.generation_id),
+                "successor_generation_id": str(successor.generation_id),
+                "recovery_evidence_sha256": control.recovery_evidence_sha256,
+                "bootstrap_id": str(control.bootstrap_id),
+                "bootstrap_capability_sha256": control.bootstrap_capability_digest.hex(),
+                "rehydration_event_id": str(rehydration.migration_event_id),
+                "request_id": str(spec.request_id),
+                "run_id": str(spec.run_id),
+                "owner_id": spec.owner_id,
+                "principal_class": spec.principal_class,
+                "command_name": spec.command_name,
+                "canonical_payload_sha256": payload_sha,
+                "protocol_release": control.protocol_release,
+                "dish_release": control.dish_release,
+                "ordinary_mutation_admission_open": False,
+                "external_effects_enabled": False,
+            },
+        )
+    )
+    return RecoveryQualificationResult(
+        generation_id=successor.generation_id,
+        qualification_event_id=qualification_event_id,
+        request_id=spec.request_id,
+        canonical_payload_sha256=payload_sha,
+        authorized_at=at,
+        replayed=False,
+    )
+
+
+def record_recovery_readiness(
+    session: Session,
+    control: RestoreControl,
+    *,
+    recovered_state: RecoveredPhysicalState,
+    qualification_request_id: uuid.UUID,
+    clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+) -> RecoveryReadinessResult:
+    """Open ordinary successor admission only after exact critical-write evidence is durable."""
+    predecessor, successor, _registry = _validate_rehydration_lineage(
+        session, control, recovered_state
+    )
+    rehydration = _require_rehydration_authority(
+        session,
+        control=control,
+        predecessor=predecessor,
+        successor=successor,
+    )
+    qualification = _recovery_repair_event(
+        session, successor.generation_id, RECOVERY_QUALIFICATION_REVISION
+    )
+    if qualification is None:
+        raise RestoreControlError(
+            "recovery readiness requires exact qualification authority"
+        )
+    qualification_details = qualification.details
+    if (
+        qualification_details.get("route") != RECOVERY_QUALIFICATION_REVISION
+        or qualification_details.get("external_restore_control_id") != control.external_control_id
+        or qualification_details.get("predecessor_generation_id") != str(predecessor.generation_id)
+        or qualification_details.get("successor_generation_id") != str(successor.generation_id)
+        or qualification_details.get("rehydration_event_id") != str(rehydration.migration_event_id)
+        or qualification_details.get("request_id") != str(qualification_request_id)
+        or qualification_details.get("external_effects_enabled") is not False
+    ):
+        raise RestoreControlError(
+            "recovery readiness qualification identity conflicts with exact lineage"
+        )
+    existing = _recovery_repair_event(
+        session, successor.generation_id, RECOVERY_READINESS_REVISION
+    )
+    if existing is not None:
+        details = existing.details
+        if (
+            details.get("route") != RECOVERY_READINESS_REVISION
+            or details.get("external_restore_control_id") != control.external_control_id
+            or details.get("predecessor_generation_id") != str(predecessor.generation_id)
+            or details.get("successor_generation_id") != str(successor.generation_id)
+            or details.get("rehydration_event_id") != str(rehydration.migration_event_id)
+            or details.get("qualification_event_id") != str(qualification.migration_event_id)
+            or details.get("qualification_request_id") != str(qualification_request_id)
+            or details.get("external_effects_enabled") is not False
+        ):
+            raise RestoreControlError(
+                "existing recovery readiness evidence conflicts with exact qualification"
+            )
+        return RecoveryReadinessResult(
+            generation_id=successor.generation_id,
+            readiness_event_id=existing.migration_event_id,
+            qualification_event_id=qualification.migration_event_id,
+            request_id=qualification_request_id,
+            verified_at=existing.terminal_at,
+            replayed=True,
+        )
+
+    verified_at = clock()
+    if verified_at.tzinfo is None or verified_at.utcoffset() is None:
+        raise RestoreControlError("recovery readiness clock must be timezone-aware")
+    request = session.get(wf.ServiceRequest, qualification_request_id)
+    outcome = session.scalar(
+        select(wf.ServiceRequestOutcome).where(
+            wf.ServiceRequestOutcome.request_id == qualification_request_id
+        )
+    )
+    execution = session.scalar(
+        select(wf.CommandExecution).where(
+            wf.CommandExecution.request_id == qualification_request_id
+        )
+    )
+    audits = session.scalars(
+        select(wf.GovernedAuditEvent)
+        .where(wf.GovernedAuditEvent.request_id == qualification_request_id)
+        .order_by(wf.GovernedAuditEvent.audit_event_id)
+    ).all()
+    audit = next(
+        (
+            row
+            for row in audits
+            if execution is not None
+            and row.generation_id == successor.generation_id
+            and row.command_execution_id == execution.execution_id
+        ),
+        None,
+    )
+    obligation = session.scalar(
+        select(wf.InvocationAuditObligation).where(
+            wf.InvocationAuditObligation.request_id == qualification_request_id
+        )
+    )
+    epoch = session.scalar(
+        select(projection_models.ProjectionEpoch).where(
+            projection_models.ProjectionEpoch.generation_id == successor.generation_id,
+            projection_models.ProjectionEpoch.status == "active",
+        )
+    )
+    expected_payload_sha = qualification_details.get("canonical_payload_sha256")
+    evidence_times = [
+        request.admitted_at if request is not None else None,
+        outcome.recorded_at if outcome is not None else None,
+        execution.terminal_at if execution is not None else None,
+        audit.occurred_at if audit is not None else None,
+        obligation.terminal_at if obligation is not None else None,
+    ]
+    if (
+        request is None
+        or request.generation_id != successor.generation_id
+        or str(request.run_id) != qualification_details.get("run_id")
+        or request.owner_id != qualification_details.get("owner_id")
+        or request.principal_class != qualification_details.get("principal_class")
+        or request.command_name != qualification_details.get("command_name")
+        or request.protocol_release != qualification_details.get("protocol_release")
+        or request.dish_release != qualification_details.get("dish_release")
+        or request.canonical_payload_sha256 != expected_payload_sha
+        or request.canonical_payload_sha256 != sha256_json(request.canonical_payload)
+        or not _at_or_before(qualification.terminal_at, request.admitted_at)
+        or outcome is None
+        or outcome.outcome_class != "success"
+        or not outcome.immutable_success
+        or outcome.result_sha256 != sha256_json(outcome.result_payload)
+        or execution is None
+        or execution.generation_id != successor.generation_id
+        or execution.status != "committed"
+        or execution.command_name != request.command_name
+        or execution.canonical_intent != request.canonical_payload
+        or audit is None
+        or obligation is None
+        or obligation.generation_id != successor.generation_id
+        or obligation.outcome_id != outcome.outcome_id
+        or obligation.command_execution_id != execution.execution_id
+        or obligation.state not in {"fulfilled", "repaired"}
+        or obligation.terminal_at is None
+        or epoch is None
+        or epoch.external_effects_enabled
+        or any(
+            value is None or not _at_or_before(value, verified_at)
+            for value in evidence_times
+        )
+    ):
+        raise RestoreControlError(
+            "recovery readiness lacks exact committed qualification request, replay, audit, and disabled-effect evidence"
+        )
+    readiness_event_id = _deterministic_rehydration_uuid(
+        control, "recovery-readiness"
+    )
+    code_sha = hashlib.sha256(RECOVERY_READINESS_REVISION.encode("utf-8")).hexdigest()
+    AuthorityRepository(session).add_migration_event(
+        models.AppliedMigrationEvent(
+            migration_event_id=readiness_event_id,
+            generation_id=successor.generation_id,
+            revision=RECOVERY_READINESS_REVISION,
+            predecessor_revision=RECOVERY_QUALIFICATION_REVISION,
+            migration_code_sha256=code_sha,
+            dish_release=control.dish_release,
+            initiator="dish-pg-recovery-readiness",
+            outcome="repair",
+            started_at=verified_at,
+            terminal_at=verified_at,
+            details={
+                "route": RECOVERY_READINESS_REVISION,
+                "external_restore_control_id": control.external_control_id,
+                "predecessor_generation_id": str(predecessor.generation_id),
+                "successor_generation_id": str(successor.generation_id),
+                "recovery_evidence_sha256": control.recovery_evidence_sha256,
+                "bootstrap_id": str(control.bootstrap_id),
+                "bootstrap_capability_sha256": control.bootstrap_capability_digest.hex(),
+                "rehydration_event_id": str(rehydration.migration_event_id),
+                "qualification_event_id": str(qualification.migration_event_id),
+                "qualification_request_id": str(request.request_id),
+                "request_payload_sha256": request.canonical_payload_sha256,
+                "outcome_id": str(outcome.outcome_id),
+                "outcome_payload_sha256": outcome.result_sha256,
+                "execution_id": str(execution.execution_id),
+                "audit_event_id": str(audit.audit_event_id),
+                "invocation_obligation_id": str(obligation.obligation_id),
+                "ordinary_mutation_admission_open": True,
+                "external_effects_enabled": False,
+            },
+        )
+    )
+    return RecoveryReadinessResult(
+        generation_id=successor.generation_id,
+        readiness_event_id=readiness_event_id,
+        qualification_event_id=qualification.migration_event_id,
+        request_id=qualification_request_id,
+        verified_at=verified_at,
         replayed=False,
     )
 

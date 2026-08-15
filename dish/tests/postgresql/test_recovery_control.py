@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import select
 
 from dish_pg import models
+from dish_pg import stage3_models as wf
 from dish_pg import stage5_models as projection_models
 from dish_pg import stage6_models as release_models
 from dish_pg.candidate_manifest import bind_approval_manifest
@@ -19,10 +20,13 @@ from dish_pg.recovery_control import (
     _authorized_release_candidate,
     RestoreControl,
     RestoreControlError,
+    authorize_recovery_qualification,
     migration_revision_sha256,
     promote_restored_generation,
+    record_recovery_readiness,
     rehydrate_restored_generation,
 )
+from dish_pg.recovery_rehydration import RecoveryQualificationSpec
 from dish_pg.release import ALEMBIC_HEAD
 from dish_pg.read_model import PostgresReadModel, ReadModelError
 from dish_pg.transition import ProjectionService
@@ -714,18 +718,95 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
         )
         assert read_result.ok is True
         assert read_result.data["title"] == "[ready] Exact imported task"
+
+        def unrelated_request(at, phase):
+            return RequestSpec(
+                request_id=_next(ids),
+                generation_id=control.generation_id,
+                run_id=current_run.run_id,
+                owner_id=current_run.owner_id,
+                principal_class="admin",
+                command_name="recovery_probe",
+                canonical_payload={
+                    "command": "recovery_probe",
+                    "arguments": {"phase": phase},
+                    "owner_id": current_run.owner_id,
+                    "run_id": str(current_run.run_id),
+                },
+                protocol_release=control.protocol_release,
+                dish_release=control.dish_release,
+                admitted_at=at,
+            )
+
+        with pytest.raises(MutationAdmissionClosed, match="pending recovery readiness"):
+            workflow.admit_request(
+                unrelated_request(WORKFLOW_NOW + timedelta(minutes=10), "rehydrated-only")
+            )
+
+        qualification_request_id = _next(ids)
+        qualification_arguments = {
+            "task_id": str(task_id),
+            "reason": "post-restore recovery qualification",
+        }
+        qualification_payload = {
+            "command": "reopen-planning",
+            "arguments": qualification_arguments,
+            "owner_id": current_run.owner_id,
+            "run_id": str(current_run.run_id),
+        }
+        qualification = authorize_recovery_qualification(
+            session,
+            control,
+            recovered_state=state,
+            spec=RecoveryQualificationSpec(
+                request_id=qualification_request_id,
+                run_id=current_run.run_id,
+                owner_id=current_run.owner_id,
+                principal_class="admin",
+                command_name="reopen-planning",
+                canonical_payload=qualification_payload,
+            ),
+            clock=lambda: WORKFLOW_NOW + timedelta(minutes=11),
+        )
+        qualification_replay = authorize_recovery_qualification(
+            session,
+            control,
+            recovered_state=state,
+            spec=RecoveryQualificationSpec(
+                request_id=qualification_request_id,
+                run_id=current_run.run_id,
+                owner_id=current_run.owner_id,
+                principal_class="admin",
+                command_name="reopen-planning",
+                canonical_payload=qualification_payload,
+            ),
+            clock=lambda: WORKFLOW_NOW + timedelta(minutes=12),
+        )
+        assert qualification_replay.replayed is True
+        assert qualification_replay.qualification_event_id == qualification.qualification_event_id
+
+        with pytest.raises(MutationAdmissionClosed, match="pending recovery readiness"):
+            workflow.admit_request(
+                unrelated_request(WORKFLOW_NOW + timedelta(minutes=11), "qualification-reserved")
+            )
+        with pytest.raises(RestoreControlError, match="lacks exact committed qualification"):
+            record_recovery_readiness(
+                session,
+                control,
+                recovered_state=state,
+                qualification_request_id=qualification_request_id,
+                clock=lambda: WORKFLOW_NOW + timedelta(minutes=12),
+            )
+
         write_result = port.execute(
             CommandCall(
                 command_name="reopen-planning",
-                arguments={
-                    "task_id": str(task_id),
-                    "reason": "post-restore recovery qualification",
-                },
+                arguments=qualification_arguments,
                 owner_id=current_run.owner_id,
                 principal_class="admin",
                 run_id=current_run.run_id,
-                request_id=_next(ids),
-                now=WORKFLOW_NOW + timedelta(minutes=10),
+                request_id=qualification_request_id,
+                now=WORKFLOW_NOW + timedelta(minutes=12),
                 protocol_release=control.protocol_release,
             )
         )
@@ -735,6 +816,70 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
         assert session.get(
             models.TaskAuthorityHead, (control.generation_id, task_id)
         ).completion_revision == pre_write_completion_revision + 1
+        obligation = session.scalar(
+            select(wf.InvocationAuditObligation).where(
+                wf.InvocationAuditObligation.request_id == qualification_request_id
+            )
+        )
+        assert obligation is not None
+        workflow.repair_invocation_audit(
+            obligation_id=obligation.obligation_id,
+            repair_identity=f"recovery-qualification:{qualification_request_id}",
+            source="postgresql",
+            payload={
+                "request_id": str(qualification_request_id),
+                "qualification_event_id": str(qualification.qualification_event_id),
+            },
+            outcome="fulfilled",
+            recorded_at=WORKFLOW_NOW + timedelta(minutes=13),
+        )
+
+        with pytest.raises(MutationAdmissionClosed, match="pending recovery readiness"):
+            workflow.admit_request(
+                unrelated_request(WORKFLOW_NOW + timedelta(minutes=13), "proof-complete-not-ready")
+            )
+
+        readiness = record_recovery_readiness(
+            session,
+            control,
+            recovered_state=state,
+            qualification_request_id=qualification_request_id,
+            clock=lambda: WORKFLOW_NOW + timedelta(minutes=14),
+        )
+        readiness_replay = record_recovery_readiness(
+            session,
+            control,
+            recovered_state=state,
+            qualification_request_id=qualification_request_id,
+            clock=lambda: WORKFLOW_NOW + timedelta(minutes=15),
+        )
+        assert readiness_replay.replayed is True
+        assert readiness_replay.readiness_event_id == readiness.readiness_event_id
+        post_readiness_qualification_replay = authorize_recovery_qualification(
+            session,
+            control,
+            recovered_state=state,
+            spec=RecoveryQualificationSpec(
+                request_id=qualification_request_id,
+                run_id=current_run.run_id,
+                owner_id=current_run.owner_id,
+                principal_class="admin",
+                command_name="reopen-planning",
+                canonical_payload=qualification_payload,
+            ),
+            clock=lambda: WORKFLOW_NOW + timedelta(minutes=15),
+        )
+        assert post_readiness_qualification_replay.replayed is True
+        assert (
+            post_readiness_qualification_replay.qualification_event_id
+            == qualification.qualification_event_id
+        )
+        ordinary = workflow.admit_request(
+            unrelated_request(WORKFLOW_NOW + timedelta(minutes=15), "readiness-open")
+        )
+        assert ordinary.replayed is False
+        assert ordinary.outcome is None
+
         successor_event = session.scalar(
             select(projection_models.ProjectionOutboxEvent).where(
                 projection_models.ProjectionOutboxEvent.generation_id == control.generation_id
@@ -742,9 +887,10 @@ def test_authorized_rehydration_restores_current_authority_and_keeps_transients_
         )
         assert successor_event is not None
         assert successor_event.state == "pending"
+        assert epoch.external_effects_enabled is False
         assert ProjectionService(session).claim_next(
             worker_id="recovery-post-write-worker",
-            now=WORKFLOW_NOW + timedelta(minutes=11),
+            now=WORKFLOW_NOW + timedelta(minutes=16),
             ttl=timedelta(minutes=1),
         ) is None
 
