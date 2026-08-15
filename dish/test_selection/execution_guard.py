@@ -1,6 +1,7 @@
 """Fail closed when governed tests run from the protected primary checkout."""
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -24,22 +25,14 @@ def _git(root: Path, *args: str) -> str:
 
 def require_safe_test_checkout(root: Path, *, expected_head: str | None = None) -> str:
     root = root.resolve()
-    git_dir_raw = _git(root, "rev-parse", "--git-dir")
-    common_dir_raw = _git(root, "rev-parse", "--git-common-dir")
-    git_dir = (
-        (root / git_dir_raw).resolve()
-        if not Path(git_dir_raw).is_absolute()
-        else Path(git_dir_raw).resolve()
-    )
-    common_dir = (
-        (root / common_dir_raw).resolve()
-        if not Path(common_dir_raw).is_absolute()
-        else Path(common_dir_raw).resolve()
-    )
+    top = Path(_git(root, "rev-parse", "--show-toplevel")).resolve()
     branch = _git(root, "branch", "--show-current")
     head = _git(root, "rev-parse", "HEAD")
+    protected_primary = Path(
+        os.environ.get("DISH_PROTECTED_PRIMARY_ROOT", Path.home() / "ai-tools")
+    ).expanduser().resolve()
 
-    if git_dir == common_dir or branch == "main":
+    if top == protected_primary or branch == "main":
         raise TestExecutionRefused(
             "protected primary/main checkout; use the task-owned worktree at the exact candidate HEAD"
         )

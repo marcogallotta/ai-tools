@@ -10,9 +10,9 @@ def _fake_git(values):
 
 
 def test_primary_checkout_is_refused(monkeypatch):
+    monkeypatch.setenv("DISH_PROTECTED_PRIMARY_ROOT", "/repo")
     monkeypatch.setattr(execution_guard, "_git", _fake_git({
-        ("rev-parse", "--git-dir"): ".git",
-        ("rev-parse", "--git-common-dir"): ".git",
+        ("rev-parse", "--show-toplevel"): "/repo",
         ("branch", "--show-current"): "feature",
         ("rev-parse", "HEAD"): "a" * 40,
     }))
@@ -21,9 +21,9 @@ def test_primary_checkout_is_refused(monkeypatch):
 
 
 def test_main_branch_is_refused_even_in_linked_worktree(monkeypatch):
+    monkeypatch.setenv("DISH_PROTECTED_PRIMARY_ROOT", "/repo")
     monkeypatch.setattr(execution_guard, "_git", _fake_git({
-        ("rev-parse", "--git-dir"): "/repo/.git/worktrees/task",
-        ("rev-parse", "--git-common-dir"): "/repo/.git",
+        ("rev-parse", "--show-toplevel"): "/worktree",
         ("branch", "--show-current"): "main",
         ("rev-parse", "HEAD"): "a" * 40,
     }))
@@ -32,9 +32,9 @@ def test_main_branch_is_refused_even_in_linked_worktree(monkeypatch):
 
 
 def test_exact_candidate_head_is_required(monkeypatch):
+    monkeypatch.setenv("DISH_PROTECTED_PRIMARY_ROOT", "/repo")
     monkeypatch.setattr(execution_guard, "_git", _fake_git({
-        ("rev-parse", "--git-dir"): "/repo/.git/worktrees/task",
-        ("rev-parse", "--git-common-dir"): "/repo/.git",
+        ("rev-parse", "--show-toplevel"): "/worktree",
         ("branch", "--show-current"): "agent/task",
         ("rev-parse", "HEAD"): "a" * 40,
     }))
@@ -42,4 +42,17 @@ def test_exact_candidate_head_is_required(monkeypatch):
         execution_guard.require_safe_test_checkout(Path("/worktree"), expected_head="b" * 40)
     assert execution_guard.require_safe_test_checkout(
         Path("/worktree"), expected_head="a" * 40
+    ) == "a" * 40
+
+
+def test_ephemeral_detached_ci_checkout_accepts_exact_candidate(monkeypatch):
+    monkeypatch.setenv("DISH_PROTECTED_PRIMARY_ROOT", "/repo")
+    monkeypatch.setattr(execution_guard, "_git", _fake_git({
+        ("rev-parse", "--show-toplevel"): "/runner/work/ai-tools",
+        ("branch", "--show-current"): "",
+        ("rev-parse", "HEAD"): "a" * 40,
+    }))
+
+    assert execution_guard.require_safe_test_checkout(
+        Path("/runner/work/ai-tools/dish"), expected_head="a" * 40
     ) == "a" * 40
