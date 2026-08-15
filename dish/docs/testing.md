@@ -164,22 +164,25 @@ a separate backstop in `.github/workflows/full-regression.yml`; it is not ordina
 
 ## Autonomous changed-path selection
 
-For every Dish code or test change, start with the complete changed-path set:
+For every Dish code or test change, start with the complete Git-tracked changed-path delta:
 
 ```sh
-# All changes from a branch base through the current working tree.
+# All tracked changes from a branch base through the current index/working tree.
 .venv/bin/python scripts/dish-test-plan --base <revision>
 
-# Or an explicit path set while iterating.
+# Or an explicit path set while iterating, including a newly authored path before it is tracked.
 .venv/bin/python scripts/dish-test-plan \
   --path dish_tool/example.py \
   --path tests/test_example.py
 ```
 
 The command reads `test_selection/ownership.csv`, takes the union across mixed changes, and prints
-focused owner tests plus governed lane commands. For Git-based planning it also reads the map at the
-base revision so deleted paths retain their prior test ownership. The map is a strong current-HEAD
-prior; it does not replace semantic review. Frontend evidence is split into independent governed
+focused owner tests plus governed lane commands. Automatic discovery and ownership-map validation use
+Git tracked/index state, not incidental ignored or generated filesystem materialization, so policy truth
+is identical whether ignored build output happens to exist locally or not. For Git-based planning it
+also reads the map at the base revision so deleted paths retain their prior test ownership. Explicit
+`--path` remains the supported way to classify a newly authored path before it is tracked. The map is a
+strong current-HEAD prior; it does not replace semantic review. Frontend evidence is split into independent governed
 `frontend static/tooling` and `browser acceptance` lanes, and production/config PostgreSQL rows marked
 `native-pg` select `native PostgreSQL certification` rather than relying on advisory follow-up. An agent
 must evaluate the actual invariant, authority, durable state, external effect, transaction boundary, and
@@ -341,17 +344,17 @@ with exit status 3 and the residual reason.
 
 `operational-certification` still requires explicit `DISH_PG_TEST_URL`. Missing infrastructure is
 reported as unavailable, never as a pass. These commands complement, rather than replace,
-changed-path focused tests and the ordinary full-suite integration checkpoint.
+changed-path focused tests and any additional governed evidence selected for the exact candidate.
 
 The canonical local target is the disposable role/database on the system-wide PG17 cluster from the
 "Local PostgreSQL 17 server binaries" section below. The lane normally provisions it automatically.
 For a manual non-interactive reset equivalent to the helper's bounded path:
 
 ```sh
-sudo -n -u postgres psql -X -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "DROP DATABASE IF EXISTS dish_test;"
-sudo -n -u postgres psql -X -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "DROP ROLE IF EXISTS dish_test;"
-sudo -n -u postgres psql -X -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "CREATE ROLE dish_test LOGIN PASSWORD '0ddca88b81a8bf1a15d84caa78efd7b3' CREATEDB;"
-sudo -n -u postgres psql -X -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE dish_test OWNER dish_test;"
+sudo -n -u postgres psql -X -h localhost -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "DROP DATABASE IF EXISTS dish_test;"
+sudo -n -u postgres psql -X -h localhost -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "DROP ROLE IF EXISTS dish_test;"
+sudo -n -u postgres psql -X -h localhost -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "CREATE ROLE dish_test LOGIN PASSWORD '0ddca88b81a8bf1a15d84caa78efd7b3' CREATEDB CREATEROLE;"
+sudo -n -u postgres psql -X -h localhost -p 5432 -d postgres -v ON_ERROR_STOP=1 -q -c "CREATE DATABASE dish_test OWNER dish_test;"
 ```
 
 The fixed local DSN is:
@@ -363,6 +366,9 @@ export DISH_PG_TEST_URL="$DISH_TEST_POSTGRESQL_DSN"
 
 The native branch of `tests/support/postgresql/core.py` drops and recreates the disposable `public`
 schema before each test, so the role only needs ordinary ownership of `dish_test`, not superuser.
+The canonical local role requires both `CREATEDB` and `CREATEROLE` because governed native fixtures
+create and drop throwaway databases and roles; it does not require superuser. The canonical helper
+verifies both capabilities before treating an existing local target as ready.
 
 `parallel-safe` is an explicit allowlist, not a general pytest mode. The exact 565-test inventory
 passed static isolation review and three clean runs each at `-n 2`, `-n 4`, and `-n 8` on 2026-08-08.
@@ -446,14 +452,19 @@ The planner may emit any of these separately reported lanes:
 .venv/bin/python -m pytest
 ```
 
-The ordinary full suite is mandatory at concrete integration checkpoints, not after every scoped
-edit:
+Completion, handoff, Review, or Integration does not by itself add the ordinary full suite. Execute
+the complete governed selector union for the exact changed-path set. Broad/full evidence is added only
+when the selector or another explicit authority names the concrete guarantee it is needed to certify,
+including:
 
-- before merge or integration of a completed change block;
-- before a final staged archive;
-- after conflict resolution affecting shared code;
-- after global selector, fixture, dependency, marker, or runner-policy changes;
-- before release or cutover certification.
+- unknown/unclassified paths or unresolved selector/semantic uncertainty that fail closed;
+- global selector, fixture, dependency, marker, collection, or governed-runner policy changes;
+- conflict resolution whose changed surface selects broad/full evidence;
+- an exact task/review gate that states the missing guarantee and stable command;
+- release or cutover certification where the repository policy explicitly requires full evidence.
+
+A merge/integration checkpoint with `TESTS TO RUN: NONE` is literal and does not invent a blanket suite.
+Periodic/full regression remains a separate health backstop rather than routine per-change evidence.
 
 Authoritative first attempts never rerun failures automatically. Preserve and report the first
 result. One lane-level retry is allowed only for a narrowly proven infrastructure signature such as
@@ -506,10 +517,14 @@ pytest with both `--postgresql` and `--native-postgresql`, and compares collecti
 inventory in `tests/support/postgresql/certification.py`. This direct certification entrypoint keeps
 its explicit-DSN contract; the canonical-local bootstrap belongs only to the named local lane and is
 not a generic default in `tests/support/postgresql/certification.py`. Certification fails when zero tests execute,
-when inventory identities drift, when setup errors occur, or when a required test skips without an
-explicit `--waive-skip NODEID=REASON`. The report includes dialect, driver, database, native server
-version, selected/executed/passed/failed/error/skipped/unavailable counts, duration, and exact node
-IDs.
+when inventory identities drift, when setup errors occur, when a required test skips without a
+matching structured `--waive-skip` JSON object, or when a configured waiver is unused, malformed,
+unknown, review-due/expired, or bound to a different skip-reason signature. Each waiver carries the
+exact node ID, SHA-256 of the expected pytest skip reason, owning Asana task GID, review-by date, and
+a separate human justification. The signature hashes only the reason text (not pytest's source
+location/`Skipped:` wrapper), so explanatory prose cannot silently stand in for the observed skip
+condition. The report includes matched waiver evidence, observed reason signatures, mismatches,
+unused waivers, dialect, driver, database, native server version, counts, duration, and exact node IDs.
 
 Production/config/source-artifact ownership rows carrying the `native-pg` trait select this lane by
 default. Narrow PGlite and source-level PostgreSQL tests are not blanket-promoted merely because their
@@ -558,11 +573,14 @@ Compose stack; they are only waived here because bare native-certification never
 `DISH_SECTION1_COMPOSE_JSON`. All four skip (with a reason) rather than fail when that variable is
 unset:
 
+The accepted 2026-08-07 gap is review-bounded to 2026-09-07. These are the committed structured
+waivers; a reason change requires a new reviewed signature rather than reusing the node ID:
+
 ```sh
---waive-skip "tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_database_disconnect_rolls_back_then_recovers_once=no runner wires DISH_SECTION1_COMPOSE_JSON to the shared TEST PostgreSQL target; revisit before setting external_effects_enabled=true" \
---waive-skip "tests/postgresql/native/test_process_failure_command.py::test_command_process_disconnect_before_commit_fails_closed_and_recovers=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure" \
---waive-skip "tests/postgresql/native/test_process_failure_disconnect.py::test_projection_worker_fails_clearly_across_postgresql_disconnect=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure" \
---waive-skip "tests/postgresql/native/test_process_failure_disconnect.py::test_reconciliation_worker_writes_nothing_while_postgresql_is_down=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure"
+--waive-skip '{"nodeid":"tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_database_disconnect_rolls_back_then_recovers_once","expected_reason_sha256":"a73321063eef94cb68f134ff85b48a2a1eda77a2e3d60a5893a40dc8b288ac1b","owner_task_gid":"1217428310522281","review_by":"2026-09-07","justification":"bare native certification lacks shared TEST Compose control; revisit before enabling external effects"}' \
+--waive-skip '{"nodeid":"tests/postgresql/native/test_process_failure_command.py::test_command_process_disconnect_before_commit_fails_closed_and_recovers","expected_reason_sha256":"b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1","owner_task_gid":"1217428310522281","review_by":"2026-09-07","justification":"covered by dish-pg-process-failure; bare native certification lacks Compose control"}' \
+--waive-skip '{"nodeid":"tests/postgresql/native/test_process_failure_disconnect.py::test_projection_worker_fails_clearly_across_postgresql_disconnect","expected_reason_sha256":"b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1","owner_task_gid":"1217428310522281","review_by":"2026-09-07","justification":"covered by dish-pg-process-failure; bare native certification lacks Compose control"}' \
+--waive-skip '{"nodeid":"tests/postgresql/native/test_process_failure_disconnect.py::test_reconciliation_worker_writes_nothing_while_postgresql_is_down","expected_reason_sha256":"b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1","owner_task_gid":"1217428310522281","review_by":"2026-09-07","justification":"covered by dish-pg-process-failure; bare native certification lacks Compose control"}'
 ```
 
 The section4 test is a decided, accepted gap (2026-08-07), tolerable only because dark-launch

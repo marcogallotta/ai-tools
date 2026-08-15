@@ -60,6 +60,7 @@ A domain label alone never justifies a second AI-reviewer dependency: the purpor
 ## Evidence and integration gates
 
 Treat implementation-agent test evidence as evidence; rerun only for a concrete review reason. Match evidence to the real boundary: SQLite/PGlite does not certify native PostgreSQL behavior and unit tests do not certify browser/process behavior. Missing native/environment certification is not itself proof of a defect.
+If Review requires evidence beyond the governed selector/implementation record, name the concrete missing guarantee and the exact stable command that would establish it. When no additional local/environment certification is missing, record `TESTS TO RUN: NONE`; do not request a broad/full suite as a generic safety ritual.
 
 Ordinary CI must certify the exact source PR head SHA. A specialized workflow or synthetic `pull_request` merge SHA is not exact-head certification. Missing, pending, or failed ordinary CI is Integration evidence/ownership state, not a reason to delay substantive Review or rewrite the semantic verdict. Review does not require the branch to be synchronized with current `main` before reviewing the exact current PR head merely because `main` moved. Require a newer base first only when the movement creates a known semantic dependency that makes the current review question invalid.
 
@@ -132,3 +133,7 @@ Host capability and role authority are separate. Before emitting any local-work 
 If a fix is required, put the blocker and complete standalone fix-agent handoff on the PR: blocked PR/branch/head, failure mechanism, required change, scope/non-goals, invariants, expected evidence, and required new head SHA. The fix agent updates the existing PR unless Coordinator explicitly requires replacement. Record exactly one after-fix disposition: `FOCUSED RECHECK`, `MECHANICAL CHECK ONLY`, `DOMAIN DEEP RECHECK`, or `NORMAL MERGE REVIEW`. `DOMAIN DEEP RECHECK` (legacy `NEW SPECIALIST REVIEW`) stays inside this same Review workflow; it never hands off to a second AI reviewer.
 
 After an isolated blocker fix, normally perform a focused recheck on the new exact head rather than a fresh broad review. Reopen broader review only when the fix materially changes the previously accepted design or exposes a new merge-critical uncertainty.
+
+## Development friction and non-blocking debt
+
+Apply the inherited contributor-base contracts: repository friction is discoverable/dedupe-first and logged without creating a second queue or urgency; relevant non-blocking code smells are deduped/logged to the Code Smells surface and the assigned scope continues. True current-task blockers stay on the active task/PR.

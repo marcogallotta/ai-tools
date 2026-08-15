@@ -2,16 +2,33 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from test_selection.model import PolicyError, load_policy
-from test_selection.planner import build_plan
+from test_selection.planner import build_plan, discover_git_paths
 
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = ROOT / "test_selection" / "ownership.csv"
+
+
+def test_git_discovery_uses_tracked_delta_not_untracked_filesystem_state(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "config", "user.name", "Test"], check=True)
+    (tmp_path / "tracked.py").write_text("base\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "tracked.py"], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "commit", "-qm", "base"], check=True)
+    (tmp_path / "tracked.py").write_text("changed\n", encoding="utf-8")
+    (tmp_path / "untracked.py").write_text("incidental\n", encoding="utf-8")
+
+    paths, ignored = discover_git_paths(repo_root=tmp_path)
+
+    assert paths == ("tracked.py",)
+    assert ignored == ()
 
 
 def test_ordinary_authority_change_selects_focused_owners_and_smoke() -> None:
@@ -65,6 +82,13 @@ def test_integration_checkpoint_does_not_broaden_selector_required_lanes() -> No
     assert ".venv/bin/python -m pytest" not in plan.commands
 
 
+def test_classified_documentation_only_change_requires_no_safety_ritual_suite() -> None:
+    plan = build_plan(["frontend/README.md"], policy_path=POLICY)
+
+    assert plan.commands == ()
+    assert "ordinary full suite" not in plan.lanes
+
+
 def test_ordinary_python_selection_stays_focused() -> None:
     plan = build_plan(["dish_service/config.py"], policy_path=POLICY)
 
@@ -113,6 +137,48 @@ def test_native_postgresql_runtime_mapping_is_not_only_advisory() -> None:
     assert "native PostgreSQL certification" in plan.lanes
     assert any("dish-pg-native-certification" in command for command in plan.commands)
     assert "ordinary full suite" not in plan.lanes
+
+
+def test_native_postgresql_command_is_narrow_when_selector_has_exact_native_bindings() -> None:
+    plan = build_plan(["dish_pg/migration_status.py"], policy_path=POLICY)
+
+    native = next(command for command in plan.commands if "dish-pg-native-certification" in command)
+    assert "--test-file tests/postgresql/native/test_migration_status.py" in native
+    assert "ordinary full suite" not in plan.lanes
+
+
+def test_native_postgresql_command_stays_full_when_lane_has_no_exact_native_binding() -> None:
+    plan = build_plan(
+        ["frontend/README.md"],
+        policy_path=POLICY,
+        add_lanes=["native PostgreSQL certification"],
+    )
+
+    native = next(command for command in plan.commands if "dish-pg-native-certification" in command)
+    assert "--test-file" not in native
+
+
+def test_mixed_bound_and_unbound_native_impacts_fail_closed_to_full_native() -> None:
+    plan = build_plan(
+        ["dish_pg/migration_status.py", "deploy/systemd/dish-postgres-prod.service"],
+        policy_path=POLICY,
+    )
+
+    native = next(command for command in plan.commands if "dish-pg-native-certification" in command)
+    assert "--test-file" not in native
+    assert plan.native_postgresql_fully_bound is False
+
+
+def test_all_bound_native_impacts_union_exact_native_test_files() -> None:
+    plan = build_plan(
+        ["dish_pg/migration_status.py", "dish_pg/importer.py"],
+        policy_path=POLICY,
+    )
+
+    native = next(command for command in plan.commands if "dish-pg-native-certification" in command)
+    assert "--test-file tests/postgresql/native/test_migration_status.py" in native
+    assert "--test-file tests/postgresql/native/test_importer.py" in native
+    assert plan.native_postgresql_fully_bound is True
 
 
 def test_agent_can_add_a_semantic_escalation_lane() -> None:

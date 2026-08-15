@@ -22,11 +22,38 @@ import pr_gate  # noqa: E402
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 ADD_LANES_RE = re.compile(r"(?im)^\s*CERTIFICATION ADD LANES:\s*(.*?)\s*$")
 
-NATIVE_WAIVERS = (
-    "tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_database_disconnect_rolls_back_then_recovers_once=no runner wires DISH_SECTION1_COMPOSE_JSON to the shared TEST PostgreSQL target; revisit before setting external_effects_enabled=true",
-    "tests/postgresql/native/test_process_failure_command.py::test_command_process_disconnect_before_commit_fails_closed_and_recovers=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure",
-    "tests/postgresql/native/test_process_failure_disconnect.py::test_projection_worker_fails_clearly_across_postgresql_disconnect=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure",
-    "tests/postgresql/native/test_process_failure_disconnect.py::test_reconciliation_worker_writes_nothing_while_postgresql_is_down=no runner wires DISH_SECTION1_COMPOSE_JSON under bare native certification; already covered via dish-pg-process-failure",
+NATIVE_WAIVER_RECORDS = (
+    {
+        "nodeid": "tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_database_disconnect_rolls_back_then_recovers_once",
+        "expected_reason_sha256": "a73321063eef94cb68f134ff85b48a2a1eda77a2e3d60a5893a40dc8b288ac1b",
+        "owner_task_gid": "1217428310522281",
+        "review_by": "2026-09-07",
+        "justification": "bare native certification lacks shared TEST Compose control; revisit before enabling external effects",
+    },
+    {
+        "nodeid": "tests/postgresql/native/test_process_failure_command.py::test_command_process_disconnect_before_commit_fails_closed_and_recovers",
+        "expected_reason_sha256": "b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1",
+        "owner_task_gid": "1217428310522281",
+        "review_by": "2026-09-07",
+        "justification": "covered by dish-pg-process-failure; bare native certification lacks Compose control",
+    },
+    {
+        "nodeid": "tests/postgresql/native/test_process_failure_disconnect.py::test_projection_worker_fails_clearly_across_postgresql_disconnect",
+        "expected_reason_sha256": "b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1",
+        "owner_task_gid": "1217428310522281",
+        "review_by": "2026-09-07",
+        "justification": "covered by dish-pg-process-failure; bare native certification lacks Compose control",
+    },
+    {
+        "nodeid": "tests/postgresql/native/test_process_failure_disconnect.py::test_reconciliation_worker_writes_nothing_while_postgresql_is_down",
+        "expected_reason_sha256": "b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1",
+        "owner_task_gid": "1217428310522281",
+        "review_by": "2026-09-07",
+        "justification": "covered by dish-pg-process-failure; bare native certification lacks Compose control",
+    },
+)
+NATIVE_WAIVERS = tuple(
+    json.dumps(record, sort_keys=True, separators=(",", ":")) for record in NATIVE_WAIVER_RECORDS
 )
 
 DISH_LANE_COMMANDS: dict[str, tuple[str, ...]] = {
@@ -223,10 +250,23 @@ def build_execution_spec(plan: dict[str, object], *, plan_digest: str) -> dict[s
             _command("frontend static", ("npm", "--prefix", "dish/frontend", "run", "check:static"))
         ]
     if "native-postgresql" in selected:
+        native = plan.get("native_postgresql")
+        if not isinstance(native, dict):
+            raise PRCertificationError("planner output is missing native_postgresql selection")
+        mode = native.get("mode")
+        test_files = native.get("test_files")
+        if mode not in {"focused", "full"} or not isinstance(test_files, list):
+            raise PRCertificationError("planner native_postgresql selection is invalid")
+        if mode == "full" and test_files:
+            raise PRCertificationError("full native_postgresql selection must not name test files")
+        if mode == "focused" and not test_files:
+            raise PRCertificationError("focused native_postgresql selection must name test files")
         argv = [
             "dish/.venv/bin/python", "dish/scripts/dish-pg-native-certification",
             "--output", ".test-artifacts/native-postgresql/report.json",
         ]
+        for test_file in test_files:
+            argv.extend(("--test-file", str(test_file)))
         for waiver in NATIVE_WAIVERS:
             argv.extend(("--waive-skip", waiver))
         groups["native-postgresql"] = [_command("native PostgreSQL certification", argv)]

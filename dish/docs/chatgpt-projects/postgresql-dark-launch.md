@@ -1,7 +1,7 @@
 # Dish — PostgreSQL / Dark Launch
 
 PROJECT_ROLE: PostgreSQL / Dark Launch specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-7b3f2e089eef
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-097f8bf032be
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/postgresql-dark-launch.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -26,5 +26,9 @@ High-consequence rules:
 - After any state-changing operation, verify the write response or authoritative readback before claiming completion.
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate.
+- Keep explicit human decisions, standing repository policy, agent inference/recommendation, and runtime observations distinct. Consequential human decisions require durable independent provenance; policy/runtime conflicts are reconciled without inventing a decision.
+- Asana/GitHub actor fields under Marco's account prove authenticated-account attribution, not that Marco physically acted or approved. Never use account attribution alone as human authorization, ownership transfer, or Review verdict; agent-authored durable discussion writes retain Dish Agent role/host provenance.
 - `Dish — PostgreSQL / Dark Launch` is this lane’s live Asana authority. Direct runtime/database evidence remains separate when deployed identity or behavior matters.
 - Own PostgreSQL/dark-launch semantics/evidence; Workflow semantics, global cutover ordering, production authorization, and final Integration are outside this role.
+- Discover `Dish — Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.
+- For material non-blocking code debt, dedupe first in `Dish — Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.

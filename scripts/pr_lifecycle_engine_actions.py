@@ -4,8 +4,117 @@ from __future__ import annotations
 from pr_lifecycle_support import *
 from pr_lifecycle_helpers import *
 from pr_lifecycle_helpers import _handoff_key, _notice_key, _notice_present
+from pr_lifecycle_terminal import (
+    TERMINAL_DISPOSITION_MARKER, TerminalCleanupDispatcher, asana_terminal_decision, cleanup_marker,
+    comment_has_marker, disposition_marker,
+)
 
 class LifecycleActionsMixin:
+    def _terminal_cleanup(
+        self,
+        current: PRLifecycle,
+        *,
+        disposition: str,
+        terminal_cleaner: TerminalCleanupDispatcher | None,
+        notify: Callable[[str], None],
+    ) -> PRLifecycle:
+        if not current.branch.startswith("agent/"):
+            current.residual_reason = f"terminal branch {current.branch!r} is not an agent/* branch; cleanup refused"
+            current.human_action = "inspect terminal lineage manually; default/protected/unrelated refs are never auto-deleted"
+            return current
+        comments = self.github.get_comments(current.number)
+        marker = cleanup_marker(current, disposition)
+        if comment_has_marker(comments, marker):
+            return current
+        branch = self.github.get_branch(current.branch)
+        if branch is not None and bool(branch.get("protected")):
+            current.residual_reason = f"terminal agent branch {current.branch!r} is protected; cleanup refused"
+            current.human_action = "resolve protected-branch policy manually without deleting an unrelated ref"
+            return current
+        if terminal_cleaner is None:
+            current.residual_reason = "terminal cleanup dispatcher is not configured"
+            current.human_action = "configure repository-owned terminal cleanup before retrying lifecycle dispatch"
+            return current
+        try:
+            result = terminal_cleaner.dispatch(current, disposition)
+        except LifecycleError as exc:
+            current.residual_reason = str(exc)
+            current.human_action = "recover/preserve the reported terminal lineage, then retry cleanup"
+            self._notify_once(
+                current,
+                kind="terminal-cleanup",
+                action=str(exc),
+                message=f"PR #{current.number} — terminal cleanup refused. Action: {exc}",
+                notify=notify,
+            )
+            return current
+        if result.get("remote_branch_removed") is not True:
+            raise LifecycleError("terminal cleanup did not confirm remote branch removal")
+        self.github.add_comment(
+            current.number,
+            f"{marker}\nTerminal cleanup verified for `{current.branch}` at exact head `{current.head}`. "
+            f"Local state present: `{bool(result.get('local_state_present'))}`.\n\n— Dish PR lifecycle dispatcher",
+        )
+        reread = self.github.get_comments(current.number)
+        if not comment_has_marker(reread, marker):
+            raise LifecycleError("terminal cleanup succeeded but durable GitHub cleanup marker readback failed")
+        return self.inspect(self.github.get_pr(current.number))
+
+    def _dispatch_terminal(
+        self,
+        current: PRLifecycle,
+        *,
+        terminal_cleaner: TerminalCleanupDispatcher | None,
+        notify: Callable[[str], None],
+    ) -> PRLifecycle | None:
+        disposition: str | None = None
+        if current.state == LifecycleState.MERGED:
+            disposition = "merged"
+        elif current.state == LifecycleState.CLOSED:
+            # Closed-unmerged is itself authoritative terminal state. Preserve a prior
+            # explicit superseded/abandoned disposition marker when present.
+            comments = self.github.get_comments(current.number)
+            for candidate in ("superseded", "abandoned"):
+                token = f"{TERMINAL_DISPOSITION_MARKER} disposition={candidate} head={current.head}"
+                if comment_has_marker(comments, token):
+                    disposition = candidate
+                    break
+            disposition = disposition or "closed"
+        else:
+            decision = asana_terminal_decision(current)
+            if decision is None:
+                return None
+            marker = disposition_marker(decision, current)
+            comments = self.github.get_comments(current.number)
+            if not comment_has_marker(comments, marker):
+                lineage = []
+                if decision.replacement_pr is not None:
+                    lineage.append(f"replacement PR #{decision.replacement_pr}")
+                if decision.replacement_task is not None:
+                    lineage.append(f"replacement task {decision.replacement_task}")
+                linkage = f" Replacement: {', '.join(lineage)}." if lineage else ""
+                self.github.add_comment(
+                    current.number,
+                    f"{marker}\nAuthoritative terminal disposition: **{decision.disposition}**. "
+                    f"Source: Asana task `{decision.task_gid}` — {decision.reason}.{linkage}\n\n"
+                    "— Dish PR lifecycle dispatcher",
+                )
+                comments = self.github.get_comments(current.number)
+                if not comment_has_marker(comments, marker):
+                    raise LifecycleError("terminal disposition comment write readback failed; PR left open")
+            reread_pr = self.github.get_pr(current.number)
+            if pr_gate.pr_head_sha(reread_pr) != current.head:
+                return self.inspect(reread_pr)
+            self.github.close_pr(current.number)
+            closed = self.inspect(self.github.get_pr(current.number))
+            if closed.state != LifecycleState.CLOSED:
+                raise LifecycleError("GitHub close request did not produce authoritative closed-unmerged readback")
+            current = closed
+            disposition = decision.disposition
+        return self._terminal_cleanup(
+            current, disposition=disposition, terminal_cleaner=terminal_cleaner, notify=notify
+        )
+
     def _post_lease(self, pr: PRLifecycle, *, phase: str, review_class: str | None = None) -> str:
         lease_id = str(uuid.uuid4())
         class_field = f" class={review_class}" if review_class else ""
@@ -145,10 +254,14 @@ class LifecycleActionsMixin:
         workspace: WorkspaceAgentDispatcher | None,
         local_reviewer: LocalReviewDispatcher | None,
         implementation_fixer: ImplementationFixDispatcher | None = None,
+        terminal_cleaner: TerminalCleanupDispatcher | None = None,
         notify: Callable[[str], None] | None = None,
     ) -> PRLifecycle:
         notify = notify or (lambda _: None)
         current = self.inspect(self.github.get_pr(pr.number))
+        terminal = self._dispatch_terminal(current, terminal_cleaner=terminal_cleaner, notify=notify)
+        if terminal is not None:
+            return terminal
 
         if current.state == LifecycleState.CHANGES_REQUESTED:
             active_fix = any(
@@ -334,6 +447,10 @@ class LifecycleActionsMixin:
             result = self._merge_exact_head(current)
             if result.state == LifecycleState.MERGED:
                 notify(f"PR #{result.number} — merged.")
+                if terminal_cleaner is not None:
+                    return self._terminal_cleanup(
+                        result, disposition="merged", terminal_cleaner=terminal_cleaner, notify=notify
+                    )
             return result
         return current
 
@@ -344,20 +461,19 @@ class LifecycleActionsMixin:
         workspace: WorkspaceAgentDispatcher | None = None,
         local_reviewer: LocalReviewDispatcher | None = None,
         implementation_fixer: ImplementationFixDispatcher | None = None,
+        terminal_cleaner: TerminalCleanupDispatcher | None = None,
         notify: Callable[[str], None] | None = None,
     ) -> list[PRLifecycle]:
         values = self.status(include_closed=include_closed)
         results: list[PRLifecycle] = []
         for value in values:
-            if value.state in {LifecycleState.MERGED, LifecycleState.CLOSED}:
-                results.append(value)
-                continue
             results.append(
                 self.dispatch_one(
                     value,
                     workspace=workspace,
                     local_reviewer=local_reviewer,
                     implementation_fixer=implementation_fixer,
+                    terminal_cleaner=terminal_cleaner,
                     notify=notify,
                 )
             )

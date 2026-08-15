@@ -13,6 +13,7 @@
     "semantic_additions",
     "selected_lanes",
     "selected_groups",
+    "native_postgresql",
     "force_full",
     "force_full_reasons",
     "policy_identity"
@@ -91,6 +92,20 @@
         ]
       },
       "uniqueItems": true
+    },
+    "native_postgresql": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "test_files", "reason"],
+      "properties": {
+        "mode": {"enum": ["none", "focused", "full"]},
+        "test_files": {
+          "type": "array",
+          "items": {"type": "string", "pattern": "^tests/postgresql/native/test_.*\\.py$"},
+          "uniqueItems": true
+        },
+        "reason": {"type": "string", "minLength": 1}
+      }
     },
     "force_full": {"type": "boolean"},
     "force_full_reasons": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},

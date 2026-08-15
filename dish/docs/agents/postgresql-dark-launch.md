@@ -123,3 +123,7 @@ If work depends on Workflow or another specialist area, record the dependency in
 Keep Asana current while working, not only when asked for a handoff. Before ending a substantial work session, compacting context, switching agents, or yielding the role, make sure every material in-flight state change from any private/local task list is represented in the project.
 
 A handoff may point the successor to relevant tasks, but it must not be the only place that active PostgreSQL/dark-launch state exists.
+
+## Development friction and non-blocking debt
+
+Apply the inherited contributor-base contracts: repository friction is discoverable/dedupe-first and logged without creating a second queue or urgency; relevant non-blocking code smells are deduped/logged to the Code Smells surface and the assigned scope continues. True current-task blockers stay on the active task/PR.

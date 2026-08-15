@@ -222,7 +222,7 @@ A venv is not part of the handoff by default. Build/use the environment accordin
 
 Ordinary PR CI is exact-head evidence: on `pull_request`, candidate identity is the source PR head SHA, not the synthetic merge `GITHUB_SHA`. Required ordinary CI must test that exact source head and publish the repository-defined exact-head status/evidence for it. Manual/native evidence remains valid only for guarantees not automated by CI and must record the exact candidate SHA.
 
-Do not rerun large suites merely to produce volume when existing focused evidence plus governed lanes establish the changed behavior, but follow repository requirements for completed change blocks.
+Do not rerun large suites merely to produce volume when existing focused evidence plus governed lanes establish the changed behavior. Completion or handoff does not itself add a blanket suite: execute the governed selector union plus any concrete semantic boundary, exact PR-local certification marker, or explicitly named review/task evidence requirement.
 
 ## Migration from patch handoffs
 
@@ -251,3 +251,7 @@ Return enough information for the coordinator/reviewer to proceed without recons
 Do not describe work as merged, landed, deployed, or activated unless you actually have authoritative evidence of that state.
 
 If you are returning a fix requested by a reviewer, update the existing PR unless the coordinator explicitly requires a replacement PR, address the reviewer's exact blocker scope, identify any additional semantic changes, and return the new exact PR head SHA.
+
+## Development friction and non-blocking debt
+
+Apply the inherited contributor-base contracts: repository friction is discoverable/dedupe-first and logged without creating a second queue or urgency; relevant non-blocking code smells are deduped/logged to the Code Smells surface and the assigned scope continues. True current-task blockers stay on the active task/PR.

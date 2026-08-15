@@ -4,7 +4,7 @@ This directory owns the concise ChatGPT Project instruction kernels for recurrin
 
 ## Canonical topology
 
-The current standing role index maps to seven persistent Project boundaries:
+The current standing role index maps to eight persistent Project boundaries:
 
 1. Coordinator
 2. Development Workflow
@@ -13,6 +13,7 @@ The current standing role index maps to seven persistent Project boundaries:
 5. Integration
 6. Workflow specialist
 7. PostgreSQL / Dark Launch specialist
+8. Audit
 
 `source.json` is the canonical data source for shared kernel rules, permitted role composition, role-specific high-consequence gates, and each rule's default drift impact/surface/action boundaries. `manifest.json` records the source digest, rendered-kernel identity, and a machine-readable `change_history` between canonical versions. The `canonical_version` binds both rendered instructions and rule-impact metadata, so behaviorally meaningful bootstrap or drift-classification changes move the version. The manifest also maps each role to its generated Markdown kernel. `chatgpt_project_kernels.py` fails if the source topology differs from the current standing role index, so role-map changes cannot silently leave obsolete Project kernels behind.
 
@@ -51,13 +52,13 @@ A runner is therefore part of the trusted eval boundary: it must instrument the 
 
 ## Acceptance and rollout policy
 
-The repository keeps the complete approved matrix — 32 scenarios / 37 role-expanded cases — as deterministic harness coverage. `prepare-eval` emits all 37 cases, and action-bearing cases keep their machine-verifiable observation requirements.
+The repository keeps the complete approved matrix — 49 scenarios / 73 role-expanded cases — as deterministic harness coverage. `prepare-eval` emits all 73 cases, and action-bearing cases keep their machine-verifiable observation requirements.
 
-The **complete live 37-case run is an automated/periodic regression target, not a mandatory manual merge gate**. Absence of an authorized fresh-Project runner or full live result bundle does not by itself make a repository change unreviewable or require manual recreation of the matrix.
+The **complete live 73-case run is an automated/periodic regression target, not a mandatory manual merge gate**. Absence of an authorized fresh-Project runner or full live result bundle does not by itself make a repository change unreviewable or require manual recreation of the matrix.
 
 Repository changes land on governed repository evidence and exact-head review requirements. When an automated live runner is available, use the full matrix for periodic regression and record failures as concrete follow-up defects.
 
-Project UI resync scope follows the manifest's affected roles and impact. A relevant BREAKING change requires resync of only the affected Project(s) before the affected action; ADDITIVE changes defer resync; COMPATIBLE and UNRELATED changes do not hard-stop work. This migration changes the shared bootstrap/drift gate and repository binding, so **all seven existing Projects require one final resync to this canonical version**. Future ordinary role-policy changes fetched from live Git authority do not automatically imply seven-Project resync.
+Project UI resync scope follows the manifest's affected roles and impact. A relevant BREAKING change requires resync of only the affected Project(s) before the affected action; ADDITIVE changes defer resync; COMPATIBLE and UNRELATED changes do not hard-stop work. Audit is a new Project boundary in this version. Existing Projects follow the manifest edge: roles with relevant BREAKING changes must resynchronize before the affected action; ADDITIVE-only changes may wait for a natural boundary. Future ordinary role-policy changes fetched from live Git authority do not imply an all-Project resync.
 
 If a real ChatGPT Project rollout boundary genuinely needs live smoke validation, keep it deliberately small: at most one representative decision-only case and one representative action-bearing case on a safe/disposable test surface. The purpose is to confirm Project wiring and tool-observation instrumentation, **not** to claim exhaustive model-behavior certification. Such a smoke must be explicitly justified by the rollout risk; it is not a standing requirement for every kernel change.
 
