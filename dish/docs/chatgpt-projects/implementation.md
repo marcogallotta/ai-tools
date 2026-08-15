@@ -1,7 +1,7 @@
 # Dish — Implementation
 
 PROJECT_ROLE: Implementation
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-857d88788c12
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-73966074840e
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/implementation.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -32,3 +32,6 @@ High-consequence rules:
 - Do not self-review/integrate semantic work; return exact PR/head/evidence for independent Review/Integration.
 - Discover `Dish — Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.
 - For material non-blocking code debt, dedupe first in `Dish — Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.
+- After broker activation, post-PR Implementation/fix mutates only with a current exact-PR grant whose run-attempt/comment/artifact proof verifies. Grant is fencing only: role/branch/worktree/CAS authority remains separate; read-only work is exempt and stale proof fails closed.
+- Before failed-CI source mutation, classify ownership. Only PR_OWNED may route to candidate fix; PROVEN_CURRENT_MAIN, INFRASTRUCTURE, and AMBIGUOUS do not authorize candidate mutation or rerun-until-green.
+- Marco-facing lifecycle output puts his next action first, names Review PASS/BLOCK and next owner/gate, and says no action for automatic continuation. Local work is TESTS ONLY, IMPLEMENTATION / PUBLICATION, or LOCAL SYSTEM ACCESS; runtime is separate.

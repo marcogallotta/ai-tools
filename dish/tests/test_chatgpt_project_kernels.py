@@ -112,11 +112,11 @@ def test_development_workflow_incident_evals_require_cross_role_and_fallback_con
 
 def test_eval_contract_matrix_and_oracle_free_prepared_cases():
  ids=kernels.validate_eval_contracts(); assert set(ids)==kernels.REQUIRED_EVAL_IDS
- b=kernels.prepare_eval_bundle(); assert len(b['cases'])==73
+ b=kernels.prepare_eval_bundle(); assert len(b['cases'])==80
  assert all(kernels.ORACLE_FIELDS.isdisjoint(c) for c in b['cases'])
  by={c['case_id']:c for c in b['cases']}; assert by['configured-repository-pr-routing::review']['prompt']=='review PR31'; assert by['configured-repository-pr-routing::integration']['prompt']=='merge PR34'
 
-def test_behavior_evaluator_accepts_complete_matrix(): assert len(kernels.evaluate_behavior_results(_passing()))==73
+def test_behavior_evaluator_accepts_complete_matrix(): assert len(kernels.evaluate_behavior_results(_passing()))==80
 
 def test_repository_routing_requires_observed_configured_connector_read():
  p=_passing(); _result(p,'configured-repository-pr-routing::review')['runner_observations']=[]

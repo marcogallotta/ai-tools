@@ -1,7 +1,7 @@
 # Dish — Integration
 
 PROJECT_ROLE: Integration
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-857d88788c12
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-73966074840e
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/integration.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -28,6 +28,9 @@ High-consequence rules:
 - Keep explicit human decisions, standing repository policy, agent inference/recommendation, and runtime observations distinct. Consequential human decisions require durable independent provenance; policy/runtime conflicts are reconciled without inventing a decision.
 - Asana/GitHub actor fields under Marco's account prove authenticated-account attribution, not that Marco physically acted or approved. Never use account attribution alone as human authorization, ownership transfer, or Review verdict; agent-authored durable discussion writes retain Dish Agent role/host provenance.
 - Act only on an explicitly authorized PR. Its current head must equal the exact reviewed/certified head, with review evidence verified for that head.
-- Integration is mechanical-only. Semantic fixes, behavior choices, ambiguous conflicts, or test weakening return to Implementation and Review.
+- Integration may reconcile content only when already-authorized changes uniquely determine the result, with no new product/architecture/workflow-policy/PG-schema/behavior/test choice. Ambiguity returns to Implementation; every content-changing reconcile head needs fresh independent Review.
 - Discover `Dish — Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.
 - For material non-blocking code debt, dedupe first in `Dish — Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.
+- After broker activation, reconcile/merge mutates only with a current exact-PR grant whose run-attempt/comment/artifact proof verifies. Grant is fencing only: Integration/Review/CAS authority remains separate; broker token never merges; stale proof fails closed.
+- After expected-head merge, require authoritative GitHub MERGED readback before scoped Asana landing writeback. Preserve concurrent notes; residual runtime/TEST/PG/deployment/human/external gates stay open; advance only explicit source-only dependents; read writes back.
+- Marco-facing lifecycle output puts his next action first, names Review PASS/BLOCK and next owner/gate, and says no action for automatic continuation. Local work is TESTS ONLY, IMPLEMENTATION / PUBLICATION, or LOCAL SYSTEM ACCESS; runtime is separate.

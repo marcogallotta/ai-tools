@@ -93,7 +93,7 @@
       "rules": [
         {
           "id": "development-workflow-boundary",
-          "text": "Own development-system mechanics/reliability, not semantic product/workflow/PG decisions, review verdicts, Integration landing, or production mutation.",
+          "text": "Own dev mechanics/reliability; `scripts/pr_lifecycle.py` stays sole lifecycle engine and the GitHub broker is admission only. No semantic product/workflow/PG decisions, Review verdicts, Integration landing, or production mutation.",
           "impact": "breaking",
           "action_boundaries": [
             "role-critical-write"
@@ -217,6 +217,35 @@
             "review-write"
           ],
           "surface": "lifecycle"
+        },
+        {
+          "id": "mutation-broker-admission",
+          "text": "After broker activation, post-PR Implementation/fix mutates only with a current exact-PR grant whose run-attempt/comment/artifact proof verifies. Grant is fencing only: role/branch/worktree/CAS authority remains separate; read-only work is exempt and stale proof fails closed.",
+          "impact": "additive",
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "surface": "lifecycle"
+        },
+        {
+          "id": "implementation-ci-failure-ownership",
+          "text": "Before failed-CI source mutation, classify ownership. Only PR_OWNED may route to candidate fix; PROVEN_CURRENT_MAIN, INFRASTRUCTURE, and AMBIGUOUS do not authorize candidate mutation or rerun-until-green.",
+          "impact": "additive",
+          "action_boundaries": [
+            "role-critical-write"
+          ],
+          "surface": "safety"
+        },
+        {
+          "id": "action-first-human-output",
+          "text": "Marco-facing lifecycle output puts his next action first, names Review PASS/BLOCK and next owner/gate, and says no action for automatic continuation. Local work is TESTS ONLY, IMPLEMENTATION / PUBLICATION, or LOCAL SYSTEM ACCESS; runtime is separate.",
+          "impact": "compatible",
+          "action_boundaries": [
+            "status",
+            "handoff"
+          ],
+          "surface": "presentation"
         }
       ]
     },
@@ -237,7 +266,7 @@
         },
         {
           "id": "integration-mechanical-only",
-          "text": "Integration is mechanical-only. Semantic fixes, behavior choices, ambiguous conflicts, or test weakening return to Implementation and Review.",
+          "text": "Integration may reconcile content only when already-authorized changes uniquely determine the result, with no new product/architecture/workflow-policy/PG-schema/behavior/test choice. Ambiguity returns to Implementation; every content-changing reconcile head needs fresh independent Review.",
           "impact": "breaking",
           "action_boundaries": [
             "merge"
@@ -263,6 +292,36 @@
             "review-write"
           ],
           "surface": "lifecycle"
+        },
+        {
+          "id": "mutation-broker-admission",
+          "text": "After broker activation, reconcile/merge mutates only with a current exact-PR grant whose run-attempt/comment/artifact proof verifies. Grant is fencing only: Integration/Review/CAS authority remains separate; broker token never merges; stale proof fails closed.",
+          "impact": "additive",
+          "action_boundaries": [
+            "merge",
+            "handoff"
+          ],
+          "surface": "lifecycle"
+        },
+        {
+          "id": "integration-post-merge-writeback",
+          "text": "After expected-head merge, require authoritative GitHub MERGED readback before scoped Asana landing writeback. Preserve concurrent notes; residual runtime/TEST/PG/deployment/human/external gates stay open; advance only explicit source-only dependents; read writes back.",
+          "impact": "additive",
+          "action_boundaries": [
+            "merge",
+            "handoff"
+          ],
+          "surface": "lifecycle"
+        },
+        {
+          "id": "action-first-human-output",
+          "text": "Marco-facing lifecycle output puts his next action first, names Review PASS/BLOCK and next owner/gate, and says no action for automatic continuation. Local work is TESTS ONLY, IMPLEMENTATION / PUBLICATION, or LOCAL SYSTEM ACCESS; runtime is separate.",
+          "impact": "compatible",
+          "action_boundaries": [
+            "status",
+            "handoff"
+          ],
+          "surface": "presentation"
         }
       ]
     },
