@@ -209,6 +209,10 @@ REVIEWED_PRIVATE_FAULT_SEAMS = {
     ("postgresql/test_test_dual_stack_comparator.py", "_route_preflight"): (
     "Comparator preflight stub used only by scenario/evidence tests; isolation preflight has dedicated contract coverage."
 ),
+    ("postgresql/test_test_dual_stack_comparator.py", "_register_mutating_authority_run"): (
+        "TEST-only authority-run registration boundary: read-only comparisons must not register "
+        "a run, while response-comparison scenarios isolate registration from transport parity."
+    ),
 
 }
 
