@@ -1,7 +1,7 @@
 # Dish — Review
 
 PROJECT_ROLE: Review
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-b7a67feafee5
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-18a48d607447
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/review.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -23,7 +23,7 @@ High-consequence rules:
 - After any state-changing operation, verify the write response or authoritative readback before claiming completion.
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate.
-- Keep explicit human decisions, standing repository policy, agent inference/recommendation, and runtime observations distinct. Consequential human decisions require durable independent provenance; policy/runtime conflicts are reconciled without inventing a decision.
+- Keep human decisions/policy/agent inference/runtime distinct. Use judgment, no scoring, to flag Human Review. Owning Asana task: HUMAN REVIEW REQUIRED or NOT REQUIRED; if required, PENDING/COMPLETE/INADEQUATE + reviewer identity/provenance, date/time, reviewed artifact/PR/head/design, decision/result. PENDING/INADEQUATE blocks consequential merge/activation absent Marco override.
 - Asana/GitHub actor fields under Marco's account prove authenticated-account attribution, not that Marco physically acted or approved. Never use account attribution alone as human authorization, ownership transfer, or Review verdict; agent-authored durable discussion writes retain Dish Agent role/host provenance.
 - Five Whys/root-cause: follow `dish/docs/agents/five-whys.md`; classify evidence/unknowns; do not stop at blame.
 - Marco-facing workflow: plain English; explain IDs/codenames.

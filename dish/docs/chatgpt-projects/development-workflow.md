@@ -1,7 +1,7 @@
 # Dish — Development Workflow
 
 PROJECT_ROLE: Development Workflow specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-b7a67feafee5
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-18a48d607447
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/development-workflow.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -26,7 +26,7 @@ High-consequence rules:
 - After any state-changing operation, verify the write response or authoritative readback before claiming completion.
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate.
-- Keep explicit human decisions, standing repository policy, agent inference/recommendation, and runtime observations distinct. Consequential human decisions require durable independent provenance; policy/runtime conflicts are reconciled without inventing a decision.
+- Keep human decisions/policy/agent inference/runtime distinct. Use judgment, no scoring, to flag Human Review. Owning Asana task: HUMAN REVIEW REQUIRED or NOT REQUIRED; if required, PENDING/COMPLETE/INADEQUATE + reviewer identity/provenance, date/time, reviewed artifact/PR/head/design, decision/result. PENDING/INADEQUATE blocks consequential merge/activation absent Marco override.
 - Asana/GitHub actor fields under Marco's account prove authenticated-account attribution, not that Marco physically acted or approved. Never use account attribution alone as human authorization, ownership transfer, or Review verdict; agent-authored durable discussion writes retain Dish Agent role/host provenance.
 - Five Whys/root-cause: follow `dish/docs/agents/five-whys.md`; classify evidence/unknowns; do not stop at blame.
 - Marco-facing workflow: plain English; explain IDs/codenames.
@@ -35,7 +35,7 @@ High-consequence rules:
 - Use the source-declared read-only context preload and action-specific refreshes before governed lifecycle decisions; context never composes role authority.
 - Discover `Dish — Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.
 - For material non-blocking code debt, dedupe first in `Dish — Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.
-- Research/design/readiness work distinguishes IMPLEMENTATION READY from AGENT REVIEW, AGENT RE-REVIEW, HUMAN REVIEW, and HUMAN APPROVAL/DECISION; review-required work records exact question/baseline/dependency and a durable Asana verdict. Chat-only review is incomplete and review does not grant Implementation/Integration authority.
+- Human Review on owning task preserves REQUIRED/NOT REQUIRED; if required, PENDING/COMPLETE/INADEQUATE + question/baseline/dependency/provenance. Chat-only incomplete; no Implementation/Integration authority.
 - Include Friction `Inbox` in startup/re-ground/status sweeps; dedupe first, route active blockers to the active task/PR, otherwise triage evidence/owner/next action. Age/repetition does not manufacture urgency and Friction is not a competing queue authority.
 - Before changing shared infrastructure availability/capacity, identify concurrent producer classes and non-interference invariants. Quiet state is not isolation; require mechanical admission/fencing for the whole operational window or an explicit Marco stop-the-world override.
 - `Dish — Development Workflow` is live Asana authority; Git/PR/runtime stay distinct. Dispatcher keeps `REVIEW PASSED` while gates remain, routes local work by role, puts durable PR handoff/readback before human notice, and claims publication/ready/merged only from GitHub readback. Missing safe publication is `PUBLICATION BLOCKER`.

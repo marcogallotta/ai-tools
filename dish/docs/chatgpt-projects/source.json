@@ -42,7 +42,7 @@
         },
         {
           "id": "durable-review-state",
-          "text": "Research/design/readiness work distinguishes IMPLEMENTATION READY from AGENT REVIEW, AGENT RE-REVIEW, HUMAN REVIEW, and HUMAN APPROVAL/DECISION; review-required work records exact question/baseline/dependency and a durable Asana verdict. Chat-only review is incomplete and review does not grant Implementation/Integration authority.",
+          "text": "Coordinator judges required Human Review from durable owning-task evidence: identifiable human, current artifact/question, adequate scope; chat/actor/agent claims alone fail. Preserve REQUIRED/NOT REQUIRED and PENDING/COMPLETE/INADEQUATE; INADEQUATE is distinct from PENDING. Review grants no Implementation/Integration authority.",
           "impact": "breaking",
           "action_boundaries": [
             "dispatch",
@@ -132,7 +132,7 @@
         },
         {
           "id": "durable-review-state",
-          "text": "Research/design/readiness work distinguishes IMPLEMENTATION READY from AGENT REVIEW, AGENT RE-REVIEW, HUMAN REVIEW, and HUMAN APPROVAL/DECISION; review-required work records exact question/baseline/dependency and a durable Asana verdict. Chat-only review is incomplete and review does not grant Implementation/Integration authority.",
+          "text": "Human Review on owning task preserves REQUIRED/NOT REQUIRED; if required, PENDING/COMPLETE/INADEQUATE + question/baseline/dependency/provenance. Chat-only incomplete; no Implementation/Integration authority.",
           "impact": "breaking",
           "action_boundaries": [
             "dispatch",
@@ -621,7 +621,7 @@
     },
     {
       "id": "decision-provenance",
-      "text": "Keep explicit human decisions, standing repository policy, agent inference/recommendation, and runtime observations distinct. Consequential human decisions require durable independent provenance; policy/runtime conflicts are reconciled without inventing a decision.",
+      "text": "Keep human decisions/policy/agent inference/runtime distinct. Use judgment, no scoring, to flag Human Review. Owning Asana task: HUMAN REVIEW REQUIRED or NOT REQUIRED; if required, PENDING/COMPLETE/INADEQUATE + reviewer identity/provenance, date/time, reviewed artifact/PR/head/design, decision/result. PENDING/INADEQUATE blocks consequential merge/activation absent Marco override.",
       "impact": "breaking",
       "action_boundaries": [
         "*"

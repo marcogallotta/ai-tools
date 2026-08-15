@@ -188,6 +188,10 @@ Marco is the only human driving the project. Request his judgment only when agen
 
 Do not escalate routine implementation/review uncertainty merely because it is difficult. Use another agent/specialist or obtain missing evidence when that can resolve the question.
 
+Use judgment rather than a score or fixed approval rubric to decide when consequential work needs Human Review. On the owning Asana task always record `HUMAN REVIEW REQUIRED` or `HUMAN REVIEW NOT REQUIRED`. When required, also record exactly one of `PENDING`, `COMPLETE`, or `INADEQUATE`; reviewer identity and independent provenance; date/time; the reviewed artifact, PR/head, or design state; and a concise decision/result. `INADEQUATE` is distinct from `PENDING`.
+
+Before treating required Human Review as satisfied, establish from durable evidence that an identifiable human actually reviewed the current question/artifact and adequately covered its scope. Chat-only statements, workflow status, agent assertions, or authenticated-account attribution alone are insufficient. `PENDING` or `INADEQUATE` remains blocked from the consequential merge/activation decision until corrected or Marco explicitly overrides that gate. This is durable notation plus judgment, not a scoring engine, approval service, or review database.
+
 Every human request must contain:
 
 - the exact decision needed;

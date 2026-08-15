@@ -33,3 +33,19 @@ def test_bundle_gate_preserves_live_authority_and_behavior_eval():
     assert set(scenario["roles"]) == set(source["roles"])
     assert {"verify_repository_bundle", "read_live_github_asana_for_current_state"} <= set(scenario["required_actions"])
     assert "treat_bundle_as_live_orchestration_authority" in scenario["forbidden_actions"]
+
+
+def test_human_review_state_model_is_explicit_and_durable():
+    source = _source()
+    shared = _rule(source, "coordinator", "decision-provenance")["text"]
+    for token in ("HUMAN REVIEW REQUIRED", "NOT REQUIRED", "PENDING/COMPLETE/INADEQUATE", "reviewer identity/provenance", "date/time", "reviewed artifact/PR/head/design", "decision/result"):
+        assert token in shared
+    coordinator = _rule(source, "coordinator", "durable-review-state")["text"]
+    assert "INADEQUATE is distinct from PENDING" in coordinator
+    assert "chat/actor/agent claims alone fail" in coordinator
+    contract = (ROOT / "dish/docs/agents/coordinator.md").read_text()
+    for token in ("HUMAN REVIEW REQUIRED", "HUMAN REVIEW NOT REQUIRED", "`PENDING`", "`COMPLETE`", "`INADEQUATE`", "reviewer identity", "date/time", "PR/head", "decision/result"):
+        assert token in contract
+    scenario = _scenario("human-review-durable-state-model")
+    assert "record_human_review_required_or_not_required" in scenario["required_actions"]
+    assert "collapse_inadequate_into_pending" in scenario["forbidden_actions"]
