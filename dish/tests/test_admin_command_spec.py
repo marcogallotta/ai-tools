@@ -62,6 +62,26 @@ def _is_normal_navigation_guidance(paragraph: str) -> bool:
     )
 
 
+def _mentions_command(paragraph: str, command: str) -> bool:
+    return bool(
+        re.search(
+            rf"(?<![A-Za-z0-9_-]){re.escape(command)}(?![A-Za-z0-9_-])",
+            paragraph,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
+def _explicitly_invokes_command(paragraph: str, command: str) -> bool:
+    return bool(
+        re.search(
+            rf"dish-admin\s+{re.escape(command)}(?![A-Za-z0-9_-])",
+            paragraph,
+            flags=re.IGNORECASE,
+        )
+    )
+
+
 def _assert_operator_doc_command_presentation(text: str, relative: str) -> None:
     paragraphs = re.split(r"\n\s*\n", text)
     for index, paragraph in enumerate(paragraphs):
@@ -71,17 +91,14 @@ def _assert_operator_doc_command_presentation(text: str, relative: str) -> None:
         )
         for tier, commands in NON_PRIMARY_ADMIN_COMMANDS_BY_TIER.items():
             mentioned = {
-                command
-                for command in commands
-                if re.search(rf"`{re.escape(command)}`", paragraph)
-                or re.search(rf"dish-admin\s+{re.escape(command)}\b", paragraph)
+                command for command in commands if _mentions_command(paragraph, command)
             }
             if not mentioned:
                 continue
             explicitly_invoked = {
                 command
                 for command in mentioned
-                if re.search(rf"dish-admin\s+{re.escape(command)}\b", paragraph)
+                if _explicitly_invokes_command(paragraph, command)
             }
             needs_exception = normal_guidance or (
                 tier == "compatibility" and bool(explicitly_invoked)
@@ -155,9 +172,39 @@ def test_operator_doc_drift_gate_rejects_review_queue_navigation_code_block() ->
         )
 
 
+def test_operator_doc_drift_gate_rejects_plain_attention_as_normal_start() -> None:
+    with pytest.raises(AssertionError, match="attention"):
+        _assert_operator_doc_command_presentation(
+            "Start with attention for global diagnosis.",
+            "synthetic.md",
+        )
+
+
+def test_operator_doc_drift_gate_rejects_plain_review_queue_as_normal_start() -> None:
+    with pytest.raises(AssertionError, match="review-queue"):
+        _assert_operator_doc_command_presentation(
+            "Start with review-queue to review pending work.",
+            "synthetic.md",
+        )
+
+
 def test_operator_doc_drift_gate_allows_explicit_review_queue_detail_guidance() -> None:
     _assert_operator_doc_command_presentation(
         "The normal operator entry point is `dish-admin queue`. "
         "The hidden `review-queue` command remains a detail view.",
+        "synthetic.md",
+    )
+
+
+def test_operator_doc_drift_gate_allows_explicit_attention_compatibility_guidance() -> None:
+    _assert_operator_doc_command_presentation(
+        "Do not start with attention; it is a compatibility alias for old callers.",
+        "synthetic.md",
+    )
+
+
+def test_operator_doc_drift_gate_ignores_longer_command_like_tokens() -> None:
+    _assert_operator_doc_command_presentation(
+        "Start with inattention or review-queue-extra for this unrelated example.",
         "synthetic.md",
     )
