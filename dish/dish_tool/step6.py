@@ -42,6 +42,7 @@ from .task_store import LiveTask, move_exact, read_complete_task, write_exact_co
 from .governed_diff import (
     GOVERNED_FIELDS,
     agent_attested_decision_appends,
+    canonical_body_changed,
     effective_material_change_level,
     explicit_material_reasons,
     require_governed_authorization,
@@ -104,18 +105,6 @@ def _require_actor(row, agent: str) -> None:
 def _render_document(document) -> tuple[str, str]:
     lines = document.render().splitlines()
     return lines[0], "\n".join(lines[1:]) + "\n"
-
-
-def _body_changed(before, after) -> bool:
-    return (
-        before.title != after.title
-        or before.recognition != after.recognition
-        or before.introduction != after.introduction
-        or dict(before.sections) != dict(after.sections)
-        or before.planning_brief.values != after.planning_brief.values
-        or before.decisions != after.decisions
-        or before.research_basis != after.research_basis
-    )
 
 
 def _content_normalization_contract(submitted, written) -> dict[str, Any]:
@@ -357,7 +346,9 @@ def prepare_live(
 
     verification_snapshot = None
     material_changes = list(candidate.material_changes)
-    body_changed = prior is not None and _body_changed(prior, authority_candidate)
+    body_changed = prior is not None and canonical_body_changed(
+        prior, authority_candidate
+    )
     effective_classification = None
     forced_material_reasons: tuple[str, ...] = ()
 

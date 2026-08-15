@@ -224,7 +224,11 @@ def assert_committed_command_effects(
             observed.add("reject_verification_cycle")
 
     expected_phase = {
-        "prepare": "await_verification",
+        "prepare": (
+            "completed"
+            if result_data.get("handoff") == "checked-in"
+            else "await_verification"
+        ),
         "approve": "await_submission",
         "hold-reject": "held_evidence",
         "reject": (

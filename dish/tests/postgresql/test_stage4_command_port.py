@@ -12,6 +12,7 @@ from dish_pg import models
 from dish_pg import stage3_models as wf
 from dish_pg.command_contract import ACTION_COMMANDS
 from dish_pg.command_port import CommandCall, PostgresCommandPort, _task_reference_from_dish
+from dish_pg.document_authority import parse_canonical_document
 from dish_pg.database import session_scope
 from dish_pg.openapi import postgres_action_openapi
 from dish_pg.planner import (
@@ -25,10 +26,12 @@ from dish_pg.planner import (
 from dish_pg.protocol import AuthenticationError, PostgresProtocolService, ScopedBearerAuthenticator
 from dish_pg.read_model import InvalidCursor
 from dish_pg.transition import ProjectionService
+from dish_tool.models import material_editor_line
 from dish_tool.workflow_policy import WorkflowSnapshot, legal_actions
 from tests.support.canonical import TASK
 from tests.support.postgresql.core import _import_one
 from tests.support.postgresql.command import (
+    _add_destination_section,
     _add_verification_queue,
     _call,
     _inspect,
@@ -72,6 +75,83 @@ def test_stage4_postgresql_action_path_contract() -> None:
 )
 def test_task_reference_from_dish_reduces_known_shapes(dish_value, expected) -> None:
     assert _task_reference_from_dish(dish_value) == expected
+
+
+def _signed_ready_baseline(session, ids, context, task_id):
+    _add_verification_queue(session, ids, context)
+    _add_destination_section(session, ids, context)
+    author_run = _next(ids)
+    verifier_run = _next(ids)
+    _register_run(session, generation_id=context["generation_id"], run_id=author_run)
+    _register_run(
+        session,
+        generation_id=context["generation_id"],
+        run_id=verifier_run,
+        owner="verifier-owner",
+        agent="codex",
+    )
+    port = _port(session, ids)
+    started = _start_initial(port, ids, task_id=task_id, run_id=author_run)
+    prepared = _prepare_for_verification(
+        port,
+        ids,
+        task_id=task_id,
+        operation_id=started.data["operation_id"],
+        run_id=author_run,
+    )
+    _start_verification(
+        port,
+        ids,
+        task_id=task_id,
+        operation_id=started.data["operation_id"],
+        run_id=verifier_run,
+    )
+    _inspect(
+        port,
+        ids,
+        task_id=task_id,
+        operation_id=started.data["operation_id"],
+        run_id=verifier_run,
+    )
+    reviewed = session.get(
+        models.ContentVersion, uuid.UUID(prepared.data["content_version_id"])
+    )
+    approved = port.execute(
+        _call(
+            "approve",
+            run_id=verifier_run,
+            request_id=_next(ids),
+            owner="verifier-owner",
+            principal="verification",
+            arguments={
+                "task_id": str(task_id),
+                "operation_id": started.data["operation_id"],
+                "agent": "codex",
+                "model": "test-verifier",
+                "correction": "none",
+                "reviewed_identity": reviewed.content_identity,
+                "semantic_review_complete": True,
+                "provenance_complete": True,
+            },
+        )
+    )
+    assert approved.ok, (approved.code, approved.http_status, approved.data)
+    submitted = port.execute(
+        _call(
+            "submit",
+            run_id=author_run,
+            request_id=_next(ids),
+            arguments={
+                "task_id": str(task_id),
+                "operation_id": started.data["operation_id"],
+            },
+        )
+    )
+    assert submitted.ok, (submitted.code, submitted.http_status, submitted.data)
+    signed = session.get(
+        models.ContentVersion, uuid.UUID(approved.data["signed_content_version_id"])
+    )
+    return port, signed
 
 
 def test_prepare_stamps_researched_by_and_self_verified_from_agent(workflow_db) -> None:
@@ -129,6 +209,275 @@ def test_prepare_stamps_researched_by_and_self_verified_from_agent(workflow_db) 
         assert "Verified by: None" in version.body
         assert "Status detail: None" in version.body
         assert "Resume status: None" in version.body
+
+
+def test_prepare_material_change_stamps_pending_verification_from_signed_baseline(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port, signed = _signed_ready_baseline(session, ids, context, task_id)
+        signed_parts = parse_canonical_document(title=signed.title, body=signed.body)
+        change_run = _next(ids)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=change_run,
+            agent="gpt",
+        )
+        started = port.execute(
+            _call(
+                "start",
+                run_id=change_run,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "kind": "change",
+                    "agent": "gpt",
+                    "change_level": "small",
+                    "change_reason": "tighten the success target",
+                },
+            )
+        )
+        assert started.ok, (started.code, started.http_status, started.data)
+        candidate = (signed.title + "\n" + signed.body).replace(
+            "Crisp and aromatic.",
+            "Crisp, aromatic, and deeply browned.",
+        )
+        result = port.execute(
+            _call(
+                "prepare",
+                run_id=change_run,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                    "file_text": candidate,
+                    "agent": "gpt",
+                    "model": "gpt-5.6-sol",
+                    "material_classification": "non-material",
+                },
+            )
+        )
+        assert result.ok, (result.code, result.http_status, result.data)
+        assert result.data["handoff"] == "verification"
+        assert result.data["material_classification"]["requested"] == "non-material"
+        assert result.data["material_classification"]["effective"] == "material"
+        assert result.data["material_classification"]["forced_material_reasons"]
+
+        version = session.get(
+            models.ContentVersion, uuid.UUID(result.data["content_version_id"])
+        )
+        prepared = parse_canonical_document(title=version.title, body=version.body)
+        assert prepared.document.state.values["Status"] == "pending-verification"
+        assert (
+            prepared.document.state.values["Researched by"]
+            == signed_parts.document.state.values["Researched by"]
+        )
+        assert prepared.document.state.values["Verified by"] == "None"
+        assert prepared.document.state.values["Self-verified"] == material_editor_line(
+            "gpt", "gpt-5.6-sol", NOW.date().isoformat()
+        )
+        assert len(prepared.document.material_changes) == len(
+            signed_parts.document.material_changes
+        ) + 1
+        assert "tighten the success target" in prepared.document.material_changes[-1]
+        operation = session.get(
+            wf.WorkflowOperation, uuid.UUID(started.data["operation_id"])
+        )
+        assert operation.lifecycle == "open"
+        assert operation.phase == "await_verification"
+        assert session.scalar(
+            select(func.count())
+            .select_from(wf.VerificationCycle)
+            .where(wf.VerificationCycle.operation_id == operation.operation_id)
+        ) == 1
+
+
+def test_prepare_non_material_change_preserves_prior_signed_state_and_checks_in(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port, signed = _signed_ready_baseline(session, ids, context, task_id)
+        signed_parts = parse_canonical_document(title=signed.title, body=signed.body)
+        placement_before = session.get(
+            models.CurrentTaskSectionPlacement,
+            (context["generation_id"], task_id),
+        ).section_id
+        change_run = _next(ids)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=change_run,
+            agent="gpt",
+        )
+        started = port.execute(
+            _call(
+                "start",
+                run_id=change_run,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "kind": "change",
+                    "agent": "gpt",
+                    "change_level": "small",
+                    "change_reason": "preserve last-minute handling",
+                },
+            )
+        )
+        assert started.ok, (started.code, started.http_status, started.data)
+        candidate = (signed.title + "\n" + signed.body).replace(
+            "1. Cook it.",
+            "1. Cook it.\n2. Finish fresh just before serving.",
+        ).replace(
+            "Status: ready",
+            "Status: pending-verification",
+        )
+        result = port.execute(
+            _call(
+                "prepare",
+                run_id=change_run,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                    "file_text": candidate,
+                    "agent": "gpt",
+                    "model": "gpt-5.6-sol",
+                    "material_classification": "non-material",
+                },
+            )
+        )
+        assert result.ok, (result.code, result.http_status, result.data)
+        assert result.data["handoff"] == "checked-in"
+        assert result.data["cycle_id"] is None
+        assert result.data["placement_projection_event_id"] is None
+        assert result.data["material_classification"] == {
+            "classified_subject": "canonical body diff from the signed baseline",
+            "requested": "non-material",
+            "effective": "non-material",
+            "forced_material_reasons": [],
+            "route": "signed-check-in",
+        }
+
+        version = session.get(
+            models.ContentVersion, uuid.UUID(result.data["content_version_id"])
+        )
+        checked_in = parse_canonical_document(title=version.title, body=version.body)
+        assert checked_in.document.state == signed_parts.document.state
+        assert checked_in.document.material_changes == signed_parts.document.material_changes
+        assert "Finish fresh just before serving." in checked_in.body
+        operation = session.get(
+            wf.WorkflowOperation, uuid.UUID(started.data["operation_id"])
+        )
+        assert operation.lifecycle == "completed"
+        assert operation.phase == "completed"
+        assert operation.terminal_outcome == "non_material_checkin"
+        assert operation.persisted_actions == []
+        assert session.scalar(
+            select(func.count())
+            .select_from(wf.VerificationCycle)
+            .where(wf.VerificationCycle.operation_id == operation.operation_id)
+        ) == 0
+        originating_signoff = session.scalar(
+            select(wf.VerificationSignoff).where(
+                wf.VerificationSignoff.task_id == task_id,
+                wf.VerificationSignoff.signed_content_version_id
+                == signed.content_version_id,
+            )
+        )
+        assert originating_signoff is not None
+        checkin_step = session.scalar(
+            select(wf.OperationStep)
+            .where(wf.OperationStep.operation_id == operation.operation_id)
+            .order_by(wf.OperationStep.step_sequence.desc())
+            .limit(1)
+        )
+        assert checkin_step is not None
+        assert checkin_step.evidence["inherited_signoff_id"] == str(
+            originating_signoff.signoff_id
+        )
+        assert checkin_step.evidence["inherited_signoff_cycle_id"] == str(
+            originating_signoff.cycle_id
+        )
+        placement_after = session.get(
+            models.CurrentTaskSectionPlacement,
+            (context["generation_id"], task_id),
+        ).section_id
+        assert placement_after == placement_before
+
+        second_run = _next(ids)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=second_run,
+            agent="gpt",
+        )
+        second_started = port.execute(
+            _call(
+                "start",
+                run_id=second_run,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "kind": "change",
+                    "agent": "gpt",
+                    "change_level": "small",
+                    "change_reason": "keep the finish crisp",
+                },
+            )
+        )
+        assert second_started.ok, (
+            second_started.code,
+            second_started.http_status,
+            second_started.data,
+        )
+        second_candidate = (version.title + "\n" + version.body).replace(
+            "2. Finish fresh just before serving.",
+            "2. Finish fresh just before serving.\n3. Keep crisp until serving.",
+        )
+        second = port.execute(
+            _call(
+                "prepare",
+                run_id=second_run,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": second_started.data["operation_id"],
+                    "file_text": second_candidate,
+                    "agent": "gpt",
+                    "model": "gpt-5.6-sol",
+                    "material_classification": "non-material",
+                },
+            )
+        )
+        assert second.ok, (second.code, second.http_status, second.data)
+        assert second.data["handoff"] == "checked-in"
+        second_version = session.get(
+            models.ContentVersion, uuid.UUID(second.data["content_version_id"])
+        )
+        second_checked_in = parse_canonical_document(
+            title=second_version.title, body=second_version.body
+        )
+        assert second_checked_in.document.state == signed_parts.document.state
+        second_operation = session.get(
+            wf.WorkflowOperation, uuid.UUID(second_started.data["operation_id"])
+        )
+        second_step = session.scalar(
+            select(wf.OperationStep)
+            .where(wf.OperationStep.operation_id == second_operation.operation_id)
+            .order_by(wf.OperationStep.step_sequence.desc())
+            .limit(1)
+        )
+        assert second_step is not None
+        assert second_step.evidence["inherited_signoff_id"] == str(
+            originating_signoff.signoff_id
+        )
+        assert second_step.evidence["inherited_signoff_cycle_id"] == str(
+            originating_signoff.cycle_id
+        )
+
 
 
 def test_inspect_resolves_task_from_dish_argument(workflow_db) -> None:

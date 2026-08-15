@@ -12,9 +12,14 @@ from datetime import datetime
 from typing import Any, Mapping
 
 from dish_tool.errors import DishRuleError
-from dish_tool.lifecycle import hold, pending_verification, ready, resumed
-from dish_tool.governed_diff import preserve_material_change_history
-from dish_tool.models import material_editor_line, verification_actor_line
+from dish_tool.lifecycle import assert_transition, hold, pending_verification, ready, resumed
+from dish_tool.governed_diff import (
+    canonical_body_changed,
+    effective_material_change_level,
+    explicit_material_reasons,
+    preserve_material_change_history,
+)
+from dish_tool.models import material_change_line, material_editor_line, verification_actor_line
 from dish_tool.task_document import (
     DESTINATION_RE,
     CanonicalTaskDocument,
@@ -40,6 +45,16 @@ class CanonicalDocumentParts:
     document: CanonicalTaskDocument
     title: str
     body: str
+
+
+@dataclass(frozen=True)
+class PreparedChangeDocument:
+    parts: CanonicalDocumentParts
+    body_changed: bool
+    requested_classification: str | None
+    effective_classification: str | None
+    forced_material_reasons: tuple[str, ...]
+    effective_change_level: str | None
 
 
 def parse_canonical_document(
@@ -156,6 +171,134 @@ def prepared_document(
     state["Self-verified"] = actor_line
     stamped = dataclasses.replace(document, state=TaskState(state))
     return _validated_parts(stamped, expected_status="pending-verification")
+
+
+def prepared_change_document(
+    file_text: str,
+    *,
+    prior: CanonicalTaskDocument,
+    requested_classification: str | None,
+    change_level: str,
+    change_reason: str,
+    agent: str,
+    model: str,
+    at: datetime,
+    protocol_release: str,
+) -> PreparedChangeDocument:
+    """Prepare a post-signoff change using legacy's existing materiality authority.
+
+    The caller classifies the exact signed-baseline body diff as material or
+    non-material.  Protocol-owned ``explicit_material_reasons`` may only force
+    that proposal upward to material; this function does not introduce another
+    materiality classifier.  Material changes receive the same deterministic
+    pending-verification stamping as legacy.  Accepted non-material changes keep
+    the prior signed PROCESS RECORD byte-for-byte in state terms.
+    """
+    try:
+        candidate = parse_task_document(str(file_text))
+        candidate_state = dict(candidate.state.values)
+        candidate_state["Researched by"] = prior.state.values["Researched by"]
+        candidate = dataclasses.replace(candidate, state=TaskState(candidate_state))
+        candidate = preserve_material_change_history(prior, candidate)
+
+        body_changed = canonical_body_changed(prior, candidate)
+        if body_changed and requested_classification is None:
+            raise CanonicalDocumentError(
+                "a changed canonical body requires material or non-material classification"
+            )
+        if not body_changed and requested_classification is not None:
+            raise CanonicalDocumentError(
+                "material classification is not applicable because the canonical body did not change"
+            )
+        if requested_classification is not None and requested_classification not in {
+            "material",
+            "non-material",
+        }:
+            raise CanonicalDocumentError(
+                "change prepare requires material or non-material classification"
+            )
+
+        forced_material_reasons: tuple[str, ...] = ()
+        effective_classification = requested_classification
+        if body_changed:
+            forced_material_reasons = explicit_material_reasons(prior, candidate)
+            if effective_classification == "non-material" and forced_material_reasons:
+                effective_classification = "material"
+
+        material_changes = list(candidate.material_changes)
+        effective_change_level: str | None = None
+        if effective_classification == "material":
+            assert_transition(
+                action="material_edit",
+                before=prior.state.values["Status"],
+                after="pending-verification",
+            )
+            effective_change_level = effective_material_change_level(
+                change_level, forced_material_reasons
+            )
+            material_changes.append(
+                material_change_line(
+                    agent,
+                    model,
+                    at.date().isoformat(),
+                    change="updated the candidate",
+                    reason=change_reason,
+                    materiality=effective_change_level.capitalize(),
+                )
+            )
+            state = dict(
+                pending_verification(
+                    candidate.state.values, protocol_release=protocol_release
+                ).values
+            )
+            state["Researched by"] = prior.state.values["Researched by"]
+            state["Self-verified"] = material_editor_line(
+                agent, model, at.date().isoformat()
+            )
+            prepared = dataclasses.replace(
+                candidate,
+                state=TaskState(state),
+                material_changes=tuple(material_changes),
+            )
+            parts = _validated_parts(prepared, expected_status="pending-verification")
+        elif effective_classification == "non-material":
+            assert_transition(
+                action="non_material_edit",
+                before=prior.state.values["Status"],
+                after="ready",
+            )
+            prepared = dataclasses.replace(
+                candidate,
+                state=prior.state,
+                material_changes=tuple(material_changes),
+            )
+            parts = _validated_parts(prepared, expected_status="ready")
+        else:
+            prepared = dataclasses.replace(
+                candidate,
+                state=prior.state,
+                material_changes=tuple(material_changes),
+            )
+            parts = _validated_parts(
+                prepared,
+                expected_status=prior.state.values["Status"],
+            )
+    except DocumentParseError as exc:
+        raise CanonicalDocumentError(
+            "candidate is not a canonical Dish document",
+            errors=document_parse_error_payloads(exc),
+        ) from exc
+    except DishRuleError as exc:
+        raise CanonicalDocumentError(str(exc)) from exc
+
+    return PreparedChangeDocument(
+        parts=parts,
+        body_changed=body_changed,
+        requested_classification=requested_classification,
+        effective_classification=effective_classification,
+        forced_material_reasons=forced_material_reasons,
+        effective_change_level=effective_change_level,
+    )
 
 
 def ready_document(
