@@ -320,6 +320,49 @@ def _notice_present(comments: Iterable[Mapping[str, Any]], *, kind: str, head: s
     return False
 
 
+def review_gate_metadata(review: Mapping[str, Any] | None) -> ReviewGateMetadata:
+    """Parse phase-explicit Review evidence while preserving legacy fail-closed semantics."""
+    if not review or review.get("verdict") != "MERGE":
+        return ReviewGateMetadata(format="none")
+    body = str(review.get("body") or "")
+    pre = PRE_INTEGRATION_TESTS_RE.search(body)
+    post = POST_MERGE_GATES_RE.search(body)
+    if pre is not None or post is not None:
+        if pre is None or post is None:
+            return ReviewGateMetadata(
+                format="new",
+                error=(
+                    "new-format exact-head MERGE review must contain both "
+                    "PRE-INTEGRATION TESTS TO RUN and POST-MERGE GATES"
+                ),
+            )
+        pre_value = pre.group("value").strip()
+        post_value = post.group("value").strip()
+        return ReviewGateMetadata(
+            format="new",
+            pre_integration_tests=(
+                None if pre_value.rstrip(".").upper() == "NONE" else pre_value
+            ),
+            post_merge_gates=(
+                () if post_value.rstrip(".").upper() == "NONE" else (post_value,)
+            ),
+        )
+
+    legacy = TESTS_TO_RUN_RE.search(body)
+    if legacy is None:
+        return ReviewGateMetadata(
+            format="legacy",
+            error="legacy exact-head MERGE review is missing required TESTS TO RUN line",
+        )
+    legacy_value = legacy.group("value").strip()
+    return ReviewGateMetadata(
+        format="legacy",
+        pre_integration_tests=(
+            None if legacy_value.rstrip(".").upper() == "NONE" else legacy_value
+        ),
+    )
+
+
 def local_work_from_review(
     review: Mapping[str, Any] | None,
     comments: Iterable[Mapping[str, Any]],
@@ -344,21 +387,20 @@ def local_work_from_review(
                 ),
             )
         )
-    tests = TESTS_TO_RUN_RE.search(body)
-    if tests:
-        instruction = tests.group("value").strip()
-        if instruction.rstrip(".").upper() != "NONE":
-            work.append(
-                LocalWork(
-                    kind="certification",
-                    required=True,
-                    instruction=instruction,
-                    completed=_completion_present(comments, kind="certification", head=head),
-                    handoff_present=_handoff_present(
-                        comments, kind="certification", head=head, instruction=instruction
-                    ),
-                )
+    metadata = review_gate_metadata(review)
+    if metadata.error is None and metadata.pre_integration_tests is not None:
+        instruction = metadata.pre_integration_tests
+        work.append(
+            LocalWork(
+                kind="certification",
+                required=True,
+                instruction=instruction,
+                completed=_completion_present(comments, kind="certification", head=head),
+                handoff_present=_handoff_present(
+                    comments, kind="certification", head=head, instruction=instruction
+                ),
             )
+        )
     return work
 
 

@@ -1,7 +1,7 @@
 # Dish — Review
 
 PROJECT_ROLE: Review
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-28dcb04decc8
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-2e87cf466b91
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/review.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -35,3 +35,4 @@ High-consequence rules:
 - `READY FOR MERGE` hands off to Integration; Review does not merge.
 - Discover `Dish — Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.
 - For material non-blocking code debt, dedupe first in `Dish — Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.
+- New MERGE Review metadata separates `PRE-INTEGRATION TESTS TO RUN` from `POST-MERGE GATES`; both new fields are required together. Post-merge TEST/runtime/PROD acceptance never becomes a source-merge blocker by placement alone; legacy `TESTS TO RUN` remains pre-Integration compatibility.

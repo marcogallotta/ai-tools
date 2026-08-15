@@ -1,7 +1,7 @@
 # Dish — Integration
 
 PROJECT_ROLE: Integration
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-28dcb04decc8
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-2e87cf466b91
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/integration.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -34,3 +34,4 @@ High-consequence rules:
 - After broker activation, reconcile/merge mutates only with a current exact-PR grant whose run-attempt/comment/artifact proof verifies. Grant is fencing only: Integration/Review/CAS authority remains separate; broker token never merges; stale proof fails closed.
 - After expected-head merge, require authoritative GitHub MERGED readback before scoped Asana landing writeback. Preserve concurrent notes; residual runtime/TEST/PG/deployment/human/external gates stay open; advance only explicit source-only dependents; read writes back.
 - Marco-facing lifecycle output puts his next action first, names Review PASS/BLOCK and next owner/gate, and says no action for automatic continuation. Local work is TESTS ONLY, IMPLEMENTATION / PUBLICATION, or LOCAL SYSTEM ACCESS; runtime is separate.
+- Integration executes only `PRE-INTEGRATION TESTS TO RUN` (or legacy `TESTS TO RUN`) before source merge. `POST-MERGE GATES` remain residual acceptance after authoritative landing and keep owning work open without blocking source Integration by themselves.

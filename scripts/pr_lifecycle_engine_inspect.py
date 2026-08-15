@@ -196,6 +196,20 @@ class LifecycleInspectMixin:
                 residual_reason="formal review did not contain an authoritative exact-head verdict",
             )
 
+        review_metadata = review_gate_metadata(exact_review)
+        base_kwargs["post_merge_gates"] = list(review_metadata.post_merge_gates)
+        if review_metadata.error is not None:
+            return PRLifecycle(
+                **base_kwargs,
+                state=LifecycleState.REVIEW_PASSED,
+                state_label=STATE_LABELS[LifecycleState.REVIEW_PASSED],
+                review_class=review_class,
+                review_verdict=verdict,
+                reviewed_head=reviewed_head,
+                active_leases=lease_payload,
+                residual_reason=f"malformed Review phase metadata: {review_metadata.error}",
+            )
+
         local_work = local_work_from_review(exact_review, comments, head=head)
         local_payload = [asdict(item) for item in local_work]
         pending_impl = next((item for item in local_work if item.kind == "implementation" and not item.completed), None)
@@ -213,20 +227,6 @@ class LifecycleInspectMixin:
                 human_action=pending_impl.instruction if pending_impl.handoff_present else None,
             )
         pending_cert = next((item for item in local_work if item.kind == "certification" and not item.completed), None)
-
-        body = str(exact_review.get("body") or "")
-        if TESTS_TO_RUN_RE.search(body) is None:
-            return PRLifecycle(
-                **base_kwargs,
-                state=LifecycleState.REVIEW_PASSED,
-                state_label=STATE_LABELS[LifecycleState.REVIEW_PASSED],
-                review_class=review_class,
-                review_verdict=verdict,
-                reviewed_head=reviewed_head,
-                active_leases=lease_payload,
-                local_work=local_payload,
-                residual_reason="exact-head MERGE review is missing required TESTS TO RUN line",
-            )
 
         ordering = _integration_order_reason(exact_review, current)
         if ordering:

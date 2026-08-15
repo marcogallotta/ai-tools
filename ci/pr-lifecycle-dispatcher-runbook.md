@@ -153,7 +153,9 @@ While externally blocked the dispatcher does not launch Implementation/fix or lo
 
 ## Local work after Review MERGE
 
-A formal Review must keep using its required `TESTS TO RUN:` line. A non-`NONE` command creates `LOCAL CERTIFICATION REQUIRED` until the exact head has a durable completion marker:
+New formal MERGE reviews use the phase-explicit pair `PRE-INTEGRATION TESTS TO RUN:` and `POST-MERGE GATES:`. Only a non-`NONE` `PRE-INTEGRATION TESTS TO RUN` command creates `LOCAL CERTIFICATION REQUIRED` before source Integration. `POST-MERGE GATES` is carried as residual acceptance metadata and does not block source merge by itself. If either new-format field appears, both must appear; partial metadata fails closed as malformed Review metadata rather than becoming CI pending or a privileged local handoff. Legacy exact-head reviews containing only `TESTS TO RUN:` retain the existing pre-Integration behavior.
+
+A required pre-Integration command remains pending until the exact head has a durable completion marker:
 
 ```text
 <!-- dish-local-completion:v1 kind=certification head=<sha> result=pass -->

@@ -417,6 +417,9 @@ class LifecycleActionsMixin:
         # Never infer MERGED from the merge response alone; authoritative PR readback is required.
         raw_after_merge = self.github.get_pr(pr.number)
         authoritative = self.inspect(raw_after_merge)
+        # A merged PR no longer needs Review parsing for source truth, but the exact-head
+        # Review remains the durable authority for residual post-merge acceptance gates.
+        authoritative.post_merge_gates = list(current.post_merge_gates)
         if authoritative.state != LifecycleState.MERGED:
             authoritative.state = LifecycleState.INTEGRATION_READY
             authoritative.state_label = STATE_LABELS[LifecycleState.INTEGRATION_READY]

@@ -45,6 +45,8 @@ WORKSPACE_API_ROOT = "https://api.chatgpt.com/v1"
 WORKSPACE_RUNS_BETA = "workspace_agent_runs=v1"
 TASK_GID_RE = re.compile(r"(?<!\d)(\d{16})(?!\d)")
 TESTS_TO_RUN_RE = re.compile(r"(?im)^TESTS TO RUN:\s*(?P<value>.+?)\s*$")
+PRE_INTEGRATION_TESTS_RE = re.compile(r"(?im)^PRE-INTEGRATION TESTS TO RUN:\s*(?P<value>.+?)\s*$")
+POST_MERGE_GATES_RE = re.compile(r"(?im)^POST-MERGE GATES:\s*(?P<value>.+?)\s*$")
 AUTHORING_EVIDENCE_PENDING_RE = re.compile(
     r"(?im)^IMPLEMENTATION EVIDENCE PENDING:\s*(?P<value>[^\n]+?)\s*$"
 )
@@ -135,6 +137,14 @@ class Lease:
 
 
 @dataclass(frozen=True)
+class ReviewGateMetadata:
+    format: str
+    pre_integration_tests: str | None = None
+    post_merge_gates: tuple[str, ...] = ()
+    error: str | None = None
+
+
+@dataclass(frozen=True)
 class LocalWork:
     kind: str
     required: bool
@@ -161,6 +171,7 @@ class PRLifecycle:
     reviewed_head: str | None = None
     active_leases: list[dict[str, Any]] = field(default_factory=list)
     local_work: list[dict[str, Any]] = field(default_factory=list)
+    post_merge_gates: list[str] = field(default_factory=list)
     gate: dict[str, Any] | None = None
     external_dependency: dict[str, Any] | None = None
     residual_reason: str | None = None
