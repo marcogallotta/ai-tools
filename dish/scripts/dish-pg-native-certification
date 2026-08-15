@@ -211,6 +211,13 @@ def _parser() -> argparse.ArgumentParser:
             "requires nodeid, expected_reason_sha256, owner_task_gid, review_by, justification"
         ),
     )
+    parser.add_argument(
+        "--test-file",
+        action="append",
+        default=[],
+        metavar="PATH",
+        help="governed focused native PostgreSQL test file; repeatable",
+    )
     return parser
 
 
@@ -337,6 +344,25 @@ def _evaluate_waivers(
     }
 
 
+def _parse_test_files(values: list[str], inventory: tuple[str, ...]) -> tuple[str, ...]:
+    requested = tuple(sorted(set(value.strip() for value in values if value.strip())))
+    inventory_files = {nodeid.split("::", 1)[0] for nodeid in inventory}
+    for value in requested:
+        path = Path(value)
+        if (
+            path.is_absolute()
+            or ".." in path.parts
+            or not value.startswith("tests/postgresql/native/test_")
+            or path.suffix != ".py"
+        ):
+            raise ValueError(
+                "--test-file must be a canonical governed tests/postgresql/native/test_*.py path"
+            )
+        if value not in inventory_files:
+            raise ValueError(f"--test-file is not in the governed native inventory: {value}")
+    return requested
+
+
 def _run(command: list[str], *, env: dict[str, str]) -> dict[str, Any]:
     started = time.monotonic()
     completed = subprocess.run(
@@ -359,14 +385,23 @@ def _run(command: list[str], *, env: dict[str, str]) -> dict[str, Any]:
 
 
 def _base_report(
-    *, dsn: str, waivers: dict[str, dict[str, str]], inventory: tuple[str, ...]
+    *,
+    dsn: str,
+    waivers: dict[str, dict[str, str]],
+    inventory: tuple[str, ...],
+    required_inventory: tuple[str, ...],
+    test_files: tuple[str, ...],
 ) -> dict[str, Any]:
     return {
         "format": "dish-native-postgresql-certification-report-v1",
         "recorded_at": datetime.now(timezone.utc).isoformat(),
         "certification_scope": "native_postgresql",
+        "selection_mode": "focused" if test_files else "full",
+        "selected_test_files": list(test_files),
         "inventory": list(inventory),
         "inventory_count": len(inventory),
+        "required_inventory": list(required_inventory),
+        "required_inventory_count": len(required_inventory),
         "dsn": redacted_dsn(dsn),
         "skip_waivers": waivers,
         "source_contract_acceptance": False,
@@ -385,7 +420,13 @@ def main(argv: list[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     if args.ensure_local_postgresql:
-        if args.output is not None or args.dsn is not None or args.waive_skip or args.python != sys.executable:
+        if (
+            args.output is not None
+            or args.dsn is not None
+            or args.waive_skip
+            or args.test_file
+            or args.python != sys.executable
+        ):
             parser.error("--ensure-local-postgresql cannot be combined with certification options")
         result = ensure_canonical_local_postgresql()
         if args.json:
@@ -404,12 +445,29 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     inventory = discover_native_postgresql_inventory(ROOT)
+    try:
+        test_files = _parse_test_files(args.test_file, inventory)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    required_inventory = tuple(
+        nodeid
+        for nodeid in inventory
+        if not test_files or nodeid.split("::", 1)[0] in set(test_files)
+    )
+    if not required_inventory:
+        raise SystemExit("native PostgreSQL selection resolved to an empty governed inventory")
     unknown_waivers = sorted(set(waivers) - set(inventory))
     if unknown_waivers:
         raise SystemExit("skip waivers are not in the governed inventory: " + ", ".join(unknown_waivers))
 
     dsn = args.dsn or postgresql_dsn()
-    report = _base_report(dsn=dsn, waivers=waivers, inventory=inventory)
+    report = _base_report(
+        dsn=dsn,
+        waivers=waivers,
+        inventory=inventory,
+        required_inventory=required_inventory,
+        test_files=test_files,
+    )
     try:
         identity = probe_native_postgresql(dsn)
     except NativePostgreSQLUnavailable as exc:
@@ -419,14 +477,14 @@ def main(argv: list[str] | None = None) -> int:
                 "environment_error": str(exc),
                 "identity": None,
                 "tests": {
-                    "selected": len(inventory),
+                    "selected": len(required_inventory),
                     "executed": 0,
                     "passed": 0,
                     "failed": 0,
                     "errors": 0,
                     "skipped": 0,
-                    "unavailable": len(inventory),
-                    "unavailable_nodeids": list(inventory),
+                    "unavailable": len(required_inventory),
+                    "unavailable_nodeids": list(required_inventory),
                 },
                 "native_postgresql_certified": False,
             }
@@ -463,8 +521,13 @@ def main(argv: list[str] | None = None) -> int:
             str(junit_report),
             "-q",
         ]
+        if test_files:
+            for test_file in test_files:
+                command.extend(("--dish-internal-native-test-file", test_file))
         env = os.environ.copy()
         env["DISH_TEST_POSTGRESQL_DSN"] = dsn
+        if test_files:
+            env["DISH_INTERNAL_GOVERNED_RUNNER"] = "1"
         run = _run(command, env=env)
         if pytest_report.is_file():
             pytest_payload = json.loads(pytest_report.read_text(encoding="utf-8"))
@@ -488,7 +551,7 @@ def main(argv: list[str] | None = None) -> int:
 
     tests = pytest_payload["tests"]
     selected = set(tests.get("selected_nodeids", []))
-    expected = set(inventory)
+    expected = set(required_inventory)
     inventory_missing = sorted(expected - selected)
     inventory_unexpected = sorted(selected - expected)
     skipped = set(tests.get("skipped_nodeids", []))
