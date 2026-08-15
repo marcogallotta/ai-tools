@@ -37,6 +37,12 @@ Marco's explicit scoped `override` of a named Dish process/workflow/test/review/
 
 Execution environment and repository transport are **agent-host-specific**. A Dish role does not imply a particular host or bootstrap path.
 
+### Bounded diagnosis and research reads
+
+After mandatory startup/context reads are complete, keep diagnosis and research retrieval bounded. Search/find the relevant heading, term, or symbol first, then open only the range needed to answer the current question. Read an entire large runbook only when the task genuinely requires whole-document review or targeted retrieval cannot establish the answer.
+
+This context-efficiency rule never relaxes required startup/context preload, standing-role reads, task-authority reads, or any other explicitly mandatory source. Likewise, when a durable local-certification/local-work handoff already unambiguously names the receiving role and work, follow that receiving role's current standing contract and execute the authorized handoff instead of asking Marco to choose the same routine route again. This does not create or expand role authority; missing authority or materially incomplete/ambiguous handoff information still fails closed.
+
 ### Claude Code and Codex
 
 Claude Code and Codex use their live checkout plus their host-native Git/tooling and environment. For implementation/fix work, use the repository-owned `tools/agent-worktree` lifecycle rather than creating a competing branch/worktree or synchronizing the operator `main` checkout. First creation requires the coordinator-supplied exact base ref + SHA to still match `origin`; resume observes current origin state without automatically resetting, merging, rebasing, or chasing a moved `main`. Enter the returned owned path directly or use `tools/agent-worktree exec --task <gid> -- <agent-command>`.
