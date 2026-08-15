@@ -49,3 +49,27 @@ def test_human_review_state_model_is_explicit_and_durable():
     scenario = _scenario("human-review-durable-state-model")
     assert "record_human_review_required_or_not_required" in scenario["required_actions"]
     assert "collapse_inadequate_into_pending" in scenario["forbidden_actions"]
+
+
+def test_fresh_sessions_reconcile_queue_and_audit_before_dispatch():
+    source = _source()
+    coordinator = _rule(source, "coordinator", "coordinator-live-scan")
+    workflow = _rule(source, "development-workflow", "development-workflow-friction-triage")
+    for current in (coordinator, workflow):
+        text = current["text"]
+        assert "Fresh/replacement" in text
+        assert "before ordinary status/dispatch" in text
+        assert "audit due/active/incomplete/returned state" in text
+        assert "surface due audits before next work" in text
+        assert "no scheduler/second queue" in text
+        assert {"status", "dispatch"} <= set(current["action_boundaries"])
+    coordinator_contract = (ROOT / "dish/docs/agents/coordinator.md").read_text()
+    workflow_contract = (ROOT / "dish/docs/agents/development-workflow.md").read_text()
+    for contract in (coordinator_contract, workflow_contract):
+        assert "before ordinary status conclusions, next-work selection, or dispatch" in contract
+        assert "due-but-unsent, active, incomplete, or returned audits" in contract
+        assert "fast path narrow unless drift is detected" in contract
+    for scenario_id in ("coordinator-fresh-session-queue-audit-reconciliation", "development-workflow-fresh-session-queue-audit-reconciliation"):
+        scenario = _scenario(scenario_id)
+        assert "only_then_select_or_dispatch_next_work" in scenario["required_actions"]
+        assert "dispatch_before_queue_audit_reconciliation" in scenario["forbidden_actions"]

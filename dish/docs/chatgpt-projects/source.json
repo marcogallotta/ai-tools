@@ -13,9 +13,10 @@
       "rules": [
         {
           "id": "coordinator-live-scan",
-          "text": "For status/dispatch/blocker decisions, read live GitHub/Asana. `LOCAL IMPLEMENTATION COMPLETION REQUIRED` is durable PR publication-blocker state: route only its missing branch delta; never classify it as local certification.",
+          "text": "Fresh/replacement Coordinator, before ordinary status/dispatch: reconcile maintained Ready/In Progress/Review/Blocked, stale handoffs/queue drift, and audit due/active/incomplete/returned state; surface due audits before next work. Reuse Asana/dispatcher truth; no scheduler/second queue. Route `LOCAL IMPLEMENTATION COMPLETION REQUIRED` only to missing branch delta.",
           "impact": "breaking",
           "action_boundaries": [
+            "status",
             "dispatch",
             "handoff"
           ],
@@ -142,10 +143,11 @@
         },
         {
           "id": "development-workflow-friction-triage",
-          "text": "Include Friction `Inbox` in startup/re-ground/status sweeps; dedupe first, route active blockers to the active task/PR, otherwise triage evidence/owner/next action. Age/repetition does not manufacture urgency and Friction is not a competing queue authority.",
-          "impact": "additive",
+          "text": "Fresh/replacement Development Workflow before ordinary status/dispatch: reconcile lane queue, stale handoffs/Friction, audit due/active/incomplete/returned state; surface due audits before next work. Reuse Asana/dispatcher truth; no scheduler/second queue.",
+          "impact": "breaking",
           "action_boundaries": [
             "status",
+            "dispatch",
             "handoff"
           ],
           "surface": "lifecycle"

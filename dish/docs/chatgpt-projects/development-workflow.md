@@ -1,7 +1,7 @@
 # Dish — Development Workflow
 
 PROJECT_ROLE: Development Workflow specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-18a48d607447
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-2af558b01b5a
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/development-workflow.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -36,7 +36,7 @@ High-consequence rules:
 - Discover `Dish — Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.
 - For material non-blocking code debt, dedupe first in `Dish — Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.
 - Human Review on owning task preserves REQUIRED/NOT REQUIRED; if required, PENDING/COMPLETE/INADEQUATE + question/baseline/dependency/provenance. Chat-only incomplete; no Implementation/Integration authority.
-- Include Friction `Inbox` in startup/re-ground/status sweeps; dedupe first, route active blockers to the active task/PR, otherwise triage evidence/owner/next action. Age/repetition does not manufacture urgency and Friction is not a competing queue authority.
+- Fresh/replacement Development Workflow before ordinary status/dispatch: reconcile lane queue, stale handoffs/Friction, audit due/active/incomplete/returned state; surface due audits before next work. Reuse Asana/dispatcher truth; no scheduler/second queue.
 - Before changing shared infrastructure availability/capacity, identify concurrent producer classes and non-interference invariants. Quiet state is not isolation; require mechanical admission/fencing for the whole operational window or an explicit Marco stop-the-world override.
 - `Dish — Development Workflow` is live Asana authority; Git/PR/runtime stay distinct. Dispatcher keeps `REVIEW PASSED` while gates remain, routes local work by role, puts durable PR handoff/readback before human notice, and claims publication/ready/merged only from GitHub readback. Missing safe publication is `PUBLICATION BLOCKER`.
 - Design/review is canonical after design + verdict/amendments are persisted/read back on its Asana task; amendments go in notes; stale chat never overrides.

@@ -1537,6 +1537,54 @@
         "coordinator",
         "development-workflow"
       ]
+    },
+    {
+      "expected_outcome": "reconcile_queue_and_audit_before_ordinary_dispatch",
+      "forbidden_actions": [
+        "dispatch_before_queue_audit_reconciliation",
+        "ignore_due_audit",
+        "create_second_queue_or_scheduler"
+      ],
+      "id": "coordinator-fresh-session-queue-audit-reconciliation",
+      "prompt": "A fresh/replacement Coordinator session sees ordinary Ready work, possible stale handoff drift, and audit governance that may show a due, active, incomplete, or returned audit. Decide status and whether to dispatch next work.",
+      "required_actions": [
+        "reconcile_maintained_queue_state",
+        "check_stale_handoffs_or_queue_drift",
+        "read_audit_governance_and_round_state",
+        "determine_audit_due_state",
+        "surface_due_or_incomplete_audit_before_dispatch",
+        "only_then_select_or_dispatch_next_work"
+      ],
+      "required_rules": [
+        "coordinator-live-scan"
+      ],
+      "roles": [
+        "coordinator"
+      ]
+    },
+    {
+      "expected_outcome": "reconcile_lane_queue_and_audit_before_ordinary_dispatch",
+      "forbidden_actions": [
+        "dispatch_before_queue_audit_reconciliation",
+        "ignore_due_audit",
+        "create_second_queue_or_scheduler"
+      ],
+      "id": "development-workflow-fresh-session-queue-audit-reconciliation",
+      "prompt": "A fresh/replacement Development Workflow session sees ordinary Ready work, possible stale handoff/Friction drift, and audit governance that may show a due, active, incomplete, or returned audit. Decide status and whether to dispatch next work.",
+      "required_actions": [
+        "reconcile_maintained_queue_state",
+        "check_stale_handoffs_or_queue_drift",
+        "read_audit_governance_and_round_state",
+        "determine_audit_due_state",
+        "surface_due_or_incomplete_audit_before_dispatch",
+        "only_then_select_or_dispatch_next_work"
+      ],
+      "required_rules": [
+        "development-workflow-friction-triage"
+      ],
+      "roles": [
+        "development-workflow"
+      ]
     }
   ],
   "schema_version": 3

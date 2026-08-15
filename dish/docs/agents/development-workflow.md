@@ -67,6 +67,8 @@ Refresh action-specific authority immediately before the relevant decision:
 
 The Project kernel carries the concise startup/re-grounding dependency declaration. This standing contract carries the same requirement for local/replacement agents; neither host may narrow the preload because conversation history happens to contain one visible downstream contract.
 
+At every fresh or replacement Development Workflow session, before ordinary status conclusions, next-work selection, or dispatch, reconcile the maintained lane Ready / In Progress / Review / Blocked state, stale handoffs and Friction inconsistencies, audit governance/latest audit round, and whether an audit is due from cadence/prior yield/engineering movement/material authority or process migration. Surface due-but-unsent, active, incomplete, or returned audits before ordinary dispatch. Reuse maintained Asana/dispatcher truth; keep the fast path narrow unless drift is detected; do not create a scheduler, second queue, or parallel lifecycle.
+
 ## Asana lifecycle
 
 Use the Development Workflow project lifecycle:
