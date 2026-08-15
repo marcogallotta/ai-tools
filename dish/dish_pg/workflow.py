@@ -23,6 +23,7 @@ from . import models
 from . import reservation_models as reservations
 from . import stage3_models as wf
 from . import stage6_models as rel
+from .recovery_rehydration import RECOVERY_REHYDRATION_REVISION
 from .release_history import operation_revocation_history_reconciled
 
 
@@ -503,9 +504,38 @@ class WorkflowAuthorityRepository:
             ).limit(1)
         ) is not None
         if generation.creation_reason == "destructive_restore" and not candidate_exists:
-            raise MutationAdmissionClosed(
-                "restored generation mutation admission requires deliberate reissue control"
+            repair = self.session.scalar(
+                select(models.AppliedMigrationEvent).where(
+                    models.AppliedMigrationEvent.generation_id == spec.generation_id,
+                    models.AppliedMigrationEvent.revision == RECOVERY_REHYDRATION_REVISION,
+                    models.AppliedMigrationEvent.outcome == "repair",
+                )
             )
+            details = None if repair is None else repair.details
+            bootstrap = self.session.scalar(
+                select(models.GenerationBootstrapAuthority).where(
+                    models.GenerationBootstrapAuthority.generation_id == generation.generation_id
+                )
+            )
+            lineage_valid = (
+                details is not None
+                and bootstrap is not None
+                and details.get("route") == RECOVERY_REHYDRATION_REVISION
+                and details.get("successor_generation_id") == str(generation.generation_id)
+                and details.get("predecessor_generation_id")
+                    == str(generation.predecessor_generation_id)
+                and details.get("external_restore_control_id")
+                    == generation.external_restore_control_id
+                and details.get("bootstrap_id") == str(bootstrap.bootstrap_id)
+                and details.get("bootstrap_capability_sha256")
+                    == bootstrap.capability_digest.hex()
+                and bootstrap.external_control_id == generation.external_restore_control_id
+                and details.get("external_effects_enabled") is False
+            )
+            if not lineage_valid:
+                raise MutationAdmissionClosed(
+                    "restored generation mutation admission requires deliberate reissue control"
+                )
         reservation = None
         if candidate_exists:
             control = self.session.get(rel.MutationAdmissionControl, spec.generation_id)

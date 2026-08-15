@@ -3,9 +3,10 @@
 The database may contain a complete historical authority timeline after recovery,
 but restored rows do not make restored actors current.  This module consumes one
 operator-issued control receipt, creates a new destructive-restore generation,
-clones only the governed registry needed for admission, and starts a disabled
-projection epoch.  Normal workflow admission then requires the one-time bootstrap
-capability attached to that receipt.
+clones only the governed registry, and starts a disabled projection epoch.  A
+separate, explicit rehydration transition may then reissue only current task
+authority from the exact predecessor; transient workflow and external-effect state
+remain forensic predecessor evidence and are never copied forward.
 """
 from __future__ import annotations
 
@@ -16,15 +17,17 @@ import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Mapping
+from typing import Any, Callable, Mapping
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from . import candidate_manifest_models as manifest_models
 from . import models
+from . import stage3_models as wf
 from . import stage5_models as projection_models
 from . import stage6_models as release_models
+from .recovery_rehydration import RECOVERY_REHYDRATION_REVISION, RecoveryRehydrationResult
 from .release import ALEMBIC_HEAD
 from .release_evidence import sha256_json
 from .repositories import AuthorityRepository, RegistryRepository
@@ -560,6 +563,602 @@ def _current_recovery_generation(
         )
     return active
 
+
+
+def _deterministic_rehydration_uuid(control: RestoreControl, label: str) -> uuid.UUID:
+    namespace = uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        f"dish:recovery-rehydration:{control.external_control_id}:{control.generation_id}",
+    )
+    return uuid.uuid5(namespace, label)
+
+
+def _rehydration_repair_event(session: Session, generation_id: uuid.UUID) -> models.AppliedMigrationEvent | None:
+    return session.scalar(
+        select(models.AppliedMigrationEvent).where(
+            models.AppliedMigrationEvent.generation_id == generation_id,
+            models.AppliedMigrationEvent.revision == RECOVERY_REHYDRATION_REVISION,
+            models.AppliedMigrationEvent.outcome == "repair",
+        )
+    )
+
+
+def _validate_rehydration_lineage(
+    session: Session,
+    control: RestoreControl,
+    recovered_state: RecoveredPhysicalState,
+) -> tuple[models.AuthorityGeneration, models.AuthorityGeneration, models.ActiveSectionRegistry]:
+    _assert_physical_recovery_binding(control, recovered_state)
+    successor = session.scalar(
+        select(models.AuthorityGeneration)
+        .where(models.AuthorityGeneration.generation_id == control.generation_id)
+        .with_for_update()
+    )
+    predecessor = session.get(models.AuthorityGeneration, control.predecessor_generation_id)
+    if successor is None or predecessor is None:
+        raise RestoreControlError("rehydration requires the exact promoted predecessor/successor lineage")
+    if (
+        successor.status != "active"
+        or successor.creation_reason != "destructive_restore"
+        or successor.predecessor_generation_id != predecessor.generation_id
+        or successor.external_restore_control_id != control.external_control_id
+        or successor.schema_head != control.schema_head
+        or successor.dish_release != control.dish_release
+        or predecessor.status != "retired"
+    ):
+        raise RestoreControlError("rehydration predecessor/successor lineage mismatch")
+    bootstrap = session.get(models.GenerationBootstrapAuthority, control.bootstrap_id)
+    if (
+        bootstrap is None
+        or bootstrap.generation_id != successor.generation_id
+        or bootstrap.external_control_id != control.external_control_id
+        or bootstrap.capability_digest != control.bootstrap_capability_digest
+    ):
+        raise RestoreControlError("rehydration recovery authority mismatch")
+    activation = session.scalar(
+        select(models.AuthorityActivation).where(
+            models.AuthorityActivation.generation_id == successor.generation_id,
+            models.AuthorityActivation.outcome == "activated",
+        )
+    )
+    if (
+        activation is None
+        or activation.cutover_approval_id != control.external_control_id
+        or activation.schema_head != control.schema_head
+        or activation.dish_release != control.dish_release
+        or activation.honest_release != control.honest_release
+        or activation.protocol_release != control.protocol_release
+        or activation.openapi_release != control.openapi_release
+        or activation.routing_release != control.routing_release
+    ):
+        raise RestoreControlError("rehydration recovery release authority mismatch")
+    stamp = session.scalar(
+        select(models.AppliedMigrationEvent).where(
+            models.AppliedMigrationEvent.generation_id == successor.generation_id,
+            models.AppliedMigrationEvent.revision == control.schema_head,
+            models.AppliedMigrationEvent.outcome == "stamp",
+        )
+    )
+    if (
+        stamp is None
+        or stamp.details.get("external_restore_control_id") != control.external_control_id
+        or stamp.details.get("recovery_evidence_sha256") != control.recovery_evidence_sha256
+    ):
+        raise RestoreControlError("rehydration requires exact restore-promotion evidence")
+    registry = session.get(models.ActiveSectionRegistry, successor.generation_id)
+    if registry is None:
+        raise RestoreControlError("rehydration successor lacks active section registry")
+    epoch = session.scalar(
+        select(projection_models.ProjectionEpoch).where(
+            projection_models.ProjectionEpoch.generation_id == successor.generation_id,
+            projection_models.ProjectionEpoch.status == "active",
+        )
+    )
+    if epoch is None or epoch.external_effects_enabled:
+        raise RestoreControlError(
+            "rehydration requires the successor projection epoch to remain external-effects-disabled"
+        )
+    return predecessor, successor, registry
+
+
+def _predecessor_task_snapshot(session: Session, generation_id: uuid.UUID) -> list[dict[str, Any]]:
+    heads = session.scalars(
+        select(models.TaskAuthorityHead)
+        .where(models.TaskAuthorityHead.generation_id == generation_id)
+        .order_by(models.TaskAuthorityHead.task_id)
+    ).all()
+    snapshots: list[dict[str, Any]] = []
+    for head in heads:
+        activation = session.get(models.ContentActivation, head.current_content_activation_id)
+        placement = session.get(models.CurrentTaskSectionPlacement, (generation_id, head.task_id))
+        completion = session.get(models.CurrentTaskCompletion, (generation_id, head.task_id))
+        if (
+            activation is None
+            or activation.generation_id != generation_id
+            or activation.task_id != head.task_id
+            or activation.task_revision != head.task_revision
+            or placement is None
+            or placement.placement_revision != head.placement_revision
+            or completion is None
+            or completion.completion_revision != head.completion_revision
+        ):
+            raise RestoreControlError(
+                f"predecessor current task authority is incomplete for task {head.task_id}"
+            )
+        version = session.get(models.ContentVersion, activation.content_version_id)
+        if version is None or version.generation_id != generation_id or version.task_id != head.task_id:
+            raise RestoreControlError(
+                f"predecessor current content is incomplete for task {head.task_id}"
+            )
+        memberships = session.scalars(
+            select(models.CurrentTaskProjectMembership)
+            .where(
+                models.CurrentTaskProjectMembership.generation_id == generation_id,
+                models.CurrentTaskProjectMembership.task_id == head.task_id,
+            )
+            .order_by(models.CurrentTaskProjectMembership.project_id)
+        ).all()
+        if any(row.membership_revision > head.membership_revision for row in memberships):
+            raise RestoreControlError(
+                f"predecessor membership revision exceeds task head for task {head.task_id}"
+            )
+        snapshots.append(
+            {
+                "task_id": str(head.task_id),
+                "source_content_version_id": str(version.content_version_id),
+                "source_content_activation_id": str(activation.content_activation_id),
+                "representation_kind": version.representation_kind,
+                "title": version.title,
+                "body": version.body,
+                "identity_scheme": version.identity_scheme,
+                "content_identity": version.content_identity,
+                "contract_binding_id": str(version.contract_binding_id),
+                "task_revision": head.task_revision,
+                "membership_revision": head.membership_revision,
+                "placement_revision": head.placement_revision,
+                "completion_revision": head.completion_revision,
+                "memberships": [
+                    {
+                        "project_id": str(row.project_id),
+                        "is_member": bool(row.is_member),
+                        "membership_revision": row.membership_revision,
+                        "source_event_id": str(row.latest_event_id),
+                    }
+                    for row in memberships
+                ],
+                "placement": {
+                    "section_id": None if placement.section_id is None else str(placement.section_id),
+                    "source_registry_version_id": str(placement.registry_version_id),
+                    "source_event_id": str(placement.latest_event_id),
+                },
+                "completion": {
+                    "completed": bool(completion.completed),
+                    "source_event_id": str(completion.latest_event_id),
+                },
+            }
+        )
+    return snapshots
+
+
+def _predecessor_transient_state(session: Session, generation_id: uuid.UUID) -> dict[str, Any]:
+    operations = session.scalars(
+        select(wf.WorkflowOperation)
+        .where(wf.WorkflowOperation.generation_id == generation_id, wf.WorkflowOperation.lifecycle == "open")
+        .order_by(wf.WorkflowOperation.operation_id)
+    ).all()
+    leases = session.scalars(
+        select(wf.ServiceLease)
+        .where(wf.ServiceLease.generation_id == generation_id, wf.ServiceLease.state == "active")
+        .order_by(wf.ServiceLease.lease_id)
+    ).all()
+    requests = session.scalars(
+        select(wf.ServiceRequest)
+        .where(wf.ServiceRequest.generation_id == generation_id)
+        .order_by(wf.ServiceRequest.request_id)
+    ).all()
+    unresolved_requests: list[dict[str, Any]] = []
+    for request in requests:
+        outcome = session.scalar(
+            select(wf.ServiceRequestOutcome).where(wf.ServiceRequestOutcome.request_id == request.request_id)
+        )
+        resolution = session.scalar(
+            select(wf.RequestUncertaintyResolution).where(
+                wf.RequestUncertaintyResolution.request_id == request.request_id
+            )
+        )
+        if outcome is None or (outcome.outcome_class == "uncertain" and resolution is None):
+            unresolved_requests.append(
+                {
+                    "request_id": str(request.request_id),
+                    "command_name": request.command_name,
+                    "outcome_class": None if outcome is None else outcome.outcome_class,
+                    "classification": "forensic_only_no_reissue",
+                }
+            )
+    executions = session.scalars(
+        select(wf.CommandExecution)
+        .where(
+            wf.CommandExecution.generation_id == generation_id,
+            wf.CommandExecution.status.in_(("pending", "claimed", "uncertain")),
+        )
+        .order_by(wf.CommandExecution.execution_id)
+    ).all()
+    projection_events = session.scalars(
+        select(projection_models.ProjectionOutboxEvent)
+        .where(projection_models.ProjectionOutboxEvent.generation_id == generation_id)
+        .order_by(projection_models.ProjectionOutboxEvent.projection_event_id)
+    ).all()
+    unresolved_effects: list[dict[str, Any]] = []
+    for event in projection_events:
+        attempts = session.scalars(
+            select(projection_models.ProjectionAttempt)
+            .where(projection_models.ProjectionAttempt.projection_event_id == event.projection_event_id)
+            .order_by(projection_models.ProjectionAttempt.attempt_number)
+        ).all()
+        attempt_states = [attempt.state for attempt in attempts]
+        if event.state in {"pending", "claimed", "uncertain", "blocked"} or any(
+            state in {"dispatched", "uncertain", "blocked"} for state in attempt_states
+        ):
+            unresolved_effects.append(
+                {
+                    "projection_event_id": str(event.projection_event_id),
+                    "task_id": str(event.task_id),
+                    "event_type": event.event_type,
+                    "event_state": event.state,
+                    "attempts": [
+                        {"attempt_id": str(a.attempt_id), "state": a.state, "attempt_number": a.attempt_number}
+                        for a in attempts
+                    ],
+                    "classification": "predecessor_only_reconcile_never_redispatch",
+                }
+            )
+    return {
+        "open_operations": [
+            {
+                "operation_id": str(row.operation_id),
+                "task_id": str(row.task_id),
+                "kind": row.kind,
+                "phase": row.phase,
+                "classification": "fenced_predecessor_only",
+            }
+            for row in operations
+        ],
+        "active_leases": [
+            {
+                "lease_id": str(row.lease_id),
+                "task_id": str(row.task_id),
+                "operation_id": None if row.operation_id is None else str(row.operation_id),
+                "run_id": None if row.run_id is None else str(row.run_id),
+                "classification": "fenced_predecessor_only",
+            }
+            for row in leases
+        ],
+        "unresolved_requests": unresolved_requests,
+        "in_flight_executions": [
+            {
+                "execution_id": str(row.execution_id),
+                "request_id": str(row.request_id),
+                "task_id": None if row.task_id is None else str(row.task_id),
+                "status": row.status,
+                "classification": "forensic_only_no_reissue",
+            }
+            for row in executions
+        ],
+        "unresolved_external_effects": unresolved_effects,
+        "carry_forward_policy": {
+            "workflow_operations": "none",
+            "leases": "none",
+            "service_requests": "none",
+            "command_executions": "none",
+            "projection_outbox_or_attempts": "none",
+        },
+    }
+
+
+def _clone_rehydrated_task_authority(
+    session: Session,
+    *,
+    control: RestoreControl,
+    import_run_id: uuid.UUID,
+    registry_version_id: uuid.UUID,
+    snapshots: list[dict[str, Any]],
+    at: datetime,
+) -> None:
+    for snapshot in snapshots:
+        task_id = uuid.UUID(snapshot["task_id"])
+        version_id = _deterministic_rehydration_uuid(control, f"task:{task_id}:content-version")
+        activation_id = _deterministic_rehydration_uuid(control, f"task:{task_id}:content-activation")
+        session.add(
+            models.ContentVersion(
+                content_version_id=version_id,
+                generation_id=control.generation_id,
+                task_id=task_id,
+                representation_kind=snapshot["representation_kind"],
+                title=snapshot["title"],
+                body=snapshot["body"],
+                identity_scheme=snapshot["identity_scheme"],
+                content_identity=snapshot["content_identity"],
+                creator_route="import",
+                import_run_id=import_run_id,
+                command_execution_id=None,
+                predecessor_content_version_id=None,
+                contract_binding_id=uuid.UUID(snapshot["contract_binding_id"]),
+                created_at=at,
+            )
+        )
+        session.flush()
+        session.add(
+            models.ContentActivation(
+                content_activation_id=activation_id,
+                generation_id=control.generation_id,
+                task_id=task_id,
+                content_version_id=version_id,
+                activation_route="import",
+                import_run_id=import_run_id,
+                command_execution_id=None,
+                task_revision=snapshot["task_revision"],
+                activated_at=at,
+            )
+        )
+        session.flush()
+        session.add(
+            models.TaskAuthorityHead(
+                generation_id=control.generation_id,
+                task_id=task_id,
+                current_content_activation_id=activation_id,
+                task_revision=snapshot["task_revision"],
+                membership_revision=snapshot["membership_revision"],
+                placement_revision=snapshot["placement_revision"],
+                completion_revision=snapshot["completion_revision"],
+                updated_at=at,
+            )
+        )
+        session.flush()
+        for membership in snapshot["memberships"]:
+            project_id = uuid.UUID(membership["project_id"])
+            event_id = _deterministic_rehydration_uuid(control, f"task:{task_id}:membership:{project_id}")
+            session.add(
+                models.TaskProjectMembershipEvent(
+                    membership_event_id=event_id,
+                    generation_id=control.generation_id,
+                    task_id=task_id,
+                    project_id=project_id,
+                    event_kind="joined" if membership["is_member"] else "left",
+                    membership_revision=membership["membership_revision"],
+                    provenance_route="import",
+                    import_run_id=import_run_id,
+                    command_execution_id=None,
+                    occurred_at=at,
+                )
+            )
+            session.flush()
+            session.add(
+                models.CurrentTaskProjectMembership(
+                    generation_id=control.generation_id,
+                    task_id=task_id,
+                    project_id=project_id,
+                    latest_event_id=event_id,
+                    is_member=membership["is_member"],
+                    membership_revision=membership["membership_revision"],
+                    updated_at=at,
+                )
+            )
+        placement_id = _deterministic_rehydration_uuid(control, f"task:{task_id}:placement")
+        section_id = None if snapshot["placement"]["section_id"] is None else uuid.UUID(snapshot["placement"]["section_id"])
+        session.add(
+            models.TaskSectionPlacementEvent(
+                placement_event_id=placement_id,
+                generation_id=control.generation_id,
+                task_id=task_id,
+                section_id=section_id,
+                registry_version_id=registry_version_id,
+                event_kind="placed" if section_id is not None else "cleared",
+                placement_revision=snapshot["placement_revision"],
+                provenance_route="import",
+                import_run_id=import_run_id,
+                command_execution_id=None,
+                occurred_at=at,
+            )
+        )
+        session.flush()
+        session.add(
+            models.CurrentTaskSectionPlacement(
+                generation_id=control.generation_id,
+                task_id=task_id,
+                section_id=section_id,
+                registry_version_id=registry_version_id,
+                latest_event_id=placement_id,
+                placement_revision=snapshot["placement_revision"],
+                updated_at=at,
+            )
+        )
+        completion_id = _deterministic_rehydration_uuid(control, f"task:{task_id}:completion")
+        session.add(
+            models.TaskCompletionEvent(
+                completion_event_id=completion_id,
+                generation_id=control.generation_id,
+                task_id=task_id,
+                completed=snapshot["completion"]["completed"],
+                reason="imported",
+                completion_revision=snapshot["completion_revision"],
+                provenance_route="import",
+                import_run_id=import_run_id,
+                command_execution_id=None,
+                occurred_at=at,
+            )
+        )
+        session.flush()
+        session.add(
+            models.CurrentTaskCompletion(
+                generation_id=control.generation_id,
+                task_id=task_id,
+                completed=snapshot["completion"]["completed"],
+                latest_event_id=completion_id,
+                completion_revision=snapshot["completion_revision"],
+                updated_at=at,
+            )
+        )
+    session.flush()
+
+
+def rehydrate_restored_generation(
+    session: Session,
+    control: RestoreControl,
+    *,
+    recovered_state: RecoveredPhysicalState,
+    clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+) -> RecoveryRehydrationResult:
+    """Reissue only current task authority into an exact promoted restore successor.
+
+    Historical workflow ownership and projection/external-effect state remain exclusively in
+    the retired predecessor.  The immutable repair event is the admission gate proving that
+    this exact successor was rehydrated under the exact restore receipt.
+    """
+    predecessor, successor, registry = _validate_rehydration_lineage(
+        session, control, recovered_state
+    )
+    snapshots = _predecessor_task_snapshot(session, predecessor.generation_id)
+    snapshot_sha = sha256_json(
+        {
+            "format": "dish-recovery-current-task-snapshot-v1",
+            "predecessor_generation_id": str(predecessor.generation_id),
+            "successor_generation_id": str(successor.generation_id),
+            "tasks": snapshots,
+        }
+    )
+    transient_state = _predecessor_transient_state(session, predecessor.generation_id)
+    transient_sha = sha256_json(
+        {
+            "format": "dish-recovery-transient-classification-v1",
+            "predecessor_generation_id": str(predecessor.generation_id),
+            "state": transient_state,
+        }
+    )
+    existing = _rehydration_repair_event(session, successor.generation_id)
+    if existing is not None:
+        details = existing.details
+        if (
+            details.get("route") != RECOVERY_REHYDRATION_REVISION
+            or details.get("external_restore_control_id") != control.external_control_id
+            or details.get("predecessor_generation_id") != str(predecessor.generation_id)
+            or details.get("successor_generation_id") != str(successor.generation_id)
+            or details.get("predecessor_snapshot_sha256") != snapshot_sha
+            or details.get("recovery_evidence_sha256") != control.recovery_evidence_sha256
+            or details.get("bootstrap_id") != str(control.bootstrap_id)
+            or details.get("bootstrap_capability_sha256")
+                != control.bootstrap_capability_digest.hex()
+        ):
+            raise RestoreControlError("existing recovery rehydration evidence conflicts with exact lineage")
+        return RecoveryRehydrationResult(
+            predecessor_generation_id=predecessor.generation_id,
+            generation_id=successor.generation_id,
+            import_run_id=uuid.UUID(details["import_run_id"]),
+            repair_event_id=existing.migration_event_id,
+            predecessor_snapshot_sha256=snapshot_sha,
+            transient_state_sha256=str(details["transient_state_sha256"]),
+            task_count=int(details["task_count"]),
+            rehydrated_at=existing.terminal_at,
+            replayed=True,
+        )
+    if session.scalar(
+        select(models.TaskAuthorityHead.generation_id)
+        .where(models.TaskAuthorityHead.generation_id == successor.generation_id)
+        .limit(1)
+    ) is not None:
+        raise RestoreControlError("successor already contains task authority without authorized rehydration")
+    at = clock()
+    if at.tzinfo is None or at.utcoffset() is None:
+        raise RestoreControlError("rehydration clock must be timezone-aware")
+    import_run_id = _deterministic_rehydration_uuid(control, "authority-import-run")
+    repair_event_id = _deterministic_rehydration_uuid(control, "repair-event")
+    session.add(
+        models.ImportRun(
+            import_run_id=import_run_id,
+            source_commit=control.recovery_evidence_sha256,
+            source_release=predecessor.dish_release,
+            legacy_generation_id=f"recovery:{predecessor.generation_id}",
+            baseline_high_water_mark=f"{successor.generation_id}:{snapshot_sha}",
+            source_bundle_sha256=snapshot_sha,
+            status="complete",
+            started_at=at,
+            completed_at=at,
+            provenance={
+                "route": RECOVERY_REHYDRATION_REVISION,
+                "external_restore_control_id": control.external_control_id,
+                "predecessor_generation_id": str(predecessor.generation_id),
+                "successor_generation_id": str(successor.generation_id),
+                "recovery_evidence_sha256": control.recovery_evidence_sha256,
+                "predecessor_snapshot_sha256": snapshot_sha,
+                "bootstrap_id": str(control.bootstrap_id),
+                "bootstrap_capability_sha256": control.bootstrap_capability_digest.hex(),
+            },
+        )
+    )
+    session.flush()
+    _clone_rehydrated_task_authority(
+        session,
+        control=control,
+        import_run_id=import_run_id,
+        registry_version_id=registry.registry_version_id,
+        snapshots=snapshots,
+        at=at,
+    )
+    repair_code_sha = hashlib.sha256(RECOVERY_REHYDRATION_REVISION.encode("utf-8")).hexdigest()
+    AuthorityRepository(session).add_migration_event(
+        models.AppliedMigrationEvent(
+            migration_event_id=repair_event_id,
+            generation_id=successor.generation_id,
+            revision=RECOVERY_REHYDRATION_REVISION,
+            predecessor_revision=control.schema_head,
+            migration_code_sha256=repair_code_sha,
+            dish_release=control.dish_release,
+            initiator="dish-pg-recovery-rehydration",
+            outcome="repair",
+            started_at=at,
+            terminal_at=at,
+            details={
+                "route": RECOVERY_REHYDRATION_REVISION,
+                "external_restore_control_id": control.external_control_id,
+                "predecessor_generation_id": str(predecessor.generation_id),
+                "successor_generation_id": str(successor.generation_id),
+                "recovery_evidence_sha256": control.recovery_evidence_sha256,
+                "bootstrap_id": str(control.bootstrap_id),
+                "bootstrap_capability_sha256": control.bootstrap_capability_digest.hex(),
+                "predecessor_snapshot_sha256": snapshot_sha,
+                "transient_state_sha256": transient_sha,
+                "transient_state": transient_state,
+                "import_run_id": str(import_run_id),
+                "task_count": len(snapshots),
+                "carried_forward": [
+                    "current_task_authority",
+                    "current_content_binding",
+                    "current_membership",
+                    "current_placement",
+                    "current_completion",
+                ],
+                "fenced_not_carried": [
+                    "workflow_operations",
+                    "leases",
+                    "service_requests",
+                    "command_executions",
+                    "projection_outbox_events",
+                    "projection_attempts",
+                ],
+                "external_effects_enabled": False,
+            },
+        )
+    )
+    return RecoveryRehydrationResult(
+        predecessor_generation_id=predecessor.generation_id,
+        generation_id=successor.generation_id,
+        import_run_id=import_run_id,
+        repair_event_id=repair_event_id,
+        predecessor_snapshot_sha256=snapshot_sha,
+        transient_state_sha256=transient_sha,
+        task_count=len(snapshots),
+        rehydrated_at=at,
+        replayed=False,
+    )
 
 def promote_restored_generation(
     session: Session,

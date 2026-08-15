@@ -12,6 +12,7 @@ from dish_pg import models
 from dish_pg import stage5_models as projection_models
 from dish_pg import stage6_models as release_models
 from dish_pg.candidate_manifest import bind_approval_manifest
+from dish_pg.command_port import CommandCall, PostgresCommandPort
 from dish_pg.database import session_scope
 from dish_pg.recovery_control import (
     RecoveredPhysicalState,
@@ -20,8 +21,10 @@ from dish_pg.recovery_control import (
     RestoreControlError,
     migration_revision_sha256,
     promote_restored_generation,
+    rehydrate_restored_generation,
 )
 from dish_pg.release import ALEMBIC_HEAD
+from dish_pg.read_model import PostgresReadModel, ReadModelError
 from dish_pg.transition import ProjectionService
 from dish_pg.workflow import (
     MutationAdmissionClosed,
@@ -444,3 +447,337 @@ def test_recovery_remains_valid_after_legitimate_post_burn_readiness(recovery_db
             session, active=active, control=control
         )
         assert authorized.candidate_id == candidate_id
+
+
+
+def test_authorized_rehydration_restores_current_authority_and_keeps_transients_fenced(recovery_db):
+    factory, ids, context, task_id = recovery_db
+    pending_effect_id = None
+    with session_scope(factory) as session:
+        generation = session.get(models.AuthorityGeneration, context["generation_id"])
+        service, candidate_id, _ = _burn_rollback(
+            session, ids, context, task_id, dish_release=generation.dish_release
+        )
+        candidate = service._candidate(candidate_id)
+        pending_effect_id = ProjectionService(
+            session, uuid_factory=lambda: _next(ids)
+        )._record_event(
+            generation_id=context["generation_id"],
+            execution_id=None,
+            task_id=task_id,
+            event_type="reproject",
+            payload={"reason": "recovery-regression"},
+            source_route="service",
+            origin="live",
+            created_at=WORKFLOW_NOW + timedelta(minutes=7),
+        ).projection_event_id
+        predecessor_head = session.get(
+            models.TaskAuthorityHead, (context["generation_id"], task_id)
+        )
+        predecessor_identity = (
+            predecessor_head.current_content_activation_id,
+            predecessor_head.task_revision,
+            predecessor_head.membership_revision,
+            predecessor_head.placement_revision,
+            predecessor_head.completion_revision,
+        )
+
+    with session_scope(factory) as session:
+        candidate = session.get(release_models.ReleaseCandidate, candidate_id)
+        state = _physical_state()
+        control = _control_for_candidate(context, ids, state, candidate)
+        promote_restored_generation(
+            session,
+            control,
+            recovered_state=state,
+            clock=lambda: WORKFLOW_NOW + timedelta(minutes=8),
+            uuid_factory=lambda: _next(ids),
+        )
+        with pytest.raises(ReadModelError, match="no authority head"):
+            PostgresReadModel(session, cursor_secret=b"r" * 32).task_view(task_id)
+        predecessor_head_after_promotion = session.get(
+            models.TaskAuthorityHead, (context["generation_id"], task_id)
+        )
+        predecessor_content_activation = session.get(
+            models.ContentActivation,
+            predecessor_head_after_promotion.current_content_activation_id,
+        )
+        predecessor_content = session.get(
+            models.ContentVersion, predecessor_content_activation.content_version_id
+        )
+        predecessor_membership = session.scalar(
+            select(models.CurrentTaskProjectMembership).where(
+                models.CurrentTaskProjectMembership.generation_id == context["generation_id"],
+                models.CurrentTaskProjectMembership.task_id == task_id,
+            )
+        )
+        predecessor_placement = session.scalar(
+            select(models.CurrentTaskSectionPlacement).where(
+                models.CurrentTaskSectionPlacement.generation_id == context["generation_id"],
+                models.CurrentTaskSectionPlacement.task_id == task_id,
+            )
+        )
+        predecessor_completion = session.scalar(
+            select(models.CurrentTaskCompletion).where(
+                models.CurrentTaskCompletion.generation_id == context["generation_id"],
+                models.CurrentTaskCompletion.task_id == task_id,
+            )
+        )
+        predecessor_pending_effect = session.get(
+            projection_models.ProjectionOutboxEvent, pending_effect_id
+        )
+        predecessor_forensic_snapshot = (
+            predecessor_head_after_promotion.current_content_activation_id,
+            predecessor_head_after_promotion.task_revision,
+            predecessor_head_after_promotion.membership_revision,
+            predecessor_head_after_promotion.placement_revision,
+            predecessor_head_after_promotion.completion_revision,
+            predecessor_content_activation.content_activation_id,
+            predecessor_content_activation.content_version_id,
+            predecessor_content_activation.task_revision,
+            predecessor_content.content_identity,
+            predecessor_content.title,
+            predecessor_content.body,
+            predecessor_membership.latest_event_id,
+            predecessor_membership.is_member,
+            predecessor_membership.membership_revision,
+            predecessor_placement.latest_event_id,
+            predecessor_placement.section_id,
+            predecessor_placement.registry_version_id,
+            predecessor_placement.placement_revision,
+            predecessor_completion.latest_event_id,
+            predecessor_completion.completed,
+            predecessor_completion.completion_revision,
+            predecessor_pending_effect.projection_event_id,
+            predecessor_pending_effect.state,
+            predecessor_pending_effect.intent_payload,
+        )
+        workflow = WorkflowAuthorityService(session, uuid_factory=lambda: _next(ids))
+        current_run = workflow.register_run(
+            run_id=_next(ids),
+            generation_id=control.generation_id,
+            owner_id="post-restore",
+            agent="service",
+            capability_digest=control.bootstrap_capability_digest,
+            bootstrap_id=control.bootstrap_id,
+            registered_at=WORKFLOW_NOW + timedelta(minutes=9),
+        )
+        with pytest.raises(MutationAdmissionClosed, match="deliberate reissue control"):
+            workflow.admit_request(
+                RequestSpec(
+                    request_id=_next(ids),
+                    generation_id=control.generation_id,
+                    run_id=current_run.run_id,
+                    owner_id=current_run.owner_id,
+                    principal_class="service",
+                    command_name="recovery_probe",
+                    canonical_payload={"phase": "before-rehydration"},
+                    protocol_release=control.protocol_release,
+                    dish_release=control.dish_release,
+                    admitted_at=WORKFLOW_NOW + timedelta(minutes=9),
+                )
+            )
+
+        result = rehydrate_restored_generation(
+            session,
+            control,
+            recovered_state=state,
+            clock=lambda: WORKFLOW_NOW + timedelta(minutes=10),
+        )
+        replay = rehydrate_restored_generation(
+            session,
+            control,
+            recovered_state=state,
+            clock=lambda: WORKFLOW_NOW + timedelta(minutes=11),
+        )
+        assert replay.replayed is True
+        assert replay.repair_event_id == result.repair_event_id
+        assert replay.import_run_id == result.import_run_id
+        assert result.task_count == 1
+
+        view = PostgresReadModel(session, cursor_secret=b"r" * 32).task_view(task_id)
+        assert view.title == "[ready] Exact imported task"
+        assert view.body == "Canonical body\n---\nStatus: ready\n"
+        assert view.section_id == context["section_id"]
+        assert view.completed is False
+        successor_head = session.get(
+            models.TaskAuthorityHead, (control.generation_id, task_id)
+        )
+        assert successor_head is not None
+        assert (
+            successor_head.task_revision,
+            successor_head.membership_revision,
+            successor_head.placement_revision,
+            successor_head.completion_revision,
+        ) == predecessor_identity[1:]
+
+        predecessor_head = session.get(
+            models.TaskAuthorityHead, (context["generation_id"], task_id)
+        )
+        assert (
+            predecessor_head.current_content_activation_id,
+            predecessor_head.task_revision,
+            predecessor_head.membership_revision,
+            predecessor_head.placement_revision,
+            predecessor_head.completion_revision,
+        ) == predecessor_identity
+        predecessor_content_activation = session.get(
+            models.ContentActivation, predecessor_head.current_content_activation_id
+        )
+        predecessor_content = session.get(
+            models.ContentVersion, predecessor_content_activation.content_version_id
+        )
+        predecessor_membership = session.scalar(
+            select(models.CurrentTaskProjectMembership).where(
+                models.CurrentTaskProjectMembership.generation_id == context["generation_id"],
+                models.CurrentTaskProjectMembership.task_id == task_id,
+            )
+        )
+        predecessor_placement = session.scalar(
+            select(models.CurrentTaskSectionPlacement).where(
+                models.CurrentTaskSectionPlacement.generation_id == context["generation_id"],
+                models.CurrentTaskSectionPlacement.task_id == task_id,
+            )
+        )
+        predecessor_completion = session.scalar(
+            select(models.CurrentTaskCompletion).where(
+                models.CurrentTaskCompletion.generation_id == context["generation_id"],
+                models.CurrentTaskCompletion.task_id == task_id,
+            )
+        )
+        predecessor_pending_effect = session.get(
+            projection_models.ProjectionOutboxEvent, pending_effect_id
+        )
+        assert (
+            predecessor_head.current_content_activation_id,
+            predecessor_head.task_revision,
+            predecessor_head.membership_revision,
+            predecessor_head.placement_revision,
+            predecessor_head.completion_revision,
+            predecessor_content_activation.content_activation_id,
+            predecessor_content_activation.content_version_id,
+            predecessor_content_activation.task_revision,
+            predecessor_content.content_identity,
+            predecessor_content.title,
+            predecessor_content.body,
+            predecessor_membership.latest_event_id,
+            predecessor_membership.is_member,
+            predecessor_membership.membership_revision,
+            predecessor_placement.latest_event_id,
+            predecessor_placement.section_id,
+            predecessor_placement.registry_version_id,
+            predecessor_placement.placement_revision,
+            predecessor_completion.latest_event_id,
+            predecessor_completion.completed,
+            predecessor_completion.completion_revision,
+            predecessor_pending_effect.projection_event_id,
+            predecessor_pending_effect.state,
+            predecessor_pending_effect.intent_payload,
+        ) == predecessor_forensic_snapshot
+        repair = session.get(models.AppliedMigrationEvent, result.repair_event_id)
+        unresolved = repair.details["transient_state"]["unresolved_external_effects"]
+        assert str(pending_effect_id) in {row["projection_event_id"] for row in unresolved}
+        assert repair.details["external_effects_enabled"] is False
+        assert session.scalar(
+            select(projection_models.ProjectionOutboxEvent).where(
+                projection_models.ProjectionOutboxEvent.generation_id == control.generation_id
+            )
+        ) is None
+        epoch = session.scalar(
+            select(projection_models.ProjectionEpoch).where(
+                projection_models.ProjectionEpoch.generation_id == control.generation_id,
+                projection_models.ProjectionEpoch.status == "active",
+            )
+        )
+        assert epoch.external_effects_enabled is False
+        assert ProjectionService(session).claim_next(
+            worker_id="recovery-regression-worker",
+            now=WORKFLOW_NOW + timedelta(minutes=10),
+            ttl=timedelta(minutes=1),
+        ) is None
+
+        pre_write_completion_revision = successor_head.completion_revision
+        port = PostgresCommandPort(
+            session, cursor_secret=b"r" * 32, uuid_factory=lambda: _next(ids)
+        )
+        read_result = port.execute(
+            CommandCall(
+                command_name="read",
+                arguments={"task_id": str(task_id)},
+                owner_id=current_run.owner_id,
+                principal_class="admin",
+                run_id=current_run.run_id,
+                request_id=None,
+                now=WORKFLOW_NOW + timedelta(minutes=10),
+                protocol_release=control.protocol_release,
+            )
+        )
+        assert read_result.ok is True
+        assert read_result.data["title"] == "[ready] Exact imported task"
+        write_result = port.execute(
+            CommandCall(
+                command_name="reopen-planning",
+                arguments={
+                    "task_id": str(task_id),
+                    "reason": "post-restore recovery qualification",
+                },
+                owner_id=current_run.owner_id,
+                principal_class="admin",
+                run_id=current_run.run_id,
+                request_id=_next(ids),
+                now=WORKFLOW_NOW + timedelta(minutes=10),
+                protocol_release=control.protocol_release,
+            )
+        )
+        assert write_result.ok is True, (write_result.code, write_result.data)
+        updated = PostgresReadModel(session, cursor_secret=b"r" * 32).task_view(task_id)
+        assert updated.completed is False
+        assert session.get(
+            models.TaskAuthorityHead, (control.generation_id, task_id)
+        ).completion_revision == pre_write_completion_revision + 1
+        successor_event = session.scalar(
+            select(projection_models.ProjectionOutboxEvent).where(
+                projection_models.ProjectionOutboxEvent.generation_id == control.generation_id
+            )
+        )
+        assert successor_event is not None
+        assert successor_event.state == "pending"
+        assert ProjectionService(session).claim_next(
+            worker_id="recovery-post-write-worker",
+            now=WORKFLOW_NOW + timedelta(minutes=11),
+            ttl=timedelta(minutes=1),
+        ) is None
+
+
+
+def test_rehydration_rejects_wrong_successor_or_recovery_identity(recovery_db):
+    factory, ids, context, task_id = recovery_db
+    with session_scope(factory) as session:
+        generation = session.get(models.AuthorityGeneration, context["generation_id"])
+        service, candidate_id, _ = _burn_rollback(
+            session, ids, context, task_id, dish_release=generation.dish_release
+        )
+        candidate = service._candidate(candidate_id)
+    with session_scope(factory) as session:
+        candidate = session.get(release_models.ReleaseCandidate, candidate_id)
+        state = _physical_state()
+        control = _control_for_candidate(context, ids, state, candidate)
+        promote_restored_generation(
+            session, control, recovered_state=state,
+            clock=lambda: WORKFLOW_NOW + timedelta(minutes=8),
+            uuid_factory=lambda: _next(ids),
+        )
+        with pytest.raises(RestoreControlError, match="lineage"):
+            rehydrate_restored_generation(
+                session,
+                replace(control, generation_id=uuid.uuid4()),
+                recovered_state=state,
+                clock=lambda: WORKFLOW_NOW + timedelta(minutes=9),
+            )
+        with pytest.raises(RestoreControlError, match="recovery authority"):
+            rehydrate_restored_generation(
+                session,
+                replace(control, bootstrap_capability_digest=hashlib.sha256(b"wrong").digest()),
+                recovered_state=state,
+                clock=lambda: WORKFLOW_NOW + timedelta(minutes=9),
+            )

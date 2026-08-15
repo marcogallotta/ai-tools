@@ -40,6 +40,7 @@ from .bootstrap import (
     bootstrap_initial_generation,
 )
 from .database import session_factory, session_scope
+from .command_port import CommandCall, PostgresCommandPort
 from .recovery_control import (
     RecoveredPhysicalState,
     RestoreControl,
@@ -47,6 +48,7 @@ from .recovery_control import (
     load_restore_control,
     migration_revision_sha256,
     promote_restored_generation,
+    rehydrate_restored_generation,
 )
 from .release import ALEMBIC_HEAD, ReleaseCandidateService
 from .release_evidence import (
@@ -2318,6 +2320,64 @@ def _exercise_promotion(
             raise RehearsalError(
                 "restored generation admitted mutation before deliberate reissue control"
             )
+
+        rehydration = rehydrate_restored_generation(
+            session, control, recovered_state=recovered_state
+        )
+        port = PostgresCommandPort(
+            session,
+            cursor_secret=hashlib.sha256(b"section2-recovery-read-model").digest(),
+        )
+        read_result = port.execute(
+            CommandCall(
+                command_name="read",
+                arguments={"task_id": str(context.task_id)},
+                owner_id=current_run.owner_id,
+                principal_class="admin",
+                run_id=current_run.run_id,
+                request_id=None,
+                now=utc_now(),
+                protocol_release=context.protocol_release,
+            )
+        )
+        if not read_result.ok:
+            raise RehearsalError(
+                f"rehydrated recovery read failed: {read_result.code} {read_result.data}"
+            )
+        write_result = port.execute(
+            CommandCall(
+                command_name="reopen-planning",
+                arguments={
+                    "task_id": str(context.task_id),
+                    "reason": "destructive-restore recovery qualification",
+                },
+                owner_id=current_run.owner_id,
+                principal_class="admin",
+                run_id=current_run.run_id,
+                request_id=uuid.uuid4(),
+                now=utc_now(),
+                protocol_release=context.protocol_release,
+            )
+        )
+        if not write_result.ok:
+            raise RehearsalError(
+                f"rehydrated recovery write failed: {write_result.code} {write_result.data}"
+            )
+        successor_epoch = session.scalar(
+            select(transition_models.ProjectionEpoch).where(
+                transition_models.ProjectionEpoch.generation_id == control.generation_id,
+                transition_models.ProjectionEpoch.status == "active",
+            )
+        )
+        if successor_epoch is None or successor_epoch.external_effects_enabled:
+            raise RehearsalError(
+                "rehydration or critical write enabled successor external effects"
+            )
+        faults["rehydrated_critical_read_write"] = {
+            "passed": True,
+            "repair_event_id": str(rehydration.repair_event_id),
+            "task_count": rehydration.task_count,
+        }
         old_lease = session.scalar(
             select(wf.ServiceLease).where(
                 wf.ServiceLease.generation_id == context.generation_id
@@ -2345,7 +2405,8 @@ def _exercise_promotion(
             "recovery_evidence_sha256": recovered_state.evidence_sha256,
             "current_run_id": str(current_run.run_id),
             "bootstrap_consumed": True,
-            "mutation_admission": "closed_pending_deliberate_reissue_control",
+            "mutation_admission": "rehydrated_current_authority_read_write_succeeded",
+            "rehydration": rehydration.as_json(),
             "old_lease_restored_but_stale": old_lease is not None,
             "old_projection_epoch_status": None if old_epoch is None else old_epoch.status,
             "faults": faults,
