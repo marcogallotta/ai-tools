@@ -97,6 +97,143 @@ def test_stale_takeover_is_exact_cas_and_aba_safe(h: Harness) -> None:
     assert record(h, task)[1]["token"] == second
 
 
+def test_failed_takeover_child_restores_prior_coherent_owner(h: Harness) -> None:
+    task, branch = "3006", "agent/failed-takeover"
+    for agent in ("a", "b"):
+        h.agent_file(agent)
+    h.start(task=task, branch=branch, agent="a")
+    _, prior = record(h, task)
+    prior_token = str(prior["token"])
+
+    failed = claim(
+        h,
+        task=task,
+        branch=branch,
+        agent="b",
+        takeover=True,
+        expected=prior_token,
+        child=["definitely-not-an-agent-worktree-command"],
+    )
+    assert_error(failed, "CLAIM_COMMAND_FAILED")
+    _, after = record(h, task)
+    assert after["agent_id"] == "a"
+    assert after["token"] == prior_token
+    assert h.state(task)["owner"]["agent_id"] == "a"
+
+    resumed = claim(
+        h,
+        task=task,
+        branch=branch,
+        agent="a",
+        child=["python3", str(SCRIPT), "resume", "--task", task, "--agent-id", "a"],
+    )
+    assert resumed.returncode == 0
+
+
+def test_failed_wrapper_after_durable_takeover_keeps_new_owner_coherent(h: Harness) -> None:
+    task, branch = "3007", "agent/takeover-then-fail"
+    for agent in ("a", "b"):
+        h.agent_file(agent)
+    h.start(task=task, branch=branch, agent="a")
+    prior_token = str(record(h, task)[1]["token"])
+    child = [
+        "python3",
+        "-c",
+        (
+            "import subprocess,sys; "
+            "subprocess.check_call(sys.argv[1:]); "
+            "raise SystemExit(9)"
+        ),
+        "python3",
+        str(SCRIPT),
+        "resume",
+        "--task",
+        task,
+        "--agent-id",
+        "b",
+        "--takeover",
+    ]
+    failed = claim(
+        h,
+        task=task,
+        branch=branch,
+        agent="b",
+        takeover=True,
+        expected=prior_token,
+        child=child,
+    )
+    assert failed.returncode == 9
+    _, after = record(h, task)
+    assert after["agent_id"] == "b"
+    assert after["released_at"] is not None
+    assert h.state(task)["owner"]["agent_id"] == "b"
+    assert claim(h, task=task, branch=branch, agent="b", child=["python3", "-c", "pass"]).returncode == 0
+
+
+def test_inconsistent_stale_claim_has_bounded_tool_native_recovery(h: Harness) -> None:
+    task, branch = "3008", "agent/recover-claim"
+    for agent in ("a", "b", "c"):
+        h.agent_file(agent)
+    h.start(task=task, branch=branch, agent="a")
+    path, stale = record(h, task)
+    stale["agent_id"] = "b"
+    stale["released_at"] = None
+    path.write_text(json.dumps(stale) + "\n", encoding="utf-8")
+    stale_token = str(stale["token"])
+
+    refused = claim(h, task=task, branch=branch, agent="c", child=["python3", "-c", "pass"])
+    assert_error(refused, "OWNERSHIP_AMBIGUOUS")
+    assert f"claim --takeover --expected-claim {stale_token}" in refused.stderr
+    assert h.state(task)["owner"]["agent_id"] == "a"
+
+    recovered = claim(
+        h,
+        task=task,
+        branch=branch,
+        agent="b",
+        takeover=True,
+        expected=stale_token,
+        child=["python3", str(SCRIPT), "resume", "--task", task, "--agent-id", "b", "--takeover"],
+    )
+    assert recovered.returncode == 0
+    _, after = record(h, task)
+    assert after["agent_id"] == "b"
+    assert after["released_at"] is not None
+    assert h.state(task)["owner"]["agent_id"] == "b"
+
+
+def test_crash_boundary_survivors_remain_recoverable(h: Harness) -> None:
+    task, branch = "3009", "agent/crash-boundaries"
+    for agent in ("a", "b"):
+        h.agent_file(agent)
+    h.start(task=task, branch=branch, agent="a")
+    path, stale = record(h, task)
+
+    # Surviving state after process death immediately after the new claim
+    # record was persisted: claim says b, durable task owner still says a.
+    stale["agent_id"] = "b"
+    stale["released_at"] = None
+    path.write_text(json.dumps(stale) + "\n", encoding="utf-8")
+    token = str(stale["token"])
+    recovered = claim(
+        h,
+        task=task,
+        branch=branch,
+        agent="b",
+        takeover=True,
+        expected=token,
+        child=["python3", str(SCRIPT), "resume", "--task", task, "--agent-id", "b", "--takeover"],
+    )
+    assert recovered.returncode == 0
+
+    # Surviving state after durable owner transition but before claim release:
+    # both records name b, while the now-dead process no longer holds locks.
+    path, stale = record(h, task)
+    stale["released_at"] = None
+    path.write_text(json.dumps(stale) + "\n", encoding="utf-8")
+    assert claim(h, task=task, branch=branch, agent="b", child=["python3", "-c", "pass"]).returncode == 0
+
+
 def test_status_pr_visibility_and_cross_lineage_fail_closed(h: Harness) -> None:
     task, branch = "3004", "agent/owned"
     for agent in ("a", "b"):

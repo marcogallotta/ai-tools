@@ -267,6 +267,33 @@ def remove_archived_claim(
         os.close(dir_fd)
 
 
+def _remove_claim_file(path: Path) -> None:
+    if not path.exists():
+        return
+    path.unlink()
+    dir_fd = os.open(path.parent, os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
+def _coherent_prior_claim(
+    previous: dict[str, Any],
+    state: dict[str, Any],
+    state_owner: str,
+) -> dict[str, Any]:
+    """Repair only stale claim bookkeeping to the already-authoritative task owner."""
+    repaired = dict(previous)
+    repaired["agent_id"] = state_owner
+    owner = state.get("owner")
+    if isinstance(owner, dict) and owner.get("host") is not None:
+        repaired["host"] = str(owner["host"])
+    repaired["released_at"] = repaired.get("released_at") or now_utc()
+    repaired["takeover"] = False
+    return repaired
+
+
 def _reconcile_existing(
     *,
     runner: GitRunner,
@@ -274,8 +301,9 @@ def _reconcile_existing(
     branch: str,
     agent_id: str,
     takeover: bool,
+    expected_claim: str | None,
     pr: dict[str, Any] | None,
-) -> dict[str, Any] | None:
+) -> tuple[dict[str, Any] | None, str | None]:
     previous = read_claim(task_gid)
     state = load_task_state(task_gid) if state_path(task_gid).exists() else None
 
@@ -317,10 +345,20 @@ def _reconcile_existing(
     state_owner = owner_agent_id(state) if state is not None else None
     prior_owner = previous.get("agent_id") if previous is not None else None
     if state_owner is not None and prior_owner is not None and state_owner != prior_owner:
-        fail(
-            "OWNERSHIP_AMBIGUOUS",
-            f"task worktree owner {state_owner!r} disagrees with prior claim owner {prior_owner!r}",
-        )
+        exact_takeover = takeover and previous is not None and previous.get("token") == expected_claim
+        same_durable_owner = not takeover and agent_id == state_owner
+        if not (exact_takeover or same_durable_owner):
+            token = str(previous.get("token"))
+            fail(
+                "OWNERSHIP_AMBIGUOUS",
+                f"task worktree owner {state_owner!r} disagrees with prior claim owner {prior_owner!r}. "
+                f"Safe recovery: durable owner {state_owner!r} may reacquire this same task/branch with ordinary `claim`; "
+                "after an explicit handoff, a replacement owner must retry the same lineage with "
+                f"`claim --takeover --expected-claim {token}`. A live claim remains fenced by the task/branch/PR locks.",
+            )
+        assert previous is not None
+        previous = _coherent_prior_claim(previous, state, state_owner)
+        prior_owner = state_owner
     durable_owner = state_owner or prior_owner
     if durable_owner is None and state is not None and not takeover:
         fail(
@@ -332,7 +370,50 @@ def _reconcile_existing(
             "OWNER_HANDOFF_REQUIRED",
             f"task/branch belongs to prior local owner {durable_owner!r}; explicit handoff requires claim --takeover",
         )
-    return previous
+    return previous, state_owner
+
+
+def _settle_failed_claim(
+    *,
+    task_gid: str,
+    path: Path,
+    token: str,
+    agent_id: str,
+    previous: dict[str, Any] | None,
+    baseline_state_owner: str | None,
+) -> None:
+    """Leave claim bookkeeping coherent with whichever owner the child durably persisted."""
+    current = read_claim(task_gid)
+    if current is None or current.get("token") != token:
+        fail("OWNERSHIP_AMBIGUOUS", "claim metadata changed while this agent still held the live ownership locks")
+
+    state = load_task_state(task_gid) if state_path(task_gid).exists() else None
+    post_owner = owner_agent_id(state) if state is not None else None
+    rollback_owner = previous.get("agent_id") if previous is not None else baseline_state_owner
+
+    if post_owner == agent_id:
+        current["released_at"] = now_utc()
+        atomic_write_json(path, current)
+        return
+
+    if state is None or post_owner == rollback_owner:
+        if previous is None:
+            _remove_claim_file(path)
+        else:
+            atomic_write_json(path, previous)
+        return
+
+    # The child durably wrote an unexpected owner. Do not invent a rollback of
+    # child state; instead make the stale claim record agree with that durable
+    # owner so a subsequent explicit claim/takeover can recover safely.
+    assert state is not None and post_owner is not None
+    current["agent_id"] = post_owner
+    owner = state.get("owner")
+    if isinstance(owner, dict) and owner.get("host") is not None:
+        current["host"] = str(owner["host"])
+    current["released_at"] = now_utc()
+    current["takeover"] = False
+    atomic_write_json(path, current)
 
 
 class _HeldClaimLocks:
@@ -395,12 +476,13 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
     token = uuid.uuid4().hex
     path = claim_path(task_gid)
     try:
-        previous = _reconcile_existing(
+        previous, baseline_state_owner = _reconcile_existing(
             runner=runner,
             task_gid=task_gid,
             branch=branch,
             agent_id=agent_id,
             takeover=bool(args.takeover),
+            expected_claim=expected_claim,
             pr=pr,
         )
         if args.takeover:
@@ -456,7 +538,25 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
                 pass_fds=tuple(locks.fds),
             )
         except OSError as exc:
+            _settle_failed_claim(
+                task_gid=task_gid,
+                path=path,
+                token=token,
+                agent_id=agent_id,
+                previous=previous,
+                baseline_state_owner=baseline_state_owner,
+            )
             fail("CLAIM_COMMAND_FAILED", f"could not launch claimed local-agent command: {exc}")
+        if completed.returncode != 0:
+            _settle_failed_claim(
+                task_gid=task_gid,
+                path=path,
+                token=token,
+                agent_id=agent_id,
+                previous=previous,
+                baseline_state_owner=baseline_state_owner,
+            )
+            return completed.returncode
         current = read_claim(task_gid)
         if current is None or current.get("token") != token:
             fail("OWNERSHIP_AMBIGUOUS", "claim metadata changed while this agent still held the live ownership locks")
