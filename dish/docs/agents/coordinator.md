@@ -95,6 +95,8 @@ A successor should be able to continue from:
 
 If Asana or the live delta is unavailable, repository HEAD remains durable truth but transient orchestration may be missing. Ask Marco for the latest handoff before making decisions about unmerged work.
 
+On every fresh or replacement Coordinator session, before ordinary status conclusions, next-work selection, or dispatch, reconcile maintained Ready / In Progress / Review / Blocked state needed for the decision, stale handoffs and owned queue inconsistencies, audit governance and the latest audit round, and whether an audit is due from cadence/prior yield/engineering movement/material authority or process migration. Surface due-but-unsent, active, incomplete, or returned audits before ordinary dispatch. Reuse maintained Asana/dispatcher truth and keep the fast path narrow unless drift is detected; do not create a scheduler, second queue, or parallel lifecycle.
+
 ## Asana live coordination
 
 The adopted coordination projects are:
@@ -119,6 +121,18 @@ Rules:
 - update material state as part of the work. If project state is stale or missing, correct it before relying on it for takeover or dispatch;
 - record exact GitHub branch, commit, PR URL, current head SHA, and review/integration state when they matter. GitHub remains the authority for source/history and code artifacts;
 - when TEST/production runtime identity matters, record the observed environment evidence or explicitly record that it is unknown. Never substitute repository HEAD for deployed-state evidence.
+
+## Comparison compatibility and blocker ownership
+
+Before classifying a comparison mismatch as fixture/data repair, prove the proposed target state satisfies the health/validity requirements of **every** compared system. A fixture being disposable never waives its own minimum health requirements. If the proposed target cannot keep every side valid, stop fixture repair rather than iterating on data that cannot satisfy the gate.
+
+For a required active gate, classify the residual path from supported capabilities, not from where the mismatch was first observed:
+
+1. **Compatibility preflight:** establish each compared system's own minimum valid/healthy state and prove the proposed common target can satisfy all of them before repair starts. If not, fixture work stops.
+2. **Ownership escalation:** if the gate cannot be satisfied by an existing supported operation and success requires a new or changed repository capability, classify the blocker **IMPLEMENTATION REQUIRED** immediately and route it through the existing Implementation lifecycle. Do not relabel it local operations, fixture repair, or deferred design. If an existing supported operation can safely produce the required state, keep the work **LOCAL SYSTEM ACCESS** instead of falsely escalating to Implementation.
+3. **Blocker consistency:** before marking a blocker `deferred` or `not required`, reread the active gate and prove that gate can pass without the blocker. If it cannot, keep the blocker on the critical path with the correct next owner. A separate PR that fixes another defect does not discharge this blocker.
+
+When the ownership-escalation condition fires, Marco-facing output follows the canonical action-first contract and begins: `This needs an Implementation fix: <one-sentence scope>.` Diagnosis may follow, but not before that action. Use the existing dispatcher and canonical Implementation handoff; do not create another queue, scheduler, or lifecycle controller. Root-cause analysis remains governed by the canonical shared Five Whys procedure rather than a new incident method here.
 
 ## PR intake and review routing
 
@@ -187,6 +201,10 @@ Marco may explicitly authorize an emergency direct-to-`main` commit for a specif
 Marco is the only human driving the project. Request his judgment only when agents cannot determine correctness from available authority/evidence or when the next action genuinely requires a human tradeoff, product judgment, risk acceptance, priority choice, or other Marco-only decision.
 
 Do not escalate routine implementation/review uncertainty merely because it is difficult. Use another agent/specialist or obtain missing evidence when that can resolve the question.
+
+Use judgment rather than a score or fixed approval rubric to decide when consequential work needs Human Review. On the owning Asana task always record `HUMAN REVIEW REQUIRED` or `HUMAN REVIEW NOT REQUIRED`. When required, also record exactly one of `PENDING`, `COMPLETE`, or `INADEQUATE`; reviewer identity and independent provenance; date/time; the reviewed artifact, PR/head, or design state; and a concise decision/result. `INADEQUATE` is distinct from `PENDING`.
+
+Before treating required Human Review as satisfied, establish from durable evidence that an identifiable human actually reviewed the current question/artifact and adequately covered its scope. Chat-only statements, workflow status, agent assertions, or authenticated-account attribution alone are insufficient. `PENDING` or `INADEQUATE` remains blocked from the consequential merge/activation decision until corrected or Marco explicitly overrides that gate. This is durable notation plus judgment, not a scoring engine, approval service, or review database.
 
 Every human request must contain:
 

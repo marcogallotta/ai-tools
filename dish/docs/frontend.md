@@ -14,12 +14,13 @@ operations.
 
 The frontend gives the sole human user a fast desktop view of Dish's canonical
 task state without making the browser a second authority. The current product is
-a private, read-only board with task detail, background refresh, warnings, and
-shared-password authentication.
+a private, read-only board with active-title search, task detail, background
+refresh, warnings, and shared-password authentication.
 
-It does not provide search, completed-task browsing, history, editing, task
-creation, drag-and-drop, workflow or recovery commands, administrative
-intervention, cutover controls, or direct PostgreSQL or Asana access.
+It does not provide completed-task browsing, history, body/ingredient/content
+search, editing, task creation, drag-and-drop, workflow or recovery commands,
+administrative intervention, cutover controls, or direct PostgreSQL or Asana
+access.
 Frontend-owned authentication state is not task or workflow authority.
 
 ## Board
@@ -44,6 +45,21 @@ registered attention categories: isolation, lease, Verification, hold, recovery,
 abandonment, succession, and abnormal projection. Attention does not create
 synthetic columns. The browser does not infer new categories or display raw
 identifiers, diagnostics, policy output, or `allowed_actions`.
+
+## Active title search
+
+The board has a persistent read-only search over the full current active corpus,
+using the same eligibility rules as board cards rather than only the cards already
+loaded in the browser. Search matches the current canonical Dish title only, as a
+case-insensitive literal substring. It does not search body/content, prior
+revisions, completed or archived dishes, or Asana.
+
+The backend bounds each request to 50 results and reports when more matches exist.
+Each result contains the canonical Dish UUID and current title plus project and
+section labels for disambiguation. Selecting a result performs the ordinary fresh
+detail read and opens `/dishes/<stored-dish-uuid>/<decorative-title-slug>`; the
+browser does not maintain a search index or a second task identity. Search failure
+is isolated from board refresh and leaves the last usable board available.
 
 ## Task detail and routes
 

@@ -15,9 +15,19 @@ All repository-modifying roles inherit [`contributor-base.md`](contributor-base.
 | Workflow specialist, workflow agent | [`workflow.md`](workflow.md) |
 | PostgreSQL specialist, dark-launch specialist, dark-launch agent, PostgreSQL agent | [`postgresql-dark-launch.md`](postgresql-dark-launch.md) |
 
+## Shared human-facing workflow rules
+
+Anything shown directly to Marco must use plain English. State what happened, what is happening, what is blocked, and what happens next without relying on internal codenames, task-family shorthand, implementation-phase labels, or repository/process jargon. Technical identifiers such as task IDs, branch names, PR numbers, and exact SHAs may be shown when useful, but pair them with their plain-language meaning. Internal agent-to-agent and machine/audit records may stay technical unless Marco asks to see the internal form.
+
+Marco's explicit scoped override is authoritative over Dish process/workflow/test/review/Integration gates for the named operation. If the active blocked gate is already unambiguous, a clear follow-up such as `override`, `go`, `do not run tests`, or `mark in PR override` applies to that gate without requiring special syntax or another confirmation. Execute the scoped override first and record its provenance second. Preserve factual evidence exactly: a failed or blocked test remains failed or blocked, while the lifecycle record separately states `GATE WAIVED BY MARCO OVERRIDE`. Do not infer unrelated waivers. Genuine platform/system constraints remain outside this policy.
+
+## Shared analysis methods
+
+For any requested Five Whys / root-cause Five Whys analysis, read and follow [`five-whys.md`](five-whys.md) before presenting conclusions. The shared procedure is an analysis method only and does not change role authority.
+
 ## ChatGPT Project kernels
 
-Recurring ChatGPT role Projects use the concise, versioned kernels in [`../chatgpt-projects/`](../chatgpt-projects/README.md). Those generated kernels bootstrap high-consequence gates and drift detection; this index and the mapped standing contracts remain detailed role authority. A Project canonical-version mismatch must be reported as `PROJECT INSTRUCTIONS STALE` before role-critical state changes.
+Recurring ChatGPT role Projects use the concise, versioned kernels in [`../chatgpt-projects/`](../chatgpt-projects/README.md). Those generated kernels bootstrap high-consequence gates and drift detection; this index and the mapped standing contracts remain detailed role authority. A canonical-version mismatch is non-blocking by itself: fold exact role/action history, continue for `DRIFT 1/3` compatible/unrelated and `DRIFT 2/3` additive changes, and stop/resynchronize only for proof-backed applicable `DRIFT 3/3` incompatibility. Missing, malformed, or unproved drift metadata is `INTEGRITY ERROR · DRIFT ?/3` and fails closed only the affected action for repository repair, not Project resync.
 
 ## Shared repository lifecycle
 

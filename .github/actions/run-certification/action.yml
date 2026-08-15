@@ -89,14 +89,14 @@ runs:
         docker run -d --rm \
           --name "$container" \
           -e POSTGRES_DB=dish_ai_tools_ci_test \
-          -e POSTGRES_USER=ai_tools_ci \
-          -e POSTGRES_PASSWORD=ci-only-password \
+          -e POSTGRES_USER=ai_tools_ci_admin \
+          -e POSTGRES_PASSWORD=ci-admin-only-password \
           -p 5432:5432 \
           postgres:17.10 >/dev/null
         echo "CERTIFICATION_POSTGRES_CONTAINER=$container" >> "$GITHUB_ENV"
         ready=false
         for _ in $(seq 1 30); do
-          if docker exec "$container" pg_isready -U ai_tools_ci -d dish_ai_tools_ci_test >/dev/null 2>&1; then
+          if docker exec "$container" pg_isready -U ai_tools_ci_admin -d dish_ai_tools_ci_test >/dev/null 2>&1; then
             ready=true
             break
           fi
@@ -106,7 +106,26 @@ runs:
           docker logs "$container" >&2 || true
           exit 1
         }
+        docker exec "$container" psql -X -v ON_ERROR_STOP=1 \
+          -U ai_tools_ci_admin -d postgres -q \
+          -c "CREATE ROLE ai_tools_ci LOGIN PASSWORD 'ci-only-password' CREATEDB CREATEROLE NOSUPERUSER" \
+          -c "ALTER DATABASE dish_ai_tools_ci_test OWNER TO ai_tools_ci"
+        primary_identity="$(docker exec "$container" psql -X -At \
+          -U ai_tools_ci_admin -d postgres \
+          -c "SELECT rolcreatedb, rolcreaterole, rolsuper FROM pg_roles WHERE rolname = 'ai_tools_ci'")"
+        test "$primary_identity" = 't|t|f' || {
+          echo "unexpected certification primary role capabilities: $primary_identity" >&2
+          exit 1
+        }
+        reset_identity="$(docker exec "$container" psql -X -At \
+          -U ai_tools_ci_admin -d postgres \
+          -c "SELECT rolsuper FROM pg_roles WHERE rolname = 'ai_tools_ci_admin'")"
+        test "$reset_identity" = 't' || {
+          echo "certification reset role is not a PostgreSQL superuser" >&2
+          exit 1
+        }
         echo "DISH_TEST_POSTGRESQL_DSN=postgresql+psycopg://ai_tools_ci:ci-only-password@127.0.0.1:5432/dish_ai_tools_ci_test" >> "$GITHUB_ENV"
+        echo "DISH_TEST_POSTGRESQL_RESET_DSN=postgresql+psycopg://ai_tools_ci_admin:ci-admin-only-password@127.0.0.1:5432/dish_ai_tools_ci_test" >> "$GITHUB_ENV"
 
     - name: Install Chromium only when browser acceptance is selected
       if: steps.runtime.outputs.chromium == 'true'

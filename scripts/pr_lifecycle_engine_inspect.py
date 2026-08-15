@@ -213,19 +213,6 @@ class LifecycleInspectMixin:
                 human_action=pending_impl.instruction if pending_impl.handoff_present else None,
             )
         pending_cert = next((item for item in local_work if item.kind == "certification" and not item.completed), None)
-        if pending_cert:
-            return PRLifecycle(
-                **base_kwargs,
-                state=LifecycleState.LOCAL_CERTIFICATION_REQUIRED,
-                state_label=STATE_LABELS[LifecycleState.LOCAL_CERTIFICATION_REQUIRED],
-                review_class=review_class,
-                review_verdict=verdict,
-                reviewed_head=reviewed_head,
-                active_leases=lease_payload,
-                local_work=local_payload,
-                residual_reason=pending_cert.instruction,
-                human_action=pending_cert.instruction if pending_cert.handoff_present else None,
-            )
 
         body = str(exact_review.get("body") or "")
         if TESTS_TO_RUN_RE.search(body) is None:
@@ -311,6 +298,22 @@ class LifecycleInspectMixin:
 
         diagnosis_state = diagnosis["diagnosis"]
         if diagnosis_state == pr_gate.GateDiagnosis.PENDING.value:
+            if pending_cert:
+                return PRLifecycle(
+                    **base_kwargs,
+                    state=LifecycleState.LOCAL_CERTIFICATION_REQUIRED,
+                    state_label=STATE_LABELS[LifecycleState.LOCAL_CERTIFICATION_REQUIRED],
+                    review_class=review_class,
+                    review_verdict=verdict,
+                    reviewed_head=reviewed_head,
+                    active_leases=lease_payload,
+                    local_work=local_payload,
+                    gate=diagnosis,
+                    residual_reason=(
+                        f"{pending_cert.instruction}; exact-head CI pending: {diagnosis['reason']}"
+                    ),
+                    human_action=pending_cert.instruction if pending_cert.handoff_present else None,
+                )
             return PRLifecycle(
                 **base_kwargs,
                 state=LifecycleState.WAITING_CI,
@@ -421,6 +424,20 @@ class LifecycleInspectMixin:
                 local_work=local_payload,
                 gate=diagnosis,
                 residual_reason=f"Integration evidence unavailable/stale: {diagnosis['reason']}",
+            )
+
+        if pending_cert:
+            return PRLifecycle(
+                **base_kwargs,
+                state=LifecycleState.LOCAL_CERTIFICATION_REQUIRED,
+                state_label=STATE_LABELS[LifecycleState.LOCAL_CERTIFICATION_REQUIRED],
+                review_class=review_class,
+                review_verdict=verdict,
+                reviewed_head=reviewed_head,
+                active_leases=lease_payload,
+                local_work=local_payload,
+                residual_reason=pending_cert.instruction,
+                human_action=pending_cert.instruction if pending_cert.handoff_present else None,
             )
 
         gate = pr_gate.evaluate_integration_gate(

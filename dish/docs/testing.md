@@ -368,7 +368,11 @@ The native branch of `tests/support/postgresql/core.py` drops and recreates the 
 schema before each test, so the role only needs ordinary ownership of `dish_test`, not superuser.
 The canonical local role requires both `CREATEDB` and `CREATEROLE` because governed native fixtures
 create and drop throwaway databases and roles; it does not require superuser. The canonical helper
-verifies both capabilities before treating an existing local target as ready.
+verifies both capabilities before treating an existing local target as ready. The native
+production-reset fixture requires `DISH_TEST_POSTGRESQL_RESET_DSN`: an explicitly supplied
+superuser connection to the same isolated server/database. The ordinary local helper never creates
+or elevates that role. Missing reset-owner infrastructure is unavailable evidence, not a reason to
+weaken the reset safety check or run host privilege setup.
 
 `parallel-safe` is an explicit allowlist, not a general pytest mode. The exact 565-test inventory
 passed static isolation review and three clean runs each at `-n 2`, `-n 4`, and `-n 8` on 2026-08-08.

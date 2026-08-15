@@ -114,6 +114,9 @@ class FrontendPrivateRuntime:
     def board(self) -> dict[str, Any]:
         return self._board_read(lambda service: service.bootstrap())
 
+    def search(self, query: str) -> dict[str, Any]:
+        return self._board_read(lambda service: service.search(query))
+
     def admin(self) -> dict[str, Any]:
         config = self._required_board_config()
         session = self._required_observation_factory()()
