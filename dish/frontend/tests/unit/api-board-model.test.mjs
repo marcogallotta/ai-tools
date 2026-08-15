@@ -4,6 +4,7 @@ import {
   appendSectionPage,
   BoardContractMismatch,
   mapBoardResponse,
+  mapSearchResponse,
   mapSectionPageResponse,
 } from "../../src/js/features/board/api-board-model.js";
 
@@ -107,4 +108,37 @@ test("bounded strings count Unicode code points like the server contract", () =>
   const tooLong = boardDto();
   tooLong.sections[0].cards[0].title = "😀".repeat(501);
   assert.throws(() => mapBoardResponse(tooLong), BoardContractMismatch);
+});
+
+
+test("search DTO maps canonical identity and distinguishing context", () => {
+  const mapped = mapSearchResponse({
+    results: [
+      { task_id: taskA, title: "Chicken Curry", project_label: "Cooking", section_label: "Research Queue" },
+      { task_id: taskB, title: "Curry Noodles", project_label: "Cooking", section_label: "Verification Queue" },
+    ],
+    truncated: false,
+  });
+  assert.deepEqual(mapped, {
+    results: [
+      { id: taskA, title: "Chicken Curry", projectLabel: "Cooking", sectionLabel: "Research Queue" },
+      { id: taskB, title: "Curry Noodles", projectLabel: "Cooking", sectionLabel: "Verification Queue" },
+    ],
+    truncated: false,
+  });
+  assert.deepEqual(mapSearchResponse({ results: [], truncated: false }), { results: [], truncated: false });
+});
+
+test("search DTO fails closed on duplicate or legacy identities", () => {
+  assert.throws(() => mapSearchResponse({
+    results: [
+      { task_id: taskA, title: "One", project_label: "Cooking", section_label: "Research Queue" },
+      { task_id: taskA, title: "Two", project_label: "Cooking", section_label: "Research Queue" },
+    ],
+    truncated: false,
+  }), BoardContractMismatch);
+  assert.throws(() => mapSearchResponse({
+    results: [{ task_id: `r1t-${"x".repeat(27)}`, title: "One", project_label: "Cooking", section_label: "Research Queue" }],
+    truncated: false,
+  }), BoardContractMismatch);
 });

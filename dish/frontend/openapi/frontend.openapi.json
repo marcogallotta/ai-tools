@@ -1038,6 +1038,147 @@
         },
         "summary": "Read the operator admin overview and journal"
       }
+    },
+    "/frontend/search": {
+      "get": {
+        "operationId": "getFrontendSearch",
+        "security": [
+          {
+            "frontendSession": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "X-Dish-Frontend-Contract",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "const": "dish-frontend-v1"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Compatible response",
+            "headers": {
+              "X-Dish-Frontend-Contract": {
+                "schema": {
+                  "type": "string",
+                  "const": "dish-frontend-v1"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1988,6 +2129,57 @@
             "items": {
               "$ref": "#/components/schemas/AdminJournalEvent"
             }
+          }
+        }
+      },
+      "SearchResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "task_id",
+          "title",
+          "project_label",
+          "section_label"
+        ],
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "pattern": "^(?!00000000-0000-0000-0000-000000000000)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "project_label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "section_label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          }
+        }
+      },
+      "SearchResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "results",
+          "truncated"
+        ],
+        "properties": {
+          "results": {
+            "type": "array",
+            "maxItems": 50,
+            "items": {
+              "$ref": "#/components/schemas/SearchResult"
+            }
+          },
+          "truncated": {
+            "type": "boolean"
           }
         }
       }

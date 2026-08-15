@@ -11,6 +11,7 @@ from dish_pg.frontend_board_query import (
     BoardRegistryFacts,
     CardFact,
     FrontendBoardQuery,
+    SearchFact,
     SectionFact,
 )
 from dish_service.frontend_contract import (
@@ -26,6 +27,8 @@ from dish_service.frontend_tokens import CursorInvalid, CursorStale, opaque_dige
 
 MAX_TITLE_LENGTH = 500
 MAX_LABEL_LENGTH = 160
+MAX_SEARCH_QUERY_LENGTH = 160
+MAX_SEARCH_RESULTS = 50
 
 
 class BoardConfigurationInvalid(RuntimeError):
@@ -196,6 +199,20 @@ class FrontendBoardService:
             "notices": notices,
         }
 
+    def search(self, query: str) -> dict[str, Any]:
+        normalized = query.strip()
+        if not 1 <= len(normalized) <= MAX_SEARCH_QUERY_LENGTH:
+            raise ValueError("search query must be 1..160 characters")
+        facts = self.query.search_titles(
+            query=normalized,
+            projection_delay=self._projection_delay,
+            max_results=MAX_SEARCH_RESULTS,
+        )
+        return {
+            "results": [self._search_dto(result) for result in facts.results],
+            "truncated": facts.truncated,
+        }
+
     @property
     def _projection_delay(self) -> timedelta:
         assert self.config.projection_delay is not None
@@ -250,6 +267,23 @@ class FrontendBoardService:
             "section_id": self._section_route(card.section_id),
             "workflow_status": operation_status(card.operation_kind, card.operation_phase),
             "attention_codes": attention_codes,
+        }
+
+    def _search_dto(self, result: SearchFact) -> dict[str, str]:
+        title = result.title.strip()
+        section_label = result.section_label.strip()
+        project_label = result.project_label.strip()
+        if not 1 <= len(title) <= MAX_TITLE_LENGTH:
+            raise BoardConfigurationInvalid("task title exceeds frontend contract bounds")
+        if not 1 <= len(section_label) <= MAX_LABEL_LENGTH:
+            raise BoardConfigurationInvalid("section label exceeds frontend contract bounds")
+        if not 1 <= len(project_label) <= MAX_LABEL_LENGTH:
+            raise BoardConfigurationInvalid("project label exceeds frontend contract bounds")
+        return {
+            "task_id": self._task_route(result.task_id),
+            "title": title,
+            "section_label": section_label,
+            "project_label": project_label,
         }
 
     @staticmethod

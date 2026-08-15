@@ -6,7 +6,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from dish_pg.revise_section_registry import main
+from dish_pg.revise_section_registry import main, membership_main
 
 if __name__ == "__main__":
+    if len(sys.argv) > 1 and sys.argv[1] == "test-membership":
+        raise SystemExit(membership_main(sys.argv[2:]))
     raise SystemExit(main())

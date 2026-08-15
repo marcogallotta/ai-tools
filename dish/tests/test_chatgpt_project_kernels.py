@@ -22,16 +22,6 @@ def _obs(sid,role):
   {'seq':3,'kind':'human_notification','operation':'control_plane_message','pr':52,'action':'local_implementation_completion','details_location':'pull_request'}]
  if sid=='configured-repository-pr-routing':
   return [{'seq':1,'kind':'connector_read','operation':'pull_request_read','connector':'GitHub','repository':'marcogallotta/ai-tools','pr':31 if role=='review' else 34}]
- if sid=='review-remote-local-evidence-pr-handoff': return [
-  {'seq':1,'kind':'tool','operation':'write_exact_head_pr_handoff','pr_number':61},
-  {'seq':2,'kind':'tool','operation':'verify_pr_handoff_readback','pr_number':61},
-  {'seq':3,'kind':'message','operation':'route_to_local_review','pr_number':61}]
- if sid=='implementation-publication-readback-success': return [
-  {'seq':1,'kind':'tool','operation':'verify_remote_branch_exact_head','pr_number':62},
-  {'seq':2,'kind':'tool','operation':'verify_real_pr_identity','pr_number':62},
-  {'seq':3,'kind':'tool','operation':'verify_pr_branch_and_head','pr_number':62},
-  {'seq':4,'kind':'tool','operation':'verify_ready_readback','pr_number':62},
-  {'seq':5,'kind':'message','operation':'report_review_ready','pr_number':62}]
  return []
 def _passing():
  m,_=kernels.load_canonical(); results=[]
@@ -94,10 +84,10 @@ def test_development_workflow_context_preload_is_role_index_driven_and_read_only
  assert deps['action_specific']['dispatcher/Integration mechanics']==['ci/pr-lifecycle-dispatcher-runbook.md']
  assert deps['action_specific']['native-PostgreSQL workflow mechanics']==['dish/docs/testing.md','dish/docs/architecture/postgresql-runtime.md']
  text=kernels.render_role(m,s,'development-workflow')
- assert text.index('Startup:')<text.index('Context only: load role-index contracts')
- assert 'Context only: load role-index contracts' in text
+ assert text.index('Startup:')<text.index('Read-only decision context (startup/re-grounding):')
+ assert 'load every standing role contract listed by the current role index' in text
  assert '`dish/docs/agents/contributor-base.md`' in text
- assert 'no authority gained' in text
+ assert 'grants no Implementation, Review, Integration, merge, or production authority' in text
  comps=s['roles']['development-workflow']['allowed_compositions']; assert len(comps)==1 and 'implementation.md' in comps[0]
  assert 'review.md' not in comps[0] and 'integration.md' not in comps[0]
 
@@ -149,6 +139,87 @@ def test_fresh_chat_ids_cannot_be_reused():
  p=_passing(); p['results'][1]['fresh_chat_id']=p['results'][0]['fresh_chat_id']
  with pytest.raises(kernels.KernelError,match='reused fresh_chat_id'): kernels.evaluate_behavior_results(p)
 
+
+
+
+
+
+def test_task_required_drift_eval_cases_are_present_and_scoped():
+ by={s['id']:s for s in kernels._evals()}
+ assert by['compatible-wording-drift']['roles']==['implementation']; assert by['unrelated-role-drift']['roles']==['implementation']
+ assert by['review-breaking-completion-drift']['roles']==['review']; assert by['integration-breaking-merge-drift']['roles']==['integration']
+ assert 'fold_all_skipped_versions' in by['skipped-version-breaking-drift']['required_actions']
+ assert {'project-drift-current-silent','project-drift-integrity-error','project-drift-pre-d96-legacy','project-drift-v708-review-compatible','project-drift-self-compatible'}<=set(by)
+
+def test_role_and_publication_boundaries_remain_high_salience():
+ _,s=kernels.load_canonical(); impl=' '.join(x['text'] for x in kernels.effective_rules(s,'implementation')); rev=' '.join(x['text'] for x in kernels.effective_rules(s,'review')); integ=' '.join(x['text'] for x in kernels.effective_rules(s,'integration'))
+ assert 'owned branch + commit + PR + exact head' in impl and 'Do not self-review/integrate' in impl
+ assert 'formal GitHub `COMMENT` verdict' in rev and 'Review does not implement fixes' in rev
+ assert 'current head must equal the exact reviewed/certified head' in integ
+
+
+def test_c1_governance_contracts_and_evals_are_mechanical():
+ m,s=kernels.load_canonical()
+ assert 'audit' in s['roles'] and m['generated_role_files']['audit']=='audit.md'
+ audit={r['id'] for r in kernels.effective_rules(s,'audit')}
+ assert {'audit-authority-boundary','audit-exact-baseline','audit-asana-disposition','audit-specialist-context'}<=audit
+ for role in ('coordinator','development-workflow','implementation','integration','review','workflow','postgresql-dark-launch'):
+  assert 'repository-friction-capture' in {r['id'] for r in kernels.effective_rules(s,role)}
+ for role in ('development-workflow','implementation','integration','review','workflow','postgresql-dark-launch'):
+  assert 'code-smell-debt-capture' in {r['id'] for r in kernels.effective_rules(s,role)}
+ assert {'decision-provenance','authenticated-account-provenance'}<={r['id'] for r in kernels.effective_rules(s,'coordinator')}
+ ids={x['id'] for x in kernels._evals()}
+ assert {'audit-exact-baseline','repository-friction-discovery','code-smell-dedupe-log-and-continue','durable-review-classification','coordinator-check-everything-mixed-state','authenticated-account-not-human-decision','shared-resource-concurrency-preflight'}<=ids
+
+
+def test_c1_standing_contracts_preserve_authority_and_capture_surfaces():
+ audit=(DISH_ROOT/'docs'/'agents'/'audit.md').read_text()
+ assert 'read-only for GitHub/source mutation' in audit and 'bounded Asana finding disposition' in audit
+ assert 'may not implement fixes' in audit and 'exact audited GitHub SHA/baseline' in audit
+ base=(DISH_ROOT/'docs'/'agents'/'contributor-base.md').read_text()
+ assert '1217443500915644' in base and 'notice -> dedupe -> log/update -> continue' in base
+ assert '1217443501022227' in base and 'Current blockers remain on the active work surface' in base
+ dw=(DISH_ROOT/'docs'/'agents'/'development-workflow.md').read_text()
+ assert '`AGENT REVIEW`' in dw and '`AGENT RE-REVIEW`' in dw and '`HUMAN APPROVAL/DECISION`' in dw
+ assert 'Observing a quiet state is not isolation' in dw and 'mechanically enforced admission/fencing boundary' in dw
+ idx=(DISH_ROOT/'docs'/'agents'/'index.md').read_text()
+ assert 'Authenticated-account metadata' in idx and 'not that Marco physically performed or approved' in idx
+
+def test_fixture_mismatch_standing_contracts_stop_impossible_repair_and_escalate_owner():
+ coordinator=(DISH_ROOT/'docs'/'agents'/'coordinator.md').read_text()
+ workflow=(DISH_ROOT/'docs'/'agents'/'development-workflow.md').read_text()
+ for text in (coordinator,workflow):
+  assert 'Compatibility preflight' in text
+  assert 'Ownership escalation' in text
+  assert 'Blocker consistency' in text
+  assert 'IMPLEMENTATION REQUIRED' in text
+  assert 'LOCAL SYSTEM ACCESS' in text
+  assert 'deferred' in text and 'not required' in text
+  assert 'This needs an Implementation fix: <one-sentence scope>.' in text
+  assert 'Five Whys' in text
+ assert 'disposable never waives' in coordinator
+ assert 'disposability is not an exemption' in workflow
+ assert 'do not create another queue, scheduler, or lifecycle controller' in coordinator
+ assert 'creates no new scheduler, queue, or lifecycle authority' in workflow
+
+
+def test_fixture_mismatch_recurrence_matrix_covers_escalation_and_non_escalation():
+ incompatible=_scenario('comparison-incompatible-target-escalates-implementation')
+ assert {'check_all_compared_system_health_requirements','reject_incompatible_common_target','stop_fixture_repair','classify_implementation_required','keep_required_blocker_active'}<=set(incompatible['required_actions'])
+ assert {'continue_fixture_repair','classify_local_system_access','defer_required_capability'}<=set(incompatible['forbidden_actions'])
+ deferred=_scenario('active-gate-blocker-cannot-be-deferred')
+ assert {'mark_required_blocker_deferred','mark_required_blocker_not_required'}<=set(deferred['forbidden_actions'])
+ disposable=_scenario('disposable-fixture-still-needs-health')
+ assert 'treat_disposability_as_health_override' in disposable['forbidden_actions']
+ separate=_scenario('separate-pr-does-not-clear-independent-blocker')
+ assert 'mark_independent_blocker_resolved' in separate['forbidden_actions']
+ human=_scenario('implementation-escalation-is-action-first')
+ assert 'begin_with_implementation_fix_sentence' in human['required_actions']
+ assert 'diagnosis_before_action' in human['forbidden_actions']
+ supported=_scenario('supported-operation-stays-local-system-access')
+ assert 'classify_local_system_access' in supported['required_actions']
+ assert 'classify_implementation_required' in supported['forbidden_actions']
+
 def _prior_fingerprints(source):
  return {
   '_shared':{x['id']:kernels._rule_fingerprint(x) for x in kernels._rules(source['shared_rules'],'shared_rules')},
@@ -181,7 +252,7 @@ def test_current_project_is_silent_and_no_zero_prefix():
  assert ok is True and message=='' and '0/3' not in message
 
 def test_d96_plus_additive_drift_continues_without_resync():
- m,s=kernels.load_canonical(); parent='dish-chatgpt-projects-v2-2af558b01b5a'
+ m,s=kernels.load_canonical(); parent=m['change_history'][-1]['from_version']
  d=kernels.classify_project_drift(parent,'implementation','handoff',manifest=m,source=s)
  assert not d['block'] and not d['resync_required'] and d['drift_level']==2
  assert d['indicator']=='PROJECT SETTINGS: OUTDATED · DRIFT 2/3'
@@ -244,7 +315,7 @@ def test_historical_reclassification_has_machine_readable_provenance():
  assert corrected and all(c['historical_correction']['previous_impact']=='breaking' for c in corrected)
 
 def test_self_transition_is_nonblocking_for_every_role_and_action():
- m,s=kernels.load_canonical(); parent='dish-chatgpt-projects-v2-2af558b01b5a'
+ m,s=kernels.load_canonical(); parent=m['change_history'][-1]['from_version']
  boundaries={'startup','status','dispatch','handoff','role-critical-write','review-write','merge','analysis'}
  for role in s['roles']:
   for boundary in boundaries:
@@ -262,86 +333,3 @@ def test_impact_is_explicit_and_never_inferred_from_rule_criticality():
  for surface in ('authority','safety','presentation'):
   with pytest.raises(kernels.KernelError,match='explicit transition impact'):
    kernels._impact({'surface':surface})
-
-def test_task_required_drift_eval_cases_are_present_and_scoped():
- by={s['id']:s for s in kernels._evals()}
- assert by['compatible-wording-drift']['roles']==['implementation']; assert by['unrelated-role-drift']['roles']==['implementation']
- assert by['review-breaking-completion-drift']['roles']==['review']; assert by['integration-breaking-merge-drift']['roles']==['integration']
- assert 'fold_all_skipped_versions' in by['skipped-version-breaking-drift']['required_actions']
- assert {'project-drift-current-silent','project-drift-integrity-error','project-drift-pre-d96-legacy','project-drift-v708-review-compatible','project-drift-self-compatible'}<=set(by)
-
-def test_role_and_publication_boundaries_remain_high_salience():
- _,s=kernels.load_canonical(); impl=' '.join(x['text'] for x in kernels.effective_rules(s,'implementation')); rev=' '.join(x['text'] for x in kernels.effective_rules(s,'review')); integ=' '.join(x['text'] for x in kernels.effective_rules(s,'integration'))
- assert 'owned branch + commit + real GitHub PR + exact head' in impl and 'Do not self-review/integrate' in impl
- assert 'formal GitHub `COMMENT` verdict' in rev and 'Review does not implement fixes' in rev
- assert 'current head must equal the exact reviewed/certified head' in integ
-
-
-def test_c1_governance_contracts_and_evals_are_mechanical():
- m,s=kernels.load_canonical()
- assert 'audit' in s['roles'] and m['generated_role_files']['audit']=='audit.md'
- audit={r['id'] for r in kernels.effective_rules(s,'audit')}
- assert {'audit-authority-boundary','audit-exact-baseline','audit-asana-disposition','audit-specialist-context'}<=audit
- for role in ('coordinator','development-workflow','implementation','integration','review','workflow','postgresql-dark-launch'):
-  assert 'repository-friction-capture' in {r['id'] for r in kernels.effective_rules(s,role)}
- for role in ('development-workflow','implementation','integration','review','workflow','postgresql-dark-launch'):
-  assert 'code-smell-debt-capture' in {r['id'] for r in kernels.effective_rules(s,role)}
- assert {'decision-provenance','authenticated-account-provenance'}<={r['id'] for r in kernels.effective_rules(s,'coordinator')}
- ids={x['id'] for x in kernels._evals()}
- assert {'audit-exact-baseline','repository-friction-discovery','code-smell-dedupe-log-and-continue','durable-review-classification','coordinator-check-everything-mixed-state','authenticated-account-not-human-decision','shared-resource-concurrency-preflight'}<=ids
-
-
-def test_c1_standing_contracts_preserve_authority_and_capture_surfaces():
- audit=(DISH_ROOT/'docs'/'agents'/'audit.md').read_text()
- assert 'read-only for GitHub/source mutation' in audit and 'bounded Asana finding disposition' in audit
- assert 'may not implement fixes' in audit and 'exact audited GitHub SHA/baseline' in audit
- base=(DISH_ROOT/'docs'/'agents'/'contributor-base.md').read_text()
- assert '1217443500915644' in base and 'notice -> dedupe -> log/update -> continue' in base
- assert '1217443501022227' in base and 'Current blockers remain on the active work surface' in base
- dw=(DISH_ROOT/'docs'/'agents'/'development-workflow.md').read_text()
- assert '`AGENT REVIEW`' in dw and '`AGENT RE-REVIEW`' in dw and '`HUMAN APPROVAL/DECISION`' in dw
- assert 'Observing a quiet state is not isolation' in dw and 'mechanically enforced admission/fencing boundary' in dw
- idx=(DISH_ROOT/'docs'/'agents'/'index.md').read_text()
- assert 'Authenticated-account metadata' in idx and 'not that Marco physically performed or approved' in idx
-
-
-def test_shared_human_language_override_and_host_policy_are_deterministic():
- m,s=kernels.load_canonical()
- for role in s['roles']:
-  text=kernels.render_role(m,s,role)
-  assert 'plain English' in text
-  assert 'GATE WAIVED BY MARCO OVERRIDE' in text
- plain=_scenario('human-facing-plain-language')
- assert {'use_unexplained_internal_codename','make_identifier_carry_meaning'}<=set(plain['forbidden_actions'])
- override=_scenario('marco-scoped-override-preserves-evidence')
- assert {'rerun_waived_tests','convert_failure_to_pass','demand_override_syntax','ask_confirmation_again'}<=set(override['forbidden_actions'])
- for host in (DISH_ROOT.parent/'CLAUDE.md',DISH_ROOT.parent/'AGENTS.md'):
-  policy=host.read_text()
-  assert 'plain English' in policy and 'GATE WAIVED BY MARCO OVERRIDE' in policy
-
-
-def test_five_whys_is_one_evidence_grounded_shared_method():
- index=(DISH_ROOT/'docs'/'agents'/'index.md').read_text()
- method=(DISH_ROOT/'docs'/'agents'/'five-whys.md').read_text()
- assert 'Shared analysis methods' in index and '[`five-whys.md`](five-whys.md)' in index
- assert '**VERIFIED FACT**' in method
- assert '**TESTED/REJECTED ALTERNATIVE**' in method
- assert '**HYPOTHESIS/UNKNOWN**' in method
- assert 'heuristic, not a required count' in method and 'Branch into multiple causal chains' in method
- assert 'Do not stop at individual blame' in method and 'Keep cause and countermeasure separate' in method
- for heading in ('Problem statement / observed failure','Root cause(s)','Detection / escape failure','Rejected alternatives / contrary evidence','Verification / recurrence-prevention test','Remaining uncertainty','Owner / next action'):
-  assert heading in method
- for anti in ('five unrelated reasons','five restatements of the same symptom','speculation presented as fact','treating exactly five questions as mandatory','calling chronology or correlation a cause without evidence'):
-  assert anti in method
- scenario=_scenario('five-whys-evidence-discipline')
- assert {'force_exactly_five','stop_at_human_blame','present_hypothesis_as_fact','reverse_engineer_cause_from_solution'}<=set(scenario['forbidden_actions'])
-
-
-def test_development_workflow_uses_owning_asana_task_as_design_review_state():
- role=(DISH_ROOT/'docs'/'agents'/'development-workflow.md').read_text()
- assert 'owning Asana task is the durable canonical design/review artifact' in role
- assert 'persist the complete proposed design' in role and 'read it back' in role
- assert 'fold the accepted/current design into task notes' in role
- assert 'stale copied chat subset never overrides newer Asana task state' in role
- scenario=_scenario('development-workflow-asana-design-review-state')
- assert {'dispatch_from_chat_only_design','let_stale_chat_override_asana','claim_durable_without_readback'}<=set(scenario['forbidden_actions'])

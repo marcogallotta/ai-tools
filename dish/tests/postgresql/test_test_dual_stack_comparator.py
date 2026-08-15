@@ -8,6 +8,9 @@ from pathlib import Path
 import pytest
 
 from dish_pg import test_comparator as comparator
+from dish_pg.database import session_scope
+from dish_pg.workflow import WorkflowAuthorityService
+from tests.postgresql import test_postgres_runtime_validation_http as runtime_http
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -125,6 +128,13 @@ def test_read_only_run_is_diagnostic_and_persists_secret_free_evidence(tmp_path:
     authority, oracle = _targets()
     plan = comparator.load_plan(PLAN)
     monkeypatch.setattr(comparator, "_route_preflight", lambda *_args, **_kwargs: _preflight())
+    monkeypatch.setattr(
+        comparator,
+        "_register_mutating_authority_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("read-only comparator must not register a run")
+        ),
+    )
     monkeypatch.setattr(comparator, "_command_request", lambda *_args, **_kwargs: {"ok": True, "command": "sections", "data": {"sections": []}})
     outcome = comparator.run_comparison(plan=plan, authority=authority, oracle=oracle, evidence_dir=tmp_path, run_id=uuid.UUID(int=1), now=datetime(2026, 8, 15, tzinfo=timezone.utc))
     assert outcome.report["mismatch_count"] == 0
@@ -140,6 +150,16 @@ def test_full_run_matches_equivalent_target_specific_identities(tmp_path: Path, 
     authority, oracle = _targets()
     plan = comparator.load_plan(PLAN)
     monkeypatch.setattr(comparator, "_route_preflight", lambda *_args, **_kwargs: _preflight())
+    monkeypatch.setattr(
+        comparator,
+        "_register_mutating_authority_run",
+        lambda *_args, **_kwargs: {
+            "mechanism": "WorkflowAuthorityService.register_run",
+            "owner_id": "gpt-action",
+            "agent": "gpt",
+            "created": True,
+        },
+    )
 
     def request(target: comparator.TargetConfig, *, command: str, arguments: dict[str, object], **_kwargs: object) -> dict[str, object]:
         if command == "sections":
@@ -162,6 +182,131 @@ def test_full_run_matches_equivalent_target_specific_identities(tmp_path: Path, 
     assert outcome.report["full_qualification"] is True
     assert outcome.report["qualification_passed"] is True
 
+
+def test_mutating_run_registers_before_first_authority_mutation(
+    workflow_db, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    factory, _ids, context, _task_id = workflow_db
+    authority, oracle = _targets()
+    authority.env["DISH_PG_EXPECTED_GENERATION_ID"] = str(context["generation_id"])
+    plan = comparator.load_plan(PLAN)
+    run_id = uuid.UUID("11111111-1111-4111-8111-111111111111")
+    engine = factory.kw["bind"]
+    monkeypatch.setattr(comparator, "create_database_engine", lambda *_args, **_kwargs: engine)
+    monkeypatch.setattr(
+        comparator,
+        "_route_preflight",
+        lambda *_args, **_kwargs: {
+            "action_contract": {"match": True},
+            "routing": {},
+            "authority_health": {
+                "identity": {
+                    "database": "dish_stage_a_test",
+                    "generation_id": str(context["generation_id"]),
+                    "generation_status": "active",
+                }
+            },
+            "oracle_health": {},
+        },
+    )
+
+    def request(
+        target: comparator.TargetConfig,
+        *,
+        command: str,
+        arguments: dict[str, object],
+        **_kwargs: object,
+    ) -> dict[str, object]:
+        if command == "sections":
+            return {"ok": True, "command": "sections", "data": {"sections": []}}
+        if command == "create":
+            if target.name == "authority":
+                with session_scope(factory) as session:
+                    registered = WorkflowAuthorityService(session).repo.require_active_run(
+                        generation_id=context["generation_id"],
+                        run_id=run_id,
+                        owner_id="gpt-action",
+                    )
+                    assert registered.agent == "gpt"
+                return {"ok": True, "command": "create", "code": "OK", "retryable": False, "data": {"dish_id": "pg-dish"}}
+            return {"ok": True, "command": "create", "code": "OK", "retryable": False, "data": {"task_gid": "asana-task"}}
+        assert command == "read"
+        if target.name == "authority":
+            assert arguments["dish_id"] == "pg-dish"
+            return {"ok": True, "command": "read", "data": {"title": "same", "body": "body", "completed": False}}
+        assert arguments["task_gid"] == "asana-task"
+        return {"ok": True, "command": "read", "data": {"task": {"title": "same", "notes": "body", "completed": False}}}
+
+    monkeypatch.setattr(comparator, "_command_request", request)
+    outcome = comparator.run_comparison(
+        plan=plan, authority=authority, oracle=oracle, evidence_dir=tmp_path,
+        allow_mutating_scenarios=True, run_id=run_id,
+        now=datetime(2026, 8, 15, tzinfo=timezone.utc),
+    )
+    assert outcome.report["qualification_passed"] is True
+    assert outcome.report["run_authority"]["mechanism"] == "WorkflowAuthorityService.register_run"
+    assert outcome.report["run_authority"]["owner_id"] == "gpt-action"
+
+
+def test_mutating_run_rejects_health_generation_mismatch() -> None:
+    authority, _oracle = _targets()
+    authority.env["DISH_PG_EXPECTED_GENERATION_ID"] = "00000000-0000-0000-0000-000000000002"
+    with pytest.raises(comparator.ComparatorError, match="health generation does not match"):
+        comparator._mutating_authority_generation_id(
+            authority,
+            preflight={
+                "authority_health": {
+                    "identity": {
+                        "database": "dish_stage_a_test",
+                        "generation_id": "22222222-2222-4222-8222-222222222222",
+                        "generation_status": "active",
+                    }
+                }
+            },
+        )
+
+
+
+@pytest.mark.parametrize("retire_run", [False, True])
+def test_postgresql_action_unregistered_or_retired_run_is_structured_conflict(
+    workflow_db, tmp_path: Path, retire_run: bool
+) -> None:
+    factory, ids, context, _task_id = workflow_db
+    run_id = runtime_http._next(ids)
+    request_id = runtime_http._next(ids)
+    if retire_run:
+        with session_scope(factory) as session:
+            runtime_http._register_run(
+                session, generation_id=context["generation_id"], run_id=run_id,
+                owner="gpt-action", agent="gpt",
+            )
+            registered = session.get(runtime_http.wf.ServiceRun, run_id)
+            assert registered is not None
+            registered.status = "retired"
+            registered.retired_at = runtime_http.NOW
+
+    service = runtime_http.runtime_service(factory, tmp_path)
+    service.config = runtime_http.replace(service.config, action_token="postgres-action-token")
+    with runtime_http.DishHTTPServer(("127.0.0.1", 0), service, surface_mode="action") as server:
+        thread = runtime_http.start_server_thread(server, name="postgres-stale-run-action-http")
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        try:
+            status, result = runtime_http._post_json(
+                f"{base}/v1/action/create", token="postgres-action-token",
+                body={
+                    "client": {"run_id": str(run_id), "request_id": str(request_id)},
+                    "arguments": {"agent": "gpt", "title": "Rejected run"},
+                },
+            )
+        finally:
+            runtime_http.stop_server(server, thread)
+
+    assert status == 200
+    assert result["ok"] is False
+    assert result["code"] == "CONFLICT"
+    assert result["retryable"] is False
+    assert result["errors"] == [{"rule": "postgresql_command_rejected"}]
+    assert result["data"]["message"] == "run is stale, retired, or belongs to another generation"
 
 def test_material_mismatch_is_durable_and_blocks_qualification(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     authority, oracle = _targets()

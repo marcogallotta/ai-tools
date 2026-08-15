@@ -34,6 +34,8 @@ class FakeBackend:
         self.bootstrap_calls = 0
         self.continuation_calls: list[tuple[str, str]] = []
         self.fail_bootstrap = False
+        self.search_calls: list[str] = []
+        self.fail_search = False
         self.detail_calls: list[str] = []
         self.detail_outcome = "ok"
 
@@ -62,6 +64,22 @@ class FakeBackend:
                 }
             ],
             "notices": [{"code": "isolated", "task_id": TASK_ID, "severity": "warning"}],
+        }
+
+    def search(self, query: str):
+        self.search_calls.append(query)
+        if self.fail_search:
+            raise BoardReadUnavailable("search unavailable")
+        return {
+            "results": [
+                {
+                    "task_id": TASK_ID,
+                    "title": "[ready] Exact imported task",
+                    "project_label": "Cooking",
+                    "section_label": "Research Queue",
+                }
+            ],
+            "truncated": False,
         }
 
     def continuation(self, *, section_route_id: str, cursor: str):
@@ -284,6 +302,27 @@ def test_local_http_access_log_omits_route_and_cursor_values(local_server, caplo
     assert "status=200" in caplog.text
     assert SECTION_ID not in caplog.text
     assert cursor not in caplog.text
+
+
+def test_local_search_is_read_only_and_does_not_poison_board(local_server) -> None:
+    server, backend = local_server
+    status, _, body = request(server, "GET", "/frontend/search?q=Exact")
+    assert status == 200
+    assert json_body(body)["results"][0]["task_id"] == TASK_ID
+    assert backend.search_calls == ["Exact"]
+
+    status, _, body = request(server, "GET", "/frontend/search?q=")
+    assert status == 400
+    assert json_body(body)["error"]["code"] == "request_invalid"
+
+    backend.fail_search = True
+    status, _, body = request(server, "GET", "/frontend/search?q=Exact")
+    assert status == 503
+    assert json_body(body)["error"]["code"] == "service_unavailable"
+
+    status, _, body = request(server, "GET", "/frontend/board")
+    assert status == 200
+    assert json_body(body)["sections"][0]["cards"][0]["task_id"] == TASK_ID
 
 
 def test_bootstrap_and_continuation_are_contract_bound_and_read_only(local_server) -> None:
