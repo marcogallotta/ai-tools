@@ -21,7 +21,7 @@ The generated role Markdown files are copyable Project-instruction text. Do not 
 
 ## Version and drift control
 
-Each generated kernel declares `PROJECT_CANONICAL_VERSION`. Exact-current Projects report `PROJECT SETTINGS: CURRENT` with **no drift fraction**. A version mismatch is only a trigger to inspect semantic history; it never blocks by itself. The Project folds every manifest transition from its declared version to current, then scopes each change to the exact role and action boundary before deciding.
+Each generated kernel declares `PROJECT_CANONICAL_VERSION`. Exact-current Projects emit no Project-settings prefix. A version mismatch is only a trigger to inspect semantic history; it never blocks by itself. The Project folds every manifest transition from its declared version to current, then scopes each change to the exact role and action boundary before deciding.
 
 The user-facing state is deterministic:
 

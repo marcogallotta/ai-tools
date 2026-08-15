@@ -160,8 +160,10 @@ def _legacy_floor(m):
  for key in ('prior_kernel_identity','counterexample','git_reconciliation_failure','migration','rollback','evidence_ref'): _proof_text(proof,key)
  if floor.get('marco_approved') is not True or not str(floor.get('marco_approval_ref','')).strip(): raise KernelError('legacy bootstrap floor requires Marco approval reference')
  return first,[str(x) for x in pre]
-def validate_change_history(m,s):
+def validate_change_history(m,s,*,role_key=None,action_boundary=None):
  h=m.get('change_history'); roles=set(s['roles']); ids={x['id'] for r in roles for x in effective_rules(s,r)}
+ scoped=role_key is not None or action_boundary is not None
+ if scoped and (role_key not in roles or not str(action_boundary).strip()): raise KernelError('scoped history validation requires known role/action boundary')
  if not isinstance(h,list) or not h: raise KernelError('manifest.change_history must be non-empty')
  for edge in h:
   prior=edge.get('from_rule_fingerprints') if isinstance(edge,dict) else None
@@ -183,10 +185,14 @@ def validate_change_history(m,s):
   change_seen=set()
   for c in ch:
    if not isinstance(c,dict): raise KernelError(f'change_history {a}->{b} contains non-object change')
-   rid=str(c.get('rule_id','')).strip(); rs=c.get('roles'); bounds=c.get('action_boundaries'); surf=str(c.get('surface','')).strip()
+   rs=c.get('roles'); bounds=c.get('action_boundaries')
+   if not isinstance(rs,list) or not rs or any(not isinstance(x,str) or not x.strip() for x in rs) or (set(rs)!={'*'} and not set(rs).issubset(roles)): raise KernelError(f'change_history {c.get("rule_id")} has invalid roles')
+   if not isinstance(bounds,list) or not bounds or any(not isinstance(x,str) or not x.strip() for x in bounds): raise KernelError(f'change_history {c.get("rule_id")} requires boundaries')
+   if scoped and '*' not in rs and role_key not in rs: continue
+   if scoped and '*' not in bounds and action_boundary not in bounds: continue
+   rid=str(c.get('rule_id','')).strip(); surf=str(c.get('surface','')).strip()
    if not rid or (rid not in ids and not rid.startswith('renderer:')): raise KernelError(f'change_history references unknown rule {rid!r}')
-   if not isinstance(rs,list) or not rs or (set(rs)!={'*'} and not set(rs).issubset(roles)): raise KernelError(f'change_history {rid} has invalid roles')
-   if not isinstance(bounds,list) or not bounds or any(not str(x).strip() for x in bounds) or not surf: raise KernelError(f'change_history {rid} requires boundaries/surface')
+   if not surf: raise KernelError(f'change_history {rid} requires surface')
    key=(rid,tuple(rs),tuple(bounds))
    if key in change_seen: raise KernelError(f'duplicate/conflicting change_history classification for {rid}')
    change_seen.add(key); imp=_impact(c); _validate_correction(c)
@@ -197,12 +203,12 @@ def validate_change_history(m,s):
  if first not in versions or any(v not in versions for v in pre): raise KernelError('legacy bootstrap floor references unknown retained version')
  if any(v==canonical for v in pre): raise KernelError('canonical version cannot be pre-floor')
  # d96+ history may never retain an unproved hard break; the proof validator above is the only admissibility path.
- _validate_current_edge_classification(m,s)
+ if not scoped:_validate_current_edge_classification(m,s)
 def generated_sha256(m,s):
  parts=[]
  for role in sorted(s['roles']): parts.append(role+'\0'+render_role_with_version(s,role,str(m['canonical_version'])))
  return _h('\0'.join(parts).encode())
-def load_canonical():
+def load_canonical(*,validate_history=True):
  m=_read_json(MANIFEST_PATH); p=PROJECT_DIR/str(m.get('source_file','')); s=_read_json(p)
  if m.get('source_sha256')!=_h(json.dumps(s,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()): raise KernelError('canonical source semantic hash mismatch')
  if s.get('schema_version')!=m.get('schema_version'): raise KernelError('manifest/source schema mismatch')
@@ -211,7 +217,8 @@ def load_canonical():
  exp=f"{m.get('version_namespace','')}-{kid[:12]}"
  if m.get('canonical_version')!=exp: raise KernelError(f'canonical_version must be {exp!r}')
  if m.get('generated_sha256')!=generated_sha256(m,s): raise KernelError('current generated Project digest mismatch')
- validate_change_history(m,s); return m,s
+ if validate_history:validate_change_history(m,s)
+ return m,s
 def render_role(m,s,role):return render_role_with_version(s,role,str(m['canonical_version']))
 def generated_paths(m,s):
  files=m.get('generated_role_files')
@@ -238,14 +245,14 @@ def _integrity_result(project_version,canonical,role,boundary,error):
  return {'project_version':project_version,'canonical_version':canonical,'role':role,'action_boundary':boundary,'state':'integrity_error','impact':'integrity_error','drift_level':None,'indicator':'PROJECT SETTINGS: INTEGRITY ERROR · DRIFT ?/3','block':True,'resync_required':False,'settings_refresh_recommended':False,'repair':'repository-authority','error':str(error),'changes':[]}
 def classify_project_drift(project_version,role_key,action_boundary,*,manifest=None,source=None,actual_generated_sha256=None):
  if manifest is None or source is None:
-  try:mm,ss=load_canonical()
+  try:mm,ss=load_canonical(validate_history=False)
   except KernelError as e:return _integrity_result(project_version,'<unknown>',role_key,str(action_boundary),e)
   manifest=manifest or mm; source=source or ss
  canonical=str(manifest.get('canonical_version',''))
  boundary=str(action_boundary).strip()
  if role_key not in source.get('roles',{}): return _integrity_result(project_version,canonical,role_key,boundary,'unknown Project role')
  if not boundary:return _integrity_result(project_version,canonical,role_key,boundary,'drift classification requires action_boundary')
- try:validate_change_history(manifest,source)
+ try:validate_change_history(manifest,source,role_key=role_key,action_boundary=boundary)
  except KernelError as e:return _integrity_result(project_version,canonical,role_key,boundary,e)
  if project_version==canonical:
   if actual_generated_sha256 is not None and str(actual_generated_sha256)!=str(manifest.get('generated_sha256','')): return _integrity_result(project_version,canonical,role_key,boundary,'current generated Project digest mismatch')

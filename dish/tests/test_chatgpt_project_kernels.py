@@ -282,6 +282,18 @@ def test_invalid_or_unknown_drift_routes_to_integrity_error_without_resync():
  assert d['indicator']=='PROJECT SETTINGS: INTEGRITY ERROR · DRIFT ?/3'
  assert d['repair']=='repository-authority'
 
+def test_malformed_unrelated_history_only_blocks_the_affected_action():
+ m,s=kernels.load_canonical(); m=copy.deepcopy(m); old=None
+ for edge in m['change_history']:
+  for change in edge['changes']:
+   if change.get('rule_id')=='coordinator-live-scan' and 'status' in change.get('action_boundaries',[]):
+    change.pop('impact'); old=edge['from_version']; break
+  if old:break
+ unrelated=kernels.classify_project_drift(old,'review','review-write',manifest=m,source=s)
+ affected=kernels.classify_project_drift(old,'coordinator','status',manifest=m,source=s)
+ assert not unrelated['block'] and unrelated['state']!='integrity_error'
+ assert affected['state']=='integrity_error' and affected['block'] and not affected['resync_required']
+
 def test_proven_breaking_blocks_only_exact_role_and_action():
  m,s,old=_synthetic_transition(impact='breaking',proof=True)
  d=kernels.classify_project_drift(old,'implementation','role-critical-write',manifest=m,source=s)
