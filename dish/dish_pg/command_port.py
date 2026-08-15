@@ -57,6 +57,7 @@ from .transition import ProjectionService
 from dish_tool.dish_urls import dish_uuid_from_url
 from dish_tool.errors import DishRuleError
 from dish_tool.governed_diff import (
+    GOVERNED_FIELDS,
     agent_attested_decision_appends,
     canonical_diff,
     governed_changes_requiring_authorization,
@@ -916,11 +917,15 @@ class PostgresCommandPort:
             )
         return payload, candidate_parts, expected_required
 
-    def _available_semantic_proposal_grants(
+    def _available_governed_change_grants(
         self,
-        requirement: wf.HumanReviewRequirement,
+        *,
+        generation_id: uuid.UUID,
+        task_id: uuid.UUID,
+        operation_id: uuid.UUID,
         required: list[dict[str, Any]],
     ) -> list[tuple[wf.MarcoAuthorizationGrant, wf.MarcoAuthorizationState]]:
+        """Match exact available Marco grants for one governed candidate diff."""
         rows = list(
             self.session.execute(
                 select(wf.MarcoAuthorizationGrant, wf.MarcoAuthorizationState)
@@ -930,22 +935,18 @@ class PostgresCommandPort:
                     == wf.MarcoAuthorizationGrant.grant_id,
                 )
                 .where(
-                    wf.MarcoAuthorizationGrant.generation_id
-                    == requirement.generation_id,
-                    wf.MarcoAuthorizationGrant.task_id == requirement.task_id,
+                    wf.MarcoAuthorizationGrant.generation_id == generation_id,
+                    wf.MarcoAuthorizationGrant.task_id == task_id,
                     wf.MarcoAuthorizationState.state == "available",
                 )
             ).all()
         )
         available = [
-            row
-            for row in rows
-            if row[0].operation_id in {None, requirement.operation_id}
+            row for row in rows if row[0].operation_id in {None, operation_id}
         ]
+        # Prefer a grant bound to this exact operation over a task-wide grant.
         available.sort(key=lambda row: row[0].operation_id is None)
-        matched: list[
-            tuple[wf.MarcoAuthorizationGrant, wf.MarcoAuthorizationState]
-        ] = []
+        matched: list[tuple[wf.MarcoAuthorizationGrant, wf.MarcoAuthorizationState]] = []
         used: set[uuid.UUID] = set()
         for change in required:
             found = None
@@ -964,6 +965,18 @@ class PostgresCommandPort:
             used.add(found[0].grant_id)
             matched.append(found)
         return matched
+
+    def _available_semantic_proposal_grants(
+        self,
+        requirement: wf.HumanReviewRequirement,
+        required: list[dict[str, Any]],
+    ) -> list[tuple[wf.MarcoAuthorizationGrant, wf.MarcoAuthorizationState]]:
+        return self._available_governed_change_grants(
+            generation_id=requirement.generation_id,
+            task_id=requirement.task_id,
+            operation_id=requirement.operation_id,
+            required=required,
+        )
 
     def _semantic_proposal_status(
         self, operation: wf.WorkflowOperation
@@ -2455,6 +2468,135 @@ class PostgresCommandPort:
                 expected_inherited_signoff_id = inherited_signoff_uuid
             current_version_id = version.predecessor_content_version_id
 
+    def _reserve_change_prepare_authority(
+        self,
+        *,
+        call: CommandCall,
+        generation_id: uuid.UUID,
+        execution: wf.CommandExecution,
+        task: models.DishTask,
+        operation: wf.WorkflowOperation,
+        before: Any,
+        after: Any,
+    ) -> tuple[tuple[str, ...], list[tuple[uuid.UUID, uuid.UUID]], list[dict[str, Any]]]:
+        """Apply legacy-equivalent governed-change and Decision-attestation gates.
+
+        ``governed_change_fields`` is only an explicit provenance attestation for
+        an append-only attributed Marco Decision. Formal authority for every
+        other governed field comes from exact durable PostgreSQL Marco grants.
+        """
+        declared = tuple(
+            dict.fromkeys(
+                str(value).strip()
+                for value in (call.arguments.get("governed_change_fields") or ())
+                if str(value).strip()
+            )
+        )
+        unknown = sorted(set(declared) - set(GOVERNED_FIELDS))
+        if unknown:
+            raise CommandRuleError(
+                "INVALID_ARGUMENT",
+                "governed_change_fields contains unsupported field names",
+                http_status=400,
+                data={
+                    "rule": "governed_change_field_invalid",
+                    "unsupported": unknown,
+                    "allowed": list(GOVERNED_FIELDS),
+                },
+            )
+        if set(declared) - {"Decisions"}:
+            raise CommandRuleError(
+                "INVALID_ARGUMENT",
+                "prepare accepts governed_change_fields only to attest an appended Marco Decision",
+                http_status=400,
+                data={
+                    "rule": "prepare_governed_change_field_not_applicable",
+                    "allowed": ["Decisions"],
+                },
+            )
+
+        try:
+            validate_semantic_proposal(before, after)
+            newly_attributed = agent_attested_decision_appends(before, after)
+        except DishRuleError as exc:
+            raise CommandRuleError(
+                str(exc.code),
+                str(exc),
+                http_status=409,
+                data=dict(getattr(exc, "details", {}) or {}),
+            ) from exc
+
+        attested: tuple[str, ...] = ()
+        if "Decisions" in declared:
+            if not newly_attributed:
+                raise CommandRuleError(
+                    "INVALID_ARGUMENT",
+                    "Decisions attestation applies only to newly recorded attributed Marco choices",
+                    http_status=400,
+                    data={"rule": "decision_attestation_not_applicable"},
+                )
+            attested = newly_attributed
+        elif newly_attributed:
+            raise CommandRuleError(
+                "CONFIRMATION_REQUIRED",
+                "an attributed Marco Decision append requires explicit agent attestation",
+                data={
+                    "rule": "decision_attestation_required",
+                    "appended_decisions": list(newly_attributed),
+                    "required_governed_change_field": "Decisions",
+                    "instruction": (
+                        "Retry the same exact candidate with governed_change_fields including "
+                        "Decisions only if Marco actually stated these choices in the conversation. "
+                        "This records agent-attested provenance, not formal governed authorization."
+                    ),
+                    "fresh_request_id": True,
+                },
+            )
+
+        try:
+            required_changes = governed_changes_requiring_authorization(
+                before, after, agent_attested_decisions=attested
+            )
+        except DishRuleError as exc:
+            raise CommandRuleError(
+                str(exc.code),
+                str(exc),
+                http_status=409,
+                data=dict(getattr(exc, "details", {}) or {}),
+            ) from exc
+        required = [
+            {
+                "field": change.field,
+                "before": _json_safe(change.before),
+                "after": _json_safe(change.after),
+            }
+            for change in required_changes
+        ]
+        grants = self._available_governed_change_grants(
+            generation_id=generation_id,
+            task_id=task.task_id,
+            operation_id=operation.operation_id,
+            required=required,
+        )
+        if len(grants) != len(required):
+            raise CommandRuleError(
+                "GOVERNED_AUTHORIZATION_REQUIRED",
+                "change prepare is not authorized for every exact governed change",
+                data={"required_authorizations": required},
+            )
+
+        reservations: list[tuple[uuid.UUID, uuid.UUID]] = []
+        for grant, _state in grants:
+            token = self.uuid_factory()
+            self.workflow.reserve_marco_authorization(
+                grant_id=grant.grant_id,
+                reservation_token=token,
+                execution_id=execution.execution_id,
+                reserved_at=call.now,
+            )
+            reservations.append((grant.grant_id, token))
+        return attested, reservations, required
+
     def _prepare(self, call, generation, binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
         if operation.lifecycle != "open":
@@ -2476,6 +2618,9 @@ class PostgresCommandPort:
         body_value = call.arguments.get("body")
         change_preparation = None
         inherited_signoff = None
+        agent_attested_decisions: tuple[str, ...] = ()
+        authorization_reservations: list[tuple[uuid.UUID, uuid.UUID]] = []
+        required_authorizations: list[dict[str, Any]] = []
         if operation.kind == "initial" and file_text is not None:
             parts = prepared_document(
                 str(file_text),
@@ -2515,6 +2660,19 @@ class PostgresCommandPort:
                         "NON_MATERIAL_SIGNED_BASELINE_MISSING",
                         "signed check-in requires an exact signed baseline",
                     )
+            (
+                agent_attested_decisions,
+                authorization_reservations,
+                required_authorizations,
+            ) = self._reserve_change_prepare_authority(
+                call=call,
+                generation_id=generation.generation_id,
+                execution=execution,
+                task=task,
+                operation=operation,
+                before=prior_parts.document,
+                after=parts.document,
+            )
         else:
             parts = parse_canonical_document(
                 file_text=str(file_text) if file_text is not None else None,
@@ -2532,6 +2690,14 @@ class PostgresCommandPort:
             predecessor_content_version_id=prior.content_version_id,
             at=call.now,
         )
+        for grant_id, token in authorization_reservations:
+            self.workflow.consume_marco_authorization(
+                grant_id=grant_id,
+                reservation_token=token,
+                execution_id=execution.execution_id,
+                bound_result_id=version_id,
+                consumed_at=call.now,
+            )
         non_material_checkin = (
             change_preparation is not None
             and change_preparation.effective_classification != "material"
@@ -2590,6 +2756,13 @@ class PostgresCommandPort:
             step_evidence["handoff"] = (
                 "checked-in" if non_material_checkin else "verification"
             )
+            if agent_attested_decisions:
+                step_evidence["agent_attested_decisions"] = list(agent_attested_decisions)
+            if authorization_reservations:
+                step_evidence["authorization_grant_ids"] = [
+                    str(grant_id) for grant_id, _token in authorization_reservations
+                ]
+                step_evidence["required_authorizations"] = required_authorizations
             if change_preparation.body_changed:
                 step_evidence["material_classification"] = {
                     "requested": change_preparation.requested_classification,
@@ -2618,6 +2791,29 @@ class PostgresCommandPort:
                 occurred_at=call.now,
             )
         )
+        if agent_attested_decisions:
+            self.session.add(
+                wf.GovernedAuditEvent(
+                    audit_event_id=self.uuid_factory(),
+                    generation_id=generation.generation_id,
+                    request_id=execution.request_id,
+                    command_execution_id=execution.execution_id,
+                    task_id=task.task_id,
+                    operation_id=operation.operation_id,
+                    event_type="decision.agent_attested",
+                    actor=call.owner_id,
+                    payload={
+                        "agent": call.arguments.get("agent"),
+                        "run_id": str(call.run_id),
+                        "source": "agent-attested-conversation",
+                        "appended_decisions": list(agent_attested_decisions),
+                        "formal_marco_authorization": False,
+                        "before_decisions": list(prior_parts.document.decisions),
+                        "after_decisions": list(parts.document.decisions),
+                    },
+                    occurred_at=call.now,
+                )
+            )
         if not non_material_checkin:
             cycle = self.workflow.open_verification_cycle(
                 cycle_id=self.uuid_factory(),
@@ -2655,6 +2851,12 @@ class PostgresCommandPort:
             result["handoff"] = (
                 "checked-in" if non_material_checkin else "verification"
             )
+        if authorization_reservations:
+            result["authorization_grant_ids"] = [
+                str(grant_id) for grant_id, _token in authorization_reservations
+            ]
+        if agent_attested_decisions:
+            result["agent_attested_decisions"] = list(agent_attested_decisions)
         if change_preparation is not None and change_preparation.body_changed:
             result["material_classification"] = {
                 "classified_subject": "canonical body diff from the signed baseline",

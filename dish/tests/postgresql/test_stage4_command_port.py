@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 
 from dish_pg import models
 from dish_pg import stage3_models as wf
+from dish_pg import stage5_models as projection
 from dish_pg.command_contract import ACTION_COMMANDS
 from dish_pg.command_port import CommandCall, PostgresCommandPort, _task_reference_from_dish
 from dish_pg.document_authority import parse_canonical_document
@@ -478,6 +479,255 @@ def test_prepare_non_material_change_preserves_prior_signed_state_and_checks_in(
             originating_signoff.cycle_id
         )
 
+
+
+def _start_change(port, ids, context, task_id, *, reason="governed parity"):
+    run_id = _next(ids)
+    _register_run(
+        port.session,
+        generation_id=context["generation_id"],
+        run_id=run_id,
+        agent="gpt",
+    )
+    started = port.execute(
+        _call(
+            "start",
+            run_id=run_id,
+            request_id=_next(ids),
+            arguments={
+                "task_id": str(task_id),
+                "kind": "change",
+                "agent": "gpt",
+                "change_level": "small",
+                "change_reason": reason,
+            },
+        )
+    )
+    assert started.ok, (started.code, started.http_status, started.data)
+    return run_id, started
+
+
+def _prepare_change(port, ids, task_id, run_id, operation_id, candidate, **extra):
+    arguments = {
+        "task_id": str(task_id),
+        "operation_id": operation_id,
+        "file_text": candidate,
+        "agent": "gpt",
+        "model": "gpt-5.6-sol",
+        "material_classification": "material",
+    }
+    arguments.update(extra)
+    return port.execute(
+        _call(
+            "prepare",
+            run_id=run_id,
+            request_id=_next(ids),
+            arguments=arguments,
+        )
+    )
+
+
+def test_prepare_change_blocks_unauthorized_governed_field_before_activation_or_projection(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port, signed = _signed_ready_baseline(session, ids, context, task_id)
+        run_id, started = _start_change(port, ids, context, task_id)
+        candidate = (signed.title + "\n" + signed.body).replace(
+            "Purpose: Compare texture",
+            "Purpose: Compare texture and aroma",
+        )
+        current_before = port._current_content_version_id(context["generation_id"], task_id)
+        version_count_before = session.scalar(select(func.count()).select_from(models.ContentVersion))
+        projection_count_before = session.scalar(
+            select(func.count()).select_from(projection.ProjectionOutboxEvent)
+        )
+
+        blocked = _prepare_change(
+            port,
+            ids,
+            task_id,
+            run_id,
+            started.data["operation_id"],
+            candidate,
+        )
+        assert not blocked.ok
+        assert blocked.code == "GOVERNED_AUTHORIZATION_REQUIRED"
+        assert {item["field"] for item in blocked.data["required_authorizations"]} == {"Purpose"}
+        assert port._current_content_version_id(context["generation_id"], task_id) == current_before
+        assert session.scalar(select(func.count()).select_from(models.ContentVersion)) == version_count_before
+        assert session.scalar(
+            select(func.count()).select_from(projection.ProjectionOutboxEvent)
+        ) == projection_count_before
+
+
+def test_prepare_change_requires_explicit_decision_attestation_and_records_provenance(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port, signed = _signed_ready_baseline(session, ids, context, task_id)
+        run_id, started = _start_change(port, ids, context, task_id, reason="record Marco choice")
+        decision = "Human — Marco: Keep the finish crisp at serving time"
+        candidate = (signed.title + "\n" + signed.body).replace(
+            "### Research basis",
+            f"{decision}\n### Research basis",
+        )
+        current_before = port._current_content_version_id(context["generation_id"], task_id)
+
+        blocked = _prepare_change(
+            port, ids, task_id, run_id, started.data["operation_id"], candidate
+        )
+        assert not blocked.ok
+        assert blocked.code == "CONFIRMATION_REQUIRED"
+        assert blocked.data["rule"] == "decision_attestation_required"
+        assert blocked.data["appended_decisions"] == [decision]
+        assert port._current_content_version_id(context["generation_id"], task_id) == current_before
+
+        accepted = _prepare_change(
+            port,
+            ids,
+            task_id,
+            run_id,
+            started.data["operation_id"],
+            candidate,
+            governed_change_fields=["Decisions"],
+        )
+        assert accepted.ok, (accepted.code, accepted.http_status, accepted.data)
+        assert accepted.data["agent_attested_decisions"] == [decision]
+        audit = session.scalar(
+            select(wf.GovernedAuditEvent)
+            .where(
+                wf.GovernedAuditEvent.operation_id == uuid.UUID(started.data["operation_id"]),
+                wf.GovernedAuditEvent.event_type == "decision.agent_attested",
+            )
+            .order_by(wf.GovernedAuditEvent.occurred_at.desc())
+            .limit(1)
+        )
+        assert audit is not None
+        assert audit.payload["appended_decisions"] == [decision]
+        assert audit.payload["formal_marco_authorization"] is False
+        assert session.scalar(
+            select(func.count())
+            .select_from(wf.MarcoAuthorizationGrant)
+            .where(wf.MarcoAuthorizationGrant.operation_id == uuid.UUID(started.data["operation_id"]))
+        ) == 0
+
+
+def test_prepare_change_rejects_decision_attestation_without_new_decision(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port, signed = _signed_ready_baseline(session, ids, context, task_id)
+        run_id, started = _start_change(port, ids, context, task_id)
+        candidate = (signed.title + "\n" + signed.body).replace(
+            "1. Cook it.", "1. Cook it.\n2. Keep crisp until serving."
+        )
+        blocked = _prepare_change(
+            port, ids, task_id, run_id, started.data["operation_id"], candidate,
+            material_classification="non-material",
+            governed_change_fields=["Decisions"],
+        )
+        assert not blocked.ok
+        assert blocked.code == "INVALID_ARGUMENT"
+        assert blocked.data["rule"] == "decision_attestation_not_applicable"
+
+
+def test_prepare_decision_attestation_does_not_authorize_unrelated_governed_change(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port, signed = _signed_ready_baseline(session, ids, context, task_id)
+        run_id, started = _start_change(port, ids, context, task_id, reason="mixed governed diff")
+        decision = "Human — Marco: Keep the finish crisp at serving time"
+        candidate = (signed.title + "\n" + signed.body).replace(
+            "Purpose: Compare texture",
+            "Purpose: Compare texture and aroma",
+        ).replace(
+            "### Research basis",
+            f"{decision}\n### Research basis",
+        )
+        current_before = port._current_content_version_id(context["generation_id"], task_id)
+
+        blocked = _prepare_change(
+            port,
+            ids,
+            task_id,
+            run_id,
+            started.data["operation_id"],
+            candidate,
+            governed_change_fields=["Decisions"],
+        )
+        assert not blocked.ok
+        assert blocked.code == "GOVERNED_AUTHORIZATION_REQUIRED"
+        assert {item["field"] for item in blocked.data["required_authorizations"]} == {"Purpose"}
+        assert port._current_content_version_id(context["generation_id"], task_id) == current_before
+
+
+def test_prepare_change_consumes_exact_durable_grant_before_governed_activation(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port, signed = _signed_ready_baseline(session, ids, context, task_id)
+        run_id, started = _start_change(port, ids, context, task_id)
+        candidate = (signed.title + "\n" + signed.body).replace(
+            "Purpose: Compare texture",
+            "Purpose: Compare texture and aroma",
+        )
+        blocked = _prepare_change(
+            port, ids, task_id, run_id, started.data["operation_id"], candidate
+        )
+        required = blocked.data["required_authorizations"]
+        assert blocked.code == "GOVERNED_AUTHORIZATION_REQUIRED" and len(required) == 1
+
+        admin_run = _next(ids)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=admin_run,
+            owner="marco",
+            agent="codex",
+        )
+        change = required[0]
+        grant_result = port.execute(
+            _call(
+                "authorize-governed-change",
+                run_id=admin_run,
+                request_id=_next(ids),
+                owner="marco",
+                principal="admin",
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                    "field_name": change["field"],
+                    "before": change["before"],
+                    "after": change["after"],
+                    "reason": "Marco approved exact Purpose change",
+                },
+            )
+        )
+        assert grant_result.ok, (grant_result.code, grant_result.http_status, grant_result.data)
+
+        accepted = _prepare_change(
+            port, ids, task_id, run_id, started.data["operation_id"], candidate
+        )
+        assert accepted.ok, (accepted.code, accepted.http_status, accepted.data)
+        grant_id = uuid.UUID(grant_result.data["grant_id"])
+        assert accepted.data["authorization_grant_ids"] == [str(grant_id)]
+        state = session.get(wf.MarcoAuthorizationState, grant_id)
+        assert state.state == "consumed"
+        assert state.consumed_result_id == uuid.UUID(accepted.data["content_version_id"])
+        events = list(
+            session.scalars(
+                select(wf.MarcoAuthorizationEvent)
+                .where(wf.MarcoAuthorizationEvent.grant_id == grant_id)
+                .order_by(wf.MarcoAuthorizationEvent.occurred_at)
+            )
+        )
+        assert {event.event_kind for event in events} == {"reserved", "consumed"}
+        assert len(events) == 2
 
 
 def test_inspect_resolves_task_from_dish_argument(workflow_db) -> None:
