@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from playwright.sync_api import expect
 
 from frontend.tests.browser.support.payloads import (
@@ -92,4 +94,31 @@ def test_minimum_desktop_viewport_has_no_page_level_horizontal_overflow(acceptan
     assert metrics["page"] <= metrics["viewport"] + 1
     assert metrics["board"] >= metrics["boardViewport"]
     acceptance.screenshot("minimum-desktop")
+    acceptance.assert_clean()
+
+
+def test_search_finds_unloaded_active_title_and_opens_canonical_detail_route(acceptance):
+    acceptance.runtime.board_state.cards = [
+        CardSpec(TASK_ALPHA, "Alpha soup"),
+        CardSpec(TASK_BETA, "Beta curry"),
+        CardSpec(TASK_GAMMA, "Gamma rice"),
+        CardSpec(TASK_DELTA, "Delta noodles"),
+    ]
+    acceptance.login()
+    acceptance.wait_board()
+
+    research = acceptance.page.locator(f'.board-column[data-section-id="{SECTION_RESEARCH}"]')
+    expect(research.locator(".task-card")).to_have_count(3)
+    expect(acceptance.page.locator(f'[data-task-id="{TASK_DELTA}"]')).to_have_count(0)
+
+    acceptance.page.get_by_label("Search active dishes").fill("NOOD")
+    acceptance.page.get_by_role("button", name="Search", exact=True).click()
+    result = acceptance.page.locator(".board-search__result").filter(has_text="Delta noodles")
+    expect(result).to_be_visible()
+    expect(result).to_contain_text("Cooking · Research Queue")
+    assert acceptance.runtime.search_calls == ["NOOD"]
+
+    result.click()
+    expect(acceptance.page).to_have_url(re.compile(rf"/dishes/{TASK_DELTA}/delta-noodles$"))
+    expect(acceptance.page.get_by_role("dialog").get_by_role("heading", name="Delta noodles")).to_be_visible()
     acceptance.assert_clean()

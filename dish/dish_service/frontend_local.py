@@ -80,6 +80,9 @@ class PostgresLocalBoardBackend:
     def bootstrap(self) -> dict[str, Any]:
         return self._read(lambda service: service.bootstrap())
 
+    def search(self, query: str) -> dict[str, Any]:
+        return self._read(lambda service: service.search(query))
+
     def admin(self) -> dict[str, Any]:
         session = self.factory()
         try:

@@ -138,6 +138,26 @@ def board_payload(state: BoardState, *, page_size: int = 3) -> dict:
     }
 
 
+def search_payload(state: BoardState, query: str, *, max_results: int = 50) -> dict:
+    normalized = query.casefold()
+    matches = [card for card in state.cards if normalized in card.title.casefold()]
+    matches.sort(key=lambda card: (card.title.casefold(), card.task_id))
+    visible = matches[:max_results]
+    section_labels = dict(state.sections)
+    return {
+        "results": [
+            {
+                "task_id": card.task_id,
+                "title": card.title,
+                "project_label": "Cooking",
+                "section_label": section_labels[card.section_id],
+            }
+            for card in visible
+        ],
+        "truncated": len(matches) > max_results,
+    }
+
+
 def continuation_payload(state: BoardState, section_id: str, cursor: str) -> dict:
     expected = f"stage7:{section_id}:1"
     if cursor != expected:
