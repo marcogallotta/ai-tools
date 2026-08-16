@@ -36,7 +36,10 @@ import shlex
 import sys
 from pathlib import Path
 
-OWN_TASK_AUTO_ALLOW = {"set-notes", "append", "replace", "rename", "move"}
+# Moving a task needs separate destination-project proof.  This hook receives only
+# the command and the active task identity, so it cannot safely establish that
+# proof; keep moves behind the normal approval prompt.
+OWN_TASK_AUTO_ALLOW = {"set-notes", "append", "replace", "rename"}
 
 WRITE_SUBCOMMANDS = {
     "set-notes", "append", "replace", "rename",

@@ -259,6 +259,7 @@ class TestMissingCommand:
 
 
 def _install_agent_identity(monkeypatch, tmp_path, task_gid="12345", agent_id="session-1"):
+    monkeypatch.delenv("CODEX_THREAD_ID", raising=False)
     home = tmp_path / "home"
     root = home / ".local/state/dish"
     worktree = tmp_path / "owned-worktree"
@@ -313,7 +314,6 @@ class TestOwnTaskAutoAllow:
         "asana append 12345 'more'",
         "asana replace 12345 old new",
         "asana rename 12345 'new name'",
-        "asana move 12345 99999",
     ])
     def test_routine_direct_own_task_write_is_allowed(
         self, asana_write_guard, monkeypatch, capsys, tmp_path, command
@@ -321,6 +321,15 @@ class TestOwnTaskAutoAllow:
         agent_id, task_gid = _install_agent_identity(monkeypatch, tmp_path)
         decision = run_hook_as_agent(asana_write_guard, command, agent_id, monkeypatch, capsys)
         assert_explicitly_allowed(decision, f"active task {task_gid}")
+
+    def test_same_task_move_remains_approval_gated_without_destination_proof(
+        self, asana_write_guard, monkeypatch, capsys, tmp_path
+    ):
+        agent_id, _ = _install_agent_identity(monkeypatch, tmp_path)
+        decision = run_hook_as_agent(
+            asana_write_guard, "asana move 12345 99999", agent_id, monkeypatch, capsys
+        )
+        assert_asked(decision, "Approve this Asana write")
 
     def test_other_task_and_create_remain_approval_gated(
         self, asana_write_guard, monkeypatch, capsys, tmp_path
