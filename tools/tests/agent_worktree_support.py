@@ -117,7 +117,7 @@ class Harness:
         return run(["python3", str(SCRIPT), *args], cwd=self.primary, env=actual_env, check=check)
 
     def tool(self, *args: str, check: bool = True, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
-        if not args or args[0] not in {"start", "adopt", "resume", "publish", "verify-handoff", "cleanup", "exec"}:
+        if not args or args[0] not in {"start", "adopt", "resume", "commit", "publish", "verify-handoff", "cleanup", "exec"}:
             return self.raw_tool(*args, check=check, env=env)
 
         child = list(args)

@@ -94,7 +94,7 @@
       "rules": [
         {
           "id": "development-workflow-boundary",
-          "text": "Own development-system mechanics/reliability, not semantic product/workflow/PG decisions, review verdicts, Integration landing, or production mutation.",
+          "text": "Own dev mechanics/reliability; `scripts/pr_lifecycle.py` stays sole lifecycle engine and the GitHub broker is admission only. No semantic product/workflow/PG decisions, Review verdicts, Integration landing, or production mutation.",
           "impact": "breaking",
           "action_boundaries": [
             "role-critical-write"
@@ -103,7 +103,7 @@
         },
         {
           "id": "development-workflow-live-lane",
-          "text": "`Dish — Development Workflow` is live Asana authority. Fixture repair requires every side healthy; incompatible target stops. Required gate + no supported op + needed repo capability => IMPLEMENTATION REQUIRED, active/not deferred; safe supported op => LOCAL SYSTEM ACCESS. Missing safe publication stays `PUBLICATION BLOCKER`.",
+          "text": "`Dish — Development Workflow` is live Asana authority. Fixture repair requires every side healthy; incompatibility stops. Required gate + no supported op + needed repo capability => IMPLEMENTATION REQUIRED, active/not deferred; safe supported op => LOCAL SYSTEM ACCESS. Missing safe publication: use the landed exact-tree materializer when eligible; else `PUBLICATION BLOCKER`.",
           "impact": "breaking",
           "action_boundaries": [
             "role-critical-write",
@@ -193,6 +193,16 @@
           "surface": "lifecycle"
         },
         {
+          "id": "publication-materializer-path",
+          "text": "After the exact-tree materializer has landed, a canonical same-repo draft-PR publication blocker with the complete verified candidate tree and a request within proven limits uses that bounded remote path before local completion. The workflow may create only an unattached exact-parent/exact-tree candidate; Implementation independently reads it back, performs the separate non-force expected-head connector ref update, and authoritatively re-reads PR/branch/commit/tree. Ineligible/unavailable/over-limit/incomplete requests retain `LOCAL IMPLEMENTATION COMPLETION REQUIRED`; this path grants no Review/Integration authority.",
+          "impact": "additive",
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "surface": "lifecycle"
+        },
+        {
           "id": "implementation-no-self-review-integration",
           "text": "Do not self-review/integrate semantic work; return exact PR/head/evidence for independent Review/Integration.",
           "impact": "breaking",
@@ -221,6 +231,66 @@
             "review-write"
           ],
           "surface": "lifecycle"
+        },
+        {
+          "id": "mutation-broker-admission",
+          "text": "After broker activation, post-PR Implementation/fix mutates only with a current exact-PR grant whose run-attempt/comment/artifact proof verifies. Grant is fencing only: role/branch/worktree/CAS authority remains separate; read-only work is exempt and stale proof fails closed.",
+          "impact": "additive",
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "surface": "lifecycle"
+        },
+        {
+          "id": "implementation-ci-failure-ownership",
+          "text": "Before failed-CI source mutation, classify ownership. Only PR_OWNED may route to candidate fix; PROVEN_CURRENT_MAIN, INFRASTRUCTURE, and AMBIGUOUS do not authorize candidate mutation or rerun-until-green.",
+          "impact": "additive",
+          "action_boundaries": [
+            "role-critical-write"
+          ],
+          "surface": "safety"
+        },
+        {
+          "id": "action-first-human-output",
+          "text": "Marco-facing lifecycle output puts his next action first, names Review PASS/BLOCK and next owner/gate, and says no action for automatic continuation. Local work is TESTS ONLY, IMPLEMENTATION / PUBLICATION, or LOCAL SYSTEM ACCESS; runtime is separate.",
+          "impact": "compatible",
+          "action_boundaries": [
+            "status",
+            "handoff"
+          ],
+          "surface": "presentation"
+        },
+        {
+          "id": "implementation-remote-first-local-boundary",
+          "text": "Default substantive repository implementation to hosted/ChatGPT execution. Local semantic Implementation requires `IMPLEMENTATION / PUBLICATION` with the exact unavailable hosted capability and bounded exhausted fallbacks; `TESTS ONLY`, `LOCAL SYSTEM ACCESS`, runtime length, convenience, or prior local-agent use never justify it.",
+          "impact": "additive",
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "surface": "routing"
+        },
+        {
+          "id": "implementation-host-aware-fix-routing",
+          "text": "Post-PR BLOCK/PR-owned-CI fixes default to CHATGPT_IMPLEMENTATION. LOCAL_IMPLEMENTATION requires the canonical unavailable hosted capability + exhausted fallbacks; selected host is carried through the existing #95 broker route/grant and a new head returns to independent Review without cross-host fallback.",
+          "impact": "additive",
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "surface": "routing"
+        },
+        {
+          "id": "scope-amplification-checkpoint",
+          "text": "Re-anchor work to the one-sentence operator outcome. Before adding a scheduler/queue/database/service/new ownership/identity/control-plane or materially broader lifecycle, require explicit durable Marco approval; missing approval blocks only expansion. After two design/re-review loops, shrink the slice or seek a decision. Prove capability need before dependency.",
+          "impact": "additive",
+          "action_boundaries": [
+            "role-critical-write",
+            "review-write",
+            "handoff"
+          ],
+          "surface": "safety"
         }
       ]
     },
@@ -241,7 +311,7 @@
         },
         {
           "id": "integration-mechanical-only",
-          "text": "Integration is mechanical-only. Semantic fixes, behavior choices, ambiguous conflicts, or test weakening return to Implementation and Review.",
+          "text": "Integration may reconcile content only when already-authorized changes uniquely determine the result, with no new product/architecture/workflow-policy/PG-schema/behavior/test choice. Ambiguity returns to Implementation; every content-changing reconcile head needs fresh independent Review.",
           "impact": "breaking",
           "action_boundaries": [
             "merge"
@@ -267,6 +337,56 @@
             "review-write"
           ],
           "surface": "lifecycle"
+        },
+        {
+          "id": "mutation-broker-admission",
+          "text": "After broker activation, reconcile/merge mutates only with a current exact-PR grant whose run-attempt/comment/artifact proof verifies. Grant is fencing only: Integration/Review/CAS authority remains separate; broker token never merges; stale proof fails closed.",
+          "impact": "additive",
+          "action_boundaries": [
+            "merge",
+            "handoff"
+          ],
+          "surface": "lifecycle"
+        },
+        {
+          "id": "integration-post-merge-writeback",
+          "text": "After expected-head merge, require authoritative GitHub MERGED readback before scoped Asana landing writeback. Preserve concurrent notes; residual runtime/TEST/PG/deployment/human/external gates stay open; advance only explicit source-only dependents; read writes back.",
+          "impact": "additive",
+          "action_boundaries": [
+            "merge",
+            "handoff"
+          ],
+          "surface": "lifecycle"
+        },
+        {
+          "id": "action-first-human-output",
+          "text": "Marco-facing lifecycle output puts his next action first, names Review PASS/BLOCK and next owner/gate, and says no action for automatic continuation. Local work is TESTS ONLY, IMPLEMENTATION / PUBLICATION, or LOCAL SYSTEM ACCESS; runtime is separate.",
+          "impact": "compatible",
+          "action_boundaries": [
+            "status",
+            "handoff"
+          ],
+          "surface": "presentation"
+        },
+        {
+          "id": "integration-phase-separated-gates",
+          "text": "Integration executes only `PRE-INTEGRATION TESTS TO RUN` (or legacy `TESTS TO RUN`) before source merge. `POST-MERGE GATES` remain residual acceptance after authoritative landing and keep owning work open without blocking source Integration by themselves.",
+          "impact": "additive",
+          "action_boundaries": [
+            "merge",
+            "handoff"
+          ],
+          "surface": "lifecycle"
+        },
+        {
+          "id": "integration-local-work-classifier",
+          "text": "Classify residual local work as TESTS ONLY, IMPLEMENTATION / PUBLICATION, or LOCAL SYSTEM ACCESS with runtime separate. Only an explicitly evidenced IMPLEMENTATION / PUBLICATION boundary can route semantic Implementation locally; tests/system access retain their actual owner.",
+          "impact": "additive",
+          "action_boundaries": [
+            "handoff",
+            "merge"
+          ],
+          "surface": "routing"
         }
       ]
     },
@@ -397,6 +517,37 @@
             "review-write"
           ],
           "surface": "lifecycle"
+        },
+        {
+          "id": "review-phase-separated-gates",
+          "text": "New MERGE Review metadata separates `PRE-INTEGRATION TESTS TO RUN` from `POST-MERGE GATES`; both new fields are required together. Post-merge TEST/runtime/PROD acceptance never becomes a source-merge blocker by placement alone; legacy `TESTS TO RUN` remains pre-Integration compatibility.",
+          "impact": "additive",
+          "action_boundaries": [
+            "review-write",
+            "handoff"
+          ],
+          "surface": "lifecycle"
+        },
+        {
+          "id": "review-host-aware-independence-routing",
+          "text": "Route substantive/domain Review to ChatGPT. Bounded local light/focused/mechanical Review requires a positive exact-current-head `CHATGPT_IMPLEMENTATION` witness; local/unknown/ambiguous provenance forces ChatGPT Review. After BLOCK, local Implementation requires exact class-B unavailable-capability + exhausted-fallback proof; remote outage never falls back local.",
+          "impact": "additive",
+          "action_boundaries": [
+            "review-write",
+            "handoff"
+          ],
+          "surface": "routing"
+        },
+        {
+          "id": "scope-amplification-checkpoint",
+          "text": "Re-anchor work to the one-sentence operator outcome. Before adding a scheduler/queue/database/service/new ownership/identity/control-plane or materially broader lifecycle, require explicit durable Marco approval; missing approval blocks only expansion. After two design/re-review loops, shrink the slice or seek a decision. Prove capability need before dependency.",
+          "impact": "additive",
+          "action_boundaries": [
+            "role-critical-write",
+            "review-write",
+            "handoff"
+          ],
+          "surface": "safety"
         }
       ]
     },

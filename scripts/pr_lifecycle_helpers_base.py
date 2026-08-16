@@ -1,7 +1,17 @@
 """Durable marker parsing and lifecycle helper predicates."""
 from __future__ import annotations
 
+import hashlib
+import io
+import json
+import zipfile
+
 from pr_lifecycle_support import *
+
+
+IMPLEMENTATION_PROVENANCE_SCHEMA = "dish-implementation-prelaunch-proof-v1"
+IMPLEMENTATION_PROVENANCE_WORKFLOW = ".github/workflows/pr-implementation-provenance.yml"
+IMPLEMENTATION_PROVENANCE_FILENAME = "implementation-provenance.json"
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -135,6 +145,61 @@ def parse_external_dependency(
     return max(records, key=lambda item: (item.timestamp, item.comment_id, item.marker_index))
 
 
+
+def parse_ci_failure_ownership(
+    comments: Iterable[Mapping[str, Any]], *, current_head: str, check_identity: str
+) -> dict[str, Any]:
+    """Return the newest exact-head durable CI ownership classification.
+
+    Missing or malformed ownership is AMBIGUOUS. The marker is diagnostic/routing
+    evidence only; it never weakens the required CI gate or creates source authority.
+    """
+    records: list[dict[str, Any]] = []
+    allowed = {"PR_OWNED", "PROVEN_CURRENT_MAIN", "INFRASTRUCTURE", "AMBIGUOUS"}
+    for comment in comments:
+        body = str(comment.get("body") or "")
+        for fields in _marker_fields(body, CI_FAILURE_OWNERSHIP_MARKER):
+            if str(fields.get("head") or "").lower() != current_head.lower():
+                continue
+            check = urlparse.unquote(str(fields.get("check") or ""))
+            if check != check_identity:
+                continue
+            classification = str(fields.get("classification") or "").upper()
+            evidence = urlparse.unquote(str(fields.get("evidence") or "")).strip()
+            if classification not in allowed or not evidence:
+                return {
+                    "classification": "AMBIGUOUS",
+                    "evidence": "malformed durable CI ownership marker",
+                    "comment_id": comment.get("id"),
+                }
+            timestamp = _parse_time(comment.get("updated_at") or comment.get("created_at"))
+            if timestamp is None:
+                return {
+                    "classification": "AMBIGUOUS",
+                    "evidence": "CI ownership marker lacks valid timestamp",
+                    "comment_id": comment.get("id"),
+                }
+            try:
+                cid = int(comment.get("id"))
+            except (TypeError, ValueError):
+                cid = -1
+            records.append(
+                {
+                    "classification": classification,
+                    "evidence": evidence,
+                    "comment_id": cid,
+                    "timestamp": timestamp,
+                }
+            )
+    if not records:
+        return {
+            "classification": "AMBIGUOUS",
+            "evidence": "no exact-head durable CI failure ownership classification",
+            "comment_id": None,
+        }
+    newest = max(records, key=lambda item: (item["timestamp"], item["comment_id"]))
+    return {k: v for k, v in newest.items() if k != "timestamp"}
+
 def external_dependency_human_action(record: ExternalDependency) -> str:
     owner = f"PR #{record.owner_pr} / task {record.task_gid}" if record.owner_pr else f"task {record.task_gid}"
     return f"Waiting on {owner}: {record.check}. No action for Marco."
@@ -265,6 +330,49 @@ def _notice_present(comments: Iterable[Mapping[str, Any]], *, kind: str, head: s
     return False
 
 
+def review_gate_metadata(review: Mapping[str, Any] | None) -> ReviewGateMetadata:
+    """Parse phase-explicit Review evidence while preserving legacy fail-closed semantics."""
+    if not review or review.get("verdict") != "MERGE":
+        return ReviewGateMetadata(format="none")
+    body = str(review.get("body") or "")
+    pre = PRE_INTEGRATION_TESTS_RE.search(body)
+    post = POST_MERGE_GATES_RE.search(body)
+    if pre is not None or post is not None:
+        if pre is None or post is None:
+            return ReviewGateMetadata(
+                format="new",
+                error=(
+                    "new-format exact-head MERGE review must contain both "
+                    "PRE-INTEGRATION TESTS TO RUN and POST-MERGE GATES"
+                ),
+            )
+        pre_value = pre.group("value").strip()
+        post_value = post.group("value").strip()
+        return ReviewGateMetadata(
+            format="new",
+            pre_integration_tests=(
+                None if pre_value.rstrip(".").upper() == "NONE" else pre_value
+            ),
+            post_merge_gates=(
+                () if post_value.rstrip(".").upper() == "NONE" else (post_value,)
+            ),
+        )
+
+    legacy = TESTS_TO_RUN_RE.search(body)
+    if legacy is None:
+        return ReviewGateMetadata(
+            format="legacy",
+            error="legacy exact-head MERGE review is missing required TESTS TO RUN line",
+        )
+    legacy_value = legacy.group("value").strip()
+    return ReviewGateMetadata(
+        format="legacy",
+        pre_integration_tests=(
+            None if legacy_value.rstrip(".").upper() == "NONE" else legacy_value
+        ),
+    )
+
+
 def local_work_from_review(
     review: Mapping[str, Any] | None,
     comments: Iterable[Mapping[str, Any]],
@@ -289,22 +397,132 @@ def local_work_from_review(
                 ),
             )
         )
-    tests = TESTS_TO_RUN_RE.search(body)
-    if tests:
-        instruction = tests.group("value").strip()
-        if instruction.rstrip(".").upper() != "NONE":
-            work.append(
-                LocalWork(
-                    kind="certification",
-                    required=True,
-                    instruction=instruction,
-                    completed=_completion_present(comments, kind="certification", head=head),
-                    handoff_present=_handoff_present(
-                        comments, kind="certification", head=head, instruction=instruction
-                    ),
-                )
+    metadata = review_gate_metadata(review)
+    if metadata.error is None and metadata.pre_integration_tests is not None:
+        instruction = metadata.pre_integration_tests
+        work.append(
+            LocalWork(
+                kind="certification",
+                required=True,
+                instruction=instruction,
+                completed=_completion_present(comments, kind="certification", head=head),
+                handoff_present=_handoff_present(
+                    comments, kind="certification", head=head, instruction=instruction
+                ),
             )
+        )
     return work
+
+
+def implementation_host_witness(
+    pr: Mapping[str, Any],
+    comments: Iterable[Mapping[str, Any]],
+    *,
+    current_head: str,
+    github: Any | None = None,
+) -> str | None:
+    """Return independently proven exact-head implementation provenance, else fail closed."""
+    hosts: set[str] = set()
+    # PR descriptions are editable by the implementation author and can never prove
+    # where implementation ran.  A pre-PR witness must be produced by the trusted
+    # provenance workflow and bound to its immutable artifact; a post-PR result must
+    # validate the broker grant/proof that admitted the mutation.
+    for comment in comments:
+        body = str(comment.get("body") or "")
+        for fields in _marker_fields(body, IMPLEMENTATION_HOST_WITNESS_MARKER):
+            if _verified_prelaunch_host(pr, fields, current_head=current_head, github=github) == "chatgpt":
+                hosts.add("CHATGPT_IMPLEMENTATION")
+        for fields in _marker_fields(body, IMPLEMENTATION_ROUTE_RESULT_MARKER):
+            if _verified_route_result_host(pr, comments, fields, current_head=current_head, github=github) == "chatgpt":
+                hosts.add("CHATGPT_IMPLEMENTATION")
+    return next(iter(hosts)) if len(hosts) == 1 else None
+
+
+def _verified_prelaunch_host(
+    pr: Mapping[str, Any], fields: Mapping[str, str], *, current_head: str, github: Any | None
+) -> str | None:
+    required = ("head", "host", "source", "launcher", "run", "attempt", "artifact", "digest")
+    if github is None or any(not fields.get(name) for name in required):
+        return None
+    if fields.get("head") != current_head or fields.get("host") != "chatgpt" or fields.get("source") != "orchestration":
+        return None
+    try:
+        run_id, attempt, artifact_id = (int(fields[name]) for name in ("run", "attempt", "artifact"))
+        run = github.get_workflow_run_attempt(run_id, attempt)
+        if (
+            int(run.get("id", -1)) != run_id
+            or int(run.get("run_attempt", -1)) != attempt
+            or str(run.get("event") or "") != "repository_dispatch"
+            or str(run.get("conclusion") or "") != "success"
+            or str(run.get("path") or run.get("workflow_path") or "") != IMPLEMENTATION_PROVENANCE_WORKFLOW
+        ):
+            return None
+        artifacts = [
+            value for value in github.get_run_artifacts(run_id)
+            if int(value.get("id", -1)) == artifact_id and not bool(value.get("expired"))
+        ]
+        if len(artifacts) != 1 or str(artifacts[0].get("digest") or "").lower() != fields["digest"].lower():
+            return None
+        archive = github.download_artifact(artifact_id)
+        if f"sha256:{hashlib.sha256(archive).hexdigest()}" != fields["digest"].lower():
+            return None
+        with zipfile.ZipFile(io.BytesIO(archive), "r") as zf:
+            names = [name for name in zf.namelist() if not name.endswith("/")]
+            if names != [IMPLEMENTATION_PROVENANCE_FILENAME]:
+                return None
+            proof = json.loads(zf.read(IMPLEMENTATION_PROVENANCE_FILENAME))
+        if not isinstance(proof, dict):
+            return None
+        if proof != {
+            "schema": IMPLEMENTATION_PROVENANCE_SCHEMA,
+            "repository": github.repository,
+            "pr_number": _pr_number(pr),
+            "branch": _pr_branch(pr),
+            "head": current_head,
+            "host": "chatgpt",
+            "launcher": fields["launcher"],
+            "run_id": run_id,
+            "run_attempt": attempt,
+        }:
+            return None
+    except (AttributeError, KeyError, TypeError, ValueError, zipfile.BadZipFile, json.JSONDecodeError):
+        return None
+    return "chatgpt"
+
+
+def _verified_route_result_host(
+    pr: Mapping[str, Any], comments: Iterable[Mapping[str, Any]], fields: Mapping[str, str], *, current_head: str,
+    github: Any | None,
+) -> str | None:
+    if github is None or fields.get("head") != current_head:
+        return None
+    required = ("start", "route", "grant", "generation", "broker_event", "host")
+    if any(not fields.get(name) for name in required):
+        return None
+    try:
+        from pr_mutation_broker import current_verified_grant
+
+        repository_id = github.get_repository_id()
+        grant = current_verified_grant(github=github, pr_number=_pr_number(pr), repository_id=repository_id)
+        if grant is None or not grant.closed:
+            return None
+        if (
+            grant.grant_id != fields["grant"]
+            or str(grant.generation) != fields["generation"]
+            or grant.event_comment_id != int(fields["broker_event"])
+            or grant.route != fields["route"]
+            or grant.starting_head != fields["start"]
+            or grant.pr_number != _pr_number(pr)
+            or grant.branch != _pr_branch(pr)
+            or grant.action not in {"fix", "implementation"}
+            or grant.result_head != current_head
+            or grant.accepted_host not in {"chatgpt", "local"}
+            or fields["host"] != grant.accepted_host
+        ):
+            return None
+    except (AttributeError, ValueError, LifecycleError):
+        return None
+    return grant.accepted_host
 
 
 def review_class_for(

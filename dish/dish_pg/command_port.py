@@ -33,6 +33,7 @@ from .document_authority import (
     destination_gid,
     held_document,
     parse_canonical_document,
+    prepared_change_document,
     prepared_document,
     ready_document,
     resumed_document,
@@ -56,6 +57,7 @@ from .transition import ProjectionService
 from dish_tool.dish_urls import dish_uuid_from_url
 from dish_tool.errors import DishRuleError
 from dish_tool.governed_diff import (
+    GOVERNED_FIELDS,
     agent_attested_decision_appends,
     canonical_diff,
     governed_changes_requiring_authorization,
@@ -499,6 +501,10 @@ class PostgresCommandPort:
                         semantic_proposal_queued=bool(
                             data.get("semantic_proposal_queued")
                         ),
+                        non_material_checkin=(
+                            call.command_name == "prepare"
+                            and data.get("handoff") == "checked-in"
+                        ),
                     ),
                     result_data=data,
                     projection_origin=self.projection_origin,
@@ -911,11 +917,15 @@ class PostgresCommandPort:
             )
         return payload, candidate_parts, expected_required
 
-    def _available_semantic_proposal_grants(
+    def _available_governed_change_grants(
         self,
-        requirement: wf.HumanReviewRequirement,
+        *,
+        generation_id: uuid.UUID,
+        task_id: uuid.UUID,
+        operation_id: uuid.UUID,
         required: list[dict[str, Any]],
     ) -> list[tuple[wf.MarcoAuthorizationGrant, wf.MarcoAuthorizationState]]:
+        """Match exact available Marco grants for one governed candidate diff."""
         rows = list(
             self.session.execute(
                 select(wf.MarcoAuthorizationGrant, wf.MarcoAuthorizationState)
@@ -925,22 +935,18 @@ class PostgresCommandPort:
                     == wf.MarcoAuthorizationGrant.grant_id,
                 )
                 .where(
-                    wf.MarcoAuthorizationGrant.generation_id
-                    == requirement.generation_id,
-                    wf.MarcoAuthorizationGrant.task_id == requirement.task_id,
+                    wf.MarcoAuthorizationGrant.generation_id == generation_id,
+                    wf.MarcoAuthorizationGrant.task_id == task_id,
                     wf.MarcoAuthorizationState.state == "available",
                 )
             ).all()
         )
         available = [
-            row
-            for row in rows
-            if row[0].operation_id in {None, requirement.operation_id}
+            row for row in rows if row[0].operation_id in {None, operation_id}
         ]
+        # Prefer a grant bound to this exact operation over a task-wide grant.
         available.sort(key=lambda row: row[0].operation_id is None)
-        matched: list[
-            tuple[wf.MarcoAuthorizationGrant, wf.MarcoAuthorizationState]
-        ] = []
+        matched: list[tuple[wf.MarcoAuthorizationGrant, wf.MarcoAuthorizationState]] = []
         used: set[uuid.UUID] = set()
         for change in required:
             found = None
@@ -959,6 +965,18 @@ class PostgresCommandPort:
             used.add(found[0].grant_id)
             matched.append(found)
         return matched
+
+    def _available_semantic_proposal_grants(
+        self,
+        requirement: wf.HumanReviewRequirement,
+        required: list[dict[str, Any]],
+    ) -> list[tuple[wf.MarcoAuthorizationGrant, wf.MarcoAuthorizationState]]:
+        return self._available_governed_change_grants(
+            generation_id=requirement.generation_id,
+            task_id=requirement.task_id,
+            operation_id=requirement.operation_id,
+            required=required,
+        )
 
     def _semantic_proposal_status(
         self, operation: wf.WorkflowOperation
@@ -2339,6 +2357,246 @@ class PostgresCommandPort:
             )
         return operation
 
+    def _change_intent(self, operation: wf.WorkflowOperation) -> tuple[str, str]:
+        creation_execution_id = operation.creation_execution_id
+        if creation_execution_id is None:
+            raise CommandRuleError(
+                "CHANGE_INTENT_MISSING",
+                "change operation is missing its durable start execution",
+            )
+        start_execution = self.session.get(wf.CommandExecution, creation_execution_id)
+        intent = dict(start_execution.canonical_intent) if start_execution is not None else {}
+        arguments = dict(intent.get("arguments") or {})
+        change_level = str(arguments.get("change_level") or "").strip()
+        change_reason = str(arguments.get("change_reason") or "").strip()
+        if (
+            start_execution is None
+            or start_execution.command_name != "start"
+            or change_level not in {"small", "large"}
+            or not change_reason
+        ):
+            raise CommandRuleError(
+                "CHANGE_INTENT_MISSING",
+                "change operation is missing its durable material-change intent",
+            )
+        return change_level, change_reason
+
+    def _signed_baseline_signoff(
+        self, task_id: uuid.UUID, content_version_id: uuid.UUID
+    ) -> wf.VerificationSignoff | None:
+        current_version_id: uuid.UUID | None = content_version_id
+        expected_inherited_signoff_id: uuid.UUID | None = None
+        visited: set[uuid.UUID] = set()
+        while current_version_id is not None:
+            if current_version_id in visited:
+                return None
+            visited.add(current_version_id)
+
+            signoff = self.session.scalar(
+                select(wf.VerificationSignoff)
+                .where(
+                    wf.VerificationSignoff.task_id == task_id,
+                    wf.VerificationSignoff.signed_content_version_id
+                    == current_version_id,
+                )
+                .order_by(wf.VerificationSignoff.signed_at.desc())
+                .limit(1)
+            )
+            if signoff is not None:
+                if (
+                    expected_inherited_signoff_id is not None
+                    and signoff.signoff_id != expected_inherited_signoff_id
+                ):
+                    return None
+                return signoff
+
+            version = self.session.get(models.ContentVersion, current_version_id)
+            if (
+                version is None
+                or version.task_id != task_id
+                or version.command_execution_id is None
+                or version.predecessor_content_version_id is None
+            ):
+                return None
+            prepare_execution = self.session.get(
+                wf.CommandExecution, version.command_execution_id
+            )
+            if (
+                prepare_execution is None
+                or prepare_execution.command_name != "prepare"
+                or prepare_execution.operation_id is None
+            ):
+                return None
+            checkin_operation = self.session.get(
+                wf.WorkflowOperation, prepare_execution.operation_id
+            )
+            if (
+                checkin_operation is None
+                or checkin_operation.task_id != task_id
+                or checkin_operation.lifecycle != "completed"
+                or checkin_operation.terminal_outcome != "non_material_checkin"
+            ):
+                return None
+            step = self.session.scalar(
+                select(wf.OperationStep)
+                .where(
+                    wf.OperationStep.operation_id == checkin_operation.operation_id,
+                    wf.OperationStep.command_execution_id
+                    == prepare_execution.execution_id,
+                    wf.OperationStep.outcome == "complete",
+                )
+                .order_by(wf.OperationStep.step_sequence.desc())
+                .limit(1)
+            )
+            evidence = dict(step.evidence or {}) if step is not None else {}
+            if (
+                evidence.get("handoff") != "checked-in"
+                or evidence.get("content_version_id") != str(current_version_id)
+            ):
+                return None
+            inherited_signoff_id = evidence.get("inherited_signoff_id")
+            if inherited_signoff_id is not None:
+                try:
+                    inherited_signoff_uuid = uuid.UUID(str(inherited_signoff_id))
+                except ValueError:
+                    return None
+                if (
+                    expected_inherited_signoff_id is not None
+                    and inherited_signoff_uuid != expected_inherited_signoff_id
+                ):
+                    return None
+                expected_inherited_signoff_id = inherited_signoff_uuid
+            current_version_id = version.predecessor_content_version_id
+
+    def _reserve_change_prepare_authority(
+        self,
+        *,
+        call: CommandCall,
+        generation_id: uuid.UUID,
+        execution: wf.CommandExecution,
+        task: models.DishTask,
+        operation: wf.WorkflowOperation,
+        before: Any,
+        after: Any,
+    ) -> tuple[tuple[str, ...], list[tuple[uuid.UUID, uuid.UUID]], list[dict[str, Any]]]:
+        """Apply legacy-equivalent governed-change and Decision-attestation gates.
+
+        ``governed_change_fields`` is only an explicit provenance attestation for
+        an append-only attributed Marco Decision. Formal authority for every
+        other governed field comes from exact durable PostgreSQL Marco grants.
+        """
+        declared = tuple(
+            dict.fromkeys(
+                str(value).strip()
+                for value in (call.arguments.get("governed_change_fields") or ())
+                if str(value).strip()
+            )
+        )
+        unknown = sorted(set(declared) - set(GOVERNED_FIELDS))
+        if unknown:
+            raise CommandRuleError(
+                "INVALID_ARGUMENT",
+                "governed_change_fields contains unsupported field names",
+                http_status=400,
+                data={
+                    "rule": "governed_change_field_invalid",
+                    "unsupported": unknown,
+                    "allowed": list(GOVERNED_FIELDS),
+                },
+            )
+        if set(declared) - {"Decisions"}:
+            raise CommandRuleError(
+                "INVALID_ARGUMENT",
+                "prepare accepts governed_change_fields only to attest an appended Marco Decision",
+                http_status=400,
+                data={
+                    "rule": "prepare_governed_change_field_not_applicable",
+                    "allowed": ["Decisions"],
+                },
+            )
+
+        try:
+            validate_semantic_proposal(before, after)
+            newly_attributed = agent_attested_decision_appends(before, after)
+        except DishRuleError as exc:
+            raise CommandRuleError(
+                str(exc.code),
+                str(exc),
+                http_status=409,
+                data=dict(getattr(exc, "details", {}) or {}),
+            ) from exc
+
+        attested: tuple[str, ...] = ()
+        if "Decisions" in declared:
+            if not newly_attributed:
+                raise CommandRuleError(
+                    "INVALID_ARGUMENT",
+                    "Decisions attestation applies only to newly recorded attributed Marco choices",
+                    http_status=400,
+                    data={"rule": "decision_attestation_not_applicable"},
+                )
+            attested = newly_attributed
+        elif newly_attributed:
+            raise CommandRuleError(
+                "CONFIRMATION_REQUIRED",
+                "an attributed Marco Decision append requires explicit agent attestation",
+                data={
+                    "rule": "decision_attestation_required",
+                    "appended_decisions": list(newly_attributed),
+                    "required_governed_change_field": "Decisions",
+                    "instruction": (
+                        "Retry the same exact candidate with governed_change_fields including "
+                        "Decisions only if Marco actually stated these choices in the conversation. "
+                        "This records agent-attested provenance, not formal governed authorization."
+                    ),
+                    "fresh_request_id": True,
+                },
+            )
+
+        try:
+            required_changes = governed_changes_requiring_authorization(
+                before, after, agent_attested_decisions=attested
+            )
+        except DishRuleError as exc:
+            raise CommandRuleError(
+                str(exc.code),
+                str(exc),
+                http_status=409,
+                data=dict(getattr(exc, "details", {}) or {}),
+            ) from exc
+        required = [
+            {
+                "field": change.field,
+                "before": _json_safe(change.before),
+                "after": _json_safe(change.after),
+            }
+            for change in required_changes
+        ]
+        grants = self._available_governed_change_grants(
+            generation_id=generation_id,
+            task_id=task.task_id,
+            operation_id=operation.operation_id,
+            required=required,
+        )
+        if len(grants) != len(required):
+            raise CommandRuleError(
+                "GOVERNED_AUTHORIZATION_REQUIRED",
+                "change prepare is not authorized for every exact governed change",
+                data={"required_authorizations": required},
+            )
+
+        reservations: list[tuple[uuid.UUID, uuid.UUID]] = []
+        for grant, _state in grants:
+            token = self.uuid_factory()
+            self.workflow.reserve_marco_authorization(
+                grant_id=grant.grant_id,
+                reservation_token=token,
+                execution_id=execution.execution_id,
+                reserved_at=call.now,
+            )
+            reservations.append((grant.grant_id, token))
+        return attested, reservations, required
+
     def _prepare(self, call, generation, binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None
         if operation.lifecycle != "open":
@@ -2358,6 +2616,11 @@ class PostgresCommandPort:
         )
         file_text = call.arguments.get("file_text")
         body_value = call.arguments.get("body")
+        change_preparation = None
+        inherited_signoff = None
+        agent_attested_decisions: tuple[str, ...] = ()
+        authorization_reservations: list[tuple[uuid.UUID, uuid.UUID]] = []
+        required_authorizations: list[dict[str, Any]] = []
         if operation.kind == "initial" and file_text is not None:
             parts = prepared_document(
                 str(file_text),
@@ -2365,6 +2628,50 @@ class PostgresCommandPort:
                 model=str(call.arguments.get("model")),
                 at=call.now,
                 protocol_release=binding.protocol_release,
+            )
+        elif operation.kind == "change" and file_text is not None:
+            requested_classification = call.arguments.get("material_classification")
+            prior_parts = parse_canonical_document(
+                title=prior.title, body=prior.body
+            )
+            change_level, change_reason = self._change_intent(operation)
+            change_preparation = prepared_change_document(
+                str(file_text),
+                prior=prior_parts.document,
+                requested_classification=(
+                    str(requested_classification)
+                    if requested_classification is not None
+                    else None
+                ),
+                change_level=change_level,
+                change_reason=change_reason,
+                agent=str(call.arguments.get("agent")),
+                model=str(call.arguments.get("model")),
+                at=call.now,
+                protocol_release=binding.protocol_release,
+            )
+            parts = change_preparation.parts
+            if change_preparation.effective_classification != "material":
+                inherited_signoff = self._signed_baseline_signoff(
+                    task.task_id, prior.content_version_id
+                )
+                if inherited_signoff is None:
+                    raise CommandRuleError(
+                        "NON_MATERIAL_SIGNED_BASELINE_MISSING",
+                        "signed check-in requires an exact signed baseline",
+                    )
+            (
+                agent_attested_decisions,
+                authorization_reservations,
+                required_authorizations,
+            ) = self._reserve_change_prepare_authority(
+                call=call,
+                generation_id=generation.generation_id,
+                execution=execution,
+                task=task,
+                operation=operation,
+                before=prior_parts.document,
+                after=parts.document,
             )
         else:
             parts = parse_canonical_document(
@@ -2383,19 +2690,34 @@ class PostgresCommandPort:
             predecessor_content_version_id=prior.content_version_id,
             at=call.now,
         )
-        verification_section_id = self._section_for_role(
-            generation.generation_id,
-            "verification_queue",
-            missing_code="VERIFICATION_QUEUE_MISSING",
-            missing_message="active registry has no Verification Queue",
+        for grant_id, token in authorization_reservations:
+            self.workflow.consume_marco_authorization(
+                grant_id=grant_id,
+                reservation_token=token,
+                execution_id=execution.execution_id,
+                bound_result_id=version_id,
+                consumed_at=call.now,
+            )
+        non_material_checkin = (
+            change_preparation is not None
+            and change_preparation.effective_classification != "material"
         )
-        self._set_placement(
-            generation.generation_id,
-            task.task_id,
-            verification_section_id,
-            execution.execution_id,
-            call.now,
-        )
+        verification_section_id = None
+        cycle = None
+        if not non_material_checkin:
+            verification_section_id = self._section_for_role(
+                generation.generation_id,
+                "verification_queue",
+                missing_code="VERIFICATION_QUEUE_MISSING",
+                missing_message="active registry has no Verification Queue",
+            )
+            self._set_placement(
+                generation.generation_id,
+                task.task_id,
+                verification_section_id,
+                execution.execution_id,
+                call.now,
+            )
         author_lease = self.session.scalar(
             select(wf.ServiceLease).where(
                 wf.ServiceLease.operation_id == operation.operation_id,
@@ -2409,11 +2731,54 @@ class PostgresCommandPort:
                 "released",
                 execution,
                 call.now,
-                "candidate prepared for Verification",
+                (
+                    "non-material change checked in"
+                    if non_material_checkin
+                    else "candidate prepared for Verification"
+                ),
             )
-        operation.phase = "await_verification"
-        operation.persisted_actions = ["inspect"]
+        if non_material_checkin:
+            operation.lifecycle = "completed"
+            operation.phase = "completed"
+            operation.persisted_actions = []
+            operation.terminal_outcome = "non_material_checkin"
+            operation.terminal_at = call.now
+        else:
+            operation.phase = "await_verification"
+            operation.persisted_actions = ["inspect"]
         operation.operation_revision += 1
+        step_evidence: dict[str, Any] = {
+            "content_version_id": str(version_id),
+        }
+        if verification_section_id is not None:
+            step_evidence["section_id"] = str(verification_section_id)
+        if change_preparation is not None:
+            step_evidence["handoff"] = (
+                "checked-in" if non_material_checkin else "verification"
+            )
+            if agent_attested_decisions:
+                step_evidence["agent_attested_decisions"] = list(agent_attested_decisions)
+            if authorization_reservations:
+                step_evidence["authorization_grant_ids"] = [
+                    str(grant_id) for grant_id, _token in authorization_reservations
+                ]
+                step_evidence["required_authorizations"] = required_authorizations
+            if change_preparation.body_changed:
+                step_evidence["material_classification"] = {
+                    "requested": change_preparation.requested_classification,
+                    "effective": change_preparation.effective_classification,
+                    "forced_material_reasons": list(
+                        change_preparation.forced_material_reasons
+                    ),
+                    "effective_change_level": change_preparation.effective_change_level,
+                }
+            if inherited_signoff is not None:
+                step_evidence["inherited_signoff_id"] = str(
+                    inherited_signoff.signoff_id
+                )
+                step_evidence["inherited_signoff_cycle_id"] = str(
+                    inherited_signoff.cycle_id
+                )
         self.session.add(
             wf.OperationStep(
                 step_id=self.uuid_factory(),
@@ -2422,20 +2787,41 @@ class PostgresCommandPort:
                 step_sequence=self._next_step(operation.operation_id),
                 outcome="complete",
                 command_execution_id=execution.execution_id,
-                evidence={
-                    "content_version_id": str(version_id),
-                    "section_id": str(verification_section_id),
-                },
+                evidence=step_evidence,
                 occurred_at=call.now,
             )
         )
-        cycle = self.workflow.open_verification_cycle(
-            cycle_id=self.uuid_factory(),
-            execution_id=execution.execution_id,
-            operation_id=operation.operation_id,
-            reviewed_content_version_id=version_id,
-            created_at=call.now,
-        )
+        if agent_attested_decisions:
+            self.session.add(
+                wf.GovernedAuditEvent(
+                    audit_event_id=self.uuid_factory(),
+                    generation_id=generation.generation_id,
+                    request_id=execution.request_id,
+                    command_execution_id=execution.execution_id,
+                    task_id=task.task_id,
+                    operation_id=operation.operation_id,
+                    event_type="decision.agent_attested",
+                    actor=call.owner_id,
+                    payload={
+                        "agent": call.arguments.get("agent"),
+                        "run_id": str(call.run_id),
+                        "source": "agent-attested-conversation",
+                        "appended_decisions": list(agent_attested_decisions),
+                        "formal_marco_authorization": False,
+                        "before_decisions": list(prior_parts.document.decisions),
+                        "after_decisions": list(parts.document.decisions),
+                    },
+                    occurred_at=call.now,
+                )
+            )
+        if not non_material_checkin:
+            cycle = self.workflow.open_verification_cycle(
+                cycle_id=self.uuid_factory(),
+                execution_id=execution.execution_id,
+                operation_id=operation.operation_id,
+                reviewed_content_version_id=version_id,
+                created_at=call.now,
+            )
         self.session.flush()
         projection_id = self._project(
             generation.generation_id,
@@ -2445,20 +2831,47 @@ class PostgresCommandPort:
             {"content_version_id": str(version_id)},
             call.now,
         )
-        placement_projection_id = self._project(
-            generation.generation_id,
-            execution.execution_id,
-            task.task_id,
-            "move_task",
-            {"section_id": str(verification_section_id)},
-            call.now,
-        )
-        return {
+        placement_projection_id = None
+        if verification_section_id is not None:
+            placement_projection_id = self._project(
+                generation.generation_id,
+                execution.execution_id,
+                task.task_id,
+                "move_task",
+                {"section_id": str(verification_section_id)},
+                call.now,
+            )
+        result: dict[str, Any] = {
             "content_version_id": str(version_id),
-            "cycle_id": str(cycle.cycle_id),
+            "cycle_id": str(cycle.cycle_id) if cycle is not None else None,
             "projection_event_id": projection_id,
             "placement_projection_event_id": placement_projection_id,
         }
+        if change_preparation is not None:
+            result["handoff"] = (
+                "checked-in" if non_material_checkin else "verification"
+            )
+        if authorization_reservations:
+            result["authorization_grant_ids"] = [
+                str(grant_id) for grant_id, _token in authorization_reservations
+            ]
+        if agent_attested_decisions:
+            result["agent_attested_decisions"] = list(agent_attested_decisions)
+        if change_preparation is not None and change_preparation.body_changed:
+            result["material_classification"] = {
+                "classified_subject": "canonical body diff from the signed baseline",
+                "requested": change_preparation.requested_classification,
+                "effective": change_preparation.effective_classification,
+                "forced_material_reasons": list(
+                    change_preparation.forced_material_reasons
+                ),
+                "route": (
+                    "signed-check-in"
+                    if non_material_checkin
+                    else "verification"
+                ),
+            }
+        return result
 
     def _inspect(self, call, generation, _binding, execution, task, operation) -> dict[str, Any]:
         assert task is not None and operation is not None

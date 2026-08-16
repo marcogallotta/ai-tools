@@ -66,7 +66,7 @@ def pytest_addoption(parser):
         "--smoke",
         action="store_true",
         default=False,
-        help="run only tests explicitly marked as smoke",
+        help="run only the launch-critical invariant smoke core",
     )
     parser.addoption(
         "--database-boundary",
@@ -195,7 +195,10 @@ def _select_items(config, items):
         selected = [
             item
             for item in items
-            if item.get_closest_marker("smoke") is not None
+            if any(
+                item.get_closest_marker(marker) is not None
+                for marker in REQUIRED_SMOKE_INVARIANTS
+            )
             and item.get_closest_marker("full_suite_only") is None
             and item.get_closest_marker(QUARANTINE_MARKER) is None
         ]

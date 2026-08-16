@@ -49,9 +49,12 @@ def test_missing_repository_bootstrap_fails_closed():
 
 def test_current_edge_requires_exact_rule_classification():
  m,s=kernels.load_canonical(); bad=copy.deepcopy(m); edge=next(x for x in bad['change_history'] if x['to_version']==bad['canonical_version'])
- edge['changes']=[x for x in edge['changes'] if x['rule_id']!='canonical-version-gate']
+ removed=edge['changes'][0]
+ edge['changes']=edge['changes'][1:]
  with pytest.raises(kernels.KernelError,match='classification mismatch'): kernels._validate_current_edge_classification(bad,s)
- drift=kernels.classify_project_drift(edge['from_version'],'review','review-write',manifest=bad,source=s)
+ role=next(r for r in removed['roles'] if r!='*') if '*' not in removed['roles'] else 'review'
+ boundary=next(b for b in removed['action_boundaries'] if b!='*') if '*' not in removed['action_boundaries'] else 'review-write'
+ drift=kernels.classify_project_drift(edge['from_version'],role,boundary,manifest=bad,source=s)
  assert drift['state']=='integrity_error' and drift['block'] and not drift['resync_required']
 
 def test_classified_stable_rule_removal_is_representable_and_unknown_ids_still_fail():
@@ -254,8 +257,11 @@ def test_current_project_is_silent_and_no_zero_prefix():
  assert ok is True and message=='' and '0/3' not in message
 
 def test_d96_plus_additive_drift_continues_without_resync():
- m,s=kernels.load_canonical(); parent=m['change_history'][-1]['from_version']
- d=kernels.classify_project_drift(parent,'implementation','handoff',manifest=m,source=s)
+ m,s=kernels.load_canonical(); edge=m['change_history'][-1]; parent=edge['from_version']
+ change=next(x for x in edge['changes'] if x['impact']=='additive')
+ role=next(r for r in change['roles'] if r!='*') if '*' not in change['roles'] else 'review'
+ boundary=next(b for b in change['action_boundaries'] if b!='*') if '*' not in change['action_boundaries'] else 'review-write'
+ d=kernels.classify_project_drift(parent,role,boundary,manifest=m,source=s)
  assert not d['block'] and not d['resync_required'] and d['drift_level']==2
  assert d['indicator']=='PROJECT SETTINGS: OUTDATED · DRIFT 2/3'
 

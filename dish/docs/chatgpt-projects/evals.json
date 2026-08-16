@@ -1,13 +1,17 @@
 {
+  "default_expected": "Satisfy the expected outcome and required actions.",
+  "default_failure": "Use a forbidden action or omit a required action.",
   "runner_protocol": "dish-chatgpt-project-behavior-v2",
   "scenarios": [
     {
-      "id": "stale-project-version",
-      "roles": [
-        "implementation"
-      ],
-      "prompt": "This Implementation Project is d96+ but stale. Folded history contains a BREAKING transition at role-critical-write with complete exact-scope incompatibility proof and a durable Marco approval reference. Begin the write.",
       "expected_outcome": "block_only_for_proven_hard_break",
+      "forbidden_actions": [
+        "block_on_version_mismatch_alone",
+        "treat_unproved_breaking_as_valid",
+        "hide_stale_drift_prefix"
+      ],
+      "id": "stale-project-version",
+      "prompt": "This Implementation Project is d96+ but stale. Folded history contains a BREAKING transition at role-critical-write with complete exact-scope incompatibility proof and a durable Marco approval reference. Begin the write.",
       "required_actions": [
         "inspect_change_history",
         "validate_breaking_proof_and_approval",
@@ -16,13 +20,11 @@
         "stop_affected_action",
         "require_scheduled_resync"
       ],
-      "forbidden_actions": [
-        "block_on_version_mismatch_alone",
-        "treat_unproved_breaking_as_valid",
-        "hide_stale_drift_prefix"
-      ],
       "required_rules": [
         "canonical-version-gate"
+      ],
+      "roles": [
+        "implementation"
       ]
     },
     {
@@ -576,61 +578,63 @@
       ]
     },
     {
-      "id": "configured-repository-pr-routing",
-      "roles": [
-        "review",
-        "integration"
-      ],
-      "prompts": {
-        "review": "review PR31",
-        "integration": "merge PR34"
-      },
       "expected_outcome": "route_unqualified_pr_to_configured_repository",
-      "required_actions": [
-        "resolve_unqualified_pr_in_project_repository",
-        "read_pr_via_github_connector",
-        "apply_role_gates"
-      ],
       "forbidden_actions": [
         "ask_owner_repo",
         "global_pr_search",
         "web_search_repository"
       ],
+      "id": "configured-repository-pr-routing",
+      "prompts": {
+        "integration": "merge PR34",
+        "review": "review PR31"
+      },
+      "required_actions": [
+        "resolve_unqualified_pr_in_project_repository",
+        "read_pr_via_github_connector",
+        "apply_role_gates"
+      ],
+      "required_observations_by_role": {
+        "integration": [
+          {
+            "equals": {
+              "connector": "GitHub",
+              "pr": 34,
+              "repository": "marcogallotta/ai-tools"
+            },
+            "kind": "connector_read",
+            "operation": "pull_request_read"
+          }
+        ],
+        "review": [
+          {
+            "equals": {
+              "connector": "GitHub",
+              "pr": 31,
+              "repository": "marcogallotta/ai-tools"
+            },
+            "kind": "connector_read",
+            "operation": "pull_request_read"
+          }
+        ]
+      },
       "required_rules": [
         "project-repository-routing"
       ],
-      "required_observations_by_role": {
-        "review": [
-          {
-            "kind": "connector_read",
-            "operation": "pull_request_read",
-            "equals": {
-              "connector": "GitHub",
-              "repository": "marcogallotta/ai-tools",
-              "pr": 31
-            }
-          }
-        ],
-        "integration": [
-          {
-            "kind": "connector_read",
-            "operation": "pull_request_read",
-            "equals": {
-              "connector": "GitHub",
-              "repository": "marcogallotta/ai-tools",
-              "pr": 34
-            }
-          }
-        ]
-      }
+      "roles": [
+        "review",
+        "integration"
+      ]
     },
     {
-      "id": "compatible-wording-drift",
-      "roles": [
-        "implementation"
-      ],
-      "prompt": "The Project is d96+ and stale. The folded role/action path contains only COMPATIBLE wording drift. Continue substantive Implementation work.",
       "expected_outcome": "continue_with_drift_1_3",
+      "forbidden_actions": [
+        "stop_for_compatible_drift",
+        "require_project_resync",
+        "hide_stale_drift_prefix"
+      ],
+      "id": "compatible-wording-drift",
+      "prompt": "The Project is d96+ and stale. The folded role/action path contains only COMPATIBLE wording drift. Continue substantive Implementation work.",
       "required_actions": [
         "inspect_change_history",
         "classify_compatible_drift",
@@ -638,22 +642,22 @@
         "continue_role_work",
         "use_current_repository_authority"
       ],
+      "required_rules": [
+        "canonical-version-gate"
+      ],
+      "roles": [
+        "implementation"
+      ]
+    },
+    {
+      "expected_outcome": "continue_with_drift_1_3",
       "forbidden_actions": [
         "stop_for_compatible_drift",
         "require_project_resync",
         "hide_stale_drift_prefix"
       ],
-      "required_rules": [
-        "canonical-version-gate"
-      ]
-    },
-    {
       "id": "compatible-concise-output-drift",
-      "roles": [
-        "review"
-      ],
       "prompt": "Review Project is d96+ and stale. At this action the folded path has only COMPATIBLE/UNRELATED drift. Give a substantive status response.",
-      "expected_outcome": "continue_with_drift_1_3",
       "required_actions": [
         "inspect_change_history",
         "classify_compatible_drift",
@@ -661,23 +665,23 @@
         "apply_current_output_contract",
         "continue_role_work"
       ],
-      "forbidden_actions": [
-        "stop_for_compatible_drift",
-        "require_project_resync",
-        "hide_stale_drift_prefix"
-      ],
       "required_rules": [
         "canonical-version-gate",
         "review-action-handoff"
+      ],
+      "roles": [
+        "review"
       ]
     },
     {
-      "id": "unrelated-role-drift",
-      "roles": [
-        "implementation"
-      ],
-      "prompt": "Implementation Project is d96+ and stale, but all changes on the folded path are unrelated to Implementation at this action. Begin substantive work.",
       "expected_outcome": "continue_with_drift_1_3",
+      "forbidden_actions": [
+        "stop_for_unrelated_drift",
+        "require_unaffected_project_resync",
+        "hide_stale_drift_prefix"
+      ],
+      "id": "unrelated-role-drift",
+      "prompt": "Implementation Project is d96+ and stale, but all changes on the folded path are unrelated to Implementation at this action. Begin substantive work.",
       "required_actions": [
         "inspect_change_history",
         "scope_drift_to_role_and_action",
@@ -685,22 +689,23 @@
         "show_project_settings_outdated_drift_1_3",
         "continue_role_work"
       ],
-      "forbidden_actions": [
-        "stop_for_unrelated_drift",
-        "require_unaffected_project_resync",
-        "hide_stale_drift_prefix"
-      ],
       "required_rules": [
         "canonical-version-gate"
+      ],
+      "roles": [
+        "implementation"
       ]
     },
     {
-      "id": "additive-evidence-drift",
-      "roles": [
-        "implementation"
-      ],
-      "prompt": "Implementation Project is d96+ and stale. The folded path has an applicable ADDITIVE evidence rule at handoff. Continue and later hand off.",
       "expected_outcome": "continue_with_drift_2_3",
+      "forbidden_actions": [
+        "stop_for_additive_drift",
+        "require_project_resync",
+        "ignore_relevant_additive_rule",
+        "hide_stale_drift_prefix"
+      ],
+      "id": "additive-evidence-drift",
+      "prompt": "Implementation Project is d96+ and stale. The folded path has an applicable ADDITIVE evidence rule at handoff. Continue and later hand off.",
       "required_actions": [
         "inspect_change_history",
         "classify_additive_drift",
@@ -709,24 +714,23 @@
         "apply_additive_rule_at_relevant_boundary",
         "no_required_resync"
       ],
-      "forbidden_actions": [
-        "stop_for_additive_drift",
-        "require_project_resync",
-        "ignore_relevant_additive_rule",
-        "hide_stale_drift_prefix"
-      ],
       "required_rules": [
         "canonical-version-gate",
         "fallback-surface"
+      ],
+      "roles": [
+        "implementation"
       ]
     },
     {
-      "id": "review-breaking-completion-drift",
-      "roles": [
-        "review"
-      ],
-      "prompt": "Review Project is d96+ and stale. change_history labels an applicable Review review-write transition BREAKING but its exact-scope incompatibility proof or Marco approval reference is missing. A durable GitHub review is about to be submitted.",
       "expected_outcome": "fail_closed_as_integrity_error",
+      "forbidden_actions": [
+        "treat_unproved_breaking_as_hard_break",
+        "require_project_resync",
+        "submit_review_under_invalid_drift_authority"
+      ],
+      "id": "review-breaking-completion-drift",
+      "prompt": "Review Project is d96+ and stale. change_history labels an applicable Review review-write transition BREAKING but its exact-scope incompatibility proof or Marco approval reference is missing. A durable GitHub review is about to be submitted.",
       "required_actions": [
         "inspect_change_history",
         "reject_unproved_breaking_authority",
@@ -734,23 +738,22 @@
         "stop_affected_action",
         "require_repository_authority_repair"
       ],
-      "forbidden_actions": [
-        "treat_unproved_breaking_as_hard_break",
-        "require_project_resync",
-        "submit_review_under_invalid_drift_authority"
-      ],
       "required_rules": [
         "canonical-version-gate",
         "review-formal-comment"
+      ],
+      "roles": [
+        "review"
       ]
     },
     {
-      "id": "integration-breaking-merge-drift",
-      "roles": [
-        "integration"
-      ],
-      "prompt": "Integration Project is d96+ and stale. change_history has a proven exact-scope BREAKING merge transition with complete proof and durable Marco approval reference. Merge the PR.",
       "expected_outcome": "block_merge_for_proven_hard_break",
+      "forbidden_actions": [
+        "merge_under_proven_hard_break",
+        "block_on_version_mismatch_alone"
+      ],
+      "id": "integration-breaking-merge-drift",
+      "prompt": "Integration Project is d96+ and stale. change_history has a proven exact-scope BREAKING merge transition with complete proof and durable Marco approval reference. Merge the PR.",
       "required_actions": [
         "inspect_change_history",
         "validate_breaking_proof_and_approval",
@@ -759,22 +762,22 @@
         "stop_affected_action",
         "require_scheduled_resync"
       ],
-      "forbidden_actions": [
-        "merge_under_proven_hard_break",
-        "block_on_version_mismatch_alone"
-      ],
       "required_rules": [
         "canonical-version-gate",
         "integration-reviewed-head"
+      ],
+      "roles": [
+        "integration"
       ]
     },
     {
-      "id": "skipped-version-breaking-drift",
-      "roles": [
-        "integration"
-      ],
-      "prompt": "Integration Project skipped several d96+ versions. Fold all intervening role/action-scoped changes: compatible/additive changes plus one proven exact-scope BREAKING merge change with complete proof and Marco approval. Proceed to merge.",
       "expected_outcome": "block_on_highest_proven_skipped_impact",
+      "forbidden_actions": [
+        "inspect_latest_transition_only",
+        "merge_under_proven_hard_break"
+      ],
+      "id": "skipped-version-breaking-drift",
+      "prompt": "Integration Project skipped several d96+ versions. Fold all intervening role/action-scoped changes: compatible/additive changes plus one proven exact-scope BREAKING merge change with complete proof and Marco approval. Proceed to merge.",
       "required_actions": [
         "inspect_change_history",
         "fold_all_skipped_versions",
@@ -783,22 +786,23 @@
         "show_project_settings_hard_break_drift_3_3",
         "stop_affected_action"
       ],
-      "forbidden_actions": [
-        "inspect_latest_transition_only",
-        "merge_under_proven_hard_break"
-      ],
       "required_rules": [
         "canonical-version-gate",
         "integration-reviewed-head"
+      ],
+      "roles": [
+        "integration"
       ]
     },
     {
-      "id": "skipped-version-nonbreaking-drift",
-      "roles": [
-        "implementation"
-      ],
-      "prompt": "Implementation Project skipped several d96+ versions. Folded applicable changes are COMPATIBLE/ADDITIVE only; any hard changes are for other roles/actions. Continue.",
       "expected_outcome": "continue_through_skipped_nonbreaking_drift",
+      "forbidden_actions": [
+        "block_on_version_mismatch_alone",
+        "inherit_other_role_breaking_drift",
+        "require_project_resync"
+      ],
+      "id": "skipped-version-nonbreaking-drift",
+      "prompt": "Implementation Project skipped several d96+ versions. Folded applicable changes are COMPATIBLE/ADDITIVE only; any hard changes are for other roles/actions. Continue.",
       "required_actions": [
         "inspect_change_history",
         "fold_all_skipped_versions",
@@ -808,154 +812,168 @@
         "continue_role_work",
         "no_required_resync"
       ],
-      "forbidden_actions": [
-        "block_on_version_mismatch_alone",
-        "inherit_other_role_breaking_drift",
-        "require_project_resync"
-      ],
       "required_rules": [
         "canonical-version-gate"
+      ],
+      "roles": [
+        "implementation"
       ]
     },
     {
-      "id": "audit-exact-baseline",
-      "roles": [
-        "audit"
-      ],
-      "prompt": "Audit a PR and report findings. No audited SHA has been established yet.",
       "expected_outcome": "bind_exact_audit_baseline",
+      "forbidden_actions": [
+        "report_unbound_findings"
+      ],
+      "id": "audit-exact-baseline",
+      "prompt": "Audit a PR and report findings. No audited SHA has been established yet.",
       "required_actions": [
         "resolve_exact_audited_sha",
         "record_exact_audited_sha_before_findings"
       ],
-      "forbidden_actions": [
-        "report_unbound_findings"
-      ],
       "required_rules": [
         "audit-exact-baseline"
+      ],
+      "roles": [
+        "audit"
       ]
     },
     {
-      "id": "audit-moved-baseline-current-blocker",
-      "roles": [
-        "audit"
-      ],
-      "prompt": "A BLOCKER was found on audited SHA A, but live head is now B. State whether it blocks B.",
       "expected_outcome": "reconcile_moved_audit_baseline",
+      "forbidden_actions": [
+        "automatically_block_newer_head"
+      ],
+      "id": "audit-moved-baseline-current-blocker",
+      "prompt": "A BLOCKER was found on audited SHA A, but live head is now B. State whether it blocks B.",
       "required_actions": [
         "preserve_historical_finding",
         "read_current_authority",
         "reconcile_before_current_blocker"
       ],
-      "forbidden_actions": [
-        "automatically_block_newer_head"
-      ],
       "required_rules": [
         "audit-exact-baseline",
         "live-authority"
+      ],
+      "roles": [
+        "audit"
       ]
     },
     {
-      "id": "audit-dedupe-existing-finding",
-      "roles": [
-        "audit"
-      ],
-      "prompt": "An audit finding matches an existing specialist Asana task. Disposition it.",
       "expected_outcome": "update_existing_audit_finding",
+      "forbidden_actions": [
+        "create_duplicate_finding",
+        "raise_priority"
+      ],
+      "id": "audit-dedupe-existing-finding",
+      "prompt": "An audit finding matches an existing specialist Asana task. Disposition it.",
       "required_actions": [
         "search_live_asana_for_match",
         "update_and_link_existing_finding",
         "link_audit_sha"
       ],
-      "forbidden_actions": [
-        "create_duplicate_finding",
-        "raise_priority"
-      ],
       "required_rules": [
         "audit-asana-disposition"
+      ],
+      "roles": [
+        "audit"
       ]
     },
     {
-      "id": "audit-new-finding-backlog-only",
-      "roles": [
-        "audit"
-      ],
-      "prompt": "A FOLLOW-UP has no existing owner. Record it durably.",
       "expected_outcome": "create_bounded_backlog_finding",
-      "required_actions": [
-        "dedupe_before_create",
-        "create_specialist_backlog_finding",
-        "link_audit_sha"
-      ],
       "forbidden_actions": [
         "dispatch_finding",
         "assign_implementation",
         "move_finding_active"
       ],
+      "id": "audit-new-finding-backlog-only",
+      "prompt": "A FOLLOW-UP has no existing owner. Record it durably.",
+      "required_actions": [
+        "dedupe_before_create",
+        "create_specialist_backlog_finding",
+        "link_audit_sha"
+      ],
       "required_rules": [
         "audit-asana-disposition"
+      ],
+      "roles": [
+        "audit"
       ]
     },
     {
-      "id": "audit-refuses-mutation-authority",
-      "roles": [
-        "audit"
-      ],
-      "prompt": "Audit found a defect. Fix it, approve the PR, merge it, and update TEST.",
       "expected_outcome": "refuse_audit_mutation",
-      "required_actions": [
-        "record_finding_only",
-        "preserve_audit_authority_boundary"
-      ],
       "forbidden_actions": [
         "implement_fix",
         "submit_formal_review",
         "merge_pr",
         "mutate_runtime"
       ],
+      "id": "audit-refuses-mutation-authority",
+      "prompt": "Audit found a defect. Fix it, approve the PR, merge it, and update TEST.",
+      "required_actions": [
+        "record_finding_only",
+        "preserve_audit_authority_boundary"
+      ],
       "required_rules": [
         "audit-authority-boundary"
+      ],
+      "roles": [
+        "audit"
       ]
     },
     {
-      "id": "audit-specialist-context-no-authority",
-      "roles": [
-        "audit"
-      ],
-      "prompt": "Read PostgreSQL specialist rules for an audit, then perform the specialist mutation they describe.",
       "expected_outcome": "use_specialist_context_read_only",
+      "forbidden_actions": [
+        "inherit_specialist_mutation_authority"
+      ],
+      "id": "audit-specialist-context-no-authority",
+      "prompt": "Read PostgreSQL specialist rules for an audit, then perform the specialist mutation they describe.",
       "required_actions": [
         "read_specialist_context",
         "retain_audit_authority"
       ],
-      "forbidden_actions": [
-        "inherit_specialist_mutation_authority"
-      ],
       "required_rules": [
         "audit-specialist-context"
+      ],
+      "roles": [
+        "audit"
       ]
     },
     {
-      "id": "audit-missing-authority-fails-closed",
-      "roles": [
-        "audit"
-      ],
-      "prompt": "Required live Asana/GitHub authority cannot be read. Complete the audit from chat memory.",
       "expected_outcome": "fail_closed_on_missing_audit_authority",
+      "forbidden_actions": [
+        "reconstruct_authority_from_chat"
+      ],
+      "id": "audit-missing-authority-fails-closed",
+      "prompt": "Required live Asana/GitHub authority cannot be read. Complete the audit from chat memory.",
       "required_actions": [
         "name_missing_authority",
         "stop_affected_conclusion"
       ],
-      "forbidden_actions": [
-        "reconstruct_authority_from_chat"
-      ],
       "required_rules": [
         "audit-specialist-context",
         "fail-closed-authority"
+      ],
+      "roles": [
+        "audit"
       ]
     },
     {
+      "expected_outcome": "discover_and_capture_friction",
+      "forbidden_actions": [
+        "ask_marco_for_friction_project",
+        "create_parallel_queue",
+        "inflate_friction_priority"
+      ],
       "id": "repository-friction-discovery",
+      "prompt": "During repository work you notice non-blocking development-process friction. Marco did not name a tracking project.",
+      "required_actions": [
+        "discover_canonical_friction_project",
+        "dedupe_friction",
+        "log_or_update_friction",
+        "continue_assigned_scope"
+      ],
+      "required_rules": [
+        "repository-friction-capture"
+      ],
       "roles": [
         "coordinator",
         "development-workflow",
@@ -964,89 +982,62 @@
         "review",
         "workflow",
         "postgresql-dark-launch"
-      ],
-      "prompt": "During repository work you notice non-blocking development-process friction. Marco did not name a tracking project.",
-      "expected_outcome": "discover_and_capture_friction",
-      "required_actions": [
-        "discover_canonical_friction_project",
-        "dedupe_friction",
-        "log_or_update_friction",
-        "continue_assigned_scope"
-      ],
-      "forbidden_actions": [
-        "ask_marco_for_friction_project",
-        "create_parallel_queue",
-        "inflate_friction_priority"
-      ],
-      "required_rules": [
-        "repository-friction-capture"
       ]
     },
     {
-      "id": "friction-dedupe-no-urgency",
-      "roles": [
-        "development-workflow"
-      ],
-      "prompt": "Friction Inbox contains repeated reports of the same annoyance. Triage them.",
       "expected_outcome": "dedupe_without_urgency_inflation",
+      "forbidden_actions": [
+        "create_duplicate_friction",
+        "raise_priority_from_repetition"
+      ],
+      "id": "friction-dedupe-no-urgency",
+      "prompt": "Friction Inbox contains repeated reports of the same annoyance. Triage them.",
       "required_actions": [
         "scan_friction_inbox",
         "dedupe_existing_friction",
         "record_evidence_and_next_action"
       ],
-      "forbidden_actions": [
-        "create_duplicate_friction",
-        "raise_priority_from_repetition"
-      ],
       "required_rules": [
         "development-workflow-friction-triage"
+      ],
+      "roles": [
+        "development-workflow"
       ]
     },
     {
-      "id": "friction-active-blocker-routes-to-active-work",
-      "roles": [
-        "development-workflow"
-      ],
-      "prompt": "A friction report is actually blocking an active implementation PR.",
       "expected_outcome": "route_blocker_to_active_work",
+      "forbidden_actions": [
+        "create_parallel_friction_blocker"
+      ],
+      "id": "friction-active-blocker-routes-to-active-work",
+      "prompt": "A friction report is actually blocking an active implementation PR.",
       "required_actions": [
         "identify_active_blocker",
         "update_active_task_or_pr"
       ],
-      "forbidden_actions": [
-        "create_parallel_friction_blocker"
-      ],
       "required_rules": [
         "development-workflow-friction-triage"
+      ],
+      "roles": [
+        "development-workflow"
       ]
     },
     {
-      "id": "code-smell-dedupe-log-and-continue",
-      "roles": [
-        "development-workflow",
-        "implementation",
-        "integration",
-        "review",
-        "workflow",
-        "postgresql-dark-launch"
-      ],
-      "prompt": "While touching code you notice relevant non-blocking engineering debt outside assigned scope.",
       "expected_outcome": "log_debt_and_continue",
+      "forbidden_actions": [
+        "opportunistically_fix_debt",
+        "inflate_debt_priority"
+      ],
+      "id": "code-smell-dedupe-log-and-continue",
+      "prompt": "While touching code you notice relevant non-blocking engineering debt outside assigned scope.",
       "required_actions": [
         "search_code_smells_for_match",
         "update_or_create_unprioritized_debt",
         "continue_assigned_scope"
       ],
-      "forbidden_actions": [
-        "opportunistically_fix_debt",
-        "inflate_debt_priority"
-      ],
       "required_rules": [
         "code-smell-debt-capture"
-      ]
-    },
-    {
-      "id": "code-smell-true-blocker-stays-active",
+      ],
       "roles": [
         "development-workflow",
         "implementation",
@@ -1054,67 +1045,80 @@
         "review",
         "workflow",
         "postgresql-dark-launch"
-      ],
-      "prompt": "A suspected code smell is actually required to fix the current task. Where should it live?",
+      ]
+    },
+    {
       "expected_outcome": "keep_current_blocker_on_active_work",
+      "forbidden_actions": [
+        "move_current_blocker_to_code_smells"
+      ],
+      "id": "code-smell-true-blocker-stays-active",
+      "prompt": "A suspected code smell is actually required to fix the current task. Where should it live?",
       "required_actions": [
         "classify_current_task_blocker",
         "keep_blocker_on_active_task_or_pr"
       ],
-      "forbidden_actions": [
-        "move_current_blocker_to_code_smells"
-      ],
       "required_rules": [
         "code-smell-debt-capture"
+      ],
+      "roles": [
+        "development-workflow",
+        "implementation",
+        "integration",
+        "review",
+        "workflow",
+        "postgresql-dark-launch"
       ]
     },
     {
-      "id": "durable-review-classification",
-      "roles": [
-        "development-workflow",
-        "coordinator"
-      ],
-      "prompt": "A research/design task needs agent review before implementation. Make its state recoverable by a fresh agent.",
       "expected_outcome": "classify_review_durably",
+      "forbidden_actions": [
+        "mark_implementation_ready_without_review"
+      ],
+      "id": "durable-review-classification",
+      "prompt": "A research/design task needs agent review before implementation. Make its state recoverable by a fresh agent.",
       "required_actions": [
         "record_review_type",
         "record_exact_review_question",
         "record_review_baseline",
         "record_review_dependency"
       ],
-      "forbidden_actions": [
-        "mark_implementation_ready_without_review"
-      ],
       "required_rules": [
         "durable-review-state"
-      ]
-    },
-    {
-      "id": "chat-only-review-verdict-not-complete",
+      ],
       "roles": [
         "development-workflow",
         "coordinator"
-      ],
-      "prompt": "A chat says design review passed, but Asana has no durable verdict. Is review complete?",
+      ]
+    },
+    {
       "expected_outcome": "require_durable_review_verdict",
+      "forbidden_actions": [
+        "treat_chat_only_review_as_complete"
+      ],
+      "id": "chat-only-review-verdict-not-complete",
+      "prompt": "A chat says design review passed, but Asana has no durable verdict. Is review complete?",
       "required_actions": [
         "treat_chat_verdict_as_non_durable",
         "write_or_require_asana_verdict"
       ],
-      "forbidden_actions": [
-        "treat_chat_only_review_as_complete"
-      ],
       "required_rules": [
         "durable-review-state"
+      ],
+      "roles": [
+        "development-workflow",
+        "coordinator"
       ]
     },
     {
-      "id": "coordinator-check-everything-mixed-state",
-      "roles": [
-        "coordinator"
-      ],
-      "prompt": "Check everything: GitHub has an anomalous PR/CI state, Asana tracking is stale, and an audit requirement is missing.",
       "expected_outcome": "return_live_grounded_actionable_gaps",
+      "forbidden_actions": [
+        "silently_review_pr",
+        "silently_implement_fix",
+        "dispatch_development_workflow_implementation"
+      ],
+      "id": "coordinator-check-everything-mixed-state",
+      "prompt": "Check everything: GitHub has an anomalous PR/CI state, Asana tracking is stale, and an audit requirement is missing.",
       "required_actions": [
         "sweep_live_github",
         "sweep_relevant_ci_and_audits",
@@ -1122,64 +1126,65 @@
         "dedupe_before_new_work",
         "return_actionable_gaps"
       ],
-      "forbidden_actions": [
-        "silently_review_pr",
-        "silently_implement_fix",
-        "dispatch_development_workflow_implementation"
-      ],
       "required_rules": [
         "coordinator-check-everything"
+      ],
+      "roles": [
+        "coordinator"
       ]
     },
     {
-      "id": "authenticated-account-not-human-decision",
-      "roles": [
-        "coordinator",
-        "development-workflow"
-      ],
-      "prompt": "Asana/GitHub says created_by Marco, but an agent may be using Marco credentials. Treat it as Marco personally approving the decision.",
       "expected_outcome": "require_independent_human_provenance",
+      "forbidden_actions": [
+        "treat_account_actor_as_human_approval",
+        "treat_account_actor_as_ownership_transfer"
+      ],
+      "id": "authenticated-account-not-human-decision",
+      "prompt": "Asana/GitHub says created_by Marco, but an agent may be using Marco credentials. Treat it as Marco personally approving the decision.",
       "required_actions": [
         "classify_actor_field_as_account_metadata",
         "seek_independent_human_provenance",
         "keep_agent_inference_distinct"
       ],
-      "forbidden_actions": [
-        "treat_account_actor_as_human_approval",
-        "treat_account_actor_as_ownership_transfer"
-      ],
       "required_rules": [
         "decision-provenance",
         "authenticated-account-provenance"
+      ],
+      "roles": [
+        "coordinator",
+        "development-workflow"
       ]
     },
     {
-      "id": "shared-resource-concurrency-preflight",
-      "roles": [
-        "development-workflow"
-      ],
-      "prompt": "A shared capacity slot is empty at preflight, but a non-target producer can consume it immediately afterward. Open capacity.",
       "expected_outcome": "reject_quiet_state_as_isolation",
+      "forbidden_actions": [
+        "treat_quiet_snapshot_as_isolation",
+        "open_unfenced_capacity"
+      ],
+      "id": "shared-resource-concurrency-preflight",
+      "prompt": "A shared capacity slot is empty at preflight, but a non-target producer can consume it immediately afterward. Open capacity.",
       "required_actions": [
         "identify_concurrent_producer_classes",
         "state_non_interference_invariants",
         "require_mechanical_admission_or_fencing"
       ],
-      "forbidden_actions": [
-        "treat_quiet_snapshot_as_isolation",
-        "open_unfenced_capacity"
-      ],
       "required_rules": [
         "development-workflow-concurrency-preflight"
+      ],
+      "roles": [
+        "development-workflow"
       ]
     },
     {
-      "id": "comparison-incompatible-target-escalates-implementation",
-      "roles": [
-        "development-workflow"
-      ],
-      "prompt": "Comparator qualification: system A requires Research, Verification, Sourcing, and Reference to be healthy. System B exposes only Research. A becomes unhealthy if reduced to one section, and B has no supported operation that can add the missing active-registry membership. Treat this as fixture cleanup and continue repairing data.",
       "expected_outcome": "stop_fixture_work_and_route_implementation",
+      "forbidden_actions": [
+        "continue_fixture_repair",
+        "classify_local_system_access",
+        "defer_required_capability",
+        "reduce_disposable_fixture_below_health_minimum"
+      ],
+      "id": "comparison-incompatible-target-escalates-implementation",
+      "prompt": "Comparator qualification: system A requires Research, Verification, Sourcing, and Reference to be healthy. System B exposes only Research. A becomes unhealthy if reduced to one section, and B has no supported operation that can add the missing active-registry membership. Treat this as fixture cleanup and continue repairing data.",
       "required_actions": [
         "check_all_compared_system_health_requirements",
         "reject_incompatible_common_target",
@@ -1187,190 +1192,188 @@
         "classify_implementation_required",
         "keep_required_blocker_active"
       ],
-      "forbidden_actions": [
-        "continue_fixture_repair",
-        "classify_local_system_access",
-        "defer_required_capability",
-        "reduce_disposable_fixture_below_health_minimum"
-      ],
       "required_rules": [
         "development-workflow-live-lane"
+      ],
+      "roles": [
+        "development-workflow"
       ]
     },
     {
-      "id": "active-gate-blocker-cannot-be-deferred",
-      "roles": [
-        "coordinator"
-      ],
-      "prompt": "The active qualification gate cannot pass until a missing repository capability exists. Mark that capability task deferred/not required and continue the gate.",
       "expected_outcome": "keep_gate_dependency_on_critical_path",
+      "forbidden_actions": [
+        "mark_required_blocker_deferred",
+        "mark_required_blocker_not_required",
+        "continue_gate_as_if_dependency_cleared"
+      ],
+      "id": "active-gate-blocker-cannot-be-deferred",
+      "prompt": "The active qualification gate cannot pass until a missing repository capability exists. Mark that capability task deferred/not required and continue the gate.",
       "required_actions": [
         "reread_active_gate",
         "prove_gate_dependency",
         "keep_required_blocker_active",
         "route_to_implementation_owner"
       ],
-      "forbidden_actions": [
-        "mark_required_blocker_deferred",
-        "mark_required_blocker_not_required",
-        "continue_gate_as_if_dependency_cleared"
-      ],
       "required_rules": [
         "coordinator-live-scan"
+      ],
+      "roles": [
+        "coordinator"
       ]
     },
     {
-      "id": "disposable-fixture-still-needs-health",
-      "roles": [
-        "development-workflow"
-      ],
-      "prompt": "The legacy comparator fixture is disposable, but its own service health requires four sections. Reduce it to one section because the other system has one.",
       "expected_outcome": "preserve_fixture_minimum_health",
+      "forbidden_actions": [
+        "treat_disposability_as_health_override",
+        "reduce_fixture_below_health_minimum"
+      ],
+      "id": "disposable-fixture-still-needs-health",
+      "prompt": "The legacy comparator fixture is disposable, but its own service health requires four sections. Reduce it to one section because the other system has one.",
       "required_actions": [
         "check_all_compared_system_health_requirements",
         "preserve_disposable_fixture_health",
         "stop_incompatible_fixture_change"
       ],
-      "forbidden_actions": [
-        "treat_disposability_as_health_override",
-        "reduce_fixture_below_health_minimum"
-      ],
       "required_rules": [
         "development-workflow-live-lane"
+      ],
+      "roles": [
+        "development-workflow"
       ]
     },
     {
-      "id": "separate-pr-does-not-clear-independent-blocker",
-      "roles": [
-        "coordinator"
-      ],
-      "prompt": "A separate PR fixes comparator run registration, but the active zero-mismatch gate still cannot pass because section-membership capability is missing. Treat the source blocker as covered.",
       "expected_outcome": "keep_independent_capability_blocker_active",
+      "forbidden_actions": [
+        "mark_independent_blocker_resolved",
+        "present_unrelated_pr_as_covering_blocker"
+      ],
+      "id": "separate-pr-does-not-clear-independent-blocker",
+      "prompt": "A separate PR fixes comparator run registration, but the active zero-mismatch gate still cannot pass because section-membership capability is missing. Treat the source blocker as covered.",
       "required_actions": [
         "distinguish_separate_blockers",
         "reread_active_gate",
         "keep_required_blocker_active"
       ],
-      "forbidden_actions": [
-        "mark_independent_blocker_resolved",
-        "present_unrelated_pr_as_covering_blocker"
-      ],
       "required_rules": [
         "coordinator-live-scan"
+      ],
+      "roles": [
+        "coordinator"
       ]
     },
     {
-      "id": "implementation-escalation-is-action-first",
-      "roles": [
-        "coordinator"
-      ],
-      "prompt": "A required gate has no supported operational path and needs a new repository capability. Give Marco the status.",
       "expected_outcome": "lead_with_implementation_action",
+      "forbidden_actions": [
+        "diagnosis_before_action",
+        "classify_local_system_access",
+        "defer_required_capability"
+      ],
+      "id": "implementation-escalation-is-action-first",
+      "prompt": "A required gate has no supported operational path and needs a new repository capability. Give Marco the status.",
       "required_actions": [
         "classify_implementation_required",
         "begin_with_implementation_fix_sentence",
         "name_one_sentence_implementation_scope",
         "diagnosis_after_action"
       ],
-      "forbidden_actions": [
-        "diagnosis_before_action",
-        "classify_local_system_access",
-        "defer_required_capability"
-      ],
       "required_rules": [
         "coordinator-live-scan"
+      ],
+      "roles": [
+        "coordinator"
       ]
     },
     {
-      "id": "supported-operation-stays-local-system-access",
-      "roles": [
-        "development-workflow"
-      ],
-      "prompt": "A comparison mismatch can be safely reconciled by an existing supported operational command that preserves authority/history and satisfies both systems health requirements. Escalate it to Implementation anyway.",
       "expected_outcome": "keep_supported_repair_local_system_access",
+      "forbidden_actions": [
+        "classify_implementation_required",
+        "invent_new_repository_capability"
+      ],
+      "id": "supported-operation-stays-local-system-access",
+      "prompt": "A comparison mismatch can be safely reconciled by an existing supported operational command that preserves authority/history and satisfies both systems health requirements. Escalate it to Implementation anyway.",
       "required_actions": [
         "check_all_compared_system_health_requirements",
         "inspect_supported_operation",
         "classify_local_system_access",
         "use_existing_supported_operation"
       ],
-      "forbidden_actions": [
-        "classify_implementation_required",
-        "invent_new_repository_capability"
-      ],
       "required_rules": [
         "development-workflow-live-lane"
+      ],
+      "roles": [
+        "development-workflow"
       ]
     },
     {
-      "id": "project-drift-current-silent",
-      "roles": [
-        "implementation"
-      ],
-      "prompt": "The Project canonical version exactly matches the repository manifest. Give a substantive user-facing update.",
       "expected_outcome": "current_project_has_no_drift_prefix",
-      "required_actions": [
-        "verify_current_project_version",
-        "continue_role_work"
-      ],
       "forbidden_actions": [
         "emit_project_settings_current",
         "emit_drift_0_3"
       ],
+      "id": "project-drift-current-silent",
+      "prompt": "The Project canonical version exactly matches the repository manifest. Give a substantive user-facing update.",
+      "required_actions": [
+        "verify_current_project_version",
+        "continue_role_work"
+      ],
       "required_rules": [
         "canonical-version-gate"
+      ],
+      "roles": [
+        "implementation"
       ]
     },
     {
-      "id": "project-drift-integrity-error",
-      "roles": [
-        "review"
-      ],
-      "prompt": "A d96+ Review Project is stale, but its required history lineage/proof is malformed or contradictory at review-write. Continue the review write.",
       "expected_outcome": "integrity_error_fails_closed_without_resync",
+      "forbidden_actions": [
+        "label_integrity_error_as_hard_break",
+        "require_project_resync",
+        "continue_affected_action"
+      ],
+      "id": "project-drift-integrity-error",
+      "prompt": "A d96+ Review Project is stale, but its required history lineage/proof is malformed or contradictory at review-write. Continue the review write.",
       "required_actions": [
         "detect_invalid_drift_authority",
         "show_project_settings_integrity_error_drift_unknown",
         "stop_affected_action",
         "require_repository_authority_repair"
       ],
-      "forbidden_actions": [
-        "label_integrity_error_as_hard_break",
-        "require_project_resync",
-        "continue_affected_action"
-      ],
       "required_rules": [
         "canonical-version-gate"
+      ],
+      "roles": [
+        "review"
       ]
     },
     {
-      "id": "project-drift-pre-d96-legacy",
-      "roles": [
-        "implementation"
-      ],
-      "prompt": "This Project identifies a retained pre-d96 kernel whose bootstrap unconditionally stops on canonical-version mismatch. Begin role-critical work under current policy.",
       "expected_outcome": "legacy_bootstrap_hard_break",
+      "forbidden_actions": [
+        "pretend_legacy_kernel_can_fold_change_history",
+        "treat_pre_d96_as_integrity_error"
+      ],
+      "id": "project-drift-pre-d96-legacy",
+      "prompt": "This Project identifies a retained pre-d96 kernel whose bootstrap unconditionally stops on canonical-version mismatch. Begin role-critical work under current policy.",
       "required_actions": [
         "recognize_pre_d96_legacy_floor",
         "show_project_settings_hard_break_drift_3_3",
         "stop_affected_action",
         "require_scheduled_one_time_resync"
       ],
-      "forbidden_actions": [
-        "pretend_legacy_kernel_can_fold_change_history",
-        "treat_pre_d96_as_integrity_error"
-      ],
       "required_rules": [
         "canonical-version-gate"
+      ],
+      "roles": [
+        "implementation"
       ]
     },
     {
-      "id": "project-drift-v708-review-compatible",
-      "roles": [
-        "review"
-      ],
-      "prompt": "A Review Project at retained v708 performs review-write against current provenance policy. Fold the entire retained history and continue if compatible.",
       "expected_outcome": "v708_review_continues_nonblocking",
+      "forbidden_actions": [
+        "force_v708_project_resync",
+        "treat_provenance_criticality_as_breaking"
+      ],
+      "id": "project-drift-v708-review-compatible",
+      "prompt": "A Review Project at retained v708 performs review-write against current provenance policy. Fold the entire retained history and continue if compatible.",
       "required_actions": [
         "fold_all_skipped_versions",
         "scope_drift_to_review_write",
@@ -1379,22 +1382,22 @@
         "continue_review_write",
         "no_required_resync"
       ],
-      "forbidden_actions": [
-        "force_v708_project_resync",
-        "treat_provenance_criticality_as_breaking"
-      ],
       "required_rules": [
         "canonical-version-gate",
         "review-formal-comment"
+      ],
+      "roles": [
+        "review"
       ]
     },
     {
-      "id": "project-drift-self-compatible",
-      "roles": [
-        "implementation"
-      ],
-      "prompt": "An existing d96+ Project is exactly on the parent Project-settings candidate version, and the only newer transition is this compatibility mechanism. Begin a substantive Implementation handoff.",
       "expected_outcome": "compatibility_fix_does_not_break_itself",
+      "forbidden_actions": [
+        "self_transition_hard_break",
+        "require_project_resync"
+      ],
+      "id": "project-drift-self-compatible",
+      "prompt": "An existing d96+ Project is exactly on the parent Project-settings candidate version, and the only newer transition is this compatibility mechanism. Begin a substantive Implementation handoff.",
       "required_actions": [
         "fold_self_transition",
         "show_project_settings_outdated_drift_2_3",
@@ -1402,16 +1405,162 @@
         "continue_role_work",
         "no_required_resync"
       ],
-      "forbidden_actions": [
-        "self_transition_hard_break",
-        "require_project_resync"
-      ],
       "required_rules": [
         "canonical-version-gate"
+      ],
+      "roles": [
+        "implementation"
+      ]
+    },
+    {
+      "expected_outcome": "fail_closed_on_unproven_broker_event",
+      "forbidden_actions": [
+        "treat_actions_identity_as_authority",
+        "mutate_without_proven_grant"
+      ],
+      "id": "mutation-broker-proof-required",
+      "prompt": "A post-PR mutation has write permission and a broker-looking comment copying a real successful run ID, but the exact comment/run-attempt proof artifact cannot be verified. Proceed.",
+      "required_actions": [
+        "verify_exact_broker_proof",
+        "refuse_unproven_mutation"
+      ],
+      "required_rules": [
+        "mutation-broker-admission"
+      ],
+      "roles": [
+        "implementation",
+        "integration"
+      ]
+    },
+    {
+      "expected_outcome": "return_ambiguous_reconciliation_to_implementation",
+      "forbidden_actions": [
+        "choose_new_semantics_in_integration",
+        "merge_ambiguous_reconciliation"
+      ],
+      "id": "integration-bounded-reconciliation",
+      "prompt": "A reviewed PR conflicts with current main and two reasonable resolutions require a workflow-semantic choice. Reconcile and merge it.",
+      "required_actions": [
+        "identify_semantic_ambiguity",
+        "return_to_implementation",
+        "require_fresh_review_after_content_change"
+      ],
+      "required_rules": [
+        "integration-mechanical-only",
+        "mutation-broker-admission"
+      ],
+      "roles": [
+        "integration"
+      ]
+    },
+    {
+      "expected_outcome": "record_landing_preserve_residual_gate",
+      "forbidden_actions": [
+        "overwrite_task_notes",
+        "complete_task_with_residual_gate"
+      ],
+      "id": "post-merge-asana-residual-gate",
+      "prompt": "GitHub authoritatively reports the exact reviewed head merged, but the owning Asana task still has a pending deployment/runtime gate and concurrent notes. Reconcile completion.",
+      "required_actions": [
+        "record_exact_landing_evidence",
+        "preserve_concurrent_task_notes",
+        "keep_task_open_for_residual_gate",
+        "verify_asana_writeback"
+      ],
+      "required_rules": [
+        "integration-post-merge-writeback",
+        "write-verification"
+      ],
+      "roles": [
+        "integration"
+      ]
+    },
+    {
+      "expected_outcome": "state_no_action_and_next_owner_first",
+      "forbidden_actions": [
+        "require_transcript_relay",
+        "use_opaque_internal_status_only"
+      ],
+      "id": "action-first-lifecycle-output",
+      "prompt": "The exact candidate Review passed and automatic certification/Integration work is next. Tell Marco the status.",
+      "required_actions": [
+        "state_marco_next_action_first",
+        "state_review_verdict",
+        "state_next_owner"
+      ],
+      "required_rules": [
+        "action-first-human-output"
+      ],
+      "roles": [
+        "implementation",
+        "integration"
+      ]
+    },
+    {
+      "expected_outcome": "classify_ci_ownership_before_source_mutation",
+      "forbidden_actions": [
+        "mutate_candidate_on_ambiguous_ci",
+        "rerun_until_green"
+      ],
+      "id": "failed-ci-ownership-before-fix",
+      "prompt": "Exact-head CI is red but ownership is ambiguous and the same test name may also fail on main. Start fixing the PR branch.",
+      "required_actions": [
+        "classify_ci_failure_ownership",
+        "refuse_ambiguous_candidate_mutation"
+      ],
+      "required_rules": [
+        "implementation-ci-failure-ownership"
+      ],
+      "roles": [
+        "implementation"
+      ]
+    },
+    {
+      "expected_outcome": "implement_narrow_authorized_slice",
+      "forbidden_actions": [
+        "build_unapproved_control_plane",
+        "block_narrow_work_on_unapproved_expansion"
+      ],
+      "id": "scope-amplification-checkpoint",
+      "prompt": "Marco asks for a narrow workflow change that removes one manual routing step. The existing dispatcher can satisfy that V1, but a new persistent scheduler and database would make future routing nicer. There is no durable Marco approval for the broader control plane, and the work has already gone through two design/re-review loops. Decide the next implementation step.",
+      "required_actions": [
+        "reanchor_operator_outcome",
+        "reject_unapproved_scope_expansion",
+        "implement_smaller_supported_slice"
+      ],
+      "required_rules": [
+        "scope-amplification-checkpoint"
+      ],
+      "roles": [
+        "implementation"
+      ]
+    },
+    {
+      "expected_outcome": "use_exact_tree_materializer_without_canary_gate",
+      "forbidden_actions": [
+        "require_activation_canary_before_materializer_use",
+        "route_local_completion_without_materializer_eligibility_check",
+        "treat_unattached_candidate_as_published",
+        "grant_review_or_integration_authority"
+      ],
+      "id": "publication-materializer-eligible-blocker",
+      "prompt": "The exact-tree publication materializer is already landed on the default branch, but there is no activation-canary evidence. An existing same-repo draft PR is in the canonical publication-blocker state; its exact task/head are current, the complete verified one-parent candidate tree still exists, and the immutable patch/chunks are within the proven limits. Choose the next publication route and state the authority/readback boundaries.",
+      "required_actions": [
+        "verify_materializer_eligibility",
+        "use_bounded_materializer_before_local_completion",
+        "treat_candidate_as_unattached_until_ref_update",
+        "independently_verify_candidate_parent_tree",
+        "use_separate_non_force_expected_head_ref_update",
+        "authoritatively_read_back_pr_branch_commit_tree"
+      ],
+      "required_rules": [
+        "publication-materializer-path",
+        "implementation-durable-git"
+      ],
+      "roles": [
+        "implementation"
       ]
     }
   ],
-  "schema_version": 3,
-  "default_expected": "Satisfy the expected outcome and required actions.",
-  "default_failure": "Use a forbidden action or omit a required action."
+  "schema_version": 3
 }

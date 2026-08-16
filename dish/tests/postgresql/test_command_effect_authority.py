@@ -31,6 +31,17 @@ def test_effect_spec_is_the_exact_branch_sensitive_authority() -> None:
         "update_task_document",
         "move_task",
     )
+    assert effect_spec_for(
+        "prepare", {}, non_material_checkin=True
+    ) == CommandEffectSpec(
+        (
+            "activate_content_version",
+            "append_operation_step",
+            "advance_operation",
+        ),
+        ("update_task_document",),
+        verify_mutation_effects=True,
+    )
     assert effect_spec_for("approve", {"correction": "none"}) == CommandEffectSpec(
         (
             "activate_corrected_content_version",

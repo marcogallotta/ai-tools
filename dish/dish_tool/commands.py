@@ -7,6 +7,7 @@ from .audit_repair import attempt_command_audit_repairs, attach_audit_repair_war
 import asyncio
 import inspect
 import json
+import logging
 import sqlite3
 from typing import Any, Callable, Mapping
 
@@ -40,6 +41,9 @@ from .database import resolve_signoff_cycle_for_identity
 from .task_document import document_shape
 from .workflow_policy import RestingTaskSnapshot, required_resting_start_kind
 from .validation_scope import scope_for_command
+
+
+LOG = logging.getLogger("dish.commands")
 
 
 def _exposed_action_contract(
@@ -648,7 +652,26 @@ class DishApplication:
                 except Exception:
                     # Error reporting must not hide the original governed failure.
                     pass
-        except Exception:
+        except Exception as unexpected:
+            context = {
+                key: value
+                for key, value in {
+                    "command": command,
+                    "request_id": self.invocation_request_id,
+                    "owner_id": self.invocation_owner_id,
+                    "run_id": self.invocation_run_id,
+                    "task_gid": trace.task_gid,
+                    "operation_id": trace.submission_id,
+                }.items()
+                if value not in {None, ""}
+            }
+            # Keep unexpected command failures diagnosable without serializing
+            # command arguments, candidate text/paths, credentials, or task payloads.
+            LOG.error(
+                "unexpected_command_failure context=%s",
+                json.dumps(context, sort_keys=True, separators=(",", ":")),
+                exc_info=(type(unexpected), unexpected, unexpected.__traceback__),
+            )
             exc = DishRuleError(
                 "INTERNAL_ERROR",
                 "unexpected internal failure",

@@ -4,6 +4,8 @@ This is the canonical router for standing Dish agent roles. Root `CLAUDE.md` poi
 
 All repository-modifying roles inherit [`contributor-base.md`](contributor-base.md). Specialist contracts add their own scope and authority rules.
 
+All roles also apply the shared [`Dish operator / orchestration control plane`](../../../OPERATOR_CONTROL_PLANE.md) for presentation mechanics. Coordinator and Development Workflow additionally apply its action-specific queue/handoff/decision/triage sections; that shared file is a decomposition aid, not role composition or a new authority layer.
+
 | Role / common names | Standing contract |
 |---|---|
 | Coordinator, master, orchestration coordinator | [`coordinator.md`](coordinator.md) |

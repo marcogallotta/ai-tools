@@ -19,6 +19,9 @@ class LifecycleInspectMixin:
         integration_capable: bool = True,
         merge_method: str = "squash",
         now: Callable[[], datetime] = _utcnow,
+        mutation_broker_enabled: bool = False,
+        mutation_broker_repository_id: int | None = None,
+        mutation_broker_routes: Mapping[str, str] | None = None,
     ) -> None:
         self.github = github
         self.asana = asana
@@ -26,6 +29,10 @@ class LifecycleInspectMixin:
         self.integration_capable = integration_capable
         self.merge_method = merge_method
         self.now = now
+        self.mutation_broker_enabled = mutation_broker_enabled
+        self.mutation_broker_repository_id = mutation_broker_repository_id
+        self.mutation_broker_routes = dict(mutation_broker_routes or {})
+        self.integration_reconciler = None
 
     def _asana_details(self, task_ids: list[str]) -> list[dict[str, Any]]:
         if not self.asana:
@@ -189,6 +196,20 @@ class LifecycleInspectMixin:
                 residual_reason="formal review did not contain an authoritative exact-head verdict",
             )
 
+        review_metadata = review_gate_metadata(exact_review)
+        base_kwargs["post_merge_gates"] = list(review_metadata.post_merge_gates)
+        if review_metadata.error is not None:
+            return PRLifecycle(
+                **base_kwargs,
+                state=LifecycleState.REVIEW_PASSED,
+                state_label=STATE_LABELS[LifecycleState.REVIEW_PASSED],
+                review_class=review_class,
+                review_verdict=verdict,
+                reviewed_head=reviewed_head,
+                active_leases=lease_payload,
+                residual_reason=f"malformed Review phase metadata: {review_metadata.error}",
+            )
+
         local_work = local_work_from_review(exact_review, comments, head=head)
         local_payload = [asdict(item) for item in local_work]
         pending_impl = next((item for item in local_work if item.kind == "implementation" and not item.completed), None)
@@ -206,20 +227,6 @@ class LifecycleInspectMixin:
                 human_action=pending_impl.instruction if pending_impl.handoff_present else None,
             )
         pending_cert = next((item for item in local_work if item.kind == "certification" and not item.completed), None)
-
-        body = str(exact_review.get("body") or "")
-        if TESTS_TO_RUN_RE.search(body) is None:
-            return PRLifecycle(
-                **base_kwargs,
-                state=LifecycleState.REVIEW_PASSED,
-                state_label=STATE_LABELS[LifecycleState.REVIEW_PASSED],
-                review_class=review_class,
-                review_verdict=verdict,
-                reviewed_head=reviewed_head,
-                active_leases=lease_payload,
-                local_work=local_payload,
-                residual_reason="exact-head MERGE review is missing required TESTS TO RUN line",
-            )
 
         ordering = _integration_order_reason(exact_review, current)
         if ordering:
@@ -328,6 +335,9 @@ class LifecycleInspectMixin:
                 reason = dependency.reason or str(diagnosis["reason"])
                 if marker_note:
                     reason = f"{reason}; {marker_note}"
+                owned_gate = dict(diagnosis)
+                owned_gate["failure_ownership"] = "PROVEN_CURRENT_MAIN"
+                owned_gate["failure_ownership_evidence"] = dependency.evidence
                 return PRLifecycle(
                     **base_kwargs,
                     state=LifecycleState.WAITING_EXTERNAL_DEPENDENCY,
@@ -337,27 +347,53 @@ class LifecycleInspectMixin:
                     reviewed_head=reviewed_head,
                     active_leases=lease_payload,
                     local_work=local_payload,
-                    gate=diagnosis,
+                    gate=owned_gate,
                     external_dependency=dependency.json(),
                     residual_reason=reason,
                     human_action=external_dependency_human_action(dependency),
                 )
-            residual = (
-                "exact-head required certification failed; failure remains owned by this PR "
-                "and returns to Implementation/fix"
+
+            ownership = parse_ci_failure_ownership(
+                comments, current_head=head, check_identity=pr_gate.REQUIRED_ORDINARY_CI_CONTEXT
             )
+            owned_gate = dict(diagnosis)
+            owned_gate["failure_ownership"] = ownership["classification"]
+            owned_gate["failure_ownership_evidence"] = ownership["evidence"]
+            classification = ownership["classification"]
+            if classification == "PR_OWNED":
+                residual = "CI FAILURE — PR OWNED — exact-head evidence proves this candidate owns the failure; brokered fix is eligible"
+                if marker_note:
+                    residual = f"{residual}; {marker_note}"
+                return PRLifecycle(
+                    **base_kwargs,
+                    state=LifecycleState.CHANGES_REQUESTED,
+                    state_label=STATE_LABELS[LifecycleState.CHANGES_REQUESTED],
+                    review_class=review_class,
+                    review_verdict=verdict,
+                    reviewed_head=reviewed_head,
+                    active_leases=lease_payload,
+                    local_work=local_payload,
+                    gate=owned_gate,
+                    residual_reason=residual,
+                )
+            if classification == "INFRASTRUCTURE":
+                residual = "CI FAILURE — INFRASTRUCTURE — workflow/infrastructure repair is owned outside semantic Implementation"
+            elif classification == "PROVEN_CURRENT_MAIN":
+                residual = "CI FAILURE — MAIN OWNED — durable baseline ownership must be attached before candidate mutation"
+            else:
+                residual = "CI FAILURE — AMBIGUOUS — ownership must be proven before any semantic branch mutation"
             if marker_note:
                 residual = f"{residual}; {marker_note}"
             return PRLifecycle(
                 **base_kwargs,
-                state=LifecycleState.CHANGES_REQUESTED,
-                state_label=STATE_LABELS[LifecycleState.CHANGES_REQUESTED],
+                state=LifecycleState.REVIEW_PASSED,
+                state_label=STATE_LABELS[LifecycleState.REVIEW_PASSED],
                 review_class=review_class,
                 review_verdict=verdict,
                 reviewed_head=reviewed_head,
                 active_leases=lease_payload,
                 local_work=local_payload,
-                gate=diagnosis,
+                gate=owned_gate,
                 residual_reason=residual,
             )
 

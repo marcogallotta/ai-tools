@@ -33,7 +33,7 @@ dish-task notes to Asana. Live multi-agent use runs through the laptop-hosted `d
 local direct mode is limited to controlled single-agent testing. See `dish/README.md`.
 
 **`hooks/`** — host adapters and shared classifiers used by Claude Code and Codex
-PreToolUse guards. They block carpet-bomb `git`/`rm` patterns, compound bash, raw redirects,
+PreToolUse guards. They block carpet-bomb `git`/`rm` patterns, unsafe repository mutation paths, raw redirects,
 unguarded Asana and Anthropic-API writes, and branch changes in the shared primary checkout.
 
 ## Instructions for agents

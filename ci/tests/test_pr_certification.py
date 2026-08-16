@@ -128,6 +128,32 @@ def test_native_execution_spec_preserves_planner_focused_test_files():
     )
     argv = spec["required_groups"]["native-postgresql"][0]["argv"]
     assert argv[argv.index("--test-file") + 1] == "tests/postgresql/native/test_migration_status.py"
+    assert argv[argv.index("--expected-head") + 1] == CANDIDATE
+    assert "--waive-skip" not in argv
+
+
+def test_focused_native_selection_includes_only_matching_waiver_records():
+    selected_file = "tests/postgresql/native/test_process_failure_command.py"
+    spec = module.build_execution_spec(
+        plan(
+            groups=["native-postgresql"],
+            lanes=["native PostgreSQL certification"],
+            native_postgresql={
+                "mode": "focused",
+                "test_files": [selected_file],
+                "reason": "focused-waiver-contract",
+            },
+        ),
+        plan_digest="b" * 64,
+    )
+    argv = spec["required_groups"]["native-postgresql"][0]["argv"]
+    values = [argv[index + 1] for index, value in enumerate(argv) if value == "--waive-skip"]
+    assert len(values) == 1
+    record = json.loads(values[0])
+    assert record["nodeid"] == (
+        selected_file
+        + "::test_command_process_disconnect_before_commit_fails_closed_and_recovers"
+    )
 
 
 def test_native_postgresql_execution_spec_uses_structured_bounded_waivers():

@@ -56,6 +56,18 @@ NATIVE_WAIVERS = tuple(
     json.dumps(record, sort_keys=True, separators=(",", ":")) for record in NATIVE_WAIVER_RECORDS
 )
 
+
+def _native_waivers_for_selection(*, mode: str, test_files: list[object]) -> tuple[str, ...]:
+    if mode == "full":
+        return NATIVE_WAIVERS
+    selected_files = {str(test_file) for test_file in test_files}
+    return tuple(
+        json.dumps(record, sort_keys=True, separators=(",", ":"))
+        for record in NATIVE_WAIVER_RECORDS
+        if str(record["nodeid"]).split("::", 1)[0] in selected_files
+    )
+
+
 DISH_LANE_COMMANDS: dict[str, tuple[str, ...]] = {
     "smoke": (".venv/bin/python", "-m", "pytest", "--smoke"),
     "SQLite database-boundary": (".venv/bin/python", "-m", "pytest", "--database-boundary"),
@@ -264,10 +276,11 @@ def build_execution_spec(plan: dict[str, object], *, plan_digest: str) -> dict[s
         argv = [
             "dish/.venv/bin/python", "dish/scripts/dish-pg-native-certification",
             "--output", ".test-artifacts/native-postgresql/report.json",
+            "--expected-head", candidate,
         ]
         for test_file in test_files:
             argv.extend(("--test-file", str(test_file)))
-        for waiver in NATIVE_WAIVERS:
+        for waiver in _native_waivers_for_selection(mode=mode, test_files=test_files):
             argv.extend(("--waive-skip", waiver))
         groups["native-postgresql"] = [_command("native PostgreSQL certification", argv)]
     if "browser-acceptance" in selected:
