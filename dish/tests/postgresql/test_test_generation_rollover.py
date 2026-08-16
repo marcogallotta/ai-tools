@@ -133,6 +133,20 @@ def _contaminate(factory, ids, context, task_id):
     return candidate_id, cutover_id, reservation_id
 
 
+def _corrupt_candidate_status_to_assembling(factory, candidate_id) -> None:
+    """Model the persisted assembling candidate while preserving downstream rows."""
+    with session_scope(factory) as session:
+        candidate = session.get(rel.ReleaseCandidate, candidate_id)
+        assert candidate is not None
+        candidate.status = "assembling"
+        candidate.candidate_revision = 1
+        candidate.validation_bundle_sha256 = None
+        candidate.validated_at = None
+        candidate.approved_at = None
+        candidate.terminal_at = None
+        session.flush()
+
+
 def _row_payload(row) -> dict[str, object]:
     return {column.name: getattr(row, column.name) for column in row.__table__.columns}
 
@@ -234,6 +248,45 @@ def test_rollover_preserves_contaminated_generation_and_new_admission_isolated(w
     assert after == before
 
 
+def test_rollover_accepts_exact_fixture_incident_with_corrupt_assembling_candidate(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    candidate_id, cutover_id, reservation_id = _contaminate(factory, ids, context, task_id)
+    _corrupt_candidate_status_to_assembling(factory, candidate_id)
+    verification_section_id = _install_verification_queue(factory, ids, context)
+    before = _stage6_forensic_payload(
+        factory, candidate_id, cutover_id, context["generation_id"]
+    )
+    assert before["candidate"]["status"] == "assembling"
+
+    with session_scope(factory) as session:
+        result = _rollover_generation_transaction(
+            session,
+            predecessor_generation_id=context["generation_id"],
+            contaminated_candidate_id=candidate_id,
+            contaminated_cutover_run_id=cutover_id,
+            contaminated_reservation_id=reservation_id,
+            research_queue_section_id=context["section_id"],
+            verification_queue_section_id=verification_section_id,
+            source_commit=SOURCE_COMMIT,
+            uuid_factory=lambda: _next(ids),
+            clock=lambda: NOW + timedelta(hours=1),
+        )
+        assert result.contamination.candidate_status == "assembling"
+        assert result.as_dict()["contaminated_candidate_status"] == "assembling"
+        successor = session.get(models.AuthorityGeneration, result.generation_id)
+        assert successor is not None and successor.status == "active"
+        import_run = session.get(models.ImportRun, result.import_run_id)
+        assert import_run is not None
+        assert import_run.provenance["contaminated_stage6"]["candidate_status"] == "assembling"
+
+    after = _stage6_forensic_payload(
+        factory, candidate_id, cutover_id, context["generation_id"]
+    )
+    assert after == before
+
+
 def test_rollover_refuses_same_shape_first_admission_without_incident_signature(
     workflow_db, monkeypatch
 ) -> None:
@@ -291,6 +344,48 @@ def test_rollover_refuses_same_shape_first_admission_without_incident_signature(
         factory, candidate_id, cutover_id, context["generation_id"]
     ) == before
 
+
+
+def test_rollover_refuses_corrupt_assembling_candidate_without_incident_signature(
+    workflow_db, monkeypatch
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    original_prepare_candidate = first_admission_support._prepare_candidate
+
+    def _prepare_nonincident_candidate(*args, **kwargs):
+        kwargs["source_manifest_sha256"] = "b" * 64
+        return original_prepare_candidate(*args, **kwargs)
+
+    monkeypatch.setattr(
+        first_admission_support, "_prepare_candidate", _prepare_nonincident_candidate
+    )
+    candidate_id, cutover_id, reservation_id = _contaminate(
+        factory, ids, context, task_id
+    )
+    _corrupt_candidate_status_to_assembling(factory, candidate_id)
+    verification_section_id = _install_verification_queue(factory, ids, context)
+    before = _stage6_forensic_payload(
+        factory, candidate_id, cutover_id, context["generation_id"]
+    )
+
+    with pytest.raises(RolloverError, match="incident signature"):
+        with session_scope(factory) as session:
+            _rollover_generation_transaction(
+                session,
+                predecessor_generation_id=context["generation_id"],
+                contaminated_candidate_id=candidate_id,
+                contaminated_cutover_run_id=cutover_id,
+                contaminated_reservation_id=reservation_id,
+                research_queue_section_id=context["section_id"],
+                verification_queue_section_id=verification_section_id,
+                source_commit=SOURCE_COMMIT,
+                uuid_factory=lambda: _next(ids),
+                clock=lambda: NOW + timedelta(hours=1),
+            )
+
+    assert _stage6_forensic_payload(
+        factory, candidate_id, cutover_id, context["generation_id"]
+    ) == before
 
 def test_rollover_refuses_wrong_explicit_incident_identity(workflow_db) -> None:
     factory, ids, context, task_id = workflow_db

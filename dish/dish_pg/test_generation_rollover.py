@@ -57,6 +57,7 @@ class ContaminationEvidence:
     reservation_id: uuid.UUID
     shadow_baseline_id: uuid.UUID
     projection_epoch_id: uuid.UUID
+    candidate_status: str
 
 
 @dataclass(frozen=True)
@@ -88,6 +89,7 @@ class GenerationRolloverResult:
             "contaminated_candidate_id": str(self.contamination.candidate_id),
             "contaminated_cutover_run_id": str(self.contamination.cutover_run_id),
             "contaminated_reservation_id": str(self.contamination.reservation_id),
+            "contaminated_candidate_status": self.contamination.candidate_status,
             "source_commit": self.source_commit,
             "snapshot_sha256": self.snapshot_sha256,
             "task_count": self.task_count,
@@ -174,15 +176,20 @@ def _contamination_evidence(
         raise GenerationRolloverError(
             "explicit contaminated candidate/cutover/reservation identities do not bind one predecessor bundle"
         )
+    # The historical fixture incident has also been observed with the candidate
+    # status stranded at ``assembling`` while the exact downstream Stage 6 rows
+    # already exist.  That state cannot be produced by the supported lifecycle.
+    # Accept the status variant only as an input to this forensic-preserving
+    # rollover; the fixture-specific provenance checks below remain mandatory.
     if (
-        candidate.status != "activated"
+        candidate.status not in {"activated", "assembling"}
         or cutover.rehearsal_id is not None
         or cutover.state != "admission_open"
         or control.state != "closed"
         or reservation.state != "reserved"
     ):
         raise GenerationRolloverError(
-            "explicit contaminated bundle is not in the known blocked first-admission lifecycle state"
+            "explicit contaminated bundle is not in a supported known fixture-contamination lifecycle state"
         )
 
     plan = session.get(rel.FirstAdmissionPlan, reservation.plan_id)
@@ -260,6 +267,7 @@ def _contamination_evidence(
         reservation_id=reservation.reservation_id,
         shadow_baseline_id=candidate.shadow_baseline_id,
         projection_epoch_id=candidate.projection_epoch_id,
+        candidate_status=candidate.status,
     )
 
 
@@ -401,6 +409,7 @@ def _snapshot_digest(
                 "candidate_id": str(contamination.candidate_id),
                 "cutover_run_id": str(contamination.cutover_run_id),
                 "reservation_id": str(contamination.reservation_id),
+                "candidate_status": contamination.candidate_status,
             },
         }
     )
@@ -729,6 +738,7 @@ def _rollover_generation_transaction(
             "candidate_id": str(contamination.candidate_id),
             "cutover_run_id": str(contamination.cutover_run_id),
             "reservation_id": str(contamination.reservation_id),
+            "candidate_status": contamination.candidate_status,
             "rows_preserved_in_place": True,
         },
         "snapshot_sha256": snapshot_sha256,
