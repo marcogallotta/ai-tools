@@ -4,7 +4,7 @@ This workflow is a bounded ChatGPT publication transport for an **existing same-
 
 ## When to use it
 
-Use the simpler existing connector path when it can safely publish the complete intended change. After this workflow has landed on the default branch and passed its bounded activation canary, use the materializer before handing off to local completion only when all of these are true:
+Use the simpler existing connector path when it can safely publish the complete intended change. After this workflow has landed on the default branch, use the materializer before handing off to local completion only when all of these are true:
 
 - the PR is open, draft, targets the repository default branch, and is not a fork;
 - the PR body contains `## PUBLICATION BLOCKER — LOCAL BRANCH COMPLETION REQUIRED BEFORE REVIEW`, `State: LOCAL IMPLEMENTATION COMPLETION REQUIRED`, and the exact owning Asana task identity;
@@ -73,8 +73,8 @@ Only then use the existing connected-GitHub non-force expected-head/CAS ref upda
 
 After the ref update, re-read branch, PR, commit and tree and require the exact new head/tree. Only that authoritative readback completes publication. Then reconcile the publication-blocker text, run any remaining exact-head Implementation evidence, and mark ready for Review only through the normal Implementation contract.
 
-## Bootstrap and activation
+## Bootstrap and validation evidence
 
 The `issue_comment` workflow executes trusted code from the default branch, so the PR introducing it cannot prove its own live trigger. Pre-merge evidence is deterministic helper/workflow testing plus a bounded real connector blob round-trip at the selected chunk ceiling where available.
 
-After the workflow lands on the default branch, run one disposable same-repository draft-PR canary through the real multi-chunk request, unattached candidate creation, independent parent/tree readback, non-force ref update, and authoritative final readback. Do not call the capability operationally validated before that canary passes.
+After the workflow lands on the default branch, ordinary authorized use is governed by the eligibility, exactness, immutable-transport, independent candidate readback, non-force expected-head/CAS ref update, and authoritative final readback checks above. A disposable same-repository end-to-end run may provide additional operational evidence when explicitly required, but it is not an activation prerequisite and does not create authority.
