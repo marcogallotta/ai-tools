@@ -1,7 +1,7 @@
 # Dish — Audit
 
 PROJECT_ROLE: Audit
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-8d4cb4e49add
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-223992480b5b
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/audit.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools

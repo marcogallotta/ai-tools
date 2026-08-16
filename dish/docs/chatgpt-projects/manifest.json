@@ -1,5 +1,5 @@
 {
-  "canonical_version": "dish-chatgpt-projects-v2-8d4cb4e49add",
+  "canonical_version": "dish-chatgpt-projects-v2-223992480b5b",
   "change_history": [
     {
       "changes": [
@@ -2117,6 +2117,29 @@
       "changes": [
         {
           "action_boundaries": [
+            "role-critical-write"
+          ],
+          "impact": "additive",
+          "roles": [
+            "development-workflow"
+          ],
+          "rule_id": "development-workflow-boundary",
+          "surface": "authority"
+        },
+        {
+          "action_boundaries": [
+            "merge",
+            "handoff"
+          ],
+          "impact": "additive",
+          "roles": [
+            "integration"
+          ],
+          "rule_id": "mutation-broker-admission",
+          "surface": "lifecycle"
+        },
+        {
+          "action_boundaries": [
             "*"
           ],
           "impact": "additive",
@@ -2232,7 +2255,7 @@
         }
       },
       "from_version": "dish-chatgpt-projects-v2-712e3b16aa05",
-      "to_version": "dish-chatgpt-projects-v2-8d4cb4e49add"
+      "to_version": "dish-chatgpt-projects-v2-223992480b5b"
     }
   ],
   "generated_role_files": {
@@ -2245,8 +2268,8 @@
     "review": "review.md",
     "workflow": "workflow.md"
   },
-  "generated_sha256": "da7d71d1df4190087582c73297dfa7aff17824a73bebd7373847edfe40bcc5db",
-  "kernel_identity_sha256": "8d4cb4e49add881056590b7f9f8dc73ae9bcf0cb82029417618eacc23f6807e7",
+  "generated_sha256": "8ac3373073fd13499061f61918d1a010d5bb5fe9154629564c21ffe782a797d5",
+  "kernel_identity_sha256": "223992480b5b5e99ee5b4e91c11f5fead80319bfed6f2a8ee95a27b43acac703",
   "legacy_bootstrap_floor": {
     "action_boundaries": [
       "*"
@@ -2275,6 +2298,6 @@
   "max_kernel_chars": 7999,
   "schema_version": 2,
   "source_file": "source.json",
-  "source_sha256": "4cdb71ff79977b3075d15a973ecf69b454555f63fa70595f99255df9b8014bf2",
+  "source_sha256": "3b0fa617a27217cca6c8c9ba671b64010348fda5512901070168dd324072eddc",
   "version_namespace": "dish-chatgpt-projects-v2"
 }

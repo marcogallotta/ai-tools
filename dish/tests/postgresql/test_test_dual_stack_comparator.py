@@ -66,6 +66,63 @@ def test_plan_is_curated_and_mutation_is_explicit() -> None:
     assert [item["id"] for item in plan["scenarios"] if item["mutating"]] == ["create-bare-dish"]
 
 
+def test_sections_projection_compares_semantic_content_not_backend_envelope() -> None:
+    plan = comparator.load_plan(PLAN)
+    scenario = next(item for item in plan["scenarios"] if item["id"] == "sections")
+    authority_response = {
+        "ok": True,
+        "command": "sections",
+        "code": "OK",
+        "retryable": False,
+        "http_status": 200,
+        "data": {
+            "request_replayed": False,
+            "sections": [
+                {"name": "Research Queue", "section_id": "pg-research", "workflow_role": "research"},
+                {"name": "Reference", "section_id": "pg-reference", "workflow_role": "reference"},
+            ],
+        },
+    }
+    oracle_response = {
+        "ok": True,
+        "command": "sections",
+        "code": "OK",
+        "retryable": False,
+        "allowed_actions": [],
+        "errors": [],
+        "state": "ready",
+        "submission_id": None,
+        "task_gid": None,
+        "data": {
+            "sections": [
+                {"name": "Research Queue", "gid": "asana-research", "ordinal": 1},
+                {"name": "Reference", "gid": "asana-reference", "ordinal": 2},
+            ],
+        },
+    }
+
+    authority_value, oracle_value = comparator._normalized_comparison(
+        scenario,
+        authority_response=authority_response,
+        oracle_response=oracle_response,
+        identity_aliases={},
+    )
+    assert authority_value == oracle_value == {
+        "command": "sections",
+        "ok": True,
+        "sections": [{"name": "Research Queue"}, {"name": "Reference"}],
+    }
+
+    oracle_response["data"]["sections"][1]["name"] = "Sourcing"
+    _, mismatched_oracle_value = comparator._normalized_comparison(
+        scenario,
+        authority_response=authority_response,
+        oracle_response=oracle_response,
+        identity_aliases={},
+    )
+    assert authority_value != mismatched_oracle_value
+
+
 def test_authority_rejects_asana_and_oracle_requires_disposable_isolation() -> None:
     authority, oracle = _envs()
     authority["ASANA_ENV"] = "/tmp/asana"

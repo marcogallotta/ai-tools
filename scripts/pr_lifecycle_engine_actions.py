@@ -359,118 +359,31 @@ class LifecycleActionsMixin:
         notify(action_first_status(pr))
         return True
 
-    def _merge_exact_head(self, pr: PRLifecycle) -> PRLifecycle:
-        current = self.inspect(self.github.get_pr(pr.number))
-        if current.head != pr.head:
-            return current
-        if current.state == LifecycleState.MERGED:
-            return current
-        if current.state not in {LifecycleState.INTEGRATION_READY, LifecycleState.MERGING}:
-            return current
-        if not self.integration_authority or not self.integration_capable:
-            return current
-
-        broker_grant = None
-        if getattr(self, "mutation_broker_enabled", False):
-            route = self._broker_route("merge")
-            if not route:
-                current.residual_reason = "mutation broker is active but no Integration merge route is configured"
-                current.human_action = None
-                return current
-            try:
-                broker_grant = self._broker_grant_for(current, action="merge", route=route)
-            except LifecycleError as exc:
-                current.residual_reason = str(exc)
-                current.human_action = None
-                return current
-            if broker_grant is None:
-                current.residual_reason = "merge requires a current proven mutation broker grant"
-                current.human_action = None
-                return current
-            # Consequential merge boundary: re-read live Asana immediately before merge.
-            owner, owner_error = owning_task_identity_from_references(current.task_ids)
-            if owner_error or owner is None or self.asana is None:
-                current.residual_reason = "merge cannot re-read the explicit owning Asana task"
-                current.human_action = None
-                return current
-            try:
-                task = self.asana.get_task(owner)
-            except LifecycleError as exc:
-                current.residual_reason = f"merge live Asana read failed: {exc}"
-                current.human_action = None
-                return current
-            allowed, reason = asana_task_allows_mutation(task)
-            if not allowed:
-                current.residual_reason = f"merge stopped by live Asana authority: {reason}"
-                current.human_action = None
-                return current
-            live_main = self.github.get_ref_sha(f"heads/{current.base}")
-            if broker_grant.main_sha != live_main:
-                current.residual_reason = "merge broker grant is stale against current target main; reclassify/re-request"
-                current.human_action = None
-                return current
-        else:
-            active_dispatcher_lease = next(
-                (
-                    lease
-                    for lease in current.active_leases
-                    if lease["phase"] == "integration" and lease.get("owner") == DISPATCH_OWNER
-                ),
-                None,
-            )
-            if active_dispatcher_lease is None:
-                self._post_lease(current, phase="integration")
-        # Re-read after grant/legacy lease validation. A semantic head move returns to Review.
-        reread = self.inspect(self.github.get_pr(pr.number))
-        if reread.head != pr.head:
-            return reread
-        if reread.state not in {LifecycleState.MERGING, LifecycleState.INTEGRATION_READY}:
-            return reread
-        if getattr(self, "mutation_broker_enabled", False):
-            route = self._broker_route("merge")
-            assert route is not None
-            # Final proof/grant read at the irreversible boundary. Missing/expired/deleted
-            # proof cannot fall back to commenter identity or an older cached grant.
-            final_grant = self._broker_grant_for(reread, action="merge", route=route)
-            if final_grant is None or final_grant.grant_id != broker_grant.grant_id:
-                reread.residual_reason = "merge broker grant changed/disappeared at final boundary"
-                return reread
-        try:
-            result = self.github.merge(
-                pr.number, expected_head=pr.head, method=self.merge_method
-            )
-        except HTTPError as exc:
-            # Capability/branch-protection failures are residual Integration boundaries.
-            if exc.status in {401, 403, 405, 409, 422}:
-                reread = self.inspect(self.github.get_pr(pr.number))
-                if reread.state == LifecycleState.MERGED:
-                    return reread
-                reread.state = LifecycleState.INTEGRATION_READY
-                reread.state_label = STATE_LABELS[LifecycleState.INTEGRATION_READY]
-                reread.residual_reason = f"merge capability/authorization failed: {exc}"
-                reread.human_action = "use an authorized Integration host or resolve the reported merge boundary"
-                return reread
-            raise
-        if result.get("merged") is not True:
-            reread = self.inspect(self.github.get_pr(pr.number))
-            if reread.state == LifecycleState.MERGED:
-                return reread
-            reread.state = LifecycleState.INTEGRATION_READY
-            reread.state_label = STATE_LABELS[LifecycleState.INTEGRATION_READY]
-            reread.residual_reason = f"GitHub merge did not confirm success: {result.get('message') or result!r}"
-            return reread
-        # Never infer MERGED from the merge response alone; authoritative PR readback is required.
-        raw_after_merge = self.github.get_pr(pr.number)
+    def _finalize_authoritative_merge(
+        self,
+        source_before: PRLifecycle,
+        *,
+        raw_after_merge: dict[str, Any],
+        merge_sha: str,
+    ) -> PRLifecycle:
+        """Reconcile only after authoritative GitHub MERGED readback from local Integration."""
         authoritative = self.inspect(raw_after_merge)
-        # A merged PR no longer needs Review parsing for source truth, but the exact-head
-        # Review remains the durable authority for residual post-merge acceptance gates.
-        authoritative.post_merge_gates = list(current.post_merge_gates)
+        authoritative.post_merge_gates = list(source_before.post_merge_gates)
         if authoritative.state != LifecycleState.MERGED:
             authoritative.state = LifecycleState.INTEGRATION_READY
             authoritative.state_label = STATE_LABELS[LifecycleState.INTEGRATION_READY]
-            authoritative.residual_reason = "merge API returned success but authoritative PR readback is not merged"
+            authoritative.residual_reason = (
+                "local Integration returned but authoritative GitHub PR readback is not merged"
+            )
+            authoritative.human_action = None
             return authoritative
-        merge_sha = str(result.get("sha") or raw_after_merge.get("merge_commit_sha") or "").lower()
+        merge_sha = str(merge_sha or "").lower()
+        if FULL_SHA_RE.fullmatch(merge_sha) is None:
+            authoritative.residual_reason = (
+                "PR is authoritatively merged, but the authoritative merge commit SHA is unavailable; "
+                "post-merge Asana landing reconciliation needs recovery"
+            )
+            return authoritative
         if self.asana is not None:
             try:
                 writeback = reconcile_after_merge(
@@ -486,24 +399,17 @@ class LifecycleActionsMixin:
                     )
             except LifecycleError as exc:
                 authoritative.residual_reason = f"PR merged; post-merge Asana writeback needs recovery: {exc}"
-        if getattr(self, "mutation_broker_enabled", False) and broker_grant is not None:
-            # Closing the grant is itself broker-proven; this comment only requests that
-            # state transition and cannot free the grant by itself.
-            try:
-                self._submit_broker_request(
-                    authoritative,
-                    action="complete",
-                    route=broker_grant.route,
-                    grant_id=broker_grant.grant_id,
-                    generation=broker_grant.generation,
-                )
-            except LifecycleError:
-                # GitHub MERGED readback remains authoritative source truth. A failed close
-                # request is recovery debt and may not turn a real merge back into unmerged.
-                prior = authoritative.residual_reason
-                close_reason = "mutation-grant close request needs recovery"
-                authoritative.residual_reason = f"{prior}; {close_reason}" if prior else f"PR merged; {close_reason}"
         return authoritative
+
+    def _merge_exact_head(self, pr: PRLifecycle) -> PRLifecycle:
+        """Legacy guard: V1-A forbids dispatcher/ChatGPT/broker-side landing."""
+        current = self.inspect(self.github.get_pr(pr.number))
+        current.residual_reason = (
+            "dispatcher-side merge is disabled by Integration V1-A; final landing belongs only to the fenced "
+            "local Claude/Codex Integration execution"
+        )
+        current.human_action = None
+        return current
 
     def dispatch_one(
         self,
@@ -744,89 +650,6 @@ class LifecycleActionsMixin:
             )
             return self.inspect(self.github.get_pr(current.number))
 
-        if (
-            current.state == LifecycleState.REVIEW_PASSED
-            and getattr(self, "mutation_broker_enabled", False)
-            and self.integration_authority
-            and any(
-                token in str(current.residual_reason or "").lower()
-                for token in ("mergeab", "integration ordering", "base", "conflict")
-            )
-        ):
-            route = self._broker_route("integration-reconcile")
-            reconciler = getattr(self, "integration_reconciler", None)
-            if not route:
-                current.residual_reason = "bounded Integration reconciliation is required but no broker route is configured"
-                current.human_action = None
-                return current
-            if reconciler is None or not reconciler.command:
-                current.residual_reason = "bounded Integration reconciliation is required but no Integration consumer is configured"
-                current.human_action = None
-                return current
-            reviews = self.github.get_reviews(current.number)
-            exact_review = pr_gate.latest_exact_head_review(reviews, reviewed_head=current.head)
-            try:
-                review_id = int(exact_review.get("id")) if exact_review is not None else None
-            except (TypeError, ValueError):
-                review_id = None
-            live_main = self.github.get_ref_sha(f"heads/{current.base}")
-            try:
-                grant = self._broker_grant_for(current, action="integration-reconcile", route=route)
-            except LifecycleError as exc:
-                current.residual_reason = str(exc)
-                current.human_action = None
-                return current
-            if grant is None:
-                self._submit_broker_request(
-                    current,
-                    action="integration-reconcile",
-                    route=route,
-                    review_id=review_id,
-                    main_sha=live_main,
-                )
-                reread = self.inspect(self.github.get_pr(current.number))
-                reread.residual_reason = "bounded Integration reconciliation request is waiting for the serialized broker"
-                reread.human_action = None
-                return reread
-            # Re-read PR/review/task/proof immediately before the first head-changing
-            # reconciliation consumer is allowed to acquire its branch/worktree.
-            reread = self.inspect(self.github.get_pr(current.number))
-            if reread.head != current.head or reread.state != LifecycleState.REVIEW_PASSED:
-                return reread
-            grant = self._broker_grant_for(reread, action="integration-reconcile", route=route)
-            if grant is None:
-                reread.residual_reason = "reconciliation grant disappeared before Integration consumer dispatch"
-                return reread
-            context = {
-                "schema": "dish-pr-integration-reconcile-v1",
-                "repository": self.github.repository,
-                "pr_url": reread.url,
-                "pr_number": reread.number,
-                "branch": reread.branch,
-                "reviewed_head": reread.head,
-                "review_id": review_id,
-                "main_sha": live_main,
-                "task_ids": reread.task_ids,
-                "mutation_grant": {
-                    "grant_id": grant.grant_id,
-                    "generation": grant.generation,
-                    "consumer_id": grant.consumer_id,
-                    "route": grant.route,
-                    "starting_head": grant.starting_head,
-                    "event_comment_id": grant.event_comment_id,
-                },
-                "lifecycle": reread.json(),
-                "instruction": (
-                    "Act as Dish Integration. Preserve only already-authorized outcomes whose combined result is "
-                    "mechanically/intentionally determined. Do not make a product, architecture, workflow-policy, "
-                    "PostgreSQL/schema, test-weakening, or other semantic choice. Re-read PR open/head, Review, live "
-                    "Asana, current main, route and broker proof before first mutation and publication. Any ambiguity "
-                    "returns to Implementation. Any content-changing result is a new head and requires fresh independent Review."
-                ),
-            }
-            reconciler.dispatch(context)
-            return self.inspect(self.github.get_pr(current.number))
-
         if current.state in {
             LifecycleState.LOCAL_IMPLEMENTATION_REQUIRED,
             LifecycleState.LOCAL_CERTIFICATION_REQUIRED,
@@ -862,47 +685,6 @@ class LifecycleActionsMixin:
                 )
             return current
 
-        if current.state in {LifecycleState.INTEGRATION_READY, LifecycleState.MERGING} and self.integration_authority and self.integration_capable:
-            if getattr(self, "mutation_broker_enabled", False):
-                route = self._broker_route("merge")
-                if not route:
-                    current.residual_reason = "mutation broker is active but no Integration merge route is configured"
-                    current.human_action = None
-                    return current
-                reviews = self.github.get_reviews(current.number)
-                exact_review = pr_gate.latest_exact_head_review(reviews, reviewed_head=current.head)
-                try:
-                    review_id = int(exact_review.get("id")) if exact_review is not None else None
-                except (TypeError, ValueError):
-                    review_id = None
-                live_main = self.github.get_ref_sha(f"heads/{current.base}")
-                try:
-                    grant = self._broker_grant_for(current, action="merge", route=route)
-                except LifecycleError as exc:
-                    current.residual_reason = str(exc)
-                    current.human_action = None
-                    return current
-                if grant is None:
-                    self._submit_broker_request(
-                        current, action="merge", route=route, review_id=review_id, main_sha=live_main
-                    )
-                    reread = self.inspect(self.github.get_pr(current.number))
-                    reread.residual_reason = "Review accepted the exact head; merge mutation request is waiting for the serialized broker"
-                    reread.human_action = None
-                    return reread
-            elif current.state == LifecycleState.MERGING and not any(
-                lease.get("phase") == "integration" and lease.get("owner") == DISPATCH_OWNER
-                for lease in current.active_leases
-            ):
-                return current
-            result = self._merge_exact_head(current)
-            if result.state == LifecycleState.MERGED:
-                notify(action_first_status(result))
-                if terminal_cleaner is not None:
-                    return self._terminal_cleanup(
-                        result, disposition="merged", terminal_cleaner=terminal_cleaner, notify=notify
-                    )
-            return result
         return current
 
     def dispatch(
