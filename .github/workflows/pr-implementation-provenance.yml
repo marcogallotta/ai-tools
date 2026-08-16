@@ -1,0 +1,69 @@
+name: PR implementation provenance
+
+on:
+  repository_dispatch:
+    types: [dish-implementation-provenance]
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  record:
+    if: >-
+      github.event.client_payload.host == 'chatgpt' &&
+      github.event.client_payload.pr != '' &&
+      github.event.client_payload.head != '' &&
+      github.event.client_payload.branch != '' &&
+      github.event.client_payload.launcher != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify the exact published candidate
+        id: candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.client_payload.pr }}
+          HEAD: ${{ github.event.client_payload.head }}
+          BRANCH: ${{ github.event.client_payload.branch }}
+        run: |
+          set -euo pipefail
+          actual_head="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}" --jq '.head.sha')"
+          actual_branch="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}" --jq '.head.ref')"
+          test "$actual_head" = "$HEAD"
+          test "$actual_branch" = "$BRANCH"
+
+      - name: Write immutable proof
+        env:
+          PR: ${{ github.event.client_payload.pr }}
+          HEAD: ${{ github.event.client_payload.head }}
+          BRANCH: ${{ github.event.client_payload.branch }}
+          LAUNCHER: ${{ github.event.client_payload.launcher }}
+        run: >-
+          jq -n --arg repository "$GITHUB_REPOSITORY" --argjson pr_number "$PR"
+          --arg branch "$BRANCH" --arg head "$HEAD" --arg launcher "$LAUNCHER"
+          --argjson run_id "$GITHUB_RUN_ID" --argjson run_attempt "$GITHUB_RUN_ATTEMPT"
+          '{schema:"dish-implementation-prelaunch-proof-v1",repository:$repository,pr_number:$pr_number,branch:$branch,head:$head,host:"chatgpt",launcher:$launcher,run_id:$run_id,run_attempt:$run_attempt}'
+          > implementation-provenance.json
+
+      - name: Upload proof
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: implementation-provenance-${{ github.run_id }}-${{ github.run_attempt }}
+          path: implementation-provenance.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish provenance record
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.client_payload.pr }}
+          HEAD: ${{ github.event.client_payload.head }}
+          LAUNCHER: ${{ github.event.client_payload.launcher }}
+          ARTIFACT: ${{ steps.upload.outputs.artifact-id }}
+          DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+        run: >-
+          gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body
+          "<!-- dish-implementation-host-witness:v1 head=${HEAD} host=chatgpt source=orchestration launcher=${LAUNCHER} run=${GITHUB_RUN_ID} attempt=${GITHUB_RUN_ATTEMPT} artifact=${ARTIFACT} digest=${DIGEST} -->"
