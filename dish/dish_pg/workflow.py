@@ -128,8 +128,26 @@ class WorkflowAuthorityRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def require_active_generation(self, generation_id: uuid.UUID) -> models.AuthorityGeneration:
-        generation = self.session.get(models.AuthorityGeneration, generation_id)
+    def require_active_generation(
+        self,
+        generation_id: uuid.UUID,
+        *,
+        hold_transition_fence: bool = False,
+    ) -> models.AuthorityGeneration:
+        if not hold_transition_fence:
+            generation = self.session.get(models.AuthorityGeneration, generation_id)
+        else:
+            statement = select(models.AuthorityGeneration).where(
+                models.AuthorityGeneration.generation_id == generation_id
+            )
+            if self.session.get_bind().dialect.name == "postgresql":
+                # Consequential command transactions hold a shared generation-liveness fence
+                # through the caller-owned commit. Generation rollover takes FOR UPDATE on
+                # this same row, so either the command commits before the successor snapshot
+                # or rollover wins and this fresh read observes the retired predecessor.
+                statement = statement.with_for_update(read=True)
+            statement = statement.execution_options(populate_existing=True)
+            generation = self.session.scalar(statement)
         if generation is None or generation.status != "active":
             raise StaleAuthorityError("authority generation is not active")
         return generation
@@ -482,12 +500,12 @@ class WorkflowAuthorityRepository:
         return RequestAdmission(request, False, recorded)
 
     def admit_request(self, spec: RequestSpec) -> RequestAdmission:
+        generation = self.require_active_generation(
+            spec.generation_id, hold_transition_fence=True
+        )
         self.require_active_run(
             generation_id=spec.generation_id, run_id=spec.run_id, owner_id=spec.owner_id
         )
-        generation = self.session.get(models.AuthorityGeneration, spec.generation_id)
-        if generation is None:
-            raise StaleAuthorityError("authority generation is not active")
         payload = dict(spec.canonical_payload)
         payload_sha = sha256_json(payload)
         existing = self.session.get(wf.ServiceRequest, spec.request_id)
