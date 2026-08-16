@@ -359,6 +359,16 @@
           "surface": "lifecycle"
         },
         {
+          "id": "integration-standing-policy-readback",
+          "text": "Standing-policy work is not DONE from merge alone. After authoritative GitHub `MERGED` readback, read authoritative `main` and prove every active independent standing invariant’s required source rule, eval inventory, and rendered-role coverage before completion; missing coverage keeps the owning task open. Git ancestry or merge status alone is insufficient.",
+          "impact": "additive",
+          "action_boundaries": [
+            "merge",
+            "handoff"
+          ],
+          "surface": "lifecycle"
+        },
+        {
           "id": "action-first-human-output",
           "text": "Marco-facing lifecycle output puts his next action first, names Review PASS/BLOCK and next owner/gate, and says no action for automatic continuation. Local work is TESTS ONLY, IMPLEMENTATION / PUBLICATION, or LOCAL SYSTEM ACCESS; runtime is separate.",
           "impact": "compatible",
@@ -681,6 +691,15 @@
         "*"
       ],
       "surface": "authority"
+    },
+    {
+      "id": "repository-context-admission",
+      "text": "Before substantial consequential repository/system reasoning, establish a current repository-context witness: resolve live `refs/heads/main` plus repository name/ID from GitHub; retrieve the exact `repository-bundle-<SHA>` through the GitHub connector; materialize it; verify with `scripts/repository_bundle.py` against name/ID/ref/SHA; bind the verified clone; only then reason across files. Tiny targeted reads are exempt. Re-enter after fresh/replacement session, post-compaction re-ground, affected-role switch, or main movement whenever the witness is absent/stale. Missing/unverifiable/stale context blocks only the affected substantial conclusion. Bundle is read-only context; live GitHub/Asana remain current-state authorities.",
+      "impact": "additive",
+      "action_boundaries": [
+        "*"
+      ],
+      "surface": "safety"
     },
     {
       "id": "repository-lifecycle",

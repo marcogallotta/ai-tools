@@ -1,7 +1,7 @@
 # Dish — Coordinator
 
 PROJECT_ROLE: Coordinator
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-712e3b16aa05
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-8d4cb4e49add
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/coordinator.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -19,6 +19,7 @@ High-consequence rules:
 - Unqualified PR/issue numbers mean `marcogallotta/ai-tools`. Use the connected GitHub connector first; never web/global-search for this Project's repo/PR or ask Marco for owner/repo while configured. If connector access fails, report it; do not substitute web.
 - GitHub is source/history and PR/review authority; Asana is orchestration authority; runtime/deployment evidence is separate.
 - Before current-state, ownership, process, dispatch, or completion conclusions, read relevant live GitHub and Asana authority; do not rely on stale remembered/user-reported state.
+- Before substantial consequential repository/system reasoning, establish a current repository-context witness: resolve live `refs/heads/main` plus repository name/ID from GitHub; retrieve the exact `repository-bundle-<SHA>` through the GitHub connector; materialize it; verify with `scripts/repository_bundle.py` against name/ID/ref/SHA; bind the verified clone; only then reason across files. Tiny targeted reads are exempt. Re-enter after fresh/replacement session, post-compaction re-ground, affected-role switch, or main movement whenever the witness is absent/stale. Missing/unverifiable/stale context blocks only the affected substantial conclusion. Bundle is read-only context; live GitHub/Asana remain current-state authorities.
 - Normal repository work is branch + commit -> GitHub PR -> exact-head Review -> Integration of that exact reviewed/certified head; no new patch-only handoff.
 - Current standing role contracts define authority. Chats/handoffs/specialist context cannot silently expand it beyond explicitly permitted composition.
 - Before calling assigned work invalid/no-op/already fixed/not reproducible, reconcile its current problem/history with live GitHub/runtime facts; healthy current state does not erase a historical/process defect.

@@ -33,6 +33,9 @@ Recurring ChatGPT role Projects use the concise, versioned kernels in [`../chatg
 
 ## Shared repository lifecycle
 
+Ratified cross-Project standing invariants that must survive Project regeneration/reconciliation are governed by [`standing-invariants.md`](standing-invariants.md) and its independent machine-readable registry.
+
+
 The single repository-owned Implementation/fix handoff contract is [`templates/implementation-handoff.md`](templates/implementation-handoff.md). Coordinator, Development Workflow, and Implementation all use that same source; do not create a role-local or transport-local competing template.
 
 For new repository work, all roles use the same Git-native lifecycle:

@@ -22,6 +22,23 @@ def _obs(sid,role):
   {'seq':3,'kind':'human_notification','operation':'control_plane_message','pr':52,'action':'local_implementation_completion','details_location':'pull_request'}]
  if sid=='configured-repository-pr-routing':
   return [{'seq':1,'kind':'connector_read','operation':'pull_request_read','connector':'GitHub','repository':'marcogallotta/ai-tools','pr':31 if role=='review' else 34}]
+ if sid=='repository-context-admission-consequential-reasoning':
+  aid='admission-a'; sha='a'*40
+  return [
+   {'seq':1,'kind':'connector_read','operation':'repository_main_identity','connector':'GitHub','repository':'marcogallotta/ai-tools','repository_id':1304888921,'source_ref':'refs/heads/main','source_sha':sha,'admission_id':aid},
+   {'seq':2,'kind':'connector_read','operation':'repository_bundle_download','connector':'GitHub','artifact':f'repository-bundle-{sha}','source_sha':sha,'admission_id':aid},
+   {'seq':3,'kind':'tool','operation':'repository_bundle_materialize','source_sha':sha,'admission_id':aid},
+   {'seq':4,'kind':'tool','operation':'repository_bundle_verify','repository':'marcogallotta/ai-tools','repository_id':1304888921,'source_ref':'refs/heads/main','source_sha':sha,'verified':True,'admission_id':aid},
+   {'seq':5,'kind':'tool','operation':'repository_bundle_bind','source_sha':sha,'bound':True,'admission_id':aid},
+   {'seq':6,'kind':'reasoning','operation':'substantial_cross_file_reasoning','source_sha':sha,'admission_id':aid},
+   {'seq':7,'kind':'connector_read','operation':'github_current_state','connector':'GitHub','admission_id':aid},
+   {'seq':8,'kind':'connector_read','operation':'asana_current_state','connector':'Asana','admission_id':aid}]
+ if sid=='repository-context-admission-tiny-lookup':
+  return [{'seq':1,'kind':'connector_read','operation':'targeted_status_lookup','connector':'GitHub'}]
+ if sid=='standing-policy-post-integration-main-readback':
+  return [
+   {'seq':1,'kind':'connector_read','operation':'pull_request_merged_state','connector':'GitHub','merged':True},
+   {'seq':2,'kind':'connector_read','operation':'standing_invariant_main_readback','connector':'GitHub','invariant_id':'repository-context-admission','coverage_complete':False}]
  return []
 def _passing():
  m,_=kernels.load_canonical(); results=[]
@@ -115,6 +132,89 @@ def test_development_workflow_incident_evals_require_cross_role_and_fallback_con
  assert {'load_contributor_base_context','inspect_authorized_fallback_surface','classify_residual_certification_only_after_fallback_check'}<=set(pr40['required_actions'])
  noauth=_scenario('development-workflow-context-preload-no-authority')
  assert {'treat_context_read_as_implementation_authority','treat_context_read_as_review_authority','treat_context_read_as_integration_authority'}<=set(noauth['forbidden_actions'])
+
+def test_repository_context_admission_is_shared_rendered_and_independently_registered():
+ m,s=kernels.load_canonical(); registry=kernels._standing_invariant_registry(); entry=registry['repository-context-admission']
+ assert entry['status']=='active'
+ assert set(entry['coverage']['rendered_roles'])==set(s['roles'])==set(kernels.REPOSITORY_CONTEXT_ROLES)
+ assert set(entry['coverage']['required_eval_ids'])==set(kernels.REPOSITORY_CONTEXT_EVAL_IDS)
+ shared={r['id']:r for r in kernels._rules(s['shared_rules'],'shared_rules')}; rule=shared['repository-context-admission']
+ assert entry['coverage']['source_rule_fingerprint']==kernels._rule_fingerprint(rule)
+ for role in s['roles']:
+  ids={r['id'] for r in kernels.effective_rules(s,role)}; assert 'repository-context-admission' in ids
+  assert rule['text'] in kernels.render_role(m,s,role)
+ assert kernels.validate_standing_invariants(s)==['repository-context-admission:active']
+
+
+def test_repository_context_behavior_contract_covers_order_exemption_reentry_and_stale_main():
+ full=_scenario('repository-context-admission-consequential-reasoning')
+ assert full['require_ordered_observations'] is True and full['observation_link_field']=='admission_id'
+ assert [x['operation'] for x in full['required_observations']]==['repository_main_identity','repository_bundle_download','repository_bundle_materialize','repository_bundle_verify','repository_bundle_bind','substantial_cross_file_reasoning','github_current_state','asana_current_state']
+ assert set(full['roles'])==set(kernels.REPOSITORY_CONTEXT_ROLES)
+ missing=_scenario('repository-context-admission-missing-bundle'); assert missing['roles']==['development-workflow'] and 'block_affected_substantial_conclusion' in missing['required_actions']
+ tiny=_scenario('repository-context-admission-tiny-lookup'); assert 'classify_tiny_targeted_lookup' in tiny['required_actions'] and 'require_repository_bundle_for_tiny_lookup' in tiny['forbidden_actions']
+ reentry=_scenario('repository-context-admission-reentry'); assert 'reenter_repository_context_admission' in reentry['required_actions']
+ stale=_scenario('repository-context-admission-stale-main'); assert {'reject_stale_repository_context','reenter_repository_context_admission'}<=set(stale['required_actions'])
+
+
+def test_repository_context_ordered_observation_rejects_reasoning_before_verification():
+ p=_passing(); r=_result(p,'repository-context-admission-consequential-reasoning::implementation')
+ by={x['operation']:x for x in r['runner_observations']}
+ by['substantial_cross_file_reasoning']['seq']=4
+ by['repository_bundle_verify']['seq']=6
+ with pytest.raises(kernels.KernelError,match='missing required runner observation'):
+  kernels.evaluate_behavior_results(p)
+
+
+def test_independent_registry_catches_self_consistent_project_surface_deletion():
+ _,s=kernels.load_canonical(); registry=kernels._standing_invariant_registry(); rebuilt=copy.deepcopy(s)
+ rebuilt['shared_rules']=[r for r in rebuilt['shared_rules'] if r['id']!='repository-context-admission']
+ rebuilt['roles']['integration']['rules']=[r for r in rebuilt['roles']['integration']['rules'] if r['id']!='integration-standing-policy-readback']
+ deleted=set(kernels.REPOSITORY_CONTEXT_EVAL_IDS)
+ eval_ids={x['id'] for x in kernels._evals()}-deleted
+ required_ids=set(kernels.REQUIRED_EVAL_IDS)-deleted
+ with pytest.raises(kernels.KernelError,match='missing canonical shared source rule'):
+  kernels.validate_standing_invariants(rebuilt,registry=registry,eval_ids=eval_ids,required_eval_ids=required_ids)
+
+
+def test_reconciliation_shape_cannot_omit_registered_bundle_outcome():
+ _,s=kernels.load_canonical(); registry=kernels._standing_invariant_registry(); reconstructed=copy.deepcopy(s)
+ reconstructed['shared_rules']=[r for r in reconstructed['shared_rules'] if r['id']!='repository-context-admission']
+ # Simulate main + an unrelated selected delta: the Project surface remains otherwise valid-looking.
+ reconstructed['roles']['implementation']['rules'][0]['text']+=' Selected unrelated reconciliation delta.'
+ with pytest.raises(kernels.KernelError,match='missing canonical shared source rule'):
+  kernels.validate_standing_invariants(reconstructed,registry=registry)
+
+
+def test_standing_invariant_removal_requires_explicit_durable_supersession():
+ _,s=kernels.load_canonical(); registry=kernels._standing_invariant_registry()
+ missing=copy.deepcopy(registry); missing.pop('repository-context-admission')
+ with pytest.raises(kernels.KernelError,match='missing required standing invariants'):
+  kernels.validate_standing_invariants(s,registry=missing)
+ superseded=copy.deepcopy(registry); entry=superseded['repository-context-admission']; entry['status']='superseded'; entry.pop('supersession',None)
+ with pytest.raises(kernels.KernelError,match='supersession requires durable explicit authority'):
+  kernels.validate_standing_invariants(s,registry=superseded)
+ entry['supersession']={'authority_type':'marco-explicit','durable_ref':'asana:task:example#explicit-decision','decision':'supersede for test','effective_at':'2026-08-16T22:00:00+02:00'}
+ assert kernels.validate_standing_invariants(s,registry=superseded)==['repository-context-admission:superseded']
+
+
+def test_active_standing_invariant_cannot_be_weakened_by_updating_project_and_registry_together():
+ _,s=kernels.load_canonical(); registry=kernels._standing_invariant_registry(); weakened=copy.deepcopy(s); altered=copy.deepcopy(registry)
+ rule=next(r for r in weakened['shared_rules'] if r['id']=='repository-context-admission'); rule['text']='Tiny reads and substantial reasoning may both proceed without a repository bundle.'
+ altered['repository-context-admission']['coverage']['source_rule_fingerprint']=kernels._rule_fingerprint(rule)
+ with pytest.raises(kernels.KernelError,match='coverage weakened without supersession'):
+  kernels.validate_standing_invariants(weakened,registry=altered)
+
+
+def test_standing_policy_completion_requires_authoritative_main_coverage_readback():
+ _,s=kernels.load_canonical(); integration={r['id']:r for r in kernels.effective_rules(s,'integration')}
+ assert 'integration-standing-policy-readback' in integration
+ contract=(DISH_ROOT/'docs'/'agents'/'integration.md').read_text()
+ assert 'do not mark the task complete from merge/ancestry alone' in contract and 'standing-invariants.json' in contract
+ scenario=_scenario('standing-policy-post-integration-main-readback')
+ assert scenario['roles']==['integration'] and scenario['require_ordered_observations'] is True
+ assert {'refuse_done_without_required_main_coverage','keep_owning_task_open'}<=set(scenario['required_actions'])
+
 
 def test_eval_contract_matrix_and_oracle_free_prepared_cases():
  ids=kernels.validate_eval_contracts(); assert set(ids)==kernels.REQUIRED_EVAL_IDS
