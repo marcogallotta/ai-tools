@@ -387,86 +387,161 @@ def grounding_context(
     return "\n".join(pieces)
 
 
+def _existing_boundary(agent_id: str) -> dict[str, Any] | None:
+    path = boundary_path(agent_id)
+    if not path.exists():
+        return None
+    try:
+        boundary = _read_json(path, "compaction boundary")
+    except RegroundError:
+        return None
+    return boundary if boundary.get("source") == "compact" else None
+
+
+def _boundary_transcript_path(payload: dict[str, Any], boundary: dict[str, Any] | None) -> str | None:
+    value = payload.get("transcript_path") or payload.get("transcriptPath")
+    if value is None and boundary is not None:
+        value = boundary.get("transcript_path")
+    return str(value) if value else None
+
+
+def _persist_reground_failure(agent_id: str, host: str, payload: dict[str, Any], error: str) -> None:
+    existing = _existing_boundary(agent_id) or {}
+    generation = str(existing.get("grounding_generation") or uuid.uuid4())
+    compaction_generation = str(existing.get("compaction_generation") or generation)
+    transcript_path = _boundary_transcript_path(payload, existing)
+    attempt_count = existing.get("reground_attempt_count", 1)
+    if not isinstance(attempt_count, int) or attempt_count < 1:
+        attempt_count = 1
+    failed_at = now_utc()
+    boundary = {
+        **existing,
+        "schema_version": SCHEMA_VERSION,
+        "agent_id": agent_id,
+        "session_identity": agent_id,
+        "host": host,
+        "grounding_generation": generation,
+        "compaction_generation": compaction_generation,
+        "source": "compact",
+        "boundary_at": existing.get("boundary_at") or failed_at,
+        "transcript_path": transcript_path,
+        "status": "pending",
+        "reground_attempt_count": attempt_count,
+        "last_attempt_at": existing.get("last_attempt_at") or failed_at,
+        "last_attempt_event": existing.get("last_attempt_event") or hook_event(payload) or "unknown",
+        "last_attempt_outcome": "failure",
+        "last_error": error,
+        "last_failure_at": failed_at,
+    }
+    _atomic_write_json(boundary_path(agent_id), boundary)
+
+
 def perform_reground(payload: dict[str, Any], agent_id: str, host: str) -> dict[str, Any]:
+    previous = _existing_boundary(agent_id)
     generation = str(uuid.uuid4())
+    compaction_generation = str(
+        (previous or {}).get("compaction_generation")
+        or (previous or {}).get("grounding_generation")
+        or generation
+    )
+    previous_attempts = (previous or {}).get("reground_attempt_count", 0)
+    if not isinstance(previous_attempts, int) or previous_attempts < 0:
+        previous_attempts = 0
+    transcript_path = _boundary_transcript_path(payload, previous)
+    attempt_at = now_utc()
     boundary = {
         "schema_version": SCHEMA_VERSION,
         "agent_id": agent_id,
+        "session_identity": agent_id,
         "host": host,
         "grounding_generation": generation,
+        "compaction_generation": compaction_generation,
         "source": "compact",
-        "boundary_at": now_utc(),
+        "boundary_at": (previous or {}).get("boundary_at") or attempt_at,
+        "transcript_path": transcript_path,
         "status": "pending",
+        "reground_attempt_count": previous_attempts + 1,
+        "last_attempt_at": attempt_at,
+        "last_attempt_event": hook_event(payload) or "unknown",
+        "last_attempt_outcome": "pending",
     }
+    for key in ("last_error", "last_failure_at"):
+        if previous and previous.get(key) is not None:
+            boundary[key] = previous[key]
     _atomic_write_json(boundary_path(agent_id), boundary)
 
-    identity = load_identity(agent_id)
-    repo = resolve_repo(identity, payload)
-    verify_repository(repo)
-    root_text = _read_required(repo, "CLAUDE.md")
-    index_text = _read_required(repo, "dish/docs/agents/index.md")
-    role = str(identity["role"]).strip()
-    contract_path = role_contract_from_index(index_text, role)
-    contract_text = _read_required(repo, contract_path)
+    try:
+        identity = load_identity(agent_id)
+        repo = resolve_repo(identity, payload)
+        verify_repository(repo)
+        root_text = _read_required(repo, "CLAUDE.md")
+        index_text = _read_required(repo, "dish/docs/agents/index.md")
+        role = str(identity["role"]).strip()
+        contract_path = role_contract_from_index(index_text, role)
+        contract_text = _read_required(repo, contract_path)
 
-    preload: dict[str, str] = {}
-    if role == "development-workflow":
-        for path in _all_role_contract_paths(index_text):
-            preload[path] = _read_required(repo, path)
-        contributor = "dish/docs/agents/contributor-base.md"
-        preload[contributor] = _read_required(repo, contributor)
+        preload: dict[str, str] = {}
+        if role == "development-workflow":
+            for path in _all_role_contract_paths(index_text):
+                preload[path] = _read_required(repo, path)
+            contributor = "dish/docs/agents/contributor-base.md"
+            preload[contributor] = _read_required(repo, contributor)
 
-    asana = recover_asana(repo, identity, contract_text)
-    git_pr = recover_git_pr(repo, identity)
-    transcript_path = payload.get("transcript_path") or payload.get("transcriptPath")
-    transcript_accessible = bool(transcript_path and Path(str(transcript_path)).is_file())
+        asana = recover_asana(repo, identity, contract_text)
+        git_pr = recover_git_pr(repo, identity)
+        transcript_accessible = bool(transcript_path and Path(transcript_path).is_file())
 
-    marker = {
-        "schema_version": SCHEMA_VERSION,
-        "status": "ready",
-        "grounding_generation": generation,
-        "agent_id": agent_id,
-        "host": host,
-        "resolved_role": role,
-        "grounded_at": now_utc(),
-        "repository": EXPECTED_REPOSITORY,
-        "workspace": str(repo),
-        "identity_sha256": _sha256_text(json.dumps(identity, sort_keys=True, separators=(",", ":"))),
-        "root_instructions": _authority_record(repo, "CLAUDE.md", root_text),
-        "role_index": _authority_record(repo, "dish/docs/agents/index.md", index_text),
-        "role_contract": _authority_record(repo, contract_path, contract_text),
-        "owning_task_gid": asana.get("owning_task_gid") if asana else _task_gid(identity),
-        "owning_project_gid": asana.get("owning_project_gid") if asana else _project_gid(identity),
-        "asana_state": asana,
-        "git": {"branch": git_pr["branch"], "local_head": git_pr["local_head"]},
-        "pr": git_pr["pr"],
-        "transcript": {
-            "path": str(transcript_path) if transcript_path else None,
-            "accessible": transcript_accessible,
-            "history_before_boundary": "VERIFY_TRANSCRIPT_OR_UNKNOWN",
-        },
-    }
-    _atomic_write_json(marker_path(agent_id), marker)
-    boundary["status"] = "ready"
-    boundary["grounded_at"] = marker["grounded_at"]
-    _atomic_write_json(boundary_path(agent_id), boundary)
-
-    context = grounding_context(
-        root_text=root_text,
-        index_text=index_text,
-        contract_text=contract_text,
-        contract_path=contract_path,
-        preload=preload,
-        asana=asana,
-        git_pr=git_pr,
-        marker=marker,
-    )
-    return {
-        "hookSpecificOutput": {
-            "hookEventName": "SessionStart",
-            "additionalContext": context,
+        marker = {
+            "schema_version": SCHEMA_VERSION,
+            "status": "ready",
+            "grounding_generation": generation,
+            "compaction_generation": compaction_generation,
+            "agent_id": agent_id,
+            "host": host,
+            "resolved_role": role,
+            "grounded_at": now_utc(),
+            "repository": EXPECTED_REPOSITORY,
+            "workspace": str(repo),
+            "identity_sha256": _sha256_text(json.dumps(identity, sort_keys=True, separators=(",", ":"))),
+            "root_instructions": _authority_record(repo, "CLAUDE.md", root_text),
+            "role_index": _authority_record(repo, "dish/docs/agents/index.md", index_text),
+            "role_contract": _authority_record(repo, contract_path, contract_text),
+            "owning_task_gid": asana.get("owning_task_gid") if asana else _task_gid(identity),
+            "owning_project_gid": asana.get("owning_project_gid") if asana else _project_gid(identity),
+            "asana_state": asana,
+            "git": {"branch": git_pr["branch"], "local_head": git_pr["local_head"]},
+            "pr": git_pr["pr"],
+            "transcript": {
+                "path": transcript_path,
+                "accessible": transcript_accessible,
+                "history_before_boundary": "VERIFY_TRANSCRIPT_OR_UNKNOWN",
+            },
         }
-    }
+        _atomic_write_json(marker_path(agent_id), marker)
+        boundary["status"] = "ready"
+        boundary["grounded_at"] = marker["grounded_at"]
+        boundary["last_attempt_outcome"] = "success"
+        _atomic_write_json(boundary_path(agent_id), boundary)
+
+        context = grounding_context(
+            root_text=root_text,
+            index_text=index_text,
+            contract_text=contract_text,
+            contract_path=contract_path,
+            preload=preload,
+            asana=asana,
+            git_pr=git_pr,
+            marker=marker,
+        )
+        return {
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": context,
+            }
+        }
+    except RegroundError as exc:
+        _persist_reground_failure(agent_id, host, payload, str(exc))
+        raise
 
 
 def validate_barrier(payload: dict[str, Any], agent_id: str) -> str | None:
@@ -522,11 +597,45 @@ def deny(reason: str) -> dict[str, Any]:
             "permissionDecision": "deny",
             "permissionDecisionReason": (
                 "Dish post-compaction role/process barrier: " + reason + ". "
-                "Re-run the compact SessionStart re-grounding hook before substantive work."
+                "Automatic same-session re-grounding was attempted once; the tool remains blocked until the "
+                "reported authority failure is resolved."
             ),
         }
     }
 
+
+def _pretool_recovery_payload(
+    payload: dict[str, Any], agent_id: str, host: str
+) -> dict[str, Any]:
+    boundary = _existing_boundary(agent_id)
+    recovery = dict(payload)
+    recovery["hook_event_name"] = "PreToolUse"
+    recovery["source"] = "compact"
+    if host == "claude":
+        recovery.setdefault("session_id", agent_id)
+    transcript_path = _boundary_transcript_path(payload, boundary)
+    if transcript_path:
+        recovery["transcript_path"] = transcript_path
+    return recovery
+
+
+def recover_pretool_barrier(
+    payload: dict[str, Any], agent_id: str, host: str
+) -> dict[str, Any] | None:
+    reason = validate_barrier(payload, agent_id)
+    if not reason:
+        return None
+
+    recovery_payload = _pretool_recovery_payload(payload, agent_id, host)
+    try:
+        perform_reground(recovery_payload, agent_id, host)
+    except RegroundError as exc:
+        return deny(f"automatic re-ground retry failed: {exc}")
+
+    residual = validate_barrier(payload, agent_id)
+    if residual:
+        return deny(f"automatic re-ground retry completed but validation still fails: {residual}")
+    return None
 
 def history_check(agent_id: str, query: str | None) -> int:
     try:
@@ -601,40 +710,12 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(perform_reground(payload, agent_id, host)))
             return 0
         if event == "PreToolUse":
-            reason = validate_barrier(payload, agent_id)
-            if reason:
-                print(json.dumps(deny(reason)))
+            decision = recover_pretool_barrier(payload, agent_id, host)
+            if decision:
+                print(json.dumps(decision))
             return 0
         return 0
     except (RegroundError, json.JSONDecodeError) as exc:
-        # A compact boundary failure must leave a durable pending generation whenever we can
-        # identify the session, so the next substantive tool call fails closed.
-        try:
-            payload_obj = locals().get("payload")
-            if isinstance(payload_obj, dict):
-                agent_id, host = resolve_agent_id(payload_obj)
-                if hook_event(payload_obj) == "SessionStart" and payload_obj.get("source") == "compact":
-                    existing = None
-                    try:
-                        existing = _read_json(boundary_path(agent_id), "compaction boundary")
-                    except RegroundError:
-                        pass
-                    if not existing:
-                        _atomic_write_json(
-                            boundary_path(agent_id),
-                            {
-                                "schema_version": SCHEMA_VERSION,
-                                "agent_id": agent_id,
-                                "host": host,
-                                "grounding_generation": str(uuid.uuid4()),
-                                "source": "compact",
-                                "boundary_at": now_utc(),
-                                "status": "pending",
-                                "error": str(exc),
-                            },
-                        )
-        except Exception:
-            pass
         print(f"agent-reground: {exc}", file=sys.stderr)
         return 2
 
