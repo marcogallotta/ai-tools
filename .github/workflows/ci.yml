@@ -146,6 +146,35 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
 
+      - name: Wait for exact certification plan artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAN_ARTIFACT_NAME: pr-certification-plan-${{ needs.plan.outputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          for poll in $(seq 1 60); do
+            mapfile -t matches < <(
+              gh api --paginate \
+                -H 'Accept: application/vnd.github+json' \
+                "/repos/$GITHUB_REPOSITORY/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100" \
+                --jq '.artifacts[] | select(.expired == false) | .name' \
+                | grep -Fx "$PLAN_ARTIFACT_NAME" || true
+            )
+            if (( ${#matches[@]} == 1 )); then
+              break
+            fi
+            if (( ${#matches[@]} > 1 )); then
+              echo "Found duplicate current-attempt certification plan artifacts: $PLAN_ARTIFACT_NAME" >&2
+              exit 1
+            fi
+            if (( poll == 60 )); then
+              echo "Timed out waiting for current-attempt certification plan artifact: $PLAN_ARTIFACT_NAME" >&2
+              exit 1
+            fi
+            sleep 2
+          done
+
       - name: Download exact certification plan
         uses: actions/download-artifact@v8
         with:
