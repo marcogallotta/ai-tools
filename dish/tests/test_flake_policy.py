@@ -135,3 +135,63 @@ def test_collection_policy_rejects_dual_candidate_and_quarantine_markers():
     assert _flake_policy_violations([item]) == [
         "tests/test_example.py::test_example: cannot be both flake_candidate and quarantined"
     ]
+
+
+class _Config:
+    def __init__(self, **overrides):
+        self._options = {
+            "--smoke": False,
+            "--database-boundary": False,
+            "--flake-candidates": False,
+            "--quarantine": False,
+            "--pglite": False,
+            "--native-postgresql": False,
+            "--postgresql": False,
+        }
+        self._options.update(overrides)
+
+    def getoption(self, name):
+        return self._options[name]
+
+
+def test_smoke_selection_is_the_required_invariant_core_not_legacy_smoke_membership():
+    from tests.conftest import REQUIRED_SMOKE_INVARIANTS, _select_items
+
+    invariant_items = [
+        _Item(
+            f"tests/test_launch_core.py::test_{marker}",
+            [_Marker(marker)],
+        )
+        for marker in sorted(REQUIRED_SMOKE_INVARIANTS)
+    ]
+    aggregate_frontend_smoke = _Item(
+        "tests/test_frontend_tooling.py::test_frontend_tooling_and_unit_contract",
+        [_Marker("smoke")],
+    )
+    historical_smoke = _Item(
+        "tests/test_historical_regression.py::test_incidental_smoke",
+        [_Marker("smoke")],
+    )
+
+    selected = _select_items(
+        _Config(**{"--smoke": True}),
+        [*invariant_items, aggregate_frontend_smoke, historical_smoke],
+    )
+
+    assert selected == invariant_items
+
+
+def test_smoke_selection_still_fails_closed_when_a_required_invariant_is_missing():
+    from tests.conftest import REQUIRED_SMOKE_INVARIANTS, _select_items
+
+    missing = "invariant_request_replay"
+    items = [
+        _Item(
+            f"tests/test_launch_core.py::test_{marker}",
+            [_Marker(marker)],
+        )
+        for marker in sorted(REQUIRED_SMOKE_INVARIANTS - {missing})
+    ]
+
+    with pytest.raises(pytest.UsageError, match=missing):
+        _select_items(_Config(**{"--smoke": True}), items)
