@@ -6,10 +6,12 @@ guardrail, not a process sandbox: it handles direct and visible nested Git
 invocations, but cannot inspect arbitrary opaque child-process behavior.
 """
 
+import json
 import os
 import re
 import shlex
 import subprocess
+from pathlib import Path
 
 
 DEFAULT_PROTECTED_CHECKOUT_ROOT = os.path.realpath(os.path.expanduser("~/ai-tools"))
@@ -332,6 +334,65 @@ def _is_protected_primary(identity, protected_root):
     )
 
 
+def _active_task_for_identity(identity):
+    """Return the exact active task GID for a registered linked worktree."""
+    if identity is None:
+        return None
+    toplevel, git_dir, common_dir = (os.path.realpath(value) for value in identity)
+    state_root = Path(os.path.expanduser("~/.local/state/dish/worktrees"))
+    if not state_root.is_dir():
+        return None
+    for path in state_root.glob("*.json"):
+        if path.is_symlink():
+            continue
+        try:
+            state = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(state, dict) or state.get("lifecycle") != "active":
+            continue
+        task_gid = str(state.get("task_gid", ""))
+        branch = str(state.get("branch", ""))
+        if not task_gid.isdigit() or not branch.startswith("agent/"):
+            continue
+        if path.stem != task_gid:
+            continue
+        if (
+            os.path.realpath(str(state.get("worktree_path", ""))) == toplevel
+            and os.path.realpath(str(state.get("git_dir", ""))) == git_dir
+            and os.path.realpath(str(state.get("git_common_dir", ""))) == common_dir
+        ):
+            return task_gid
+    return None
+
+
+def active_task_for_cwd(cwd):
+    identity = _resolve_repo_identity([], {}, cwd)
+    return _active_task_for_identity(identity)
+
+
+def active_task_for_git_segment(segment, cwd):
+    """Resolve a direct visible Git segment to its registered active task, if any."""
+    pairs = _classify_tokens(segment)
+    command_idx = _command_index(pairs)
+    if command_idx is None or basename_token(pairs[command_idx][0]) != "git":
+        return None
+    location_args, _global_args, sub_idx, ambiguous, _alias_ambiguous = _resolve_git_invocation(
+        pairs, command_idx
+    )
+    if sub_idx is None or ambiguous:
+        return None
+    command_env, _ambiguous_names = _command_environment(pairs[:command_idx])
+    location_env, env_ambiguous = _env_location_overrides(pairs[:command_idx])
+    if env_ambiguous:
+        return None
+    identity = _resolve_repo_identity(location_args, {**command_env, **location_env}, cwd)
+    task_gid = _active_task_for_identity(identity)
+    if task_gid is None:
+        return None
+    return task_gid, basename_token(pairs[sub_idx][0])
+
+
 def _alias_value(global_args, extra_env, cwd, name):
     result = _run_git([*global_args, "config", "--get", f"alias.{name}"], extra_env, cwd)
     if result is None or result.returncode != 0:
@@ -345,6 +406,15 @@ def _deny_branch(subcommand, kind, protected_root):
         f"primary {protected_root} checkout - this is the shared operator checkout, "
         "not an isolated agent worktree. Create/enter an owned linked worktree and "
         "retry the branch change there."
+    )
+
+
+def _deny_task_branch(subcommand, kind, task_gid):
+    return (
+        f"[protected-checkout] Refusing '{subcommand}' branch change ({kind}) in active "
+        f"Dish task worktree {task_gid}. The task-owned branch is fixed by the registered "
+        "agent-worktree lifecycle; use tools/agent-worktree status/resume rather than "
+        "checkout/switch."
     )
 
 
@@ -389,6 +459,9 @@ def _classify_git(
         identity = _resolve_repo_identity(location_args, extra_env, cwd)
         if _is_protected_primary(identity, protected_root):
             return _deny_branch(subcommand, kind, protected_root)
+        task_gid = _active_task_for_identity(identity)
+        if task_gid is not None:
+            return _deny_task_branch(subcommand, kind, task_gid)
         return None
 
     if depth >= 6 or subcommand in seen_aliases:

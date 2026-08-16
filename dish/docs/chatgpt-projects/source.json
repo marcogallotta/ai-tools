@@ -103,7 +103,7 @@
         },
         {
           "id": "development-workflow-live-lane",
-          "text": "`Dish — Development Workflow` is live Asana authority. Fixture repair requires every side healthy; incompatible target stops. Required gate + no supported op + needed repo capability => IMPLEMENTATION REQUIRED, active/not deferred; safe supported op => LOCAL SYSTEM ACCESS. Missing safe publication stays `PUBLICATION BLOCKER`.",
+          "text": "`Dish — Development Workflow` is live Asana authority. Fixture repair requires every side healthy; incompatibility stops. Required gate + no supported op + needed repo capability => IMPLEMENTATION REQUIRED, active/not deferred; safe supported op => LOCAL SYSTEM ACCESS. Missing safe publication: use activated exact-tree materializer when eligible; else `PUBLICATION BLOCKER`.",
           "impact": "breaking",
           "action_boundaries": [
             "role-critical-write",
@@ -189,6 +189,16 @@
           "action_boundaries": [
             "handoff",
             "role-critical-write"
+          ],
+          "surface": "lifecycle"
+        },
+        {
+          "id": "publication-materializer-path",
+          "text": "After the exact-tree materializer has landed and passed its post-landing activation canary, a canonical same-repo draft-PR publication blocker with the complete verified candidate tree and a request within proven limits uses that bounded remote path before local completion. The workflow may create only an unattached exact-parent/exact-tree candidate; Implementation independently reads it back, performs the separate non-force expected-head connector ref update, and authoritatively re-reads PR/branch/commit/tree. Ineligible/unavailable/over-limit/incomplete requests retain `LOCAL IMPLEMENTATION COMPLETION REQUIRED`; this path grants no Review/Integration authority.",
+          "impact": "additive",
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
           ],
           "surface": "lifecycle"
         },

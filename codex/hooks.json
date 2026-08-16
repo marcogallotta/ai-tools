@@ -20,7 +20,7 @@
           {
             "type": "command",
             "command": "/home/marco/.local/bin/agent-reground",
-            "timeout": 10,
+            "timeout": 30,
             "statusMessage": "Checking post-compaction Dish role state"
           }
         ]

@@ -1,0 +1,111 @@
+name: Publication materializer
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+jobs:
+  filter:
+    if: >-
+      github.event.issue.pull_request != null &&
+      contains(github.event.comment.body, 'dish-publication-materialize:v1')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    outputs:
+      valid: ${{ steps.filter.outputs.valid }}
+      pr_number: ${{ steps.filter.outputs.pr_number }}
+      request_id: ${{ steps.filter.outputs.request_id }}
+    steps:
+      - name: Check out trusted default-branch request parser
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Validate request without write authority
+        id: filter
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python scripts/ci/publication_materializer.py filter
+          --event-path "$GITHUB_EVENT_PATH"
+          --github-output "$GITHUB_OUTPUT"
+
+  materialize:
+    needs: filter
+    if: needs.filter.outputs.valid == 'true'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: dish-publication-materialize-${{ needs.filter.outputs.pr_number }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      issues: read
+      pull-requests: read
+    outputs:
+      candidate_commit: ${{ steps.materialize.outputs.candidate_commit }}
+      tree: ${{ steps.materialize.outputs.tree }}
+      parent: ${{ steps.materialize.outputs.parent }}
+      pr_number: ${{ steps.materialize.outputs.pr_number }}
+      request_id: ${{ steps.materialize.outputs.request_id }}
+    steps:
+      - name: Resolve exact trusted default-branch source
+        id: authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          source_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${DEFAULT_BRANCH}" --jq '.object.sha')"
+          test "${#source_sha}" -eq 40
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+      - name: Check out exact trusted materializer source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.authority.outputs.source_sha }}
+          persist-credentials: false
+      - name: Revalidate and create unattached exact-tree child commit
+        id: materialize
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python scripts/ci/publication_materializer.py materialize
+          --event-path "$GITHUB_EVENT_PATH"
+          --result-path "$RUNNER_TEMP/publication-materializer-result.json"
+          --github-output "$GITHUB_OUTPUT"
+
+  report:
+    needs: [filter, materialize]
+    if: needs.materialize.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Report unattached candidate identity without source-write authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.materialize.outputs.pr_number }}
+          REQUEST_ID: ${{ needs.materialize.outputs.request_id }}
+          CANDIDATE: ${{ needs.materialize.outputs.candidate_commit }}
+          PARENT: ${{ needs.materialize.outputs.parent }}
+          TREE: ${{ needs.materialize.outputs.tree }}
+        run: |
+          set -euo pipefail
+          body="$(cat <<EOF
+          Exact-tree publication candidate materialized. No branch ref was updated.
+
+          - Expected parent: \`${PARENT}\`
+          - Candidate commit: \`${CANDIDATE}\`
+          - Tree: \`${TREE}\`
+
+          Implementation must independently verify this exact parent/tree, then attach the candidate to the existing PR branch through the separate expected-head/CAS connector ref update and re-read the authoritative PR/branch/commit/tree state.
+
+          <!-- dish-publication-materialize-result:v1 request=${REQUEST_ID} candidate=${CANDIDATE} parent=${PARENT} tree=${TREE} -->
+          EOF
+          )"
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --raw-field body="$body" >/dev/null

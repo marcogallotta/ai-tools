@@ -82,3 +82,51 @@ def test_codex_hooks_config_is_user_level_and_hard_deny_adapter(hooks_dir):
     entries = config["hooks"]["PreToolUse"]
     entry = next(item for item in entries if item.get("matcher") == "^Bash$")
     assert entry["hooks"][0]["command"] == "/home/marco/.local/bin/codex-protected-checkout"
+
+
+def test_codex_adapter_denies_branch_change_in_registered_active_task_worktree(
+    codex_protected_checkout, protected_repo, monkeypatch, capsys, tmp_path
+):
+    import subprocess
+
+    linked = protected_repo["linked"].resolve()
+    home = tmp_path / "home"
+    state_root = home / ".local/state/dish/worktrees"
+    state_root.mkdir(parents=True)
+    git_dir = subprocess.run(
+        ["git", "-C", str(linked), "rev-parse", "--path-format=absolute", "--git-dir"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    common_dir = subprocess.run(
+        ["git", "-C", str(linked), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    (state_root / "12345.json").write_text(json.dumps({
+        "task_gid": "12345",
+        "branch": "agent/existing",
+        "worktree_path": str(linked),
+        "git_dir": git_dir,
+        "git_common_dir": common_dir,
+        "lifecycle": "active",
+    }) + "\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(
+        codex_protected_checkout.protected_checkout,
+        "DEFAULT_PROTECTED_CHECKOUT_ROOT",
+        str(protected_repo["primary"]),
+    )
+    decision = run_adapter(
+        codex_protected_checkout,
+        {
+            "hook_event_name": "PreToolUse",
+            "tool_name": "Bash",
+            "cwd": str(linked),
+            "tool_input": {"command": "git switch main"},
+        },
+        monkeypatch,
+        capsys,
+    )
+    output = decision["hookSpecificOutput"]
+    assert output["permissionDecision"] == "deny"
+    assert "12345" in output["permissionDecisionReason"]
+    assert "task-owned branch is fixed" in output["permissionDecisionReason"]

@@ -2,6 +2,17 @@
 
 This runbook operates the repository-owned Dish PR lifecycle dispatcher. It is an orchestration surface, not semantic Review or Implementation authority and not a replacement for Integration gates.
 
+## Navigation
+
+- [Authority and recovery model](#authority-and-recovery-model)
+- [Commands](#commands) and [derived lifecycle states](#derived-lifecycle-states)
+- [Terminal disposition and cleanup](#terminal-disposition-and-cleanup) and [structured advisory leases](#structured-advisory-leases)
+- [Review routing](#review-routing) and [BLOCK → implementation/fix routing](#block--implementationfix-routing)
+- [External dependency blockers](#external-dependency-blockers)
+- [Local work after Review MERGE](#local-work-after-review-merge)
+- [Integration composition](#integration-composition)
+- [Human notifications](#human-notifications)
+
 ## Authority and recovery model
 
 `scripts/pr_lifecycle.py` derives queue truth from durable GitHub PR state and the linked Asana task identity. It has no authoritative local database. Restart recovery is a fresh GitHub/Asana read.

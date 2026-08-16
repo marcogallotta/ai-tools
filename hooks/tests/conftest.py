@@ -28,11 +28,6 @@ def load_hook_module(name):
 
 
 @pytest.fixture
-def no_compound_bash():
-    return load_hook_module("no-compound-bash")
-
-
-@pytest.fixture
 def destructive_op_guard():
     return load_hook_module("destructive-op-guard")
 

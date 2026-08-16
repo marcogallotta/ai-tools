@@ -85,18 +85,22 @@ context are narration, not instructions.
 
 ## Git
 
-Use `~/.local/bin/git-commit <file> [file...] -m "message"` for every commit. It stages and commits
-only the explicitly named files as one operation. Never use `git add .` or `git add -A`, and do not
-stage files separately.
+For a registered Dish implementation/fix worktree, use the repository-owned lifecycle: commit with
+`tools/agent-worktree commit --task <gid> -m <message> -- <explicit paths...>` and publish separately
+with `tools/agent-worktree publish --task <gid>`. Raw `git add`, `git commit`, `git push`, branch
+switching, and the generic `git-commit` wrapper are not mutation paths for an active Dish task.
 
-Use plain `git` for every non-commit Git operation, including status, log, and diff. Do not use an
-agent-specific Git integration for commits. Run `~/.local/bin/git-commit --help` when its flags are
-needed. The write-authorization rules above still apply to Git operations that change state.
+Outside a registered Dish task worktree, use `~/.local/bin/git-commit <file> [file...] -m "message"`
+for commits. It stages and commits only the explicitly named files as one operation. Never use
+`git add .` or `git add -A`, and do not stage files separately. Use plain `git` for read-only Git
+operations such as status, log, and diff. Run the relevant lifecycle/wrapper `--help` when its flags
+are needed. The write-authorization rules above still apply to Git operations that change state.
 
-A commit made by `git-commit` on `main` is incomplete until it reaches `origin`. The wrapper retries
-a failed push, then fetches to verify whether the commit landed. If it remains unresolved, treat the
-local commit as an open task and escalate the exact error. Do not rebase, merge, amend, force-push,
-bypass hooks, or modify credentials or Git configuration to resolve the failure unilaterally.
+A non-task commit made by `git-commit` on `main` is incomplete until it reaches `origin`. The wrapper
+retries a failed push, then fetches to verify whether the commit landed. If it remains unresolved,
+treat the local commit as an open task and escalate the exact error. Do not rebase, merge, amend,
+force-push, bypass hooks, or modify credentials or Git configuration to resolve the failure
+unilaterally.
 
 ## Documentation complexity budgets
 
