@@ -1514,6 +1514,31 @@
       "roles": [
         "implementation"
       ]
+    },
+    {
+      "expected_outcome": "use_activated_exact_tree_materializer_before_local_completion",
+      "forbidden_actions": [
+        "route_local_completion_without_materializer_eligibility_check",
+        "treat_unattached_candidate_as_published",
+        "grant_review_or_integration_authority"
+      ],
+      "id": "publication-materializer-eligible-blocker",
+      "prompt": "The exact-tree publication materializer is already landed and its activation canary passed. An existing same-repo draft PR is in the canonical publication-blocker state; its exact task/head are current, the complete verified one-parent candidate tree still exists, and the immutable patch/chunks are within the proven limits. Choose the next publication route and state the authority/readback boundaries.",
+      "required_actions": [
+        "verify_materializer_eligibility",
+        "use_bounded_materializer_before_local_completion",
+        "treat_candidate_as_unattached_until_ref_update",
+        "independently_verify_candidate_parent_tree",
+        "use_separate_non_force_expected_head_ref_update",
+        "authoritatively_read_back_pr_branch_commit_tree"
+      ],
+      "required_rules": [
+        "publication-materializer-path",
+        "implementation-durable-git"
+      ],
+      "roles": [
+        "implementation"
+      ]
     }
   ],
   "schema_version": 3

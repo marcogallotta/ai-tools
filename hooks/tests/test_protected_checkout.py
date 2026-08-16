@@ -283,3 +283,46 @@ def test_opaque_python_subprocess_is_explicitly_outside_classifier(
     classifier_module, protected_repo
 ):
     assert classify(classifier_module, protected_repo, "python3 opaque.py") is None
+
+
+def _register_active_linked_worktree(protected_repo, monkeypatch, tmp_path, task_gid="12345"):
+    import json
+    import os
+
+    home = tmp_path / "home"
+    state_root = home / ".local/state/dish/worktrees"
+    state_root.mkdir(parents=True)
+    linked = protected_repo["linked"].resolve()
+    git_dir = subprocess.run(
+        ["git", "-C", str(linked), "rev-parse", "--path-format=absolute", "--git-dir"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    common_dir = subprocess.run(
+        ["git", "-C", str(linked), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    (state_root / f"{task_gid}.json").write_text(json.dumps({
+        "task_gid": task_gid,
+        "branch": "agent/existing",
+        "worktree_path": str(linked),
+        "git_dir": git_dir,
+        "git_common_dir": common_dir,
+        "lifecycle": "active",
+    }) + "\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    return task_gid
+
+
+def test_registered_active_task_worktree_branch_change_is_denied(
+    classifier_module, protected_repo, monkeypatch, tmp_path
+):
+    task_gid = _register_active_linked_worktree(protected_repo, monkeypatch, tmp_path)
+    reason = classify(classifier_module, protected_repo, "git switch main", cwd="linked")
+    assert task_gid in reason
+    assert "task-owned branch is fixed" in reason
+
+
+def test_unregistered_linked_worktree_branch_change_retains_existing_behavior(
+    classifier_module, protected_repo
+):
+    assert classify(classifier_module, protected_repo, "git switch main", cwd="linked") is None
