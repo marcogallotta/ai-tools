@@ -101,6 +101,7 @@ class FakeGitHub:
         self.artifacts = {}
         self.merge_response = {"merged": True, "sha": "d" * 40, "message": "Pull Request successfully merged"}
         self.merge_mutates = True
+        self.refs = {"heads/main": "c" * 40}
 
     def list_prs(self, *, include_closed=False):
         if self.pr["state"] != "open" and not include_closed:
@@ -125,6 +126,9 @@ class FakeGitHub:
 
     def get_repository_id(self):
         return self.repository_id
+
+    def get_ref_sha(self, ref):
+        return self.refs[ref]
 
     def get_workflow_run_attempt(self, run_id, run_attempt):
         return deepcopy(self.workflow_attempts[(run_id, run_attempt)])
@@ -152,9 +156,46 @@ class FakeGitHub:
         if self.merge_mutates and self.merge_response.get("merged") is True:
             self.pr["merged"] = True
             self.pr["merged_at"] = NOW.isoformat()
+            self.pr["merge_commit_sha"] = self.merge_response.get("sha")
             self.pr["state"] = "closed"
         return deepcopy(self.merge_response)
 
+
+
+class FakeLocalIntegration:
+    command = "fake-local-integration"
+
+    def __init__(self, github: FakeGitHub, *, outcome: str = "merge"):
+        self.github = github
+        self.outcome = outcome
+        self.calls = []
+
+    def dispatch(self, context, *, lock_fd=None):
+        self.calls.append(deepcopy(context))
+        self.github.events.append(("local-integration", context["pull_request"]["head"], self.outcome))
+        if self.outcome == "merge":
+            self.github.merge(
+                context["pull_request"]["number"],
+                expected_head=context["pull_request"]["head"],
+                method=context.get("merge_method", "squash"),
+            )
+        elif self.outcome == "head-change":
+            self.github.pr["head"]["sha"] = NEW_HEAD
+        elif self.outcome == "no-readback":
+            prior = self.github.merge_mutates
+            self.github.merge_mutates = False
+            try:
+                self.github.merge(
+                    context["pull_request"]["number"],
+                    expected_head=context["pull_request"]["head"],
+                    method="squash",
+                )
+            finally:
+                self.github.merge_mutates = prior
+        elif self.outcome == "return":
+            return
+        else:
+            raise AssertionError(f"unknown fake local Integration outcome: {self.outcome}")
 
 def engine(gh, *, now=NOW, authority=False, capable=True):
     return pr_lifecycle.LifecycleEngine(
@@ -268,26 +309,34 @@ def test_merge_with_local_cert_updates_pr_before_human_notification():
     assert result.local_work[0]["handoff_present"] is True
 
 
-def test_merge_with_green_gates_and_explicit_authority_merges_exact_head_then_reads_back():
+def test_merge_with_green_gates_and_explicit_authority_uses_local_launcher_then_reads_back(tmp_path, monkeypatch):
+    monkeypatch.setenv("DISH_LOCAL_INTEGRATION_STATE_ROOT", str(tmp_path))
     gh = FakeGitHub()
     gh.reviews = [review()]
     lifecycle = engine(gh, authority=True)
+    launcher = FakeLocalIntegration(gh, outcome="merge")
+    lifecycle.local_integration_launcher = launcher
     initial = lifecycle.inspect(gh.pr)
     assert initial.state == pr_lifecycle.LifecycleState.INTEGRATION_READY
     result = lifecycle.dispatch_one(initial, workspace=None, local_reviewer=None)
     assert result.state == pr_lifecycle.LifecycleState.MERGED
-    merge_event = next(event for event in gh.events if event[0] == "merge")
-    assert merge_event[1] == HEAD
+    assert len(launcher.calls) == 1
+    assert launcher.calls[0]["schema"] == "dish-pr-local-integration-v1"
+    assert launcher.calls[0]["claim"]["head"] == HEAD
+    assert next(event for event in gh.events if event[0] == "local-integration")[1] == HEAD
+    assert next(event for event in gh.events if event[0] == "merge")[1] == HEAD
 
 
-def test_no_false_merged_state_from_merge_response_without_authoritative_readback():
+def test_no_false_merged_state_from_local_launcher_without_authoritative_readback(tmp_path, monkeypatch):
+    monkeypatch.setenv("DISH_LOCAL_INTEGRATION_STATE_ROOT", str(tmp_path))
     gh = FakeGitHub()
     gh.reviews = [review()]
-    gh.merge_mutates = False
     lifecycle = engine(gh, authority=True)
+    launcher = FakeLocalIntegration(gh, outcome="no-readback")
+    lifecycle.local_integration_launcher = launcher
     result = lifecycle.dispatch_one(lifecycle.inspect(gh.pr), workspace=None, local_reviewer=None)
     assert result.state == pr_lifecycle.LifecycleState.INTEGRATION_READY
-    assert "readback" in result.residual_reason
+    assert "without authoritative MERGED readback" in result.residual_reason
 
 
 def test_agent_prose_or_stale_review_never_advances_to_merged():
@@ -451,30 +500,30 @@ def test_old_block_domain_deep_recheck_stays_in_one_review_workflow():
     assert state.review_class == "domain:unspecified"
 
 
-def test_restart_resumes_dispatcher_owned_integration_lease():
+def test_restart_advisory_integration_lease_does_not_replace_local_fence(tmp_path, monkeypatch):
+    monkeypatch.setenv("DISH_LOCAL_INTEGRATION_STATE_ROOT", str(tmp_path))
     gh = FakeGitHub()
     gh.reviews = [review()]
     gh.comments = [lease_comment(phase="integration")]
     lifecycle = engine(gh, authority=True)
+    lifecycle.local_integration_launcher = FakeLocalIntegration(gh, outcome="merge")
     initial = lifecycle.inspect(gh.pr)
     assert initial.state == pr_lifecycle.LifecycleState.MERGING
     result = lifecycle.dispatch_one(initial, workspace=None, local_reviewer=None)
     assert result.state == pr_lifecycle.LifecycleState.MERGED
-    assert next(event for event in gh.events if event[0] == "merge")[1] == HEAD
 
 
-def test_foreign_integration_lease_is_not_taken_over_before_stale():
+def test_foreign_advisory_integration_lease_is_visibility_only_under_v1a(tmp_path, monkeypatch):
+    monkeypatch.setenv("DISH_LOCAL_INTEGRATION_STATE_ROOT", str(tmp_path))
     gh = FakeGitHub()
     gh.reviews = [review()]
     foreign = lease_comment(phase="integration")
     foreign["body"] = foreign["body"].replace("owner=pr-lifecycle", "owner=another-integrator")
     gh.comments = [foreign]
     lifecycle = engine(gh, authority=True)
-    initial = lifecycle.inspect(gh.pr)
-    assert initial.state == pr_lifecycle.LifecycleState.MERGING
-    result = lifecycle.dispatch_one(initial, workspace=None, local_reviewer=None)
-    assert result.state == pr_lifecycle.LifecycleState.MERGING
-    assert not any(event[0] == "merge" for event in gh.events)
+    lifecycle.local_integration_launcher = FakeLocalIntegration(gh, outcome="merge")
+    result = lifecycle.dispatch_one(lifecycle.inspect(gh.pr), workspace=None, local_reviewer=None)
+    assert result.state == pr_lifecycle.LifecycleState.MERGED
 
 
 def test_local_action_notice_is_idempotent_across_duplicate_polls():

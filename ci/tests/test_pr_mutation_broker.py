@@ -385,7 +385,6 @@ def test_takeover_rejects_head_or_branch_movement_before_reclassification_or_rec
     ("action", "route", "policy"),
     [
         ("fix", ROUTE, {ROUTE: {"role": "implementation", "actions": ["takeover"]}}),
-        ("merge", "integration", {"integration": {"role": "integration", "actions": ["takeover"]}}),
     ],
 )
 def test_takeover_cannot_use_literal_takeover_permission_for_original_action(action, route, policy):
@@ -510,40 +509,12 @@ def test_pr_owned_ci_fix_does_not_accept_ambiguous_or_infrastructure_failure():
             )
 
 
-def test_merge_eligibility_rechecks_exact_review_main_and_integration_authority():
-    request = broker.parse_request_comment(request_comment(action="merge", review=77, route="integration"))
-    lifecycle = lifecycle_for(broker.LifecycleState.INTEGRATION_READY)
-    reviews = [{"id": 77, "state": "COMMENTED", "commit_id": HEAD, "body": f"VERDICT: MERGE\nReviewed head: {HEAD}", "submitted_at": NOW.isoformat()}]
-    broker.validate_lifecycle_eligibility(
-        request, lifecycle=lifecycle, reviews=reviews, live_main_sha=MAIN,
-        integration_authority=True, current_grant=None,
-    )
-    with pytest.raises(broker.BrokerError, match="Integration authority"):
-        broker.validate_lifecycle_eligibility(
-            request, lifecycle=lifecycle, reviews=reviews, live_main_sha=MAIN,
-            integration_authority=False, current_grant=None,
-        )
-    with pytest.raises(broker.BrokerError, match="main precondition"):
-        broker.validate_lifecycle_eligibility(
-            request, lifecycle=lifecycle, reviews=reviews, live_main_sha="c" * 40,
-            integration_authority=True, current_grant=None,
-        )
-
-
-def test_integration_reconcile_is_unavailable_without_proven_bounded_need():
-    request = broker.parse_request_comment(request_comment(action="integration-reconcile", review=77, route="integration"))
-    reviews = [{"id": 77, "state": "COMMENTED", "commit_id": HEAD, "body": f"VERDICT: MERGE\nReviewed head: {HEAD}", "submitted_at": NOW.isoformat()}]
-    lifecycle = lifecycle_for(broker.LifecycleState.REVIEW_PASSED, residual="ordinary wait")
-    with pytest.raises(broker.BrokerError, match="no bounded head-changing"):
-        broker.validate_lifecycle_eligibility(
-            request, lifecycle=lifecycle, reviews=reviews, live_main_sha=MAIN,
-            integration_authority=True, current_grant=None,
-        )
-    lifecycle.residual_reason = "current base conflict requires Integration ordering reconciliation"
-    broker.validate_lifecycle_eligibility(
-        request, lifecycle=lifecycle, reviews=reviews, live_main_sha=MAIN,
-        integration_authority=True, current_grant=None,
-    )
+def test_v1a_broker_rejects_integration_merge_and_reconcile_requests_at_parse_boundary():
+    for action in ("merge", "integration-reconcile"):
+        with pytest.raises(broker.BrokerError, match="unsupported mutation action"):
+            broker.parse_request_comment(
+                request_comment(action=action, review=77, route="integration")
+            )
 
 
 def test_local_fix_route_rechecks_exact_local_only_review_classification():

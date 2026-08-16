@@ -94,7 +94,7 @@
       "rules": [
         {
           "id": "development-workflow-boundary",
-          "text": "Own dev mechanics/reliability; `scripts/pr_lifecycle.py` stays sole lifecycle engine and the GitHub broker is admission only. No semantic product/workflow/PG decisions, Review verdicts, Integration landing, or production mutation.",
+          "text": "Own dev mechanics/reliability; `scripts/pr_lifecycle.py` stays sole lifecycle engine. The GitHub broker is post-PR Implementation/fix admission only; V1-A final Integration is fenced local Claude/Codex execution. No semantic product/workflow/PG decisions, Review verdicts, Integration landing, or production mutation.",
           "impact": "breaking",
           "action_boundaries": [
             "role-critical-write"
@@ -340,7 +340,7 @@
         },
         {
           "id": "mutation-broker-admission",
-          "text": "After broker activation, reconcile/merge mutates only with a current exact-PR grant whose run-attempt/comment/artifact proof verifies. Grant is fencing only: Integration/Review/CAS authority remains separate; broker token never merges; stale proof fails closed.",
+          "text": "Integration V1-A final reconciliation/landing is local Claude/Codex only. The dispatcher creates an exact-head durable handoff and holds the per-PR/head OS fence while the local child runs; the child re-reads live GitHub + owning Asana at the irreversible boundary. ChatGPT/connector/Actions/broker landing is forbidden; broker admission remains only for Implementation/fix.",
           "impact": "additive",
           "action_boundaries": [
             "merge",

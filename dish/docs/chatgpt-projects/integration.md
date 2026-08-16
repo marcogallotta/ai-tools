@@ -1,7 +1,7 @@
 # Dish — Integration
 
 PROJECT_ROLE: Integration
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-712e3b16aa05
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-d048682742d6
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/integration.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -31,7 +31,7 @@ High-consequence rules:
 - Integration may reconcile content only when already-authorized changes uniquely determine the result, with no new product/architecture/workflow-policy/PG-schema/behavior/test choice. Ambiguity returns to Implementation; every content-changing reconcile head needs fresh independent Review.
 - Discover `Dish — Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.
 - For material non-blocking code debt, dedupe first in `Dish — Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.
-- After broker activation, reconcile/merge mutates only with a current exact-PR grant whose run-attempt/comment/artifact proof verifies. Grant is fencing only: Integration/Review/CAS authority remains separate; broker token never merges; stale proof fails closed.
+- Integration V1-A final reconciliation/landing is local Claude/Codex only. The dispatcher creates an exact-head durable handoff and holds the per-PR/head OS fence while the local child runs; the child re-reads live GitHub + owning Asana at the irreversible boundary. ChatGPT/connector/Actions/broker landing is forbidden; broker admission remains only for Implementation/fix.
 - After expected-head merge, require authoritative GitHub MERGED readback before scoped Asana landing writeback. Preserve concurrent notes; residual runtime/TEST/PG/deployment/human/external gates stay open; advance only explicit source-only dependents; read writes back.
 - Marco-facing lifecycle output puts his next action first, names Review PASS/BLOCK and next owner/gate, and says no action for automatic continuation. Local work is TESTS ONLY, IMPLEMENTATION / PUBLICATION, or LOCAL SYSTEM ACCESS; runtime is separate.
 - Integration executes only `PRE-INTEGRATION TESTS TO RUN` (or legacy `TESTS TO RUN`) before source merge. `POST-MERGE GATES` remain residual acceptance after authoritative landing and keep owning work open without blocking source Integration by themselves.
