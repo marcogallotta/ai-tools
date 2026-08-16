@@ -260,6 +260,37 @@
             "handoff"
           ],
           "surface": "presentation"
+        },
+        {
+          "id": "implementation-remote-first-local-boundary",
+          "text": "Default substantive repository implementation to hosted/ChatGPT execution. Local semantic Implementation requires `IMPLEMENTATION / PUBLICATION` with the exact unavailable hosted capability and bounded exhausted fallbacks; `TESTS ONLY`, `LOCAL SYSTEM ACCESS`, runtime length, convenience, or prior local-agent use never justify it.",
+          "impact": "additive",
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "surface": "routing"
+        },
+        {
+          "id": "implementation-host-aware-fix-routing",
+          "text": "Post-PR BLOCK/PR-owned-CI fixes default to CHATGPT_IMPLEMENTATION. LOCAL_IMPLEMENTATION requires the canonical unavailable hosted capability + exhausted fallbacks; selected host is carried through the existing #95 broker route/grant and a new head returns to independent Review without cross-host fallback.",
+          "impact": "additive",
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "surface": "routing"
+        },
+        {
+          "id": "scope-amplification-checkpoint",
+          "text": "Re-anchor work to the one-sentence operator outcome. Before adding a scheduler/queue/database/service/new ownership/identity/control-plane or materially broader lifecycle, require explicit durable Marco approval; missing approval blocks only expansion. After two design/re-review loops, shrink the slice or seek a decision. Prove capability need before dependency.",
+          "impact": "additive",
+          "action_boundaries": [
+            "role-critical-write",
+            "review-write",
+            "handoff"
+          ],
+          "surface": "safety"
         }
       ]
     },
@@ -336,6 +367,26 @@
             "handoff"
           ],
           "surface": "presentation"
+        },
+        {
+          "id": "integration-phase-separated-gates",
+          "text": "Integration executes only `PRE-INTEGRATION TESTS TO RUN` (or legacy `TESTS TO RUN`) before source merge. `POST-MERGE GATES` remain residual acceptance after authoritative landing and keep owning work open without blocking source Integration by themselves.",
+          "impact": "additive",
+          "action_boundaries": [
+            "merge",
+            "handoff"
+          ],
+          "surface": "lifecycle"
+        },
+        {
+          "id": "integration-local-work-classifier",
+          "text": "Classify residual local work as TESTS ONLY, IMPLEMENTATION / PUBLICATION, or LOCAL SYSTEM ACCESS with runtime separate. Only an explicitly evidenced IMPLEMENTATION / PUBLICATION boundary can route semantic Implementation locally; tests/system access retain their actual owner.",
+          "impact": "additive",
+          "action_boundaries": [
+            "handoff",
+            "merge"
+          ],
+          "surface": "routing"
         }
       ]
     },
@@ -466,6 +517,37 @@
             "review-write"
           ],
           "surface": "lifecycle"
+        },
+        {
+          "id": "review-phase-separated-gates",
+          "text": "New MERGE Review metadata separates `PRE-INTEGRATION TESTS TO RUN` from `POST-MERGE GATES`; both new fields are required together. Post-merge TEST/runtime/PROD acceptance never becomes a source-merge blocker by placement alone; legacy `TESTS TO RUN` remains pre-Integration compatibility.",
+          "impact": "additive",
+          "action_boundaries": [
+            "review-write",
+            "handoff"
+          ],
+          "surface": "lifecycle"
+        },
+        {
+          "id": "review-host-aware-independence-routing",
+          "text": "Route substantive/domain Review to ChatGPT. Bounded local light/focused/mechanical Review requires a positive exact-current-head `CHATGPT_IMPLEMENTATION` witness; local/unknown/ambiguous provenance forces ChatGPT Review. After BLOCK, local Implementation requires exact class-B unavailable-capability + exhausted-fallback proof; remote outage never falls back local.",
+          "impact": "additive",
+          "action_boundaries": [
+            "review-write",
+            "handoff"
+          ],
+          "surface": "routing"
+        },
+        {
+          "id": "scope-amplification-checkpoint",
+          "text": "Re-anchor work to the one-sentence operator outcome. Before adding a scheduler/queue/database/service/new ownership/identity/control-plane or materially broader lifecycle, require explicit durable Marco approval; missing approval blocks only expansion. After two design/re-review loops, shrink the slice or seek a decision. Prove capability need before dependency.",
+          "impact": "additive",
+          "action_boundaries": [
+            "role-critical-write",
+            "review-write",
+            "handoff"
+          ],
+          "surface": "safety"
         }
       ]
     },

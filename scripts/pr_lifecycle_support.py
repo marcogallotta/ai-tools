@@ -38,6 +38,8 @@ LOCAL_COMPLETION_MARKER = "dish-local-completion:v1"
 HUMAN_NOTICE_MARKER = "dish-human-notice:v1"
 REVIEW_ROUTE_MARKER = "dish-review-route:v1"
 IMPLEMENTATION_CONTINUATION_MARKER = "dish-implementation-continuation:v1"
+IMPLEMENTATION_HOST_WITNESS_MARKER = "dish-implementation-host-witness:v1"
+IMPLEMENTATION_ROUTE_RESULT_MARKER = "dish-implementation-route-result:v1"
 EXTERNAL_DEPENDENCY_MARKER = "dish-external-dependency:v1"
 CI_FAILURE_OWNERSHIP_MARKER = "dish-ci-failure-ownership:v1"
 DISPATCH_OWNER = "pr-lifecycle"
@@ -45,6 +47,8 @@ WORKSPACE_API_ROOT = "https://api.chatgpt.com/v1"
 WORKSPACE_RUNS_BETA = "workspace_agent_runs=v1"
 TASK_GID_RE = re.compile(r"(?<!\d)(\d{16})(?!\d)")
 TESTS_TO_RUN_RE = re.compile(r"(?im)^TESTS TO RUN:\s*(?P<value>.+?)\s*$")
+PRE_INTEGRATION_TESTS_RE = re.compile(r"(?im)^PRE-INTEGRATION TESTS TO RUN:\s*(?P<value>.+?)\s*$")
+POST_MERGE_GATES_RE = re.compile(r"(?im)^POST-MERGE GATES:\s*(?P<value>.+?)\s*$")
 AUTHORING_EVIDENCE_PENDING_RE = re.compile(
     r"(?im)^IMPLEMENTATION EVIDENCE PENDING:\s*(?P<value>[^\n]+?)\s*$"
 )
@@ -135,6 +139,14 @@ class Lease:
 
 
 @dataclass(frozen=True)
+class ReviewGateMetadata:
+    format: str
+    pre_integration_tests: str | None = None
+    post_merge_gates: tuple[str, ...] = ()
+    error: str | None = None
+
+
+@dataclass(frozen=True)
 class LocalWork:
     kind: str
     required: bool
@@ -161,6 +173,7 @@ class PRLifecycle:
     reviewed_head: str | None = None
     active_leases: list[dict[str, Any]] = field(default_factory=list)
     local_work: list[dict[str, Any]] = field(default_factory=list)
+    post_merge_gates: list[str] = field(default_factory=list)
     gate: dict[str, Any] | None = None
     external_dependency: dict[str, Any] | None = None
     residual_reason: str | None = None
@@ -451,11 +464,40 @@ class AsanaREST:
         return dict(value["data"])
 
     def get_stories(self, gid: str) -> list[dict[str, Any]]:
-        query = urlparse.urlencode({"opt_fields": "gid,text,created_at,created_by.gid"})
-        _, _, value = self.http.request("GET", f"{self.api_root}/tasks/{gid}/stories?{query}", headers=self.headers)
-        if not isinstance(value, dict) or not isinstance(value.get("data"), list):
-            raise LifecycleError(f"Asana task {gid} stories response was not a list")
-        return [dict(item) for item in value["data"] if isinstance(item, dict)]
+        """Return the task's complete story history, following every returned page.
+
+        A story-history read backs stale-handoff invalidation (see
+        `scripts/pr_implementation_provenance.py::_has_stale_handoff_notice`), which
+        must fail closed rather than silently accept a truncated subset: a stale
+        marker outside a partial read would otherwise never be observed. This
+        follows `next_page.offset` to completion with a bounded iteration count and
+        offset-repeat guard, rather than returning the first page only.
+        """
+        max_pages = 1000
+        offset: str | None = None
+        stories: list[dict[str, Any]] = []
+        seen_offsets: set[str] = set()
+        for _ in range(max_pages):
+            params = {"opt_fields": "gid,text,created_at,created_by.gid", "limit": 100}
+            if offset is not None:
+                params["offset"] = offset
+            query = urlparse.urlencode(params)
+            _, _, value = self.http.request(
+                "GET", f"{self.api_root}/tasks/{gid}/stories?{query}", headers=self.headers
+            )
+            if not isinstance(value, dict) or not isinstance(value.get("data"), list):
+                raise LifecycleError(f"Asana task {gid} stories response was not a list")
+            stories.extend(dict(item) for item in value["data"] if isinstance(item, dict))
+            next_page = value.get("next_page")
+            if next_page is None:
+                return stories
+            if not isinstance(next_page, dict) or not isinstance(next_page.get("offset"), str) or not next_page["offset"]:
+                raise LifecycleError(f"Asana task {gid} stories response had a malformed next_page")
+            offset = next_page["offset"]
+            if offset in seen_offsets:
+                raise LifecycleError(f"Asana task {gid} stories pagination repeated offset {offset!r}")
+            seen_offsets.add(offset)
+        raise LifecycleError(f"Asana task {gid} stories pagination exceeded {max_pages} pages")
 
     def add_comment(self, gid: str, text: str) -> dict[str, Any]:
         _, _, value = self.http.request(
@@ -622,3 +664,35 @@ class ImplementationFixDispatcher:
                 f"implementation/fix dispatcher failed with exit {completed.returncode}"
                 f"{': ' + detail if detail else ''}"
             )
+
+
+class ImplementationFixRouter:
+    """Select one configured Implementation consumer without cross-host fallback."""
+
+    def __init__(
+        self,
+        *,
+        chatgpt_command: str | None,
+        local_command: str | None,
+        legacy_error: str | None = None,
+    ) -> None:
+        self.chatgpt = ImplementationFixDispatcher(chatgpt_command)
+        self.local = ImplementationFixDispatcher(local_command)
+        self.legacy_error = legacy_error
+
+    @property
+    def command(self) -> str | None:
+        return self.chatgpt.command or self.local.command
+
+    def command_for(self, host: str) -> str | None:
+        if host == "CHATGPT_IMPLEMENTATION":
+            return self.chatgpt.command
+        if host == "LOCAL_IMPLEMENTATION":
+            return self.local.command
+        return None
+
+    def dispatch(self, context: dict[str, Any], *, host: str) -> None:
+        if self.legacy_error and self.command_for(host) is None:
+            raise LifecycleError(self.legacy_error)
+        dispatcher = self.chatgpt if host == "CHATGPT_IMPLEMENTATION" else self.local
+        dispatcher.dispatch(context)

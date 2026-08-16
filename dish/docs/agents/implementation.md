@@ -173,6 +173,18 @@ Preserve established authority and identity boundaries. Do not introduce a secon
 
 When a dependency, architectural contradiction, or necessary scope expansion appears, report it rather than silently broadening the task.
 
+### Remote-first execution and local-work classification
+
+Substantive repository implementation is remote/hosted by default. Local execution is not continuity authority and is not justified by convenience, a prior local agent, a slow suite, a timeout, a missing optional dependency, or one failed publication primitive while another authorized hosted path remains. Before routing semantic Implementation locally, name the exact capability the hosted path cannot provide and the bounded authorized fallbacks already exhausted.
+
+Classify every residual local requirement by work type, independently from elapsed runtime:
+
+- `TESTS ONLY — <exact local test/environment boundary>` for already-authored source that only needs native/local evidence;
+- `IMPLEMENTATION / PUBLICATION — <exact unavailable remote capability>; fallbacks exhausted: <bounded list>` only when a real local source/publication mutation is unavoidable;
+- `LOCAL SYSTEM ACCESS — <exact capability>` for sudo/systemd/device/installed-runtime operations that are neither semantic authoring nor merely a test command.
+
+Only the second form, with both the unavailable hosted capability and exhausted fallbacks explicit, can justify a local Implementation route. `TESTS ONLY` and `LOCAL SYSTEM ACCESS` never do. Report runtime separately when useful; a 45-minute suite remains `TESTS ONLY`, while a 30-second source repair remains Implementation. Preserve completed remote evidence and hand off only the irreducibly local residual.
+
 ### Scope discipline
 
 The task brief defines the implementation boundary. Do not expand an implementation task into an audit, redesign, inventory exercise, or architecture change unless the task explicitly requests it.
@@ -188,6 +200,10 @@ Only the first two belong in the PR. Record adjacent findings separately as foll
 Once the existing mechanism responsible for the requested invariant is identified, stop discovery and make the smallest change needed to enforce or prove that invariant.
 
 Before adding new files, systems, targets, or process changes, ask whether the change directly satisfies the acceptance criteria. If it improves surrounding systems without being required, do not include it in the PR.
+
+For operator-friction work, state the smallest operator outcome in one sentence: the manual/repetitive work this slice removes. Re-anchor implementation decisions to that outcome and the current accepted task specification. Before adding a scheduler, queue, database, service, new ownership/identity system, control plane, or materially broader lifecycle than that outcome requires, obtain an explicit durable Marco decision approving the expansion. Missing approval blocks the broader expansion, not the narrow authorized slice.
+
+After two design/re-review cycles without implementation progress, do not default to another broader design pass: reduce to a smaller implementable slice or require an explicit human decision. Before making a new V1 dependency, prove the exact capability the dependency supplies and that the supported existing route cannot provide it; unsupported same-session or convenience optimizations fall back to the ordinary supported route rather than becoming blockers.
 
 Do not perform production/cutover activation unless the task explicitly authorizes it.
 

@@ -1,7 +1,7 @@
 # Dish — Implementation
 
 PROJECT_ROLE: Implementation
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-9bb70124ca21
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-694190185f60
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/implementation.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -36,3 +36,6 @@ High-consequence rules:
 - After broker activation, post-PR Implementation/fix mutates only with a current exact-PR grant whose run-attempt/comment/artifact proof verifies. Grant is fencing only: role/branch/worktree/CAS authority remains separate; read-only work is exempt and stale proof fails closed.
 - Before failed-CI source mutation, classify ownership. Only PR_OWNED may route to candidate fix; PROVEN_CURRENT_MAIN, INFRASTRUCTURE, and AMBIGUOUS do not authorize candidate mutation or rerun-until-green.
 - Marco-facing lifecycle output puts his next action first, names Review PASS/BLOCK and next owner/gate, and says no action for automatic continuation. Local work is TESTS ONLY, IMPLEMENTATION / PUBLICATION, or LOCAL SYSTEM ACCESS; runtime is separate.
+- Default substantive repository implementation to hosted/ChatGPT execution. Local semantic Implementation requires `IMPLEMENTATION / PUBLICATION` with the exact unavailable hosted capability and bounded exhausted fallbacks; `TESTS ONLY`, `LOCAL SYSTEM ACCESS`, runtime length, convenience, or prior local-agent use never justify it.
+- Post-PR BLOCK/PR-owned-CI fixes default to CHATGPT_IMPLEMENTATION. LOCAL_IMPLEMENTATION requires the canonical unavailable hosted capability + exhausted fallbacks; selected host is carried through the existing #95 broker route/grant and a new head returns to independent Review without cross-host fallback.
+- Re-anchor work to the one-sentence operator outcome. Before adding a scheduler/queue/database/service/new ownership/identity/control-plane or materially broader lifecycle, require explicit durable Marco approval; missing approval blocks only expansion. After two design/re-review loops, shrink the slice or seek a decision. Prove capability need before dependency.

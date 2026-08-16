@@ -61,6 +61,12 @@ def _residual_gates(task: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(sorted({match.group("kind").lower() for match in _RESIDUAL_RE.finditer(str(task.get("notes") or ""))}))
 
 
+def _combined_residual_gates(task: Mapping[str, Any], lifecycle: PRLifecycle) -> tuple[str, ...]:
+    residual = set(_residual_gates(task))
+    residual.update(f"post-merge:{gate}" for gate in lifecycle.post_merge_gates)
+    return tuple(sorted(residual))
+
+
 def reconcile_after_merge(
     *,
     asana: WritebackAsana,
@@ -84,7 +90,7 @@ def reconcile_after_merge(
 
     task = asana.get_task(owner)
     notes = str(task.get("notes") or "")
-    residual = _residual_gates(task)
+    residual = _combined_residual_gates(task, lifecycle)
     marker = landing_marker(
         repository=repository,
         pr_number=lifecycle.number,
@@ -109,7 +115,7 @@ def reconcile_after_merge(
     # be observed instead of completing from a stale task snapshot.
     pre_completion_task = asana.get_task(owner)
     notes = str(pre_completion_task.get("notes") or "")
-    residual = _residual_gates(pre_completion_task)
+    residual = _combined_residual_gates(pre_completion_task, lifecycle)
     should_complete = bool(_FINAL_SOURCE_RE.search(notes)) and not residual
     if should_complete and not bool(pre_completion_task.get("completed")):
         asana.update_task_fields(owner, {"completed": True})

@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 
 from pr_lifecycle_owner import owning_task_identity_from_references
+from pr_lifecycle_host_routing import classify_local_work_item
 from pr_lifecycle_support import LifecycleState, PRLifecycle
 
 
@@ -15,11 +16,8 @@ def local_work_classification(pr: PRLifecycle) -> tuple[str | None, str | None]:
     pending = [item for item in pr.local_work if item.get("required") and not item.get("completed")]
     if not pending:
         return None, None
-    first = pending[0]
-    instruction = str(first.get("instruction") or "complete the exact PR-local handoff")
-    if str(first.get("kind")) == "certification":
-        return "TESTS ONLY", instruction
-    return "IMPLEMENTATION / PUBLICATION", instruction
+    boundary = classify_local_work_item(pending[0])
+    return boundary.work_type, boundary.scope
 
 
 def _review_phrase(pr: PRLifecycle) -> str:
