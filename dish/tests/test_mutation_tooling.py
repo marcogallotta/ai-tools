@@ -1,16 +1,22 @@
 from __future__ import annotations
 
 import ast
+import re
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from tests.mutation_cases import CASES, STAGE_A_CASES
 from tests.mutation_runner import (
+    EPHEMERAL_GIT_BRANCH,
     ROOT,
+    _copy_workspace,
+    _initialize_workspace_git,
     apply_mutation,
     classify_pytest_exit,
     pytest_selection_expression,
+    run_case,
 )
 
 
@@ -77,3 +83,55 @@ def test_stage_a_cli_selection_uses_only_stage_a_cases(monkeypatch, tmp_path):
     assert mutation_runner.main(["--stage-a", "--artifacts", str(tmp_path)]) == 0
     assert captured["cases"] is STAGE_A_CASES
     assert captured["artifacts"] == tmp_path
+
+
+def test_copied_mutation_workspace_has_committed_non_main_git_identity(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _copy_workspace(workspace)
+
+    head = _initialize_workspace_git(workspace)
+
+    branch = subprocess.run(
+        ["git", "-C", str(workspace), "branch", "--show-current"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    status = subprocess.run(
+        ["git", "-C", str(workspace), "status", "--porcelain"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+    assert branch == EPHEMERAL_GIT_BRANCH
+    assert branch != "main"
+    assert re.fullmatch(r"[0-9a-f]{40}", head)
+    assert status == ""
+
+
+def test_run_case_executes_through_real_guarded_temporary_workspace():
+    result = run_case(STAGE_A_CASES[0])
+
+    assert result["outcome"] == "killed"
+    assert "REFUSED:" not in result["output"]
+
+
+def test_run_case_without_git_identity_is_refused_by_execution_guard(monkeypatch):
+    from tests import mutation_runner
+
+    real_run = subprocess.run
+
+    def skip_git_commands(command, *args, **kwargs):
+        if command and command[0] == "git":
+            return subprocess.CompletedProcess(command, 0, stdout="")
+        return real_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(mutation_runner.subprocess, "run", skip_git_commands)
+    result = mutation_runner.run_case(STAGE_A_CASES[0])
+
+    assert result["outcome"] == "infrastructure_error"
+    assert (
+        "cannot verify repository/worktree identity; execution refused" in result["output"]
+    )

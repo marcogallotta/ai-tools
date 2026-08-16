@@ -29,6 +29,9 @@ COPY_ENTRIES = (
     "pytest.ini",
 )
 CASE_TIMEOUT_SECONDS = 120
+EPHEMERAL_GIT_BRANCH = "dish-mutation-runner"
+EPHEMERAL_GIT_USER = "Dish Mutation Runner"
+EPHEMERAL_GIT_EMAIL = "dish-mutation-runner@example.invalid"
 
 
 def apply_mutation(path: Path, case: MutationCase) -> None:
@@ -63,6 +66,37 @@ def _copy_workspace(destination: Path) -> None:
             shutil.copy2(source, target)
 
 
+def _git(workspace: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["git", "-C", str(workspace), *args],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    if completed.returncode:
+        raise RuntimeError(
+            f"git {' '.join(args)} failed in mutation workspace\n{completed.stdout}"
+        )
+    return completed.stdout.strip()
+
+
+def _initialize_workspace_git(workspace: Path) -> str:
+    _git(workspace, "init", "--quiet", f"--initial-branch={EPHEMERAL_GIT_BRANCH}")
+    _git(workspace, "add", "--all")
+    _git(
+        workspace,
+        "-c",
+        f"user.name={EPHEMERAL_GIT_USER}",
+        "-c",
+        f"user.email={EPHEMERAL_GIT_EMAIL}",
+        "commit",
+        "--quiet",
+        "-m",
+        "mutation runner candidate",
+    )
+    return _git(workspace, "rev-parse", "HEAD")
+
 
 def pytest_selection_expression(case: MutationCase) -> str:
     """Select exact registered function names while collecting the whole suite.
@@ -77,6 +111,7 @@ def run_case(case: MutationCase) -> dict:
     with tempfile.TemporaryDirectory(prefix=f"dish-mutant-{case.mutation_id}-") as raw:
         workspace = Path(raw)
         _copy_workspace(workspace)
+        _initialize_workspace_git(workspace)
         apply_mutation(workspace / case.target, case)
         command = [
             sys.executable,
