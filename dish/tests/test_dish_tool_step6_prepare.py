@@ -1,4 +1,6 @@
 from pathlib import Path
+import logging
+import traceback
 
 import pytest
 
@@ -22,6 +24,68 @@ _DUPLICATE_SCHEMA_CANDIDATE = TASK.replace(
     "Schema version: 2\nSchema version: 2\n",
     1,
 )
+
+@pytest.mark.smoke
+def test_planning_prepare_unexpected_failure_logs_original_exception_with_bounded_context(
+    tmp_path, monkeypatch, caplog
+):
+    backend = Backend()
+    application = app(tmp_path, backend)
+    started = application.execute(
+        "start",
+        agent="gpt",
+        task_gid="t",
+        kind="planning",
+        change_level=None,
+        change_reason=None,
+    )
+    operation_id = started["submission_id"]
+    application.invocation_owner_id = "owner-diagnostic"
+    application.invocation_run_id = "run-diagnostic"
+    application.invocation_request_id = "request-diagnostic"
+    original = RuntimeError("original prepare diagnostic")
+
+    def fail_read_task(_task_gid):
+        raise original
+
+    monkeypatch.setattr(backend, "read_task", fail_read_task)
+    candidate = PLANNING.replace("Compare texture", "SENSITIVE CANDIDATE CONTENT")
+
+    with caplog.at_level(logging.ERROR, logger="dish.commands"):
+        result = application.execute(
+            "prepare",
+            model="gpt-5.6-sol",
+            agent="gpt",
+            submission_id=operation_id,
+            file_path=write(tmp_path, "sensitive-candidate.txt", candidate),
+        )
+
+    assert result["code"] == "INTERNAL_ERROR"
+    assert result["errors"] == [{"rule": "unexpected_internal_failure"}]
+    assert "original prepare diagnostic" not in str(result)
+    records = [
+        record
+        for record in caplog.records
+        if record.getMessage().startswith("unexpected_command_failure")
+    ]
+    assert len(records) == 1
+    record = records[0]
+    message = record.getMessage()
+    assert '"command":"prepare"' in message
+    assert '"task_gid":"t"' in message
+    assert f'"operation_id":"{operation_id}"' in message
+    assert '"request_id":"request-diagnostic"' in message
+    assert '"owner_id":"owner-diagnostic"' in message
+    assert '"run_id":"run-diagnostic"' in message
+    assert "SENSITIVE CANDIDATE CONTENT" not in message
+    assert "sensitive-candidate.txt" not in message
+    assert record.exc_info is not None
+    assert record.exc_info[1] is original
+    rendered_traceback = "".join(traceback.format_exception(*record.exc_info))
+    assert "fail_read_task" in rendered_traceback
+    assert "original prepare diagnostic" in rendered_traceback
+    assert "SENSITIVE CANDIDATE CONTENT" not in rendered_traceback
+
 
 @pytest.mark.smoke
 def test_planning_prepare_writes_live_and_preserves_research_queue(tmp_path):
