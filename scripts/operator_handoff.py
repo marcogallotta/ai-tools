@@ -94,7 +94,7 @@ def move_task_to_section(asana: Any, gid: str, section_gid: str) -> None:
     """Use an existing adapter method or the established AsanaREST transport surface."""
     mover = getattr(asana, "move_task_to_section", None)
     if callable(mover):
-        mover(gid, section_gid)
+        mover(task_gid=gid, section_gid=section_gid)
         return
     http = getattr(asana, "http", None)
     api_root = getattr(asana, "api_root", None)

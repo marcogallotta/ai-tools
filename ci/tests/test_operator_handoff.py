@@ -41,7 +41,8 @@ class FakeAsana:
             self.stories.append({"text": text})
         return {"gid": f"story-{self.comments}", "text": text}
 
-    def move_task_to_section(self, gid, section_gid):
+    def move_task_to_section(self, *, task_gid, section_gid):
+        assert task_gid == TASK
         self.moves += 1
         if self.readback_move:
             self.task["memberships"] = [{"section": {"gid": section_gid}}]
