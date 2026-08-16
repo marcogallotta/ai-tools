@@ -238,6 +238,26 @@ def test_independently_backed_prelaunch_chatgpt_lineage_allows_bounded_local_rev
     assert workspace.calls == []
 
 
+def test_stale_prelaunch_handoff_routes_to_chatgpt_review(monkeypatch):
+    candidate = base.pr(body="Owning task: 1217443403986570\nREVIEW CLASS: focused")
+    gh = base.FakeGitHub(candidate)
+    handoff, story = _prelaunch_story()
+    _install_prelaunch_cache(gh, handoff=handoff)
+    stale_notice = {
+        "gid": "story-2",
+        "text": f"<!-- dish-stale-handoff:v1 handoff={handoff} -->",
+        "created_at": (base.NOW + timedelta(minutes=2)).isoformat(),
+    }
+    monkeypatch.setattr(provenance, "_asana_from_environment", lambda: FakeAsana([story, stale_notice]))
+    local = RecordingReview()
+    workspace = RecordingWorkspace()
+    p.LifecycleEngine(gh).dispatch_one(
+        p.LifecycleEngine(gh).inspect(gh.pr), workspace=workspace, local_reviewer=local
+    )
+    assert local.calls == []
+    assert len(workspace.calls) == 1
+
+
 def test_tampered_or_ambiguous_prelaunch_lineage_routes_to_chatgpt_review(monkeypatch):
     candidate = base.pr(body="Owning task: 1217443403986570\nREVIEW CLASS: focused")
     gh = base.FakeGitHub(candidate)

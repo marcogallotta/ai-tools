@@ -25,12 +25,16 @@ IMPLEMENTATION_PROVENANCE_SCHEMA = "dish-implementation-prelaunch-proof-v2"
 IMPLEMENTATION_PROVENANCE_WORKFLOW = ".github/workflows/pr-implementation-provenance.yml"
 IMPLEMENTATION_PROVENANCE_FILENAME = "implementation-provenance.json"
 HANDOFF_MARKER = "dish-implementation-handoff:v1"
+STALE_HANDOFF_MARKER = "dish-stale-handoff:v1"
 HANDOFF_ROLE = "Implementation"
 LAUNCHER_PREFIX = "asana-handoff:"
 
 _HANDOFF_RE = re.compile(
     rf"<!--\s*{re.escape(HANDOFF_MARKER)}\s+handoff=(?P<id>[0-9a-f]{{16}})\s+"
     r"task=(?P<task>\d{16})\s+role=(?P<role>[A-Za-z-]+)\s+at=(?P<at>[^\s]+)\s*-->"
+)
+_STALE_HANDOFF_RE = re.compile(
+    rf"<!--\s*{re.escape(STALE_HANDOFF_MARKER)}\s+handoff=(?P<id>[0-9a-f]{{16}})\s*-->"
 )
 _FULL_SHA_RE = re.compile(r"[0-9a-f]{40}")
 _HANDOFF_CLOCK_SKEW_SECONDS = 300
@@ -114,6 +118,15 @@ def _verified_handoff_story(
         "— Dish Agent: Development Workflow | repository control plane",
     }
     return required_lines <= set(text.splitlines())
+
+
+def _has_stale_handoff_notice(stories: Iterable[Mapping[str, Any]], handoff_id: str) -> bool:
+    """Apply the operator control plane's durable stale-handoff invalidation marker."""
+    return any(
+        match.group("id") == handoff_id
+        for story in stories
+        for match in _STALE_HANDOFF_RE.finditer(str(story.get("text") or ""))
+    )
 
 
 def _verified_prelaunch_host(
@@ -203,6 +216,8 @@ def _verified_prelaunch_host(
             )
         ]
         if len(matches) != 1:
+            return None
+        if _has_stale_handoff_notice(stories, fields["handoff"]):
             return None
     except (
         AttributeError, KeyError, TypeError, ValueError, zipfile.BadZipFile,
