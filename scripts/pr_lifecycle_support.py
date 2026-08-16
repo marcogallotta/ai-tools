@@ -464,11 +464,40 @@ class AsanaREST:
         return dict(value["data"])
 
     def get_stories(self, gid: str) -> list[dict[str, Any]]:
-        query = urlparse.urlencode({"opt_fields": "gid,text,created_at,created_by.gid"})
-        _, _, value = self.http.request("GET", f"{self.api_root}/tasks/{gid}/stories?{query}", headers=self.headers)
-        if not isinstance(value, dict) or not isinstance(value.get("data"), list):
-            raise LifecycleError(f"Asana task {gid} stories response was not a list")
-        return [dict(item) for item in value["data"] if isinstance(item, dict)]
+        """Return the task's complete story history, following every returned page.
+
+        A story-history read backs stale-handoff invalidation (see
+        `scripts/pr_implementation_provenance.py::_has_stale_handoff_notice`), which
+        must fail closed rather than silently accept a truncated subset: a stale
+        marker outside a partial read would otherwise never be observed. This
+        follows `next_page.offset` to completion with a bounded iteration count and
+        offset-repeat guard, rather than returning the first page only.
+        """
+        max_pages = 1000
+        offset: str | None = None
+        stories: list[dict[str, Any]] = []
+        seen_offsets: set[str] = set()
+        for _ in range(max_pages):
+            params = {"opt_fields": "gid,text,created_at,created_by.gid", "limit": 100}
+            if offset is not None:
+                params["offset"] = offset
+            query = urlparse.urlencode(params)
+            _, _, value = self.http.request(
+                "GET", f"{self.api_root}/tasks/{gid}/stories?{query}", headers=self.headers
+            )
+            if not isinstance(value, dict) or not isinstance(value.get("data"), list):
+                raise LifecycleError(f"Asana task {gid} stories response was not a list")
+            stories.extend(dict(item) for item in value["data"] if isinstance(item, dict))
+            next_page = value.get("next_page")
+            if next_page is None:
+                return stories
+            if not isinstance(next_page, dict) or not isinstance(next_page.get("offset"), str) or not next_page["offset"]:
+                raise LifecycleError(f"Asana task {gid} stories response had a malformed next_page")
+            offset = next_page["offset"]
+            if offset in seen_offsets:
+                raise LifecycleError(f"Asana task {gid} stories pagination repeated offset {offset!r}")
+            seen_offsets.add(offset)
+        raise LifecycleError(f"Asana task {gid} stories pagination exceeded {max_pages} pages")
 
     def add_comment(self, gid: str, text: str) -> dict[str, Any]:
         _, _, value = self.http.request(

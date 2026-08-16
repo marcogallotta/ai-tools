@@ -7,10 +7,13 @@ import io
 import json
 import zipfile
 
+import pytest
+
 import test_pr_lifecycle as base
 import pr_implementation_provenance as provenance
 import pr_mutation_broker as broker
 from pr_lifecycle_helpers_base import _verified_route_result_host
+from pr_lifecycle_support import AsanaREST, LifecycleError
 
 p = base.pr_lifecycle
 
@@ -60,6 +63,34 @@ class FakeAsana:
     def get_stories(self, gid):
         assert gid == "1217443403986570"
         return deepcopy(self.stories)
+
+
+class FakePaginatedAsanaHTTP:
+    """Mocks the raw Asana stories endpoint's real pagination shape.
+
+    `pages` is a list of (stories, next_offset_or_None); each `request()` call
+    returns exactly one page and records the requested offset, so tests can
+    prove `AsanaREST.get_stories` follows every `next_page.offset` to
+    completion rather than accepting only the first page.
+    """
+
+    def __init__(self, pages):
+        self.pages = list(pages)
+        self.requested_offsets = []
+
+    def request(self, method, url, *, headers=None, body=None):
+        from urllib.parse import urlsplit, parse_qs
+
+        query = parse_qs(urlsplit(url).query)
+        offset = query.get("offset", [None])[0]
+        self.requested_offsets.append(offset)
+        index = len(self.requested_offsets) - 1
+        stories, next_offset = self.pages[index]
+        value = {
+            "data": deepcopy(stories),
+            "next_page": {"offset": next_offset} if next_offset is not None else None,
+        }
+        return 200, {}, value
 
 
 def _prelaunch_story(*, base_sha="c" * 40):
@@ -256,6 +287,92 @@ def test_stale_prelaunch_handoff_routes_to_chatgpt_review(monkeypatch):
     )
     assert local.calls == []
     assert len(workspace.calls) == 1
+
+
+def test_stale_marker_on_second_asana_story_page_routes_to_chatgpt_review(monkeypatch):
+    """Production-boundary regression for the paginated-story trust gap.
+
+    Unlike the other prelaunch-lineage tests above, this exercises the real
+    `AsanaREST.get_stories()` production read (not the in-memory `FakeAsana`
+    test double) so the matching handoff appearing on page one and the
+    canonical stale marker on a later page cannot be missed.
+    """
+    candidate = base.pr(body="Owning task: 1217443403986570\nREVIEW CLASS: focused")
+    gh = base.FakeGitHub(candidate)
+    handoff, story = _prelaunch_story()
+    _install_prelaunch_cache(gh, handoff=handoff)
+    stale_notice = {
+        "gid": "story-2",
+        "text": f"<!-- dish-stale-handoff:v1 handoff={handoff} -->",
+        "created_at": (base.NOW + timedelta(minutes=2)).isoformat(),
+    }
+    fake_http = FakePaginatedAsanaHTTP([([story], "page-2"), ([stale_notice], None)])
+    monkeypatch.setattr(
+        provenance, "_asana_from_environment", lambda: AsanaREST("test-token", http=fake_http)
+    )
+    local = RecordingReview()
+    workspace = RecordingWorkspace()
+    p.LifecycleEngine(gh).dispatch_one(
+        p.LifecycleEngine(gh).inspect(gh.pr), workspace=workspace, local_reviewer=local
+    )
+    assert local.calls == []
+    assert len(workspace.calls) == 1
+    assert fake_http.requested_offsets == [None, "page-2"]
+
+
+def test_valid_current_handoff_across_asana_story_pages_allows_bounded_local_review(monkeypatch):
+    """Keeps the positive case green against the real paginated production read."""
+    candidate = base.pr(body="Owning task: 1217443403986570\nREVIEW CLASS: focused")
+    gh = base.FakeGitHub(candidate)
+    handoff, story = _prelaunch_story()
+    _install_prelaunch_cache(gh, handoff=handoff)
+    unrelated = {
+        "gid": "story-2",
+        "text": "unrelated system activity",
+        "created_at": (base.NOW + timedelta(minutes=2)).isoformat(),
+    }
+    fake_http = FakePaginatedAsanaHTTP([([story], "page-2"), ([unrelated], None)])
+    monkeypatch.setattr(
+        provenance, "_asana_from_environment", lambda: AsanaREST("test-token", http=fake_http)
+    )
+    local = RecordingReview()
+    workspace = RecordingWorkspace()
+    p.LifecycleEngine(gh).dispatch_one(
+        p.LifecycleEngine(gh).inspect(gh.pr), workspace=workspace, local_reviewer=local
+    )
+    assert len(local.calls) == 1
+    assert workspace.calls == []
+    assert fake_http.requested_offsets == [None, "page-2"]
+
+
+def test_malformed_asana_story_pagination_fails_closed_to_chatgpt_review(monkeypatch):
+    """A truncated/ambiguous story history must never be treated as proof no stale marker exists."""
+    candidate = base.pr(body="Owning task: 1217443403986570\nREVIEW CLASS: focused")
+    gh = base.FakeGitHub(candidate)
+    handoff, story = _prelaunch_story()
+    _install_prelaunch_cache(gh, handoff=handoff)
+
+    malformed_next_page = FakePaginatedAsanaHTTP([([story], "")])
+    repeated_offset = FakePaginatedAsanaHTTP([([story], "page-2"), ([], "page-2")])
+
+    for fake_http in (malformed_next_page, repeated_offset):
+        monkeypatch.setattr(
+            provenance, "_asana_from_environment", lambda fake_http=fake_http: AsanaREST("test-token", http=fake_http)
+        )
+        local = RecordingReview()
+        workspace = RecordingWorkspace()
+        p.LifecycleEngine(gh).dispatch_one(
+            p.LifecycleEngine(gh).inspect(gh.pr), workspace=workspace, local_reviewer=local
+        )
+        assert local.calls == []
+        assert len(workspace.calls) == 1
+
+
+def test_asana_rest_get_stories_raises_on_malformed_or_looping_pagination():
+    with pytest.raises(LifecycleError):
+        AsanaREST("test-token", http=FakePaginatedAsanaHTTP([([], "")])).get_stories("1")
+    with pytest.raises(LifecycleError):
+        AsanaREST("test-token", http=FakePaginatedAsanaHTTP([([], "loop"), ([], "loop")])).get_stories("1")
 
 
 def test_tampered_or_ambiguous_prelaunch_lineage_routes_to_chatgpt_review(monkeypatch):
