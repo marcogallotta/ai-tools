@@ -79,17 +79,24 @@ def test_stale_head_between_handoff_and_claim_prevents_launch(tmp_path, monkeypa
     assert not any(event[0] == "merge" for event in gh.events)
 
 
-def _fence(tmp_path):
+def _fence(
+    tmp_path,
+    *,
+    review_id=10,
+    main_sha="c" * 40,
+    handoff_comment_id=99,
+    handoff_key_value="abc123",
+):
     return LocalIntegrationFence(
         repository="marcogallotta/ai-tools",
         pr_number=31,
         branch="agent/test",
         head=base.HEAD,
-        review_id=10,
+        review_id=review_id,
         task_ids=[TASK],
-        main_sha="c" * 40,
-        handoff_comment_id=99,
-        handoff_key_value="abc123",
+        main_sha=main_sha,
+        handoff_comment_id=handoff_comment_id,
+        handoff_key_value=handoff_key_value,
         root=tmp_path,
     )
 
@@ -133,6 +140,75 @@ def test_recovery_reconstructs_checkpoint_after_prior_owner_disappears(tmp_path,
         assert recovered["recovery"]["worktree"].endswith("/worktree")
     finally:
         replacement.release()
+
+
+def test_same_head_retry_refreshes_main_review_handoff_and_launches_once(tmp_path, monkeypatch):
+    monkeypatch.setenv("DISH_LOCAL_INTEGRATION_STATE_ROOT", str(tmp_path))
+    gh = base.FakeGitHub()
+    gh.reviews = [base.review(review_id=10)]
+    first_launcher = base.FakeLocalIntegration(gh, outcome="return")
+    lifecycle = configure(base.engine(gh, authority=True), first_launcher)
+
+    first = lifecycle.dispatch_one(lifecycle.inspect(gh.pr), workspace=None, local_reviewer=None)
+    assert first.state == p.LifecycleState.INTEGRATION_READY
+    assert len(first_launcher.calls) == 1
+    first_claim = first_launcher.calls[0]["claim"]
+    first_handoff = first_launcher.calls[0]["handoff"]
+
+    gh.refs["heads/main"] = "e" * 40
+    gh.reviews = [base.review(review_id=11)]
+    second_launcher = base.FakeLocalIntegration(gh, outcome="return")
+    lifecycle.local_integration_launcher = second_launcher
+
+    second = lifecycle.dispatch_one(lifecycle.inspect(gh.pr), workspace=None, local_reviewer=None)
+    assert second.state == p.LifecycleState.INTEGRATION_READY
+    assert len(second_launcher.calls) == 1
+    second_call = second_launcher.calls[0]
+    second_claim = second_call["claim"]
+    assert second_claim["generation"] == 2
+    assert second_claim["main_sha"] == "e" * 40
+    assert second_claim["review_id"] == 11
+    assert second_call["handoff"]["observed_main_sha"] == "e" * 40
+    assert second_claim["recovery"]["phase"] == "returned"
+    assert second_claim["recovery"]["main_sha"] == "c" * 40
+    assert second_claim["recovery"]["review_id"] == 10
+    assert second_claim["recovery"]["handoff_comment_id"] == first_claim["handoff_comment_id"]
+    assert second_claim["recovery"]["handoff_key"] == first_handoff["key"]
+    assert second_claim["handoff_comment_id"] != first_claim["handoff_comment_id"]
+    assert second_claim["handoff_key"] != first_claim["handoff_key"]
+
+
+def test_equivalent_duplicate_handoff_comment_id_does_not_poison_recovery(tmp_path, monkeypatch):
+    monkeypatch.setenv("DISH_LOCAL_INTEGRATION_STATE_ROOT", str(tmp_path))
+    gh = base.FakeGitHub()
+    gh.reviews = [base.review()]
+    first_launcher = base.FakeLocalIntegration(gh, outcome="return")
+    lifecycle = configure(base.engine(gh, authority=True), first_launcher)
+
+    first = lifecycle.dispatch_one(lifecycle.inspect(gh.pr), workspace=None, local_reviewer=None)
+    assert first.state == p.LifecycleState.INTEGRATION_READY
+    assert len(first_launcher.calls) == 1
+    first_claim = first_launcher.calls[0]["claim"]
+    first_comment = next(
+        comment for comment in gh.comments if comment["id"] == first_claim["handoff_comment_id"]
+    )
+    duplicate = deepcopy(first_comment)
+    duplicate["id"] = max(comment["id"] for comment in gh.comments) + 1
+    duplicate["created_at"] = "2026-08-13T08:00:01+00:00"
+    duplicate["updated_at"] = duplicate["created_at"]
+    gh.comments.append(duplicate)
+
+    second_launcher = base.FakeLocalIntegration(gh, outcome="return")
+    lifecycle.local_integration_launcher = second_launcher
+    second = lifecycle.dispatch_one(lifecycle.inspect(gh.pr), workspace=None, local_reviewer=None)
+
+    assert second.state == p.LifecycleState.INTEGRATION_READY
+    assert len(second_launcher.calls) == 1
+    second_claim = second_launcher.calls[0]["claim"]
+    assert second_claim["generation"] == 2
+    assert second_claim["handoff_comment_id"] == duplicate["id"]
+    assert second_claim["recovery"]["handoff_comment_id"] == first_claim["handoff_comment_id"]
+    assert second_claim["handoff_key"] == first_claim["handoff_key"]
 
 
 class SemanticStopLauncher:

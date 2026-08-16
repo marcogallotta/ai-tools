@@ -205,16 +205,15 @@ class LocalIntegrationFence(AbstractContextManager["LocalIntegrationFence"]):
         self._handle = handle
         prior = _read(self.state_path)
         if prior is not None:
+            # The lock/state path is already scoped to the exact PR/head. Only durable
+            # owner identity is immutable across generations. Review/main/handoff data
+            # are live authority snapshots and may legitimately change between attempts.
             expected = {
                 "schema": CLAIM_SCHEMA,
                 "repository": self.repository,
                 "pr_number": self.pr_number,
                 "branch": self.branch,
                 "head": self.head,
-                "review_id": self.review_id,
-                "main_sha": self.main_sha,
-                "handoff_comment_id": self.handoff_comment_id,
-                "handoff_key": self.handoff_key,
             }
             for key, value in expected.items():
                 if prior.get(key) != value:
@@ -236,6 +235,11 @@ class LocalIntegrationFence(AbstractContextManager["LocalIntegrationFence"]):
                 "current_head": prior.get("current_head"),
                 "reconciliation_occurred": prior.get("reconciliation_occurred"),
                 "next_action": prior.get("next_action"),
+                "review_id": prior.get("review_id"),
+                "task_ids": list(prior.get("task_ids") or []),
+                "main_sha": prior.get("main_sha"),
+                "handoff_comment_id": prior.get("handoff_comment_id"),
+                "handoff_key": prior.get("handoff_key"),
             }
             history.append({**recovery, "superseded_at": _now()})
         self.state = {
