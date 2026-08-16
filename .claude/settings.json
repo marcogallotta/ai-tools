@@ -19,7 +19,7 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/hooks/agent-reground",
-            "timeout": 10,
+            "timeout": 30,
             "statusMessage": "Checking post-compaction Dish role state"
           }
         ]
