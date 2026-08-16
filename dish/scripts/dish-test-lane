@@ -164,7 +164,7 @@ LANES: Mapping[str, tuple[Phase, ...]] = {
                 "tests/test_safe_reclaim_workflow.py::test_recover_settles_stranded_request_then_returns_nonrecovery_continuation",
                 "tests/test_safe_reclaim_workflow.py::test_request_recovery_does_not_settle_unresolved_request_bound_execution",
                 "tests/test_dish_partial_recovery_execution_journal.py::test_recover_inspect_settles_proven_requestless_execution_and_inspect_does_not_loop",
-                "tests/test_safe_reclaim_workflow.py::test_same_expired_run_still_gets_recover_lease_not_safe_reclaim",
+                "tests/test_safe_reclaim_workflow.py::test_same_expired_run_gets_connected_renewal_not_safe_reclaim",
                 "tests/test_safe_reclaim_workflow.py::test_different_run_can_safe_reclaim_clean_expired_verification_attempt",
                 "tests/test_abandonment_stage_successors.py::test_prepared_planning_claim_rejects_abandoned_run_then_binds_fresh_run",
                 "tests/test_human_review_queue_workflow.py::test_service_review_queue_resolves_human_hold_by_current_row_number",
