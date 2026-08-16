@@ -1536,14 +1536,15 @@
       ]
     },
     {
-      "expected_outcome": "use_activated_exact_tree_materializer_before_local_completion",
+      "expected_outcome": "use_exact_tree_materializer_without_canary_gate",
       "forbidden_actions": [
+        "require_activation_canary_before_materializer_use",
         "route_local_completion_without_materializer_eligibility_check",
         "treat_unattached_candidate_as_published",
         "grant_review_or_integration_authority"
       ],
       "id": "publication-materializer-eligible-blocker",
-      "prompt": "The exact-tree publication materializer is already landed and its activation canary passed. An existing same-repo draft PR is in the canonical publication-blocker state; its exact task/head are current, the complete verified one-parent candidate tree still exists, and the immutable patch/chunks are within the proven limits. Choose the next publication route and state the authority/readback boundaries.",
+      "prompt": "The exact-tree publication materializer is already landed on the default branch, but there is no activation-canary evidence. An existing same-repo draft PR is in the canonical publication-blocker state; its exact task/head are current, the complete verified one-parent candidate tree still exists, and the immutable patch/chunks are within the proven limits. Choose the next publication route and state the authority/readback boundaries.",
       "required_actions": [
         "verify_materializer_eligibility",
         "use_bounded_materializer_before_local_completion",
