@@ -2,6 +2,17 @@
 
 This runbook operates the repository-owned Dish PR lifecycle dispatcher. It is an orchestration surface, not semantic Review or Implementation authority and not a replacement for Integration gates.
 
+## Navigation
+
+- [Authority and recovery model](#authority-and-recovery-model)
+- [Commands](#commands) and [derived lifecycle states](#derived-lifecycle-states)
+- [Terminal disposition and cleanup](#terminal-disposition-and-cleanup) and [structured advisory leases](#structured-advisory-leases)
+- [Review routing](#review-routing) and [BLOCK → implementation/fix routing](#block--implementationfix-routing)
+- [External dependency blockers](#external-dependency-blockers)
+- [Local work after Review MERGE](#local-work-after-review-merge)
+- [Integration composition](#integration-composition)
+- [Human notifications](#human-notifications)
+
 ## Authority and recovery model
 
 `scripts/pr_lifecycle.py` derives queue truth from durable GitHub PR state and the linked Asana task identity. It has no authoritative local database. Restart recovery is a fresh GitHub/Asana read.
@@ -111,7 +122,7 @@ The default ordinary route is `substantive`. A durable explicit route may be pla
 
 Classes are `light`, `focused`, `mechanical`, `substantive`, or `domain:<name>`. `domain:<name>` means the ordinary Review Workspace Agent must deepen scrutiny for that domain inside the same formal Review workflow. Legacy durable `specialist:<name>` markers normalize to `domain:<name>` and do not select another generic AI reviewer. A prior exact-head `BLOCK` whose return contract says `FOCUSED RECHECK`, `MECHANICAL CHECK ONLY`, or `DOMAIN DEEP RECHECK` supplies the bounded next review class after a new head appears. Ambiguous work defaults to `substantive`.
 
-For `light`, `focused`, or `mechanical`, `DISH_LOCAL_REVIEW_COMMAND` may provide a bounded local reviewer. It receives the lifecycle JSON on standard input. The local adapter is never the default semantic reviewer.
+For `light`, `focused`, or `mechanical`, `DISH_LOCAL_REVIEW_COMMAND` may provide a bounded local reviewer only when the exact current head has a positive implementation-host witness for `CHATGPT_IMPLEMENTATION`. A pre-PR witness uses `<!-- dish-implementation-host-witness:v1 head=<sha> host=chatgpt source=orchestration launcher=<id> -->`; post-PR fixes use the dispatcher-produced `dish-implementation-route-result:v1` marker bound to the #95 grant/route and returned head. Missing, ambiguous, or local Implementation provenance routes to ChatGPT Review. The local adapter is never the default semantic reviewer.
 
 Ordinary substantive Review prefers a published ChatGPT Review Workspace Agent. Configure:
 
@@ -124,15 +135,18 @@ If the required token or published trigger is unavailable, the dispatcher report
 
 ## BLOCK -> implementation/fix routing
 
-A formal exact-head `VERDICT: BLOCK` is not only a status classification. A `FAILED_REQUIRED_CI` diagnosis without a valid active external-dependency record is also PR-owned implementation/fix work even when the exact-head semantic Review verdict remains `MERGE`. `dispatch` routes either condition to the configured existing implementation/fix consumer. Configure that consumer with:
+A formal exact-head `VERDICT: BLOCK` is not only a status classification. A `FAILED_REQUIRED_CI` diagnosis without a valid active external-dependency record is also PR-owned implementation/fix work even when the exact-head semantic Review verdict remains `MERGE`. `dispatch` routes either condition to the configured existing implementation/fix consumer. Host selection is deterministic: ordinary BLOCK/PR-owned-CI fixes default to `CHATGPT_IMPLEMENTATION`; `LOCAL_IMPLEMENTATION` requires the exact formal Review classification `IMPLEMENTATION / PUBLICATION — <exact unavailable remote capability>; fallbacks exhausted: <bounded list>`. Configure consumers separately:
 
 ```sh
-DISH_IMPLEMENTATION_FIX_COMMAND='<existing implementation/fix launcher>'
+DISH_CHATGPT_IMPLEMENTATION_FIX_COMMAND='<hosted Implementation launcher>'
+DISH_LOCAL_IMPLEMENTATION_FIX_COMMAND='<local Implementation launcher>'
+DISH_MUTATION_BROKER_CHATGPT_IMPLEMENTATION_ROUTE='<broker route>'
+DISH_MUTATION_BROKER_LOCAL_IMPLEMENTATION_ROUTE='<broker route>'
 ```
 
-or `--implementation-fixer`. The command receives `dish-pr-fix-dispatch-v1` JSON on standard input containing the exact PR URL/number, branch, blocked head SHA, owning task IDs, the current lifecycle snapshot, and either the authoritative formal BLOCK review or the structured PR-owned CI diagnosis. The consumer must follow `dish/docs/agents/implementation.md` and the single canonical handoff contract at `dish/docs/agents/templates/implementation-handoff.md`, reconcile the matching `tools/agent-worktree` claim before touching local state, update only the authorized existing PR branch, and re-read GitHub before semantic work. Matching Asana task identity on another branch/PR is not authority. A CI-driven semantic fix changes head identity and therefore requires substantive Review on the new head.
+Legacy `DISH_IMPLEMENTATION_FIX_COMMAND` / `--implementation-fixer` remains accepted only when `DISH_IMPLEMENTATION_FIX_HOST=chatgpt|local` classifies it exactly; otherwise fix dispatch fails closed. The legacy broker `DISH_MUTATION_BROKER_FIX_ROUTE` remains a remote/default compatibility route and is never used as an implicit local fallback. The selected command receives `dish-pr-fix-dispatch-v1` JSON on standard input containing `implementation_host`, the exact PR URL/number, branch, blocked head SHA, owning task IDs, the current lifecycle snapshot, and either the authoritative formal BLOCK review or the structured PR-owned CI diagnosis. The consumer must follow `dish/docs/agents/implementation.md` and the single canonical handoff contract at `dish/docs/agents/templates/implementation-handoff.md`, reconcile the matching `tools/agent-worktree` claim before touching local state, update only the authorized existing PR branch, and re-read GitHub before semantic work. Matching Asana task identity on another branch/PR is not authority. A CI-driven semantic fix changes head identity and therefore requires substantive Review on the new head.
 
-Before broker activation, the dispatcher retains the legacy exact-head advisory `phase=fix` lease behavior only as bootstrap compatibility. After broker activation, advisory leases no longer admit mutation: the dispatcher submits a structured `fix` request and dispatches the consumer only after independently verifying the current proven broker grant. Formal BLOCK eligibility is exact `(head, block_review_id)`; pre-BLOCK authoring leases/state and older Review rounds are ineligible. PR-owned CI failure may enter the same route only after failure ownership is durably `PR_OWNED`; current-main, infrastructure, or ambiguous failures do not mutate the candidate.
+Before broker activation, the dispatcher retains the legacy exact-head advisory `phase=fix` lease behavior only as bootstrap compatibility. After broker activation, advisory leases no longer admit mutation: the dispatcher submits a structured `fix` request on the selected host route and dispatches the consumer only after independently verifying the current proven broker grant. Broker route policy defaults existing Implementation routes to `host=chatgpt`; an explicit `host=local` route rechecks the exact Review's local-only classification before grant issuance. Formal BLOCK eligibility is exact `(head, block_review_id)`; pre-BLOCK authoring leases/state and older Review rounds are ineligible. PR-owned CI failure may enter the same route only after failure ownership is durably `PR_OWNED`; current-main, infrastructure, or ambiguous failures do not mutate the candidate.
 
 Immediately before consumer dispatch, re-read the PR/head/current formal Review or CI ownership, live task authority, and the exact grant proof. A missing/expired/deleted/mismatched proof or any authority movement produces zero semantic mutation. Local `tools/agent-worktree` ownership remains mandatory after admission.
 
@@ -153,7 +167,9 @@ While externally blocked the dispatcher does not launch Implementation/fix or lo
 
 ## Local work after Review MERGE
 
-A formal Review must keep using its required `TESTS TO RUN:` line. A non-`NONE` command creates `LOCAL CERTIFICATION REQUIRED` until the exact head has a durable completion marker:
+New formal MERGE reviews use the phase-explicit pair `PRE-INTEGRATION TESTS TO RUN:` and `POST-MERGE GATES:`. Only a non-`NONE` `PRE-INTEGRATION TESTS TO RUN` command creates `LOCAL CERTIFICATION REQUIRED` before source Integration. `POST-MERGE GATES` is carried as residual acceptance metadata and does not block source merge by itself. If either new-format field appears, both must appear; partial metadata fails closed as malformed Review metadata rather than becoming CI pending or a privileged local handoff. Legacy exact-head reviews containing only `TESTS TO RUN:` retain the existing pre-Integration behavior.
+
+A required pre-Integration command remains pending until the exact head has a durable completion marker:
 
 ```text
 <!-- dish-local-completion:v1 kind=certification head=<sha> result=pass -->

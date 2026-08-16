@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 
 from .common import AgentWorktreeError, DISPOSITIONS, GitRunner, reject_repository_overrides
+from .commit import command_commit
 from .operations import emit
 from .ownership import claim_status, command_claim, require_active_claim
 from .publish_cleanup import command_cleanup, command_exec, command_publish, command_verify_handoff
@@ -78,6 +79,12 @@ def build_parser() -> argparse.ArgumentParser:
     status.add_argument("--task", required=True)
     add_json_flag(status)
 
+    commit = sub.add_parser("commit", help="stage and commit only explicit paths in the claimed task-owned worktree")
+    commit.add_argument("--task", required=True)
+    commit.add_argument("-m", "--message", required=True)
+    commit.add_argument("paths", nargs=argparse.REMAINDER)
+    add_json_flag(commit)
+
     publish = sub.add_parser("publish", help="push only the explicit owned branch refspec and verify remote HEAD")
     publish.add_argument("--task", required=True)
     add_json_flag(publish)
@@ -132,6 +139,10 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "status":
             payload = command_status(args, runner)
             payload["claim"] = claim_status(args.task)
+        elif args.command == "commit":
+            if args.paths and args.paths[0] == "--":
+                args.paths = args.paths[1:]
+            payload = command_commit(args, runner)
         elif args.command == "publish":
             payload = command_publish(args, runner)
         elif args.command == "verify-handoff":

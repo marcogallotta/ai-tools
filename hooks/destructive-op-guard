@@ -7,7 +7,7 @@
 # otherwise so normal permission evaluation proceeds.
 #
 # $cmd is split into top-level segments on unquoted ; | & (quote-aware char
-# scan, same idea as no-compound-bash's outside_quotes) and each segment is
+# scan with quote awareness and each segment is
 # shlex-tokenized. Every check below matches by token identity/position
 # rather than regex-over-raw-text. That's a deliberate fix, not just a
 # language port: the old bash version ran \bgit\b / \bcommit\b word-boundary
@@ -232,10 +232,50 @@ def git_subcommand(tokens):
     return None
 
 
-def check_git(segments):
-    # git-commit wrapper (atomic stage+commit) - but not --help/-h, which is
-    # read-only. A bare "git-commit" with no following token is left alone,
-    # matching the original bash regex which required trailing text after it.
+def check_git(segments, cwd=None):
+    current_cwd = cwd or os.getcwd()
+
+    # Active Dish task worktrees have a single canonical mutation boundary.
+    # Raw staging/commit/publication paths are hard denials, not approval
+    # prompts, because approval cannot prove task/branch/index scope.
+    for seg in segments:
+        if not seg.strip():
+            continue
+        task_context = protected_checkout.active_task_for_git_segment(seg, current_cwd)
+        task_gid = task_context[0] if task_context is not None else None
+        sub = task_context[1] if task_context is not None else None
+        if task_gid is not None and sub in ("add", "commit", "push"):
+            if sub == "push":
+                replacement = f"tools/agent-worktree publish --task {task_gid}"
+            else:
+                replacement = (
+                    f"tools/agent-worktree commit --task {task_gid} -m <message> -- "
+                    "<explicit paths...>"
+                )
+            return deny(
+                f"[destructive-op-guard] Refusing raw git {sub} in active Dish task "
+                f"worktree {task_gid}. Use the verified lifecycle boundary instead: {replacement}"
+            )
+
+        tokens = tokenize(seg)
+        if protected_checkout.active_task_for_cwd(current_cwd) is not None:
+            active_gid = protected_checkout.active_task_for_cwd(current_cwd)
+            for i, token in enumerate(tokens):
+                if not is_word(token, "git-commit") or i + 1 >= len(tokens):
+                    continue
+                if tokens[i + 1] in ("--help", "-h"):
+                    continue
+                return deny(
+                    f"[destructive-op-guard] Refusing generic git-commit in active Dish task "
+                    f"worktree {active_gid}. Use: tools/agent-worktree commit --task {active_gid} "
+                    "-m <message> -- <explicit paths...>"
+                )
+
+        changed_cwd = protected_checkout._literal_cd_target(seg, current_cwd)
+        if changed_cwd is not None:
+            current_cwd = changed_cwd
+
+    # Existing behavior remains unchanged outside active task worktrees.
     for seg in segments:
         tokens = tokenize(seg)
         for i, t in enumerate(tokens):
@@ -247,11 +287,6 @@ def check_git(segments):
                 continue
             return ask("[destructive-op-guard] git-commit (stage + commit) requires explicit approval.")
 
-    # destructive git subcommands. Each is its own pass over every segment,
-    # checked in this order, mirroring the original's sequence of exit-on-
-    # first-match ifs over the whole (unsegmented) command. Matched against
-    # the resolved subcommand position, not mere token presence, so e.g.
-    # `git worktree add` or `git remote add` don't collide with `git add`.
     for seg in segments:
         tokens = tokenize(seg)
         sub = git_subcommand(tokens)
@@ -273,10 +308,8 @@ def check_git(segments):
         if git_subcommand(tokens) == "add":
             return deny(
                 "[destructive-op-guard] Don't run git add alone — it leaves staged changes that can "
-                "collide with another session's commit. Use: ~/.claude/bin/git-commit <files> -m 'message'. "
-                "Paths resolve relative to $PWD's repo, NOT the repo root or an absolute target — if the "
-                "repo you want isn't your current cwd, pass -C <repo> instead of cd'ing there (cd && "
-                "git-commit is a compound command and will be blocked). Run 'git-commit --help' first if unsure."
+                "collide with another session's commit. Use the repository's bounded commit wrapper. "
+                "Run 'git-commit --help' first if unsure."
             )
 
     return None
@@ -350,7 +383,7 @@ def evaluate(cmd, cwd=None):
         check_rm(segments)
         or check_docker(segments)
         or check_protected_checkout(segments, cwd)
-        or check_git(segments)
+        or check_git(segments, cwd)
         #or check_psql(segments)
         or check_rsync(segments)
         or check_ssh(segments)

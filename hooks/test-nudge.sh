@@ -25,10 +25,6 @@ if printf '%s' "$first" | grep -Eq '^[[:space:]]*(for|while|until)[[:space:]]'; 
   hints+=("Bash loop detected: consider a Python script or test function instead — easier to debug, already allowlisted, and stays in the repo.")
 fi
 
-if printf '%s' "$first" | grep -Eq '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]'; then
-  hints+=("VAR=value prefix detected — this is blocked by no-compound-bash. Discuss with the user: is there a wrapper script in ~/.claude/bin/ that could encapsulate this pattern and take the values as arguments instead?")
-fi
-
 if [ ${#hints[@]} -gt 0 ]; then
   msg=$(printf '%s\n' "${hints[@]}" | paste -sd ' | ' -)
   jq -n --arg m "$msg" '{

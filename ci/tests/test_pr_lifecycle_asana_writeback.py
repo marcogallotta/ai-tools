@@ -137,3 +137,22 @@ def test_dependent_advances_only_when_exact_source_landing_is_declared_only_gate
     assert result.dependents_advanced == (DEPENDENT,)
     assert asana.tasks[DEPENDENT]["completed"] is False
     assert [x["gid"] for x in asana.tasks[DEPENDENT]["dependencies"]] == ["1217443403986572"]
+
+
+def test_review_post_merge_gate_keeps_source_task_open_without_rewriting_notes():
+    notes = "<!-- dish-source-work:v1 final_outstanding_gate=true -->"
+    asana = FakeAsana({"gid": TASK, "notes": notes, "completed": False, "dependents": []})
+    lifecycle = merged_lifecycle()
+    lifecycle.post_merge_gates = ["task 1217484567901049 — dual-stack TEST qualification before PROD"]
+    result = reconcile_after_merge(
+        asana=asana,
+        lifecycle=lifecycle,
+        repository="marcogallotta/ai-tools",
+        merge_sha=MERGE_SHA,
+    )
+    assert result.completed is False
+    assert result.residual_gates == (
+        "post-merge:task 1217484567901049 — dual-stack TEST qualification before PROD",
+    )
+    assert asana.field_updates == []
+    assert asana.tasks[TASK]["notes"] == notes

@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+import hashlib
 import importlib.util
+import io
+import json
 from pathlib import Path
 import sys
 
@@ -92,6 +95,10 @@ class FakeGitHub:
         self.combined_status = status(head=self.pr["head"]["sha"])
         self.workflow_runs = runs(head=self.pr["head"]["sha"])
         self.events = []
+        self.repository_id = 1304888921
+        self.workflow_attempts = {}
+        self.run_artifacts = {}
+        self.artifacts = {}
         self.merge_response = {"merged": True, "sha": "d" * 40, "message": "Pull Request successfully merged"}
         self.merge_mutates = True
 
@@ -115,6 +122,18 @@ class FakeGitHub:
 
     def get_workflow_runs(self):
         return deepcopy(self.workflow_runs)
+
+    def get_repository_id(self):
+        return self.repository_id
+
+    def get_workflow_run_attempt(self, run_id, run_attempt):
+        return deepcopy(self.workflow_attempts[(run_id, run_attempt)])
+
+    def get_run_artifacts(self, run_id):
+        return deepcopy(self.run_artifacts.get(run_id, []))
+
+    def download_artifact(self, artifact_id):
+        return self.artifacts[artifact_id]
 
     def add_comment(self, number, body):
         self.events.append(("comment", body))
@@ -490,3 +509,64 @@ def test_review_dispatch_configuration_notice_is_idempotent():
     second = lifecycle.dispatch_one(first, workspace=None, local_reviewer=None, notify=notices.append)
     assert len(notices) == 1
     assert sum("dish-human-notice:v1" in event[1] for event in gh.events if event[0] == "comment") == 1
+
+
+def test_new_review_phase_metadata_separates_preintegration_tests_from_postmerge_gates():
+    gh = FakeGitHub()
+    gh.reviews = [
+        review(
+            body_tail=(
+                "PRE-INTEGRATION TESTS TO RUN: NONE.\n"
+                "POST-MERGE GATES: task 1217484567901049 — dual-stack TEST qualification before PROD"
+            )
+        )
+    ]
+    state = engine(gh).inspect(gh.pr)
+    assert state.state == pr_lifecycle.LifecycleState.INTEGRATION_READY
+    assert state.local_work == []
+    assert state.post_merge_gates == [
+        "task 1217484567901049 — dual-stack TEST qualification before PROD"
+    ]
+
+
+def test_new_review_phase_metadata_preintegration_test_still_requires_local_certification():
+    gh = FakeGitHub()
+    command = "dish/scripts/dish-pg-native-certification --candidate aaaaa"
+    gh.reviews = [
+        review(
+            body_tail=(
+                f"PRE-INTEGRATION TESTS TO RUN: {command}\n"
+                "POST-MERGE GATES: NONE."
+            )
+        )
+    ]
+    state = engine(gh).inspect(gh.pr)
+    assert state.state == pr_lifecycle.LifecycleState.LOCAL_CERTIFICATION_REQUIRED
+    assert state.local_work[0]["instruction"] == command
+    assert state.post_merge_gates == []
+
+
+def test_partially_new_review_phase_metadata_fails_closed_without_legacy_fallback():
+    gh = FakeGitHub()
+    gh.reviews = [
+        review(
+            body_tail=(
+                "PRE-INTEGRATION TESTS TO RUN: NONE.\n"
+                "TESTS TO RUN: dish/scripts/dish-pg-native-certification --candidate aaaaa"
+            )
+        )
+    ]
+    state = engine(gh).inspect(gh.pr)
+    assert state.state == pr_lifecycle.LifecycleState.REVIEW_PASSED
+    assert "must contain both" in state.residual_reason
+    assert state.local_work == []
+
+
+def test_legacy_tests_to_run_review_remains_preintegration_certification():
+    gh = FakeGitHub()
+    command = "dish/scripts/dish-pg-native-certification --candidate aaaaa"
+    gh.reviews = [review(body_tail=f"TESTS TO RUN: {command}")]
+    state = engine(gh).inspect(gh.pr)
+    assert state.state == pr_lifecycle.LifecycleState.LOCAL_CERTIFICATION_REQUIRED
+    assert state.local_work[0]["instruction"] == command
+    assert state.post_merge_gates == []

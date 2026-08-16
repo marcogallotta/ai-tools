@@ -123,7 +123,9 @@ Regardless of host, the coordinator/reviewer/integrator must be able to identify
 
 A required implementation change that is not durably published because the active host cannot safely write one required branch path is a **publication blocker**, not missing local/environment certification. `LOCAL TESTING / LOCAL CERTIFICATION REQUIRED BEFORE INTEGRATION` is reserved for implementation whose complete intended changed surface is already durably published and only lacks machine/environment evidence.
 
-For a publication blocker, implementation is incomplete. Keep the existing PR draft and, **before notifying Marco**, make the PR itself the complete takeover artifact with this exact heading:
+After the repository-native exact-tree publication materializer is landed **and its post-landing activation canary has passed**, a qualifying canonical publication blocker is a supported remote publication path before local completion. Eligibility is deliberately narrow: existing same-repository open draft PR, canonical blocker + exact owning task, complete verified one-parent candidate tree still available, and the request within the proven transport limits. The materializer creates only an unattached exact-parent/exact-tree Git commit. Implementation must independently read that object back, revalidate the live PR/branch/blocker identity, move the existing PR branch only through the separate connected-GitHub non-force expected-head/CAS ref update, and authoritatively re-read branch/PR/commit/tree before calling publication complete. The materializer grants no Review, Integration, ready-for-review, Asana, or merge authority. Its exact protocol and activation boundary are in [`../../../ci/publication-materializer.md`](../../../ci/publication-materializer.md).
+
+If the materializer is not activated, is ineligible/unavailable, exceeds its proven limits, loses the complete local candidate, or fails any security/exactness check, use the existing local-completion fallback below without probing alternate transports. For a publication blocker, implementation is incomplete. Keep the existing PR draft and, **before notifying Marco**, make the PR itself the complete takeover artifact with this exact heading:
 
 `## PUBLICATION BLOCKER — LOCAL BRANCH COMPLETION REQUIRED BEFORE REVIEW`
 
@@ -154,7 +156,7 @@ A local Implementation-completion agent accepting this ownership handoff must:
 
 The head change is real review identity movement. If local completion occurs before independent Review, the new head enters normal Review. If completion occurs after any exact-head review, that review does not transfer silently: classify the movement under the normal semantic/mechanical rules and perform substantive re-review or an explicit exact-head mechanical recheck as applicable.
 
-Do not solve a publication blocker by inventing a parallel ownership map, creating a second PR for the missing line, reconstructing truncated governed content, or treating a missing write transport as certification. A future server-side branch patch primitive may remove this failure mode, but it is tooling follow-up rather than a prerequisite for this fallback.
+Do not solve a publication blocker by inventing a parallel ownership map, creating a second PR for the missing line, reconstructing truncated governed content, or treating a missing write transport as certification. The activated exact-tree materializer is the one bounded remote transport owned by this lifecycle; when it cannot safely prove eligibility/exactness, the local-completion fallback remains authoritative.
 
 ## Scope and authority
 
@@ -171,6 +173,18 @@ Preserve established authority and identity boundaries. Do not introduce a secon
 
 When a dependency, architectural contradiction, or necessary scope expansion appears, report it rather than silently broadening the task.
 
+### Remote-first execution and local-work classification
+
+Substantive repository implementation is remote/hosted by default. Local execution is not continuity authority and is not justified by convenience, a prior local agent, a slow suite, a timeout, a missing optional dependency, or one failed publication primitive while another authorized hosted path remains. Before routing semantic Implementation locally, name the exact capability the hosted path cannot provide and the bounded authorized fallbacks already exhausted.
+
+Classify every residual local requirement by work type, independently from elapsed runtime:
+
+- `TESTS ONLY — <exact local test/environment boundary>` for already-authored source that only needs native/local evidence;
+- `IMPLEMENTATION / PUBLICATION — <exact unavailable remote capability>; fallbacks exhausted: <bounded list>` only when a real local source/publication mutation is unavoidable;
+- `LOCAL SYSTEM ACCESS — <exact capability>` for sudo/systemd/device/installed-runtime operations that are neither semantic authoring nor merely a test command.
+
+Only the second form, with both the unavailable hosted capability and exhausted fallbacks explicit, can justify a local Implementation route. `TESTS ONLY` and `LOCAL SYSTEM ACCESS` never do. Report runtime separately when useful; a 45-minute suite remains `TESTS ONLY`, while a 30-second source repair remains Implementation. Preserve completed remote evidence and hand off only the irreducibly local residual.
+
 ### Scope discipline
 
 The task brief defines the implementation boundary. Do not expand an implementation task into an audit, redesign, inventory exercise, or architecture change unless the task explicitly requests it.
@@ -186,6 +200,10 @@ Only the first two belong in the PR. Record adjacent findings separately as foll
 Once the existing mechanism responsible for the requested invariant is identified, stop discovery and make the smallest change needed to enforce or prove that invariant.
 
 Before adding new files, systems, targets, or process changes, ask whether the change directly satisfies the acceptance criteria. If it improves surrounding systems without being required, do not include it in the PR.
+
+For operator-friction work, state the smallest operator outcome in one sentence: the manual/repetitive work this slice removes. Re-anchor implementation decisions to that outcome and the current accepted task specification. Before adding a scheduler, queue, database, service, new ownership/identity system, control plane, or materially broader lifecycle than that outcome requires, obtain an explicit durable Marco decision approving the expansion. Missing approval blocks the broader expansion, not the narrow authorized slice.
+
+After two design/re-review cycles without implementation progress, do not default to another broader design pass: reduce to a smaller implementable slice or require an explicit human decision. Before making a new V1 dependency, prove the exact capability the dependency supplies and that the supported existing route cannot provide it; unsupported same-session or convenience optimizations fall back to the ordinary supported route rather than becoming blockers.
 
 Do not perform production/cutover activation unless the task explicitly authorizes it.
 

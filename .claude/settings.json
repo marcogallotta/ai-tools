@@ -19,11 +19,27 @@
           {
             "type": "command",
             "command": "\"$CLAUDE_PROJECT_DIR\"/hooks/agent-reground",
-            "timeout": 10,
+            "timeout": 30,
             "statusMessage": "Checking post-compaction Dish role state"
           }
         ]
       }
+    ]
+  },
+  "sandbox": {
+    "enabled": true,
+    "failIfUnavailable": true,
+    "autoAllowBashIfSandboxed": true,
+    "allowUnsandboxedCommands": false,
+    "filesystem": {
+      "denyWrite": [
+        "~/ai-tools"
+      ]
+    }
+  },
+  "permissions": {
+    "deny": [
+      "Edit(~/ai-tools/**)"
     ]
   }
 }
