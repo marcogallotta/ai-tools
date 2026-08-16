@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from copy import deepcopy
+from datetime import timedelta
 import hashlib
 import io
 import json
 import zipfile
 
 import test_pr_lifecycle as base
+import pr_implementation_provenance as provenance
 import pr_mutation_broker as broker
 from pr_lifecycle_helpers_base import _verified_route_result_host
 
@@ -48,6 +51,88 @@ class RecordingWorkspace:
     def dispatch(self, **kwargs):
         self.calls.append(kwargs)
         return p.WorkspaceDispatchResult("key", None, None)
+
+
+class FakeAsana:
+    def __init__(self, stories):
+        self.stories = deepcopy(stories)
+
+    def get_stories(self, gid):
+        assert gid == "1217443403986570"
+        return deepcopy(self.stories)
+
+
+def _prelaunch_story(*, base_sha="c" * 40):
+    task = "1217443403986570"
+    source = provenance._expected_source(
+        repository="marcogallotta/ai-tools",
+        task_gid=task,
+        branch="agent/test",
+        base_ref="refs/heads/main",
+        base_sha=base_sha,
+    )
+    handoff = provenance._handoff_identity(task_gid=task, timestamp=base.NOW, source=source)
+    text = "\n".join((
+        f"<!-- dish-implementation-handoff:v1 handoff={handoff} task={task} role=Implementation at={base.NOW.isoformat()} -->",
+        "AUTHORIZED IMPLEMENTATION HANDOFF",
+        f"Task: {task}",
+        "Target role: Implementation",
+        f"Handoff time: {base.NOW.isoformat()}",
+        f"Source: {source}",
+        "Branch: agent/test",
+        f"Base: {base_sha}",
+        "PR: not yet known",
+        "Head: not yet known",
+        "A missing PR/branch delta does not mean this handoff was not sent.",
+        "— Dish Agent: Development Workflow | repository control plane",
+    ))
+    return handoff, {"gid": "story-1", "text": text, "created_at": base.NOW.isoformat()}
+
+
+def _install_prelaunch_cache(gh, *, handoff, base_sha="c" * 40):
+    task, run_id, attempt, artifact_id = "1217443403986570", 701, 1, 702
+    launcher = f"asana-handoff:{handoff}"
+    proof = {
+        "schema": "dish-implementation-prelaunch-proof-v2",
+        "repository": gh.repository,
+        "pr_number": 31,
+        "task_gid": task,
+        "branch": "agent/test",
+        "head": base.HEAD,
+        "base_ref": "refs/heads/main",
+        "base_sha": base_sha,
+        "host": "chatgpt",
+        "launcher": launcher,
+        "handoff_id": handoff,
+        "run_id": run_id,
+        "run_attempt": attempt,
+    }
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w") as archive:
+        archive.writestr("implementation-provenance.json", json.dumps(proof, sort_keys=True))
+    archive = archive_buffer.getvalue()
+    digest = f"sha256:{hashlib.sha256(archive).hexdigest()}"
+    gh.workflow_attempts[(run_id, attempt)] = {
+        "id": run_id,
+        "run_attempt": attempt,
+        "event": "repository_dispatch",
+        "conclusion": "success",
+        "path": ".github/workflows/pr-implementation-provenance.yml",
+        "run_started_at": (base.NOW + timedelta(minutes=1)).isoformat(),
+    }
+    gh.run_artifacts[run_id] = [{"id": artifact_id, "digest": digest, "expired": False}]
+    gh.artifacts[artifact_id] = archive
+    gh.comments = [{
+        "id": 1,
+        "body": (
+            f"<!-- dish-implementation-host-witness:v1 head={base.HEAD} host=chatgpt "
+            f"source=orchestration launcher={launcher} task={task} handoff={handoff} "
+            f"base_ref=refs/heads/main base_sha={base_sha} run={run_id} attempt={attempt} "
+            f"artifact={artifact_id} digest={digest} -->"
+        ),
+        "created_at": base.NOW.isoformat(),
+        "updated_at": base.NOW.isoformat(),
+    }]
 
 
 def test_block_fix_defaults_to_chatgpt_implementation():
@@ -123,46 +208,53 @@ def test_self_asserted_prepr_chatgpt_witness_routes_to_chatgpt_review():
     assert len(workspace.calls) == 1
 
 
-def test_broker_backed_prepr_chatgpt_witness_allows_bounded_local_review():
+def test_successful_prelaunch_cache_without_independent_lineage_routes_to_chatgpt_review(monkeypatch):
     candidate = base.pr(body="Owning task: 1217443403986570\nREVIEW CLASS: focused")
     gh = base.FakeGitHub(candidate)
-    launcher, run_id, attempt, artifact_id = "launch-123", 701, 1, 702
-    proof = {
-        "schema": "dish-implementation-prelaunch-proof-v1",
-        "repository": gh.repository,
-        "pr_number": 31,
-        "branch": "agent/test",
-        "head": base.HEAD,
-        "host": "chatgpt",
-        "launcher": launcher,
-        "run_id": run_id,
-        "run_attempt": attempt,
-    }
-    archive_buffer = io.BytesIO()
-    with zipfile.ZipFile(archive_buffer, "w") as archive:
-        archive.writestr("implementation-provenance.json", json.dumps(proof, sort_keys=True))
-    archive = archive_buffer.getvalue()
-    digest = f"sha256:{hashlib.sha256(archive).hexdigest()}"
-    gh.workflow_attempts[(run_id, attempt)] = {
-        "id": run_id, "run_attempt": attempt, "event": "repository_dispatch",
-        "conclusion": "success", "path": ".github/workflows/pr-implementation-provenance.yml",
-    }
-    gh.run_artifacts[run_id] = [{"id": artifact_id, "digest": digest, "expired": False}]
-    gh.artifacts[artifact_id] = archive
-    gh.comments = [{
-        "id": 1,
-        "body": (
-            f"<!-- dish-implementation-host-witness:v1 head={base.HEAD} host=chatgpt "
-            f"source=orchestration launcher={launcher} run={run_id} attempt={attempt} "
-            f"artifact={artifact_id} digest={digest} -->"
-        ),
-        "created_at": base.NOW.isoformat(), "updated_at": base.NOW.isoformat(),
-    }]
+    handoff, _ = _prelaunch_story()
+    _install_prelaunch_cache(gh, handoff=handoff)
+    monkeypatch.setattr(provenance, "_asana_from_environment", lambda: FakeAsana([]))
     local = RecordingReview()
     workspace = RecordingWorkspace()
-    p.LifecycleEngine(gh).dispatch_one(p.LifecycleEngine(gh).inspect(gh.pr), workspace=workspace, local_reviewer=local)
+    p.LifecycleEngine(gh).dispatch_one(
+        p.LifecycleEngine(gh).inspect(gh.pr), workspace=workspace, local_reviewer=local
+    )
+    assert local.calls == []
+    assert len(workspace.calls) == 1
+
+
+def test_independently_backed_prelaunch_chatgpt_lineage_allows_bounded_local_review(monkeypatch):
+    candidate = base.pr(body="Owning task: 1217443403986570\nREVIEW CLASS: focused")
+    gh = base.FakeGitHub(candidate)
+    handoff, story = _prelaunch_story()
+    _install_prelaunch_cache(gh, handoff=handoff)
+    monkeypatch.setattr(provenance, "_asana_from_environment", lambda: FakeAsana([story]))
+    local = RecordingReview()
+    workspace = RecordingWorkspace()
+    p.LifecycleEngine(gh).dispatch_one(
+        p.LifecycleEngine(gh).inspect(gh.pr), workspace=workspace, local_reviewer=local
+    )
     assert len(local.calls) == 1
     assert workspace.calls == []
+
+
+def test_tampered_or_ambiguous_prelaunch_lineage_routes_to_chatgpt_review(monkeypatch):
+    candidate = base.pr(body="Owning task: 1217443403986570\nREVIEW CLASS: focused")
+    gh = base.FakeGitHub(candidate)
+    handoff, story = _prelaunch_story()
+    _install_prelaunch_cache(gh, handoff=handoff)
+    tampered = deepcopy(story)
+    tampered["text"] = tampered["text"].replace("host=chatgpt", "host=local")
+
+    for stories in ([tampered], [story, deepcopy(story)]):
+        monkeypatch.setattr(provenance, "_asana_from_environment", lambda stories=stories: FakeAsana(stories))
+        local = RecordingReview()
+        workspace = RecordingWorkspace()
+        p.LifecycleEngine(gh).dispatch_one(
+            p.LifecycleEngine(gh).inspect(gh.pr), workspace=workspace, local_reviewer=local
+        )
+        assert local.calls == []
+        assert len(workspace.calls) == 1
 
 
 def test_positive_local_implementation_witness_forces_chatgpt_review():

@@ -17,37 +17,56 @@ jobs:
       github.event.client_payload.pr != '' &&
       github.event.client_payload.head != '' &&
       github.event.client_payload.branch != '' &&
-      github.event.client_payload.launcher != ''
+      github.event.client_payload.task != '' &&
+      github.event.client_payload.handoff != '' &&
+      github.event.client_payload.base_ref != '' &&
+      github.event.client_payload.base_sha != ''
     runs-on: ubuntu-latest
     steps:
-      - name: Verify the exact published candidate
-        id: candidate
+      - name: Verify exact published candidate and cache identity
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.client_payload.pr }}
           HEAD: ${{ github.event.client_payload.head }}
           BRANCH: ${{ github.event.client_payload.branch }}
+          TASK: ${{ github.event.client_payload.task }}
+          HANDOFF: ${{ github.event.client_payload.handoff }}
+          BASE_REF: ${{ github.event.client_payload.base_ref }}
+          BASE_SHA: ${{ github.event.client_payload.base_sha }}
         run: |
           set -euo pipefail
+          [[ "$PR" =~ ^[0-9]+$ ]]
+          [[ "$TASK" =~ ^[0-9]{16}$ ]]
+          [[ "$HANDOFF" =~ ^[0-9a-f]{16}$ ]]
+          [[ "$HEAD" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$BASE_REF" == refs/heads/* ]]
           actual_head="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}" --jq '.head.sha')"
           actual_branch="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}" --jq '.head.ref')"
+          actual_base="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${PR}" --jq '.base.ref')"
           test "$actual_head" = "$HEAD"
           test "$actual_branch" = "$BRANCH"
+          test "$BASE_REF" = "refs/heads/${actual_base}"
 
-      - name: Write immutable proof
+      - name: Write immutable cache proof
         env:
           PR: ${{ github.event.client_payload.pr }}
           HEAD: ${{ github.event.client_payload.head }}
           BRANCH: ${{ github.event.client_payload.branch }}
-          LAUNCHER: ${{ github.event.client_payload.launcher }}
+          TASK: ${{ github.event.client_payload.task }}
+          HANDOFF: ${{ github.event.client_payload.handoff }}
+          BASE_REF: ${{ github.event.client_payload.base_ref }}
+          BASE_SHA: ${{ github.event.client_payload.base_sha }}
         run: >-
           jq -n --arg repository "$GITHUB_REPOSITORY" --argjson pr_number "$PR"
-          --arg branch "$BRANCH" --arg head "$HEAD" --arg launcher "$LAUNCHER"
+          --arg task_gid "$TASK" --arg branch "$BRANCH" --arg head "$HEAD"
+          --arg base_ref "$BASE_REF" --arg base_sha "$BASE_SHA"
+          --arg launcher "asana-handoff:${HANDOFF}" --arg handoff_id "$HANDOFF"
           --argjson run_id "$GITHUB_RUN_ID" --argjson run_attempt "$GITHUB_RUN_ATTEMPT"
-          '{schema:"dish-implementation-prelaunch-proof-v1",repository:$repository,pr_number:$pr_number,branch:$branch,head:$head,host:"chatgpt",launcher:$launcher,run_id:$run_id,run_attempt:$run_attempt}'
+          '{schema:"dish-implementation-prelaunch-proof-v2",repository:$repository,pr_number:$pr_number,task_gid:$task_gid,branch:$branch,head:$head,base_ref:$base_ref,base_sha:$base_sha,host:"chatgpt",launcher:$launcher,handoff_id:$handoff_id,run_id:$run_id,run_attempt:$run_attempt}'
           > implementation-provenance.json
 
-      - name: Upload proof
+      - name: Upload cache proof
         id: upload
         uses: actions/upload-artifact@v4
         with:
@@ -56,14 +75,17 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Publish provenance record
+      - name: Publish non-authoritative cache record
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.client_payload.pr }}
           HEAD: ${{ github.event.client_payload.head }}
-          LAUNCHER: ${{ github.event.client_payload.launcher }}
+          TASK: ${{ github.event.client_payload.task }}
+          HANDOFF: ${{ github.event.client_payload.handoff }}
+          BASE_REF: ${{ github.event.client_payload.base_ref }}
+          BASE_SHA: ${{ github.event.client_payload.base_sha }}
           ARTIFACT: ${{ steps.upload.outputs.artifact-id }}
           DIGEST: ${{ steps.upload.outputs.artifact-digest }}
         run: >-
           gh pr comment "$PR" --repo "$GITHUB_REPOSITORY" --body
-          "<!-- dish-implementation-host-witness:v1 head=${HEAD} host=chatgpt source=orchestration launcher=${LAUNCHER} run=${GITHUB_RUN_ID} attempt=${GITHUB_RUN_ATTEMPT} artifact=${ARTIFACT} digest=${DIGEST} -->"
+          "<!-- dish-implementation-host-witness:v1 head=${HEAD} host=chatgpt source=orchestration launcher=asana-handoff:${HANDOFF} task=${TASK} handoff=${HANDOFF} base_ref=${BASE_REF} base_sha=${BASE_SHA} run=${GITHUB_RUN_ID} attempt=${GITHUB_RUN_ATTEMPT} artifact=${ARTIFACT} digest=${DIGEST} -->"

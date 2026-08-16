@@ -21,13 +21,38 @@ Assignment class: <implementation | fix | local implementation completion>
 Implementation host: <CHATGPT_IMPLEMENTATION | LOCAL_IMPLEMENTATION>
 ```
 
-When pre-PR orchestration launches the writer and later Review routing will depend on host provenance, persist the launcher-bound exact-head witness on the PR once that head exists:
+When initial pre-PR orchestration selects `CHATGPT_IMPLEMENTATION` and later Review routing may use
+that fact, the **independent pre-launch authority** is the durable Asana operator-handoff record
+written by `scripts/operator_handoff.py` before the writer is launched. Use target role
+`Implementation`, record the known branch/base with `PR: not yet known` and `Head: not yet known`,
+require its normal state + story readback, and use this exact source string (single spaces, field
+order unchanged):
 
 ```text
-<!-- dish-implementation-host-witness:v1 head=<exact-sha> host=<chatgpt|local> source=orchestration launcher=<durable-launcher-id> -->
+dish-prelaunch:v1 repository=marcogallotta/ai-tools task=<gid> assignment=implementation host=chatgpt branch=<authorized-branch> base_ref=<base-ref> base_sha=<base-sha> existing_pr=none
 ```
 
-The marker is routing evidence only. It does not grant branch/write/Review authority and must not be self-invented by the implementation execution. Post-PR fix provenance is instead produced by the lifecycle dispatcher after a #95 broker-proven consumer returns a new exact head.
+The returned 16-hex handoff identity is the launcher lineage: `asana-handoff:<handoff-id>`. Do not
+accept a caller-chosen launcher label as provenance. After the branch has a PR and exact head,
+`pr-implementation-provenance.yml` may publish a restart/cache record for that exact head using the
+task, handoff id, base ref and base SHA. Its PR marker has this shape:
+
+```text
+<!-- dish-implementation-host-witness:v1 head=<exact-sha> host=chatgpt source=orchestration launcher=asana-handoff:<handoff-id> task=<gid> handoff=<handoff-id> base_ref=<base-ref> base_sha=<base-sha> run=<run-id> attempt=<n> artifact=<id> digest=<sha256> -->
+```
+
+The workflow artifact/comment is **not independent authority**. Review routing accepts it only after
+mechanically re-reading the owning task's Asana stories, finding exactly one matching
+`dish-implementation-handoff:v1` record, recomputing its handoff identity from the canonical source
+above, verifying the selected ChatGPT host/assignment/branch/base, and confirming that durable
+record predates the cache workflow run. Missing Asana read authority, a missing/duplicate/tampered
+record, mismatched task/branch/base/host, or a cache-only/self-asserted marker yields no positive
+remote witness and therefore falls back to ChatGPT Review. The record proves routing provenance
+only; it never grants branch/write/Review authority.
+
+Post-PR fix provenance is separate: it is produced by the lifecycle dispatcher only after a #95
+broker-proven consumer returns and the proof-backed terminal broker event binds both accepted host
+and exact result head.
 
 The repository + Asana task GID + authorized branch + existing-PR/expected-head tuple is one
 assignment identity. A matching task on another branch or PR is **not authorization** to adopt,
