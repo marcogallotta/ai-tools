@@ -189,40 +189,51 @@ Completion is recorded as:
 
 Before notifying Marco about either local action, the dispatcher first writes the complete exact-head handoff to the PR with a `dish-local-handoff:v1` marker. For `kind=implementation`, the local worker must follow the single canonical handoff contract at `dish/docs/agents/templates/implementation-handoff.md` and reconcile the matching agent-worktree claim before touching prepared state. If the local implementation action changes the source head, the prior Review and completion marker are stale and the new head returns to Review/recheck under the normal rules.
 
-For reviewed exact heads with a complete durable certification handoff, bounded Integration can execute that handoff locally instead of turning it into a Marco message. Configure the local Integration consumer with:
+For reviewed exact heads with a complete durable certification handoff, bounded Integration executes that handoff on the same local Integration consumer used for final V1-A landing. Configure the sole local Integration consumer with:
 
 ```sh
-DISH_LOCAL_INTEGRATION_CERTIFICATION_COMMAND='<local Integration launcher>'
+DISH_LOCAL_INTEGRATION_COMMAND='<local Claude/Codex Integration launcher>'
 ```
 
-or `--local-integration-certifier`. The command receives `dish-pr-integration-certification-v1` JSON on standard input only after the dispatcher has written and re-read the durable exact-head handoff. The payload contains repository/PR identity, branch and exact reviewed head, the complete PR body, owning task IDs, the formal exact-head Review, the certification handoff, and the current lifecycle snapshot. The consumer acts under `dish/docs/agents/integration.md`: it re-reads live GitHub/Asana authority, executes the durable handoff, derives existing routine task/branch/agent IDs or safely creates the documented attempt identities, and records durable exact-head pass/fail evidence. It must not ask Marco to copy routine identifiers or choose a bypass that the workflow can resolve safely.
+or `--local-integration-launcher`. The legacy `--local-integration-certifier` spelling remains an alias during rollout. The command receives `dish-pr-integration-certification-v1` JSON for local certification and `dish-pr-local-integration-v1` JSON for final Integration. Certification success never causes the dispatcher itself to merge; final landing is a separate fenced local Integration execution.
 
-A synchronous consumer return without a durable completion marker leaves `LOCAL CERTIFICATION REQUIRED` with a machine-actionable residual reason; it does not emit a human-action notice. A durable pass is re-read and the dispatcher continues the exact-head certification/order/mergeability/Integration gates in the same dispatch when possible. A durable failure is evidence for the normal Implementation/fix loop, not permission for Integration to change semantics. Missing Integration authority or a missing local Integration consumer remains an execution/authority boundary and may still require a real human action when no authorized execution path exists.
+A synchronous certification return without a durable completion marker leaves `LOCAL CERTIFICATION REQUIRED` with a machine-actionable residual reason. A durable pass is re-read and the candidate advances through the remaining exact-head gates. A durable failure returns to the normal Implementation/fix path. Missing local launcher capability is not replaced by ChatGPT, connector, Actions, or broker landing.
 
 ## Integration composition
 
-All local work must be complete and `scripts/pr_gate.py integration` must pass on the exact reviewed head before the dispatcher can enter Integration.
+All required local certification must be complete and `scripts/pr_gate.py integration` must pass on the exact reviewed head before ordinary landing. A reviewed head blocked only by mechanically resolvable base/mergeability/order movement may also be handed to the same local Integration consumer; semantic ambiguity still returns to Implementation.
 
-Tool capability does not grant Integration authority. Bounded dispatcher composition is explicitly enabled only by `--integration-authority` or:
+Tool capability does not grant Integration authority. Bounded dispatcher composition is enabled only by `--integration-authority` or:
 
 ```sh
 DISH_INTEGRATION_AUTHORITY=bounded-reviewed-head
 ```
 
-With that authority and merge capability, the dispatcher:
+With that authority, the dispatcher is a deterministic classifier/handoff controller only. It:
 
-1. re-reads the PR/current head and exact formal Review/certification;
-2. re-evaluates local work, mergeability/order, live Asana, and current main;
-3. after broker activation, obtains/verifies the sole current exact-action broker grant instead of using an advisory Integration lease as admission;
-4. re-verifies the exact grant and all live authority immediately before merge;
-5. merges through the normal expected-head-protected Integration transport (the broker workflow itself never merges);
-6. re-reads GitHub and reports `MERGED` only from authoritative merged state;
-7. performs scoped residual-gate-aware Asana landing writeback and readback;
-8. requests a separately proven broker close/completion event for the consumed grant.
+1. re-reads the PR/current head, exact formal Review, certification, mergeability/order, and current target branch;
+2. writes and re-reads one durable `dish-local-integration-handoff:v1` record binding repository, PR, branch, exact reviewed head, exact Review id, and observed target-branch SHA;
+3. acquires the repository-owned local per-PR/head `fcntl` fence under `~/.local/state/dish/integration/`; the OS lock is consequential-mutation admission and the JSON claim is crash/compaction recovery state;
+4. while holding that fence, invokes only `DISH_LOCAL_INTEGRATION_COMMAND` and passes the exact handoff plus claim id/path/generation/recovery snapshot;
+5. after the child returns, re-reads GitHub. A new PR head stops for fresh independent exact-head Review; an unchanged unmerged head remains `INTEGRATION READY`; only authoritative GitHub `MERGED` readback enters post-merge reconciliation;
+6. after authoritative `MERGED`, performs the existing scoped residual-gate-aware Asana landing reconciliation/readback and safe terminal cleanup.
 
-When a reviewed candidate needs head-changing base/conflict reconciliation, `integration-reconcile` is available only under the standing Integration contract and only where the combined result is uniquely determined by already-authorized changes. Any new product/architecture/workflow-policy/PostgreSQL/schema/behavior choice or ambiguity returns to Implementation. Any content-changing reconciliation creates a new head and therefore requires fresh independent Review before merge.
+The local Integration child owns the irreversible boundary. It must use a live checkout and real Git/worktree tooling, fetch current origin state, run literal required PRE-INTEGRATION evidence, and re-read live GitHub plus the explicit owning Asana task before its first mutation and again immediately before merge. It may perform only conflict-free/mechanical reconciliation already determined by authority. Any content-changing reconciliation creates a new exact PR head and stops for fresh Review. Final merge must use expected-head/current-state protection and authoritative GitHub MERGED readback.
 
-The grant is admission only; it cannot make semantic fixes, weaken tests, create Review/Integration/human authority, or bypass source ownership/CAS. If all gates are green but authorization/capability/proof is unavailable, state remains fail-closed with the exact residual reason.
+The child checkpoints durable recovery state with:
+
+```sh
+python scripts/pr_lifecycle.py integration-checkpoint \
+  --claim-path <claim.json> \
+  --claim-id <claim-id> \
+  --phase <certifying|reconciling|reconciled|premerge|head-changed|failed-evidence|merged>
+```
+
+A replacement local Integration execution may proceed only after it can acquire the same OS fence; it then receives the prior JSON checkpoint as recovery context. Two starts for the same PR/head therefore cannot both own consequential mutation. Advisory `phase=integration` comments remain visibility only and never admission.
+
+If the local launcher/laptop is unavailable, the PR remains `INTEGRATION READY` with zero merge mutation. There is deliberately no remote ChatGPT, connector-native, GitHub Actions, or mutation-broker fallback for V1-A.
+
+The mutation broker remains active only for post-PR Implementation continuation/fix admission. It no longer accepts or grants `integration-reconcile` or `merge`; removing those routes must not disable ordinary GitHub CI, remote Implementation, or remote Review.
 
 ## Mutation broker request/proof records
 

@@ -38,23 +38,22 @@ PROOF_FILENAME = "mutation-broker-proof.json"
 DEFAULT_STALE_AFTER = timedelta(minutes=60)
 PROOF_RETENTION_DAYS = 7
 
+# V1-A broker admission is intentionally limited to remote post-PR Implementation/fix.
+# Final Integration/reconciliation/merge is local-only and fenced by
+# pr_lifecycle_local_integration.py; the broker must not mint new Integration grants.
 MUTATION_ACTIONS = {
     "implementation",
     "fix",
-    "integration-reconcile",
-    "merge",
     "renew",
     "release",
     "complete",
     "takeover",
 }
-_NEW_GRANT_ACTIONS = {"implementation", "fix", "integration-reconcile", "merge"}
+_NEW_GRANT_ACTIONS = {"implementation", "fix"}
 _CLOSE_ACTIONS = {"release", "complete"}
 ROLE_FOR_ACTION = {
     "implementation": "implementation",
     "fix": "implementation",
-    "integration-reconcile": "integration",
-    "merge": "integration",
 }
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I)
 _DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -972,28 +971,6 @@ def validate_lifecycle_eligibility(
                 )
         return
 
-    if request.action in {"integration-reconcile", "merge"}:
-        if not integration_authority:
-            raise BrokerError("standing bounded Integration authority is not enabled")
-        if not exact_review or exact_review.get("verdict") != "MERGE" or request.review_id != exact_review_id:
-            raise BrokerError("Integration mutation requires the current exact-head formal MERGE Review id")
-        if request.main_sha != live_main_sha:
-            raise BrokerError("Integration request main precondition is stale or missing")
-        if request.action == "merge":
-            if lifecycle.state != LifecycleState.INTEGRATION_READY:
-                raise BrokerError("lifecycle gates do not currently authorize merge")
-            return
-        # Reconciliation is intentionally narrower than generic Integration. It is
-        # available only when an exact reviewed head is blocked before merge by an
-        # integration/base/mergeability condition. Any semantic ambiguity remains a
-        # non-eligible lifecycle state and returns to Implementation.
-        if lifecycle.state != LifecycleState.REVIEW_PASSED:
-            raise BrokerError("lifecycle does not currently require Integration reconciliation")
-        reason = str(lifecycle.residual_reason or "").lower()
-        if not any(token in reason for token in ("mergeab", "integration ordering", "base", "conflict")):
-            raise BrokerError("no bounded head-changing Integration reconciliation requirement is proven")
-        return
-
     if request.action == "renew":
         if current_grant is None or current_grant.closed:
             raise BrokerError("renew requires a current grant")
@@ -1002,10 +979,8 @@ def validate_lifecycle_eligibility(
             raise BrokerError("Implementation grant is no longer lifecycle-current")
         if original == "fix" and lifecycle.state != LifecycleState.CHANGES_REQUESTED:
             raise BrokerError("fix grant is no longer lifecycle-current")
-        if original == "merge" and lifecycle.state not in {LifecycleState.INTEGRATION_READY, LifecycleState.MERGING}:
-            raise BrokerError("merge grant is no longer lifecycle-current")
-        if original == "integration-reconcile" and lifecycle.state != LifecycleState.REVIEW_PASSED:
-            raise BrokerError("reconciliation grant is no longer lifecycle-current")
+        if original not in {"implementation", "fix"}:
+            raise BrokerError("legacy Integration broker grants cannot renew under local-only Integration V1-A")
         return
     raise BrokerError(f"no lifecycle eligibility rule for {request.action!r}")
 

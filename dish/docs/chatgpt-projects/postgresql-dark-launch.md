@@ -1,7 +1,7 @@
 # Dish — PostgreSQL / Dark Launch
 
 PROJECT_ROLE: PostgreSQL / Dark Launch specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-712e3b16aa05
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-d048682742d6
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/postgresql-dark-launch.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools

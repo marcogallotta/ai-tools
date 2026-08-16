@@ -33,7 +33,7 @@ def test_integration_executes_durable_local_certification_handoff_and_continues_
     lifecycle = engine(gh, authority=True)
 
     initial = lifecycle.inspect(gh.pr)
-    lifecycle.local_integration_certifier = certifier
+    lifecycle.local_integration_launcher = certifier
     result = lifecycle.dispatch_one(
         initial,
         workspace=None,
@@ -51,8 +51,8 @@ def test_integration_executes_durable_local_certification_handoff_and_continues_
     assert context["local_certification"]["instruction"] == command
     assert notices == []
     assert not any("dish-human-notice:v1" in event[1] for event in gh.events if event[0] == "comment")
-    assert result.state.value == "merged"
-    assert next(event for event in gh.events if event[0] == "merge")[1] == HEAD
+    assert result.state.value == "integration_ready"
+    assert not any(event[0] == "merge" for event in gh.events)
 
 
 def test_integration_certifier_without_durable_completion_does_not_bounce_to_human():
@@ -63,7 +63,7 @@ def test_integration_certifier_without_durable_completion_does_not_bounce_to_hum
     notices = []
     lifecycle = engine(gh, authority=True)
 
-    lifecycle.local_integration_certifier = certifier
+    lifecycle.local_integration_launcher = certifier
     result = lifecycle.dispatch_one(
         lifecycle.inspect(gh.pr),
         workspace=None,

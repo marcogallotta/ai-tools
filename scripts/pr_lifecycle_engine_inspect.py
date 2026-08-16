@@ -32,7 +32,6 @@ class LifecycleInspectMixin:
         self.mutation_broker_enabled = mutation_broker_enabled
         self.mutation_broker_repository_id = mutation_broker_repository_id
         self.mutation_broker_routes = dict(mutation_broker_routes or {})
-        self.integration_reconciler = None
 
     def _asana_details(self, task_ids: list[str]) -> list[dict[str, Any]]:
         if not self.asana:
@@ -473,8 +472,8 @@ class LifecycleInspectMixin:
                 active_leases=lease_payload,
                 local_work=local_payload,
                 gate=gate,
-                residual_reason="bounded Integration authority is not explicitly enabled for this dispatcher",
-                human_action="authorize an Integration-capable workflow or run Integration separately",
+                residual_reason="bounded local Integration authority is not explicitly enabled for this dispatcher",
+                human_action="run the repository lifecycle on an authorized local Integration controller",
             )
         if not self.integration_capable:
             return PRLifecycle(
@@ -487,8 +486,11 @@ class LifecycleInspectMixin:
                 active_leases=lease_payload,
                 local_work=local_payload,
                 gate=gate,
-                residual_reason="Integration merge capability is unavailable on this host",
-                human_action="run an authorized Integration host with GitHub merge capability",
+                residual_reason=(
+                    "local Git-capable Integration launcher is unavailable on this host; V1-A has no "
+                    "remote/connector/broker landing fallback"
+                ),
+                human_action=None,
             )
         return PRLifecycle(
             **base_kwargs,
@@ -500,7 +502,7 @@ class LifecycleInspectMixin:
             active_leases=lease_payload,
             local_work=local_payload,
             gate=gate,
-            residual_reason="all exact-head gates are green; bounded Integration may proceed",
+            residual_reason="all exact-head gates are green; durable local Integration handoff may proceed",
         )
 
     def status(self, *, include_closed: bool = False) -> list[PRLifecycle]:

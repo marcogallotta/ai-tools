@@ -83,7 +83,7 @@ def action_first_status(pr: PRLifecycle) -> str:
     elif state == LifecycleState.INTEGRATION_READY:
         first = "No action for you — Review accepted the candidate; Integration is next."
         why = pr.residual_reason or "All current exact-head landing gates are green."
-        owner = "Next owner/system: mutation broker and authorized Integration consumer."
+        owner = "Next owner/system: the configured local Claude/Codex Integration launcher."
     elif state == LifecycleState.MERGING:
         first = "No action for you — authorized Integration is in progress."
         why = pr.residual_reason or "The exact reviewed head is inside the landing boundary."

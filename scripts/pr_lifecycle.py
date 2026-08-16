@@ -17,6 +17,7 @@ from pr_lifecycle_engine_inspect import LifecycleInspectMixin
 from pr_lifecycle_engine_actions import LifecycleActionsMixin
 from pr_lifecycle_authoring_actions import LifecycleAuthoringActionsMixin
 from pr_lifecycle_integration_certification import LocalIntegrationCertificationMixin
+from pr_lifecycle_local_integration import LocalIntegrationLauncher, checkpoint_claim
 from pr_lifecycle_terminal import TerminalCleanupDispatcher
 from pr_lifecycle_operator import action_first_status
 from pr_mutation_broker import (
@@ -126,26 +127,27 @@ def _build_engine(
     asana = AsanaREST(asana_token) if asana_token else None
     authority = args.integration_authority or os.getenv("DISH_INTEGRATION_AUTHORITY") == "bounded-reviewed-head"
     broker_enabled = os.getenv("DISH_MUTATION_BROKER_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
+    local_integration_command = (
+        args.local_integration_launcher or os.getenv("DISH_LOCAL_INTEGRATION_COMMAND")
+    )
+    integration_capable = bool(local_integration_command) and not args.no_integration_capability
     repository_id = None
     if broker_enabled:
         raw_repo_id = os.getenv("GITHUB_REPOSITORY_ID")
         repository_id = int(raw_repo_id) if raw_repo_id else github.get_repository_id()
     implementation_route = os.getenv("DISH_MUTATION_BROKER_IMPLEMENTATION_ROUTE")
-    integration_route = os.getenv("DISH_MUTATION_BROKER_INTEGRATION_ROUTE")
     legacy_fix_route = os.getenv("DISH_MUTATION_BROKER_FIX_ROUTE") or implementation_route
     broker_routes = {
         "implementation": implementation_route,
         "fix": legacy_fix_route,
         "fix-chatgpt": os.getenv("DISH_MUTATION_BROKER_CHATGPT_IMPLEMENTATION_ROUTE") or legacy_fix_route,
         "fix-local": os.getenv("DISH_MUTATION_BROKER_LOCAL_IMPLEMENTATION_ROUTE"),
-        "integration-reconcile": os.getenv("DISH_MUTATION_BROKER_RECONCILE_ROUTE") or integration_route,
-        "merge": os.getenv("DISH_MUTATION_BROKER_MERGE_ROUTE") or integration_route,
     }
     engine = LifecycleEngine(
         github,
         asana=asana,
         integration_authority=authority,
-        integration_capable=not args.no_merge_capability,
+        integration_capable=integration_capable,
         merge_method=args.merge_method,
         mutation_broker_enabled=broker_enabled,
         mutation_broker_repository_id=repository_id,
@@ -181,13 +183,7 @@ def _build_engine(
         local_command=local_fix_command,
         legacy_error=legacy_error,
     )
-    certifier = ImplementationFixDispatcher(
-        args.local_integration_certifier or os.getenv("DISH_LOCAL_INTEGRATION_CERTIFICATION_COMMAND")
-    )
-    engine.local_integration_certifier = certifier
-    engine.integration_reconciler = ImplementationFixDispatcher(
-        os.getenv("DISH_INTEGRATION_RECONCILE_COMMAND")
-    )
+    engine.local_integration_launcher = LocalIntegrationLauncher(local_integration_command)
     terminal_command = args.terminal_cleaner or os.getenv("DISH_TERMINAL_CLEANUP_COMMAND")
     if terminal_command is None:
         terminal_command = f"{shlex.quote(sys.executable)} {shlex.quote(str(SCRIPT_DIR.parent / 'tools' / 'agent-worktree'))}"
@@ -259,15 +255,26 @@ def _parser() -> argparse.ArgumentParser:
         help="existing implementation/fix consumer command; receives exact-head BLOCK dispatch JSON on stdin",
     )
     parser.add_argument(
-        "--local-integration-certifier",
-        help="local Integration consumer; receives complete exact-head certification handoff JSON on stdin",
+        "--local-integration-launcher", "--local-integration-certifier",
+        dest="local_integration_launcher",
+        help=(
+            "sole local Integration consumer for V1-A; receives exact-head certification or final "
+            "Integration handoff JSON on stdin (legacy --local-integration-certifier spelling accepted)"
+        ),
     )
     parser.add_argument(
         "--terminal-cleaner",
         help="repository-owned terminal cleanup command; defaults to tools/agent-worktree",
     )
-    parser.add_argument("--integration-authority", action="store_true", help="explicitly compose bounded Integration after exact-head MERGE")
-    parser.add_argument("--no-merge-capability", action="store_true", help="declare that this host cannot perform GitHub merge")
+    parser.add_argument(
+        "--integration-authority", action="store_true",
+        help="explicitly compose bounded local Integration after exact-head MERGE",
+    )
+    parser.add_argument(
+        "--no-integration-capability", "--no-merge-capability",
+        dest="no_integration_capability", action="store_true",
+        help="declare that this host cannot launch the local Git-capable Integration consumer",
+    )
     parser.add_argument("--merge-method", choices=["merge", "squash", "rebase"], default="squash")
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -303,12 +310,44 @@ def _parser() -> argparse.ArgumentParser:
     broker_finalize.add_argument("--repository-id", required=True)
     broker_finalize.add_argument("--run-id", required=True, type=int)
     broker_finalize.add_argument("--run-attempt", required=True, type=int)
+
+    checkpoint = sub.add_parser(
+        "integration-checkpoint",
+        help="update the current local Integration recovery claim from the fenced local consumer",
+    )
+    checkpoint.add_argument("--claim-path", required=True)
+    checkpoint.add_argument("--claim-id", required=True)
+    checkpoint.add_argument(
+        "--phase", required=True,
+        choices=[
+            "claimed", "certifying", "reconciling", "reconciled", "premerge", "merged",
+            "stopped-semantic", "failed-evidence", "returned", "head-changed",
+        ],
+    )
+    checkpoint.add_argument("--worktree")
+    checkpoint.add_argument("--current-head")
+    checkpoint.add_argument("--main-sha")
+    checkpoint.add_argument("--next-action")
+    checkpoint.add_argument("--merge-sha")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        if args.command == "integration-checkpoint":
+            value = checkpoint_claim(
+                claim_path=args.claim_path,
+                claim_id=args.claim_id,
+                phase=args.phase,
+                worktree=args.worktree,
+                current_head=args.current_head,
+                main_sha=args.main_sha,
+                next_action=args.next_action,
+                merge_sha=args.merge_sha,
+            )
+            print(json.dumps(value, indent=2, sort_keys=True))
+            return 0
         if args.command == "broker-filter":
             value = json.loads(Path(args.event_path).read_text(encoding="utf-8"))
             if not isinstance(value, dict):

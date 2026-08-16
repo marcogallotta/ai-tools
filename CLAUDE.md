@@ -12,7 +12,7 @@ Every request in this repository is routed through `dish/docs/agents/index.md` f
 
 Standing role contracts contain stable policy so task handoffs can stay short and contain only the task-specific delta. If a handoff conflicts with a standing role contract, flag the conflict rather than silently choosing a new policy.
 
-For exact-reviewed-PR-head integration, local integration certification, commit/promotion to `main`, push verification, or integration-worktree cleanup, follow the dedicated Integration agent contract in `dish/docs/agents/integration.md`. Implementation/fix agents do not inherit final integration authority merely because they produced the implementation.
+For exact-reviewed-PR-head integration, local integration certification, commit/promotion to `main`, push verification, or integration-worktree cleanup, follow the dedicated Integration agent contract in `dish/docs/agents/integration.md`. Integration V1-A final landing is local Claude/Codex only; ChatGPT connector-native Integration/merge is not an authorized fallback. Implementation/fix agents do not inherit final integration authority merely because they produced the implementation.
 
 ## Marco-facing workflow policy
 
