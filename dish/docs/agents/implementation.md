@@ -59,6 +59,10 @@ When a PR exists and implementation/fix work is actively owned, agents may publi
 
 After the PR becomes review-ready, the repository lifecycle dispatcher owns routine lifecycle observation. Implementation should not require Marco to poll or forward Review results. An exact-head formal `VERDICT: BLOCK` is the durable transition back to the existing PR's fix owner; a new semantic commit creates a new review identity. Operational marker details are in [`../../../ci/pr-lifecycle-dispatcher-runbook.md`](../../../ci/pr-lifecycle-dispatcher-runbook.md).
 
+Once the GitHub-native mutation broker is activated on the default branch, advisory `dish-agent-lease` comments are **not** mutation admission. Post-PR Implementation continuation/fix must hold a current broker grant whose run-attempt/comment/artifact proof verifies for the exact PR/action/head/route. The grant is fencing only and never replaces this contract, branch/worktree ownership, or expected-head publication protection. Read-only diagnosis and Review remain outside broker admission.
+
+A Review BLOCK fix round remains bound to the exact current `(head, formal BLOCK review id)`. Old/pre-BLOCK authoring state, stale leases, an older BLOCK, or repository write permission cannot become current fix authority. For PR-owned CI fixes, failed-CI ownership must first be classified as `PR_OWNED`; proven current-main, infrastructure, or ambiguous failures do not authorize semantic mutation of the candidate. If the current broker proof is missing/expired/invalid or the live task/head/Review changed, stop with zero further mutation/publication and recover/reclassify.
+
 ## Canonical PR workflow
 
 For new work:

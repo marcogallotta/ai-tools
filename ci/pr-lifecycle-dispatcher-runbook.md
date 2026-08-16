@@ -132,7 +132,9 @@ DISH_IMPLEMENTATION_FIX_COMMAND='<existing implementation/fix launcher>'
 
 or `--implementation-fixer`. The command receives `dish-pr-fix-dispatch-v1` JSON on standard input containing the exact PR URL/number, branch, blocked head SHA, owning task IDs, the current lifecycle snapshot, and either the authoritative formal BLOCK review or the structured PR-owned CI diagnosis. The consumer must follow `dish/docs/agents/implementation.md` and the single canonical handoff contract at `dish/docs/agents/templates/implementation-handoff.md`, reconcile the matching `tools/agent-worktree` claim before touching local state, update only the authorized existing PR branch, and re-read GitHub before semantic work. Matching Asana task identity on another branch/PR is not authority. A CI-driven semantic fix changes head identity and therefore requires substantive Review on the new head.
 
-Before launching the consumer, the dispatcher writes an exact-head `phase=fix` advisory lease. A fresh `phase=fix` or `phase=implementation` lease on the current blocked head prevents duplicate dispatcher launches, but does not transfer or override a local `tools/agent-worktree` claim. A head move immediately invalidates the old review and lease; the dispatcher never launches a fix consumer for a BLOCK that is no longer on the current head. If the configured command fails synchronously, the dispatcher releases its lease so recovery is not deadlocked.
+Before broker activation, the dispatcher retains the legacy exact-head advisory `phase=fix` lease behavior only as bootstrap compatibility. After broker activation, advisory leases no longer admit mutation: the dispatcher submits a structured `fix` request and dispatches the consumer only after independently verifying the current proven broker grant. Formal BLOCK eligibility is exact `(head, block_review_id)`; pre-BLOCK authoring leases/state and older Review rounds are ineligible. PR-owned CI failure may enter the same route only after failure ownership is durably `PR_OWNED`; current-main, infrastructure, or ambiguous failures do not mutate the candidate.
+
+Immediately before consumer dispatch, re-read the PR/head/current formal Review or CI ownership, live task authority, and the exact grant proof. A missing/expired/deleted/mismatched proof or any authority movement produces zero semantic mutation. Local `tools/agent-worktree` ownership remains mandatory after admission.
 
 Missing implementation/fix consumer configuration is a deployment boundary, not a request for Marco to forward the review transcript. The durable BLOCK review remains on GitHub until the consumer is configured/recovered.
 
@@ -193,15 +195,27 @@ DISH_INTEGRATION_AUTHORITY=bounded-reviewed-head
 
 With that authority and merge capability, the dispatcher:
 
-1. re-reads the PR/current head;
-2. re-evaluates exact-head Review, local work, mergeability/order, and selector-driven exact-head certification;
-3. creates/resumes an exact-head `phase=integration` lease;
-4. merges with expected-head protection;
-5. re-reads GitHub;
-6. reports `MERGED` only when authoritative PR state is merged.
+1. re-reads the PR/current head and exact formal Review/certification;
+2. re-evaluates local work, mergeability/order, live Asana, and current main;
+3. after broker activation, obtains/verifies the sole current exact-action broker grant instead of using an advisory Integration lease as admission;
+4. re-verifies the exact grant and all live authority immediately before merge;
+5. merges through the normal expected-head-protected Integration transport (the broker workflow itself never merges);
+6. re-reads GitHub and reports `MERGED` only from authoritative merged state;
+7. performs scoped residual-gate-aware Asana landing writeback and readback;
+8. requests a separately proven broker close/completion event for the consumed grant.
 
-The composed Integration path is mechanical only. It cannot make semantic fixes, weaken tests, resolve semantic conflicts, or give Review Implementation authority. If all gates are green but authorization/capability is unavailable, state is `INTEGRATION READY` with the exact residual reason.
+When a reviewed candidate needs head-changing base/conflict reconciliation, `integration-reconcile` is available only under the standing Integration contract and only where the combined result is uniquely determined by already-authorized changes. Any new product/architecture/workflow-policy/PostgreSQL/schema/behavior choice or ambiguity returns to Implementation. Any content-changing reconciliation creates a new head and therefore requires fresh independent Review before merge.
+
+The grant is admission only; it cannot make semantic fixes, weaken tests, create Review/Integration/human authority, or bypass source ownership/CAS. If all gates are green but authorization/capability/proof is unavailable, state remains fail-closed with the exact residual reason.
+
+## Mutation broker request/proof records
+
+After activation, a mutation requester posts exactly one `dish-mutation-request:v1` marker with the action, task, PR, branch, exact starting head, applicable Review/main identity, prior grant generation where relevant, and configured route. Only syntactically valid request comments enter broker concurrency; unrelated PR comments do not consume a broker lane.
+
+Each authoritative broker state event is first posted as `proof=PENDING` and is non-authoritative. The same exact run attempt then uploads `mutation-broker-proof.json` as `mutation-broker-proof-r<RUN_ID>-a<RUN_ATTEMPT>-c<COMMENT_ID>`, records GitHub's artifact ID/SHA-256 digest back onto the **same** event comment, and rereads it. Consumers still treat the event as authority only after independently verifying that exact run attempt succeeded and that the run-associated artifact name/id/digest/content exactly match the current comment/event digest and identities. A copied run ID, copied comment at a new ID, edited payload, forged renew/close/takeover, rerun attempt replay, or missing/expired proof is rejected.
+
+At most one unclosed current grant generation exists per PR. A stale grant blocks its old consumer from future mutation but does not free the PR for a replacement merely because time passed. Renewal preserves the same route/consumer identity; takeover requires positive recovery authority.
 
 ## Human notifications
 
-Routine queue movement is silent. Human messages are limited to a real local action/decision or useful terminal result. The dispatcher records an exact-head `dish-human-notice:v1` idempotency marker before emitting a human-action notice, so repeated polls do not repeat the same notice. For local work, the complete `dish-local-handoff:v1` comment is written and re-read before that notice marker or human message. Detailed handoff remains on the PR.
+Routine queue movement is silent. Human messages are limited to a real local action/decision or useful terminal result. Every message shown directly to Marco states his next action first, then why, task state, consequential PR/head Review/gate state, and the next owner/system. Review PASS/BLOCK is explicit. Automatic continuation says Marco has no action and never asks him to relay a transcript. Local residuals are classified as `TESTS ONLY`, `IMPLEMENTATION / PUBLICATION`, or `LOCAL SYSTEM ACCESS`; elapsed runtime is reported separately and never changes the work type. The dispatcher records an exact-head `dish-human-notice:v1` idempotency marker before emitting a human-action notice, so repeated polls do not repeat the same notice. For local work, the complete `dish-local-handoff:v1` comment is written and re-read before that notice marker or human message. Detailed handoff remains on the PR.

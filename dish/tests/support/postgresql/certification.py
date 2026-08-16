@@ -15,6 +15,7 @@ NATIVE_POSTGRESQL_UNAVAILABLE = (
     "DISH_TEST_POSTGRESQL_DSN; SQLite and PGlite are not certification substitutes"
 )
 _NON_NATIVE_SERVER_TOKENS = ("pglite", "emscripten", "webassembly", "wasm32")
+_LIVE_DISH_DEPLOYMENT_DATABASES = frozenset({"dish_stage_a_test", "dish_stage_a_prod"})
 
 
 class NativePostgreSQLUnavailable(RuntimeError):
@@ -83,6 +84,12 @@ def probe_native_postgresql(dsn: str | None = None) -> NativePostgreSQLIdentity:
                     """
                 )
             ).mappings().one()
+        database = str(row["database"])
+        if database in _LIVE_DISH_DEPLOYMENT_DATABASES:
+            raise NativePostgreSQLUnavailable(
+                "refusing native PostgreSQL certification against live Dish deployment "
+                f"database {database!r}; use an isolated disposable target such as 'dish_test'"
+            )
         full = str(row["server_version_full"])
         lowered = full.lower()
         token = next((value for value in _NON_NATIVE_SERVER_TOKENS if value in lowered), None)
@@ -93,7 +100,7 @@ def probe_native_postgresql(dsn: str | None = None) -> NativePostgreSQLIdentity:
         return NativePostgreSQLIdentity(
             dialect=engine.dialect.name,
             driver=engine.dialect.driver,
-            database=str(row["database"]),
+            database=database,
             server_version=str(row["server_version"]),
             server_version_full=full,
             server_address=(

@@ -10,8 +10,10 @@ from sqlalchemy import func, select
 
 from dish_pg import models
 from dish_pg import stage3_models as wf
+from dish_pg import stage5_models as projection
 from dish_pg.command_contract import ACTION_COMMANDS
 from dish_pg.command_port import CommandCall, PostgresCommandPort, _task_reference_from_dish
+from dish_pg.document_authority import parse_canonical_document
 from dish_pg.database import session_scope
 from dish_pg.openapi import postgres_action_openapi
 from dish_pg.planner import (
@@ -26,10 +28,12 @@ from dish_pg.protocol import AuthenticationError, PostgresProtocolService, Scope
 from dish_pg.read_model import InvalidCursor
 from dish_pg.transition import ProjectionService
 from dish_pg.workflow import WorkflowAuthorityService
+from dish_tool.models import material_editor_line
 from dish_tool.workflow_policy import WorkflowSnapshot, legal_actions
 from tests.support.canonical import TASK
 from tests.support.postgresql.core import _import_one
 from tests.support.postgresql.command import (
+    _add_destination_section,
     _add_verification_queue,
     _call,
     _inspect,
@@ -302,6 +306,83 @@ def test_task_reference_from_dish_reduces_known_shapes(dish_value, expected) -> 
     assert _task_reference_from_dish(dish_value) == expected
 
 
+def _signed_ready_baseline(session, ids, context, task_id):
+    _add_verification_queue(session, ids, context)
+    _add_destination_section(session, ids, context)
+    author_run = _next(ids)
+    verifier_run = _next(ids)
+    _register_run(session, generation_id=context["generation_id"], run_id=author_run)
+    _register_run(
+        session,
+        generation_id=context["generation_id"],
+        run_id=verifier_run,
+        owner="verifier-owner",
+        agent="codex",
+    )
+    port = _port(session, ids)
+    started = _start_initial(port, ids, task_id=task_id, run_id=author_run)
+    prepared = _prepare_for_verification(
+        port,
+        ids,
+        task_id=task_id,
+        operation_id=started.data["operation_id"],
+        run_id=author_run,
+    )
+    _start_verification(
+        port,
+        ids,
+        task_id=task_id,
+        operation_id=started.data["operation_id"],
+        run_id=verifier_run,
+    )
+    _inspect(
+        port,
+        ids,
+        task_id=task_id,
+        operation_id=started.data["operation_id"],
+        run_id=verifier_run,
+    )
+    reviewed = session.get(
+        models.ContentVersion, uuid.UUID(prepared.data["content_version_id"])
+    )
+    approved = port.execute(
+        _call(
+            "approve",
+            run_id=verifier_run,
+            request_id=_next(ids),
+            owner="verifier-owner",
+            principal="verification",
+            arguments={
+                "task_id": str(task_id),
+                "operation_id": started.data["operation_id"],
+                "agent": "codex",
+                "model": "test-verifier",
+                "correction": "none",
+                "reviewed_identity": reviewed.content_identity,
+                "semantic_review_complete": True,
+                "provenance_complete": True,
+            },
+        )
+    )
+    assert approved.ok, (approved.code, approved.http_status, approved.data)
+    submitted = port.execute(
+        _call(
+            "submit",
+            run_id=author_run,
+            request_id=_next(ids),
+            arguments={
+                "task_id": str(task_id),
+                "operation_id": started.data["operation_id"],
+            },
+        )
+    )
+    assert submitted.ok, (submitted.code, submitted.http_status, submitted.data)
+    signed = session.get(
+        models.ContentVersion, uuid.UUID(approved.data["signed_content_version_id"])
+    )
+    return port, signed
+
+
 def test_prepare_stamps_researched_by_and_self_verified_from_agent(workflow_db) -> None:
     """PG must own tool-owned process fields on initial prepare, like legacy.
 
@@ -357,6 +438,524 @@ def test_prepare_stamps_researched_by_and_self_verified_from_agent(workflow_db) 
         assert "Verified by: None" in version.body
         assert "Status detail: None" in version.body
         assert "Resume status: None" in version.body
+
+
+def test_prepare_material_change_stamps_pending_verification_from_signed_baseline(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port, signed = _signed_ready_baseline(session, ids, context, task_id)
+        signed_parts = parse_canonical_document(title=signed.title, body=signed.body)
+        change_run = _next(ids)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=change_run,
+            agent="gpt",
+        )
+        started = port.execute(
+            _call(
+                "start",
+                run_id=change_run,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "kind": "change",
+                    "agent": "gpt",
+                    "change_level": "small",
+                    "change_reason": "tighten the success target",
+                },
+            )
+        )
+        assert started.ok, (started.code, started.http_status, started.data)
+        candidate = (signed.title + "\n" + signed.body).replace(
+            "Crisp and aromatic.",
+            "Crisp, aromatic, and deeply browned.",
+        )
+        result = port.execute(
+            _call(
+                "prepare",
+                run_id=change_run,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                    "file_text": candidate,
+                    "agent": "gpt",
+                    "model": "gpt-5.6-sol",
+                    "material_classification": "non-material",
+                },
+            )
+        )
+        assert result.ok, (result.code, result.http_status, result.data)
+        assert result.data["handoff"] == "verification"
+        assert result.data["material_classification"]["requested"] == "non-material"
+        assert result.data["material_classification"]["effective"] == "material"
+        assert result.data["material_classification"]["forced_material_reasons"]
+
+        version = session.get(
+            models.ContentVersion, uuid.UUID(result.data["content_version_id"])
+        )
+        prepared = parse_canonical_document(title=version.title, body=version.body)
+        assert prepared.document.state.values["Status"] == "pending-verification"
+        assert (
+            prepared.document.state.values["Researched by"]
+            == signed_parts.document.state.values["Researched by"]
+        )
+        assert prepared.document.state.values["Verified by"] == "None"
+        assert prepared.document.state.values["Self-verified"] == material_editor_line(
+            "gpt", "gpt-5.6-sol", NOW.date().isoformat()
+        )
+        assert len(prepared.document.material_changes) == len(
+            signed_parts.document.material_changes
+        ) + 1
+        assert "tighten the success target" in prepared.document.material_changes[-1]
+        operation = session.get(
+            wf.WorkflowOperation, uuid.UUID(started.data["operation_id"])
+        )
+        assert operation.lifecycle == "open"
+        assert operation.phase == "await_verification"
+        assert session.scalar(
+            select(func.count())
+            .select_from(wf.VerificationCycle)
+            .where(wf.VerificationCycle.operation_id == operation.operation_id)
+        ) == 1
+
+
+def test_prepare_non_material_change_preserves_prior_signed_state_and_checks_in(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port, signed = _signed_ready_baseline(session, ids, context, task_id)
+        signed_parts = parse_canonical_document(title=signed.title, body=signed.body)
+        placement_before = session.get(
+            models.CurrentTaskSectionPlacement,
+            (context["generation_id"], task_id),
+        ).section_id
+        change_run = _next(ids)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=change_run,
+            agent="gpt",
+        )
+        started = port.execute(
+            _call(
+                "start",
+                run_id=change_run,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "kind": "change",
+                    "agent": "gpt",
+                    "change_level": "small",
+                    "change_reason": "preserve last-minute handling",
+                },
+            )
+        )
+        assert started.ok, (started.code, started.http_status, started.data)
+        candidate = (signed.title + "\n" + signed.body).replace(
+            "1. Cook it.",
+            "1. Cook it.\n2. Finish fresh just before serving.",
+        ).replace(
+            "Status: ready",
+            "Status: pending-verification",
+        )
+        result = port.execute(
+            _call(
+                "prepare",
+                run_id=change_run,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                    "file_text": candidate,
+                    "agent": "gpt",
+                    "model": "gpt-5.6-sol",
+                    "material_classification": "non-material",
+                },
+            )
+        )
+        assert result.ok, (result.code, result.http_status, result.data)
+        assert result.data["handoff"] == "checked-in"
+        assert result.data["cycle_id"] is None
+        assert result.data["placement_projection_event_id"] is None
+        assert result.data["material_classification"] == {
+            "classified_subject": "canonical body diff from the signed baseline",
+            "requested": "non-material",
+            "effective": "non-material",
+            "forced_material_reasons": [],
+            "route": "signed-check-in",
+        }
+
+        version = session.get(
+            models.ContentVersion, uuid.UUID(result.data["content_version_id"])
+        )
+        checked_in = parse_canonical_document(title=version.title, body=version.body)
+        assert checked_in.document.state == signed_parts.document.state
+        assert checked_in.document.material_changes == signed_parts.document.material_changes
+        assert "Finish fresh just before serving." in checked_in.body
+        operation = session.get(
+            wf.WorkflowOperation, uuid.UUID(started.data["operation_id"])
+        )
+        assert operation.lifecycle == "completed"
+        assert operation.phase == "completed"
+        assert operation.terminal_outcome == "non_material_checkin"
+        assert operation.persisted_actions == []
+        assert session.scalar(
+            select(func.count())
+            .select_from(wf.VerificationCycle)
+            .where(wf.VerificationCycle.operation_id == operation.operation_id)
+        ) == 0
+        originating_signoff = session.scalar(
+            select(wf.VerificationSignoff).where(
+                wf.VerificationSignoff.task_id == task_id,
+                wf.VerificationSignoff.signed_content_version_id
+                == signed.content_version_id,
+            )
+        )
+        assert originating_signoff is not None
+        checkin_step = session.scalar(
+            select(wf.OperationStep)
+            .where(wf.OperationStep.operation_id == operation.operation_id)
+            .order_by(wf.OperationStep.step_sequence.desc())
+            .limit(1)
+        )
+        assert checkin_step is not None
+        assert checkin_step.evidence["inherited_signoff_id"] == str(
+            originating_signoff.signoff_id
+        )
+        assert checkin_step.evidence["inherited_signoff_cycle_id"] == str(
+            originating_signoff.cycle_id
+        )
+        placement_after = session.get(
+            models.CurrentTaskSectionPlacement,
+            (context["generation_id"], task_id),
+        ).section_id
+        assert placement_after == placement_before
+
+        second_run = _next(ids)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=second_run,
+            agent="gpt",
+        )
+        second_started = port.execute(
+            _call(
+                "start",
+                run_id=second_run,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "kind": "change",
+                    "agent": "gpt",
+                    "change_level": "small",
+                    "change_reason": "keep the finish crisp",
+                },
+            )
+        )
+        assert second_started.ok, (
+            second_started.code,
+            second_started.http_status,
+            second_started.data,
+        )
+        second_candidate = (version.title + "\n" + version.body).replace(
+            "2. Finish fresh just before serving.",
+            "2. Finish fresh just before serving.\n3. Keep crisp until serving.",
+        )
+        second = port.execute(
+            _call(
+                "prepare",
+                run_id=second_run,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": second_started.data["operation_id"],
+                    "file_text": second_candidate,
+                    "agent": "gpt",
+                    "model": "gpt-5.6-sol",
+                    "material_classification": "non-material",
+                },
+            )
+        )
+        assert second.ok, (second.code, second.http_status, second.data)
+        assert second.data["handoff"] == "checked-in"
+        second_version = session.get(
+            models.ContentVersion, uuid.UUID(second.data["content_version_id"])
+        )
+        second_checked_in = parse_canonical_document(
+            title=second_version.title, body=second_version.body
+        )
+        assert second_checked_in.document.state == signed_parts.document.state
+        second_operation = session.get(
+            wf.WorkflowOperation, uuid.UUID(second_started.data["operation_id"])
+        )
+        second_step = session.scalar(
+            select(wf.OperationStep)
+            .where(wf.OperationStep.operation_id == second_operation.operation_id)
+            .order_by(wf.OperationStep.step_sequence.desc())
+            .limit(1)
+        )
+        assert second_step is not None
+        assert second_step.evidence["inherited_signoff_id"] == str(
+            originating_signoff.signoff_id
+        )
+        assert second_step.evidence["inherited_signoff_cycle_id"] == str(
+            originating_signoff.cycle_id
+        )
+
+
+
+def _start_change(port, ids, context, task_id, *, reason="governed parity"):
+    run_id = _next(ids)
+    _register_run(
+        port.session,
+        generation_id=context["generation_id"],
+        run_id=run_id,
+        agent="gpt",
+    )
+    started = port.execute(
+        _call(
+            "start",
+            run_id=run_id,
+            request_id=_next(ids),
+            arguments={
+                "task_id": str(task_id),
+                "kind": "change",
+                "agent": "gpt",
+                "change_level": "small",
+                "change_reason": reason,
+            },
+        )
+    )
+    assert started.ok, (started.code, started.http_status, started.data)
+    return run_id, started
+
+
+def _prepare_change(port, ids, task_id, run_id, operation_id, candidate, **extra):
+    arguments = {
+        "task_id": str(task_id),
+        "operation_id": operation_id,
+        "file_text": candidate,
+        "agent": "gpt",
+        "model": "gpt-5.6-sol",
+        "material_classification": "material",
+    }
+    arguments.update(extra)
+    return port.execute(
+        _call(
+            "prepare",
+            run_id=run_id,
+            request_id=_next(ids),
+            arguments=arguments,
+        )
+    )
+
+
+def test_prepare_change_blocks_unauthorized_governed_field_before_activation_or_projection(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port, signed = _signed_ready_baseline(session, ids, context, task_id)
+        run_id, started = _start_change(port, ids, context, task_id)
+        candidate = (signed.title + "\n" + signed.body).replace(
+            "Purpose: Compare texture",
+            "Purpose: Compare texture and aroma",
+        )
+        current_before = port._current_content_version_id(context["generation_id"], task_id)
+        version_count_before = session.scalar(select(func.count()).select_from(models.ContentVersion))
+        projection_count_before = session.scalar(
+            select(func.count()).select_from(projection.ProjectionOutboxEvent)
+        )
+
+        blocked = _prepare_change(
+            port,
+            ids,
+            task_id,
+            run_id,
+            started.data["operation_id"],
+            candidate,
+        )
+        assert not blocked.ok
+        assert blocked.code == "GOVERNED_AUTHORIZATION_REQUIRED"
+        assert {item["field"] for item in blocked.data["required_authorizations"]} == {"Purpose"}
+        assert port._current_content_version_id(context["generation_id"], task_id) == current_before
+        assert session.scalar(select(func.count()).select_from(models.ContentVersion)) == version_count_before
+        assert session.scalar(
+            select(func.count()).select_from(projection.ProjectionOutboxEvent)
+        ) == projection_count_before
+
+
+def test_prepare_change_requires_explicit_decision_attestation_and_records_provenance(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port, signed = _signed_ready_baseline(session, ids, context, task_id)
+        run_id, started = _start_change(port, ids, context, task_id, reason="record Marco choice")
+        decision = "Human — Marco: Keep the finish crisp at serving time"
+        candidate = (signed.title + "\n" + signed.body).replace(
+            "### Research basis",
+            f"{decision}\n### Research basis",
+        )
+        current_before = port._current_content_version_id(context["generation_id"], task_id)
+
+        blocked = _prepare_change(
+            port, ids, task_id, run_id, started.data["operation_id"], candidate
+        )
+        assert not blocked.ok
+        assert blocked.code == "CONFIRMATION_REQUIRED"
+        assert blocked.data["rule"] == "decision_attestation_required"
+        assert blocked.data["appended_decisions"] == [decision]
+        assert port._current_content_version_id(context["generation_id"], task_id) == current_before
+
+        accepted = _prepare_change(
+            port,
+            ids,
+            task_id,
+            run_id,
+            started.data["operation_id"],
+            candidate,
+            governed_change_fields=["Decisions"],
+        )
+        assert accepted.ok, (accepted.code, accepted.http_status, accepted.data)
+        assert accepted.data["agent_attested_decisions"] == [decision]
+        audit = session.scalar(
+            select(wf.GovernedAuditEvent)
+            .where(
+                wf.GovernedAuditEvent.operation_id == uuid.UUID(started.data["operation_id"]),
+                wf.GovernedAuditEvent.event_type == "decision.agent_attested",
+            )
+            .order_by(wf.GovernedAuditEvent.occurred_at.desc())
+            .limit(1)
+        )
+        assert audit is not None
+        assert audit.payload["appended_decisions"] == [decision]
+        assert audit.payload["formal_marco_authorization"] is False
+        assert session.scalar(
+            select(func.count())
+            .select_from(wf.MarcoAuthorizationGrant)
+            .where(wf.MarcoAuthorizationGrant.operation_id == uuid.UUID(started.data["operation_id"]))
+        ) == 0
+
+
+def test_prepare_change_rejects_decision_attestation_without_new_decision(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port, signed = _signed_ready_baseline(session, ids, context, task_id)
+        run_id, started = _start_change(port, ids, context, task_id)
+        candidate = (signed.title + "\n" + signed.body).replace(
+            "1. Cook it.", "1. Cook it.\n2. Keep crisp until serving."
+        )
+        blocked = _prepare_change(
+            port, ids, task_id, run_id, started.data["operation_id"], candidate,
+            material_classification="non-material",
+            governed_change_fields=["Decisions"],
+        )
+        assert not blocked.ok
+        assert blocked.code == "INVALID_ARGUMENT"
+        assert blocked.data["rule"] == "decision_attestation_not_applicable"
+
+
+def test_prepare_decision_attestation_does_not_authorize_unrelated_governed_change(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port, signed = _signed_ready_baseline(session, ids, context, task_id)
+        run_id, started = _start_change(port, ids, context, task_id, reason="mixed governed diff")
+        decision = "Human — Marco: Keep the finish crisp at serving time"
+        candidate = (signed.title + "\n" + signed.body).replace(
+            "Purpose: Compare texture",
+            "Purpose: Compare texture and aroma",
+        ).replace(
+            "### Research basis",
+            f"{decision}\n### Research basis",
+        )
+        current_before = port._current_content_version_id(context["generation_id"], task_id)
+
+        blocked = _prepare_change(
+            port,
+            ids,
+            task_id,
+            run_id,
+            started.data["operation_id"],
+            candidate,
+            governed_change_fields=["Decisions"],
+        )
+        assert not blocked.ok
+        assert blocked.code == "GOVERNED_AUTHORIZATION_REQUIRED"
+        assert {item["field"] for item in blocked.data["required_authorizations"]} == {"Purpose"}
+        assert port._current_content_version_id(context["generation_id"], task_id) == current_before
+
+
+def test_prepare_change_consumes_exact_durable_grant_before_governed_activation(
+    workflow_db,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    with session_scope(factory) as session:
+        port, signed = _signed_ready_baseline(session, ids, context, task_id)
+        run_id, started = _start_change(port, ids, context, task_id)
+        candidate = (signed.title + "\n" + signed.body).replace(
+            "Purpose: Compare texture",
+            "Purpose: Compare texture and aroma",
+        )
+        blocked = _prepare_change(
+            port, ids, task_id, run_id, started.data["operation_id"], candidate
+        )
+        required = blocked.data["required_authorizations"]
+        assert blocked.code == "GOVERNED_AUTHORIZATION_REQUIRED" and len(required) == 1
+
+        admin_run = _next(ids)
+        _register_run(
+            session,
+            generation_id=context["generation_id"],
+            run_id=admin_run,
+            owner="marco",
+            agent="codex",
+        )
+        change = required[0]
+        grant_result = port.execute(
+            _call(
+                "authorize-governed-change",
+                run_id=admin_run,
+                request_id=_next(ids),
+                owner="marco",
+                principal="admin",
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                    "field_name": change["field"],
+                    "before": change["before"],
+                    "after": change["after"],
+                    "reason": "Marco approved exact Purpose change",
+                },
+            )
+        )
+        assert grant_result.ok, (grant_result.code, grant_result.http_status, grant_result.data)
+
+        accepted = _prepare_change(
+            port, ids, task_id, run_id, started.data["operation_id"], candidate
+        )
+        assert accepted.ok, (accepted.code, accepted.http_status, accepted.data)
+        grant_id = uuid.UUID(grant_result.data["grant_id"])
+        assert accepted.data["authorization_grant_ids"] == [str(grant_id)]
+        state = session.get(wf.MarcoAuthorizationState, grant_id)
+        assert state.state == "consumed"
+        assert state.consumed_result_id == uuid.UUID(accepted.data["content_version_id"])
+        events = list(
+            session.scalars(
+                select(wf.MarcoAuthorizationEvent)
+                .where(wf.MarcoAuthorizationEvent.grant_id == grant_id)
+                .order_by(wf.MarcoAuthorizationEvent.occurred_at)
+            )
+        )
+        assert {event.event_kind for event in events} == {"reserved", "consumed"}
+        assert len(events) == 2
 
 
 def test_inspect_resolves_task_from_dish_argument(workflow_db) -> None:

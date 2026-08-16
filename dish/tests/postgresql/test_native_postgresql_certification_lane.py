@@ -5,9 +5,11 @@ import json
 import runpy
 from datetime import date
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
+import tests.support.postgresql.certification as certification
 from test_selection import execution_guard
 from tests.support.postgresql.certification import (
     discover_native_postgresql_inventory,
@@ -30,6 +32,24 @@ def _cert_args(*args: str) -> list[str]:
 TEST_NODEID = "tests/postgresql/native/test_governed_waiver.py::test_governed_skip"
 PASS_NODEID = "tests/postgresql/native/test_governed_waiver.py::test_governed_pass"
 OWNER_TASK_GID = "1217428310522281"
+
+
+def _probe_engine(database: str) -> MagicMock:
+    engine = MagicMock()
+    engine.dialect.name = "postgresql"
+    engine.dialect.driver = "psycopg"
+    row = (
+        engine.connect.return_value.__enter__.return_value.execute.return_value
+        .mappings.return_value.one
+    )
+    row.return_value = {
+        "database": database,
+        "server_version": "17.10",
+        "server_version_full": "PostgreSQL 17.10 on x86_64-pc-linux-gnu",
+        "server_address": "127.0.0.1",
+        "server_port": 55432,
+    }
+    return engine
 
 
 def _waiver(nodeid: str, reason: str, *, review_by: str = "2099-01-01") -> str:
@@ -147,6 +167,69 @@ def test_postgresql_dsn_has_no_shared_infrastructure_fallback(monkeypatch) -> No
     assert redacted_dsn(postgresql_dsn()) == "(DISH_TEST_POSTGRESQL_DSN not set)"
     with pytest.raises(NativePostgreSQLUnavailable):
         probe_native_postgresql()
+
+
+@pytest.mark.parametrize("database", ("dish_stage_a_test", "dish_stage_a_prod"))
+def test_native_postgresql_probe_rejects_live_deployment_database_identity(
+    monkeypatch, database: str
+) -> None:
+    monkeypatch.setattr(
+        certification,
+        "create_engine",
+        lambda *_args, **_kwargs: _probe_engine(database),
+    )
+
+    with pytest.raises(
+        NativePostgreSQLUnavailable,
+        match=rf"live Dish deployment database {database!r}",
+    ):
+        probe_native_postgresql(
+            "postgresql+psycopg://dish:secret@127.0.0.1:55432/dish_test"
+        )
+
+
+@pytest.mark.parametrize("database", ("dish_stage_a_test", "dish_stage_a_prod"))
+def test_live_deployment_identity_blocks_reset_and_migration_before_sql(
+    monkeypatch, database: str
+) -> None:
+    import tests.support.postgresql.migrations as migrations
+
+    reset_engine = MagicMock()
+    reset_engine.dialect.name = "postgresql"
+    upgrade = MagicMock()
+    monkeypatch.setattr(
+        certification,
+        "create_engine",
+        lambda *_args, **_kwargs: _probe_engine(database),
+    )
+    monkeypatch.setattr(migrations, "create_engine", lambda *_args, **_kwargs: reset_engine)
+    monkeypatch.setattr(migrations.command, "upgrade", upgrade)
+    target = migrations.MigrationDatabase(
+        sqlalchemy_url="postgresql+psycopg://dish:secret@127.0.0.1:55432/dish_test",
+        expected_dialect="postgresql",
+        certification_evidence=True,
+        lane="native_postgresql_certification",
+    )
+
+    with pytest.raises(NativePostgreSQLUnavailable):
+        target.fresh_bootstrap()
+
+    reset_engine.begin.assert_not_called()
+    upgrade.assert_not_called()
+
+
+def test_native_postgresql_probe_accepts_disposable_database_identity(monkeypatch) -> None:
+    monkeypatch.setattr(
+        certification,
+        "create_engine",
+        lambda *_args, **_kwargs: _probe_engine("dish_test"),
+    )
+
+    identity = probe_native_postgresql(
+        "postgresql+psycopg://dish:secret@127.0.0.1:55432/dish_stage_a_test"
+    )
+
+    assert identity.database == "dish_test"
 
 
 def test_native_postgresql_certification_inventory_is_derived_and_nonempty() -> None:
