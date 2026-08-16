@@ -1,0 +1,2 @@
+Temporary exact-tree publication anchor for Asana task 1217505866209433.
+This file is removed by the materialized candidate; it is not part of the intended final tree.
