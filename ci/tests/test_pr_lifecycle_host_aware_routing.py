@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import io
+import json
+import zipfile
+
 import test_pr_lifecycle as base
 
 p = base.pr_lifecycle
@@ -99,7 +104,7 @@ def test_bounded_local_review_requires_positive_chatgpt_implementation_witness()
     assert len(workspace.calls) == 1
 
 
-def test_positive_prepr_chatgpt_witness_allows_bounded_local_review():
+def test_self_asserted_prepr_chatgpt_witness_routes_to_chatgpt_review():
     candidate = base.pr(
         body=(
             "Owning task: 1217443403986570\nREVIEW CLASS: focused\n"
@@ -112,6 +117,48 @@ def test_positive_prepr_chatgpt_witness_allows_bounded_local_review():
     workspace = RecordingWorkspace()
     lifecycle = base.engine(gh)
     lifecycle.dispatch_one(lifecycle.inspect(gh.pr), workspace=workspace, local_reviewer=local)
+    assert local.calls == []
+    assert len(workspace.calls) == 1
+
+
+def test_broker_backed_prepr_chatgpt_witness_allows_bounded_local_review():
+    candidate = base.pr(body="Owning task: 1217443403986570\nREVIEW CLASS: focused")
+    gh = base.FakeGitHub(candidate)
+    launcher, run_id, attempt, artifact_id = "launch-123", 701, 1, 702
+    proof = {
+        "schema": "dish-implementation-prelaunch-proof-v1",
+        "repository": gh.repository,
+        "pr_number": 31,
+        "branch": "agent/test",
+        "head": base.HEAD,
+        "host": "chatgpt",
+        "launcher": launcher,
+        "run_id": run_id,
+        "run_attempt": attempt,
+    }
+    archive_buffer = io.BytesIO()
+    with zipfile.ZipFile(archive_buffer, "w") as archive:
+        archive.writestr("implementation-provenance.json", json.dumps(proof, sort_keys=True))
+    archive = archive_buffer.getvalue()
+    digest = f"sha256:{hashlib.sha256(archive).hexdigest()}"
+    gh.workflow_attempts[(run_id, attempt)] = {
+        "id": run_id, "run_attempt": attempt, "event": "repository_dispatch",
+        "conclusion": "success", "path": ".github/workflows/pr-implementation-provenance.yml",
+    }
+    gh.run_artifacts[run_id] = [{"id": artifact_id, "digest": digest, "expired": False}]
+    gh.artifacts[artifact_id] = archive
+    gh.comments = [{
+        "id": 1,
+        "body": (
+            f"<!-- dish-implementation-host-witness:v1 head={base.HEAD} host=chatgpt "
+            f"source=orchestration launcher={launcher} run={run_id} attempt={attempt} "
+            f"artifact={artifact_id} digest={digest} -->"
+        ),
+        "created_at": base.NOW.isoformat(), "updated_at": base.NOW.isoformat(),
+    }]
+    local = RecordingReview()
+    workspace = RecordingWorkspace()
+    p.LifecycleEngine(gh).dispatch_one(p.LifecycleEngine(gh).inspect(gh.pr), workspace=workspace, local_reviewer=local)
     assert len(local.calls) == 1
     assert workspace.calls == []
 

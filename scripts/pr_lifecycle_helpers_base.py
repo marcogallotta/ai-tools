@@ -1,7 +1,17 @@
 """Durable marker parsing and lifecycle helper predicates."""
 from __future__ import annotations
 
+import hashlib
+import io
+import json
+import zipfile
+
 from pr_lifecycle_support import *
+
+
+IMPLEMENTATION_PROVENANCE_SCHEMA = "dish-implementation-prelaunch-proof-v1"
+IMPLEMENTATION_PROVENANCE_WORKFLOW = ".github/workflows/pr-implementation-provenance.yml"
+IMPLEMENTATION_PROVENANCE_FILENAME = "implementation-provenance.json"
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -409,33 +419,107 @@ def implementation_host_witness(
     comments: Iterable[Mapping[str, Any]],
     *,
     current_head: str,
+    github: Any | None = None,
 ) -> str | None:
-    """Return a positive exact-head implementation-host witness or fail closed on ambiguity."""
+    """Return independently proven exact-head implementation provenance, else fail closed."""
     hosts: set[str] = set()
-    sources = [str(pr.get("body") or "")] + [str(comment.get("body") or "") for comment in comments]
-    for body in sources:
+    # PR descriptions are editable by the implementation author and can never prove
+    # where implementation ran.  A pre-PR witness must be produced by the trusted
+    # provenance workflow and bound to its immutable artifact; a post-PR result must
+    # validate the broker grant/proof that admitted the mutation.
+    for comment in comments:
+        body = str(comment.get("body") or "")
         for fields in _marker_fields(body, IMPLEMENTATION_HOST_WITNESS_MARKER):
-            if fields.get("head") != current_head or fields.get("source") != "orchestration":
-                continue
-            if not fields.get("launcher"):
-                continue
-            host = fields.get("host")
-            if host == "chatgpt":
+            if _verified_prelaunch_host(pr, fields, current_head=current_head, github=github) == "chatgpt":
                 hosts.add("CHATGPT_IMPLEMENTATION")
-            elif host == "local":
-                hosts.add("LOCAL_IMPLEMENTATION")
         for fields in _marker_fields(body, IMPLEMENTATION_ROUTE_RESULT_MARKER):
-            if fields.get("head") != current_head:
-                continue
-            required = ("start", "route", "grant", "generation", "broker_event")
-            if any(not fields.get(name) for name in required):
-                continue
-            host = fields.get("host")
-            if host == "chatgpt":
+            if _verified_route_result_host(pr, comments, fields, current_head=current_head, github=github) == "chatgpt":
                 hosts.add("CHATGPT_IMPLEMENTATION")
-            elif host == "local":
-                hosts.add("LOCAL_IMPLEMENTATION")
     return next(iter(hosts)) if len(hosts) == 1 else None
+
+
+def _verified_prelaunch_host(
+    pr: Mapping[str, Any], fields: Mapping[str, str], *, current_head: str, github: Any | None
+) -> str | None:
+    required = ("head", "host", "source", "launcher", "run", "attempt", "artifact", "digest")
+    if github is None or any(not fields.get(name) for name in required):
+        return None
+    if fields.get("head") != current_head or fields.get("host") != "chatgpt" or fields.get("source") != "orchestration":
+        return None
+    try:
+        run_id, attempt, artifact_id = (int(fields[name]) for name in ("run", "attempt", "artifact"))
+        run = github.get_workflow_run_attempt(run_id, attempt)
+        if (
+            int(run.get("id", -1)) != run_id
+            or int(run.get("run_attempt", -1)) != attempt
+            or str(run.get("event") or "") != "repository_dispatch"
+            or str(run.get("conclusion") or "") != "success"
+            or str(run.get("path") or run.get("workflow_path") or "") != IMPLEMENTATION_PROVENANCE_WORKFLOW
+        ):
+            return None
+        artifacts = [
+            value for value in github.get_run_artifacts(run_id)
+            if int(value.get("id", -1)) == artifact_id and not bool(value.get("expired"))
+        ]
+        if len(artifacts) != 1 or str(artifacts[0].get("digest") or "").lower() != fields["digest"].lower():
+            return None
+        archive = github.download_artifact(artifact_id)
+        if f"sha256:{hashlib.sha256(archive).hexdigest()}" != fields["digest"].lower():
+            return None
+        with zipfile.ZipFile(io.BytesIO(archive), "r") as zf:
+            names = [name for name in zf.namelist() if not name.endswith("/")]
+            if names != [IMPLEMENTATION_PROVENANCE_FILENAME]:
+                return None
+            proof = json.loads(zf.read(IMPLEMENTATION_PROVENANCE_FILENAME))
+        if not isinstance(proof, dict):
+            return None
+        if proof != {
+            "schema": IMPLEMENTATION_PROVENANCE_SCHEMA,
+            "repository": github.repository,
+            "pr_number": _pr_number(pr),
+            "branch": _pr_branch(pr),
+            "head": current_head,
+            "host": "chatgpt",
+            "launcher": fields["launcher"],
+            "run_id": run_id,
+            "run_attempt": attempt,
+        }:
+            return None
+    except (AttributeError, KeyError, TypeError, ValueError, zipfile.BadZipFile, json.JSONDecodeError):
+        return None
+    return "chatgpt"
+
+
+def _verified_route_result_host(
+    pr: Mapping[str, Any], comments: Iterable[Mapping[str, Any]], fields: Mapping[str, str], *, current_head: str,
+    github: Any | None,
+) -> str | None:
+    if github is None or fields.get("head") != current_head:
+        return None
+    required = ("start", "route", "grant", "generation", "broker_event", "host")
+    if any(not fields.get(name) for name in required):
+        return None
+    try:
+        from pr_mutation_broker import current_verified_grant
+
+        repository_id = github.get_repository_id()
+        grant = current_verified_grant(github=github, pr_number=_pr_number(pr), repository_id=repository_id)
+        if grant is None or grant.closed:
+            return None
+        if (
+            grant.grant_id != fields["grant"]
+            or str(grant.generation) != fields["generation"]
+            or grant.event_comment_id != int(fields["broker_event"])
+            or grant.route != fields["route"]
+            or grant.starting_head != fields["start"]
+            or grant.pr_number != _pr_number(pr)
+            or grant.branch != _pr_branch(pr)
+            or grant.action not in {"fix", "implementation"}
+        ):
+            return None
+    except (AttributeError, ValueError, LifecycleError):
+        return None
+    return fields["host"] if fields["host"] in {"chatgpt", "local"} else None
 
 
 def review_class_for(

@@ -664,7 +664,7 @@ class LifecycleActionsMixin:
             review_class = current.review_class or "substantive"
             raw_pr = self.github.get_pr(current.number)
             review_host_witness = implementation_host_witness(
-                raw_pr, self.github.get_comments(current.number), current_head=current.head
+                raw_pr, self.github.get_comments(current.number), current_head=current.head, github=self.github
             )
             if (
                 review_class in {"light", "focused", "mechanical"}

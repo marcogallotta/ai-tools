@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
+import hashlib
 import importlib.util
+import io
+import json
 from pathlib import Path
 import sys
 
@@ -92,6 +95,10 @@ class FakeGitHub:
         self.combined_status = status(head=self.pr["head"]["sha"])
         self.workflow_runs = runs(head=self.pr["head"]["sha"])
         self.events = []
+        self.repository_id = 1304888921
+        self.workflow_attempts = {}
+        self.run_artifacts = {}
+        self.artifacts = {}
         self.merge_response = {"merged": True, "sha": "d" * 40, "message": "Pull Request successfully merged"}
         self.merge_mutates = True
 
@@ -115,6 +122,18 @@ class FakeGitHub:
 
     def get_workflow_runs(self):
         return deepcopy(self.workflow_runs)
+
+    def get_repository_id(self):
+        return self.repository_id
+
+    def get_workflow_run_attempt(self, run_id, run_attempt):
+        return deepcopy(self.workflow_attempts[(run_id, run_attempt)])
+
+    def get_run_artifacts(self, run_id):
+        return deepcopy(self.run_artifacts.get(run_id, []))
+
+    def download_artifact(self, artifact_id):
+        return self.artifacts[artifact_id]
 
     def add_comment(self, number, body):
         self.events.append(("comment", body))
