@@ -128,6 +128,7 @@ def test_native_execution_spec_preserves_planner_focused_test_files():
     )
     argv = spec["required_groups"]["native-postgresql"][0]["argv"]
     assert argv[argv.index("--test-file") + 1] == "tests/postgresql/native/test_migration_status.py"
+    assert argv[argv.index("--expected-head") + 1] == CANDIDATE
 
 
 def test_native_postgresql_execution_spec_uses_structured_bounded_waivers():
