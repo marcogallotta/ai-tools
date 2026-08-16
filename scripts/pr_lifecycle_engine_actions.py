@@ -657,6 +657,13 @@ class LifecycleActionsMixin:
                     current.number,
                     f"{marker}\nImplementation consumer returned with exact new head `{result.head}`.\n\n— Dish PR lifecycle dispatcher",
                 )
+                self._submit_broker_request(
+                    result,
+                    action="complete",
+                    route=broker_grant.route,
+                    grant_id=broker_grant.grant_id,
+                    generation=broker_grant.generation,
+                )
                 result = self.inspect(self.github.get_pr(current.number))
             return result
 

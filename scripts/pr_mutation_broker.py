@@ -537,6 +537,8 @@ class GrantState:
     stale_after: datetime
     event_comment_id: int
     closed: bool = False
+    accepted_host: str | None = None
+    result_head: str | None = None
 
     def is_stale(self, now: datetime | None = None) -> bool:
         return (now or _now()) >= self.stale_after
@@ -576,6 +578,8 @@ def fold_verified_events(events: Iterable[BrokerEvent]) -> GrantState | None:
                 main_sha=(None if p.get("main_sha") is None else str(p["main_sha"])),
                 route=str(p["route"]),
                 consumer_id=str(p["consumer_id"]),
+                accepted_host=(str(p["accepted_host"]) if p.get("accepted_host") else None),
+                result_head=None,
                 issued_at=_parse_time(p["issued_at"]),
                 stale_after=_parse_time(p["stale_after"]),
                 event_comment_id=event.comment_id,
@@ -590,6 +594,8 @@ def fold_verified_events(events: Iterable[BrokerEvent]) -> GrantState | None:
             raise BrokerProofError(f"BROKER PROOF INVALID: {kind} does not bind current grant generation")
         if str(p["route"]) != state.route or str(p["consumer_id"]) != state.consumer_id:
             raise BrokerProofError(f"BROKER PROOF INVALID: {kind} changed accepted consumer/route")
+        if p.get("accepted_host") != state.accepted_host:
+            raise BrokerProofError("BROKER PROOF INVALID: state event changed accepted consumer host")
         if kind == "renew":
             state = replace(
                 state,
@@ -597,7 +603,10 @@ def fold_verified_events(events: Iterable[BrokerEvent]) -> GrantState | None:
                 event_comment_id=event.comment_id,
             )
         else:
-            state = replace(state, closed=True, event_comment_id=event.comment_id)
+            result_head = p.get("result_head")
+            if result_head is not None and FULL_SHA_RE.fullmatch(str(result_head)) is None:
+                raise BrokerProofError("BROKER PROOF INVALID: terminal result head is invalid")
+            state = replace(state, closed=True, result_head=result_head, event_comment_id=event.comment_id)
     return state
 
 
@@ -684,6 +693,8 @@ def make_event_payload(
     stale_after: datetime,
     event_id: str | None = None,
     outcome: str = "accepted",
+    accepted_host: str | None = None,
+    result_head: str | None = None,
 ) -> dict[str, Any]:
     if kind not in {"grant", "renew", "close", "takeover"}:
         raise BrokerError("invalid authoritative broker event kind")
@@ -709,6 +720,8 @@ def make_event_payload(
         "main_sha": main_sha,
         "route": route,
         "consumer_id": consumer_id(repository, request.pr_number, grant_id, generation, route),
+        "accepted_host": accepted_host,
+        "result_head": result_head,
         "run_id": int(run_id),
         "run_attempt": int(run_attempt),
         "workflow_path": WORKFLOW_PATH,
@@ -1066,18 +1079,26 @@ def prepare_broker_event(
         review_id = current.review_id
         main_sha = current.main_sha
         route = current.route
+        accepted_host = current.accepted_host
+        result_head = request.head if kind == "close" else None
     elif kind == "takeover" and current is not None:
         branch = current.branch
         starting_head = current.starting_head
         review_id = current.review_id
         main_sha = current.main_sha
         route = current.route
+        accepted_host = current.accepted_host
+        result_head = None
     else:
         branch = request.branch
         starting_head = request.head
         review_id = request.review_id
         main_sha = request.main_sha
         route = request.route
+        accepted_host = str(route_policy.get(route, {}).get("host") or "").lower() or None
+        result_head = None
+    if action in {"implementation", "fix"} and accepted_host not in {"chatgpt", "local"}:
+        raise BrokerError("broker implementation route lacks a trusted accepted host")
     stale_after = issued if kind == "close" else issued + DEFAULT_STALE_AFTER
     payload = make_event_payload(
         repository=github.repository,
@@ -1098,6 +1119,8 @@ def prepare_broker_event(
         issued_at=issued,
         stale_after=stale_after,
         outcome="closed" if kind == "close" else "accepted",
+        accepted_host=accepted_host,
+        result_head=result_head,
     )
     provisional = event_from_payload(payload)
     posted = github.add_comment(request.pr_number, provisional_event_comment(provisional))

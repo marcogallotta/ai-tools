@@ -504,7 +504,7 @@ def _verified_route_result_host(
 
         repository_id = github.get_repository_id()
         grant = current_verified_grant(github=github, pr_number=_pr_number(pr), repository_id=repository_id)
-        if grant is None or grant.closed:
+        if grant is None or not grant.closed:
             return None
         if (
             grant.grant_id != fields["grant"]
@@ -515,11 +515,14 @@ def _verified_route_result_host(
             or grant.pr_number != _pr_number(pr)
             or grant.branch != _pr_branch(pr)
             or grant.action not in {"fix", "implementation"}
+            or grant.result_head != current_head
+            or grant.accepted_host not in {"chatgpt", "local"}
+            or fields["host"] != grant.accepted_host
         ):
             return None
     except (AttributeError, ValueError, LifecycleError):
         return None
-    return fields["host"] if fields["host"] in {"chatgpt", "local"} else None
+    return grant.accepted_host
 
 
 def review_class_for(
