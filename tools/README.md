@@ -199,7 +199,7 @@ and after creating a locked linked worktree. Any head mismatch before creation l
 state/worktree mutation; a post-create verification race is rolled back locally. Adoption never
 resets, rebases, merges, or pushes. On success the durable task record starts with local, published,
 and remote-owned heads all equal to the verified handed-off head, after which normal
-`resume`/`publish`/`verify-handoff`/`cleanup` behavior is unchanged.
+`resume`/`commit`/`publish`/`verify-handoff`/`cleanup` behavior is unchanged.
 
 ### Supersede an old task lineage explicitly
 
@@ -248,6 +248,21 @@ fail closed for explicit recovery. `--takeover` is only a provenance update afte
 orchestration handoff; it does not infer that the previous agent died.
 
 `status` is local/read-only and does not contact origin.
+
+### Commit explicit task paths
+
+```sh
+tools/agent-worktree commit --task <task_gid> -m <message> -- <explicit paths...>
+```
+
+`commit` requires the live task claim and re-verifies the stored worktree, common-dir, Git-dir,
+`agent/*` branch, and exact pre-commit head. It rejects repository-root/carpet staging, path escape,
+and any already-staged path outside the named file/directory scopes. It stages only those literal
+paths, applies the same Dish protocol/schema version guard used by `tools/git-commit`, constructs one
+commit whose single parent is the verified old head, and attaches it with an exact-old-head
+`update-ref` compare-and-swap. A competing branch move therefore leaves the candidate commit
+unattached and fails closed. The command never pushes; publication remains a separate lifecycle
+step.
 
 ### Publish and handoff
 

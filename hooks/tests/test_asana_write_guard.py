@@ -256,3 +256,106 @@ class TestMissingCommand:
         out = capsys.readouterr().out
         assert exit_code == 0
         assert out.strip() == ""
+
+
+def _install_agent_identity(monkeypatch, tmp_path, task_gid="12345", agent_id="session-1"):
+    home = tmp_path / "home"
+    root = home / ".local/state/dish"
+    worktree = tmp_path / "owned-worktree"
+    worktree.mkdir()
+    branch = "agent/own-task"
+    state_path = root / "worktrees" / f"{task_gid}.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(json.dumps({
+        "task_gid": task_gid,
+        "branch": branch,
+        "worktree_path": str(worktree),
+        "lifecycle": "active",
+        "owner": {"agent_id": agent_id},
+    }) + "\n", encoding="utf-8")
+    identity = root / "agents" / f"{agent_id}.json"
+    identity.parent.mkdir(parents=True)
+    identity.write_text(json.dumps({
+        "agent_id": agent_id,
+        "role": "implementation",
+        "owning_task_gid": task_gid,
+        "active_worktree": {
+            "task_gid": task_gid,
+            "state_path": str(state_path),
+            "worktree": str(worktree),
+            "branch": branch,
+        },
+    }) + "\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    return agent_id, task_gid
+
+
+def run_hook_as_agent(module, command, agent_id, monkeypatch, capsys):
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({
+        "session_id": agent_id,
+        "tool_input": {"command": command},
+    })))
+    assert module.main() == 0
+    out = capsys.readouterr().out
+    return json.loads(out) if out.strip() else None
+
+
+def assert_explicitly_allowed(decision, substring):
+    assert decision is not None
+    output = decision["hookSpecificOutput"]
+    assert output["permissionDecision"] == "allow"
+    assert substring in output["permissionDecisionReason"]
+
+
+class TestOwnTaskAutoAllow:
+    @pytest.mark.parametrize("command", [
+        "asana set-notes 12345 'notes'",
+        "asana append 12345 'more'",
+        "asana replace 12345 old new",
+        "asana rename 12345 'new name'",
+        "asana move 12345 99999",
+    ])
+    def test_routine_direct_own_task_write_is_allowed(
+        self, asana_write_guard, monkeypatch, capsys, tmp_path, command
+    ):
+        agent_id, task_gid = _install_agent_identity(monkeypatch, tmp_path)
+        decision = run_hook_as_agent(asana_write_guard, command, agent_id, monkeypatch, capsys)
+        assert_explicitly_allowed(decision, f"active task {task_gid}")
+
+    def test_other_task_and_create_remain_approval_gated(
+        self, asana_write_guard, monkeypatch, capsys, tmp_path
+    ):
+        agent_id, _ = _install_agent_identity(monkeypatch, tmp_path)
+        decision = run_hook_as_agent(
+            asana_write_guard, "asana rename 54321 'other'", agent_id, monkeypatch, capsys
+        )
+        assert_asked(decision, "Approve this Asana write")
+        decision = run_hook_as_agent(
+            asana_write_guard, "asana create-task 999 'new'", agent_id, monkeypatch, capsys
+        )
+        assert_asked(decision, "Approve this Asana write")
+
+    def test_compound_ambiguous_and_missing_identity_do_not_auto_allow(
+        self, asana_write_guard, monkeypatch, capsys, tmp_path
+    ):
+        agent_id, _ = _install_agent_identity(monkeypatch, tmp_path)
+        decision = run_hook_as_agent(
+            asana_write_guard, "asana rename 12345 x && echo done", agent_id, monkeypatch, capsys
+        )
+        assert_asked(decision, "Approve this Asana write")
+        decision = run_hook(asana_write_guard, "asana rename 12345 x", monkeypatch, capsys)
+        assert_asked(decision, "Approve this Asana write")
+
+    def test_second_active_task_for_same_agent_disables_auto_allow(
+        self, asana_write_guard, monkeypatch, capsys, tmp_path
+    ):
+        agent_id, _ = _install_agent_identity(monkeypatch, tmp_path)
+        root = tmp_path / "home/.local/state/dish/worktrees"
+        (root / "99999.json").write_text(json.dumps({
+            "task_gid": "99999", "branch": "agent/other", "worktree_path": "/tmp/other",
+            "lifecycle": "active", "owner": {"agent_id": agent_id},
+        }) + "\n", encoding="utf-8")
+        decision = run_hook_as_agent(
+            asana_write_guard, "asana rename 12345 x", agent_id, monkeypatch, capsys
+        )
+        assert_asked(decision, "Approve this Asana write")

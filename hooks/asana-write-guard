@@ -34,6 +34,9 @@ import os
 import re
 import shlex
 import sys
+from pathlib import Path
+
+OWN_TASK_AUTO_ALLOW = {"set-notes", "append", "replace", "rename", "move"}
 
 WRITE_SUBCOMMANDS = {
     "set-notes", "append", "replace", "rename",
@@ -74,6 +77,108 @@ def deny(reason):
             "permissionDecisionReason": reason,
         }
     }
+
+
+def allow(reason):
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "allow",
+            "permissionDecisionReason": reason,
+        }
+    }
+
+
+def _state_root():
+    configured = os.environ.get("DISH_AGENT_STATE_ROOT")
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return Path.home().resolve() / ".local" / "state" / "dish"
+
+
+def _read_object(path):
+    if path.is_symlink():
+        return None
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _agent_id(payload):
+    value = os.environ.get("CODEX_THREAD_ID") or payload.get("session_id") or payload.get("sessionId") or payload.get("agent_id")
+    text = str(value) if value is not None else ""
+    return text if re.fullmatch(r"[A-Za-z0-9._:-]+", text) else None
+
+
+def _active_own_task(payload):
+    agent_id = _agent_id(payload)
+    if agent_id is None:
+        return None
+    root = _state_root()
+    identity = _read_object(root / "agents" / f"{agent_id}.json")
+    if identity is None or identity.get("agent_id") != agent_id:
+        return None
+    active = identity.get("active_worktree")
+    if not isinstance(active, dict):
+        return None
+    task_gid = str(active.get("task_gid", ""))
+    if not task_gid.isdigit():
+        return None
+    owning = identity.get("owning_task_gid")
+    if owning is not None and str(owning) != task_gid:
+        return None
+
+    task_path = Path(str(active.get("state_path"))) if active.get("state_path") else root / "worktrees" / f"{task_gid}.json"
+    state = _read_object(task_path)
+    owner = state.get("owner") if isinstance(state, dict) else None
+    if (
+        state is None
+        or state.get("lifecycle") != "active"
+        or str(state.get("task_gid")) != task_gid
+        or state.get("branch") != active.get("branch")
+        or state.get("worktree_path") != active.get("worktree")
+        or not isinstance(owner, dict)
+        or owner.get("agent_id") != agent_id
+    ):
+        return None
+
+    owned_active = []
+    worktree_root = root / "worktrees"
+    if not worktree_root.is_dir():
+        return None
+    for candidate in worktree_root.glob("*.json"):
+        other = _read_object(candidate)
+        other_owner = other.get("owner") if isinstance(other, dict) else None
+        if (
+            isinstance(other, dict)
+            and other.get("lifecycle") == "active"
+            and isinstance(other_owner, dict)
+            and other_owner.get("agent_id") == agent_id
+        ):
+            owned_active.append(str(other.get("task_gid", "")))
+    if sorted(set(owned_active)) != [task_gid]:
+        return None
+    return task_gid
+
+
+def _direct_own_task_write(cmd, payload):
+    segments = [segment for segment in split_segments(cmd) if segment.strip()]
+    if len(segments) != 1:
+        return None
+    tokens = tokenize(segments[0])
+    if tokens and is_word(tokens[0], "bash") and len(tokens) >= 2 and is_word(tokens[1], "asana"):
+        tokens = tokens[1:]
+    if len(tokens) < 3 or not is_word(tokens[0], "asana"):
+        return None
+    subcommand = tokens[1]
+    if subcommand not in OWN_TASK_AUTO_ALLOW:
+        return None
+    task_gid = _active_own_task(payload)
+    if task_gid is None or tokens[2] != task_gid:
+        return None
+    return task_gid, subcommand
 
 
 HEREDOC_RE = re.compile(r"<<(-?)\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\2")
@@ -265,8 +370,14 @@ def check_api_wrapper(cmd):
     return None
 
 
-def evaluate(cmd):
+def evaluate(cmd, payload=None):
+    payload = payload or {}
     cmd = strip_heredocs(cmd)
+
+    own_write = _direct_own_task_write(cmd, payload)
+    if own_write is not None:
+        task_gid, subcommand = own_write
+        return allow(f"[asana-write-guard] Routine same-task {subcommand} allowed for active task {task_gid}.")
 
     if detect_batch_apply(cmd):
         return evaluate_batch_apply(cmd)
@@ -294,7 +405,7 @@ def main() -> int:
     data = json.load(sys.stdin)
     cmd = data.get("tool_input", {}).get("command") or ""
     if cmd:
-        decision = evaluate(cmd)
+        decision = evaluate(cmd, data)
         if decision is not None:
             print(json.dumps(decision))
     return 0

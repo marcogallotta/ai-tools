@@ -830,3 +830,70 @@ class TestProtectedCheckoutBranchIsolation:
             cwd=str(protected_repo["primary"]),
         )
         assert_allowed(decision)
+
+
+def _register_active_task(protected_repo, monkeypatch, tmp_path, task_gid="12345"):
+    import json
+    import subprocess
+
+    home = tmp_path / "home"
+    root = home / ".local/state/dish/worktrees"
+    root.mkdir(parents=True)
+    linked = protected_repo["linked"].resolve()
+    git_dir = subprocess.run(
+        ["git", "-C", str(linked), "rev-parse", "--path-format=absolute", "--git-dir"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    common_dir = subprocess.run(
+        ["git", "-C", str(linked), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    (root / f"{task_gid}.json").write_text(json.dumps({
+        "task_gid": task_gid,
+        "branch": "agent/existing",
+        "worktree_path": str(linked),
+        "git_dir": git_dir,
+        "git_common_dir": common_dir,
+        "lifecycle": "active",
+    }) + "\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    return task_gid
+
+
+class TestActiveTaskGitBoundary:
+    def test_raw_add_commit_push_are_denied_with_canonical_replacement(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys, tmp_path
+    ):
+        task_gid = _register_active_task(protected_repo, monkeypatch, tmp_path)
+        for command, expected in (
+            ("git add README.md", "agent-worktree commit"),
+            ('git commit -m "x"', "agent-worktree commit"),
+            ("git push", "agent-worktree publish"),
+        ):
+            decision = run_hook(
+                destructive_op_guard, command, monkeypatch, capsys,
+                cwd=str(protected_repo["linked"]),
+            )
+            assert_denied(decision, expected)
+            assert task_gid in decision["hookSpecificOutput"]["permissionDecisionReason"]
+
+    def test_dash_c_active_task_is_denied_from_elsewhere(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys, tmp_path
+    ):
+        _register_active_task(protected_repo, monkeypatch, tmp_path)
+        decision = run_hook(
+            destructive_op_guard,
+            f"git -C {protected_repo['linked']} push",
+            monkeypatch, capsys, cwd=str(protected_repo["unrelated"]),
+        )
+        assert_denied(decision, "agent-worktree publish")
+
+    def test_destructive_nonpublication_git_still_asks_in_active_task(
+        self, destructive_op_guard, protected_repo, monkeypatch, capsys, tmp_path
+    ):
+        _register_active_task(protected_repo, monkeypatch, tmp_path)
+        decision = run_hook(
+            destructive_op_guard, "git reset --hard HEAD",
+            monkeypatch, capsys, cwd=str(protected_repo["linked"]),
+        )
+        assert_asked(decision, "reset --hard")
