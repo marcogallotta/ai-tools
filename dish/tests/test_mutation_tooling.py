@@ -121,9 +121,14 @@ def test_run_case_executes_through_real_guarded_temporary_workspace():
 def test_run_case_without_git_identity_is_refused_by_execution_guard(monkeypatch):
     from tests import mutation_runner
 
-    monkeypatch.setattr(
-        mutation_runner, "_initialize_workspace_git", lambda _workspace: None
-    )
+    real_run = subprocess.run
+
+    def skip_git_commands(command, *args, **kwargs):
+        if command and command[0] == "git":
+            return subprocess.CompletedProcess(command, 0, stdout="")
+        return real_run(command, *args, **kwargs)
+
+    monkeypatch.setattr(mutation_runner.subprocess, "run", skip_git_commands)
     result = mutation_runner.run_case(STAGE_A_CASES[0])
 
     assert result["outcome"] == "infrastructure_error"
