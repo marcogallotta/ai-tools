@@ -41,3 +41,32 @@ def test_ci_certification_artifacts_are_hidden_path_safe_and_fail_closed():
     assert "if-no-files-found: error" in action
     assert "name: ${{ inputs.name }}" in action
     assert "path: ${{ inputs.path }}" in action
+
+
+def test_ci_certification_reruns_wait_for_exact_current_attempt_plan_artifact():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+
+    wait_step = "- name: Wait for exact certification plan artifact"
+    download_step = "- name: Download exact certification plan"
+    assert wait_step in workflow
+    assert workflow.index(wait_step) < workflow.index(download_step)
+
+    exact_name = (
+        "PLAN_ARTIFACT_NAME: pr-certification-plan-"
+        "${{ needs.plan.outputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}"
+    )
+    assert exact_name in workflow
+    assert '"/repos/$GITHUB_REPOSITORY/actions/runs/${GITHUB_RUN_ID}/artifacts?per_page=100"' in workflow
+    assert "gh api --paginate" in workflow
+    assert "select(.expired == false)" in workflow
+    assert 'grep -Fx "$PLAN_ARTIFACT_NAME"' in workflow
+
+    # Rerun scheduling may expose the consumer before the same-attempt plan upload
+    # is visible. Wait only for that exact attempt, fail closed on duplicates, and
+    # keep the wait bounded rather than falling back to any older artifact.
+    assert "for poll in $(seq 1 60); do" in workflow
+    assert "sleep 2" in workflow
+    assert "${#matches[@]} == 1" in workflow
+    assert "${#matches[@]} > 1" in workflow
+    assert "Timed out waiting for current-attempt certification plan artifact" in workflow
+    assert "overwrite: true" not in workflow
