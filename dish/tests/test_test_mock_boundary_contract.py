@@ -173,6 +173,13 @@ REVIEWED_PRIVATE_FAULT_SEAMS = {
         "First-admission candidate fixture boundary used to construct a same-shape non-incident "
         "candidate for rollover signature refusal."
     ),
+    (
+        "postgresql/native/test_operation_discard_prepare_concurrency.py",
+        "_contamination_evidence",
+    ): (
+        "TEST-only contamination-evidence fixture boundary used to isolate generation-rollover "
+        "serialization from the separately reviewed signature gate."
+    ),
     ("postgresql/native/test_routine_migration.py", "_repository_script"): (
         "Alembic repository-graph fault-injection boundary used to prove a known "
         "non-ancestor database revision fails before mutation."
