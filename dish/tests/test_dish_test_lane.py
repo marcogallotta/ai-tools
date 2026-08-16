@@ -45,7 +45,7 @@ def test_round1c_lane_names_the_observed_failure_journey_contracts() -> None:
     expected = {
         "tests/test_safe_reclaim_workflow.py::test_resolved_execution_with_stranded_request_blocks_until_request_recovery",
         "tests/test_dish_partial_recovery_execution_journal.py::test_recover_inspect_settles_proven_requestless_execution_and_inspect_does_not_loop",
-        "tests/test_safe_reclaim_workflow.py::test_same_expired_run_still_gets_recover_lease_not_safe_reclaim",
+        "tests/test_safe_reclaim_workflow.py::test_same_expired_run_gets_connected_renewal_not_safe_reclaim",
         "tests/test_abandonment_stage_successors.py::test_prepared_planning_claim_rejects_abandoned_run_then_binds_fresh_run",
         "tests/test_human_review_queue_workflow.py::test_service_review_queue_resolves_human_hold_by_current_row_number",
         "tests/test_semantic_proposal_bundle_workflow.py::test_governed_large_correction_queues_one_bundle_and_fresh_run_applies_it",
