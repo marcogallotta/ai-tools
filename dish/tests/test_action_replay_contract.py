@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 
 import pytest
 from pathlib import Path
@@ -138,6 +139,84 @@ def test_action_and_runtime_docs_preserve_replay_inventory_and_decision_rules():
     assert "service_request_identity_conflict" in runtime
     assert "matching pending or uncertain request is never blindly executed again" in runtime
     assert "fresh UUID represents new work" in runtime
+
+
+def test_connected_contract_covers_lost_prepare_recovery_and_planning_research_continuation():
+    action_guide = " ".join(
+        (ROOT / "deploy" / "gpt-action.md").read_text(encoding="utf-8").split()
+    )
+
+    assert "do not issue repeated automatic retries in the same assistant/tool loop" in action_guide
+    assert "Retry only at a genuine later opportunity after real elapsed time" in action_guide
+    assert "preserve the exact call for the next genuine retry opportunity" in action_guide
+    assert "Never blindly retry `BACKEND_UNCERTAIN`" in action_guide
+    assert "original objective explicitly requests both Planning and Research" in action_guide
+    assert "stable Planning run A" in action_guide
+    assert "fresh run B" in action_guide
+    assert "different `client.run_id`" in action_guide
+    assert "do not require another Marco turn solely to cross the stage boundary" in action_guide
+    assert "objective requested Planning only, stop after Planning" in action_guide
+    assert "Never broaden a Planning+Research objective into independent Verification" in action_guide
+
+    assert "Dibs bi tahina" in action_guide
+    assert "first Planning `prepare` Action" in action_guide
+    assert "must not immediately retry in the same assistant/tool loop" in action_guide
+    assert "same run ID, request ID when present, command, and arguments" in action_guide
+    assert "if that later exact replay returns one, Planning continues without a Marco rescue" in action_guide
+    assert "not as proof of a Dish backend defect" in action_guide
+    assert "fresh Research run B" in action_guide
+    assert "no extra Marco turn" in action_guide
+    assert "no automatic Verification" in action_guide
+    assert "infer a numeric cooldown" in action_guide
+    assert "DISH_HONEST_REPO=<honest-pantry>" in action_guide
+
+    assert "automatically retry exactly once" not in action_guide
+    assert "Do not make a third Action call for that logical request" not in action_guide
+
+
+def _assert_honest_connected_contract(text: str) -> None:
+    normalized = " ".join(text.split())
+    for phrase in (
+        "do not automatically retry again in the same assistant/tool loop",
+        "Retry only at a genuinely later opportunity after real elapsed time",
+        "same run ID, same request ID when present, same command, same arguments",
+        "Never blindly retry `BACKEND_UNCERTAIN`",
+        "stable Planning run A",
+        "fresh run B",
+        "different run ID",
+        "no extra Marco turn",
+        "Do not automatically chain into independent Verification",
+    ):
+        assert phrase in normalized
+    for stale in (
+        "automatically retry exactly once",
+        "No third call and no ID rotation",
+        "A completed stage is a stopping point",
+    ):
+        assert stale not in normalized
+
+
+def test_honest_connected_contract_checker_rejects_retry_policy_reversal():
+    current = """
+do not automatically retry again in the same assistant/tool loop. Retry only at a genuinely later
+opportunity after real elapsed time with the same run ID, same request ID when present, same command,
+same arguments. Never blindly retry `BACKEND_UNCERTAIN`. Keep stable Planning run A, then use fresh
+run B with a different run ID, no extra Marco turn. Do not automatically chain into independent Verification.
+"""
+    _assert_honest_connected_contract(current)
+
+    with pytest.raises(AssertionError):
+        _assert_honest_connected_contract(
+            current + "\nautomatically retry exactly once. No third call and no ID rotation.\n"
+        )
+
+
+def test_honest_connected_contract_matches_when_repo_is_supplied():
+    honest_repo = os.environ.get("DISH_HONEST_REPO")
+    if not honest_repo:
+        pytest.skip("set DISH_HONEST_REPO for paired cross-repository instruction drift acceptance")
+    honest = Path(honest_repo) / "dish-custom-gpt-instructions.md"
+    _assert_honest_connected_contract(honest.read_text(encoding="utf-8"))
 
 
 

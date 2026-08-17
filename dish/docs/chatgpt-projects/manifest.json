@@ -1,5 +1,6 @@
 {
   "canonical_version": "dish-chatgpt-projects-v2-5d24af30193a",
+  "current_transition_from": "dish-chatgpt-projects-v2-9bf227f53f0a",
   "change_history": [
     {
       "changes": [
@@ -1032,6 +1033,62 @@
       "to_version": "dish-chatgpt-projects-v2-857d88788c12"
     },
     {
+      "from_version": "dish-chatgpt-projects-v2-39ff3abc502e",
+      "to_version": "dish-chatgpt-projects-v2-708fb9a9a9bc",
+      "changes": [
+        {
+          "rule_id": "coordinator-live-scan",
+          "roles": [
+            "coordinator"
+          ],
+          "impact": "additive",
+          "action_boundaries": [
+            "dispatch",
+            "handoff"
+          ],
+          "surface": "lifecycle",
+          "historical_correction": {
+            "previous_impact": "breaking",
+            "reason": "The published 39ff generation was explicitly Git-reverted to the already-published 708 semantics. The accepted canonical-history contract preserves that reversion as non-retiring backward-compatible history so the published version remains classifiable.",
+            "provenance_ref": "asana:task:1217530559117428#ACCEPTED-IMPLEMENTATION-CONTRACT"
+          }
+        },
+        {
+          "rule_id": "development-workflow-live-lane",
+          "roles": [
+            "development-workflow"
+          ],
+          "impact": "additive",
+          "action_boundaries": [
+            "handoff"
+          ],
+          "surface": "lifecycle",
+          "historical_correction": {
+            "previous_impact": "breaking",
+            "reason": "The published 39ff generation was explicitly Git-reverted to the already-published 708 semantics. The accepted canonical-history contract preserves that reversion as non-retiring backward-compatible history so the published version remains classifiable.",
+            "provenance_ref": "asana:task:1217530559117428#ACCEPTED-IMPLEMENTATION-CONTRACT"
+          }
+        },
+        {
+          "rule_id": "implementation-durable-git",
+          "roles": [
+            "implementation"
+          ],
+          "impact": "additive",
+          "action_boundaries": [
+            "handoff",
+            "role-critical-write"
+          ],
+          "surface": "lifecycle",
+          "historical_correction": {
+            "previous_impact": "breaking",
+            "reason": "The published 39ff generation was explicitly Git-reverted to the already-published 708 semantics. The accepted canonical-history contract preserves that reversion as non-retiring backward-compatible history so the published version remains classifiable.",
+            "provenance_ref": "asana:task:1217530559117428#ACCEPTED-IMPLEMENTATION-CONTRACT"
+          }
+        }
+      ]
+    },
+    {
       "changes": [
         {
           "action_boundaries": [
@@ -1988,6 +2045,98 @@
       },
       "from_version": "dish-chatgpt-projects-v2-2c81fea9e1ee",
       "to_version": "dish-chatgpt-projects-v2-694190185f60"
+    },
+    {
+      "from_version": "dish-chatgpt-projects-v2-9bb70124ca21",
+      "to_version": "dish-chatgpt-projects-v2-694190185f60",
+      "changes": [
+        {
+          "rule_id": "implementation-host-aware-fix-routing",
+          "roles": [
+            "implementation"
+          ],
+          "impact": "additive",
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "surface": "routing"
+        },
+        {
+          "rule_id": "implementation-remote-first-local-boundary",
+          "roles": [
+            "implementation"
+          ],
+          "impact": "additive",
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "surface": "routing"
+        },
+        {
+          "rule_id": "scope-amplification-checkpoint",
+          "roles": [
+            "implementation",
+            "review"
+          ],
+          "impact": "additive",
+          "action_boundaries": [
+            "role-critical-write",
+            "review-write",
+            "handoff"
+          ],
+          "surface": "safety"
+        },
+        {
+          "rule_id": "integration-local-work-classifier",
+          "roles": [
+            "integration"
+          ],
+          "impact": "additive",
+          "action_boundaries": [
+            "handoff",
+            "merge"
+          ],
+          "surface": "routing"
+        },
+        {
+          "rule_id": "integration-phase-separated-gates",
+          "roles": [
+            "integration"
+          ],
+          "impact": "additive",
+          "action_boundaries": [
+            "merge",
+            "handoff"
+          ],
+          "surface": "lifecycle"
+        },
+        {
+          "rule_id": "review-host-aware-independence-routing",
+          "roles": [
+            "review"
+          ],
+          "impact": "additive",
+          "action_boundaries": [
+            "review-write",
+            "handoff"
+          ],
+          "surface": "routing"
+        },
+        {
+          "rule_id": "review-phase-separated-gates",
+          "roles": [
+            "review"
+          ],
+          "impact": "additive",
+          "action_boundaries": [
+            "review-write",
+            "handoff"
+          ],
+          "surface": "lifecycle"
+        }
+      ]
     },
     {
       "changes": [
@@ -3273,6 +3422,28 @@
     "roles": [
       "*"
     ]
+  },
+  "required_version_inventory": {
+    "schema_version": 1,
+    "versions": [
+      "dish-chatgpt-projects-v2-219f34402511",
+      "dish-chatgpt-projects-v2-23365034a0f1",
+      "dish-chatgpt-projects-v2-28dcb04decc8",
+      "dish-chatgpt-projects-v2-39ff3abc502e",
+      "dish-chatgpt-projects-v2-54041bbbc8d8",
+      "dish-chatgpt-projects-v2-5d24af30193a",
+      "dish-chatgpt-projects-v2-694190185f60",
+      "dish-chatgpt-projects-v2-708fb9a9a9bc",
+      "dish-chatgpt-projects-v2-712e3b16aa05",
+      "dish-chatgpt-projects-v2-857d88788c12",
+      "dish-chatgpt-projects-v2-86b8011172ee",
+      "dish-chatgpt-projects-v2-9575ccfd79c8",
+      "dish-chatgpt-projects-v2-9bb70124ca21",
+      "dish-chatgpt-projects-v2-9bf227f53f0a",
+      "dish-chatgpt-projects-v2-d048682742d6",
+      "dish-chatgpt-projects-v2-d96ab5f0588d"
+    ],
+    "retirements": []
   },
   "max_kernel_chars": 7999,
   "preservation_inventory": {

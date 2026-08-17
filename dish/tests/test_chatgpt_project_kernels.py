@@ -86,7 +86,7 @@ def test_classified_stable_rule_removal_is_representable_and_unknown_ids_still_f
  prior_roles={role:{x['id']:kernels._rule_fingerprint(x) for x in kernels._rules(s['roles'][role]['rules'],f'roles.{role}.rules')} for role in s['roles']}
  edge={'from_version':'v1','to_version':'v2','changes':[_change('review-formal-comment','review','additive','review-write','lifecycle')],'from_rule_fingerprints':{'_shared':prior_shared,'_roles':prior_roles},'from_renderer_fingerprint':kernels.renderer_fingerprint()}
  legacy={'from_version':'v0','to_version':'v1','changes':[_change('review-action-handoff','review','compatible','handoff','presentation')]}
- m={'canonical_version':'v2','change_history':[legacy,edge],'legacy_bootstrap_floor':{'first_drift_aware_version':'v1','pre_floor_versions':['v0'],'impact':'breaking','roles':['*'],'action_boundaries':['*'],'break_proof':{'prior_kernel_identity':'legacy','counterexample':'legacy mismatch stop','git_reconciliation_failure':'legacy cannot fold history','migration':'resync','rollback':'disable legacy','evidence_ref':'test'},'marco_approved':True,'marco_approval_ref':'test:approval'}}
+ m={'canonical_version':'v2','change_history':[legacy,edge],'required_version_inventory':{'schema_version':1,'versions':['v1','v2'],'retirements':[]},'legacy_bootstrap_floor':{'first_drift_aware_version':'v1','pre_floor_versions':['v0'],'impact':'breaking','roles':['*'],'action_boundaries':['*'],'break_proof':{'prior_kernel_identity':'legacy','counterexample':'legacy mismatch stop','git_reconciliation_failure':'legacy cannot fold history','migration':'resync','rollback':'disable legacy','evidence_ref':'test'},'marco_approved':True,'marco_approval_ref':'test:approval'}}
  unclassified=copy.deepcopy(m); unclassified['change_history'][0]['changes']=[]
  with pytest.raises(kernels.KernelError,match='requires changes|classification mismatch'):
   kernels.validate_change_history(unclassified,removed)
@@ -409,7 +409,7 @@ def _synthetic_transition(*,impact='compatible',proof=True):
    'migration':'Resync the affected Implementation Project before this boundary.','rollback':'Keep the old Project out of role-critical writes.',
    'evidence_ref':'test:synthetic-hard-break'}
   change['marco_approved']=True; change['marco_approval_ref']='asana:test:exact-scope-approval'
- sm=copy.deepcopy(m); sm['canonical_version']='synthetic-v2'; sm['change_history']=copy.deepcopy(m['change_history'])+[{
+ sm=copy.deepcopy(m); sm['canonical_version']='synthetic-v2'; sm['current_transition_from']=m['canonical_version']; sm['required_version_inventory']['versions']=sorted(set(sm['required_version_inventory']['versions'])|{'synthetic-v2'}); sm['change_history']=copy.deepcopy(m['change_history'])+[{
   'from_version':m['canonical_version'],'to_version':'synthetic-v2','changes':[change],
   'from_rule_fingerprints':_prior_fingerprints(prior),'from_renderer_fingerprint':kernels.renderer_fingerprint(),
  }]
@@ -468,6 +468,83 @@ def test_change_history_allows_converging_published_lineages():
  incoming=[e for e in m['change_history'] if e['to_version']==target]
  assert {e['from_version'] for e in incoming}>={'dish-chatgpt-projects-v2-86b8011172ee','dish-chatgpt-projects-v2-223992480b5b'}
  kernels.validate_change_history(m,s)
+
+
+def _retirement(version):
+ return {'version':version,'authority_type':'marco-explicit','durable_ref':'asana:task:test#retirement','decision':'retire exact historical Project version for test','effective_at':'2026-08-17T14:00:00+02:00'}
+
+def _changed_source(source,role,rule_id,suffix):
+ out=copy.deepcopy(source); rule=next(x for x in out['roles'][role]['rules'] if x['id']==rule_id); assert rule['impact'] in {'compatible','additive'}; rule['text']+=suffix; return out
+
+def test_required_version_inventory_matches_published_first_parent_history_and_restores_losses():
+ m,s=kernels.load_canonical(); versions=kernels.required_versions(m)
+ expected={f'dish-chatgpt-projects-v2-{x}' for x in ['d96ab5f0588d','708fb9a9a9bc','39ff3abc502e','857d88788c12','23365034a0f1','9575ccfd79c8','28dcb04decc8','9bb70124ca21','694190185f60','712e3b16aa05','d048682742d6','54041bbbc8d8','86b8011172ee','219f34402511','9bf227f53f0a','5d24af30193a']}
+ assert set(versions)==expected and len(versions)==16
+ assert kernels.validate_required_version_topology(m)==versions
+ for old in ('dish-chatgpt-projects-v2-39ff3abc502e','dish-chatgpt-projects-v2-9bb70124ca21'):
+  path=kernels._change_path(m,old); assert path and path[-1]['to_version']==m['canonical_version']
+  d=kernels.classify_project_drift(old,'implementation','role-critical-write',manifest=m,source=s)
+  assert d['state']=='outdated' and not d['block'] and d['drift_level'] in {1,2}
+
+def test_actual_129_124_and_114_113_history_loss_is_rejected_by_authoritative_admission():
+ base,_=kernels.load_canonical()
+ cases=[
+  ('dish-chatgpt-projects-v2-86b8011172ee',{'dish-chatgpt-projects-v2-54041bbbc8d8','dish-chatgpt-projects-v2-6c50bf4d89bc'}),
+  ('dish-chatgpt-projects-v2-9bb70124ca21',{'dish-chatgpt-projects-v2-28dcb04decc8'}),
+ ]
+ for lost,parents in cases:
+  stale=copy.deepcopy(base); stale['required_version_inventory']['versions'].remove(lost)
+  stale['change_history']=[e for e in stale['change_history'] if e['from_version']!=lost and not (e['to_version']==lost and e['from_version'] in parents)]
+  with pytest.raises(kernels.KernelError,match='truncates authoritative required Project history'):
+   kernels.validate_authoritative_base_preservation(base,stale)
+
+def test_required_history_complete_inventory_deletion_stale_subset_and_orphan_fail_closed():
+ base,_=kernels.load_canonical()
+ deleted=copy.deepcopy(base); deleted.pop('required_version_inventory')
+ with pytest.raises(kernels.KernelError,match='required_version_inventory'): kernels.validate_authoritative_base_preservation(base,deleted)
+ subset=copy.deepcopy(base); lost='dish-chatgpt-projects-v2-39ff3abc502e'; subset['required_version_inventory']['versions'].remove(lost); subset['change_history']=[e for e in subset['change_history'] if e['from_version']!=lost]
+ with pytest.raises(kernels.KernelError,match='truncates authoritative required Project history'): kernels.validate_authoritative_base_preservation(base,subset)
+ orphan=copy.deepcopy(base); orphan['required_version_inventory']['versions']=sorted(orphan['required_version_inventory']['versions']+['dish-chatgpt-projects-v2-deadbeef0000'])
+ with pytest.raises(kernels.KernelError,match='not represented/reachable'): kernels.validate_required_version_topology(orphan)
+
+def test_historical_correction_does_not_retire_topology_but_explicit_retirement_is_exact_scope():
+ base,s=kernels.load_canonical(); version='dish-chatgpt-projects-v2-39ff3abc502e'
+ correction_only=copy.deepcopy(base); correction_only['required_version_inventory']['versions'].remove(version); correction_only['change_history']=[e for e in correction_only['change_history'] if e['from_version']!=version]
+ correction_only['change_history'][0]['changes'][0]['historical_correction']={'previous_impact':'breaking','reason':'metadata correction only','provenance_ref':'asana:test:correction'}
+ with pytest.raises(kernels.KernelError,match='truncates authoritative required Project history'): kernels.validate_authoritative_base_preservation(base,correction_only)
+ retired=copy.deepcopy(base); retired['required_version_inventory']['retirements']=[_retirement(version)]; retired['change_history']=[e for e in retired['change_history'] if e['from_version']!=version]
+ kernels.validate_change_history(retired,s); kernels.validate_authoritative_base_preservation(base,retired)
+ unrelated='dish-chatgpt-projects-v2-9bb70124ca21'; retired['required_version_inventory']['versions'].remove(unrelated); retired['change_history']=[e for e in retired['change_history'] if e['from_version']!=unrelated]
+ with pytest.raises(kernels.KernelError,match='truncates authoritative required Project history'): kernels.validate_authoritative_base_preservation(base,retired)
+
+def test_single_lineage_generator_preserves_base_history_and_is_deterministic():
+ base,s=kernels.load_canonical(); original=json.dumps(base,sort_keys=True,separators=(',',':'))
+ target=_changed_source(s,'implementation','implementation-host-aware-fix-routing',' Single-lineage deterministic test.')
+ a=kernels.generate_candidate_manifest(base,s,target); b=kernels.generate_candidate_manifest(base,s,target)
+ assert json.dumps(base,sort_keys=True,separators=(',',':'))==original
+ assert json.dumps(a,sort_keys=True,separators=(',',':'))==json.dumps(b,sort_keys=True,separators=(',',':'))
+ assert a['change_history'][:-1]==base['change_history'] and a['change_history'][-1]['from_version']==base['canonical_version']
+ assert a['current_transition_from']==base['canonical_version'] and a['canonical_version'] in kernels.required_versions(a)
+
+def test_concurrent_compatible_additive_reconciliation_converges_without_truncation_and_is_byte_identical():
+ common,s=kernels.load_canonical()
+ base_source=_changed_source(s,'implementation','implementation-host-aware-fix-routing',' Authoritative branch delta.')
+ candidate_source=_changed_source(s,'review','review-host-aware-independence-routing',' Concurrent branch delta.')
+ base=kernels.generate_candidate_manifest(common,s,base_source); candidate=kernels.generate_candidate_manifest(common,s,candidate_source)
+ merged=copy.deepcopy(base_source); next(x for x in merged['roles']['review']['rules'] if x['id']=='review-host-aware-independence-routing')['text']+=' Concurrent branch delta.'
+ a=kernels.reconcile_manifests(base,base_source,candidate,candidate_source,merged); b=kernels.reconcile_manifests(base,base_source,candidate,candidate_source,merged)
+ assert json.dumps(a,sort_keys=True,separators=(',',':'))==json.dumps(b,sort_keys=True,separators=(',',':'))
+ assert {base['canonical_version'],a['canonical_version']}<=set(kernels.required_versions(a))
+ assert candidate['canonical_version'] not in set(kernels.required_versions(a))  # branch-only input is topology, not published inventory
+ assert {e['from_version'] for e in a['change_history'] if e['to_version']==a['canonical_version']}=={base['canonical_version'],candidate['canonical_version']}
+ assert a['current_transition_from']==base['canonical_version']; kernels.validate_authoritative_base_preservation(base,a)
+
+def test_concurrent_ambiguous_rule_edits_fail_closed_without_manifest_surgery():
+ common,s=kernels.load_canonical(); rid='implementation-host-aware-fix-routing'
+ base_source=_changed_source(s,'implementation',rid,' Base edit.'); candidate_source=_changed_source(s,'implementation',rid,' Candidate edit.')
+ base=kernels.generate_candidate_manifest(common,s,base_source); candidate=kernels.generate_candidate_manifest(common,s,candidate_source)
+ with pytest.raises(kernels.KernelError,match='ambiguous/incompatible concurrent rule history'):
+  kernels.reconcile_manifests(base,base_source,candidate,candidate_source,base_source)
 
 def test_design_principles_projection_is_derived_and_present_everywhere():
  m,s=kernels.load_canonical(); rule=kernels.design_principles_rule(s)
