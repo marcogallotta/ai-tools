@@ -168,3 +168,21 @@ Known dependencies/overlap: <parallel PRs or none>
 For `local implementation completion`, the existing draft PR must already contain the full
 publication-blocker handoff required by `implementation.md`. Continue the same authorized branch and
 PR only; do not create a replacement lineage.
+
+## External/current-main defect admission
+
+Use this section only when a defect is discovered while pursuing an already-authorized operator objective. A real defect does not automatically become a prerequisite task, branch, or PR.
+
+Before emitting new blocking Implementation work, record:
+
+```text
+Originating objective: <exact requested next state>
+Necessity disposition: <CONTINUE_ORIGINAL | IMPLEMENTATION_REQUIRED | UNCERTAIN>
+Necessity evidence: <why current authorized mechanisms can/cannot advance the objective>
+Owner/lineage disposition: <CONTINUE_EXISTING_LINEAGE | REUSE_OWNER_NEW_LINEAGE | CREATE_BOUNDED_OWNER_LINEAGE | ADD_TO_COHERENT_WORKSTREAM | not-applicable>
+Owner/lineage evidence: <live Asana owner + live GitHub branch/PR reconciliation, or why not applicable>
+```
+
+Stage 1 is goal continuity. `CONTINUE_ORIGINAL` continues the original objective and keeps the defect non-prerequisite; `UNCERTAIN` requires the smallest continuation/recovery/reconciliation investigation first. Only `IMPLEMENTATION_REQUIRED` proceeds to Stage 2.
+
+Stage 2 resolves the correct role/domain and live owner/lineage before authoring/publication. `ADD_TO_COHERENT_WORKSTREAM` is valid only when a durable current workstream/member mapping already exists. Do not force unrelated defects into a mega-PR, create a second scheduler/queue/control plane, or ask Marco to choose routine lineage mechanics that live authority resolves. Preserve technically sound already-authored work by reconciling provenance when safe rather than discarding it for aesthetic history.

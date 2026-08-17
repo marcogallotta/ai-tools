@@ -37,9 +37,12 @@ For any requested Five Whys / root-cause Five Whys analysis, read and follow [`f
 
 ## ChatGPT Project kernels
 
-Recurring ChatGPT role Projects use the concise, versioned kernels in [`../chatgpt-projects/`](../chatgpt-projects/README.md). Those generated kernels bootstrap high-consequence gates and drift detection; this index and the mapped standing contracts remain detailed role authority. A canonical-version mismatch is non-blocking by itself: fold exact role/action history, continue for `DRIFT 1/3` compatible/unrelated and `DRIFT 2/3` additive changes, and stop/resynchronize only for proof-backed applicable `DRIFT 3/3` incompatibility. Missing, malformed, or unproved drift metadata is `INTEGRITY ERROR · DRIFT ?/3` and fails closed only the affected action for repository repair, not Project resync.
+Recurring ChatGPT role Projects use the concise, versioned kernels in [`../chatgpt-projects/`](../chatgpt-projects/README.md). Regardless of installed Project vintage, fetch this role's current generated Project kernel from that directory on current `main` at the first substantive action and read it as current session policy; installed Project custom-instruction text is a bootstrap/version witness only until this fetch succeeds. Those generated kernels bootstrap high-consequence gates and drift detection; this index and the mapped standing contracts remain detailed role authority. A canonical-version mismatch is non-blocking by itself: fold exact role/action history, continue for `DRIFT 1/3` compatible/unrelated and `DRIFT 2/3` additive changes, and stop/resynchronize only for proof-backed applicable `DRIFT 3/3` incompatibility. Missing, malformed, or unproved drift metadata is `INTEGRITY ERROR · DRIFT ?/3` and fails closed only the affected action for repository repair, not Project resync.
 
 ## Shared repository lifecycle
+
+For unqualified Dish PR/issue references, use [`repository-routing.md`](repository-routing.md) when the trigger applies.
+
 
 Ratified cross-Project standing invariants that must survive Project regeneration/reconciliation are governed by [`standing-invariants.md`](standing-invariants.md) and its independent machine-readable registry.
 
@@ -109,6 +112,9 @@ Rules:
 - a local-checkout agent (Claude Code, Codex) must record its own current role locally for provenance — see [`identity.md`](identity.md); this does not apply to ChatGPT, and it is never authoritative.
 
 ## Decision and actor provenance
+
+For bounded attribution/approval interpretation, use [`operator-provenance.md`](operator-provenance.md); this keeps service actor metadata distinct from human authorization without duplicating the full rule into every Project kernel.
+
 
 Keep these durable provenance classes distinct:
 

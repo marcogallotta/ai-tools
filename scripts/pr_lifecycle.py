@@ -156,11 +156,13 @@ def _build_engine(
     )
     workspace_token = args.workspace_token or os.getenv("DISH_WORKSPACE_AGENT_ACCESS_TOKEN")
     review_trigger = args.review_trigger_id or os.getenv("DISH_REVIEW_API_TRIGGER_ID")
+    worker_trigger = args.worker_trigger_id or os.getenv("DISH_WORKER_API_TRIGGER_ID")
     workspace = None
-    if workspace_token or review_trigger:
+    if workspace_token or review_trigger or worker_trigger:
         workspace = WorkspaceAgentDispatcher(
             access_token=workspace_token or "",
             review_trigger_id=review_trigger,
+            worker_trigger_id=worker_trigger,
             api_root=args.workspace_api_root,
         )
     local = LocalReviewDispatcher(args.local_reviewer or os.getenv("DISH_LOCAL_REVIEW_COMMAND"))
@@ -254,6 +256,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--workspace-api-root", default=WORKSPACE_API_ROOT)
     parser.add_argument("--workspace-token", help=argparse.SUPPRESS)
     parser.add_argument("--review-trigger-id")
+    parser.add_argument("--worker-trigger-id")
     parser.add_argument("--local-reviewer", help="bounded local reviewer command; receives lifecycle JSON on stdin")
     parser.add_argument(
         "--implementation-fixer",
