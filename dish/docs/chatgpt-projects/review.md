@@ -1,7 +1,7 @@
 # Dish — Review
 
 PROJECT_ROLE: Review
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-d7d4d807b12d
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-5d24af30193a
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/review.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools

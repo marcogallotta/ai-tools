@@ -315,6 +315,20 @@ def test_role_and_publication_boundaries_remain_high_salience():
  assert 'current head must equal the exact reviewed/certified head' in integ
 
 
+def test_integration_rendered_kernel_preserves_v1a_local_only_landing_boundary():
+ _,s=kernels.load_canonical()
+ source={r['id']:r for r in s['roles']['integration']['rules']}['mutation-broker-admission']['text']
+ rendered=(DISH_ROOT/'docs'/'chatgpt-projects'/'integration.md').read_text()
+ required=(
+  'Integration V1-A final reconciliation/landing is local Claude/Codex only.',
+  'ChatGPT/connector/Actions/broker landing is forbidden',
+  'broker admission remains only for Implementation/fix',
+ )
+ for phrase in required:
+  assert phrase in source
+  assert phrase in rendered
+
+
 def test_c1_governance_contracts_and_evals_are_mechanical():
  m,s=kernels.load_canonical()
  assert 'audit' in s['roles'] and m['generated_role_files']['audit']=='audit.md'

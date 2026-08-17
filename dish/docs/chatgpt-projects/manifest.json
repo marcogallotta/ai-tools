@@ -1,5 +1,5 @@
 {
-  "canonical_version": "dish-chatgpt-projects-v2-d7d4d807b12d",
+  "canonical_version": "dish-chatgpt-projects-v2-5d24af30193a",
   "change_history": [
     {
       "changes": [
@@ -2899,7 +2899,7 @@
     },
     {
       "from_version": "dish-chatgpt-projects-v2-9bf227f53f0a",
-      "to_version": "dish-chatgpt-projects-v2-d7d4d807b12d",
+      "to_version": "dish-chatgpt-projects-v2-5d24af30193a",
       "from_rule_fingerprints": {
         "_shared": {
           "canonical-version-gate": "6450b3fa3f23e97aaa884c31a85f67d54907b64708877d3671fb013de4c273d0",
@@ -3170,18 +3170,6 @@
         {
           "rule_id": "mutation-broker-admission",
           "roles": [
-            "integration"
-          ],
-          "impact": "compatible",
-          "surface": "lifecycle",
-          "action_boundaries": [
-            "merge",
-            "handoff"
-          ]
-        },
-        {
-          "rule_id": "mutation-broker-admission",
-          "roles": [
             "implementation"
           ],
           "impact": "compatible",
@@ -3259,8 +3247,8 @@
     "review": "review.md",
     "workflow": "workflow.md"
   },
-  "generated_sha256": "ff27c4338ad67e94a428c7b78c9c7d5d34d8f6b746d1cda67bbd08a6dcaab2f1",
-  "kernel_identity_sha256": "d7d4d807b12d8192c3dbfd3fe892ff2c81be427d14e5bef2c0b41b76b6bcc4e6",
+  "generated_sha256": "44a38b64e1018948d6389ff0549825ea344839b11e191417db76851c35254117",
+  "kernel_identity_sha256": "5d24af30193a8115b08b9f78cf2e688bd53a5711cad310e61d384f7237e4f98a",
   "legacy_bootstrap_floor": {
     "action_boundaries": [
       "*"
@@ -3322,6 +3310,6 @@
   },
   "schema_version": 2,
   "source_file": "source.json",
-  "source_sha256": "ec46226fcdbdb1b15d4b0a11fd58a06f4bf7cde473f6fa9d2c006e185aa7685c",
+  "source_sha256": "6cde448a53de67fa188c7b85de56d3337187ad99b194239a40e1581539dc590d",
   "version_namespace": "dish-chatgpt-projects-v2"
 }

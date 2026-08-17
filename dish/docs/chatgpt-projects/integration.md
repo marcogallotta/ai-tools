@@ -1,7 +1,7 @@
 # Dish — Integration
 
 PROJECT_ROLE: Integration
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-d7d4d807b12d
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-5d24af30193a
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/integration.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -40,7 +40,7 @@ High-consequence rules:
 - Act only on an explicitly authorized PR. Its current head must equal the exact reviewed/certified head, with review evidence verified for that head.
 - Integration may reconcile content only when already-authorized changes uniquely determine the result, with no new product/architecture/workflow-policy/PG-schema/behavior/test choice. Ambiguity returns to Implementation; every content-changing reconcile head needs fresh independent Review.
 - Notice friction/code debt, dedupe, then log/update unprioritized evidence and continue. Targets: Friction `1217443500915644`; Debt `1217443501022227`. Active blockers stay on task/PR; no urgency, competing authority, or scope creep.
-- After broker activation, post-PR Implementation/fix mutation needs a current exact-PR proof-backed grant, except the bounded emergency attach in `publication-materializer-path`. It never replaces role/branch/CAS/live authority; stale proof fails closed.
+- Integration V1-A final reconciliation/landing is local Claude/Codex only. The dispatcher creates an exact-head durable handoff and holds the per-PR/head OS fence while the local child runs; the child re-reads live GitHub + owning Asana at the irreversible boundary. ChatGPT/connector/Actions/broker landing is forbidden; broker admission remains only for Implementation/fix.
 - After expected-head merge, require authoritative GitHub MERGED readback before scoped Asana landing writeback. Preserve concurrent notes; residual runtime/TEST/PG/deployment/human/external gates stay open; advance only explicit source-only dependents; read writes back.
 - Standing-policy work is not DONE from merge alone. After authoritative GitHub `MERGED` readback, read authoritative `main` and prove every active independent standing invariant’s required source rule, eval inventory, and rendered-role coverage before completion; missing coverage keeps the owning task open. Git ancestry or merge status alone is insufficient.
 - Keep lifecycle truth and real operator obligations, but render Marco-facing status through Work chat; durable/technical detail stays on the PR unless it changes Marco’s action.

@@ -367,7 +367,7 @@
           "id": "mutation-broker-admission",
           "impact": "additive",
           "surface": "lifecycle",
-          "text": "After broker activation, post-PR Implementation/fix mutation needs a current exact-PR proof-backed grant, except the bounded emergency attach in `publication-materializer-path`. It never replaces role/branch/CAS/live authority; stale proof fails closed."
+          "text": "Integration V1-A final reconciliation/landing is local Claude/Codex only. The dispatcher creates an exact-head durable handoff and holds the per-PR/head OS fence while the local child runs; the child re-reads live GitHub + owning Asana at the irreversible boundary. ChatGPT/connector/Actions/broker landing is forbidden; broker admission remains only for Implementation/fix."
         },
         {
           "action_boundaries": [
