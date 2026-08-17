@@ -9,3 +9,7 @@ Asana/GitHub actor, author, creator, committer, or similar account fields prove 
 ## Decision provenance
 
 Keep explicit human decisions, standing repository policy, agent inference/recommendation, runtime observation, and authenticated-account metadata distinct. Consequential policy/product/cutover decisions require durable human provenance; runtime or attribution data never silently becomes such a decision.
+
+## Execution-state truth
+
+Describe only the strongest state proved for the exact current attempt. A durable handoff is not launch; launch invocation is not acceptance; acceptance is not RUNNING. Asana placement, branch/PR existence, leases, locks, or prior-attempt evidence do not prove current execution liveness. Attempt N evidence never proves attempt N+1. GitHub absence is categorical only after successful exhaustive open-PR enumeration and exact assignment reconciliation; otherwise report UNKNOWN rather than `no PR`.

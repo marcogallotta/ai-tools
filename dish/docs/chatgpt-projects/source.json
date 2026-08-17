@@ -1197,6 +1197,22 @@
         "mode": "TRIGGERED_READ",
         "trigger": "Five Whys / 5 whys / blameless RCA"
       }
+    },
+    {
+      "id": "truthful-dispatch-liveness-language",
+      "text": "For operator-facing execution status, distinguish handoff, launch, acceptance, and running; placement/branch/PR never proves liveness, evidence is exact-attempt, and incomplete GitHub enumeration cannot prove no PR. Report the strongest proved state or UNKNOWN.",
+      "impact": "additive",
+      "surface": "presentation",
+      "action_boundaries": [
+        "status",
+        "dispatch",
+        "execution-liveness",
+        "pr-absence"
+      ],
+      "delivery": {
+        "mode": "TRIGGERED_READ",
+        "trigger": "execution / dispatch / PR liveness status"
+      }
     }
   ],
   "design_principles": {
@@ -1239,6 +1255,9 @@
       ],
       "external/current-main defect while pursuing an existing objective": [
         "dish/docs/agents/templates/implementation-handoff.md#External/current-main defect admission"
+      ],
+      "execution / dispatch / PR liveness status": [
+        "dish/docs/agents/operator-provenance.md#Execution-state truth"
       ]
     }
   }
