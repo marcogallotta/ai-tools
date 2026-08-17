@@ -1,4 +1,5 @@
 {
+  "outputStyle": "Dish Operator",
   "hooks": {
     "SessionStart": [
       {

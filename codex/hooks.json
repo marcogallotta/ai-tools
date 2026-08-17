@@ -1,7 +1,16 @@
 {
-  "description": "Mechanical protected-checkout and Dish post-compaction re-grounding barriers.",
+  "description": "Dish operator interaction context plus protected-checkout and post-compaction re-grounding barriers.",
   "hooks": {
     "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/marco/.local/bin/dish-operator-context",
+            "timeout": 5
+          }
+        ]
+      },
       {
         "matcher": "^compact$",
         "hooks": [
