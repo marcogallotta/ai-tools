@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import hashlib
 import re
+import secrets
 from typing import Any, Mapping, Protocol
 
 from pr_lifecycle_support import FULL_SHA_RE, LifecycleError
@@ -26,6 +27,7 @@ _FULL_REVIEW_RE = re.compile(
     r"head=(?P<head>[0-9a-f]{40})\s*-->",
     re.I,
 )
+
 
 class PostMergeAsana(Protocol):
     def get_task(self, gid: str) -> dict[str, Any]: ...
@@ -50,10 +52,22 @@ class PostMergeReviewObligation:
         return asdict(self)
 
 
-def obligation_key(repository: str, pr_number: int, head: str) -> str:
+def _validate_identity(repository: str, pr_number: int, head: str) -> tuple[str, int, str]:
     if FULL_SHA_RE.fullmatch(head) is None:
         raise LifecycleError("post-merge Review obligation requires an exact 40-character PR head SHA")
-    identity = f"{repository}:{int(pr_number)}:{head.lower()}"
+    return repository, int(pr_number), head.lower()
+
+
+def obligation_key(repository: str, pr_number: int, head: str) -> str:
+    repository, pr_number, head = _validate_identity(repository, pr_number, head)
+    identity = f"{repository}:{pr_number}:{head}"
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+
+
+def new_obligation_key(repository: str, pr_number: int, head: str) -> str:
+    repository, pr_number, head = _validate_identity(repository, pr_number, head)
+    nonce = secrets.token_hex(16)
+    identity = f"{repository}:{pr_number}:{head}:round:{nonce}"
     return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
 
 

@@ -7,9 +7,10 @@ from pr_lifecycle_owner import owning_task_identity_from_references
 from pr_lifecycle_support import LifecycleError, PRLifecycle, LifecycleState
 from pr_lifecycle_post_merge_review_types import (
     PostMergeAsana, PostMergeReviewObligation, THIN_RESULTS, _OBLIGATION_RE,
-    obligation_key, obligation_marker,
+    new_obligation_key, obligation_marker,
 )
 from pr_lifecycle_post_merge_review_asana_io import _create_subtask, _list_subtasks
+
 
 def _parse_obligation(task: Mapping[str, Any]) -> PostMergeReviewObligation | None:
     notes = str(task.get("notes") or "")
@@ -47,7 +48,6 @@ def _matching_subtasks(
     pr_number: int,
     head: str,
 ) -> list[PostMergeReviewObligation]:
-    key = obligation_key(repository, pr_number, head)
     matches: list[PostMergeReviewObligation] = []
     for raw in _list_subtasks(asana, owner_task_gid):
         parsed = _parse_obligation(raw)
@@ -57,7 +57,6 @@ def _matching_subtasks(
             parsed.repository == repository
             and parsed.pr_number == pr_number
             and parsed.head == head.lower()
-            and parsed.key == key
         ):
             if parsed.owner_task_gid and parsed.owner_task_gid != owner_task_gid:
                 raise LifecycleError("post-merge Review obligation parent identity changed")
@@ -130,10 +129,8 @@ def ensure_obligation(
         )
     if incomplete:
         return incomplete[0]
-    if existing:
-        return existing[0]
 
-    key = obligation_key(repository, lifecycle.number, lifecycle.head)
+    key = new_obligation_key(repository, lifecycle.number, lifecycle.head)
     marker = obligation_marker(
         repository=repository, pr_number=lifecycle.number, head=lifecycle.head, key=key
     )
@@ -148,9 +145,9 @@ def ensure_obligation(
         f"Thin safety result: {thin_result}\n"
         f"Thin safety summary: {summary}\n\n"
         "Next action: perform full Review of this exact merged head through the existing Review mechanics. "
-        "A pre-merge Review or later main movement does not satisfy this obligation. Keep this task incomplete "
-        "until a formal exact-head post-merge Review carrying the matching obligation marker is durably recorded. "
-        "VERDICT: BLOCK routes a bounded corrective Implementation owner; VERDICT: MERGE closes this obligation."
+        "A pre-merge Review, a prior completed post-merge Review round, or later main movement does not satisfy this obligation. "
+        "Keep this task incomplete until a formal exact-head post-merge Review carrying this round's matching obligation marker "
+        "is durably recorded. VERDICT: BLOCK routes a bounded corrective Implementation owner; VERDICT: MERGE closes this obligation."
     )
     created = _create_subtask(
         asana, owner,
@@ -160,8 +157,9 @@ def ensure_obligation(
     created_parsed = _parse_obligation(created)
     if created_parsed is None:
         raise LifecycleError("created post-merge Review obligation did not read back its exact identity marker")
+    if created_parsed.key != key or created_parsed.thin_result != thin_result:
+        raise LifecycleError("created post-merge Review obligation did not read back the new Review round result")
 
-    # Re-list after creation. This both verifies durability and detects concurrent duplicate creation.
     reread = _matching_subtasks(
         asana,
         owner_task_gid=owner,
@@ -174,4 +172,6 @@ def ensure_obligation(
         raise LifecycleError(
             "post-merge Review obligation creation did not produce exactly one incomplete exact-head record"
         )
+    if incomplete[0].key != key or incomplete[0].thin_result != thin_result:
+        raise LifecycleError("post-merge Review obligation readback did not preserve the new Review round result")
     return incomplete[0]

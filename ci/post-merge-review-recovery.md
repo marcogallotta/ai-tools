@@ -11,9 +11,11 @@ python scripts/pr_post_merge_review.py \
   --thin-summary '<bounded safety summary>'
 ```
 
-The command requires one existing owning Asana task. It creates or reuses one incomplete subtask keyed by repository + PR + exact merged head, writes and re-reads a GitHub linkage marker, and dispatches the existing Review Workspace Agent with an obligation-specific idempotency key. `SAFE ENOUGH` never completes the obligation. `SERIOUS DEFECT FOUND` additionally creates/reuses the bounded corrective Implementation owner immediately while the full Review remains open.
+The command requires one existing owning Asana task. It creates or reuses one incomplete subtask for repository + PR + exact merged head, writes and re-reads a GitHub linkage marker, and dispatches the existing Review Workspace Agent with an obligation-specific idempotency key. `SAFE ENOUGH` never completes the obligation. `SERIOUS DEFECT FOUND` additionally creates/reuses the bounded corrective Implementation owner immediately while the full Review remains open.
 
-The full reviewer reviews the exact head that actually merged; later `main` movement is context only. The formal exact-head GitHub `COMMENT` Review must contain a normal `VERDICT: MERGE` or `VERDICT: BLOCK` and the exact `dish-post-merge-full-review:v1 key=<key> head=<sha>` marker supplied by the obligation. Historical pre-merge Review cannot satisfy the new obligation because it lacks that identity.
+A completed obligation is historical evidence, not permanent satisfaction for future explicit Review requests. If no incomplete obligation remains for the same repository + PR + exact merged head, a later explicit request creates a fresh durable Review round with a new obligation key while preserving all completed rounds. Retries while that fresh round is still open reuse it, so at most one incomplete round exists for the exact merged head.
+
+The full reviewer reviews the exact head that actually merged; later `main` movement is context only. The formal exact-head GitHub `COMMENT` Review must contain a normal `VERDICT: MERGE` or `VERDICT: BLOCK` and the exact `dish-post-merge-full-review:v1 key=<key> head=<sha>` marker supplied by the current obligation. Historical pre-merge Review and formal Reviews from completed post-merge rounds cannot satisfy the new obligation because they lack its new round identity.
 
 The existing closed-PR lifecycle scan re-reads the durable Asana obligation and GitHub reviews. A matching full Review is written back with exact Review id/head/verdict before the obligation is marked complete. `BLOCK` creates or reuses one bounded corrective Implementation owner; if the thin pass already created it, the full Review links to that same owner rather than creating parallel work.
 
