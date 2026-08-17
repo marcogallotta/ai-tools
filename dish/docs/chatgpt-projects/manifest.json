@@ -1,6 +1,5 @@
 {
-  "canonical_version": "dish-chatgpt-projects-v2-5d24af30193a",
-  "current_transition_from": "dish-chatgpt-projects-v2-9bf227f53f0a",
+  "canonical_version": "dish-chatgpt-projects-v2-bfaeef68aed9",
   "change_history": [
     {
       "changes": [
@@ -1033,60 +1032,60 @@
       "to_version": "dish-chatgpt-projects-v2-857d88788c12"
     },
     {
-      "from_version": "dish-chatgpt-projects-v2-39ff3abc502e",
-      "to_version": "dish-chatgpt-projects-v2-708fb9a9a9bc",
       "changes": [
         {
-          "rule_id": "coordinator-live-scan",
-          "roles": [
-            "coordinator"
-          ],
-          "impact": "additive",
           "action_boundaries": [
             "dispatch",
             "handoff"
           ],
-          "surface": "lifecycle",
           "historical_correction": {
             "previous_impact": "breaking",
-            "reason": "The published 39ff generation was explicitly Git-reverted to the already-published 708 semantics. The accepted canonical-history contract preserves that reversion as non-retiring backward-compatible history so the published version remains classifiable.",
-            "provenance_ref": "asana:task:1217530559117428#ACCEPTED-IMPLEMENTATION-CONTRACT"
-          }
+            "provenance_ref": "asana:task:1217530559117428#ACCEPTED-IMPLEMENTATION-CONTRACT",
+            "reason": "The published 39ff generation was explicitly Git-reverted to the already-published 708 semantics. The accepted canonical-history contract preserves that reversion as non-retiring backward-compatible history so the published version remains classifiable."
+          },
+          "impact": "additive",
+          "roles": [
+            "coordinator"
+          ],
+          "rule_id": "coordinator-live-scan",
+          "surface": "lifecycle"
         },
         {
-          "rule_id": "development-workflow-live-lane",
-          "roles": [
-            "development-workflow"
-          ],
-          "impact": "additive",
           "action_boundaries": [
             "handoff"
           ],
-          "surface": "lifecycle",
           "historical_correction": {
             "previous_impact": "breaking",
-            "reason": "The published 39ff generation was explicitly Git-reverted to the already-published 708 semantics. The accepted canonical-history contract preserves that reversion as non-retiring backward-compatible history so the published version remains classifiable.",
-            "provenance_ref": "asana:task:1217530559117428#ACCEPTED-IMPLEMENTATION-CONTRACT"
-          }
+            "provenance_ref": "asana:task:1217530559117428#ACCEPTED-IMPLEMENTATION-CONTRACT",
+            "reason": "The published 39ff generation was explicitly Git-reverted to the already-published 708 semantics. The accepted canonical-history contract preserves that reversion as non-retiring backward-compatible history so the published version remains classifiable."
+          },
+          "impact": "additive",
+          "roles": [
+            "development-workflow"
+          ],
+          "rule_id": "development-workflow-live-lane",
+          "surface": "lifecycle"
         },
         {
-          "rule_id": "implementation-durable-git",
-          "roles": [
-            "implementation"
-          ],
-          "impact": "additive",
           "action_boundaries": [
             "handoff",
             "role-critical-write"
           ],
-          "surface": "lifecycle",
           "historical_correction": {
             "previous_impact": "breaking",
-            "reason": "The published 39ff generation was explicitly Git-reverted to the already-published 708 semantics. The accepted canonical-history contract preserves that reversion as non-retiring backward-compatible history so the published version remains classifiable.",
-            "provenance_ref": "asana:task:1217530559117428#ACCEPTED-IMPLEMENTATION-CONTRACT"
-          }
+            "provenance_ref": "asana:task:1217530559117428#ACCEPTED-IMPLEMENTATION-CONTRACT",
+            "reason": "The published 39ff generation was explicitly Git-reverted to the already-published 708 semantics. The accepted canonical-history contract preserves that reversion as non-retiring backward-compatible history so the published version remains classifiable."
+          },
+          "impact": "additive",
+          "roles": [
+            "implementation"
+          ],
+          "rule_id": "implementation-durable-git",
+          "surface": "lifecycle"
         }
-      ]
+      ],
+      "from_version": "dish-chatgpt-projects-v2-39ff3abc502e",
+      "to_version": "dish-chatgpt-projects-v2-708fb9a9a9bc"
     },
     {
       "changes": [
@@ -2047,96 +2046,96 @@
       "to_version": "dish-chatgpt-projects-v2-694190185f60"
     },
     {
-      "from_version": "dish-chatgpt-projects-v2-9bb70124ca21",
-      "to_version": "dish-chatgpt-projects-v2-694190185f60",
       "changes": [
         {
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "impact": "additive",
+          "roles": [
+            "implementation"
+          ],
           "rule_id": "implementation-host-aware-fix-routing",
-          "roles": [
-            "implementation"
-          ],
-          "impact": "additive",
+          "surface": "routing"
+        },
+        {
           "action_boundaries": [
             "role-critical-write",
             "handoff"
           ],
-          "surface": "routing"
-        },
-        {
+          "impact": "additive",
+          "roles": [
+            "implementation"
+          ],
           "rule_id": "implementation-remote-first-local-boundary",
-          "roles": [
-            "implementation"
-          ],
-          "impact": "additive",
-          "action_boundaries": [
-            "role-critical-write",
-            "handoff"
-          ],
           "surface": "routing"
         },
         {
-          "rule_id": "scope-amplification-checkpoint",
+          "action_boundaries": [
+            "role-critical-write",
+            "review-write",
+            "handoff"
+          ],
+          "impact": "additive",
           "roles": [
             "implementation",
             "review"
           ],
-          "impact": "additive",
-          "action_boundaries": [
-            "role-critical-write",
-            "review-write",
-            "handoff"
-          ],
+          "rule_id": "scope-amplification-checkpoint",
           "surface": "safety"
         },
         {
-          "rule_id": "integration-local-work-classifier",
-          "roles": [
-            "integration"
-          ],
-          "impact": "additive",
           "action_boundaries": [
             "handoff",
             "merge"
           ],
-          "surface": "routing"
-        },
-        {
-          "rule_id": "integration-phase-separated-gates",
+          "impact": "additive",
           "roles": [
             "integration"
           ],
-          "impact": "additive",
+          "rule_id": "integration-local-work-classifier",
+          "surface": "routing"
+        },
+        {
           "action_boundaries": [
             "merge",
             "handoff"
           ],
+          "impact": "additive",
+          "roles": [
+            "integration"
+          ],
+          "rule_id": "integration-phase-separated-gates",
           "surface": "lifecycle"
         },
         {
-          "rule_id": "review-host-aware-independence-routing",
-          "roles": [
-            "review"
-          ],
-          "impact": "additive",
           "action_boundaries": [
             "review-write",
             "handoff"
           ],
+          "impact": "additive",
+          "roles": [
+            "review"
+          ],
+          "rule_id": "review-host-aware-independence-routing",
           "surface": "routing"
         },
         {
-          "rule_id": "review-phase-separated-gates",
-          "roles": [
-            "review"
-          ],
-          "impact": "additive",
           "action_boundaries": [
             "review-write",
             "handoff"
           ],
+          "impact": "additive",
+          "roles": [
+            "review"
+          ],
+          "rule_id": "review-phase-separated-gates",
           "surface": "lifecycle"
         }
-      ]
+      ],
+      "from_version": "dish-chatgpt-projects-v2-9bb70124ca21",
+      "to_version": "dish-chatgpt-projects-v2-694190185f60"
     },
     {
       "changes": [
@@ -2265,26 +2264,26 @@
     {
       "changes": [
         {
-          "rule_id": "development-workflow-boundary",
-          "roles": [
-            "development-workflow"
-          ],
-          "impact": "additive",
           "action_boundaries": [
             "role-critical-write"
           ],
+          "impact": "additive",
+          "roles": [
+            "development-workflow"
+          ],
+          "rule_id": "development-workflow-boundary",
           "surface": "authority"
         },
         {
-          "rule_id": "mutation-broker-admission",
-          "roles": [
-            "integration"
-          ],
-          "impact": "additive",
           "action_boundaries": [
             "merge",
             "handoff"
           ],
+          "impact": "additive",
+          "roles": [
+            "integration"
+          ],
+          "rule_id": "mutation-broker-admission",
           "surface": "lifecycle"
         }
       ],
@@ -2322,25 +2321,25 @@
       "to_version": "dish-chatgpt-projects-v2-54041bbbc8d8"
     },
     {
-      "from_version": "dish-chatgpt-projects-v2-54041bbbc8d8",
-      "to_version": "dish-chatgpt-projects-v2-86b8011172ee",
       "changes": [
         {
-          "rule_id": "canonical-version-gate",
-          "roles": [
-            "*"
-          ],
-          "impact": "compatible",
-          "surface": "safety",
           "action_boundaries": [
             "*"
           ],
+          "impact": "compatible",
           "lineage_repair": {
-            "reason": "Preserve a Project version actually published on main; no Project-settings update is required for this transition.",
-            "provenance_ref": "git-main-lineage:main-540-to-86"
-          }
+            "provenance_ref": "git-main-lineage:main-540-to-86",
+            "reason": "Preserve a Project version actually published on main; no Project-settings update is required for this transition."
+          },
+          "roles": [
+            "*"
+          ],
+          "rule_id": "canonical-version-gate",
+          "surface": "safety"
         }
-      ]
+      ],
+      "from_version": "dish-chatgpt-projects-v2-54041bbbc8d8",
+      "to_version": "dish-chatgpt-projects-v2-86b8011172ee"
     },
     {
       "changes": [
@@ -2441,25 +2440,25 @@
       "to_version": "dish-chatgpt-projects-v2-86b8011172ee"
     },
     {
-      "from_version": "dish-chatgpt-projects-v2-86b8011172ee",
-      "to_version": "dish-chatgpt-projects-v2-219f34402511",
       "changes": [
         {
-          "rule_id": "canonical-version-gate",
-          "roles": [
-            "*"
-          ],
-          "impact": "compatible",
-          "surface": "safety",
           "action_boundaries": [
             "*"
           ],
+          "impact": "compatible",
           "lineage_repair": {
-            "reason": "Preserve a Project version actually published on main; no Project-settings update is required for this transition.",
-            "provenance_ref": "git-main-lineage:main-86-to-219"
-          }
+            "provenance_ref": "git-main-lineage:main-86-to-219",
+            "reason": "Preserve a Project version actually published on main; no Project-settings update is required for this transition."
+          },
+          "roles": [
+            "*"
+          ],
+          "rule_id": "canonical-version-gate",
+          "surface": "safety"
         }
-      ]
+      ],
+      "from_version": "dish-chatgpt-projects-v2-86b8011172ee",
+      "to_version": "dish-chatgpt-projects-v2-219f34402511"
     },
     {
       "changes": [
@@ -3047,301 +3046,214 @@
       "to_version": "dish-chatgpt-projects-v2-9bf227f53f0a"
     },
     {
-      "from_version": "dish-chatgpt-projects-v2-9bf227f53f0a",
-      "to_version": "dish-chatgpt-projects-v2-5d24af30193a",
-      "from_rule_fingerprints": {
-        "_shared": {
-          "canonical-version-gate": "6450b3fa3f23e97aaa884c31a85f67d54907b64708877d3671fb013de4c273d0",
-          "project-repository-routing": "2e0f1eba1b7872c4659ac037168269f4b00e643fca7ae28f8b83df53b4ae5b57",
-          "authority-separation": "0f8072fef1258740916ae05dc2bd74a40464c67a36833db4225ec76b14ebc848",
-          "live-authority": "3e00eb955878fddd4931d90bcf715a31629681f1a99b13edbdf6aa45454a13a2",
-          "repository-context-admission": "45190e0b9e9ffe3f4f8f33141f7cdb4e16572c90eb5453f2d2a9e11768734e3d",
-          "repository-lifecycle": "98162a5b4e2eafccc613779cfb54b30884edfd1e8902c7f0755c61431afc38ed",
-          "role-contract-authority": "8cce5fa54df08a2f2ee53bf378ff9b40a92d1d57698c4213127a64b400c1528c",
-          "task-dismissal-history": "67920547cc14e4ba50881123d7356ad0e64a89fcb45799ee4f1da7bbc116c873",
-          "fallback-surface": "c12f6e72cb8fc7dec335cc06f6cc36524204b17b9e3cf29493f77cbcfc5c1c32",
-          "write-verification": "e7726aa1b5deb824691f146962a6e521a1de23d0ed664cae3896a414ec865e84",
-          "fail-closed-authority": "a20e3adfab2d4be859460eaa2ae3c8e1ce79071b46732b4a328f1f3bc9a1aebb",
-          "no-direct-main": "8bdf0ab45d543f4be099fc90d05a4e77d1c44c51a891e9ce2d4184cae0a3da1b",
-          "decision-provenance": "427247c70ebb3fec2b469fde85eec0ca46f1637f13a46a965ea83425a9cfb436",
-          "authenticated-account-provenance": "ce70d27e4efe1191441b6f159d5a626a4dcb3c4619154dc50b3914b16e04f7a5",
-          "five-whys-shared-method": "aa7bfc616d96491a5f595bbc9c7a8b535a9eb5edcf4f7baf82d8bf34d341d40c"
-        },
-        "_roles": {
-          "audit": {
-            "audit-authority-boundary": "aac50205ed3c8ac26ddfd1cd0e32184ec28bb8db6c9921ba7452ad5fc1a5f8a1",
-            "audit-exact-baseline": "3a64235b443a09c07250c43499e23c13bcc7404331ba402844a17fa7b3ed5e18",
-            "audit-asana-disposition": "f00baca370ae243b2275c6c23315ab196b076fed960057af039abee3f8c2ede0",
-            "audit-specialist-context": "1f18706d0812aac531f41e41d5fdd3dcfdd3cf6398d6c79d16e4cc579cc47354"
-          },
-          "coordinator": {
-            "coordinator-live-scan": "0a5e865e772eaffcceed0d5c7ca49918395cd55d97b33e9364785ed49e636e7e",
-            "coordinator-no-implementation-integration": "5131e28f10a1b08733234c64aee75e3fd34682c70cdd8132ca400455bda605da",
-            "repository-friction-capture": "67b82f85516f8a4de4012913248af3f20f44df0dd48b597e9b89286f2deafb08",
-            "durable-review-state": "b0aa4cd94b5a641f2b9628c589d3694b3922e0b119e233ebcfa2b3d014006777",
-            "coordinator-check-everything": "0be2ae58fa92d66a043a9144af16233ebbf816812860d041702dd8777be7d389"
-          },
-          "development-workflow": {
-            "development-workflow-boundary": "409ac6ef090a3ddfa2ab8bf20b77df2ea8a264ddcfdfe16ed846524d391eff07",
-            "development-workflow-live-lane": "807c5f28f0d14a015372d04ffcd4ec54f54a73bb84399139880004807fd50f4f",
-            "development-workflow-context-preload": "f3ea09bf155003a1d28ff79aa8777e8f27808131217693cd742aa747f9c748fb",
-            "repository-friction-capture": "57af49ee04e866066f6257835978173f31832f02f011d116bcd99e8fc7cae223",
-            "durable-review-state": "b0aa4cd94b5a641f2b9628c589d3694b3922e0b119e233ebcfa2b3d014006777",
-            "development-workflow-friction-triage": "2b299ff65e651dc63c935cf1cf073db3617d71fc319d079c2d97727326348587",
-            "development-workflow-concurrency-preflight": "2cd8c619f462c76ee0bb83bf6abc96585e184862b3724183e221e9891348d6c5"
-          },
-          "implementation": {
-            "implementation-durable-git": "f4bcfbf0cbd69b45c532974323f0e0d864d36442ca0fe76a5e3f9e13686ff7e4",
-            "publication-materializer-path": "c7f30811efe43064e5a6ed7ac5f47ec9b2193e1524579e350c1f5c124a811ead",
-            "implementation-no-self-review-integration": "63cb01f253e328eb323d029f8be7a12fa176fe9c9b9dfcb067b5696cd8bc4f6b",
-            "repository-friction-capture": "57af49ee04e866066f6257835978173f31832f02f011d116bcd99e8fc7cae223",
-            "mutation-broker-admission": "c4c81764e6473fd1510a841b1b4ab5969119edc63b720f0f90f98539e7ab785c",
-            "action-first-human-output": "57da887ec4b204a3fd8f365016291d924cfde2c1cbaacb570bca3dc5b357c25a",
-            "implementation-remote-first-local-boundary": "cd2f3011e11096479b91638dc1b5fe006c12c4e16ed115eea1e1baf7b784190e",
-            "implementation-host-aware-fix-routing": "1ef6e09f34dfe10e8fd4f842bc4d1027450caae5711def5e13dfd22970ad0f50",
-            "scope-amplification-checkpoint": "eb13bdd763fedfa38d5d2badb162a9aae772752d020e270321e758dc872172a5",
-            "implementation-ci-failure-ownership": "d0c775ea0615eaebca2afbe9c545c5b50b8fecc34cafdb5fb675ae291ae2f557"
-          },
-          "integration": {
-            "integration-reviewed-head": "9768f9e6f7e7f636d882c1aa084b3cd652f1547c45c65b191f160608e1014e29",
-            "integration-mechanical-only": "ba200e1786c1d6c0c3502de28106148b3c569f8ba5933d9932025e79c4ea217c",
-            "repository-friction-capture": "57af49ee04e866066f6257835978173f31832f02f011d116bcd99e8fc7cae223",
-            "mutation-broker-admission": "9c5b08f829ced6588fd10534406e8b63585a054a2e6ce1cb4be43433da3ba845",
-            "integration-post-merge-writeback": "a4318da9a59f9cff046e7d6921b9eb72c5b113ce2844596e40ba3ae46706eb14",
-            "integration-standing-policy-readback": "66c32039154e99f000e5fc64081b7219bb9179a970a583fac4fc25c03921d9e3",
-            "action-first-human-output": "ac108373ee7a2f6e3790359a45714bd8313e22b46a21bc2997fff851186ce7df",
-            "integration-phase-separated-gates": "ba62208087f5a24452c6748443de9a4d651ef58ca0b332076d0a99cbe04d06fb",
-            "integration-local-work-classifier": "23e6efd90ccc99d4999b065803fe1be209bea9c066f61b3f825161f78d13086e"
-          },
-          "postgresql-dark-launch": {
-            "postgresql-live-lane": "ec8d50a7c189d7409d0c88e6326549a299ad59fd9e4363fc340a13b092236995",
-            "postgresql-domain-boundary": "d4f75c442e90a93317aea2d623c74c241b7a1dd1ec1401dadef612fcb8b23433",
-            "repository-friction-capture": "57af49ee04e866066f6257835978173f31832f02f011d116bcd99e8fc7cae223"
-          },
-          "review": {
-            "review-exact-head": "7a148644e6376a9b39ddd0d19ec448f6b880f0dc35372d507fa0276d9657e309",
-            "review-formal-comment": "8dbf6ee167c026d9187336f1f51d3a8ea22ea2a66e36477686693cf66e5b72bb",
-            "review-no-fix": "79c3d749ed5450e948a5251ed9d6738237a05a1236fa4c77fdfba4de076b0404",
-            "review-repository-context": "14bf874b84158ee54e952124d1ae302df3dc0c37cc84a8e1005d3bde2a97bfc6",
-            "review-action-handoff": "3e5dd105abb2c5f7815c5667f5f4091a1a211955675fc276d4b8b9321f271de2",
-            "review-integration-boundary": "d33b76d9d70112444f98dd1da4864dece076528670c1ccde170552e500747954",
-            "repository-friction-capture": "57af49ee04e866066f6257835978173f31832f02f011d116bcd99e8fc7cae223",
-            "review-phase-separated-gates": "3a5237d7381af1817b42d2324b98202cbf985f2efa1d2626e27133704f1b3a6b",
-            "review-host-aware-independence-routing": "25434e1e18382cb420336c9c7bb90844a032383ad54fec3ff2e9c18c7f2c87dd",
-            "scope-amplification-checkpoint": "0bf2dc48aa8eb2c41482db12cc6a2fe3901e93257f8648098deb830b04682b6e"
-          },
-          "workflow": {
-            "workflow-live-lane": "a2df0dace4dea74e09b3b75b8d73bbf1b18d0a41d4c5cebfd32245821a96d6f0",
-            "workflow-domain-boundary": "4c8ac1be546820eada644836a7b3cf2a9cc6df1130a18c6a93ce9b566482e2b8",
-            "repository-friction-capture": "57af49ee04e866066f6257835978173f31832f02f011d116bcd99e8fc7cae223"
-          }
-        }
-      },
-      "from_renderer_fingerprint": "5aad535f595e81393752c68b37cb3f5c066a3be386167cb07f16d3495e47eed0",
       "changes": [
         {
+          "action_boundaries": [
+            "*"
+          ],
+          "impact": "compatible",
+          "roles": [
+            "*"
+          ],
           "rule_id": "authenticated-account-provenance",
-          "roles": [
+          "surface": "authority"
+        },
+        {
+          "action_boundaries": [
             "*"
           ],
           "impact": "compatible",
-          "surface": "authority",
-          "action_boundaries": [
+          "roles": [
             "*"
-          ]
-        },
-        {
+          ],
           "rule_id": "canonical-version-gate",
-          "roles": [
-            "*"
-          ],
-          "impact": "compatible",
-          "surface": "safety",
-          "action_boundaries": [
-            "*"
-          ]
+          "surface": "safety"
         },
         {
-          "rule_id": "design-principles-bootstrap",
-          "roles": [
+          "action_boundaries": [
             "*"
           ],
           "impact": "additive",
-          "surface": "authority",
-          "action_boundaries": [
+          "roles": [
             "*"
-          ]
+          ],
+          "rule_id": "design-principles-bootstrap",
+          "surface": "authority"
         },
         {
+          "action_boundaries": [
+            "*"
+          ],
+          "impact": "compatible",
+          "roles": [
+            "*"
+          ],
           "rule_id": "live-authority",
-          "roles": [
+          "surface": "authority"
+        },
+        {
+          "action_boundaries": [
             "*"
           ],
           "impact": "compatible",
-          "surface": "authority",
-          "action_boundaries": [
+          "roles": [
             "*"
-          ]
-        },
-        {
+          ],
           "rule_id": "project-repository-routing",
-          "roles": [
-            "*"
-          ],
-          "impact": "compatible",
-          "surface": "authority",
-          "action_boundaries": [
-            "*"
-          ]
+          "surface": "authority"
         },
         {
-          "rule_id": "action-first-human-output",
+          "action_boundaries": [
+            "status",
+            "handoff"
+          ],
+          "impact": "compatible",
           "roles": [
             "implementation",
             "integration"
           ],
-          "impact": "compatible",
-          "surface": "presentation",
-          "action_boundaries": [
-            "status",
-            "handoff"
-          ]
+          "rule_id": "action-first-human-output",
+          "surface": "presentation"
         },
         {
+          "action_boundaries": [
+            "role-critical-write"
+          ],
+          "impact": "compatible",
+          "roles": [
+            "development-workflow"
+          ],
           "rule_id": "development-workflow-boundary",
+          "surface": "authority"
+        },
+        {
+          "action_boundaries": [
+            "role-critical-write"
+          ],
+          "impact": "compatible",
           "roles": [
             "development-workflow"
           ],
-          "impact": "compatible",
-          "surface": "authority",
-          "action_boundaries": [
-            "role-critical-write"
-          ]
-        },
-        {
           "rule_id": "development-workflow-concurrency-preflight",
-          "roles": [
-            "development-workflow"
-          ],
-          "impact": "compatible",
-          "surface": "safety",
-          "action_boundaries": [
-            "role-critical-write"
-          ]
+          "surface": "safety"
         },
         {
-          "rule_id": "development-workflow-context-preload",
-          "roles": [
-            "development-workflow"
-          ],
-          "impact": "compatible",
-          "surface": "safety",
           "action_boundaries": [
             "role-critical-write",
             "handoff"
-          ]
-        },
-        {
-          "rule_id": "development-workflow-friction-triage",
+          ],
+          "impact": "compatible",
           "roles": [
             "development-workflow"
           ],
-          "impact": "compatible",
-          "surface": "lifecycle",
+          "rule_id": "development-workflow-context-preload",
+          "surface": "safety"
+        },
+        {
           "action_boundaries": [
             "status",
             "handoff"
-          ]
-        },
-        {
-          "rule_id": "development-workflow-live-lane",
+          ],
+          "impact": "compatible",
           "roles": [
             "development-workflow"
           ],
-          "impact": "compatible",
-          "surface": "lifecycle",
+          "rule_id": "development-workflow-friction-triage",
+          "surface": "lifecycle"
+        },
+        {
           "action_boundaries": [
             "role-critical-write",
             "status",
             "dispatch",
             "handoff"
-          ]
+          ],
+          "impact": "compatible",
+          "roles": [
+            "development-workflow"
+          ],
+          "rule_id": "development-workflow-live-lane",
+          "surface": "lifecycle"
         },
         {
-          "rule_id": "durable-review-state",
+          "action_boundaries": [
+            "dispatch",
+            "handoff"
+          ],
+          "impact": "compatible",
           "roles": [
             "coordinator",
             "development-workflow"
           ],
-          "impact": "compatible",
-          "surface": "lifecycle",
-          "action_boundaries": [
-            "dispatch",
-            "handoff"
-          ]
+          "rule_id": "durable-review-state",
+          "surface": "lifecycle"
         },
         {
-          "rule_id": "implementation-durable-git",
-          "roles": [
-            "implementation"
-          ],
-          "impact": "compatible",
-          "surface": "lifecycle",
           "action_boundaries": [
             "handoff",
             "role-critical-write"
-          ]
+          ],
+          "impact": "compatible",
+          "roles": [
+            "implementation"
+          ],
+          "rule_id": "implementation-durable-git",
+          "surface": "lifecycle"
         },
         {
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "impact": "compatible",
+          "roles": [
+            "implementation"
+          ],
           "rule_id": "implementation-host-aware-fix-routing",
-          "roles": [
-            "implementation"
-          ],
-          "impact": "compatible",
-          "surface": "routing",
+          "surface": "routing"
+        },
+        {
           "action_boundaries": [
             "role-critical-write",
             "handoff"
-          ]
-        },
-        {
+          ],
+          "impact": "compatible",
+          "roles": [
+            "implementation"
+          ],
           "rule_id": "implementation-remote-first-local-boundary",
-          "roles": [
-            "implementation"
-          ],
-          "impact": "compatible",
-          "surface": "routing",
+          "surface": "routing"
+        },
+        {
           "action_boundaries": [
             "role-critical-write",
             "handoff"
-          ]
-        },
-        {
+          ],
+          "impact": "compatible",
+          "roles": [
+            "implementation"
+          ],
           "rule_id": "mutation-broker-admission",
-          "roles": [
-            "implementation"
-          ],
-          "impact": "compatible",
-          "surface": "lifecycle",
+          "surface": "lifecycle"
+        },
+        {
           "action_boundaries": [
             "role-critical-write",
             "handoff"
-          ]
-        },
-        {
+          ],
+          "impact": "compatible",
+          "roles": [
+            "implementation"
+          ],
           "rule_id": "publication-materializer-path",
-          "roles": [
-            "implementation"
-          ],
-          "impact": "compatible",
-          "surface": "lifecycle",
+          "surface": "lifecycle"
+        },
+        {
           "action_boundaries": [
             "role-critical-write",
             "handoff"
-          ]
-        },
-        {
-          "rule_id": "repository-friction-capture",
+          ],
+          "impact": "compatible",
           "roles": [
             "coordinator",
             "development-workflow",
@@ -3351,41 +3263,326 @@
             "review",
             "workflow"
           ],
-          "impact": "compatible",
-          "surface": "lifecycle",
-          "action_boundaries": [
-            "role-critical-write",
-            "handoff"
-          ]
+          "rule_id": "repository-friction-capture",
+          "surface": "lifecycle"
         },
         {
-          "rule_id": "scope-amplification-checkpoint",
-          "roles": [
-            "implementation",
-            "review"
-          ],
-          "impact": "compatible",
-          "surface": "safety",
           "action_boundaries": [
             "role-critical-write",
             "review-write",
             "handoff"
-          ]
+          ],
+          "impact": "compatible",
+          "roles": [
+            "implementation",
+            "review"
+          ],
+          "rule_id": "scope-amplification-checkpoint",
+          "surface": "safety"
         },
         {
-          "rule_id": "renderer:design-principles-projection",
-          "roles": [
+          "action_boundaries": [
             "*"
           ],
           "impact": "compatible",
-          "surface": "presentation",
+          "roles": [
+            "*"
+          ],
+          "rule_id": "renderer:design-principles-projection",
+          "surface": "presentation"
+        }
+      ],
+      "from_renderer_fingerprint": "5aad535f595e81393752c68b37cb3f5c066a3be386167cb07f16d3495e47eed0",
+      "from_rule_fingerprints": {
+        "_roles": {
+          "audit": {
+            "audit-asana-disposition": "f00baca370ae243b2275c6c23315ab196b076fed960057af039abee3f8c2ede0",
+            "audit-authority-boundary": "aac50205ed3c8ac26ddfd1cd0e32184ec28bb8db6c9921ba7452ad5fc1a5f8a1",
+            "audit-exact-baseline": "3a64235b443a09c07250c43499e23c13bcc7404331ba402844a17fa7b3ed5e18",
+            "audit-specialist-context": "1f18706d0812aac531f41e41d5fdd3dcfdd3cf6398d6c79d16e4cc579cc47354"
+          },
+          "coordinator": {
+            "coordinator-check-everything": "0be2ae58fa92d66a043a9144af16233ebbf816812860d041702dd8777be7d389",
+            "coordinator-live-scan": "0a5e865e772eaffcceed0d5c7ca49918395cd55d97b33e9364785ed49e636e7e",
+            "coordinator-no-implementation-integration": "5131e28f10a1b08733234c64aee75e3fd34682c70cdd8132ca400455bda605da",
+            "durable-review-state": "b0aa4cd94b5a641f2b9628c589d3694b3922e0b119e233ebcfa2b3d014006777",
+            "repository-friction-capture": "67b82f85516f8a4de4012913248af3f20f44df0dd48b597e9b89286f2deafb08"
+          },
+          "development-workflow": {
+            "development-workflow-boundary": "409ac6ef090a3ddfa2ab8bf20b77df2ea8a264ddcfdfe16ed846524d391eff07",
+            "development-workflow-concurrency-preflight": "2cd8c619f462c76ee0bb83bf6abc96585e184862b3724183e221e9891348d6c5",
+            "development-workflow-context-preload": "f3ea09bf155003a1d28ff79aa8777e8f27808131217693cd742aa747f9c748fb",
+            "development-workflow-friction-triage": "2b299ff65e651dc63c935cf1cf073db3617d71fc319d079c2d97727326348587",
+            "development-workflow-live-lane": "807c5f28f0d14a015372d04ffcd4ec54f54a73bb84399139880004807fd50f4f",
+            "durable-review-state": "b0aa4cd94b5a641f2b9628c589d3694b3922e0b119e233ebcfa2b3d014006777",
+            "repository-friction-capture": "57af49ee04e866066f6257835978173f31832f02f011d116bcd99e8fc7cae223"
+          },
+          "implementation": {
+            "action-first-human-output": "57da887ec4b204a3fd8f365016291d924cfde2c1cbaacb570bca3dc5b357c25a",
+            "implementation-ci-failure-ownership": "d0c775ea0615eaebca2afbe9c545c5b50b8fecc34cafdb5fb675ae291ae2f557",
+            "implementation-durable-git": "f4bcfbf0cbd69b45c532974323f0e0d864d36442ca0fe76a5e3f9e13686ff7e4",
+            "implementation-host-aware-fix-routing": "1ef6e09f34dfe10e8fd4f842bc4d1027450caae5711def5e13dfd22970ad0f50",
+            "implementation-no-self-review-integration": "63cb01f253e328eb323d029f8be7a12fa176fe9c9b9dfcb067b5696cd8bc4f6b",
+            "implementation-remote-first-local-boundary": "cd2f3011e11096479b91638dc1b5fe006c12c4e16ed115eea1e1baf7b784190e",
+            "mutation-broker-admission": "c4c81764e6473fd1510a841b1b4ab5969119edc63b720f0f90f98539e7ab785c",
+            "publication-materializer-path": "c7f30811efe43064e5a6ed7ac5f47ec9b2193e1524579e350c1f5c124a811ead",
+            "repository-friction-capture": "57af49ee04e866066f6257835978173f31832f02f011d116bcd99e8fc7cae223",
+            "scope-amplification-checkpoint": "eb13bdd763fedfa38d5d2badb162a9aae772752d020e270321e758dc872172a5"
+          },
+          "integration": {
+            "action-first-human-output": "ac108373ee7a2f6e3790359a45714bd8313e22b46a21bc2997fff851186ce7df",
+            "integration-local-work-classifier": "23e6efd90ccc99d4999b065803fe1be209bea9c066f61b3f825161f78d13086e",
+            "integration-mechanical-only": "ba200e1786c1d6c0c3502de28106148b3c569f8ba5933d9932025e79c4ea217c",
+            "integration-phase-separated-gates": "ba62208087f5a24452c6748443de9a4d651ef58ca0b332076d0a99cbe04d06fb",
+            "integration-post-merge-writeback": "a4318da9a59f9cff046e7d6921b9eb72c5b113ce2844596e40ba3ae46706eb14",
+            "integration-reviewed-head": "9768f9e6f7e7f636d882c1aa084b3cd652f1547c45c65b191f160608e1014e29",
+            "integration-standing-policy-readback": "66c32039154e99f000e5fc64081b7219bb9179a970a583fac4fc25c03921d9e3",
+            "mutation-broker-admission": "9c5b08f829ced6588fd10534406e8b63585a054a2e6ce1cb4be43433da3ba845",
+            "repository-friction-capture": "57af49ee04e866066f6257835978173f31832f02f011d116bcd99e8fc7cae223"
+          },
+          "postgresql-dark-launch": {
+            "postgresql-domain-boundary": "d4f75c442e90a93317aea2d623c74c241b7a1dd1ec1401dadef612fcb8b23433",
+            "postgresql-live-lane": "ec8d50a7c189d7409d0c88e6326549a299ad59fd9e4363fc340a13b092236995",
+            "repository-friction-capture": "57af49ee04e866066f6257835978173f31832f02f011d116bcd99e8fc7cae223"
+          },
+          "review": {
+            "repository-friction-capture": "57af49ee04e866066f6257835978173f31832f02f011d116bcd99e8fc7cae223",
+            "review-action-handoff": "3e5dd105abb2c5f7815c5667f5f4091a1a211955675fc276d4b8b9321f271de2",
+            "review-exact-head": "7a148644e6376a9b39ddd0d19ec448f6b880f0dc35372d507fa0276d9657e309",
+            "review-formal-comment": "8dbf6ee167c026d9187336f1f51d3a8ea22ea2a66e36477686693cf66e5b72bb",
+            "review-host-aware-independence-routing": "25434e1e18382cb420336c9c7bb90844a032383ad54fec3ff2e9c18c7f2c87dd",
+            "review-integration-boundary": "d33b76d9d70112444f98dd1da4864dece076528670c1ccde170552e500747954",
+            "review-no-fix": "79c3d749ed5450e948a5251ed9d6738237a05a1236fa4c77fdfba4de076b0404",
+            "review-phase-separated-gates": "3a5237d7381af1817b42d2324b98202cbf985f2efa1d2626e27133704f1b3a6b",
+            "review-repository-context": "14bf874b84158ee54e952124d1ae302df3dc0c37cc84a8e1005d3bde2a97bfc6",
+            "scope-amplification-checkpoint": "0bf2dc48aa8eb2c41482db12cc6a2fe3901e93257f8648098deb830b04682b6e"
+          },
+          "workflow": {
+            "repository-friction-capture": "57af49ee04e866066f6257835978173f31832f02f011d116bcd99e8fc7cae223",
+            "workflow-domain-boundary": "4c8ac1be546820eada644836a7b3cf2a9cc6df1130a18c6a93ce9b566482e2b8",
+            "workflow-live-lane": "a2df0dace4dea74e09b3b75b8d73bbf1b18d0a41d4c5cebfd32245821a96d6f0"
+          }
+        },
+        "_shared": {
+          "authenticated-account-provenance": "ce70d27e4efe1191441b6f159d5a626a4dcb3c4619154dc50b3914b16e04f7a5",
+          "authority-separation": "0f8072fef1258740916ae05dc2bd74a40464c67a36833db4225ec76b14ebc848",
+          "canonical-version-gate": "6450b3fa3f23e97aaa884c31a85f67d54907b64708877d3671fb013de4c273d0",
+          "decision-provenance": "427247c70ebb3fec2b469fde85eec0ca46f1637f13a46a965ea83425a9cfb436",
+          "fail-closed-authority": "a20e3adfab2d4be859460eaa2ae3c8e1ce79071b46732b4a328f1f3bc9a1aebb",
+          "fallback-surface": "c12f6e72cb8fc7dec335cc06f6cc36524204b17b9e3cf29493f77cbcfc5c1c32",
+          "five-whys-shared-method": "aa7bfc616d96491a5f595bbc9c7a8b535a9eb5edcf4f7baf82d8bf34d341d40c",
+          "live-authority": "3e00eb955878fddd4931d90bcf715a31629681f1a99b13edbdf6aa45454a13a2",
+          "no-direct-main": "8bdf0ab45d543f4be099fc90d05a4e77d1c44c51a891e9ce2d4184cae0a3da1b",
+          "project-repository-routing": "2e0f1eba1b7872c4659ac037168269f4b00e643fca7ae28f8b83df53b4ae5b57",
+          "repository-context-admission": "45190e0b9e9ffe3f4f8f33141f7cdb4e16572c90eb5453f2d2a9e11768734e3d",
+          "repository-lifecycle": "98162a5b4e2eafccc613779cfb54b30884edfd1e8902c7f0755c61431afc38ed",
+          "role-contract-authority": "8cce5fa54df08a2f2ee53bf378ff9b40a92d1d57698c4213127a64b400c1528c",
+          "task-dismissal-history": "67920547cc14e4ba50881123d7356ad0e64a89fcb45799ee4f1da7bbc116c873",
+          "write-verification": "e7726aa1b5deb824691f146962a6e521a1de23d0ed664cae3896a414ec865e84"
+        }
+      },
+      "from_version": "dish-chatgpt-projects-v2-9bf227f53f0a",
+      "to_version": "dish-chatgpt-projects-v2-5d24af30193a"
+    },
+    {
+      "changes": [
+        {
+          "action_boundaries": [
+            "diagnosis-to-new-work",
+            "external-defect",
+            "implementation-admission"
+          ],
+          "impact": "additive",
+          "roles": [
+            "coordinator",
+            "development-workflow",
+            "implementation"
+          ],
+          "rule_id": "external-defect-admission",
+          "surface": "lifecycle"
+        },
+        {
+          "action_boundaries": [
+            "startup",
+            "re-grounding",
+            "current-policy"
+          ],
+          "impact": "additive",
+          "roles": [
+            "audit",
+            "coordinator",
+            "development-workflow",
+            "implementation",
+            "integration",
+            "postgresql-dark-launch",
+            "review",
+            "workflow"
+          ],
+          "rule_id": "project-current-git-authority",
+          "surface": "authority"
+        },
+        {
+          "action_boundaries": [
+            "design",
+            "implementation-routing",
+            "scope-expansion"
+          ],
+          "impact": "additive",
+          "roles": [
+            "coordinator",
+            "development-workflow"
+          ],
+          "rule_id": "scope-amplification-checkpoint",
+          "surface": "lifecycle"
+        },
+        {
+          "action_boundaries": [
+            "status",
+            "dispatch",
+            "execution-liveness",
+            "pr-absence"
+          ],
+          "impact": "additive",
+          "roles": [
+            "audit",
+            "coordinator",
+            "development-workflow",
+            "implementation",
+            "integration",
+            "postgresql-dark-launch",
+            "review",
+            "workflow"
+          ],
+          "rule_id": "truthful-dispatch-liveness-language",
+          "surface": "presentation"
+        },
+        {
+          "action_boundaries": [
+            "worker-dispatch",
+            "phase-transition",
+            "worker-cutover"
+          ],
+          "impact": "additive",
+          "roles": [
+            "audit",
+            "coordinator",
+            "development-workflow",
+            "implementation",
+            "integration",
+            "postgresql-dark-launch",
+            "review",
+            "workflow"
+          ],
+          "rule_id": "worker-host-role-boundary",
+          "surface": "authority"
+        },
+        {
           "action_boundaries": [
             "*"
-          ]
+          ],
+          "impact": "additive",
+          "roles": [
+            "*"
+          ],
+          "rule_id": "renderer:progressive-disclosure-git-first-test-worker-v2",
+          "surface": "presentation"
         }
-      ]
+      ],
+      "from_renderer_fingerprint": "541ccf437685f4abcd02070892f399109da57e8bb5e89fc582af1368332bb216",
+      "from_rule_fingerprints": {
+        "_roles": {
+          "audit": {
+            "audit-asana-disposition": "f00baca370ae243b2275c6c23315ab196b076fed960057af039abee3f8c2ede0",
+            "audit-authority-boundary": "aac50205ed3c8ac26ddfd1cd0e32184ec28bb8db6c9921ba7452ad5fc1a5f8a1",
+            "audit-exact-baseline": "3a64235b443a09c07250c43499e23c13bcc7404331ba402844a17fa7b3ed5e18",
+            "audit-specialist-context": "1f18706d0812aac531f41e41d5fdd3dcfdd3cf6398d6c79d16e4cc579cc47354"
+          },
+          "coordinator": {
+            "coordinator-check-everything": "0be2ae58fa92d66a043a9144af16233ebbf816812860d041702dd8777be7d389",
+            "coordinator-live-scan": "0a5e865e772eaffcceed0d5c7ca49918395cd55d97b33e9364785ed49e636e7e",
+            "coordinator-no-implementation-integration": "5131e28f10a1b08733234c64aee75e3fd34682c70cdd8132ca400455bda605da",
+            "durable-review-state": "939683b2884b9cc2697a71de346b94e4501bb4f50a36ec68cb1dcc0a72c41d96",
+            "repository-friction-capture": "49351cc6889c6733ac07923ae7830468480998c5e3120b0e23f0305e396c78ad"
+          },
+          "development-workflow": {
+            "development-workflow-boundary": "232e6eadfa939f98b550896a253561ec9632d7cd8ecad08af55092b9e07b4f04",
+            "development-workflow-concurrency-preflight": "a16a618801ed70b4311fd9159cf661ede090ae0af33a2ff491353ccb11f09fb1",
+            "development-workflow-context-preload": "ef26377f2929c248d15b292be9627c0425795832b61d3d4cb1968b33873b429b",
+            "development-workflow-friction-triage": "e4408375fd5183c63055e65c854df65776aa7a6d9ba70345e64600a4298261c4",
+            "development-workflow-live-lane": "84dc5c5e625e013e8ab316a0c83995c6f9eab7b2f1399def55462211491a4e34",
+            "durable-review-state": "939683b2884b9cc2697a71de346b94e4501bb4f50a36ec68cb1dcc0a72c41d96",
+            "repository-friction-capture": "49351cc6889c6733ac07923ae7830468480998c5e3120b0e23f0305e396c78ad"
+          },
+          "implementation": {
+            "action-first-human-output": "852f6da60a7e7b535f1fd270b786224d11276dd4616a534af55cad92ca110c76",
+            "implementation-ci-failure-ownership": "d0c775ea0615eaebca2afbe9c545c5b50b8fecc34cafdb5fb675ae291ae2f557",
+            "implementation-durable-git": "8b413f057df279fb34de4b6defaaed71200bb863eec9dc14df8aeb53f7b96b07",
+            "implementation-host-aware-fix-routing": "b94f83bed1e23be52320ab4c846a5d8f071506454d63f177ad5f1329547270c9",
+            "implementation-no-self-review-integration": "63cb01f253e328eb323d029f8be7a12fa176fe9c9b9dfcb067b5696cd8bc4f6b",
+            "implementation-remote-first-local-boundary": "b23a8c855cf3b5c3177709d0b0af0e46c0cdfde45463bba5e2fd6246e3bce787",
+            "mutation-broker-admission": "c8f1a54e5fd72020d0475036b0ddfb81f4b68cb951cea284787f5e0d4e8ebc35",
+            "publication-materializer-path": "31594a06d01c8ef3a41372d52871cf40e020d6c9bd10ecfab7b1acea07056104",
+            "repository-friction-capture": "49351cc6889c6733ac07923ae7830468480998c5e3120b0e23f0305e396c78ad",
+            "scope-amplification-checkpoint": "f84b741c4f1e46353bfe34b88e987ce9866b239251de66d46a9d58d2befba0f4"
+          },
+          "integration": {
+            "action-first-human-output": "852f6da60a7e7b535f1fd270b786224d11276dd4616a534af55cad92ca110c76",
+            "integration-local-work-classifier": "23e6efd90ccc99d4999b065803fe1be209bea9c066f61b3f825161f78d13086e",
+            "integration-mechanical-only": "ba200e1786c1d6c0c3502de28106148b3c569f8ba5933d9932025e79c4ea217c",
+            "integration-phase-separated-gates": "ba62208087f5a24452c6748443de9a4d651ef58ca0b332076d0a99cbe04d06fb",
+            "integration-post-merge-writeback": "a4318da9a59f9cff046e7d6921b9eb72c5b113ce2844596e40ba3ae46706eb14",
+            "integration-reviewed-head": "9768f9e6f7e7f636d882c1aa084b3cd652f1547c45c65b191f160608e1014e29",
+            "integration-standing-policy-readback": "66c32039154e99f000e5fc64081b7219bb9179a970a583fac4fc25c03921d9e3",
+            "mutation-broker-admission": "9c5b08f829ced6588fd10534406e8b63585a054a2e6ce1cb4be43433da3ba845",
+            "repository-friction-capture": "49351cc6889c6733ac07923ae7830468480998c5e3120b0e23f0305e396c78ad"
+          },
+          "postgresql-dark-launch": {
+            "postgresql-domain-boundary": "d4f75c442e90a93317aea2d623c74c241b7a1dd1ec1401dadef612fcb8b23433",
+            "postgresql-live-lane": "ec8d50a7c189d7409d0c88e6326549a299ad59fd9e4363fc340a13b092236995",
+            "repository-friction-capture": "49351cc6889c6733ac07923ae7830468480998c5e3120b0e23f0305e396c78ad"
+          },
+          "review": {
+            "repository-friction-capture": "49351cc6889c6733ac07923ae7830468480998c5e3120b0e23f0305e396c78ad",
+            "review-action-handoff": "3e5dd105abb2c5f7815c5667f5f4091a1a211955675fc276d4b8b9321f271de2",
+            "review-exact-head": "7a148644e6376a9b39ddd0d19ec448f6b880f0dc35372d507fa0276d9657e309",
+            "review-formal-comment": "8dbf6ee167c026d9187336f1f51d3a8ea22ea2a66e36477686693cf66e5b72bb",
+            "review-host-aware-independence-routing": "25434e1e18382cb420336c9c7bb90844a032383ad54fec3ff2e9c18c7f2c87dd",
+            "review-integration-boundary": "d33b76d9d70112444f98dd1da4864dece076528670c1ccde170552e500747954",
+            "review-no-fix": "79c3d749ed5450e948a5251ed9d6738237a05a1236fa4c77fdfba4de076b0404",
+            "review-phase-separated-gates": "3a5237d7381af1817b42d2324b98202cbf985f2efa1d2626e27133704f1b3a6b",
+            "review-repository-context": "14bf874b84158ee54e952124d1ae302df3dc0c37cc84a8e1005d3bde2a97bfc6",
+            "scope-amplification-checkpoint": "f84b741c4f1e46353bfe34b88e987ce9866b239251de66d46a9d58d2befba0f4"
+          },
+          "workflow": {
+            "repository-friction-capture": "49351cc6889c6733ac07923ae7830468480998c5e3120b0e23f0305e396c78ad",
+            "workflow-domain-boundary": "4c8ac1be546820eada644836a7b3cf2a9cc6df1130a18c6a93ce9b566482e2b8",
+            "workflow-live-lane": "a2df0dace4dea74e09b3b75b8d73bbf1b18d0a41d4c5cebfd32245821a96d6f0"
+          }
+        },
+        "_shared": {
+          "authenticated-account-provenance": "6008594629f990ebd572bcb02acc9199568fd356f370eaea6a620a18400c52c6",
+          "authority-separation": "0f8072fef1258740916ae05dc2bd74a40464c67a36833db4225ec76b14ebc848",
+          "canonical-version-gate": "e437de6bfdc1ee9add4801c57c9a210a03a9bc9769fdf58b0cd41a0c6e815c7e",
+          "decision-provenance": "427247c70ebb3fec2b469fde85eec0ca46f1637f13a46a965ea83425a9cfb436",
+          "design-principles-bootstrap": "dd2d6ce436f450d966ce00d7411ac5cca4e79e539844e29a7bb344df9f9012b7",
+          "fail-closed-authority": "a20e3adfab2d4be859460eaa2ae3c8e1ce79071b46732b4a328f1f3bc9a1aebb",
+          "fallback-surface": "c12f6e72cb8fc7dec335cc06f6cc36524204b17b9e3cf29493f77cbcfc5c1c32",
+          "five-whys-shared-method": "aa7bfc616d96491a5f595bbc9c7a8b535a9eb5edcf4f7baf82d8bf34d341d40c",
+          "live-authority": "7137afb79829e9985e9e6dd400270e1f01a8963324b32237bd745a53a965810b",
+          "no-direct-main": "8bdf0ab45d543f4be099fc90d05a4e77d1c44c51a891e9ce2d4184cae0a3da1b",
+          "project-repository-routing": "8c2fab1732e702885e87353cad9a02f1768a4a7fb71b095ac7bc98e43906c341",
+          "repository-context-admission": "45190e0b9e9ffe3f4f8f33141f7cdb4e16572c90eb5453f2d2a9e11768734e3d",
+          "repository-lifecycle": "98162a5b4e2eafccc613779cfb54b30884edfd1e8902c7f0755c61431afc38ed",
+          "role-contract-authority": "8cce5fa54df08a2f2ee53bf378ff9b40a92d1d57698c4213127a64b400c1528c",
+          "task-dismissal-history": "67920547cc14e4ba50881123d7356ad0e64a89fcb45799ee4f1da7bbc116c873",
+          "write-verification": "e7726aa1b5deb824691f146962a6e521a1de23d0ed664cae3896a414ec865e84"
+        }
+      },
+      "from_version": "dish-chatgpt-projects-v2-5d24af30193a",
+      "to_version": "dish-chatgpt-projects-v2-bfaeef68aed9"
     }
   ],
+  "current_transition_from": "dish-chatgpt-projects-v2-5d24af30193a",
   "generated_role_files": {
     "audit": "audit.md",
     "coordinator": "coordinator.md",
@@ -3396,8 +3593,8 @@
     "review": "review.md",
     "workflow": "workflow.md"
   },
-  "generated_sha256": "44a38b64e1018948d6389ff0549825ea344839b11e191417db76851c35254117",
-  "kernel_identity_sha256": "5d24af30193a8115b08b9f78cf2e688bd53a5711cad310e61d384f7237e4f98a",
+  "generated_sha256": "ee8390e58465a70cf60ab8318514218fe79415dad2f2fc427d6d8220465c389d",
+  "kernel_identity_sha256": "bfaeef68aed925ed821d104a42905ea1a03786336e5ae3f3db382709f5c053b0",
   "legacy_bootstrap_floor": {
     "action_boundaries": [
       "*"
@@ -3423,29 +3620,7 @@
       "*"
     ]
   },
-  "required_version_inventory": {
-    "schema_version": 1,
-    "versions": [
-      "dish-chatgpt-projects-v2-219f34402511",
-      "dish-chatgpt-projects-v2-23365034a0f1",
-      "dish-chatgpt-projects-v2-28dcb04decc8",
-      "dish-chatgpt-projects-v2-39ff3abc502e",
-      "dish-chatgpt-projects-v2-54041bbbc8d8",
-      "dish-chatgpt-projects-v2-5d24af30193a",
-      "dish-chatgpt-projects-v2-694190185f60",
-      "dish-chatgpt-projects-v2-708fb9a9a9bc",
-      "dish-chatgpt-projects-v2-712e3b16aa05",
-      "dish-chatgpt-projects-v2-857d88788c12",
-      "dish-chatgpt-projects-v2-86b8011172ee",
-      "dish-chatgpt-projects-v2-9575ccfd79c8",
-      "dish-chatgpt-projects-v2-9bb70124ca21",
-      "dish-chatgpt-projects-v2-9bf227f53f0a",
-      "dish-chatgpt-projects-v2-d048682742d6",
-      "dish-chatgpt-projects-v2-d96ab5f0588d"
-    ],
-    "retirements": []
-  },
-  "max_kernel_chars": 7999,
+  "max_kernel_chars": 8000,
   "preservation_inventory": {
     "entries": [
       {
@@ -3463,24 +3638,47 @@
         "shared_rule_id": "five-whys-shared-method"
       },
       {
-        "id": "design-principles-bootstrap",
+        "behavior_scenario_ids": [
+          "design-principles-harmless-overlap",
+          "design-principles-no-invented-manual-gate"
+        ],
         "canonical_document": "dish/docs/agents/design-principles.md",
+        "id": "design-principles-bootstrap",
         "index_document": "dish/docs/agents/index.md",
         "index_link": "[`design-principles.md`](design-principles.md)",
         "roles": [
           "*"
         ],
-        "shared_rule_id": "design-principles-bootstrap",
-        "behavior_scenario_ids": [
-          "design-principles-harmless-overlap",
-          "design-principles-no-invented-manual-gate"
-        ]
+        "shared_rule_id": "design-principles-bootstrap"
       }
     ],
     "schema_version": 1
   },
+  "required_version_inventory": {
+    "retirements": [],
+    "schema_version": 1,
+    "versions": [
+      "dish-chatgpt-projects-v2-219f34402511",
+      "dish-chatgpt-projects-v2-23365034a0f1",
+      "dish-chatgpt-projects-v2-28dcb04decc8",
+      "dish-chatgpt-projects-v2-39ff3abc502e",
+      "dish-chatgpt-projects-v2-54041bbbc8d8",
+      "dish-chatgpt-projects-v2-5d24af30193a",
+      "dish-chatgpt-projects-v2-694190185f60",
+      "dish-chatgpt-projects-v2-708fb9a9a9bc",
+      "dish-chatgpt-projects-v2-712e3b16aa05",
+      "dish-chatgpt-projects-v2-857d88788c12",
+      "dish-chatgpt-projects-v2-86b8011172ee",
+      "dish-chatgpt-projects-v2-9575ccfd79c8",
+      "dish-chatgpt-projects-v2-9bb70124ca21",
+      "dish-chatgpt-projects-v2-9bf227f53f0a",
+      "dish-chatgpt-projects-v2-bfaeef68aed9",
+      "dish-chatgpt-projects-v2-d048682742d6",
+      "dish-chatgpt-projects-v2-d96ab5f0588d"
+    ]
+  },
   "schema_version": 2,
   "source_file": "source.json",
-  "source_sha256": "6cde448a53de67fa188c7b85de56d3337187ad99b194239a40e1581539dc590d",
+  "source_sha256": "6fc9d5fc96008c6287c7caea8f5f09e4f123c362616c28b463eead12be7c22f4",
   "version_namespace": "dish-chatgpt-projects-v2"
 }
