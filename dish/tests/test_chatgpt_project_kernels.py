@@ -120,6 +120,18 @@ def test_git_first_startup_and_test_candidate_binding_are_explicit():
  with pytest.raises(kernels.KernelError,match='TEST candidate requires exact'):
   kernels.render_test_candidate(s,'review',candidate_version='x',pr_number=140,candidate_ref='refs/pull/140/head',candidate_head='bad',candidate_manifest_sha256='2'*64,production_version=m['canonical_version'])
 
+def test_stale_installed_kernel_startup_reaches_current_kernel_fetch_without_any_generated_kernel_text():
+ # A stale/very old installed Project's own text predates this fetch instruction and cannot contain it.
+ # Its only guaranteed obligation is reading root CLAUDE.md and the role index. Prove that obligation
+ # alone reaches the current-kernel-fetch directive, independent of any already-rendered kernel text,
+ # so a stale Project is not stranded on its old installed instructions.
+ repo_root=DISH_ROOT.parent
+ claude_md=(repo_root/'CLAUDE.md').read_text()
+ index_md=(repo_root/'dish'/'docs'/'agents'/'index.md').read_text()
+ for text in (claude_md,index_md):
+  assert "fetch this role\'s current generated Project kernel" in text
+  assert 'bootstrap/version witness only' in text
+
 def test_five_whys_preservation_inventory_binds_doc_index_rule_kernels_and_behavior_cases():
  m,s=kernels.load_canonical(); payload=kernels._eval_payload(); preservation=m['preservation_inventory']
  assert kernels.validate_preservation_inventory(s,payload,preservation)==['design-principles-bootstrap','five-whys-shared-method']
