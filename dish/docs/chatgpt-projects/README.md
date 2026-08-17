@@ -46,7 +46,11 @@ If the existing drift-aware kernel can safely load current Git authority and app
 
 Skipped versions are folded transitively. Retained history may contain multiple predecessor generations converging on one later generation; each retained `from_version` still has one deterministic successor, so a Project version actually published on `main` is never discarded merely because a merged candidate carried a different predecessor. Known unrelated role/action changes are ignored before impact parsing, so malformed metadata for a demonstrably unrelated scoped change does not block another action; malformed scope that cannot be safely localized remains an integrity error.
 
-The model is not asked to hash hidden UI instruction text. Repository validation binds the source, rendered instruction set, rule-impact metadata, compatibility configuration, and current transition fingerprints; the live comparison uses the visible canonical version plus the manifest history.
+`manifest.required_version_inventory` is the repository-owned completeness inventory for drift-aware Project versions legitimately published on first-parent `main`, plus the current candidate version. `check` requires every active inventory entry to be represented and to have one deterministic path to current canonical. A version can leave the active set only through an exact-version retirement record with durable explicit human authority; `historical_correction` can repair classification metadata but cannot retire or redirect topology. The inventory is deliberately independent of the retained graph, so deleting both a historical edge and its inventory entry is not a valid reconciliation.
+
+Candidate publication must also pass authoritative-base admission. `admit` compares the candidate inventory with the current-base manifest and rejects any unretired required version lost from the candidate, including complete deletion or a stale strict subset. For ordinary source changes, `reconcile` is the supported manifest-generation path: it computes canonical identity and transition fingerprints with the same generator functions used by `check`, carries the authoritative inventory forward, and emits deterministic JSON. With a concurrent candidate manifest/source, it preserves authoritative-base history, converges compatible/additive disjoint lineages, and fails closed on ambiguous or incompatible overlapping rule histories. Do not hand-edit fingerprints or reconstruct `change_history` as the normal reconciliation path.
+
+The model is not asked to hash hidden UI instruction text. Repository validation binds the source, rendered instruction set, rule-impact metadata, compatibility configuration, required-version inventory, and current transition fingerprints; the live comparison uses the visible canonical version plus the manifest history.
 
 Commands from the repository root:
 
@@ -54,13 +58,16 @@ Commands from the repository root:
 python3 dish/scripts/chatgpt_project_kernels.py render
 python3 dish/scripts/chatgpt_project_kernels.py render --check
 python3 dish/scripts/chatgpt_project_kernels.py check
+python3 dish/scripts/chatgpt_project_kernels.py reconcile --base-manifest <current-main-manifest> --base-source <current-main-source> --source <candidate-source> --output <candidate-manifest>
+python3 dish/scripts/chatgpt_project_kernels.py reconcile --base-manifest <current-main-manifest> --base-source <current-main-source> --candidate-manifest <concurrent-manifest> --candidate-source <concurrent-source> --source <resolved-source> --output <reconciled-manifest>
+python3 dish/scripts/chatgpt_project_kernels.py admit --base-manifest <current-main-manifest> --base-source <current-main-source> --candidate-manifest <candidate-manifest> --candidate-source <candidate-source>
 python3 dish/scripts/chatgpt_project_kernels.py prepare-eval --output /tmp/chatgpt-project-eval-cases.json
 python3 dish/scripts/chatgpt_project_kernels.py eval --results /tmp/chatgpt-project-eval-results.json
 python3 dish/scripts/chatgpt_project_kernels.py eval --runner-command '<fresh-chat-runner>' --save-results /tmp/chatgpt-project-eval-results.json
 python3 dish/scripts/chatgpt_project_kernels.py version --project-version <declared-version> --role <role-key> --action-boundary <boundary>
 ```
 
-`check` validates source/rendered-version binding, current role topology, generated files, character budget, semantic-history configuration, current-edge classifications, proof/correction metadata, and the complete approved eval contract set. It does **not** report behavioral adherence. `prepare-eval` emits oracle-free cases containing the exact current Project kernel and prompt. `eval` judges structured results from one newly created ChatGPT Project chat per case, either from a recorded result bundle or from an operator-supplied runner command invoked separately for every case.
+`check` validates source/rendered-version binding, current role topology, generated files, character budget, semantic-history configuration, required-version reachability, current-edge classifications, proof/correction/retirement metadata, and the complete approved eval contract set. It does **not** report behavioral adherence. `prepare-eval` emits oracle-free cases containing the exact current Project kernel and prompt. `eval` judges structured results from one newly created ChatGPT Project chat per case, either from a recorded result bundle or from an operator-supplied runner command invoked separately for every case.
 
 The behavior-v2 runner protocol separates the assistant's declared outcome/actions from **runner-observed evidence**. For scenarios that require external side effects, `evals.json` contains a hidden observation oracle. The runner must capture actual tool-layer events such as capability discovery, a durable GitHub write, and authoritative readback, including exact PR/head/write identity where required. Assistant-authored text such as “I submitted the review” is never observation evidence. The evaluator rejects missing, wrong-head, wrong-transport, mismatched-write, or out-of-order evidence even when the assistant declares every expected action label.
 
