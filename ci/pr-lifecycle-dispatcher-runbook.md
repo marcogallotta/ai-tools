@@ -246,3 +246,11 @@ At most one unclosed current grant generation exists per PR. A stale grant block
 ## Human notifications
 
 Routine queue movement is silent. Human messages are limited to a real local action/decision or useful terminal result. Every message shown directly to Marco states his next action first, then why, task state, consequential PR/head Review/gate state, and the next owner/system. Review PASS/BLOCK is explicit. Automatic continuation says Marco has no action and never asks him to relay a transcript. Local residuals are classified as `TESTS ONLY`, `IMPLEMENTATION / PUBLICATION`, or `LOCAL SYSTEM ACCESS`; elapsed runtime is reported separately and never changes the work type. The dispatcher records an exact-head `dish-human-notice:v1` idempotency marker before emitting a human-action notice, so repeated polls do not repeat the same notice. For local work, the complete `dish-local-handoff:v1` comment is written and re-read before that notice marker or human message. Detailed handoff remains on the PR.
+
+## Worker execution profile
+
+Worker is one execution host/profile, never a union semantic role. Every trigger binds one exact standing role, one phase, and exact durable task/PR/head/design context. The Worker loads that role contract and cannot self-select or compose another specialist authority.
+
+Use `DISH_WORKER_API_TRIGGER_ID` for the generalized Workspace Agent path. HTTP `202 Accepted`, including an empty response body, proves trigger admission only; repository-generated idempotency/context identity is the durable correlation. Do not require or fabricate provider run IDs or conversation URLs.
+
+A phase becomes active only after the exact trigger/config/kernel version produces its predetermined durable activation witness and that witness is authoritatively reread. Keep the existing legacy route for that phase until its smoke and first normal durable phase result succeed. Failure falls back per phase, not globally. Parallel executions are allowed on immutable/exact inputs; existing broker/CAS fencing applies only at real shared mutation boundaries. There is no global Worker lock, second scheduler, or queue. Integration landing remains outside Worker authority.

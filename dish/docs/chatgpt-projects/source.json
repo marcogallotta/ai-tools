@@ -1213,6 +1213,21 @@
         "mode": "TRIGGERED_READ",
         "trigger": "execution / dispatch / PR liveness status"
       }
+    },
+    {
+      "id": "worker-host-role-boundary",
+      "text": "Worker is an execution host/profile, not a union role. Each trigger binds one exact standing role + phase + durable context; HTTP 202 is admission only, activation requires a durable exact-version witness/readback, fallback is per phase, and Integration landing remains outside Worker authority.",
+      "impact": "additive",
+      "surface": "authority",
+      "action_boundaries": [
+        "worker-dispatch",
+        "phase-transition",
+        "worker-cutover"
+      ],
+      "delivery": {
+        "mode": "TRIGGERED_READ",
+        "trigger": "Worker dispatch / phase cutover"
+      }
     }
   ],
   "design_principles": {
@@ -1258,6 +1273,9 @@
       ],
       "execution / dispatch / PR liveness status": [
         "dish/docs/agents/operator-provenance.md#Execution-state truth"
+      ],
+      "Worker dispatch / phase cutover": [
+        "ci/pr-lifecycle-dispatcher-runbook.md#Worker execution profile"
       ]
     }
   }
