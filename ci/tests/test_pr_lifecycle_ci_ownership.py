@@ -154,9 +154,7 @@ def test_local_handoff_names_responsible_role_before_notice():
     assert "Role: Integration" in handoff
     assert notices == [
         "Your next action: give PR #31 to a local Integration agent for exact-head certification; full handoff is on the PR "
-        "LOCAL WORK TYPE: TESTS ONLY. LOCAL SCOPE: dish/scripts/dish-pg-native-certification --candidate aaaaa. "
-        "Task 1217443403986570: REVIEW PASSED / LOCAL INTEGRATION CERTIFICATION REQUIRED. "
-        "PR #31 @ aaaaaaaaaaaa: Review accepted this exact candidate. Next owner/system: local tests."
+        "The repository has already recorded the complete handoff."
     ]
     assert result.human_action == "give PR #31 to a local Integration agent for exact-head certification; full handoff is on the PR"
 
@@ -173,9 +171,7 @@ def test_local_implementation_handoff_names_implementation_role():
     assert "Role: Implementation" in handoff
     assert notices == [
         "Your next action: give PR #31 to a local Implementation agent; full handoff is on the PR "
-        "LOCAL WORK TYPE: IMPLEMENTATION / PUBLICATION. LOCAL SCOPE: run local generator. "
-        "Task 1217443403986570: LOCAL IMPLEMENTATION COMPLETION REQUIRED. "
-        "PR #31 @ aaaaaaaaaaaa: Review accepted this exact candidate. Next owner/system: local Implementation/publication."
+        "The repository has already recorded the complete handoff."
     ]
     assert result.human_action == "give PR #31 to a local Implementation agent; full handoff is on the PR"
 
@@ -212,9 +208,7 @@ def test_combined_pending_ci_and_local_certification_write_one_integration_hando
     assert result.gate["diagnosis"] == pr_lifecycle.pr_gate.GateDiagnosis.PENDING.value
     assert notices == [
         "Your next action: give PR #31 to a local Integration agent for exact-head certification; full handoff is on the PR "
-        "LOCAL WORK TYPE: TESTS ONLY. LOCAL SCOPE: dish/scripts/dish-pg-native-certification --candidate aaaaa. "
-        "Task 1217443403986570: REVIEW PASSED / LOCAL INTEGRATION CERTIFICATION REQUIRED. "
-        "PR #31 @ aaaaaaaaaaaa: Review accepted this exact candidate. Next owner/system: local tests."
+        "The repository has already recorded the complete handoff."
     ]
 
 
