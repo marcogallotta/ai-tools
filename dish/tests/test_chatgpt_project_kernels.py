@@ -554,10 +554,19 @@ def _retirement(version):
 def _changed_source(source,role,rule_id,suffix):
  out=copy.deepcopy(source); rule=next(x for x in out['roles'][role]['rules'] if x['id']==rule_id); assert rule['impact'] in {'compatible','additive'}; rule['text']+=suffix; return out
 
+def test_triggered_rule_text_change_does_not_manufacture_project_settings_version():
+ m,s=kernels.load_canonical()
+ target=_changed_source(s,'implementation','implementation-host-aware-fix-routing',' Triggered module-only detail change.')
+ assert kernels.kernel_identity(target)==kernels.kernel_identity(s)
+ assert kernels._semantic_json_hash(target)!=kernels._semantic_json_hash(s)
+ with pytest.raises(kernels.KernelError,match='same canonical Project identity'):
+  kernels.generate_candidate_manifest(m,s,target)
+
 def test_required_version_inventory_matches_published_first_parent_history_and_restores_losses():
  m,s=kernels.load_canonical(); versions=kernels.required_versions(m)
  expected={f'dish-chatgpt-projects-v2-{x}' for x in ['d96ab5f0588d','708fb9a9a9bc','39ff3abc502e','857d88788c12','23365034a0f1','9575ccfd79c8','28dcb04decc8','9bb70124ca21','694190185f60','712e3b16aa05','d048682742d6','54041bbbc8d8','86b8011172ee','219f34402511','9bf227f53f0a','5d24af30193a']}
- assert set(versions)==expected and len(versions)==16
+ expected.add(m['canonical_version'])
+ assert set(versions)==expected and len(versions)==17
  assert kernels.validate_required_version_topology(m)==versions
  for old in ('dish-chatgpt-projects-v2-39ff3abc502e','dish-chatgpt-projects-v2-9bb70124ca21'):
   path=kernels._change_path(m,old); assert path and path[-1]['to_version']==m['canonical_version']
@@ -597,7 +606,7 @@ def test_historical_correction_does_not_retire_topology_but_explicit_retirement_
 
 def test_single_lineage_generator_preserves_base_history_and_is_deterministic():
  base,s=kernels.load_canonical(); original=json.dumps(base,sort_keys=True,separators=(',',':'))
- target=_changed_source(s,'implementation','implementation-host-aware-fix-routing',' Single-lineage deterministic test.')
+ target=_changed_source(s,'implementation','action-first-human-output',' Single-lineage deterministic test.')
  a=kernels.generate_candidate_manifest(base,s,target); b=kernels.generate_candidate_manifest(base,s,target)
  assert json.dumps(base,sort_keys=True,separators=(',',':'))==original
  assert json.dumps(a,sort_keys=True,separators=(',',':'))==json.dumps(b,sort_keys=True,separators=(',',':'))
@@ -606,10 +615,10 @@ def test_single_lineage_generator_preserves_base_history_and_is_deterministic():
 
 def test_concurrent_compatible_additive_reconciliation_converges_without_truncation_and_is_byte_identical():
  common,s=kernels.load_canonical()
- base_source=_changed_source(s,'implementation','implementation-host-aware-fix-routing',' Authoritative branch delta.')
- candidate_source=_changed_source(s,'review','review-host-aware-independence-routing',' Concurrent branch delta.')
+ base_source=_changed_source(s,'implementation','action-first-human-output',' Authoritative branch delta.')
+ candidate_source=_changed_source(s,'review','review-repository-context',' Concurrent branch delta.')
  base=kernels.generate_candidate_manifest(common,s,base_source); candidate=kernels.generate_candidate_manifest(common,s,candidate_source)
- merged=copy.deepcopy(base_source); next(x for x in merged['roles']['review']['rules'] if x['id']=='review-host-aware-independence-routing')['text']+=' Concurrent branch delta.'
+ merged=copy.deepcopy(base_source); next(x for x in merged['roles']['review']['rules'] if x['id']=='review-repository-context')['text']+=' Concurrent branch delta.'
  a=kernels.reconcile_manifests(base,base_source,candidate,candidate_source,merged); b=kernels.reconcile_manifests(base,base_source,candidate,candidate_source,merged)
  assert json.dumps(a,sort_keys=True,separators=(',',':'))==json.dumps(b,sort_keys=True,separators=(',',':'))
  assert {base['canonical_version'],a['canonical_version']}<=set(kernels.required_versions(a))
@@ -618,7 +627,7 @@ def test_concurrent_compatible_additive_reconciliation_converges_without_truncat
  assert a['current_transition_from']==base['canonical_version']; kernels.validate_authoritative_base_preservation(base,a)
 
 def test_concurrent_ambiguous_rule_edits_fail_closed_without_manifest_surgery():
- common,s=kernels.load_canonical(); rid='implementation-host-aware-fix-routing'
+ common,s=kernels.load_canonical(); rid='action-first-human-output'
  base_source=_changed_source(s,'implementation',rid,' Base edit.'); candidate_source=_changed_source(s,'implementation',rid,' Candidate edit.')
  base=kernels.generate_candidate_manifest(common,s,base_source); candidate=kernels.generate_candidate_manifest(common,s,candidate_source)
  with pytest.raises(kernels.KernelError,match='ambiguous/incompatible concurrent rule history'):
