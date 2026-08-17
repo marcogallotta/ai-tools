@@ -930,6 +930,20 @@
       }
     },
     {
+      "id": "project-current-git-authority",
+      "text": "After current-Git grounding, current `main` kernel + role index/contract are authority; installed Project text is bootstrap/version witness. Compatible/additive drift needs no manual resync; unreadable/mismatched current authority fails only the affected action.",
+      "impact": "additive",
+      "surface": "authority",
+      "action_boundaries": [
+        "startup",
+        "re-grounding",
+        "current-policy"
+      ],
+      "delivery": {
+        "mode": "DIRECT_ALWAYS_ON"
+      }
+    },
+    {
       "action_boundaries": [
         "*"
       ],

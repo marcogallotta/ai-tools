@@ -98,9 +98,27 @@ def test_classified_stable_rule_removal_is_representable_and_unknown_ids_still_f
 def test_generated_kernels_current_bound_and_within_budget():
  m,s=kernels.load_canonical(); results=kernels.render_all(check=True); assert len(results)==8
  for role,p in kernels.generated_paths(m,s).items():
-  text=p.read_text(); assert len(text)<=m['max_kernel_chars']; assert f"PROJECT_CANONICAL_VERSION: {m['canonical_version']}" in text
+  text=p.read_text(); assert len(text)<=m['max_kernel_chars']; assert f"PROJECT_CANONICAL_VERSION: {m['canonical_version']}" in text; assert 'PROJECT_CHANNEL: production' in text
   assert text.index('PROJECT_REPOSITORY: marcogallotta/ai-tools')<text.index('Startup:')
   assert 'Mismatch alone never blocks' in text and '?/3 integrity error' in text
+
+
+def test_git_first_startup_and_test_candidate_binding_are_explicit():
+ m,s=kernels.load_canonical()
+ for role in s['roles']:
+  text=kernels.render_role(m,s,role)
+  assert 'PROJECT_CHANNEL: production' in text
+  assert "fetch this role\'s current generated Project kernel" in text
+  assert 'Installed Project text is bootstrap/version witness after grounding' in text
+  assert 'project-current-git-authority' in {x['id'] for x in kernels.effective_rules(s,role)}
+ test=kernels.render_test_candidate(s,'review',candidate_version='dish-chatgpt-projects-test-candidate',pr_number=140,candidate_ref='refs/pull/140/head',candidate_head='1'*40,candidate_manifest_sha256='2'*64,production_version=m['canonical_version'])
+ assert 'PROJECT_CHANNEL: test' in test
+ assert 'PROJECT_CANDIDATE_PR: 140' in test and 'PROJECT_CANDIDATE_REF: refs/pull/140/head' in test
+ assert f'PROJECT_CANDIDATE_HEAD: {"1"*40}' in test
+ assert f'PROJECT_CANDIDATE_MANIFEST_SHA256: {"2"*64}' in test
+ assert 'never chase a moved TEST head or treat TEST acceptance as production promotion' in test
+ with pytest.raises(kernels.KernelError,match='TEST candidate requires exact'):
+  kernels.render_test_candidate(s,'review',candidate_version='x',pr_number=140,candidate_ref='refs/pull/140/head',candidate_head='bad',candidate_manifest_sha256='2'*64,production_version=m['canonical_version'])
 
 def test_five_whys_preservation_inventory_binds_doc_index_rule_kernels_and_behavior_cases():
  m,s=kernels.load_canonical(); payload=kernels._eval_payload(); preservation=m['preservation_inventory']

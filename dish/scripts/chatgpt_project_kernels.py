@@ -215,13 +215,25 @@ def _render_context_dependencies(s,role):
 def render_role_with_version(s,role,version):
  r=s['roles'][role]; comps=r.get('allowed_compositions',[]); repo,branch,_=repository_config(s)
  if not isinstance(comps,list): raise KernelError(f'roles.{role}.allowed_compositions must be a list')
- lines=[f"# {r['project_name']}",'',f"PROJECT_ROLE: {r['default_role']}",f'PROJECT_CANONICAL_VERSION: {version}','CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json',f"ROLE_CONTRACT: {r['contract']}",f'PROJECT_REPOSITORY: {repo}',f'PROJECT_DEFAULT_BRANCH: {branch}','',STARTUP_TEMPLATE.format(repository=repo,branch=branch,contract=r['contract'])]
+ lines=[f"# {r['project_name']}",'',f"PROJECT_ROLE: {r['default_role']}",f'PROJECT_CANONICAL_VERSION: {version}','PROJECT_CHANNEL: production','CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json',f"ROLE_CONTRACT: {r['contract']}",f'PROJECT_REPOSITORY: {repo}',f'PROJECT_DEFAULT_BRANCH: {branch}','',STARTUP_TEMPLATE.format(repository=repo,branch=branch,contract=r['contract'])]
  lines += _render_context_dependencies(s,role)+['']+_render_chatty_lines(s)+['',f"Role: **{r['default_role']}**."]
  if comps: lines+=['Allowed composition only when explicitly triggered by current authority:']+[f'- {x}' for x in comps]
  else: lines+=['No implicit role composition is permitted.']
  direct=[x for x in effective_rules(s,role) if x['delivery']['mode']=='DIRECT_ALWAYS_ON']
  lines += [HANDOFF_BOUNDARY,'','High-consequence rules:']+[f"- {x['text']}" for x in direct]+['']
  return '\n'.join(lines)
+def render_test_candidate(s,role,*,candidate_version,pr_number,candidate_ref,candidate_head,candidate_manifest_sha256,production_version):
+ if role not in s.get('roles',{}): raise KernelError(f'unknown role {role!r}')
+ version=str(candidate_version).strip(); ref=str(candidate_ref).strip(); head=str(candidate_head).strip(); manifest_sha=str(candidate_manifest_sha256).strip(); prod=str(production_version).strip()
+ if not version or not prod or not str(pr_number).isdigit() or not ref or not re.fullmatch(r'[0-9a-f]{40}',head) or not re.fullmatch(r'[0-9a-f]{64}',manifest_sha): raise KernelError('TEST candidate requires exact version/PR/ref/40-hex head/64-hex manifest identity')
+ text=render_role_with_version(s,role,version)
+ text=text.replace('PROJECT_CHANNEL: production',f'PROJECT_CHANNEL: test\nPROJECT_PRODUCTION_VERSION: {prod}\nPROJECT_CANDIDATE_PR: {pr_number}\nPROJECT_CANDIDATE_REF: {ref}\nPROJECT_CANDIDATE_HEAD: {head}\nPROJECT_CANDIDATE_MANIFEST_SHA256: {manifest_sha}',1)
+ startup=STARTUP_TEMPLATE.format(repository=repository_config(s)[0],branch=repository_config(s)[1],contract=s['roles'][role]['contract'])
+ test_startup=(f'Startup: resolve TEST candidate `{ref}` at exact head `{head}` and verify candidate manifest `{manifest_sha}` before using candidate instruction behavior. '
+  f'Current production role/source authority remains the ceiling for genuine work; never chase a moved TEST head or treat TEST acceptance as production promotion.')
+ if startup not in text: raise KernelError('TEST candidate startup replacement failed')
+ return text.replace(startup,test_startup,1)
+
 def kernel_identity(s):
  repository_config(s); b=bytearray()
  for role in sorted(s['roles']):
@@ -232,7 +244,7 @@ def kernel_identity(s):
 def _rule_fingerprint(x):return _h(json.dumps({k:x.get(k) for k in ('id','text','impact','surface','action_boundaries')},sort_keys=True,separators=(',',':')).encode())
 def rule_fingerprints(s):return {r:{x['id']:_rule_fingerprint(x) for x in effective_rules(s,r)} for r in s['roles']}
 def renderer_fingerprint():
- return _h('\0'.join((STARTUP_TEMPLATE,HANDOFF_BOUNDARY,CHATTY_BLOCK_START,CHATTY_BLOCK_END,DESIGN_BLOCK_START,DESIGN_BLOCK_END,inspect.getsource(chatty_contract),inspect.getsource(design_principles_rule),inspect.getsource(shared_rules),inspect.getsource(_design_principles_block),inspect.getsource(_render_role_index_design_principles),inspect.getsource(_render_chatty_lines),inspect.getsource(_root_chatty_block),inspect.getsource(_render_root_instructions),inspect.getsource(repository_config),inspect.getsource(context_dependencies),inspect.getsource(_render_context_dependencies),inspect.getsource(render_role_with_version),inspect.getsource(kernel_identity))).encode())
+ return _h('\0'.join((STARTUP_TEMPLATE,HANDOFF_BOUNDARY,CHATTY_BLOCK_START,CHATTY_BLOCK_END,DESIGN_BLOCK_START,DESIGN_BLOCK_END,inspect.getsource(chatty_contract),inspect.getsource(design_principles_rule),inspect.getsource(shared_rules),inspect.getsource(_design_principles_block),inspect.getsource(_render_role_index_design_principles),inspect.getsource(_render_chatty_lines),inspect.getsource(_root_chatty_block),inspect.getsource(_render_root_instructions),inspect.getsource(repository_config),inspect.getsource(context_dependencies),inspect.getsource(_render_context_dependencies),inspect.getsource(render_role_with_version),inspect.getsource(render_test_candidate),inspect.getsource(kernel_identity))).encode())
 def _impact(c):
  x=str(c.get('impact','')).strip()
  if x not in {'compatible','additive','breaking'}: raise KernelError(f"explicit transition impact required for {c.get('rule_id','<unknown>')!r}")

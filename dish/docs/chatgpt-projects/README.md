@@ -27,6 +27,12 @@ Project kernels keep universal/high-consequence policy directly loaded and deliv
 
 The only blocking size limit is the ChatGPT Project platform ceiling of **8,000 characters**. Structural checks prove delivery classification, trigger/destination integrity, rendered identity, and actual size. Behavioral evals remain responsible for proving that agents perform required triggered reads before governed actions.
 
+## Production and TEST freshness
+
+Production kernels declare `PROJECT_CHANNEL: production`. On startup/re-grounding, a governed Project resolves current GitHub `main`, fetches the latest generated kernel for its declared role, and reads the current role index/contract and manifest from that same authority. Installed Project settings remain a strong bootstrap/version witness until current Git is grounded; afterward current Git kernel + role authority govern. Compatible/additive drift does not require manual Project resync, while unreadable or role-mismatched current authority fails closed only the affected action.
+
+A TEST kernel is explicitly `PROJECT_CHANNEL: test` and binds an exact candidate version, PR, ref, 40-hex head, and candidate-manifest digest. A TEST start/re-ground must verify that exact binding and fail closed on movement/mismatch rather than chasing a new head. Candidate instruction behavior never expands current production role/mutation/Review/Integration/deployment authority, and TEST acceptance alone never promotes production. The dedicated TEST Project/canary sequence remains specific to the explicitly approved Chatty rollout rather than a standing gate for every kernel change.
+
 ## Version and drift control
 
 Each generated kernel declares `PROJECT_CANONICAL_VERSION`. Exact-current Projects emit no Project-settings prefix. A version mismatch is only a trigger to inspect semantic history; it never blocks by itself. The Project folds every manifest transition from its declared version to current, then scopes each change to the exact role and action boundary before deciding.
