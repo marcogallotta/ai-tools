@@ -448,3 +448,28 @@ def test_host_configs_wire_compact_and_pretool_barriers(hooks_dir):
     claude_session_timeout = claude["hooks"]["SessionStart"][0]["hooks"][0]["timeout"]
     claude_reground_pretool = claude["hooks"]["PreToolUse"][0]["hooks"][0]
     assert claude_reground_pretool["timeout"] >= claude_session_timeout
+
+
+def test_unidentified_codex_session_never_synthesizes_development_workflow_identity(
+    agent_reground, tmp_path, monkeypatch
+):
+    repo = _make_repo(tmp_path)
+    _install_fake_gh(tmp_path, monkeypatch)
+    state_root = tmp_path / "state"
+    monkeypatch.setenv("DISH_AGENT_STATE_ROOT", str(state_root))
+    monkeypatch.setenv("CODEX_THREAD_ID", "fresh-codex-thread")
+    payload = {
+        "hook_event_name": "SessionStart",
+        "source": "compact",
+        "session_id": "payload-session",
+        "cwd": str(repo),
+    }
+
+    with pytest.raises(agent_reground.RegroundError, match="per-agent identity is missing"):
+        agent_reground.perform_reground(payload, "fresh-codex-thread", "codex")
+
+    identity = state_root / "agents/fresh-codex-thread.json"
+    assert not identity.exists()
+    boundary = json.loads(agent_reground.boundary_path("fresh-codex-thread").read_text())
+    assert boundary["status"] == "pending"
+    assert "per-agent identity is missing" in boundary["last_error"]

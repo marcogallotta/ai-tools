@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pr_lifecycle_support import *
 from pr_lifecycle_helpers import *
+from installed_host_cert import EVIDENCE as INSTALLED_HOST_CERT_EVIDENCE, requirement_for_files, status_from_comments
 from pr_lifecycle_helpers import (
     _integration_order_reason, _lease_json, _mergeability_reason,
     _pr_base, _pr_branch, _pr_number, _pr_title, _pr_url,
@@ -127,6 +128,22 @@ class LifecycleInspectMixin:
         review_class = review_class_for(current, reviews, comments, current_head=head)
         lease_payload = [_lease_json(lease, now) for lease in leases]
 
+        host_requirement = None
+        host_cert_status = None
+        get_pr_files = getattr(self.github, "get_pr_files", None)
+        if callable(get_pr_files):
+            host_requirement = requirement_for_files(get_pr_files(number))
+            if host_requirement is not None:
+                host_cert_status = status_from_comments(
+                    comments,
+                    repository=self.github.repository,
+                    pr_number=number,
+                    branch=base_kwargs["branch"],
+                    head=head,
+                    task_ids=task_ids,
+                    requirement=host_requirement,
+                )
+
         if draft:
             pending_evidence = pending_authoring_evidence(current)
             if pending_evidence:
@@ -137,6 +154,23 @@ class LifecycleInspectMixin:
                     lease_payload=lease_payload,
                     implementation_active=bool(active_by_phase.get("implementation")),
                 )
+
+        if host_requirement is not None and host_cert_status is not None and not host_cert_status.passed:
+            lifecycle = implementation_continuation_lifecycle(
+                base_kwargs=base_kwargs,
+                evidence=INSTALLED_HOST_CERT_EVIDENCE,
+                review_class=review_class,
+                lease_payload=lease_payload,
+                implementation_active=bool(active_by_phase.get("implementation")),
+            )
+            lifecycle.residual_reason = (
+                "hook/config/install-wiring candidate requires exact-head installed-host Implementation evidence: "
+                + str(host_cert_status.error or "certificate missing")
+            )
+            lifecycle.human_action = None
+            return lifecycle
+
+        if draft:
             return PRLifecycle(
                 **base_kwargs,
                 state=LifecycleState.AUTHORING,

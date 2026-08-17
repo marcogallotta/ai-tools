@@ -21,6 +21,7 @@ from .common import (
     require_task_gid,
 )
 from .operations import owner_agent_id, remote_ref_sha, resolve_repository_from_state, validate_branch, verify_owned_worktree
+from .launch_identity import bind_identity_from_launch_provenance, restore_identity
 from .repository import discover_repository
 from .state import (
     atomic_write_json,
@@ -189,6 +190,8 @@ def claim_status(task_gid: str) -> dict[str, Any]:
         "takeover": bool(record.get("takeover")),
         "claim_id": record["token"],
         "pr": record.get("pr"),
+        "head_moved_to": record.get("head_moved_to"),
+        "semantic_mutation_closed_at": record.get("semantic_mutation_closed_at"),
     }
 
 
@@ -446,7 +449,13 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
     agent_id = require_agent_id(args.agent_id)
     if agent_id is None:
         fail("OWNERSHIP_AGENT_REQUIRED", "exclusive local-agent ownership requires --agent-id")
-    validate_agent_state(agent_id)
+    if args.require_launch_provenance and not args.launch_provenance:
+        fail(
+            "LAUNCH_PROVENANCE_REQUIRED",
+            "--require-launch-provenance requires --launch-provenance from the actual local host launcher",
+        )
+    if not args.launch_provenance:
+        validate_agent_state(agent_id)
 
     repo = discover_repository(runner, Path(args.repo))
     branch = validate_branch(runner, repo.source_top, args.branch)
@@ -475,6 +484,8 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
     locks.acquire()
     token = uuid.uuid4().hex
     path = claim_path(task_gid)
+    prior_identity: dict[str, Any] | None = None
+    launch_identity_bound = False
     try:
         previous, baseline_state_owner = _reconcile_existing(
             runner=runner,
@@ -504,6 +515,18 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
                     "PR_BRANCH_HEAD_MISMATCH",
                     f"authorized PR head {pr['head']} does not equal remote branch {branch} head {remote_head}; dispatch lineage is stale or contradictory",
                 )
+        if args.launch_provenance:
+            prior_identity, _ = bind_identity_from_launch_provenance(
+                Path(args.launch_provenance),
+                agent_id=agent_id,
+                task_gid=task_gid,
+                branch=branch,
+                repo_path=repo.source_top,
+                pr=pr,
+            )
+            launch_identity_bound = True
+        else:
+            validate_agent_state(agent_id)
         record: dict[str, Any] = {
             "schema_version": CLAIM_SCHEMA_VERSION,
             "repository": EXPECTED_REPOSITORY,
@@ -517,8 +540,14 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
             "released_at": None,
             "takeover": bool(args.takeover),
             "pr": pr,
+            "launch_provenance_required": bool(args.require_launch_provenance),
         }
-        atomic_write_json(path, record)
+        try:
+            atomic_write_json(path, record)
+        except Exception:
+            if launch_identity_bound:
+                restore_identity(agent_id, prior_identity)
+            raise
 
         env = os.environ.copy()
         env.update(
@@ -546,6 +575,8 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
                 previous=previous,
                 baseline_state_owner=baseline_state_owner,
             )
+            if launch_identity_bound:
+                restore_identity(agent_id, prior_identity)
             fail("CLAIM_COMMAND_FAILED", f"could not launch claimed local-agent command: {exc}")
         if completed.returncode != 0:
             _settle_failed_claim(
@@ -556,6 +587,11 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
                 previous=previous,
                 baseline_state_owner=baseline_state_owner,
             )
+            if launch_identity_bound:
+                durable_state = load_task_state(task_gid) if state_path(task_gid).exists() else None
+                durable_owner = owner_agent_id(durable_state) if durable_state is not None else None
+                if durable_owner != agent_id:
+                    restore_identity(agent_id, prior_identity)
             return completed.returncode
         current = read_claim(task_gid)
         if current is None or current.get("token") != token:
@@ -567,6 +603,26 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
         locks.release()
 
 
+def invalidate_claim_after_head_movement(task_gid: str, new_head: str) -> bool:
+    task_gid = require_task_gid(task_gid)
+    new_head = require_full_sha(new_head, "new PR head")
+    token = os.environ.get(CLAIM_TOKEN_ENV)
+    if not token:
+        fail("OWNERSHIP_CLAIM_REQUIRED", "head-movement invalidation requires the live ownership claim")
+    record = read_claim(task_gid)
+    if record is None or record.get("token") != token or record.get("released_at") is not None:
+        fail("OWNERSHIP_CLAIM_MISMATCH", "cannot invalidate a missing/stale/mismatched ownership claim")
+    pr = record.get("pr")
+    if not isinstance(pr, dict):
+        return False
+    if pr.get("head") == new_head:
+        return False
+    record["head_moved_to"] = new_head
+    record["semantic_mutation_closed_at"] = now_utc()
+    atomic_write_json(claim_path(task_gid), record)
+    return True
+
+
 def require_active_claim(
     task_gid: str,
     branch: str,
@@ -574,6 +630,7 @@ def require_active_claim(
     *,
     allow_takeover: bool = False,
     require_pr: bool = False,
+    allow_head_moved_readback: bool = False,
 ) -> dict[str, Any]:
     task_gid = require_task_gid(task_gid)
     agent_id = require_agent_id(agent_id)
@@ -597,6 +654,11 @@ def require_active_claim(
         )
     if record.get("released_at") is not None:
         fail("OWNERSHIP_CLAIM_STALE", "ownership claim was already released")
+    if record.get("head_moved_to") is not None and not allow_head_moved_readback:
+        fail(
+            "PR_HEAD_MOVED_REDISPATCH_REQUIRED",
+            f"owned PR head moved to {record.get('head_moved_to')}; stop semantic mutation and reacquire an exact-head claim from current orchestration",
+        )
     status = claim_status(task_gid)
     if status.get("state") != "live":
         fail(

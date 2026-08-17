@@ -302,3 +302,31 @@ terminal authority from current GitHub/Asana state first. Default, protected, no
 remote refs are never eligible for automatic terminal deletion.
 
 All non-`exec` commands accept `--json` for machine-readable output.
+
+### Pre-Review installed-host continuation launch identity
+
+Hook/config/install-wiring candidates can require real installed Claude/Codex evidence before Review. That continuation stays on the same task/branch/PR and uses the same `agent-worktree` writer fence, but a missing/current local identity may not be invented by a hook. The configured local Implementation launcher writes one fresh mode-0600 JSON record under:
+
+```text
+~/.local/state/dish/launch-provenance/<launch-id>.json
+```
+
+with schema `dish-local-implementation-launch-v1`. The record binds the actual host session identity (`claude_session_id` or `codex_thread_id`) to the already-authorized `implementation` role, task, project, repository checkout, branch, PR number, and exact PR head. It is launch provenance, not assignment authority.
+
+The exact continuation claim then consumes it explicitly:
+
+```sh
+tools/agent-worktree claim \
+  --task <task_gid> \
+  --branch agent/<existing-pr-branch> \
+  --agent-id <actual-host-session-id> \
+  --launch-provenance ~/.local/state/dish/launch-provenance/<launch-id>.json \
+  --require-launch-provenance \
+  --pr-number <pr-number> \
+  --pr-head <exact-current-pr-head> \
+  --pr-lease-state <active|none> \
+  [--pr-lease-id <lease-id>] \
+  -- <local-implementation-command>
+```
+
+The claim validates the canonical repository, exact remote branch head, PR identity, role/task/project/branch tuple, host-specific identity-source label, launch timestamp, provenance path/permissions, and any visible `CODEX_THREAD_ID` before writing the per-agent identity note. Missing, stale, malformed, noisy, shell-like, or conflicting provenance fails before the child command. `--require-launch-provenance` never falls back to a pre-existing unrelated identity. The per-agent identity remains non-authoritative; live orchestration/GitHub plus the claim decide what may be mutated.
