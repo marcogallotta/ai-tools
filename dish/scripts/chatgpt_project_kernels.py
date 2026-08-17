@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Render/version/evaluate canonical ChatGPT Project kernels."""
 from __future__ import annotations
-import argparse, hashlib, inspect, json, re, shlex, subprocess, sys
+import argparse, copy, hashlib, inspect, json, re, shlex, subprocess, sys
 from pathlib import Path
 from typing import Any
 DISH_ROOT=Path(__file__).resolve().parents[1]; REPO_ROOT=DISH_ROOT.parent; PROJECT_DIR=DISH_ROOT/'docs'/'chatgpt-projects'
@@ -26,6 +26,7 @@ DESIGN_BLOCK_START='<!-- BEGIN GENERATED DESIGN PRINCIPLES BOOTSTRAP -->'
 DESIGN_BLOCK_END='<!-- END GENERATED DESIGN PRINCIPLES BOOTSTRAP -->'
 IMPACT_ORDER={'unrelated':0,'compatible':1,'additive':2,'breaking':3}; FAIL_CLOSED_SURFACES={'authority','safety','lifecycle'}
 REQUIRED_PRESERVATION_IDS={'five-whys-shared-method','design-principles-bootstrap'}
+REQUIRED_VERSION_INVENTORY_SCHEMA=1
 class KernelError(RuntimeError): pass
 
 def _read_json(p:Path)->dict[str,Any]:
@@ -190,9 +191,14 @@ def _impact(c):
  if x not in {'compatible','additive','breaking'}: raise KernelError(f"explicit transition impact required for {c.get('rule_id','<unknown>')!r}")
  return x
 def _incoming(manifest):
- c=str(manifest['canonical_version']); e=[x for x in manifest['change_history'] if str(x.get('to_version'))==c]
- if len(e)!=1: raise KernelError('canonical version must have exactly one incoming change_history edge')
- return e[0]
+ c=str(manifest['canonical_version']); incoming=[x for x in manifest['change_history'] if str(x.get('to_version'))==c]
+ designated=str(manifest.get('current_transition_from','')).strip()
+ if designated:
+  e=[x for x in incoming if str(x.get('from_version'))==designated]
+  if len(e)!=1: raise KernelError('current_transition_from must identify exactly one canonical change_history edge')
+  return e[0]
+ if len(incoming)!=1: raise KernelError('canonical version must have exactly one incoming change_history edge unless current_transition_from is set')
+ return incoming[0]
 def _validate_current_edge_classification(m,s):
  e=_incoming(m); prior=e.get('from_rule_fingerprints'); roles=set(s['roles'])
  if not isinstance(prior,dict) or not isinstance(prior.get('_shared'),dict) or not isinstance(prior.get('_roles'),dict) or set(prior['_roles'])!=roles: raise KernelError('current edge requires _shared/_roles prior fingerprints')
@@ -238,6 +244,161 @@ def _legacy_floor(m):
  for key in ('prior_kernel_identity','counterexample','git_reconciliation_failure','migration','rollback','evidence_ref'): _proof_text(proof,key)
  if floor.get('marco_approved') is not True or not str(floor.get('marco_approval_ref','')).strip(): raise KernelError('legacy bootstrap floor requires Marco approval reference')
  return first,[str(x) for x in pre]
+def _retirement_version(raw):
+ if not isinstance(raw,dict): raise KernelError('required version retirement entries must be objects')
+ version=str(raw.get('version','')).strip()
+ if not version: raise KernelError('required version retirement requires exact version')
+ for key in STANDING_SUPERSESSION_FIELDS:
+  if not str(raw.get(key,'')).strip(): raise KernelError(f'required version retirement for {version} requires {key}')
+ if str(raw.get('authority_type')) not in STANDING_SUPERSESSION_AUTHORITY_TYPES: raise KernelError(f'required version retirement for {version} has unsupported authority type')
+ return version
+
+def required_versions(m,*,active_only=True):
+ inv=m.get('required_version_inventory')
+ if not isinstance(inv,dict) or inv.get('schema_version')!=REQUIRED_VERSION_INVENTORY_SCHEMA: raise KernelError(f'manifest.required_version_inventory schema_version must be {REQUIRED_VERSION_INVENTORY_SCHEMA}')
+ versions=inv.get('versions'); retirements=inv.get('retirements',[])
+ if not isinstance(versions,list) or not versions or any(not str(x).strip() for x in versions): raise KernelError('required version inventory requires non-empty versions')
+ versions=[str(x) for x in versions]
+ if versions!=sorted(set(versions)): raise KernelError('required version inventory versions must be unique and sorted')
+ if not isinstance(retirements,list): raise KernelError('required version inventory retirements must be a list')
+ retired=[]
+ for raw in retirements: retired.append(_retirement_version(raw))
+ if retired!=sorted(set(retired)): raise KernelError('required version retirements must be unique and sorted by version')
+ unknown=set(retired)-set(versions)
+ if unknown: raise KernelError(f'required version retirements reference unknown versions: {sorted(unknown)}')
+ canonical=str(m.get('canonical_version',''))
+ if canonical not in versions: raise KernelError('canonical version must be present in required version inventory')
+ if canonical in retired: raise KernelError('canonical version cannot be retired')
+ first,pre=_legacy_floor(m)
+ if first not in versions: raise KernelError('first drift-aware version must be present in required version inventory')
+ overlap=set(pre)&set(versions)
+ if overlap: raise KernelError(f'pre-floor versions cannot be required drift-aware versions: {sorted(overlap)}')
+ return [v for v in versions if not active_only or v not in set(retired)]
+
+def validate_required_version_topology(m):
+ active=required_versions(m)
+ for version in active:
+  try:_change_path(m,version)
+  except KernelError as e: raise KernelError(f'required version {version} is not represented/reachable to current canonical: {e}') from e
+ return active
+
+def validate_authoritative_base_preservation(base,candidate):
+ base_active=set(required_versions(base)); candidate_all=set(required_versions(candidate,active_only=False)); candidate_active=set(required_versions(candidate))
+ retired={_retirement_version(x) for x in candidate['required_version_inventory'].get('retirements',[])}
+ missing=sorted(v for v in base_active if v not in candidate_active and v not in retired)
+ deleted=sorted(v for v in base_active if v not in candidate_all and v not in retired)
+ if missing or deleted: raise KernelError(f'candidate truncates authoritative required Project history: missing={missing or deleted}')
+ return sorted(base_active)
+
+def _prior_fingerprint_snapshot(s):
+ return {'_shared':{x['id']:_rule_fingerprint(x) for x in shared_rules(s)},'_roles':{role:{x['id']:_rule_fingerprint(x) for x in _rules(s['roles'][role].get('rules'),f'roles.{role}.rules')} for role in s['roles']}}
+
+def _effective_rule_maps(s):
+ return {role:{x['id']:x for x in effective_rules(s,role)} for role in s['roles']}
+
+def _transition_changes(old_s,new_s):
+ if set(old_s.get('roles',{}))!=set(new_s.get('roles',{})): raise KernelError('automatic reconciliation cannot change Project role topology')
+ old=_effective_rule_maps(old_s); new=_effective_rule_maps(new_s); grouped={}
+ for role in sorted(new):
+  for rid in sorted(set(old[role])|set(new[role])):
+   a=old[role].get(rid); b=new[role].get(rid)
+   if (None if a is None else _rule_fingerprint(a))==(None if b is None else _rule_fingerprint(b)): continue
+   if b is None: raise KernelError(f'automatic reconciliation cannot classify rule removal {rid!r}; explicit authored transition required')
+   impact=str(b.get('impact','')).strip()
+   if impact=='breaking': raise KernelError(f'automatic reconciliation refuses BREAKING rule change {rid!r}; explicit proof-backed transition required')
+   key=(rid,impact,str(b['surface']),tuple(b['action_boundaries']))
+   grouped.setdefault(key,[]).append(role)
+ changes=[]
+ for (rid,impact,surface,bounds),roles in sorted(grouped.items()):
+  changes.append({'rule_id':rid,'roles':roles,'impact':impact,'action_boundaries':list(bounds),'surface':surface})
+ if not changes: raise KernelError('reconciliation source produces no canonical rule change')
+ return changes
+
+def _version_for_source(m,s): return f"{m.get('version_namespace','')}-{kernel_identity(s)[:12]}"
+
+def _finalize_candidate_manifest(m,s):
+ m['kernel_identity_sha256']=kernel_identity(s); m['canonical_version']=_version_for_source(m,s); m['source_sha256']=_semantic_json_hash(s); m['generated_sha256']=generated_sha256(m,s)
+ return m
+
+def generate_candidate_manifest(base,base_source,target_source):
+ validate_change_history(base,base_source)
+ target_version=_version_for_source(base,target_source)
+ if target_version==str(base['canonical_version']): raise KernelError('candidate source has the same canonical Project identity as authoritative base')
+ out=copy.deepcopy(base); old=str(base['canonical_version']); out['canonical_version']=target_version; out['current_transition_from']=old
+ out['change_history']=copy.deepcopy(base['change_history'])+[{'from_version':old,'to_version':target_version,'changes':_transition_changes(base_source,target_source),'from_rule_fingerprints':_prior_fingerprint_snapshot(base_source),'from_renderer_fingerprint':renderer_fingerprint()}]
+ inv=copy.deepcopy(base['required_version_inventory']); inv['versions']=sorted(set(map(str,inv['versions']))|{target_version}); out['required_version_inventory']=inv
+ _finalize_candidate_manifest(out,target_source); validate_change_history(out,target_source); validate_authoritative_base_preservation(base,out)
+ return out
+
+def _fingerprint_in_history(m,role,rid,fingerprint):
+ for edge in m.get('change_history',[]):
+  prior=edge.get('from_rule_fingerprints',{}) if isinstance(edge,dict) else {}
+  if not isinstance(prior,dict): continue
+  shared=prior.get('_shared',{}); roles=prior.get('_roles',{})
+  if isinstance(shared,dict) and shared.get(rid)==fingerprint:return True
+  if isinstance(roles,dict) and isinstance(roles.get(role),dict) and roles[role].get(rid)==fingerprint:return True
+ return False
+
+def _validate_reconciled_source(base,base_source,candidate,candidate_source,merged_source):
+ if set(base_source.get('roles',{}))!=set(candidate_source.get('roles',{})) or set(base_source.get('roles',{}))!=set(merged_source.get('roles',{})): raise KernelError('reconciliation role topology mismatch')
+ bm,cm,mm=_effective_rule_maps(base_source),_effective_rule_maps(candidate_source),_effective_rule_maps(merged_source)
+ for role in sorted(bm):
+  for rid in sorted(set(bm[role])|set(cm[role])):
+   b=bm[role].get(rid); c=cm[role].get(rid); z=mm[role].get(rid)
+   bf=None if b is None else _rule_fingerprint(b); cf=None if c is None else _rule_fingerprint(c); zf=None if z is None else _rule_fingerprint(z)
+   if bf==cf:
+    if zf!=bf: raise KernelError(f'reconciled source changes unchanged rule {role}/{rid}')
+    continue
+   if bf is None:
+    if zf!=cf: raise KernelError(f'reconciled source drops candidate additive rule {role}/{rid}')
+    continue
+   if cf is None:
+    if zf!=bf: raise KernelError(f'reconciled source drops authoritative base rule {role}/{rid}')
+    continue
+   candidate_is_ancestor=_fingerprint_in_history(base,role,rid,cf); base_is_ancestor=_fingerprint_in_history(candidate,role,rid,bf)
+   if candidate_is_ancestor and not base_is_ancestor:
+    if zf!=bf: raise KernelError(f'reconciled source revives stale rule {role}/{rid}')
+   elif base_is_ancestor and not candidate_is_ancestor:
+    if zf!=cf: raise KernelError(f'reconciled source drops newer candidate rule {role}/{rid}')
+   else: raise KernelError(f'ambiguous/incompatible concurrent rule history for {role}/{rid}')
+ return True
+
+def _merge_required_inventories(base,candidate,canonical):
+ # The authoritative main inventory is the published set. A concurrent candidate's own
+ # branch-only canonical is represented in convergence topology but is not promoted to
+ # published-required merely because it participated in reconciliation.
+ versions=sorted(set(required_versions(base,active_only=False))|{canonical}); by={}
+ for raw in list(base['required_version_inventory'].get('retirements',[]))+list(candidate['required_version_inventory'].get('retirements',[])):
+  version=_retirement_version(raw)
+  if version not in versions: continue
+  prior=by.get(version)
+  if prior is not None and prior!=raw: raise KernelError(f'conflicting retirement authority for {version}')
+  by[version]=copy.deepcopy(raw)
+ return {'schema_version':REQUIRED_VERSION_INVENTORY_SCHEMA,'versions':versions,'retirements':[by[k] for k in sorted(by)]}
+
+def reconcile_manifests(base,base_source,candidate,candidate_source,merged_source):
+ validate_change_history(base,base_source); validate_change_history(candidate,candidate_source)
+ _validate_reconciled_source(base,base_source,candidate,candidate_source,merged_source)
+ new_version=_version_for_source(base,merged_source); out=copy.deepcopy(base); old_base=str(base['canonical_version']); old_candidate=str(candidate['canonical_version'])
+ if new_version==old_base:
+  if old_candidate!=old_base:
+   out['change_history']=copy.deepcopy(base['change_history'])+[{'from_version':old_candidate,'to_version':old_base,'changes':_transition_changes(candidate_source,merged_source),'from_rule_fingerprints':_prior_fingerprint_snapshot(candidate_source),'from_renderer_fingerprint':renderer_fingerprint()}]
+  out['required_version_inventory']=_merge_required_inventories(base,candidate,new_version); _finalize_candidate_manifest(out,merged_source); validate_change_history(out,merged_source); validate_authoritative_base_preservation(base,out); return out
+ edges=copy.deepcopy(base['change_history']); by={str(e['from_version']):e for e in edges}
+ for edge in sorted(candidate.get('change_history',[]),key=lambda x:(str(x.get('from_version')),str(x.get('to_version')))):
+  a=str(edge.get('from_version')); existing=by.get(a)
+  if existing is None: edges.append(copy.deepcopy(edge)); by[a]=edge
+  elif existing==edge: continue
+  # Authoritative base successor wins at a fork. The candidate canonical is preserved below as a convergence predecessor.
+ base_edge={'from_version':old_base,'to_version':new_version,'changes':_transition_changes(base_source,merged_source),'from_rule_fingerprints':_prior_fingerprint_snapshot(base_source),'from_renderer_fingerprint':renderer_fingerprint()}
+ edges.append(base_edge)
+ if old_candidate not in {old_base,new_version}:
+  if old_candidate in {str(e.get('from_version')) for e in edges}: raise KernelError(f'ambiguous candidate canonical successor for {old_candidate}')
+  edges.append({'from_version':old_candidate,'to_version':new_version,'changes':_transition_changes(candidate_source,merged_source),'from_rule_fingerprints':_prior_fingerprint_snapshot(candidate_source),'from_renderer_fingerprint':renderer_fingerprint()})
+ out['change_history']=edges; out['canonical_version']=new_version; out['current_transition_from']=old_base; out['required_version_inventory']=_merge_required_inventories(base,candidate,new_version)
+ _finalize_candidate_manifest(out,merged_source); validate_change_history(out,merged_source); validate_authoritative_base_preservation(base,out)
+ return out
+
 def validate_change_history(m,s,*,role_key=None,action_boundary=None):
  h=m.get('change_history'); roles=set(s['roles']); ids={x['id'] for r in roles for x in effective_rules(s,r)}
  scoped=role_key is not None or action_boundary is not None
@@ -280,7 +441,7 @@ def validate_change_history(m,s,*,role_key=None,action_boundary=None):
  if first not in versions or any(v not in versions for v in pre): raise KernelError('legacy bootstrap floor references unknown retained version')
  if any(v==canonical for v in pre): raise KernelError('canonical version cannot be pre-floor')
  # d96+ history may never retain an unproved hard break; the proof validator above is the only admissibility path.
- _validate_current_edge_classification(m,s)
+ _validate_current_edge_classification(m,s); validate_required_version_topology(m)
 def _standing_invariant_registry():
  payload=_read_json(STANDING_INVARIANTS_PATH)
  if payload.get('schema_version')!=1 or not isinstance(payload.get('invariants'),list): raise KernelError('standing invariant registry schema mismatch')
@@ -559,9 +720,34 @@ def command_check():
  for x in standing: print(f'PASS standing-invariant {x}')
  for r,n in rr: print(f'PASS kernel {r}: {n} chars')
  for x in ee: print(f'PASS eval-contract {x}')
+def _load_manifest_source_files(manifest_path:Path,source_path:Path|None=None):
+ m=_read_json(manifest_path); p=source_path or manifest_path.parent/str(m.get('source_file','')); s=_read_json(p)
+ if m.get('source_sha256')!=_semantic_json_hash(s): raise KernelError(f'manifest/source semantic hash mismatch: {manifest_path}')
+ if s.get('schema_version')!=m.get('schema_version'): raise KernelError(f'manifest/source schema mismatch: {manifest_path}')
+ kid=kernel_identity(s); expected=f"{m.get('version_namespace','')}-{kid[:12]}"
+ if m.get('kernel_identity_sha256')!=kid or m.get('canonical_version')!=expected: raise KernelError(f'manifest/source canonical identity mismatch: {manifest_path}')
+ if m.get('generated_sha256')!=generated_sha256(m,s): raise KernelError(f'manifest/source generated digest mismatch: {manifest_path}')
+ validate_change_history(m,s); return m,s
+
+def command_admit(base_manifest:Path,candidate_manifest:Path,base_source:Path|None=None,candidate_source:Path|None=None):
+ base,bs=_load_manifest_source_files(base_manifest,base_source); candidate,cs=_load_manifest_source_files(candidate_manifest,candidate_source)
+ validate_authoritative_base_preservation(base,candidate); validate_required_version_topology(candidate)
+ print(f"PASS authoritative-base-preservation base={base['canonical_version']} candidate={candidate['canonical_version']}")
+
+def command_reconcile(base_manifest:Path,source:Path,output:Path,base_source:Path|None=None,candidate_manifest:Path|None=None,candidate_source:Path|None=None):
+ base,bs=_load_manifest_source_files(base_manifest,base_source); target=_read_json(source)
+ if candidate_manifest is None:
+  if candidate_source is not None: raise KernelError('--candidate-source requires --candidate-manifest')
+  out=generate_candidate_manifest(base,bs,target)
+ else:
+  candidate,cs=_load_manifest_source_files(candidate_manifest,candidate_source); out=reconcile_manifests(base,bs,candidate,cs,target)
+ _write_json(output,out); print(f"WROTE {output} canonical_version={out['canonical_version']}")
 def _write_json(p,v):p.write_text(json.dumps(v,indent=2,sort_keys=True)+'\n')
 def _parser():
- p=argparse.ArgumentParser(description=__doc__); s=p.add_subparsers(dest='command',required=True); r=s.add_parser('render'); r.add_argument('--check',action='store_true'); s.add_parser('check'); pe=s.add_parser('prepare-eval'); pe.add_argument('--output',required=True,type=Path); ev=s.add_parser('eval'); g=ev.add_mutually_exclusive_group(required=True); g.add_argument('--results',type=Path); g.add_argument('--runner-command'); ev.add_argument('--save-results',type=Path); v=s.add_parser('version'); v.add_argument('--project-version',required=True); v.add_argument('--role',required=True); v.add_argument('--action-boundary',default='role-critical-write'); return p
+ p=argparse.ArgumentParser(description=__doc__); s=p.add_subparsers(dest='command',required=True); r=s.add_parser('render'); r.add_argument('--check',action='store_true'); s.add_parser('check'); pe=s.add_parser('prepare-eval'); pe.add_argument('--output',required=True,type=Path); ev=s.add_parser('eval'); g=ev.add_mutually_exclusive_group(required=True); g.add_argument('--results',type=Path); g.add_argument('--runner-command'); ev.add_argument('--save-results',type=Path); v=s.add_parser('version'); v.add_argument('--project-version',required=True); v.add_argument('--role',required=True); v.add_argument('--action-boundary',default='role-critical-write')
+ ad=s.add_parser('admit'); ad.add_argument('--base-manifest',required=True,type=Path); ad.add_argument('--base-source',type=Path); ad.add_argument('--candidate-manifest',required=True,type=Path); ad.add_argument('--candidate-source',type=Path)
+ rc=s.add_parser('reconcile'); rc.add_argument('--base-manifest',required=True,type=Path); rc.add_argument('--base-source',type=Path); rc.add_argument('--source',required=True,type=Path); rc.add_argument('--candidate-manifest',type=Path); rc.add_argument('--candidate-source',type=Path); rc.add_argument('--output',required=True,type=Path)
+ return p
 def main():
  a=_parser().parse_args()
  try:
@@ -575,6 +761,8 @@ def main():
     if a.results: raise KernelError('--save-results only with --runner-command')
     _write_json(a.save_results,p)
    for x in evaluate_behavior_results(p): print(f'PASS behavior {x}')
+  elif a.command=='admit': command_admit(a.base_manifest,a.candidate_manifest,a.base_source,a.candidate_source)
+  elif a.command=='reconcile': command_reconcile(a.base_manifest,a.source,a.output,a.base_source,a.candidate_manifest,a.candidate_source)
   else:
    ok,msg=version_status(a.project_version,a.role,a.action_boundary); print(msg); return 0 if ok else 3
  except KernelError as e: print(f'ERROR: {e}',file=sys.stderr); return 2
