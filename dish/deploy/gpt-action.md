@@ -94,6 +94,13 @@ workflow procedure.
   Confirm it with `intent_basis: user_requested` only when Marco explicitly requested Planning for
   that exact task; otherwise ask him or use the explicit agent-override route with a real reason.
   Discussion or task legality alone is not authorization.
+- When the original objective explicitly requests both Planning and Research, complete all Planning
+  work under one stable Planning run A. After authoritative Planning completion, if Dish exposes the
+  legal initial-Research continuation and no real `human_action` or other Dish gate requires Marco,
+  start Research automatically under a fresh run B with a different `client.run_id`; do not require
+  another Marco turn solely to cross the stage boundary. Keep run B stable throughout Research. If the
+  objective requested Planning only, stop after Planning. Never broaden a Planning+Research objective
+  into independent Verification automatically; Verification remains a separate eligible run.
 - Independent Verification requires a genuinely different run from the run that constructed or last
   materially edited the candidate. New operation/cycle IDs or an attestation do not create
   independence. Use abandonment continuation targets only when Dish explicitly returns the exact
@@ -167,6 +174,26 @@ Classify inability to represent step 5 as a stale/incomplete connected Action sc
 do not route around the public contract. Then run the complete disposable-task procedure in
 `live-test-project-rehearsal.md`. Preview success for `sections` is connectivity proof, not authorization
 for production Cooking.
+
+For connected recovery acceptance, use the uncorroborated PROD Dibs incident (`Dibs bi tahina — carob
+molasses and tahini`) as the concrete regression shape, not as proof of a Dish backend defect. In TEST,
+make the first Planning `prepare` Action disappear/fail before a reliable authoritative Dish response.
+The connected agent must not immediately retry in the same assistant/tool loop when real elapsed delay
+cannot be guaranteed. Preserve the exact logical request unchanged: same run ID, request ID when present,
+command, and arguments. Retry only at a genuine later opportunity after real elapsed time. A canonical
+Dish envelope ends transport recovery; if that later exact replay returns one, Planning continues without
+a Marco rescue. Never blind-retry `BACKEND_UNCERTAIN`, rotate IDs, invent backend state, or infer a
+numeric cooldown. For a Planning+Research objective, complete stable Planning run A, then start fresh
+Research run B after authoritative Planning completion and legal Dish continuation, with no extra Marco
+turn and no automatic Verification. Genuine Dish/human gates still stop normally. Before the pass, run
+the paired instruction drift check from the ai-tools checkout with:
+
+```bash
+DISH_HONEST_REPO=<honest-pantry> python -m pytest -q \
+  tests/test_action_replay_contract.py -k honest_connected_contract
+```
+
+Any mismatch against the exact paired revisions fails acceptance.
 
 ## Token rotation
 
