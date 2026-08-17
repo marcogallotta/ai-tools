@@ -121,6 +121,44 @@ def test_commit_merge_rejects_stale_target(h: Harness) -> None:
     assert git_out(wt, "rev-parse", "HEAD") == h.base
 
 
+def test_commit_merge_rejects_target_that_moves_during_commit_preparation(h: Harness) -> None:
+    wt = _prepare(h)
+    target = h.advance_main()
+    moved = h.remote_branch_commit("race-target", "move during reconciliation", start=target)
+    counter = h.root / "race-ssh-count"
+    h.ssh.write_text(
+        "#!/usr/bin/env python3\n"
+        "import os, shlex, subprocess, sys\n"
+        "from pathlib import Path\n"
+        "counter = Path(os.environ['TEST_SSH_COUNTER'])\n"
+        "count = int(counter.read_text() or '0') + 1 if counter.exists() else 1\n"
+        "counter.write_text(str(count))\n"
+        "cmd = sys.argv[-1]\n"
+        "parts = shlex.split(cmd)\n"
+        "if not parts or parts[0] not in ('git-upload-pack', 'git-receive-pack'):\n"
+        "    raise SystemExit(f'unexpected ssh command: {cmd}')\n"
+        "if count == 2:\n"
+        "    subprocess.run([\n"
+        "        'git', '--git-dir=' + os.environ['TEST_BARE_ORIGIN'], 'update-ref',\n"
+        "        'refs/heads/main', os.environ['TEST_MOVE_MAIN_TO'],\n"
+        "    ], check=True)\n"
+        "os.execvp(parts[0], [parts[0], os.environ['TEST_BARE_ORIGIN']])\n",
+        encoding="utf-8",
+    )
+    h.ssh.chmod(0o755)
+
+    (wt / "tracked.txt").write_text("changed\n", encoding="utf-8")
+    refused = h.tool(
+        "commit", "--task", "1001", "-m", "reconcile", "--merge-target-head", target,
+        "--", "tracked.txt", check=False,
+        env={"TEST_SSH_COUNTER": str(counter), "TEST_MOVE_MAIN_TO": moved},
+    )
+
+    assert_error(refused, "STALE_MERGE_TARGET")
+    assert h.current_remote_main() == moved
+    assert git_out(wt, "rev-parse", "HEAD") == h.base
+
+
 def test_commit_merge_rejects_conflict_left_outside_explicit_paths(h: Harness) -> None:
     wt = _prepare(h)
     target = h.advance_main()

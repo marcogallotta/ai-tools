@@ -87,7 +87,7 @@ def _verify_staged_subset(staged: set[str], scopes: list[tuple[str, bool]]) -> N
         )
 
 
-def _resolve_merge_target(
+def _require_current_merge_target(
     runner: GitRunner, repo: Any, state: dict[str, Any], expected_head: str
 ) -> str:
     expected_head = require_full_sha(expected_head, "--merge-target-head")
@@ -100,6 +100,13 @@ def _resolve_merge_target(
             f"exact remote {base_ref} head is {current}, not the expected reconciliation target {expected_head}; "
             "re-verify and retry with the current head",
         )
+    return current
+
+
+def _resolve_merge_target(
+    runner: GitRunner, repo: Any, state: dict[str, Any], expected_head: str
+) -> str:
+    current = _require_current_merge_target(runner, repo, state, expected_head)
     ensure_commit_object(runner, repo, current)
     return current
 
@@ -250,6 +257,12 @@ def command_commit(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any
             *commit_tree_args,
             stdin=args.message.rstrip("\n") + "\n",
         ).stdout.strip()
+        if merge_target is not None:
+            # The first check establishes the requested target and materializes its
+            # object. Re-read the remote after all commit preparation, including
+            # commit-tree, so a base move during that window leaves this commit
+            # unattached and the owned branch unchanged.
+            _require_current_merge_target(runner, repo, state, merge_target)
         ref = f"refs/heads/{identity.branch}"
         moved = runner.run(identity.path, "update-ref", ref, commit, identity.head, check=False)
         if moved.returncode != 0:
