@@ -309,12 +309,17 @@ jobs:
             bash -lc '
               set +e
               report=.test-artifacts/full-regression/native-postgresql-report.json
+              waiver_args_file=.test-artifacts/full-regression/native-postgresql-waiver-args.txt
+              waiver_rc=0
+              python3 scripts/native_postgresql_waivers.py args > "$waiver_args_file" || waiver_rc=$?
+              if [ "$waiver_rc" -ne 0 ]; then
+                echo "Native PostgreSQL waiver registry serialization failed with status $waiver_rc" >&2
+                exit "$waiver_rc"
+              fi
+              mapfile -t native_waiver_args < "$waiver_args_file"
               dish/.venv/bin/python dish/scripts/dish-pg-native-certification \
                 --output "$report" \
-                --waive-skip "{\"nodeid\":\"tests/postgresql/native/test_production_shaped_runtime.py::test_section4_service_database_disconnect_rolls_back_then_recovers_once\",\"expected_reason_sha256\":\"a73321063eef94cb68f134ff85b48a2a1eda77a2e3d60a5893a40dc8b288ac1b\",\"owner_task_gid\":\"1217428310522281\",\"review_by\":\"2026-09-07\",\"justification\":\"bare native certification lacks shared TEST Compose control; revisit before enabling external effects\"}" \
-                --waive-skip "{\"nodeid\":\"tests/postgresql/native/test_process_failure_command.py::test_command_process_disconnect_before_commit_fails_closed_and_recovers\",\"expected_reason_sha256\":\"b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1\",\"owner_task_gid\":\"1217428310522281\",\"review_by\":\"2026-09-07\",\"justification\":\"covered by dish-pg-process-failure; bare native certification lacks Compose control\"}" \
-                --waive-skip "{\"nodeid\":\"tests/postgresql/native/test_process_failure_disconnect.py::test_projection_worker_fails_clearly_across_postgresql_disconnect\",\"expected_reason_sha256\":\"b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1\",\"owner_task_gid\":\"1217428310522281\",\"review_by\":\"2026-09-07\",\"justification\":\"covered by dish-pg-process-failure; bare native certification lacks Compose control\"}" \
-                --waive-skip "{\"nodeid\":\"tests/postgresql/native/test_process_failure_disconnect.py::test_reconciliation_worker_writes_nothing_while_postgresql_is_down\",\"expected_reason_sha256\":\"b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1\",\"owner_task_gid\":\"1217428310522281\",\"review_by\":\"2026-09-07\",\"justification\":\"covered by dish-pg-process-failure; bare native certification lacks Compose control\"}"
+                "${native_waiver_args[@]}"
               native_rc=$?
               python3 scripts/full_regression.py collect-native-report \
                 --output-dir "$FULL_REGRESSION_OUTPUT" --lane native-postgresql \
