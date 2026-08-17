@@ -32,6 +32,9 @@ class LifecycleInspectMixin:
         self.mutation_broker_enabled = mutation_broker_enabled
         self.mutation_broker_repository_id = mutation_broker_repository_id
         self.mutation_broker_routes = dict(mutation_broker_routes or {})
+        # Disposable process state only: a restart begins recovery from the
+        # newest terminal page without creating a durable lifecycle queue.
+        self._terminal_recovery_page = 1
 
     def _asana_details(self, task_ids: list[str]) -> list[dict[str, Any]]:
         if not self.asana:

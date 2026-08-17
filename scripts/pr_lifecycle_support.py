@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import socket
 import subprocess
 import sys
 import time
@@ -190,6 +191,7 @@ class GitHubBackend(Protocol):
     repository: str
 
     def list_prs(self, *, include_closed: bool = False) -> list[dict[str, Any]]: ...
+    def list_closed_prs_page(self, *, page: int, per_page: int) -> list[dict[str, Any]]: ...
     def get_pr(self, number: int) -> dict[str, Any]: ...
     def get_comments(self, number: int) -> list[dict[str, Any]]: ...
     def get_reviews(self, number: int) -> list[dict[str, Any]]: ...
@@ -206,8 +208,13 @@ class AsanaBackend(Protocol):
 
 
 class JSONHTTPClient:
-    def __init__(self, *, timeout: float = 30.0) -> None:
+    def __init__(self, *, timeout: float = 10.0) -> None:
+        if timeout <= 0:
+            raise LifecycleError("HTTP timeout must be positive")
         self.timeout = timeout
+
+    def _timeout_error(self, url: str) -> LifecycleError:
+        return LifecycleError(f"request timed out after {self.timeout:g}s for {url}")
 
     def request(
         self,
@@ -239,7 +246,11 @@ class JSONHTTPClient:
             except json.JSONDecodeError:
                 pass
             raise HTTPError(exc.code, str(message), raw[:500]) from exc
+        except (TimeoutError, socket.timeout) as exc:
+            raise self._timeout_error(url) from exc
         except urlerror.URLError as exc:
+            if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+                raise self._timeout_error(url) from exc
             raise LifecycleError(f"request failed for {url}: {exc.reason}") from exc
 
     def request_bytes(
@@ -259,7 +270,11 @@ class JSONHTTPClient:
         except urlerror.HTTPError as exc:
             raw = exc.read().decode("utf-8", errors="replace")
             raise HTTPError(exc.code, str(exc.reason or "request failed"), raw[:500]) from exc
+        except (TimeoutError, socket.timeout) as exc:
+            raise self._timeout_error(url) from exc
         except urlerror.URLError as exc:
+            if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+                raise self._timeout_error(url) from exc
             raise LifecycleError(f"request failed for {url}: {exc.reason}") from exc
 
 
@@ -307,6 +322,18 @@ class GitHubREST:
     def list_prs(self, *, include_closed: bool = False) -> list[dict[str, Any]]:
         state = "all" if include_closed else "open"
         return [dict(item) for item in self._get_paginated("pulls", query={"state": state, "sort": "updated", "direction": "desc"})]
+
+    def list_closed_prs_page(self, *, page: int, per_page: int) -> list[dict[str, Any]]:
+        if page < 1 or per_page < 1:
+            raise LifecycleError("closed-PR recovery page and size must be positive")
+        _, _, payload = self.http.request(
+            "GET",
+            self._url("pulls", {"state": "closed", "sort": "updated", "direction": "desc", "page": page, "per_page": per_page}),
+            headers=self.headers,
+        )
+        if not isinstance(payload, list):
+            raise LifecycleError("expected list from GitHub pulls")
+        return [dict(item) for item in payload]
 
     def get_pr(self, number: int) -> dict[str, Any]:
         _, _, value = self.http.request("GET", self._url(f"pulls/{number}"), headers=self.headers)

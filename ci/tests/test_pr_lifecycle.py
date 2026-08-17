@@ -273,6 +273,80 @@ def test_duplicate_poll_does_not_duplicate_chatgpt_dispatch():
     assert second[0].state == pr_lifecycle.LifecycleState.REVIEW_IN_PROGRESS
 
 
+class PagedHistoryGitHub(FakeGitHub):
+    """Open work plus a deliberately large terminal history."""
+
+    def __init__(self):
+        super().__init__()
+        self.full_history_reads = 0
+        self.closed_page_reads = []
+        self.closed_history_size = 10_000
+
+    def list_prs(self, *, include_closed=False):
+        if include_closed:
+            self.full_history_reads += 1
+            raise AssertionError("watch dispatch must not read all closed PRs")
+        return [deepcopy(self.pr)]
+
+    def list_closed_prs_page(self, *, page, per_page):
+        self.closed_page_reads.append((page, per_page))
+        # The same PR number is intentionally ignored after the open scan; the
+        # test is about bounded retrieval, not terminal action behavior.
+        return [deepcopy(self.pr)] if page <= self.closed_history_size else []
+
+
+def test_dispatch_uses_one_incremental_closed_page_per_poll_with_large_history():
+    gh = PagedHistoryGitHub()
+    lifecycle = engine(gh)
+
+    first = lifecycle.dispatch(workspace=None, local_reviewer=None)
+    second = lifecycle.dispatch(workspace=None, local_reviewer=None)
+
+    assert [value.number for value in first] == [31]
+    assert [value.number for value in second] == [31]
+    assert gh.full_history_reads == 0
+    assert gh.closed_page_reads == [(1, 1), (2, 1)]
+
+
+def test_json_status_render_includes_generation_time():
+    gh = FakeGitHub()
+    value = engine(gh).inspect(gh.pr)
+    rendered = json.loads(pr_lifecycle._render_json([value], repository="marcogallotta/ai-tools"))
+
+    assert rendered["generated_at"]
+    assert rendered["pull_requests"][0]["number"] == 31
+
+
+def test_http_timeout_is_bounded_and_reported(monkeypatch):
+    def timeout(*args, **kwargs):
+        assert kwargs["timeout"] == 7.0
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr("pr_lifecycle_support.urlrequest.urlopen", timeout)
+    client = pr_lifecycle.JSONHTTPClient(timeout=7.0)
+
+    with pytest.raises(pr_lifecycle.LifecycleError, match=r"timed out after 7s"):
+        client.request("GET", "https://example.invalid/test")
+
+
+def test_closed_recovery_reads_one_explicit_closed_page():
+    class ClosedPageHTTP:
+        def __init__(self):
+            self.calls = []
+
+        def request(self, method, url, *, headers=None, body=None):
+            self.calls.append((method, url, dict(headers or {}), body))
+            return 200, {}, []
+
+    http = ClosedPageHTTP()
+    github = pr_lifecycle.GitHubREST("marcogallotta/ai-tools", "token", http=http)
+
+    assert github.list_closed_prs_page(page=4, per_page=1) == []
+    assert "state=closed" in http.calls[0][1]
+    assert "page=4" in http.calls[0][1]
+    assert "per_page=1" in http.calls[0][1]
+
+
 def test_semantic_new_head_invalidates_prior_review():
     gh = FakeGitHub(pr(head=NEW_HEAD))
     gh.reviews = [review(head=HEAD, verdict="MERGE")]

@@ -11,7 +11,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from pr_lifecycle_support import *
 from pr_lifecycle_helpers import *
-from pr_lifecycle_helpers import _parse_time
+from pr_lifecycle_helpers import _parse_time, _utcnow
 from pr_lifecycle_external_replay import replay_external_dependency
 from pr_lifecycle_engine_inspect import LifecycleInspectMixin
 from pr_lifecycle_engine_actions import LifecycleActionsMixin
@@ -122,9 +122,10 @@ def _build_engine(
     token = args.github_token or os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
     if not token:
         raise LifecycleError("GitHub token is required via --github-token, GITHUB_TOKEN, or GH_TOKEN")
-    github = GitHubREST(args.repo, token, api_root=args.github_api_root)
+    http = JSONHTTPClient(timeout=args.http_timeout)
+    github = GitHubREST(args.repo, token, api_root=args.github_api_root, http=http)
     asana_token = args.asana_token or os.getenv("ASANA_ACCESS_TOKEN")
-    asana = AsanaREST(asana_token) if asana_token else None
+    asana = AsanaREST(asana_token, http=http) if asana_token else None
     authority = args.integration_authority or os.getenv("DISH_INTEGRATION_AUTHORITY") == "bounded-reviewed-head"
     broker_enabled = os.getenv("DISH_MUTATION_BROKER_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
     local_integration_command = (
@@ -246,6 +247,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--github-token", help=argparse.SUPPRESS)
     parser.add_argument("--asana-token", help=argparse.SUPPRESS)
     parser.add_argument("--github-api-root", default="https://api.github.com")
+    parser.add_argument(
+        "--http-timeout", type=float, default=10.0,
+        help="maximum seconds for one GitHub or Asana HTTP read",
+    )
     parser.add_argument("--workspace-api-root", default=WORKSPACE_API_ROOT)
     parser.add_argument("--workspace-token", help=argparse.SUPPRESS)
     parser.add_argument("--review-trigger-id")
@@ -404,7 +409,6 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "dispatch":
             values = engine.dispatch(
-                include_closed=True,
                 workspace=workspace,
                 local_reviewer=local,
                 implementation_fixer=fixer,
@@ -418,7 +422,6 @@ def main(argv: list[str] | None = None) -> int:
         while True:
             values = (
                 engine.dispatch(
-                    include_closed=True,
                     workspace=workspace,
                     local_reviewer=local,
                     implementation_fixer=fixer,

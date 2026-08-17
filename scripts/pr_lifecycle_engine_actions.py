@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pr_lifecycle_support import *
 from pr_lifecycle_helpers import *
-from pr_lifecycle_helpers import _handoff_key, _notice_key, _notice_present
+from pr_lifecycle_helpers import _handoff_key, _notice_key, _notice_present, _pr_number
 from pr_mutation_broker import (
     BrokerError, BrokerProofError, asana_task_allows_mutation, current_verified_grant, parse_request_comment, request_marker,
 )
@@ -697,7 +697,29 @@ class LifecycleActionsMixin:
         terminal_cleaner: TerminalCleanupDispatcher | None = None,
         notify: Callable[[str], None] | None = None,
     ) -> list[PRLifecycle]:
-        values = self.status(include_closed=include_closed)
+        # Ordinary dispatch handles open PRs. Recover terminal lineages one closed
+        # PR page at a time so a foreground watcher never blocks on full history.
+        values = self.status()
+        page_reader = getattr(self.github, "list_closed_prs_page", None)
+        if callable(page_reader):
+            page = self._terminal_recovery_page
+            terminal_prs = page_reader(page=page, per_page=1)
+            self._terminal_recovery_page = page + 1 if terminal_prs else 1
+            seen = {value.number for value in values}
+            values.extend(
+                self.inspect(candidate)
+                for candidate in terminal_prs
+                if _pr_number(candidate) not in seen
+            )
+        elif include_closed:
+            # Compatibility for test/third-party backends that have not yet
+            # implemented the bounded page read. The repository adapter above
+            # always takes the bounded path.
+            seen = {value.number for value in values}
+            values.extend(
+                value for value in self.status(include_closed=True)
+                if value.number not in seen
+            )
         results: list[PRLifecycle] = []
         for value in values:
             results.append(
