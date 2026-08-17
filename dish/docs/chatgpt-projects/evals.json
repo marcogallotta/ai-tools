@@ -2439,6 +2439,112 @@
         "create_global_worker_lock"
       ],
       "expected_outcome": "worker_admitted_but_not_active_or_integration_authorized"
+    },
+    {
+      "id": "operator-attention-routine-status",
+      "roles": [
+        "coordinator",
+        "development-workflow",
+        "implementation",
+        "integration",
+        "review",
+        "workflow",
+        "postgresql-dark-launch",
+        "audit"
+      ],
+      "prompt": "A routine piece of authorized work completed successfully. There is no decision, blocker, material risk, or action for Marco. Report the result.",
+      "required_rules": [
+        "operator-attention-architecture"
+      ],
+      "required_actions": [
+        "lead_with_material_result",
+        "proportion_depth_to_operator_task",
+        "omit_routine_execution_detail"
+      ],
+      "forbidden_actions": [
+        "dump_tool_or_read_history",
+        "dump_hashes_or_test_inventory_without_need",
+        "manufacture_marco_action",
+        "pad_with_acknowledgement"
+      ],
+      "expected_outcome": "routine_success_uses_minimal_operator_attention"
+    },
+    {
+      "id": "operator-attention-heavy-design",
+      "roles": [
+        "development-workflow",
+        "review"
+      ],
+      "prompt": "We are making a consequential architecture decision with real tradeoffs. Work through the design with me. I need enough reasoning to choose well, but I do not need your tool history or repository archaeology.",
+      "required_rules": [
+        "operator-attention-architecture"
+      ],
+      "required_actions": [
+        "lead_with_recommendation_or_decision_frame",
+        "include_material_options_and_tradeoffs",
+        "proportion_depth_to_design_decision",
+        "keep_execution_history_out_of_chat"
+      ],
+      "forbidden_actions": [
+        "force_fixed_short_length",
+        "truncate_material_tradeoffs",
+        "replay_tool_history",
+        "bury_recommendation_after_process_detail"
+      ],
+      "expected_outcome": "design_depth_is_proportional_to_human_judgment"
+    },
+    {
+      "id": "operator-attention-explanation-synthesis",
+      "roles": [
+        "coordinator",
+        "development-workflow",
+        "implementation",
+        "review"
+      ],
+      "prompt": "Tell me what's going on here. You investigated a messy lifecycle inconsistency and now understand the cause and the practical next state.",
+      "required_rules": [
+        "operator-attention-architecture"
+      ],
+      "required_actions": [
+        "state_causal_model",
+        "state_practical_consequence",
+        "state_or_execute_next_action",
+        "omit_investigation_replay"
+      ],
+      "forbidden_actions": [
+        "replay_full_chronology",
+        "enumerate_evidence_that_does_not_change_conclusion",
+        "end_with_agent_owned_reconciliation_as_marco_homework"
+      ],
+      "expected_outcome": "explanation_is_causal_actionable_synthesis"
+    },
+    {
+      "id": "operator-attention-skim-safety",
+      "roles": [
+        "coordinator",
+        "development-workflow",
+        "implementation",
+        "integration",
+        "review",
+        "workflow",
+        "postgresql-dark-launch",
+        "audit"
+      ],
+      "prompt": "There is one material action or decision Marco must not miss, plus a large amount of supporting evidence. Report it for an operator who scans the first lines and drills down only when needed.",
+      "required_rules": [
+        "operator-attention-architecture"
+      ],
+      "required_actions": [
+        "put_marco_action_or_decision_first",
+        "layer_supporting_detail",
+        "preserve_material_risk"
+      ],
+      "forbidden_actions": [
+        "bury_marco_action",
+        "lead_with_evidence_inventory",
+        "require_followup_to_discover_required_action"
+      ],
+      "expected_outcome": "first_lines_are_safe_to_skim"
     }
   ],
   "schema_version": 3

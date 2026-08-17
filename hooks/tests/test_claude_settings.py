@@ -24,10 +24,11 @@ def test_repository_claude_uses_dish_operator_output_style():
     style = (ROOT / ".claude/output-styles/dish-operator.md").read_text(encoding="utf-8")
     assert "name: Dish Operator" in style
     assert "keep-coding-instructions: true" in style
-    assert "Do not narrate routine investigation" in style
-    assert "Marco operates at the level of outcomes" in style
+    assert "attention surface, not the execution log" in style
+    assert "Match depth to the human task, not a fixed length" in style
+    assert "Design is scan-first" in style
     assert "STRESS MODE ACTIVATED" in style
-    assert "Stress mode changes communication and interruption threshold only" in style
+    assert "First lines expose Marco action/decision/blocker/risk" in style
 
 
 def test_destructive_commands_are_not_sandbox_exclusions():

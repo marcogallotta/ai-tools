@@ -6,6 +6,7 @@ INDEX = ROOT / "dish" / "docs" / "agents" / "index.md"
 POLICY = ROOT / "OPERATOR_CONTROL_PLANE.md"
 SOURCE = ROOT / "dish" / "docs" / "chatgpt-projects" / "source.json"
 CLAUDE = ROOT / "CLAUDE.md"
+CLAUDE_STYLE = ROOT / ".claude" / "output-styles" / "dish-operator.md"
 
 
 def test_role_index_routes_every_role_through_one_shared_operator_contract():
@@ -32,10 +33,12 @@ def test_canonical_chatty_contract_is_generated_into_root_and_avoids_phrase_dict
     source = json.loads(SOURCE.read_text())
     rules = source["chatty_contract"]
     root = CLAUDE.read_text()
-    assert len(rules) == 5
+    assert len(rules) == 6
     assert "<!-- BEGIN GENERATED CHATTY WORK CONTRACT -->" in root
     assert "<!-- END GENERATED CHATTY WORK CONTRACT -->" in root
+    style = CLAUDE_STYLE.read_text()
     for rule in rules:
         assert f"- {rule}" in root
-    for brittle in ("give handoff", "YES OR NO", "speak in actions"):
+        assert f"- {rule}" in style
+    for brittle in ("YES OR NO", "one to three sentences", "1-3 short sentences"):
         assert brittle not in "\n".join(rules)
