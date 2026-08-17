@@ -122,7 +122,17 @@ def resolve_agent_id(payload: dict[str, Any]) -> tuple[str, str]:
     if codex_id:
         return _validate_agent_id(codex_id), "codex"
     value = payload.get("session_id") or payload.get("sessionId") or payload.get("agent_id")
-    return _validate_agent_id(str(value) if value is not None else None), "claude"
+    agent_id = _validate_agent_id(str(value) if value is not None else None)
+    transcript = payload.get("transcript_path") or payload.get("transcriptPath")
+    if isinstance(transcript, str):
+        try:
+            transcript_path = Path(transcript).expanduser().resolve()
+            codex_sessions = (Path.home().resolve() / ".codex" / "sessions").resolve()
+            if transcript_path.is_relative_to(codex_sessions):
+                return agent_id, "codex"
+        except (OSError, RuntimeError):
+            pass
+    return agent_id, "claude"
 
 
 def hook_event(payload: dict[str, Any]) -> str:
