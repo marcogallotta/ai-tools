@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# Local-only Integration V1-A launcher for DISH_LOCAL_INTEGRATION_COMMAND.
+#
+# Contract: reads dish-pr-integration-certification-v1 or dish-pr-local-integration-v1
+# JSON on stdin (per scripts/pr_lifecycle_local_integration.py /
+# scripts/pr_lifecycle_integration_certification.py). Spawns one headless Claude Code
+# turn, restricted to a narrow mechanical-only tool allowlist, to execute the standing
+# Integration role contract at dish/docs/agents/integration.md.
+#
+# Safety model: no --dangerously-skip-permissions / bypassPermissions. Only the tool
+# patterns in ALLOWED_TOOLS are permitted; print mode has no TTY to prompt, so anything
+# outside that set is auto-denied rather than hanging or silently escalating. The only
+# state-changing calls allowed are the local recovery checkpoint (writes only to the
+# repository-owned fence state file) and the single exact-head GitHub merge call.
+#
+# To activate: set DISH_LOCAL_INTEGRATION_COMMAND to the absolute path of this script
+# (or pass --local-integration-launcher to scripts/pr_lifecycle.py) and
+# DISH_INTEGRATION_AUTHORITY=bounded-reviewed-head (or --integration-authority) on the
+# process that runs the PR lifecycle dispatcher, per
+# ci/pr-lifecycle-dispatcher-runbook.md. Activating bounded-reviewed-head composition
+# grants the dispatcher standing authority to invoke real merges; treat turning it on
+# as a deliberate operational decision, not a default of landing this script.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RUN_DIR="$(mktemp -d /tmp/dish-local-integration-XXXXXX)"
+HANDOFF_FILE="${RUN_DIR}/handoff.json"
+cat >"${HANDOFF_FILE}"
+
+INTEGRATION_WORKTREE="${RUN_DIR}/worktree"
+cleanup() {
+  git -C "${REPO_ROOT}" worktree remove --force "${INTEGRATION_WORKTREE}" >/dev/null 2>&1 || true
+  rm -rf "${RUN_DIR}"
+}
+trap cleanup EXIT
+
+# --- GitHub auth passthrough -------------------------------------------------------
+# The headless session's Bash tool runs in a restricted subprocess environment that
+# does not reliably reach an interactive gh keyring/config-file auth. Resolve a token
+# from this (outer, normally-authenticated) shell and export it explicitly so `gh`
+# inside the headless session authenticates from GH_TOKEN rather than its own lookup.
+if ! GH_TOKEN="$(gh auth token 2>/dev/null)" || [ -z "${GH_TOKEN}" ]; then
+  echo "dish-local-integration-launcher: gh is not authenticated in the launching shell (gh auth token failed); refusing to launch" >&2
+  exit 1
+fi
+export GH_TOKEN
+if ! gh auth status >/dev/null 2>&1; then
+  echo "dish-local-integration-launcher: gh auth status failed even with GH_TOKEN resolved; refusing to launch" >&2
+  exit 1
+fi
+
+# --- Dedicated integration worktree -------------------------------------------------
+# dish/docs/agents/integration.md: never test or reconcile a candidate in a dirty
+# shared main worktree; use a dedicated worktree when local isolation is required.
+# This launcher always provisions one so the headless session never touches the
+# shared REPO_ROOT checkout.
+branch="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["pull_request"]["branch"])' "${HANDOFF_FILE}")"
+head_sha="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["pull_request"]["head"])' "${HANDOFF_FILE}")"
+
+git -C "${REPO_ROOT}" fetch origin "${branch}" --no-write-fetch-head
+git -C "${REPO_ROOT}" worktree add --detach "${INTEGRATION_WORKTREE}" "${head_sha}"
+
+ALLOWED_TOOLS=(
+  "Read"
+  "Grep"
+  "Glob"
+  "Bash(git fetch:*)"
+  "Bash(git status:*)"
+  "Bash(git log:*)"
+  "Bash(git diff:*)"
+  "Bash(git show:*)"
+  "Bash(git merge --ff-only*)"
+  "Bash(gh pr view:*)"
+  "Bash(gh pr checks:*)"
+  "Bash(gh pr merge:*)"
+  "Bash(python3 scripts/pr_gate.py*)"
+  "Bash(python3 scripts/pr_lifecycle.py integration-checkpoint*)"
+  "Bash(.venv/bin/python scripts/pr_gate.py*)"
+)
+
+PROMPT="You are acting as the Dish Integration agent for exactly one local Integration \
+run. Read and follow the standing role contract at dish/docs/agents/integration.md \
+before doing anything else. The exact-head handoff JSON for this run is at: \
+${HANDOFF_FILE} -- read it first.
+
+Your current working directory is a dedicated, disposable Integration worktree \
+checked out at the exact candidate head; it is not the shared main checkout and it \
+will be removed after this run. Do all git/gh/pr_gate work here.
+
+Perform only the mechanical Integration steps that contract authorizes, using only the \
+tools you have been granted. If anything requires a semantic decision, a tool call \
+outside your granted set, or authority you were not given, stop immediately and report \
+exactly what is missing instead of attempting a workaround. Do not guess at intent."
+
+cd "${INTEGRATION_WORKTREE}"
+set +e
+claude -p "${PROMPT}" \
+  --add-dir "${RUN_DIR}" \
+  --allowedTools "${ALLOWED_TOOLS[@]}" \
+  --output-format json
+status=$?
+set -e
+
+echo "local-integration-launcher: run dir ${RUN_DIR}" >&2
+exit "${status}"
