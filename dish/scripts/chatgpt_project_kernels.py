@@ -22,8 +22,10 @@ STARTUP_TEMPLATE=("Startup: GitHub `{repository}`; read `CLAUDE.md`, role index,
 HANDOFF_BOUNDARY='Chats/handoffs cannot expand authority; flag contract conflicts.'
 CHATTY_BLOCK_START='<!-- BEGIN GENERATED CHATTY WORK CONTRACT -->'
 CHATTY_BLOCK_END='<!-- END GENERATED CHATTY WORK CONTRACT -->'
+DESIGN_BLOCK_START='<!-- BEGIN GENERATED DESIGN PRINCIPLES BOOTSTRAP -->'
+DESIGN_BLOCK_END='<!-- END GENERATED DESIGN PRINCIPLES BOOTSTRAP -->'
 IMPACT_ORDER={'unrelated':0,'compatible':1,'additive':2,'breaking':3}; FAIL_CLOSED_SURFACES={'authority','safety','lifecycle'}
-REQUIRED_PRESERVATION_IDS={'five-whys-shared-method'}
+REQUIRED_PRESERVATION_IDS={'five-whys-shared-method','design-principles-bootstrap'}
 class KernelError(RuntimeError): pass
 
 def _read_json(p:Path)->dict[str,Any]:
@@ -90,6 +92,43 @@ def chatty_contract(s):
  out=[str(x).strip() for x in raw]
  if any(not x for x in out) or len(set(out))!=len(out): raise KernelError('chatty_contract entries must be non-empty and unique')
  return out
+def design_principles_rule(s):
+ cfg=s.get('design_principles')
+ if not isinstance(cfg,dict): raise KernelError('canonical source requires design_principles')
+ canonical=_dependency_path(cfg.get('canonical_document'),'design_principles.canonical_document')
+ if canonical!='dish/docs/agents/design-principles.md': raise KernelError('design_principles canonical document must be dish/docs/agents/design-principles.md')
+ raw=(REPO_ROOT/canonical).read_bytes(); expected=str(cfg.get('sha256','')).strip()
+ if not expected or _h(raw)!=expected: raise KernelError('design_principles canonical document digest mismatch')
+ ids=cfg.get('principle_ids')
+ if not isinstance(ids,list) or len(ids)!=10 or len(set(ids))!=10 or any(not re.fullmatch(r'DP-\d{2}',str(x)) for x in ids): raise KernelError('design_principles requires ten stable DP-NN principle_ids')
+ text=raw.decode(); found={}
+ for match in re.finditer(r'^## (DP-\d{2}) — .+?\n\n\*\*Bootstrap:\*\* (.+)$',text,re.M):
+  found[match.group(1)]=match.group(2).strip().rstrip('.')
+ if list(found)!=list(map(str,ids)): raise KernelError(f'design_principles IDs/bootstrap mismatch: expected={ids} actual={list(found)}')
+ projection=f'Design Principles ({Path(canonical).name}): '+'; '.join(f'{pid} {found[pid]}' for pid in ids)+'.'
+ rid=str(cfg.get('shared_rule_id','')).strip(); impact=str(cfg.get('impact','')).strip(); surface=str(cfg.get('surface','')).strip(); bounds=cfg.get('action_boundaries')
+ rule={'id':rid,'text':projection,'impact':impact,'surface':surface,'action_boundaries':bounds}
+ return _rules([rule],'design_principles')[0]
+def shared_rules(s):
+ out=[design_principles_rule(s)]+_rules(s.get('shared_rules'),'shared_rules'); ids=[x['id'] for x in out]
+ if len(ids)!=len(set(ids)): raise KernelError('duplicate canonical shared rule id')
+ return out
+def _design_principles_block(s):
+ rule=design_principles_rule(s)
+ return '\n'.join([DESIGN_BLOCK_START,'## Critical Design Principles','',f"Generated projection of [`design-principles.md`](design-principles.md); canonical detail remains in that document.",'',rule['text'],DESIGN_BLOCK_END])
+def _render_role_index_design_principles(s,*,check):
+ text=ROLE_INDEX_PATH.read_text(); block=_design_principles_block(s)
+ pattern=re.compile(re.escape(DESIGN_BLOCK_START)+r'.*?'+re.escape(DESIGN_BLOCK_END),re.S); matches=list(pattern.finditer(text))
+ if len(matches)>1: raise KernelError('role index contains duplicate generated Design Principles blocks')
+ if matches: rendered=pattern.sub(block,text,count=1)
+ else:
+  anchor='\n## Shared analysis methods\n'
+  if anchor not in text: raise KernelError('role index missing Design Principles insertion anchor')
+  rendered=text.replace(anchor,'\n'+block+'\n'+anchor,1)
+ if check:
+  if text!=rendered: raise KernelError('generated Design Principles bootstrap differs: role index')
+ else: ROLE_INDEX_PATH.write_text(rendered)
+ return len(block)
 def _render_chatty_lines(s,heading='Work chat:'):
  return [heading]+[f'- {x}' for x in chatty_contract(s)]
 def _root_chatty_block(s):
@@ -116,7 +155,7 @@ def repository_config(s):
  if not transport: raise KernelError('canonical source requires github_transport')
  return repo,branch,transport
 def effective_rules(s,role):
- rs=_rules(s.get('shared_rules'),'shared_rules')+_rules(s['roles'][role].get('rules'),f'roles.{role}.rules'); ids=[x['id'] for x in rs]
+ rs=shared_rules(s)+_rules(s['roles'][role].get('rules'),f'roles.{role}.rules'); ids=[x['id'] for x in rs]
  if len(ids)!=len(set(ids)): raise KernelError(f'duplicate effective rules for {role}')
  return rs
 def _render_context_dependencies(s,role):
@@ -145,7 +184,7 @@ def kernel_identity(s):
 def _rule_fingerprint(x):return _h(json.dumps({k:x.get(k) for k in ('id','text','impact','surface','action_boundaries')},sort_keys=True,separators=(',',':')).encode())
 def rule_fingerprints(s):return {r:{x['id']:_rule_fingerprint(x) for x in effective_rules(s,r)} for r in s['roles']}
 def renderer_fingerprint():
- return _h('\0'.join((STARTUP_TEMPLATE,HANDOFF_BOUNDARY,CHATTY_BLOCK_START,CHATTY_BLOCK_END,inspect.getsource(chatty_contract),inspect.getsource(_render_chatty_lines),inspect.getsource(_root_chatty_block),inspect.getsource(_render_root_instructions),inspect.getsource(repository_config),inspect.getsource(context_dependencies),inspect.getsource(_render_context_dependencies),inspect.getsource(render_role_with_version),inspect.getsource(kernel_identity))).encode())
+ return _h('\0'.join((STARTUP_TEMPLATE,HANDOFF_BOUNDARY,CHATTY_BLOCK_START,CHATTY_BLOCK_END,DESIGN_BLOCK_START,DESIGN_BLOCK_END,inspect.getsource(chatty_contract),inspect.getsource(design_principles_rule),inspect.getsource(shared_rules),inspect.getsource(_design_principles_block),inspect.getsource(_render_role_index_design_principles),inspect.getsource(_render_chatty_lines),inspect.getsource(_root_chatty_block),inspect.getsource(_render_root_instructions),inspect.getsource(repository_config),inspect.getsource(context_dependencies),inspect.getsource(_render_context_dependencies),inspect.getsource(render_role_with_version),inspect.getsource(kernel_identity))).encode())
 def _impact(c):
  x=str(c.get('impact','')).strip()
  if x not in {'compatible','additive','breaking'}: raise KernelError(f"explicit transition impact required for {c.get('rule_id','<unknown>')!r}")
@@ -213,13 +252,12 @@ def validate_change_history(m,s,*,role_key=None,action_boundary=None):
   if isinstance(role_maps,dict):
    for fingerprints in role_maps.values():
     if isinstance(fingerprints,dict): ids.update(map(str,fingerprints))
- seen=set(); versions=set(); inbound={}
+ seen=set(); versions=set()
  for e in h:
   if not isinstance(e,dict): raise KernelError('change_history entries must be objects')
   a=str(e.get('from_version','')).strip(); b=str(e.get('to_version','')).strip(); ch=e.get('changes')
   if not a or not b or a==b or a in seen: raise KernelError(f'ambiguous/invalid change_history transition from {a!r}')
-  seen.add(a); versions.update((a,b)); inbound[b]=inbound.get(b,0)+1
-  if inbound[b]>1: raise KernelError(f'ambiguous change_history destination {b!r}')
+  seen.add(a); versions.update((a,b))
   if not isinstance(ch,list) or not ch: raise KernelError(f'change_history {a}->{b} requires changes')
   change_seen=set()
   for c in ch:
@@ -283,7 +321,7 @@ def validate_standing_invariants(s,*,registry=None,eval_ids=None,required_eval_i
  coverage=entry.get('coverage')
  if not isinstance(coverage,dict): raise KernelError('standing invariant repository-context-admission requires coverage')
  if coverage.get('source_rule_id')!='repository-context-admission' or coverage.get('source_rule_fingerprint')!=REPOSITORY_CONTEXT_SOURCE_RULE_FINGERPRINT or set(coverage.get('required_eval_ids',[]))!=set(REPOSITORY_CONTEXT_EVAL_IDS) or set(coverage.get('rendered_roles',[]))!=set(REPOSITORY_CONTEXT_ROLES) or coverage.get('completion_role')!='integration' or coverage.get('completion_rule_id')!='integration-standing-policy-readback' or coverage.get('completion_rule_fingerprint')!=REPOSITORY_CONTEXT_COMPLETION_RULE_FINGERPRINT: raise KernelError('standing invariant repository-context-admission coverage weakened without supersession')
- shared={x['id']:x for x in _rules(s.get('shared_rules'),'shared_rules')}
+ shared={x['id']:x for x in shared_rules(s)}
  rule=shared.get('repository-context-admission')
  if rule is None: raise KernelError('standing invariant repository-context-admission missing canonical shared source rule')
  if REPOSITORY_CONTEXT_SOURCE_RULE_FINGERPRINT!=_rule_fingerprint(rule): raise KernelError('standing invariant repository-context-admission source rule differs from ratified fingerprint')
@@ -322,7 +360,7 @@ def generated_paths(m,s):
  if not isinstance(files,dict) or set(files)!=set(s['roles']): raise KernelError('generated role file map mismatch')
  return {r:PROJECT_DIR/str(files[r]) for r in s['roles']}
 def render_all(*,check):
- m,s=load_canonical(); limit=int(m.get('max_kernel_chars',3500)); out=[]; _render_root_instructions(s,check=check)
+ m,s=load_canonical(); limit=int(m.get('max_kernel_chars',3500)); out=[]; _render_root_instructions(s,check=check); _render_role_index_design_principles(s,check=check)
  for r,p in generated_paths(m,s).items():
   text=render_role(m,s,r); n=len(text)
   if n>limit: raise KernelError(f'kernel {r} exceeds {limit} chars: {n}')
@@ -373,7 +411,7 @@ def classify_project_drift(project_version,role_key,action_boundary,*,manifest=N
  indicator='PROJECT SETTINGS: HARD BREAK · DRIFT 3/3' if level==3 else f'PROJECT SETTINGS: OUTDATED · DRIFT {level}/3'
  return {'project_version':project_version,'canonical_version':canonical,'role':role_key,'action_boundary':boundary,'state':'hard_break' if blocking else 'outdated','impact':impact,'drift_level':level,'indicator':indicator,'block':bool(blocking),'resync_required':bool(blocking),'settings_refresh_recommended':not blocking,'changes':effective}
 
-REQUIRED_EVAL_IDS={'action-first-lifecycle-output', 'active-gate-blocker-cannot-be-deferred', 'additive-evidence-drift', 'allowed-specialist-implementation-composition', 'audit-dedupe-existing-finding', 'audit-exact-baseline', 'audit-missing-authority-fails-closed', 'audit-moved-baseline-current-blocker', 'audit-new-finding-backlog-only', 'audit-refuses-mutation-authority', 'audit-specialist-context-no-authority', 'authenticated-account-not-human-decision', 'chat-only-review-verdict-not-complete', 'chatty-authorized-action-before-narration', 'chatty-high-level-review-summary', 'chatty-progress-is-not-completion', 'chatty-session-correction-latches', 'chatty-status-reconciles-before-reroute', 'code-smell-dedupe-log-and-continue', 'code-smell-true-blocker-stays-active', 'comparison-incompatible-target-escalates-implementation', 'compatible-concise-output-drift', 'compatible-wording-drift', 'configured-repository-pr-routing', 'coordinator-check-everything-mixed-state', 'coordinator-pr-intake-automatic-review', 'cross-role-context-bleed', 'current-template-lookup', 'development-workflow-context-preload-no-authority', 'development-workflow-pr40-fallback-context', 'development-workflow-pr60-test-scope-context', 'disposable-fixture-still-needs-health', 'durable-review-classification', 'emergency-attach-after-review', 'emergency-attach-asana-authority-revoked', 'emergency-attach-branch-race', 'emergency-attach-conflicting-writer', 'emergency-attach-consumed-once', 'emergency-attach-eligible', 'emergency-attach-final-readback-required', 'emergency-attach-forbids-semantic-actions', 'emergency-attach-normal-broker-path-unchanged', 'emergency-attach-parent-mismatch', 'emergency-attach-policy-denial', 'emergency-attach-tree-mismatch', 'failed-ci-ownership-before-fix', 'five-whys-evidence-discipline', 'five-whys-reground-reload', 'forbidden-implicit-role-expansion', 'friction-active-blocker-routes-to-active-work', 'friction-dedupe-no-urgency', 'handoff-conflicts-with-role-authority', 'implementation-escalation-is-action-first', 'implementation-rejects-patch-only-completion', 'integration-bounded-reconciliation', 'integration-breaking-merge-drift', 'integration-rejects-head-mismatch', 'live-authority-over-stale-memory', 'mutation-broker-proof-required', 'no-valid-fallback', 'post-merge-asana-residual-gate', 'project-drift-current-silent', 'project-drift-integrity-error', 'project-drift-pre-d96-legacy', 'project-drift-self-compatible', 'project-drift-v708-review-compatible', 'publication-blocker-forbids-unsafe-shortcuts', 'publication-completion-invalidates-prior-review', 'publication-fully-published-local-certification', 'publication-handoff-before-human-notification', 'publication-materializer-eligible-blocker', 'publication-unsafe-governed-path-blocker', 'repository-context-admission-consequential-reasoning', 'repository-context-admission-missing-bundle', 'repository-context-admission-reentry', 'repository-context-admission-stale-main', 'repository-context-admission-tiny-lookup', 'repository-friction-discovery', 'review-breaking-completion-drift', 'review-exact-head-completion', 'reviewed-head-movement-classification', 'scope-amplification-checkpoint', 'separate-pr-does-not-clear-independent-blocker', 'shared-resource-concurrency-preflight', 'skipped-version-breaking-drift', 'skipped-version-nonbreaking-drift', 'stale-project-version', 'standing-policy-post-integration-main-readback', 'supported-operation-stays-local-system-access', 'task-history-before-no-op', 'unrelated-role-drift', 'valid-action-fallback'}
+REQUIRED_EVAL_IDS={'action-first-lifecycle-output', 'active-gate-blocker-cannot-be-deferred', 'additive-evidence-drift', 'allowed-specialist-implementation-composition', 'audit-dedupe-existing-finding', 'audit-exact-baseline', 'audit-missing-authority-fails-closed', 'audit-moved-baseline-current-blocker', 'audit-new-finding-backlog-only', 'audit-refuses-mutation-authority', 'audit-specialist-context-no-authority', 'authenticated-account-not-human-decision', 'chat-only-review-verdict-not-complete', 'chatty-authorized-action-before-narration', 'chatty-high-level-review-summary', 'chatty-progress-is-not-completion', 'chatty-session-correction-latches', 'chatty-status-reconciles-before-reroute', 'code-smell-dedupe-log-and-continue', 'code-smell-true-blocker-stays-active', 'comparison-incompatible-target-escalates-implementation', 'compatible-concise-output-drift', 'compatible-wording-drift', 'configured-repository-pr-routing', 'coordinator-check-everything-mixed-state', 'coordinator-pr-intake-automatic-review', 'cross-role-context-bleed', 'current-template-lookup', 'development-workflow-context-preload-no-authority', 'development-workflow-pr40-fallback-context', 'development-workflow-pr60-test-scope-context', 'disposable-fixture-still-needs-health', 'durable-review-classification', 'emergency-attach-after-review', 'emergency-attach-asana-authority-revoked', 'emergency-attach-branch-race', 'emergency-attach-conflicting-writer', 'emergency-attach-consumed-once', 'emergency-attach-eligible', 'emergency-attach-final-readback-required', 'emergency-attach-forbids-semantic-actions', 'emergency-attach-normal-broker-path-unchanged', 'emergency-attach-parent-mismatch', 'emergency-attach-policy-denial', 'emergency-attach-tree-mismatch', 'failed-ci-ownership-before-fix', 'five-whys-evidence-discipline', 'five-whys-reground-reload', 'forbidden-implicit-role-expansion', 'friction-active-blocker-routes-to-active-work', 'friction-dedupe-no-urgency', 'handoff-conflicts-with-role-authority', 'implementation-escalation-is-action-first', 'implementation-rejects-patch-only-completion', 'integration-bounded-reconciliation', 'integration-breaking-merge-drift', 'integration-rejects-head-mismatch', 'live-authority-over-stale-memory', 'mutation-broker-proof-required', 'no-valid-fallback', 'post-merge-asana-residual-gate', 'project-drift-current-silent', 'project-drift-integrity-error', 'project-drift-pre-d96-legacy', 'project-drift-self-compatible', 'project-drift-v708-review-compatible', 'publication-blocker-forbids-unsafe-shortcuts', 'publication-completion-invalidates-prior-review', 'publication-fully-published-local-certification', 'publication-handoff-before-human-notification', 'publication-materializer-eligible-blocker', 'publication-unsafe-governed-path-blocker', 'repository-context-admission-consequential-reasoning', 'repository-context-admission-missing-bundle', 'repository-context-admission-reentry', 'repository-context-admission-stale-main', 'repository-context-admission-tiny-lookup', 'repository-friction-discovery', 'review-breaking-completion-drift', 'review-exact-head-completion', 'reviewed-head-movement-classification', 'scope-amplification-checkpoint', 'separate-pr-does-not-clear-independent-blocker', 'shared-resource-concurrency-preflight', 'skipped-version-breaking-drift', 'skipped-version-nonbreaking-drift', 'stale-project-version', 'standing-policy-post-integration-main-readback', 'supported-operation-stays-local-system-access', 'task-history-before-no-op', 'unrelated-role-drift', 'valid-action-fallback', 'design-principles-harmless-overlap', 'design-principles-no-invented-manual-gate'}
 ORACLE_FIELDS={'expected','failure','expected_outcome','required_actions','forbidden_actions','required_observations','required_observations_by_role','require_ordered_observations','observation_link_field'}
 def _eval_payload():return _read_json(EVALS_PATH)
 def _evals():
@@ -390,7 +428,7 @@ def validate_preservation_inventory(s,payload,preservation):
  scenarios=payload.get('scenarios')
  if not isinstance(scenarios,list): raise KernelError('evals scenarios must be a list')
  scenario_by={str(x.get('id','')).strip():x for x in scenarios if isinstance(x,dict)}
- shared={x['id']:x for x in _rules(s.get('shared_rules'),'shared_rules')}
+ shared={x['id']:x for x in shared_rules(s)}
  for pid,e in by.items():
   canonical=_dependency_path(e.get('canonical_document'),f'preservation.{pid}.canonical_document')
   index_document=_dependency_path(e.get('index_document'),f'preservation.{pid}.index_document')
@@ -398,7 +436,7 @@ def validate_preservation_inventory(s,payload,preservation):
   if not link or link not in index_text: raise KernelError(f'preservation {pid} index link missing from {index_document}')
   rid=str(e.get('shared_rule_id','')).strip()
   if rid!=pid or rid not in shared: raise KernelError(f'preservation {pid} shared rule missing from canonical source')
-  if canonical not in shared[rid]['text']: raise KernelError(f'preservation {pid} shared rule does not point to {canonical}')
+  if Path(canonical).name not in shared[rid]['text']: raise KernelError(f'preservation {pid} shared rule does not point to {canonical}')
   if e.get('roles')!=['*']: raise KernelError(f'preservation {pid} must cover every Project role')
   for role in s['roles']:
    if rid not in {x['id'] for x in effective_rules(s,role)}: raise KernelError(f'preservation {pid} shared rule missing from role {role}')

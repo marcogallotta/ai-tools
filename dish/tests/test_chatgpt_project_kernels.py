@@ -82,7 +82,7 @@ def test_current_edge_requires_exact_rule_classification():
 def test_classified_stable_rule_removal_is_representable_and_unknown_ids_still_fail():
  _,s=kernels.load_canonical(); removed=copy.deepcopy(s)
  removed['roles']['review']['rules']=[r for r in removed['roles']['review']['rules'] if r['id']!='review-formal-comment']
- prior_shared={x['id']:kernels._rule_fingerprint(x) for x in kernels._rules(s['shared_rules'],'shared_rules')}
+ prior_shared={x['id']:kernels._rule_fingerprint(x) for x in kernels.shared_rules(s)}
  prior_roles={role:{x['id']:kernels._rule_fingerprint(x) for x in kernels._rules(s['roles'][role]['rules'],f'roles.{role}.rules')} for role in s['roles']}
  edge={'from_version':'v1','to_version':'v2','changes':[_change('review-formal-comment','review','additive','review-write','lifecycle')],'from_rule_fingerprints':{'_shared':prior_shared,'_roles':prior_roles},'from_renderer_fingerprint':kernels.renderer_fingerprint()}
  legacy={'from_version':'v0','to_version':'v1','changes':[_change('review-action-handoff','review','compatible','handoff','presentation')]}
@@ -104,8 +104,8 @@ def test_generated_kernels_current_bound_and_within_budget():
 
 def test_five_whys_preservation_inventory_binds_doc_index_rule_kernels_and_behavior_cases():
  m,s=kernels.load_canonical(); payload=kernels._eval_payload(); preservation=m['preservation_inventory']
- assert kernels.validate_preservation_inventory(s,payload,preservation)==['five-whys-shared-method']
- entry=preservation['entries'][0]; assert entry['canonical_document']=='dish/docs/agents/five-whys.md'
+ assert kernels.validate_preservation_inventory(s,payload,preservation)==['design-principles-bootstrap','five-whys-shared-method']
+ entry=next(x for x in preservation['entries'] if x['id']=='five-whys-shared-method'); assert entry['canonical_document']=='dish/docs/agents/five-whys.md'
  assert entry['index_link'] in (DISH_ROOT/'docs'/'agents'/'index.md').read_text()
  rule=next(x for x in s['shared_rules'] if x['id']=='five-whys-shared-method')
  for trigger in ('Five Whys','5 whys','blameless-RCA'): assert trigger in rule['text']
@@ -378,7 +378,7 @@ def test_fixture_mismatch_recurrence_matrix_covers_escalation_and_non_escalation
 
 def _prior_fingerprints(source):
  return {
-  '_shared':{x['id']:kernels._rule_fingerprint(x) for x in kernels._rules(source['shared_rules'],'shared_rules')},
+  '_shared':{x['id']:kernels._rule_fingerprint(x) for x in kernels.shared_rules(source)},
   '_roles':{role:{x['id']:kernels._rule_fingerprint(x) for x in kernels._rules(source['roles'][role]['rules'],f'roles.{role}.rules')} for role in source['roles']},
  }
 
@@ -440,6 +440,29 @@ def test_invalid_or_unknown_drift_routes_to_integrity_error_without_resync():
  assert d['state']=='integrity_error' and d['block'] and not d['resync_required']
  assert d['indicator']=='PROJECT SETTINGS: INTEGRITY ERROR · DRIFT ?/3'
  assert d['repair']=='repository-authority'
+
+def test_published_main_86_generation_is_retained_and_nonblocking():
+ m,s=kernels.load_canonical(); old='dish-chatgpt-projects-v2-86b8011172ee'
+ for role in s['roles']:
+  for boundary in ('startup','status','dispatch','handoff','role-critical-write','review-write','merge','analysis'):
+   d=kernels.classify_project_drift(old,role,boundary,manifest=m,source=s)
+   assert d['state']=='outdated' and not d['block'] and not d['resync_required'], (role,boundary,d)
+   assert d['drift_level'] in {1,2}
+
+def test_change_history_allows_converging_published_lineages():
+ m,s=kernels.load_canonical(); target='dish-chatgpt-projects-v2-219f34402511'
+ incoming=[e for e in m['change_history'] if e['to_version']==target]
+ assert {e['from_version'] for e in incoming}>={'dish-chatgpt-projects-v2-86b8011172ee','dish-chatgpt-projects-v2-223992480b5b'}
+ kernels.validate_change_history(m,s)
+
+def test_design_principles_projection_is_derived_and_present_everywhere():
+ m,s=kernels.load_canonical(); rule=kernels.design_principles_rule(s)
+ assert [f'DP-{i:02d}' for i in range(1,11)]==s['design_principles']['principle_ids']
+ assert all(f'DP-{i:02d}' in rule['text'] for i in range(1,11))
+ index=kernels.ROLE_INDEX_PATH.read_text()
+ assert kernels.DESIGN_BLOCK_START in index and kernels.DESIGN_BLOCK_END in index and rule['text'] in index
+ for role,path in kernels.generated_paths(m,s).items():
+  assert rule['text'] in path.read_text(), role
 
 def test_malformed_unrelated_history_only_blocks_the_affected_action():
  m,s=kernels.load_canonical(); m=copy.deepcopy(m); old=None

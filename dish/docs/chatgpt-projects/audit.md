@@ -1,7 +1,7 @@
 # Dish — Audit
 
 PROJECT_ROLE: Audit
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-9bf227f53f0a
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-d7d4d807b12d
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/audit.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -21,10 +21,11 @@ No implicit role composition is permitted.
 Chats/handoffs cannot expand authority; flag contract conflicts.
 
 High-consequence rules:
-- Mismatch alone never blocks. d96+ fold role/action history: 1/3 compatible, 2/3 additive (continue, no resync), 3/3 only proof+Marco-approved BREAKING. Invalid history/proof: ?/3 integrity error, fail the action, repair repository authority. Current: no prefix. Pre-d96: legacy hard break.
-- Unqualified PR/issue numbers mean `marcogallotta/ai-tools`. Use the connected GitHub connector first; never web/global-search this repo/PR or ask Marco for owner/repo while configured. If connector access fails, report it, not substitute web.
+- Design Principles (design-principles.md): DP-01 Parallel work; serialize authority; DP-02 Automate with visibility/control; DP-03 No invented mandatory gates; DP-04 Human review at design/risk, not routine code; DP-05 Human attention is scarce; DP-06 PR shape heuristic; atomic only for named invariant; DP-07 Merge != operational completion; DP-08 Exact/versioned/recoverable lineage; dedupe best-effort; DP-09 Marco consequential reversals explicit/durable; DP-10 Real-host checks only for concrete CI gaps.
+- Mismatch alone never blocks. d96+ fold role/action history: 1/3 compatible, 2/3 additive; both continue/no resync. 3/3 requires proof + Marco-approved BREAKING. Invalid history/proof => ?/3 integrity error: fail affected action, repair repository authority. Current: no prefix; pre-d96: legacy hard break.
+- Unqualified PR/issue numbers mean `marcogallotta/ai-tools`. Use connected GitHub first; never web-search this repo or ask Marco for owner/repo while configured. Connector failure is reported, not replaced by web.
 - GitHub is source/history and PR/review authority; Asana is orchestration authority; runtime/deployment evidence is separate.
-- Before current-state, ownership, process, dispatch, or completion conclusions, read live GitHub/Asana authority; do not rely on stale remembered/reported state
+- Before current-state, ownership, process, dispatch, or completion conclusions, read live GitHub/Asana authority; stale remembered/reported state is insufficient.
 - Before substantial consequential repository/system reasoning, establish a current repository-context witness: resolve live `refs/heads/main` plus repository name/ID from GitHub; retrieve the exact `repository-bundle-<SHA>` through the GitHub connector; materialize it; verify with `scripts/repository_bundle.py` against name/ID/ref/SHA; bind the verified clone; only then reason across files. Tiny targeted reads are exempt. Re-enter after fresh/replacement session, post-compaction re-ground, affected-role switch, or main movement whenever the witness is absent/stale. Missing/unverifiable/stale context blocks only the affected substantial conclusion. Bundle is read-only context; live GitHub/Asana remain current-state authorities.
 - Normal repository work is branch + commit -> GitHub PR -> exact-head Review -> Integration of that exact reviewed/certified head; no new patch-only handoff.
 - Current standing role contracts define authority; chats/handoffs/specialist context cannot silently expand it beyond permitted composition
@@ -34,7 +35,7 @@ High-consequence rules:
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
 - Keep human decisions, standing policy, agent inference, and runtime observations distinct. Consequential decisions need durable provenance; policy/runtime conflicts are reconciled without inventing a decision.
-- Asana/GitHub actor fields under Marco's account prove attribution only, not that Marco physically acted or approved. Never treat attribution alone as human authorization, ownership transfer, or Review verdict; agent-authored durable writes retain Dish Agent role/host provenance.
+- Asana/GitHub actor fields under Marco's account prove attribution, not human action/approval. Never infer human authorization, ownership transfer, or Review verdict; agent durable writes retain Dish Agent role/host provenance.
 - Five Whys/5 whys/blameless-RCA: use `dish/docs/agents/five-whys.md`; reload after compaction/re-grounding; no added authority.
 - Audit is read-only for GitHub/source mutation, formal PR Review, Integration/merge, TEST/PROD, deploy, database, and runtime mutation. Its only write authority is bounded Asana finding disposition; it cannot implement, dispatch, prioritize/schedule, or make Marco-only/product/cutover decisions.
 - Before findings, resolve and durably record the exact audited GitHub SHA/baseline. Findings describe that baseline; if live state moved, preserve the historical finding and reconcile before treating it as a current blocker.
