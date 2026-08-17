@@ -9,6 +9,8 @@ kernels=importlib.util.module_from_spec(SPEC); SPEC.loader.exec_module(kernels)
 def _scenario(sid): return next(x for x in kernels._evals() if x['id']==sid)
 def _result(payload,cid): return next(x for x in payload['results'] if x['case_id']==cid)
 def _obs(sid,role):
+ if sid in {'five-whys-evidence-discipline','five-whys-reground-reload'}:
+  return [{'seq':1,'kind':'connector_read','operation':'repository_file_read','connector':'GitHub','repository':'marcogallotta/ai-tools','path':'dish/docs/agents/five-whys.md'}]
  if sid=='review-exact-head-completion': return [
   {'seq':1,'kind':'durable_write','operation':'pull_request_review','method':'COMMENT','pr':41,'head_sha':'H','write_id':'r41'},
   {'seq':2,'kind':'readback','operation':'pull_request_review','method':'COMMENT','pr':41,'head_sha':'H','write_id':'r41','verified':True}]
@@ -99,6 +101,34 @@ def test_generated_kernels_current_bound_and_within_budget():
   text=p.read_text(); assert len(text)<=m['max_kernel_chars']; assert f"PROJECT_CANONICAL_VERSION: {m['canonical_version']}" in text
   assert text.index('PROJECT_REPOSITORY: marcogallotta/ai-tools')<text.index('Startup:')
   assert 'Mismatch alone never blocks' in text and '?/3 integrity error' in text
+
+def test_five_whys_preservation_inventory_binds_doc_index_rule_kernels_and_behavior_cases():
+ m,s=kernels.load_canonical(); payload=kernels._eval_payload(); preservation=m['preservation_inventory']
+ assert kernels.validate_preservation_inventory(s,payload,preservation)==['five-whys-shared-method']
+ entry=preservation['entries'][0]; assert entry['canonical_document']=='dish/docs/agents/five-whys.md'
+ assert entry['index_link'] in (DISH_ROOT/'docs'/'agents'/'index.md').read_text()
+ rule=next(x for x in s['shared_rules'] if x['id']=='five-whys-shared-method')
+ for trigger in ('Five Whys','5 whys','blameless-RCA'): assert trigger in rule['text']
+ for role,path in kernels.generated_paths(m,s).items():
+  text=path.read_text(); assert 'dish/docs/agents/five-whys.md' in text and rule['text'] in text, role
+ by={x['id']:x for x in payload['scenarios']}
+ for sid in entry['behavior_scenario_ids']:
+  assert set(by[sid]['roles'])==set(s['roles'])
+  assert 'five-whys-shared-method' in by[sid]['required_rules']
+
+def test_five_whys_preservation_rejects_coordinated_silent_deletion():
+ m,s=kernels.load_canonical(); payload=kernels._eval_payload(); preservation=m['preservation_inventory']
+ with pytest.raises(kernels.KernelError,match='manifest requires preservation_inventory'):
+  kernels.validate_preservation_inventory(s,payload,None)
+ missing_inventory=copy.deepcopy(preservation); missing_inventory['entries']=[]
+ with pytest.raises(kernels.KernelError,match='preservation inventory mismatch'):
+  kernels.validate_preservation_inventory(s,payload,missing_inventory)
+ missing_rule=copy.deepcopy(s); missing_rule['shared_rules']=[x for x in missing_rule['shared_rules'] if x['id']!='five-whys-shared-method']
+ with pytest.raises(kernels.KernelError,match='shared rule missing'):
+  kernels.validate_preservation_inventory(missing_rule,payload,preservation)
+ missing_case=copy.deepcopy(payload); missing_case['scenarios']=[x for x in missing_case['scenarios'] if x['id']!='five-whys-reground-reload']
+ with pytest.raises(kernels.KernelError,match='behavior scenario missing'):
+  kernels.validate_preservation_inventory(s,missing_case,preservation)
 
 def test_chatty_contract_is_compiled_into_every_project_and_root():
  m,s=kernels.load_canonical(); rules=kernels.chatty_contract(s)
@@ -234,6 +264,15 @@ def test_eval_contract_matrix_and_oracle_free_prepared_cases():
  b=kernels.prepare_eval_bundle(); assert len(b['cases'])==sum(len(q['roles']) for q in kernels._evals())
  assert all(kernels.ORACLE_FIELDS.isdisjoint(c) for c in b['cases'])
  by={c['case_id']:c for c in b['cases']}; assert by['configured-repository-pr-routing::review']['prompt']=='review PR31'; assert by['configured-repository-pr-routing::integration']['prompt']=='merge PR34'
+
+def test_five_whys_behavior_cases_cover_load_reground_evidence_branching_and_anti_patterns():
+ initial=_scenario('five-whys-evidence-discipline'); reground=_scenario('five-whys-reground-reload')
+ assert {'read_canonical_five_whys_method_before_substantive_rca','classify_verified_rejected_unknown','allow_fewer_or_more_than_five','branch_supported_causes'}<=set(initial['required_actions'])
+ assert {'substantive_rca_before_method_load','force_exactly_five','stop_at_human_blame','present_hypothesis_as_fact'}<=set(initial['forbidden_actions'])
+ assert {'reload_canonical_five_whys_method_after_regrounding','continue_evidence_classification','continue_branching_as_evidence_requires','preserve_role_authority'}<=set(reground['required_actions'])
+ assert {'continue_from_stale_method_memory','invent_missing_evidence','treat_method_as_authority_expansion'}<=set(reground['forbidden_actions'])
+ for q in (initial,reground):
+  assert q['required_observations']==[{'equals':{'connector':'GitHub','path':'dish/docs/agents/five-whys.md','repository':'marcogallotta/ai-tools'},'kind':'connector_read','operation':'repository_file_read'}]
 
 def test_behavior_evaluator_accepts_complete_matrix(): assert len(kernels.evaluate_behavior_results(_passing()))==sum(len(q['roles']) for q in kernels._evals())
 

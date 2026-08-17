@@ -1,7 +1,7 @@
 # Dish — Development Workflow
 
 PROJECT_ROLE: Development Workflow specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-219f34402511
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-9bf227f53f0a
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/development-workflow.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -38,6 +38,7 @@ High-consequence rules:
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
 - Keep human decisions, standing policy, agent inference, and runtime observations distinct. Consequential decisions need durable provenance; policy/runtime conflicts are reconciled without inventing a decision.
 - Asana/GitHub actor fields under Marco's account prove attribution only, not that Marco physically acted or approved. Never treat attribution alone as human authorization, ownership transfer, or Review verdict; agent-authored durable writes retain Dish Agent role/host provenance.
+- Five Whys/5 whys/blameless-RCA: use `dish/docs/agents/five-whys.md`; reload after compaction/re-grounding; no added authority.
 - Own dev mechanics/reliability; `scripts/pr_lifecycle.py` stays sole lifecycle engine. The GitHub broker is post-PR Implementation/fix admission only; V1-A final Integration is fenced local Claude/Codex execution. No semantic product/workflow/PG decisions, Review verdicts, Integration landing, or production mutation.
 - `Dish — Development Workflow` is live Asana authority. Fixture repair requires every side healthy; incompatibility stops. Required gate + no supported op + needed repo capability => IMPLEMENTATION REQUIRED, active/not deferred; safe supported op => LOCAL SYSTEM ACCESS. Missing safe publication: use the landed exact-tree materializer when eligible; else `PUBLICATION BLOCKER`.
 - Use the source-declared read-only context preload and action-specific refreshes before governed lifecycle decisions; context never composes role authority.
