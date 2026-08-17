@@ -279,8 +279,9 @@ class PagedHistoryGitHub(FakeGitHub):
     def __init__(self):
         super().__init__()
         self.full_history_reads = 0
-        self.closed_page_reads = []
+        self.closed_recovery_slots = []
         self.closed_history_size = 10_000
+        self.closed_candidates = {}
 
     def list_prs(self, *, include_closed=False):
         if include_closed:
@@ -288,24 +289,36 @@ class PagedHistoryGitHub(FakeGitHub):
             raise AssertionError("watch dispatch must not read all closed PRs")
         return [deepcopy(self.pr)]
 
-    def list_closed_prs_page(self, *, page, per_page):
-        self.closed_page_reads.append((page, per_page))
-        # The same PR number is intentionally ignored after the open scan; the
-        # test is about bounded retrieval, not terminal action behavior.
-        return [deepcopy(self.pr)] if page <= self.closed_history_size else []
+    def closed_recovery_candidate(self, *, recovery_slot):
+        self.closed_recovery_slots.append(recovery_slot)
+        page = (recovery_slot % self.closed_history_size) + 1
+        candidate = deepcopy(self.pr)
+        candidate["number"] = 10_000 + page
+        candidate["state"] = "closed"
+        candidate["merged"] = False
+        candidate["merged_at"] = None
+        candidate["head"]["ref"] = "main"
+        self.closed_candidates[candidate["number"]] = candidate
+        return deepcopy(candidate)
+
+    def get_pr(self, number):
+        if number in self.closed_candidates:
+            return deepcopy(self.closed_candidates[number])
+        return super().get_pr(number)
 
 
-def test_dispatch_uses_one_incremental_closed_page_per_poll_with_large_history():
+def test_fresh_dispatch_processes_rotate_closed_recovery_with_large_history():
     gh = PagedHistoryGitHub()
-    lifecycle = engine(gh)
+    first = engine(gh, now=NOW).dispatch(workspace=None, local_reviewer=None)
+    second = engine(gh, now=NOW + timedelta(seconds=180)).dispatch(workspace=None, local_reviewer=None)
 
-    first = lifecycle.dispatch(workspace=None, local_reviewer=None)
-    second = lifecycle.dispatch(workspace=None, local_reviewer=None)
-
-    assert [value.number for value in first] == [31]
-    assert [value.number for value in second] == [31]
+    assert first[0].number == second[0].number == 31
+    assert first[1].number != second[1].number
     assert gh.full_history_reads == 0
-    assert gh.closed_page_reads == [(1, 1), (2, 1)]
+    assert gh.closed_recovery_slots == [
+        int(NOW.timestamp() // 180),
+        int((NOW + timedelta(seconds=180)).timestamp() // 180),
+    ]
 
 
 def test_json_status_render_includes_generation_time():
@@ -345,6 +358,27 @@ def test_closed_recovery_reads_one_explicit_closed_page():
     assert "state=closed" in http.calls[0][1]
     assert "page=4" in http.calls[0][1]
     assert "per_page=1" in http.calls[0][1]
+
+
+def test_closed_recovery_candidate_selects_a_page_from_github_pagination():
+    class RecoveryHTTP:
+        def __init__(self):
+            self.calls = []
+
+        def request(self, method, url, *, headers=None, body=None):
+            self.calls.append(url)
+            if pr_lifecycle.urlparse.parse_qs(pr_lifecycle.urlparse.urlparse(url).query)["page"] == ["1"]:
+                return 200, {"Link": '<https://api.github.com/repos/marcogallotta/ai-tools/pulls?page=3>; rel="last"'}, [pr()]
+            return 200, {}, [pr(head=NEW_HEAD)]
+
+    http = RecoveryHTTP()
+    github = pr_lifecycle.GitHubREST("marcogallotta/ai-tools", "token", http=http)
+
+    candidate = github.closed_recovery_candidate(recovery_slot=1)
+
+    assert candidate["head"]["sha"] == NEW_HEAD
+    assert len(http.calls) == 2
+    assert "page=2" in http.calls[1]
 
 
 def test_semantic_new_head_invalidates_prior_review():

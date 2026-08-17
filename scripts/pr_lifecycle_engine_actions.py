@@ -39,6 +39,9 @@ def _dispatch_fixer(dispatcher: Any, context: dict[str, Any], *, host: str) -> N
         dispatcher.dispatch(context)
 
 
+TERMINAL_RECOVERY_SLOT_SECONDS = 180
+
+
 def _route_result_marker(*, starting_head: str, new_head: str, host: str, route: str, grant: Any) -> str:
     host_token = "local" if host == LOCAL_IMPLEMENTATION else "chatgpt"
     return (
@@ -697,20 +700,17 @@ class LifecycleActionsMixin:
         terminal_cleaner: TerminalCleanupDispatcher | None = None,
         notify: Callable[[str], None] | None = None,
     ) -> list[PRLifecycle]:
-        # Ordinary dispatch handles open PRs. Recover terminal lineages one closed
-        # PR page at a time so a foreground watcher never blocks on full history.
+        # Ordinary dispatch handles open PRs. Closed recovery is stateless but
+        # rotates with the same 180-second cadence as the foreground watcher, so
+        # fresh standalone processes cannot remain pinned to the newest page.
         values = self.status()
-        page_reader = getattr(self.github, "list_closed_prs_page", None)
-        if callable(page_reader):
-            page = self._terminal_recovery_page
-            terminal_prs = page_reader(page=page, per_page=1)
-            self._terminal_recovery_page = page + 1 if terminal_prs else 1
+        candidate_reader = getattr(self.github, "closed_recovery_candidate", None)
+        if callable(candidate_reader):
+            slot = int(self.now().timestamp() // TERMINAL_RECOVERY_SLOT_SECONDS)
+            candidate = candidate_reader(recovery_slot=slot)
             seen = {value.number for value in values}
-            values.extend(
-                self.inspect(candidate)
-                for candidate in terminal_prs
-                if _pr_number(candidate) not in seen
-            )
+            if candidate is not None and _pr_number(candidate) not in seen:
+                values.append(self.inspect(candidate))
         elif include_closed:
             # Compatibility for test/third-party backends that have not yet
             # implemented the bounded page read. The repository adapter above
