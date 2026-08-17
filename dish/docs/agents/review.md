@@ -89,6 +89,54 @@ Keep substantive Review evidence and the exact durable lifecycle disposition on 
 
 The durable PR/lifecycle may still distinguish Review passed, Integration ready, local Review evidence, local Implementation completion, local Integration certification, genuine external dependency, blocked, and merged states because those distinctions control automation and authority. They remain technical state on the durable surface rather than mandatory human-facing labels. Successful Review is not completion: a formal exact-head `VERDICT: MERGE` may still have later Integration/certification gates, and Review itself never merges.
 
+### Durable lifecycle status vocabulary
+
+Human output states the lifecycle result and one exact action only; the generated Work chat contract may phrase that result in plain English. The following tokens remain the canonical technical status vocabulary on durable PR/lifecycle surfaces and in compatibility examples; they are not mandatory opening labels in Marco-facing chat.
+
+Use these meanings:
+
+- `REVIEW PASSED`: a formal exact-head `VERDICT: MERGE` exists, but an Integration gate still remains. Name the exact pending gate. Ordinary hosted exact-head certification pending uses `Action: none.`; it is not `WAITING ON DEPENDENCY` and not yet `INTEGRATION READY`.
+- `INTEGRATION READY`: Review passed and every required implementation, local/environment, CI/certification, ordering, and mergeability gate is green. Review itself does not merge; bounded Integration may continue only where separately authorized.
+- `LOCAL REVIEW REQUIRED`: Review-authorized evidence genuinely requires a local-only capability that this remote Review host lacks. Put the complete exact-head handoff on the PR before notifying Marco, then route specifically to a local **Review** agent. A local Review host that already has the required capability executes that Review evidence directly instead of handing it to another local agent.
+- `LOCAL IMPLEMENTATION COMPLETION REQUIRED`: semantic/source correction belongs to Implementation, regardless of whether the reviewer is local or remote. Put the complete fix handoff on the PR and route to Implementation; Review never fixes it.
+- `LOCAL INTEGRATION CERTIFICATION REQUIRED`: the exact reviewed head passed semantic Review and only an Integration-authorized local certification/action remains. Put the complete exact-head handoff on the PR and route to Integration; locality never grants Review Integration authority.
+- `BLOCKED`: the exact head cannot receive `VERDICT: MERGE` and no mechanically routable agent action above resolves it. Put the detailed blocker on the PR and give one exact action/reason.
+- `WAITING ON DEPENDENCY`: reserve for a genuine external task/PR/dependency whose change is itself the salient prerequisite. Ordinary post-Review CI/certification progression is `REVIEW PASSED`, not this state.
+- `MERGED`: only after authorized Integration has merged the exact reviewed/certified head and authoritative GitHub readback proves the merge SHA.
+
+Worked durable-state examples (the Marco-facing Work chat may render the same outcome in plain English):
+
+```text
+REVIEW PASSED
+PR #X passed exact-head Review.
+Waiting for: GitHub exact-head certification.
+Action: none.
+```
+
+```text
+INTEGRATION READY
+PR #X passed Review and all required gates.
+Action: Integration may merge the exact reviewed head.
+```
+
+```text
+LOCAL REVIEW REQUIRED
+PR #X needs local Review evidence.
+Action: give PR #X to a local Review agent; full handoff is on the PR.
+```
+
+```text
+LOCAL IMPLEMENTATION COMPLETION REQUIRED
+PR #X needs a semantic fix.
+Action: give PR #X to an Implementation agent; full handoff is on the PR.
+```
+
+```text
+LOCAL INTEGRATION CERTIFICATION REQUIRED
+PR #X passed Review and needs local Integration certification.
+Action: give PR #X to a local Integration agent; full handoff is on the PR.
+```
+
 When a real local/manual action is required, write the complete exact-head handoff to the PR first, then give Marco the smallest usable instruction that identifies the PR and receiving kind of agent. When continuation is automatic, say there is nothing for Marco to do.
 
 ## Blocker fixes and recheck

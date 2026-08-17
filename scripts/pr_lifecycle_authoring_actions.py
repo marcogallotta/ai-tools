@@ -3,9 +3,10 @@ from __future__ import annotations
 
 from pr_lifecycle_support import *
 from pr_lifecycle_helpers import _continuation_handoff_present, _continuation_key
+from pr_lifecycle_post_merge_actions import PostMergeReviewActionsMixin
 
 
-class LifecycleAuthoringActionsMixin:
+class LifecycleAuthoringActionsMixin(PostMergeReviewActionsMixin):
     def _ensure_implementation_continuation_handoff(
         self, pr: PRLifecycle, evidence: str
     ) -> bool:
