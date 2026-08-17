@@ -134,16 +134,19 @@ export async function bootPrivateFrontend(root, { mode, fetchImpl = globalThis.f
   };
 
   let protectedController = null;
-  if (mode === "private-postgresql") {
+  if (mode === "private-postgresql" || mode === "private-postgresql-authority") {
+    const environmentLabel = mode === "private-postgresql-authority"
+      ? "POSTGRESQL — AUTHORITATIVE SOURCE"
+      : "POSTGRESQL — NON-AUTHORITATIVE";
     if (window.location.pathname === "/admin") {
       protectedController = await renderLocalPostgresqlAdmin(root, {
-        environmentLabel: "POSTGRESQL — NON-AUTHORITATIVE",
+        environmentLabel,
         onAuthenticationLost,
       });
     } else {
       protectedController = await renderLocalPostgresqlBoard(root, {
         initialTaskId: parsePostgresTaskRoute(window.location.pathname)?.taskId ?? null,
-        environmentLabel: "POSTGRESQL — NON-AUTHORITATIVE",
+        environmentLabel,
         onAuthenticationLost,
       });
     }

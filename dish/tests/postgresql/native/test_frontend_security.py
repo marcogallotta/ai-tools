@@ -15,7 +15,10 @@ from dish_pg.database import session_factory
 from dish_pg.frontend_security_models import FrontendSecurityState, FrontendSession
 from dish_pg.release import ALEMBIC_HEAD
 from dish_service.frontend_auth import FrontendAuthFailure, FrontendAuthService
-from dish_service.frontend_private_runtime import FrontendPrivateRuntime
+from dish_service.frontend_private_runtime import (
+    FrontendAuthorityIdentity,
+    FrontendPrivateRuntime,
+)
 from dish_service.frontend_security import (
     Argon2Policy,
     FrontendSecurityConfigurationError,
@@ -262,6 +265,12 @@ def test_native_frontend_runtime_physically_isolates_auth_writes_from_observatio
         static_root = tmp_path / "dist"
         static_root.mkdir()
         (static_root / "index.html").write_text("<!doctype html>", encoding="utf-8")
+        authority_identity = FrontendAuthorityIdentity(
+            database=str(make_url(observation_database.sqlalchemy_url).database),
+            schema_head=ALEMBIC_HEAD,
+            dish_release="dish-42619b9",
+            generation_id=str(context["generation_id"]),
+        )
         runtime = FrontendPrivateRuntime(
             FrontendRuntimeSettings(
                 enabled=True,
@@ -278,7 +287,8 @@ def test_native_frontend_runtime_physically_isolates_auth_writes_from_observatio
                 argon2_policy=_policy(),
                 postgresql_reads_enabled=True,
                 projection_delay_seconds=900,
-            )
+            ),
+            authority_identity=authority_identity,
         )
         try:
             runtime.startup_check()
@@ -333,6 +343,14 @@ def test_native_frontend_runtime_physically_isolates_auth_writes_from_observatio
 
             assert rotate_password(admin_settings, "another correct battery staple") == 2
             assert _frontend_security_counts(runtime.observation_engine) == observation_counts_before
+
+            with pytest.raises(
+                FrontendSecurityConfigurationError, match="authority identity mismatch"
+            ):
+                FrontendPrivateRuntime._validate_authority_identity(
+                    runtime.observation_factory,
+                    replace(authority_identity, dish_release="wrong-release"),
+                )
         finally:
             runtime.close()
 

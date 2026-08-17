@@ -33,7 +33,7 @@ export async function boot(root = document.querySelector("#app")) {
   document.title = DOCUMENT_TITLE;
   const mode = runtimeMode();
 
-  if (mode === "private-disabled" || mode === "private-postgresql") {
+  if (["private-disabled", "private-postgresql", "private-postgresql-authority"].includes(mode)) {
     await bootPrivateFrontend(root, { mode });
     return;
   }

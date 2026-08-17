@@ -112,7 +112,9 @@ As of 2026-08-10, the public Action router has a fixed path split on the one
 Funnel origin: root routes to production and `/test` routes only the TEST
 schema and Action commands. The two services use distinct Action tokens.
 
-## Private authenticated frontend
+## Local authenticated frontend fixture
+
+This is the developer/local fixture path, not the PostgreSQL TEST product path.
 
 - **What**: the local private frontend authenticates against the separate writable
   `dish_frontend_auth_test` database on the test PostgreSQL instance and observes
@@ -157,14 +159,22 @@ schema and Action commands. The two services use distinct Action tokens.
 - **URL**: `https://127.0.0.1:4443/`. The Caddy internal root currently trusted by
   the local browser remains under `/home/marco/.local/share/caddy`; the managed
   Caddy unit reuses that state rather than issuing from another local CA.
-## Opt-in PostgreSQL-authoritative TEST rehearsal
+## PostgreSQL-authoritative TEST rehearsal
 
-Normal `dish-service-test.service` remains legacy SQLite/Asana-authoritative. To rehearse the
-cutover runtime without Asana, keep the same service unit and set `DISH_AUTHORITY_BACKEND=postgresql`
-in the TEST environment together with the `DISH_PG_*` identity values documented in
-`deploy/systemd/service-test.env.example`. Also set `DISH_PROFILE=test` and remove/comment every
-populated Asana variable, including `ASANA_ENV`; PostgreSQL-authority startup fails closed if any
-environment key containing `ASANA` is populated. There is no fallback to the legacy service.
+`dish-service-test.service` is the normal PostgreSQL/no-Asana TEST authority. Its environment uses
+`DISH_AUTHORITY_BACKEND=postgresql`, `DISH_PROFILE=test`, and the exact `DISH_PG_*` candidate identity
+from `deploy/systemd/service-test.env.example`. Remove/comment every populated Asana variable,
+including `ASANA_ENV`; PostgreSQL-authority startup fails closed if any environment key containing
+`ASANA` is populated. There is no fallback to the legacy service. The legacy TEST service exists only
+as the isolated comparator oracle under `dish-service-test-legacy.service`.
+
+The same TEST process now composes `FrontendPrivateRuntime` into its existing private listener on
+8765. The frontend observation connection must resolve to the same exact authority database, Alembic
+head, Dish release, and active generation validated by the runtime, while frontend auth/session writes
+go to a physically distinct TEST database. Startup fails closed on any mismatch. Build the ordinary
+`frontend/dist` candidate before restart; do not use `review-dist/`. The dedicated TEST HTTPS edge is
+`dish-frontend-test-caddy.service`, which proxies only to 8765 and is operationally separate from the
+Action router on 8766.
 
 Initialize the disposable TEST database with the existing PostgreSQL path: migrate it to the checked-in
 head, run `scripts/dish-pg-bootstrap-initial` against an importer-compatible synthetic or prebuilt
