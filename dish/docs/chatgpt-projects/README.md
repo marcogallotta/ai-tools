@@ -21,6 +21,12 @@ The generated role Markdown files are copyable Project-instruction text. Do not 
 
 `dish/docs/agents/design-principles.md` is the canonical detailed Design Principles document. Its stable DP-01…DP-10 bootstrap sentences are digest-bound by `source.json` and compiled into the shared `design-principles-bootstrap` rule. The generator writes that same concise projection into every current Project kernel and the current role index; those generated surfaces are projections, not second policy authorities.
 
+## Progressive disclosure
+
+Project kernels keep universal/high-consequence policy directly loaded and deliver conditional policy through an always-loaded trigger index. Canonical rules remain in `source.json`; every effective rule is mechanically classified as `DIRECT_ALWAYS_ON` or `TRIGGERED_READ`. A triggered rule must resolve through existing `context_dependencies` metadata to one or more exact `path#H2 heading` destinations, and generation fails if the trigger or bounded section is missing. This keeps the Project surface as an active routing index rather than a passive pointer or a second policy source.
+
+The only blocking size limit is the ChatGPT Project platform ceiling of **8,000 characters**. Structural checks prove delivery classification, trigger/destination integrity, rendered identity, and actual size. Behavioral evals remain responsible for proving that agents perform required triggered reads before governed actions.
+
 ## Version and drift control
 
 Each generated kernel declares `PROJECT_CANONICAL_VERSION`. Exact-current Projects emit no Project-settings prefix. A version mismatch is only a trigger to inspect semantic history; it never blocks by itself. The Project folds every manifest transition from its declared version to current, then scopes each change to the exact role and action boundary before deciding.

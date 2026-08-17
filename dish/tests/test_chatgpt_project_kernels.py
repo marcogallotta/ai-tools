@@ -109,8 +109,12 @@ def test_five_whys_preservation_inventory_binds_doc_index_rule_kernels_and_behav
  assert entry['index_link'] in (DISH_ROOT/'docs'/'agents'/'index.md').read_text()
  rule=next(x for x in s['shared_rules'] if x['id']=='five-whys-shared-method')
  for trigger in ('Five Whys','5 whys','blameless-RCA'): assert trigger in rule['text']
- for role,path in kernels.generated_paths(m,s).items():
-  text=path.read_text(); assert 'dish/docs/agents/five-whys.md' in text and rule['text'] in text, role
+ for role in s['roles']:
+  text=kernels.render_role(m,s,role)
+  assert 'Five Whys / 5 whys / blameless RCA' in text
+  assert '`dish/docs/agents/five-whys.md#Procedure`' in text
+  assert '`dish/docs/agents/five-whys.md#Required output`' in text
+  assert rule['text'] not in text, role
  by={x['id']:x for x in payload['scenarios']}
  for sid in entry['behavior_scenario_ids']:
   assert set(by[sid]['roles'])==set(s['roles'])
@@ -145,14 +149,14 @@ def test_development_workflow_context_preload_is_role_index_driven_and_read_only
  expected={'coordinator.md','development-workflow.md','audit.md','implementation.md','integration.md','review.md','workflow.md','postgresql-dark-launch.md'}
  assert kernels.role_index_contracts()==expected
  assert deps['preload']=={'role_index_contracts':True,'additional':['dish/docs/agents/contributor-base.md']}
- assert deps['action_specific']['test-scope decisions']==['dish/docs/testing.md','dish/docs/architecture/testing-boundaries.md']
- assert deps['action_specific']['dispatcher/Integration mechanics']==['ci/pr-lifecycle-dispatcher-runbook.md']
- assert deps['action_specific']['native-PostgreSQL workflow mechanics']==['dish/docs/testing.md','dish/docs/architecture/postgresql-runtime.md']
+ assert deps['triggered_reads']['test-scope decisions']==['dish/docs/testing.md#Autonomous changed-path selection','dish/docs/architecture/testing-boundaries.md#Proving tests']
+ assert deps['triggered_reads']['dispatcher / Integration mechanics']==['ci/pr-lifecycle-dispatcher-runbook.md#Review routing','ci/pr-lifecycle-dispatcher-runbook.md#BLOCK -> implementation/fix routing','ci/pr-lifecycle-dispatcher-runbook.md#Integration composition']
+ assert deps['triggered_reads']['native-PostgreSQL workflow mechanics']==['dish/docs/testing.md#Named lane commands','dish/docs/architecture/postgresql-runtime.md#Proving tests']
  text=kernels.render_role(m,s,'development-workflow')
- assert text.index('Startup:')<text.index('Read-only decision context (startup/re-grounding):')
+ assert text.index('Startup:')<text.index('Read-only startup/re-ground context:')
  assert 'load every standing role contract listed by the current role index' in text
  assert '`dish/docs/agents/contributor-base.md`' in text
- assert 'grants no Implementation, Review, Integration, merge, or production authority' in text
+ assert 'Context grants no role/mutation/Review/Integration/merge/production authority' in text
  comps=s['roles']['development-workflow']['allowed_compositions']; assert len(comps)==1 and 'implementation.md' in comps[0]
  assert 'review.md' not in comps[0] and 'integration.md' not in comps[0]
 
@@ -175,6 +179,35 @@ def test_development_workflow_incident_evals_require_cross_role_and_fallback_con
  assert {'load_contributor_base_context','inspect_authorized_fallback_surface','classify_residual_certification_only_after_fallback_check'}<=set(pr40['required_actions'])
  noauth=_scenario('development-workflow-context-preload-no-authority')
  assert {'treat_context_read_as_implementation_authority','treat_context_read_as_review_authority','treat_context_read_as_integration_authority'}<=set(noauth['forbidden_actions'])
+
+
+def test_progressive_disclosure_classifies_every_rule_and_binds_triggered_rules_to_bounded_sections():
+ m,s=kernels.load_canonical()
+ for role in s['roles']:
+  deps=kernels.context_dependencies(s,role) or {'triggered_reads':{}}
+  rendered=kernels.render_role(m,s,role)
+  for rule in kernels.effective_rules(s,role):
+   delivery=rule['delivery']; assert delivery['mode'] in {'DIRECT_ALWAYS_ON','TRIGGERED_READ'}
+   if delivery['mode']=='DIRECT_ALWAYS_ON':
+    assert rule['text'] in rendered, (role,rule['id'])
+   else:
+    trigger=delivery['trigger']; assert trigger in deps['triggered_reads']
+    assert rule['text'] not in rendered, (role,rule['id'])
+    for locator in deps['triggered_reads'][trigger]:
+     assert '#' in locator
+     path,heading=locator.split('#',1)
+     assert f'## {heading}' in (DISH_ROOT.parent/path).read_text().splitlines()
+
+def test_progressive_disclosure_rejects_orphaned_trigger_and_missing_section():
+ _,s=kernels.load_canonical(); broken=copy.deepcopy(s)
+ rule=next(x for x in broken['shared_rules'] if x['id']=='five-whys-shared-method')
+ rule['delivery']['trigger']='missing-trigger'
+ with pytest.raises(kernels.KernelError,match='lack context destinations'):
+  kernels.render_role_with_version(broken,'implementation','test')
+ broken=copy.deepcopy(s)
+ broken['context_dependencies']['triggered_reads']['Five Whys / 5 whys / blameless RCA']=['dish/docs/agents/five-whys.md#Does not exist']
+ with pytest.raises(kernels.KernelError,match='section does not exist'):
+  kernels.validate_topology(broken)
 
 def test_repository_context_admission_is_shared_rendered_and_independently_registered():
  m,s=kernels.load_canonical(); registry=kernels._standing_invariant_registry(); entry=registry['repository-context-admission']
