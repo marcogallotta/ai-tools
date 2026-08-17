@@ -12,6 +12,8 @@
 # outside that set is auto-denied rather than hanging or silently escalating. The only
 # state-changing calls allowed are the local recovery checkpoint (writes only to the
 # repository-owned fence state file) and the single exact-head GitHub merge call.
+# `tools/asana get`/`notes` are read-only and required so the immediate-pre-merge live
+# Asana authority check in dish/docs/agents/integration.md is actually satisfiable.
 #
 # To activate: set DISH_LOCAL_INTEGRATION_COMMAND to the absolute path of this script
 # (or pass --local-integration-launcher to scripts/pr_lifecycle.py) and
@@ -73,6 +75,8 @@ ALLOWED_TOOLS=(
   "Bash(gh pr view:*)"
   "Bash(gh pr checks:*)"
   "Bash(gh pr merge:*)"
+  "Bash(tools/asana get:*)"
+  "Bash(tools/asana notes:*)"
   "Bash(python3 scripts/pr_gate.py*)"
   "Bash(python3 scripts/pr_lifecycle.py integration-checkpoint*)"
   "Bash(.venv/bin/python scripts/pr_gate.py*)"
@@ -86,6 +90,12 @@ ${HANDOFF_FILE} -- read it first.
 Your current working directory is a dedicated, disposable Integration worktree \
 checked out at the exact candidate head; it is not the shared main checkout and it \
 will be removed after this run. Do all git/gh/pr_gate work here.
+
+Before the first mutation and again immediately before the irreversible merge \
+boundary, re-read live GitHub PR/head/base/Review/certification/current-main state \
+and the explicit owning Asana task via \`tools/asana get <task-gid>\` (task gid(s) are \
+in the handoff JSON). Movement, closure, or a live Asana state that no longer permits \
+the action stops the run with zero further mutation.
 
 Perform only the mechanical Integration steps that contract authorizes, using only the \
 tools you have been granted. If anything requires a semantic decision, a tool call \
