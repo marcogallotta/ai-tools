@@ -67,19 +67,19 @@ workflow procedure.
   continuation, reuse exactly that run ID and let Dish decide whether it remains authoritative.
 - For every Action whose imported schema requires `client.request_id`, create a fresh canonical
   lowercase UUID for one logical call. This includes `inspect`: Verification inspection records
-  durable evidence even though its operator purpose is observational. If no Dish envelope is received
-  because of a transport/client failure (for example `ClientResponseError`, timeout, or connection
-  reset), do not issue repeated automatic retries in the same assistant/tool loop when real elapsed
-  delay cannot be guaranteed. Preserve the exact logical request unchanged: the same `client.run_id`,
-  the same `client.request_id` when present, the same command, and the same arguments. Retry only at a
-  genuine later opportunity after real elapsed time, reusing that exact logical identity. If real
-  elapsed delay cannot be guaranteed now, report concisely that the call failed before a Dish envelope
-  and preserve the exact call for the next genuine retry opportunity; do not hammer the Action or
-  report that retries were exhausted. As soon as any Dish envelope is received, stop transport retry
-  behavior and follow Dish authority. Never blindly retry `BACKEND_UNCERTAIN`, and never rotate request
-  or run IDs merely to escape a failed or pending call. Do not invent a server-side sleep/timing Action
-  to manufacture delay. Truly read-only Actions that omit request IDs follow the same no-same-turn
-  retry rule and retain the same run ID.
+  durable evidence even though its operator purpose is observational. If no reliable authoritative
+  Dish response is received because of a transport/client failure (for example `ClientResponseError`,
+  timeout, connection reset, or a tool/client-generated error), automatically retry exactly once using
+  the exact same logical request: the same `client.run_id`, the same `client.request_id` when present,
+  the same command, and the same arguments. Do not make a third Action call for that logical request.
+  Exact-ID replay matters because the first call may have reached Dish even if its response was lost.
+  A canonical Dish envelope ends transport recovery immediately: obey it, including any
+  `allowed_actions`, `human_action`, or continuation guidance. A client/tool-generated error is not
+  Dish authority merely because it contains fields such as `allowed_actions`. Never blindly retry
+  `BACKEND_UNCERTAIN`. If the single exact retry also fails without reliable Dish authority, surface
+  the transport failure and preserve the exact logical request; do not invent backend state or rotate
+  request/run IDs to escape a failed or pending call. Truly read-only Actions that omit request IDs
+  follow the same one-automatic-retry rule and retain the same run ID.
 - Treat each Dish result as workflow authority. Follow `allowed_actions`, `service_access`,
   `data.agent_guidance`, validation findings, continuation fields, and `human_action`. Never infer a
   transition or invent/reconstruct operation, cycle, lease, hold, proposal, recovery, target, or
@@ -94,6 +94,13 @@ workflow procedure.
   Confirm it with `intent_basis: user_requested` only when Marco explicitly requested Planning for
   that exact task; otherwise ask him or use the explicit agent-override route with a real reason.
   Discussion or task legality alone is not authorization.
+- When the original objective explicitly requests both Planning and Research, complete all Planning
+  work under one stable Planning run A. After authoritative Planning completion, if Dish exposes the
+  legal initial-Research continuation and no real `human_action` or other Dish gate requires Marco,
+  start Research automatically under a fresh run B with a different `client.run_id`; do not require
+  another Marco turn solely to cross the stage boundary. Keep run B stable throughout Research. If the
+  objective requested Planning only, stop after Planning. Never broaden a Planning+Research objective
+  into independent Verification automatically; Verification remains a separate eligible run.
 - Independent Verification requires a genuinely different run from the run that constructed or last
   materially edited the candidate. New operation/cycle IDs or an attestation do not create
   independence. Use abandonment continuation targets only when Dish explicitly returns the exact
@@ -167,6 +174,24 @@ Classify inability to represent step 5 as a stale/incomplete connected Action sc
 do not route around the public contract. Then run the complete disposable-task procedure in
 `live-test-project-rehearsal.md`. Preview success for `sections` is connectivity proof, not authorization
 for production Cooking.
+
+For connected recovery acceptance, use the uncorroborated PROD Dibs incident (`Dibs bi tahina — carob
+molasses and tahini`) as the concrete regression shape, not as proof of a Dish backend defect. In TEST,
+make the first Planning `prepare` Action disappear/fail before a reliable authoritative Dish response.
+The connected agent must make exactly one automatic retry with the same run ID, request ID, command,
+and arguments; a canonical Dish envelope ends recovery and Planning continues without a Marco rescue.
+If the exact retry also lacks Dish authority, surface transport failure with no third call or ID rotation.
+For a Planning+Research objective, complete stable Planning run A, then start fresh Research run B after
+authoritative Planning completion and legal Dish continuation, with no extra Marco turn and no automatic
+Verification. Genuine Dish/human gates still stop normally. Before the pass, run the paired
+instruction drift check from the ai-tools checkout with:
+
+```bash
+DISH_HONEST_REPO=<honest-pantry> python -m pytest -q \
+  tests/test_action_replay_contract.py -k honest_connected_contract
+```
+
+Any mismatch against the exact paired revisions fails acceptance.
 
 ## Token rotation
 
