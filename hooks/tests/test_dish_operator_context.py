@@ -9,6 +9,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 HOOK = ROOT / "hooks" / "dish-operator-context"
 STYLE = ROOT / ".claude" / "output-styles" / "dish-operator.md"
+CODEX_README = ROOT / "codex" / "README.md"
+OPERATOR_ADAPTER = "/home/marco/.local/bin/dish-operator-context"
 
 
 def _style_body() -> str:
@@ -41,6 +43,39 @@ def test_codex_hooks_load_operator_policy_on_every_session_start():
     ]
     assert len(operator_entries) == 1
     assert "matcher" not in operator_entries[0]
+    assert operator_entries[0]["hooks"][0]["command"] == f"python3 {OPERATOR_ADAPTER}"
+
+
+def test_operator_adapter_symlink_resolves_policy_from_candidate(tmp_path):
+    adapter = tmp_path / "dish-operator-context"
+    adapter.symlink_to(HOOK)
+    proc = subprocess.run(
+        [sys.executable, str(adapter)],
+        input=json.dumps({"hook_event_name": "SessionStart", "source": "startup"}),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    output = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
+    assert output == "DISH OPERATOR INTERACTION POLICY\n\n" + _style_body()
+
+
+def test_exact_head_certification_binds_operator_adapter_to_candidate_worktree():
+    readme = CODEX_README.read_text(encoding="utf-8")
+    assert (
+        'ln -s "$WT/hooks/dish-operator-context" /home/marco/.local/bin/dish-operator-context'
+        in readme
+    )
+    assert (
+        'test "$(readlink -f /home/marco/.codex/hooks.json)" = "$WT/codex/hooks.json"'
+        in readme
+    )
+    assert (
+        'test "$(readlink -f /home/marco/.local/bin/dish-operator-context)" = '
+        '"$WT/hooks/dish-operator-context"'
+        in readme
+    )
 
 
 def test_operator_context_hook_ignores_non_session_events():

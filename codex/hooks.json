@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /home/marco/ai-tools/hooks/dish-operator-context",
+            "command": "python3 /home/marco/.local/bin/dish-operator-context",
             "timeout": 5
           }
         ]
