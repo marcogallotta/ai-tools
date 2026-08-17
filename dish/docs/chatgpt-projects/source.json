@@ -194,7 +194,7 @@
         },
         {
           "id": "publication-materializer-path",
-          "text": "After the exact-tree materializer has landed, a canonical same-repo draft-PR publication blocker with the complete verified candidate tree and a request within proven limits uses that bounded remote path before local completion. The workflow may create only an unattached exact-parent/exact-tree candidate; Implementation independently reads it back, performs the separate non-force expected-head connector ref update, and authoritatively re-reads PR/branch/commit/tree. Ineligible/unavailable/over-limit/incomplete requests retain `LOCAL IMPLEMENTATION COMPLETION REQUIRED`; this path grants no Review/Integration authority.",
+          "text": "After the exact-tree materializer has landed, use it for eligible same-repo draft-PR publication blockers before local completion; it creates only an unattached exact-parent/tree candidate and Implementation independently verifies/attaches/readbacks it. TEMPORARY emergency exception: if that candidate is already immutable/verified and broker admission is unavailable only because of proven shared infrastructure/commissioning failure before grant, broker admission alone may be waived for one `force=false` fast-forward ref attachment after immediate live GitHub+Asana authority/head/parent/tree/no-conflicting-writer checks. Policy/authority denial never qualifies; final PR/branch/commit/tree readback is mandatory; the exception is consumed by that head move and grants no semantic fix, Review/ready, Integration/merge/main, Asana, or runtime authority.",
           "impact": "additive",
           "action_boundaries": [
             "role-critical-write",
@@ -234,7 +234,7 @@
         },
         {
           "id": "mutation-broker-admission",
-          "text": "After broker activation, post-PR Implementation/fix mutates only with a current exact-PR grant whose run-attempt/comment/artifact proof verifies. Grant is fencing only: role/branch/worktree/CAS authority remains separate; read-only work is exempt and stale proof fails closed.",
+          "text": "After broker activation, post-PR Implementation/fix mutation requires a current exact-PR proof-backed grant, except the temporary already-materialized attach-only emergency class in `publication-materializer-path`. That exception waives broker admission only for one exact non-force candidate attachment after proven shared broker infrastructure/commissioning failure before grant; broker policy/authority denial never qualifies. Grant/exception never replaces role/branch/worktree/CAS/live-authority gates; stale proof fails closed.",
           "impact": "additive",
           "action_boundaries": [
             "role-critical-write",
