@@ -2334,6 +2334,57 @@
         "make_unapproved_gate_mandatory",
         "turn_missing_automation_into_indefinite_manual_prerequisite"
       ]
+    },
+    {
+      "id": "external-defect-continue-original",
+      "roles": [
+        "coordinator",
+        "development-workflow",
+        "implementation"
+      ],
+      "prompt": "A real current-main CI defect is observed while advancing an existing reviewed candidate, but a fresh authorized recovery/certification path can still reach the requested next state without changing CI code. Decide whether the defect becomes a prerequisite PR.",
+      "required_rules": [
+        "external-defect-admission",
+        "scope-amplification-checkpoint"
+      ],
+      "required_actions": [
+        "classify_goal_continuity",
+        "choose_continue_original",
+        "continue_original_objective",
+        "keep_defect_non_prerequisite"
+      ],
+      "forbidden_actions": [
+        "create_blocking_defect_pr",
+        "treat_real_defect_as_automatic_prerequisite",
+        "ask_marco_for_routine_lineage_choice"
+      ],
+      "expected_outcome": "continue_original_without_new_prerequisite"
+    },
+    {
+      "id": "external-defect-required-owner-lineage",
+      "roles": [
+        "development-workflow",
+        "implementation"
+      ],
+      "prompt": "An existing candidate cannot advance because a repository certification guarantee is genuinely missing. The defect is external to the candidate. Route the required semantic work without contaminating the candidate or creating a duplicate lineage.",
+      "required_rules": [
+        "external-defect-admission",
+        "scope-amplification-checkpoint"
+      ],
+      "required_actions": [
+        "classify_implementation_required",
+        "record_missing_guarantee",
+        "reconcile_live_owner",
+        "reconcile_live_github_lineage",
+        "choose_owner_lineage_disposition_before_authoring"
+      ],
+      "forbidden_actions": [
+        "broaden_blocked_candidate",
+        "create_new_lineage_without_reconciliation",
+        "invent_workstream_mapping",
+        "ask_marco_for_routine_lineage_choice"
+      ],
+      "expected_outcome": "required_fix_is_admitted_to_reconciled_owner_lineage"
     }
   ],
   "schema_version": 3

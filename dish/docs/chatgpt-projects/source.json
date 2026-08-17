@@ -157,6 +157,36 @@
             "mode": "TRIGGERED_READ",
             "trigger": "`check everything` sweep"
           }
+        },
+        {
+          "id": "external-defect-admission",
+          "text": "For an external/current-main defect found while pursuing an existing objective, prove goal-continuity necessity before creating blocking semantic work; only IMPLEMENTATION_REQUIRED proceeds to live owner/lineage admission. A real defect alone is not a prerequisite.",
+          "impact": "additive",
+          "surface": "lifecycle",
+          "action_boundaries": [
+            "diagnosis-to-new-work",
+            "external-defect",
+            "implementation-admission"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "external/current-main defect while pursuing an existing objective"
+          }
+        },
+        {
+          "id": "scope-amplification-checkpoint",
+          "text": "Re-anchor to the one-sentence operator outcome. A scheduler/queue/database/service/new authority/identity/control-plane or broader lifecycle needs Marco approval; missing approval blocks only that expansion. After two design loops, shrink scope or seek a decision; prove capability need first.",
+          "impact": "additive",
+          "surface": "lifecycle",
+          "action_boundaries": [
+            "design",
+            "implementation-routing",
+            "scope-expansion"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "scope expansion / broader lifecycle or control plane"
+          }
         }
       ],
       "context_dependencies": {
@@ -174,6 +204,9 @@
           ],
           "`check everything` sweep": [
             "dish/docs/agents/coordinator.md#Live-grounded `check everything` sweep"
+          ],
+          "scope expansion / broader lifecycle or control plane": [
+            "dish/docs/agents/coordinator.md#Continuity model"
           ]
         }
       }
@@ -219,6 +252,9 @@
           "Development Workflow gate / fixture / publication classification": [
             "dish/docs/agents/development-workflow.md#Authority and live state",
             "dish/docs/agents/development-workflow.md#Publication fallback and durable local completion"
+          ],
+          "scope expansion / broader lifecycle or control plane": [
+            "dish/docs/agents/development-workflow.md#Change discipline"
           ]
         }
       },
@@ -320,6 +356,36 @@
           "delivery": {
             "mode": "TRIGGERED_READ",
             "trigger": "shared-resource capacity / availability change"
+          }
+        },
+        {
+          "id": "external-defect-admission",
+          "text": "For an external/current-main defect found while pursuing an existing objective, prove goal-continuity necessity before creating blocking semantic work; only IMPLEMENTATION_REQUIRED proceeds to live owner/lineage admission. A real defect alone is not a prerequisite.",
+          "impact": "additive",
+          "surface": "lifecycle",
+          "action_boundaries": [
+            "diagnosis-to-new-work",
+            "external-defect",
+            "implementation-admission"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "external/current-main defect while pursuing an existing objective"
+          }
+        },
+        {
+          "id": "scope-amplification-checkpoint",
+          "text": "Re-anchor to the one-sentence operator outcome. A scheduler/queue/database/service/new authority/identity/control-plane or broader lifecycle needs Marco approval; missing approval blocks only that expansion. After two design loops, shrink scope or seek a decision; prove capability need first.",
+          "impact": "additive",
+          "surface": "lifecycle",
+          "action_boundaries": [
+            "design",
+            "implementation-routing",
+            "scope-expansion"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "scope expansion / broader lifecycle or control plane"
           }
         }
       ]
@@ -467,6 +533,21 @@
           "delivery": {
             "mode": "TRIGGERED_READ",
             "trigger": "CI failure ownership / mutation decision"
+          }
+        },
+        {
+          "id": "external-defect-admission",
+          "text": "For an external/current-main defect found while pursuing an existing objective, prove goal-continuity necessity before creating blocking semantic work; only IMPLEMENTATION_REQUIRED proceeds to live owner/lineage admission. A real defect alone is not a prerequisite.",
+          "impact": "additive",
+          "surface": "lifecycle",
+          "action_boundaries": [
+            "diagnosis-to-new-work",
+            "external-defect",
+            "implementation-admission"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "external/current-main defect while pursuing an existing objective"
           }
         }
       ],
@@ -1155,6 +1236,9 @@
       "actor attribution / approval / decision provenance": [
         "dish/docs/agents/operator-provenance.md#Actor attribution",
         "dish/docs/agents/operator-provenance.md#Decision provenance"
+      ],
+      "external/current-main defect while pursuing an existing objective": [
+        "dish/docs/agents/templates/implementation-handoff.md#External/current-main defect admission"
       ]
     }
   }

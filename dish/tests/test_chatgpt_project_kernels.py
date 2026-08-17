@@ -131,7 +131,7 @@ def test_five_whys_preservation_inventory_binds_doc_index_rule_kernels_and_behav
   text=kernels.render_role(m,s,role)
   assert 'Five Whys / 5 whys / blameless RCA' in text
   assert '`dish/docs/agents/five-whys.md#Procedure`' in text
-  assert '`dish/docs/agents/five-whys.md#Required output`' in text
+  assert '`#Required output`' in text
   assert rule['text'] not in text, role
  by={x['id']:x for x in payload['scenarios']}
  for sid in entry['behavior_scenario_ids']:
@@ -229,6 +229,19 @@ def test_progressive_disclosure_rejects_orphaned_trigger_and_missing_section():
  broken['context_dependencies']['triggered_reads']['Five Whys / 5 whys / blameless RCA']=['dish/docs/agents/five-whys.md#Does not exist']
  with pytest.raises(kernels.KernelError,match='section does not exist'):
   kernels.validate_topology(broken)
+
+
+def test_external_defect_admission_is_two_stage_and_uses_canonical_handoff():
+ m,s=kernels.load_canonical(); template=(DISH_ROOT/'docs'/'agents'/'templates'/'implementation-handoff.md').read_text()
+ assert '## External/current-main defect admission' in template
+ for token in ('CONTINUE_ORIGINAL','IMPLEMENTATION_REQUIRED','UNCERTAIN','CONTINUE_EXISTING_LINEAGE','REUSE_OWNER_NEW_LINEAGE','CREATE_BOUNDED_OWNER_LINEAGE'):
+  assert token in template
+ for role in ('coordinator','development-workflow','implementation'):
+  rule=next(x for x in kernels.effective_rules(s,role) if x['id']=='external-defect-admission')
+  assert rule['delivery']['mode']=='TRIGGERED_READ'
+  assert 'External/current-main defect admission' in kernels.render_role(m,s,role)
+ for sid in ('external-defect-continue-original','external-defect-required-owner-lineage'):
+  assert _scenario(sid)['required_rules']
 
 def test_repository_context_admission_is_shared_rendered_and_independently_registered():
  m,s=kernels.load_canonical(); registry=kernels._standing_invariant_registry(); entry=registry['repository-context-admission']
