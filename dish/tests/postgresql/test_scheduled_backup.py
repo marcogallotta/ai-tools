@@ -134,6 +134,73 @@ def test_prepare_roots_refuses_missing_mount_path(tmp_path: Path) -> None:
         backup._prepare_roots(config)
 
 
+def test_prepare_off_device_root_refuses_same_device_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path)
+    monkeypatch.setattr(backup, "_directory", lambda path, *, label: _stat(1))
+
+    with pytest.raises(backup.BackupError, match="same filesystem device"):
+        backup._prepare_off_device_root(config, local_metadata=_stat(1))
+
+
+def test_prepare_off_device_root_accepts_same_device_with_explicit_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(tmp_path)
+    env["DISH_PG_BACKUP_ALLOW_SAME_DEVICE"] = "1"
+    (tmp_path / "off-device").mkdir()
+    config = backup.config_from_environ(env, repo_root=tmp_path)
+    assert config.allow_same_device is True
+    monkeypatch.setattr(backup, "_directory", lambda path, *, label: _stat(1))
+
+    off_device_root = backup._prepare_off_device_root(config, local_metadata=_stat(1))
+
+    assert off_device_root == (tmp_path / "off-device").resolve()
+
+
+def test_copy_off_device_refuses_same_device_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.dump"
+    source.write_bytes(b"archive")
+    off_root = tmp_path / "off"
+    off_root.mkdir()
+    monkeypatch.setattr(backup, "_regular_file", lambda path, *, label: _stat(1))
+    monkeypatch.setattr(backup, "_directory", lambda path, *, label: _stat(1))
+
+    with pytest.raises(backup.BackupError, match="same filesystem device"):
+        backup._copy_off_device(
+            source,
+            off_device_root=off_root,
+            backup_id="20260813T060000Z-deadbeef",
+            expected_sha256=backup._sha256(source),
+        )
+
+
+def test_copy_off_device_accepts_same_device_with_explicit_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.dump"
+    source.write_bytes(b"archive")
+    off_root = tmp_path / "off"
+    off_root.mkdir()
+    expected = backup._sha256(source)
+    monkeypatch.setattr(backup, "_regular_file", lambda path, *, label: _stat(1))
+    monkeypatch.setattr(backup, "_directory", lambda path, *, label: _stat(1))
+
+    target, checksum = backup._copy_off_device(
+        source,
+        off_device_root=off_root,
+        backup_id="20260813T060000Z-deadbeef",
+        expected_sha256=expected,
+        allow_same_device=True,
+    )
+
+    assert backup._sha256(target) == expected
+    assert checksum.exists()
+
+
 def test_run_records_missing_off_device_mount_as_failed_attempt(tmp_path: Path) -> None:
     config = backup.BackupConfig(
         database_url="postgresql+psycopg://u:p@db/dish",
@@ -261,6 +328,7 @@ def test_run_uses_restore_compatible_custom_archive_and_prunes_only_after_copy(
         off_device_root: Path,
         backup_id: str,
         expected_sha256: str,
+        allow_same_device: bool = False,
     ) -> tuple[Path, Path]:
         calls.append("copy")
         target = off_device_root / f"{backup_id}.dump"
@@ -485,6 +553,57 @@ def test_health_fails_for_stale_backup_or_newer_failed_attempt(
     assert failed["ok"] is False
     assert failed["latest_attempt_ok"] is False
     assert "latest backup attempt failed" in failed["error"]
+
+
+def test_health_refuses_same_device_latest_backup_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path)
+    local_root = tmp_path / "local"
+    off_root = tmp_path / "off-device"
+    local_root.mkdir(exist_ok=True)
+    completed = datetime(2026, 8, 13, 6, 0, tzinfo=timezone.utc)
+    _write_success_report(
+        local_root=local_root,
+        off_root=off_root,
+        backup_id="20260813T060000Z-deadbeef",
+        completed_at=completed,
+    )
+    monkeypatch.setattr(backup, "_prepare_roots", lambda config: (local_root, off_root))
+    monkeypatch.setattr(backup, "_regular_file", lambda path, *, label: _stat(1))
+
+    result = backup.health(config, now=completed)
+
+    assert result["ok"] is False
+    assert "independent device" in result["error"]
+
+
+def test_health_accepts_same_device_latest_backup_with_explicit_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(tmp_path)
+    env["DISH_PG_BACKUP_ALLOW_SAME_DEVICE"] = "1"
+    (tmp_path / "off-device").mkdir()
+    config = backup.config_from_environ(env, repo_root=tmp_path)
+    local_root = tmp_path / "local"
+    off_root = tmp_path / "off-device"
+    local_root.mkdir(exist_ok=True)
+    completed = datetime(2026, 8, 13, 6, 0, tzinfo=timezone.utc)
+    _write_success_report(
+        local_root=local_root,
+        off_root=off_root,
+        backup_id="20260813T060000Z-deadbeef",
+        completed_at=completed,
+    )
+    monkeypatch.setattr(backup, "_prepare_roots", lambda config: (local_root, off_root))
+    monkeypatch.setattr(backup, "_regular_file", lambda path, *, label: _stat(1))
+
+    result = backup.health(
+        config, now=completed + timedelta(hours=6, minutes=30)
+    )
+
+    assert result["ok"] is True
+    assert result["latest_success"]["off_device_independent"] is False
 
 
 def test_systemd_default_schedule_is_six_hours_persistent_and_configurable() -> None:
