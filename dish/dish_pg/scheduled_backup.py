@@ -53,6 +53,7 @@ class BackupConfig:
     off_device_dir: Path
     retention_seconds: int
     max_age_seconds: int
+    allow_same_device: bool = False
     repo_root: Path = REPOSITORY_ROOT
     pg_dump: str = "pg_dump"
     pg_restore: str = "pg_restore"
@@ -134,6 +135,7 @@ def config_from_environ(
         or str(DEFAULT_LOCAL_DIR)
     )
     off_device_dir = Path(_required_env(env, "DISH_PG_BACKUP_OFF_DEVICE_DIR"))
+    allow_same_device = env.get("DISH_PG_BACKUP_ALLOW_SAME_DEVICE", "").strip() == "1"
     retention_seconds = _positive_int(
         env.get("DISH_PG_BACKUP_RETENTION_SECONDS", str(DEFAULT_RETENTION_SECONDS)),
         name="DISH_PG_BACKUP_RETENTION_SECONDS",
@@ -150,6 +152,7 @@ def config_from_environ(
         off_device_dir=off_device_dir,
         retention_seconds=retention_seconds,
         max_age_seconds=max_age_seconds,
+        allow_same_device=allow_same_device,
         repo_root=repo_root,
         pg_dump=pg_dump,
         pg_restore=pg_restore,
@@ -339,7 +342,7 @@ def _prepare_off_device_root(
         )
     off_device_root = requested_off_device.resolve(strict=True)
     off_device_metadata = _directory(off_device_root, label="off-device backup root")
-    if local_metadata.st_dev == off_device_metadata.st_dev:
+    if local_metadata.st_dev == off_device_metadata.st_dev and not config.allow_same_device:
         raise BackupError(
             "off-device backup root is on the same filesystem device as the local backup root"
         )
@@ -377,10 +380,11 @@ def _copy_off_device(
     off_device_root: Path,
     backup_id: str,
     expected_sha256: str,
+    allow_same_device: bool = False,
 ) -> tuple[Path, Path]:
     source_metadata = _regular_file(source, label="local backup artifact")
     off_root_metadata = _directory(off_device_root, label="off-device backup root")
-    if source_metadata.st_dev == off_root_metadata.st_dev:
+    if source_metadata.st_dev == off_root_metadata.st_dev and not allow_same_device:
         raise BackupError("off-device destination is on the same filesystem device as the backup")
 
     target = off_device_root / f"{backup_id}.dump"
@@ -626,6 +630,7 @@ def run_backup(
                 off_device_root=off_device_root,
                 backup_id=backup_id,
                 expected_sha256=backup_sha256,
+                allow_same_device=config.allow_same_device,
             )
             _verify_archive(config.pg_restore, retained_backup, env)
             retained_sha256 = _sha256(retained_backup)
@@ -736,6 +741,7 @@ def _verify_latest_report(
     off_device_root: Path,
     report_dir: Path,
     report: Mapping[str, Any],
+    allow_same_device: bool = False,
 ) -> dict[str, Any]:
     backup_id = report_dir.name
     expected_local = report_dir / "postgresql-authority.dump"
@@ -764,7 +770,8 @@ def _verify_latest_report(
     off_metadata = _regular_file(expected_off, label="latest off-device backup")
     _regular_file(expected_local_checksum, label="latest local checksum")
     _regular_file(expected_off_checksum, label="latest off-device checksum")
-    if local_metadata.st_dev == off_metadata.st_dev:
+    same_device = local_metadata.st_dev == off_metadata.st_dev
+    if same_device and not allow_same_device:
         raise BackupError("latest off-device backup is no longer on an independent device")
     local_sha256 = _sha256(expected_local)
     off_sha256 = _sha256(expected_off)
@@ -790,7 +797,7 @@ def _verify_latest_report(
         "sha256": expected_sha256,
         "local_path": str(expected_local),
         "off_device_path": str(expected_off),
-        "off_device_independent": True,
+        "off_device_independent": not same_device,
     }
 
 
@@ -820,6 +827,7 @@ def health(
             off_device_root=off_device_root,
             report_dir=report_dir,
             report=report,
+            allow_same_device=config.allow_same_device,
         )
         age_seconds = max(0.0, (checked_at - completed_at).total_seconds())
         fresh = age_seconds <= config.max_age_seconds
