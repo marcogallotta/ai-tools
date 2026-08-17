@@ -66,7 +66,7 @@ A runner is therefore part of the trusted eval boundary: it must instrument the 
 
 ## Acceptance and rollout policy
 
-The repository keeps the complete approved matrix — currently 70 scenarios / 112 role-expanded cases — as deterministic harness coverage. `prepare-eval` emits the full matrix, and action-bearing cases keep their machine-verifiable observation requirements.
+The repository keeps the complete approved matrix — currently 72 scenarios / 98 role-expanded cases — as deterministic harness coverage. `prepare-eval` emits the full matrix, and action-bearing cases keep their machine-verifiable observation requirements.
 
 The **complete live matrix run is an automated/periodic regression target, not a mandatory manual merge gate**. Absence of an authorized fresh-Project runner or full live result bundle does not by itself make a repository change unreviewable or require manual recreation of the matrix.
 
@@ -75,6 +75,8 @@ Repository changes land on governed repository evidence and exact-head review re
 Project UI resync scope follows the manifest's exact role/action classification and proof. Only proof-backed applicable BREAKING drift (or the approved pre-semantic-history legacy floor) requires resync before the affected action. ADDITIVE, COMPATIBLE, and UNRELATED changes continue without resync; INTEGRITY ERROR requires repository-authority repair rather than Project resync. Future ordinary role-policy changes fetched from live Git authority do not imply an all-Project resync.
 
 If a real ChatGPT Project rollout boundary genuinely needs live smoke validation, keep it deliberately small: at most one representative decision-only case and one representative action-bearing case on a safe/disposable test surface. The purpose is to confirm Project wiring and tool-observation instrumentation, **not** to claim exhaustive model-behavior certification. Such a smoke must be explicitly justified by the rollout risk; it is not a standing requirement for every kernel change.
+
+For the Chatty V1 rollout owned by Asana `1217505866209433`, bind every smoke to one exact unmerged candidate head. Claude Code and Codex each run exactly two fresh-session smokes from that candidate checkout: D1 is the representative decision/high-level-review case and A1 is the representative already-authorized safe action with observed action + readback. Both must pass per host. Only then may the dedicated ChatGPT TEST Project, once its separate TEST-candidate channel and instruction-space prerequisites are ready, run the same two semantic classes in two newly created chats. A candidate head change invalidates smoke evidence for the affected stage. These are bounded rollout smokes; the complete behavior-v2 matrix remains repository/periodic regression coverage rather than a manual promotion gate.
 
 ## OpenAI product assumptions
 

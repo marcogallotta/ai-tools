@@ -22,6 +22,9 @@ def _obs(sid,role):
   {'seq':3,'kind':'human_notification','operation':'control_plane_message','pr':52,'action':'local_implementation_completion','details_location':'pull_request'}]
  if sid=='configured-repository-pr-routing':
   return [{'seq':1,'kind':'connector_read','operation':'pull_request_read','connector':'GitHub','repository':'marcogallotta/ai-tools','pr':31 if role=='review' else 34}]
+ if sid=='chatty-authorized-action-before-narration': return [
+  {'seq':1,'kind':'durable_write','operation':'chatty_disposable_action','target':'fixture','write_id':'chatty-a1'},
+  {'seq':2,'kind':'readback','operation':'chatty_disposable_action','target':'fixture','write_id':'chatty-a1','verified':True}]
  return []
 def _passing():
  m,_=kernels.load_canonical(); results=[]
@@ -79,6 +82,16 @@ def test_generated_kernels_current_bound_and_within_budget():
   text=p.read_text(); assert len(text)<=m['max_kernel_chars']; assert f"PROJECT_CANONICAL_VERSION: {m['canonical_version']}" in text
   assert text.index('PROJECT_REPOSITORY: marcogallotta/ai-tools')<text.index('Startup:')
   assert 'Mismatch alone never blocks' in text and '?/3 integrity error' in text
+
+def test_chatty_contract_is_compiled_into_every_project_and_root():
+ m,s=kernels.load_canonical(); rules=kernels.chatty_contract(s)
+ for role in s['roles']:
+  text=kernels.render_role(m,s,role)
+  assert text.index('Work chat:') < text.index(f"Role: **{s['roles'][role]['default_role']}**.")
+  for rule in rules: assert f'- {rule}' in text
+ root=(DISH_ROOT.parent/'CLAUDE.md').read_text()
+ assert root.count(kernels.CHATTY_BLOCK_START)==1 and root.count(kernels.CHATTY_BLOCK_END)==1
+ for rule in rules: assert f'- {rule}' in root
 
 def test_development_workflow_context_preload_is_role_index_driven_and_read_only():
  m,s=kernels.load_canonical(); deps=kernels.context_dependencies(s,'development-workflow'); assert deps is not None
