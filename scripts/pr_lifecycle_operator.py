@@ -63,6 +63,7 @@ def action_first_status(pr: PRLifecycle) -> str:
     elif state == LifecycleState.INTEGRATION_READY:
         first = "Review and required checks passed. Source integration is next. Nothing for you to do."
         why = "The authorized Integration path can continue automatically."
+        owner = "Next owner/system: the configured local Claude/Codex Integration launcher."
     elif state == LifecycleState.MERGING:
         first = "Source integration is in progress. Nothing for you to do."
         why = "The approved candidate is inside the landing step."

@@ -195,6 +195,7 @@ After an expected-head merge succeeds, do not report completion from the merge r
 - append exact landing evidence without replacing task notes/html notes;
 - mutate only scoped lifecycle fields and read each write back;
 - mark the task complete only when durable task authority explicitly says source landing is the final outstanding gate;
+- for standing-policy work governed by `dish/docs/agents/standing-invariants.json`, do not mark the task complete from merge/ancestry alone: after authoritative `MERGED` readback, read authoritative `main` and prove the active registry entry’s required source rule, required eval inventory, and rendered-role coverage are present; missing coverage keeps the task open and returns the policy-preservation defect to the owning workflow;
 - runtime, TEST, PostgreSQL, deployment, human-decision, external-acceptance, or other residual gates keep the task open;
 - advance a dependent only when its durable authority explicitly declares this exact source landing as the only dependency being satisfied, and never infer unrelated readiness or completion;
 - preserve concurrent human/specialist note changes by re-reading before completion decisions.

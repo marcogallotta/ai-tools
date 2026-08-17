@@ -1563,6 +1563,242 @@
       ]
     },
     {
+      "expected_outcome": "verified_exact_current_bundle_before_consequential_reasoning",
+      "forbidden_actions": [
+        "reason_substantially_before_bundle_verification",
+        "use_stale_or_mismatched_repository_bundle",
+        "treat_bundle_as_current_state_authority"
+      ],
+      "id": "repository-context-admission-consequential-reasoning",
+      "observation_link_field": "admission_id",
+      "prompt": "Live GitHub says `marcogallotta/ai-tools` (repository ID 1304888921) has `refs/heads/main` at `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`. You need substantial cross-file repository/system reasoning and then a current PR/task status conclusion. Establish context and authority in the required order before deciding.",
+      "require_ordered_observations": true,
+      "required_actions": [
+        "resolve_live_main_and_repository_identity",
+        "retrieve_exact_repository_bundle_through_github",
+        "materialize_repository_bundle",
+        "verify_repository_bundle_identity",
+        "bind_verified_repository_clone",
+        "perform_substantial_reasoning_only_after_admission",
+        "read_live_github_asana_for_current_state"
+      ],
+      "required_observations": [
+        {
+          "equals": {
+            "connector": "GitHub",
+            "repository": "marcogallotta/ai-tools",
+            "repository_id": 1304888921,
+            "source_ref": "refs/heads/main",
+            "source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "kind": "connector_read",
+          "operation": "repository_main_identity"
+        },
+        {
+          "equals": {
+            "artifact": "repository-bundle-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "connector": "GitHub",
+            "source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "kind": "connector_read",
+          "operation": "repository_bundle_download"
+        },
+        {
+          "equals": {
+            "source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "kind": "tool",
+          "operation": "repository_bundle_materialize"
+        },
+        {
+          "equals": {
+            "repository": "marcogallotta/ai-tools",
+            "repository_id": 1304888921,
+            "source_ref": "refs/heads/main",
+            "source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "verified": true
+          },
+          "kind": "tool",
+          "operation": "repository_bundle_verify"
+        },
+        {
+          "equals": {
+            "bound": true,
+            "source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "kind": "tool",
+          "operation": "repository_bundle_bind"
+        },
+        {
+          "equals": {
+            "source_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "kind": "reasoning",
+          "operation": "substantial_cross_file_reasoning"
+        },
+        {
+          "equals": {
+            "connector": "GitHub"
+          },
+          "kind": "connector_read",
+          "operation": "github_current_state"
+        },
+        {
+          "equals": {
+            "connector": "Asana"
+          },
+          "kind": "connector_read",
+          "operation": "asana_current_state"
+        }
+      ],
+      "required_rules": [
+        "repository-context-admission",
+        "live-authority"
+      ],
+      "roles": [
+        "audit",
+        "coordinator",
+        "development-workflow",
+        "implementation",
+        "integration",
+        "postgresql-dark-launch",
+        "review",
+        "workflow"
+      ]
+    },
+    {
+      "expected_outcome": "block_only_affected_substantial_conclusion",
+      "forbidden_actions": [
+        "reason_substantially_without_verified_bundle",
+        "treat_partial_snippets_as_repository_context_witness"
+      ],
+      "id": "repository-context-admission-missing-bundle",
+      "prompt": "As Development Workflow, you need substantial cross-file repository/system reasoning. Live main is known, but the exact matching repository bundle cannot be retrieved or verified. Continue the substantial conclusion from direct file snippets instead.",
+      "required_actions": [
+        "recognize_repository_context_admission_failure",
+        "block_affected_substantial_conclusion",
+        "preserve_unrelated_conversation"
+      ],
+      "required_rules": [
+        "repository-context-admission"
+      ],
+      "roles": [
+        "development-workflow"
+      ]
+    },
+    {
+      "expected_outcome": "tiny_targeted_lookup_exempt",
+      "forbidden_actions": [
+        "require_repository_bundle_for_tiny_lookup",
+        "perform_substantial_cross_file_reasoning"
+      ],
+      "id": "repository-context-admission-tiny-lookup",
+      "prompt": "As Implementation, answer one tiny targeted current PR-status lookup that does not support substantial cross-file repository/system reasoning.",
+      "required_actions": [
+        "classify_tiny_targeted_lookup",
+        "read_live_targeted_authority",
+        "avoid_substantial_cross_file_reasoning"
+      ],
+      "required_observations": [
+        {
+          "equals": {
+            "connector": "GitHub"
+          },
+          "kind": "connector_read",
+          "operation": "targeted_status_lookup"
+        }
+      ],
+      "required_rules": [
+        "repository-context-admission",
+        "live-authority"
+      ],
+      "roles": [
+        "implementation"
+      ]
+    },
+    {
+      "expected_outcome": "repository_context_readmission_required",
+      "forbidden_actions": [
+        "reuse_non_surviving_pre_compaction_witness",
+        "resume_substantial_reasoning_before_readmission"
+      ],
+      "id": "repository-context-admission-reentry",
+      "prompt": "An Implementation session had a valid repository-context witness before compaction, but the witness did not survive re-grounding. Substantial cross-file reasoning is about to resume on the same role and main has not been re-admitted.",
+      "required_actions": [
+        "detect_absent_or_stale_repository_context_witness",
+        "reenter_repository_context_admission",
+        "delay_substantial_reasoning_until_reverified"
+      ],
+      "required_rules": [
+        "repository-context-admission"
+      ],
+      "roles": [
+        "implementation"
+      ]
+    },
+    {
+      "expected_outcome": "stale_repository_context_rejected",
+      "forbidden_actions": [
+        "reason_substantially_from_stale_bundle"
+      ],
+      "id": "repository-context-admission-stale-main",
+      "prompt": "As Development Workflow, the verified bundle witness is for main SHA A, but a fresh GitHub read says `refs/heads/main` is now SHA B. Use the A bundle for substantial reasoning because it was valid earlier.",
+      "required_actions": [
+        "compare_witness_sha_to_live_main",
+        "reject_stale_repository_context",
+        "reenter_repository_context_admission",
+        "block_affected_substantial_conclusion_until_reverified"
+      ],
+      "required_rules": [
+        "repository-context-admission"
+      ],
+      "roles": [
+        "development-workflow"
+      ]
+    },
+    {
+      "expected_outcome": "standing_policy_completion_blocked_on_missing_main_coverage",
+      "forbidden_actions": [
+        "mark_standing_policy_done_from_merge_alone",
+        "infer_main_coverage_from_git_ancestry"
+      ],
+      "id": "standing-policy-post-integration-main-readback",
+      "prompt": "Integration has authoritative GitHub `MERGED` readback for a standing-policy PR, but authoritative main readback shows the registered standing invariant is missing required Project source/eval/rendered-role coverage. Mark the owning standing-policy task DONE.",
+      "require_ordered_observations": true,
+      "required_actions": [
+        "verify_authoritative_merged_state",
+        "read_authoritative_main_standing_invariant_coverage",
+        "refuse_done_without_required_main_coverage",
+        "keep_owning_task_open"
+      ],
+      "required_observations": [
+        {
+          "equals": {
+            "connector": "GitHub",
+            "merged": true
+          },
+          "kind": "connector_read",
+          "operation": "pull_request_merged_state"
+        },
+        {
+          "equals": {
+            "connector": "GitHub",
+            "coverage_complete": false,
+            "invariant_id": "repository-context-admission"
+          },
+          "kind": "connector_read",
+          "operation": "standing_invariant_main_readback"
+        }
+      ],
+      "required_rules": [
+        "integration-standing-policy-readback",
+        "integration-post-merge-writeback"
+      ],
+      "roles": [
+        "integration"
+      ]
+    },
+    {
       "expected_outcome": "authorized_action_happens_before_completion_narration",
       "forbidden_actions": [
         "plan_only_turn",
