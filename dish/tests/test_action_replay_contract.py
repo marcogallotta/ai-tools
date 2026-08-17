@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 
 import pytest
 from pathlib import Path
@@ -110,19 +111,19 @@ def test_action_and_runtime_docs_preserve_replay_inventory_and_decision_rules():
     assert "For every Action whose imported schema requires `client.request_id`" in action_guide
     assert "This includes `inspect`" in action_guide
     assert "transport/client failure" in action_guide
-    assert "do not issue repeated automatic retries in the same assistant/tool loop" in action_guide
-    assert "real elapsed delay cannot be guaranteed" in action_guide
-    assert "Retry only at a genuine later opportunity after real elapsed time" in action_guide
+    assert "automatically retry exactly once" in action_guide
     assert "the same `client.run_id`" in action_guide
     assert "the same `client.request_id` when present" in action_guide
     assert "the same command, and the same arguments" in action_guide
-    assert "preserve the exact call for the next genuine retry opportunity" in action_guide
-    assert "do not hammer the Action or report that retries were exhausted" in action_guide
-    assert "As soon as any Dish envelope is received, stop transport retry behavior" in action_guide
+    assert "Do not make a third Action call for that logical request" in action_guide
+    assert "the first call may have reached Dish even if its response was lost" in action_guide
+    assert "A canonical Dish envelope ends transport recovery immediately" in action_guide
+    assert "client/tool-generated error is not Dish authority" in action_guide
     assert "Never blindly retry `BACKEND_UNCERTAIN`" in action_guide
-    assert "never rotate request or run IDs merely to escape a failed or pending call" in action_guide
-    assert "Do not invent a server-side sleep/timing Action" in action_guide
-    assert "no-same-turn retry rule" in action_guide
+    assert "the single exact retry also fails without reliable Dish authority" in action_guide
+    assert "surface the transport failure" in action_guide
+    assert "do not invent backend state or rotate request/run IDs" in action_guide
+    assert "Retry only at a genuine later opportunity after real elapsed time" not in action_guide
     assert "up to three times after the initial attempt" not in action_guide
     assert "approximately 2s, 5s, then 10s" not in action_guide
     assert "Truly read-only Actions" in action_guide
@@ -140,6 +141,79 @@ def test_action_and_runtime_docs_preserve_replay_inventory_and_decision_rules():
     assert "fresh UUID represents new work" in runtime
 
 
+def test_connected_contract_covers_lost_prepare_recovery_and_planning_research_continuation():
+    action_guide = " ".join(
+        (ROOT / "deploy" / "gpt-action.md").read_text(encoding="utf-8").split()
+    )
+
+    assert "automatically retry exactly once" in action_guide
+    assert "client/tool-generated error is not Dish authority" in action_guide
+    assert "Never blindly retry `BACKEND_UNCERTAIN`" in action_guide
+    assert "surface the transport failure" in action_guide
+    assert "original objective explicitly requests both Planning and Research" in action_guide
+    assert "stable Planning run A" in action_guide
+    assert "fresh run B" in action_guide
+    assert "different `client.run_id`" in action_guide
+    assert "do not require another Marco turn solely to cross the stage boundary" in action_guide
+    assert "objective requested Planning only, stop after Planning" in action_guide
+    assert "Never broaden a Planning+Research objective into independent Verification" in action_guide
+
+    assert "Dibs bi tahina" in action_guide
+    assert "first Planning `prepare` Action" in action_guide
+    assert "same run ID, request ID, command, and arguments" in action_guide
+    assert "exactly one automatic retry" in action_guide
+    assert "not as proof of a Dish backend defect" in action_guide
+    assert "fresh Research run B" in action_guide
+    assert "no extra Marco turn" in action_guide
+    assert "no automatic Verification" in action_guide
+    assert "DISH_HONEST_REPO=<honest-pantry>" in action_guide
+
+
+def _assert_honest_connected_contract(text: str) -> None:
+    normalized = " ".join(text.split())
+    for phrase in (
+        "automatically retry exactly once",
+        "exact same run ID, request ID when present, command, and arguments",
+        "No third call and no ID rotation",
+        "client/tool error is not Dish authority",
+        "Never blindly retry `BACKEND_UNCERTAIN`",
+        "stable Planning run A",
+        "fresh run B",
+        "different run ID",
+        "without another Marco turn",
+        "Never auto-chain independent Verification",
+    ):
+        assert phrase in normalized
+    for stale in (
+        "Retry only at a genuinely later opportunity after real elapsed time",
+        "do not automatically retry again in the same assistant/tool loop",
+        "A completed stage is a stopping point",
+    ):
+        assert stale not in normalized
+
+
+def test_honest_connected_contract_checker_rejects_stale_rules():
+    current = """
+automatically retry exactly once with the exact same run ID, request ID when present, command, and
+arguments. No third call and no ID rotation. A client/tool error is not Dish authority. Never blindly
+retry `BACKEND_UNCERTAIN`. Keep stable Planning run A, then use fresh run B with a different run ID,
+without another Marco turn. Never auto-chain independent Verification.
+"""
+    _assert_honest_connected_contract(current)
+
+    with pytest.raises(AssertionError):
+        _assert_honest_connected_contract(
+            current + "\nRetry only at a genuinely later opportunity after real elapsed time.\n"
+        )
+
+
+def test_honest_connected_contract_matches_when_repo_is_supplied():
+    honest_repo = os.environ.get("DISH_HONEST_REPO")
+    if not honest_repo:
+        pytest.skip("set DISH_HONEST_REPO for paired cross-repository instruction drift acceptance")
+    honest = Path(honest_repo) / "dish-custom-gpt-instructions.md"
+    _assert_honest_connected_contract(honest.read_text(encoding="utf-8"))
+
 
 def test_connected_override_and_canonical_dish_identity_contract_are_explicit():
     action_guide = " ".join(
@@ -155,6 +229,7 @@ def test_connected_override_and_canonical_dish_identity_contract_are_explicit():
     assert "Never pass a Dish UUID as `submission_id`" in action_guide
     assert "section/task browsing" in action_guide
     assert "stop rather than guessing" in action_guide
+
 
 def test_typed_action_policy_derives_command_and_request_id_inventory():
     assert set(CONNECTED_AGENT_COMMANDS) == set(EXPECTED_ACTION_COMMANDS)
@@ -190,7 +265,6 @@ def test_generated_and_checked_in_openapi_match_action_contract():
         assert assert_action_openapi_contract(document) is None
 
 
-
 @pytest.mark.parametrize(
     "mutate",
     [
@@ -212,6 +286,7 @@ def test_action_contract_rejects_plausible_generator_regressions(mutate):
 
     with pytest.raises(AssertionError):
         assert assert_action_openapi_contract(document) is None
+
 
 def test_connected_uuid_acceptance_remains_explicitly_reimport_gated():
     action_guide = " ".join(
