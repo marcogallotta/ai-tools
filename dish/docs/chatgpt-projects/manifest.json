@@ -1,5 +1,5 @@
 {
-  "canonical_version": "dish-chatgpt-projects-v2-6c50bf4d89bc",
+  "canonical_version": "dish-chatgpt-projects-v2-86b8011172ee",
   "change_history": [
     {
       "changes": [
@@ -2366,6 +2366,196 @@
       },
       "from_version": "dish-chatgpt-projects-v2-d048682742d6",
       "to_version": "dish-chatgpt-projects-v2-6c50bf4d89bc"
+    },
+    {
+      "changes": [
+        {
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "impact": "additive",
+          "roles": [
+            "implementation"
+          ],
+          "rule_id": "publication-materializer-path",
+          "surface": "lifecycle"
+        },
+        {
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "impact": "additive",
+          "roles": [
+            "implementation"
+          ],
+          "rule_id": "mutation-broker-admission",
+          "surface": "lifecycle"
+        },
+        {
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "impact": "compatible",
+          "roles": [
+            "implementation"
+          ],
+          "rule_id": "implementation-host-aware-fix-routing",
+          "surface": "routing"
+        },
+        {
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "impact": "additive",
+          "roles": [
+            "development-workflow",
+            "implementation",
+            "integration",
+            "postgresql-dark-launch",
+            "review",
+            "workflow"
+          ],
+          "rule_id": "repository-friction-capture",
+          "surface": "lifecycle"
+        },
+        {
+          "action_boundaries": [
+            "role-critical-write",
+            "review-write"
+          ],
+          "impact": "compatible",
+          "roles": [
+            "development-workflow",
+            "implementation",
+            "integration",
+            "postgresql-dark-launch",
+            "review",
+            "workflow"
+          ],
+          "rule_id": "code-smell-debt-capture",
+          "surface": "lifecycle"
+        },
+        {
+          "action_boundaries": [
+            "*"
+          ],
+          "impact": "compatible",
+          "roles": [
+            "*"
+          ],
+          "rule_id": "authenticated-account-provenance",
+          "surface": "authority"
+        },
+        {
+          "action_boundaries": [
+            "*"
+          ],
+          "impact": "compatible",
+          "roles": [
+            "*"
+          ],
+          "rule_id": "project-repository-routing",
+          "surface": "authority"
+        }
+      ],
+      "from_renderer_fingerprint": "11d992ea5843e440abc61edcae6c4411da3bf4b2d7218a27eb88c17c07b25e97",
+      "from_rule_fingerprints": {
+        "_roles": {
+          "audit": {
+            "audit-asana-disposition": "f00baca370ae243b2275c6c23315ab196b076fed960057af039abee3f8c2ede0",
+            "audit-authority-boundary": "aac50205ed3c8ac26ddfd1cd0e32184ec28bb8db6c9921ba7452ad5fc1a5f8a1",
+            "audit-exact-baseline": "3a64235b443a09c07250c43499e23c13bcc7404331ba402844a17fa7b3ed5e18",
+            "audit-specialist-context": "1f18706d0812aac531f41e41d5fdd3dcfdd3cf6398d6c79d16e4cc579cc47354"
+          },
+          "coordinator": {
+            "coordinator-check-everything": "0be2ae58fa92d66a043a9144af16233ebbf816812860d041702dd8777be7d389",
+            "coordinator-live-scan": "0a5e865e772eaffcceed0d5c7ca49918395cd55d97b33e9364785ed49e636e7e",
+            "coordinator-no-implementation-integration": "5131e28f10a1b08733234c64aee75e3fd34682c70cdd8132ca400455bda605da",
+            "durable-review-state": "b0aa4cd94b5a641f2b9628c589d3694b3922e0b119e233ebcfa2b3d014006777",
+            "repository-friction-capture": "67b82f85516f8a4de4012913248af3f20f44df0dd48b597e9b89286f2deafb08"
+          },
+          "development-workflow": {
+            "code-smell-debt-capture": "cc8d29a94eef8c1db388f6ba5842a9d76adfa42bcc59d6668a1a4d954dd85195",
+            "development-workflow-boundary": "409ac6ef090a3ddfa2ab8bf20b77df2ea8a264ddcfdfe16ed846524d391eff07",
+            "development-workflow-concurrency-preflight": "2cd8c619f462c76ee0bb83bf6abc96585e184862b3724183e221e9891348d6c5",
+            "development-workflow-context-preload": "f3ea09bf155003a1d28ff79aa8777e8f27808131217693cd742aa747f9c748fb",
+            "development-workflow-friction-triage": "2b299ff65e651dc63c935cf1cf073db3617d71fc319d079c2d97727326348587",
+            "development-workflow-live-lane": "807c5f28f0d14a015372d04ffcd4ec54f54a73bb84399139880004807fd50f4f",
+            "durable-review-state": "b0aa4cd94b5a641f2b9628c589d3694b3922e0b119e233ebcfa2b3d014006777",
+            "repository-friction-capture": "67b82f85516f8a4de4012913248af3f20f44df0dd48b597e9b89286f2deafb08"
+          },
+          "implementation": {
+            "action-first-human-output": "ac108373ee7a2f6e3790359a45714bd8313e22b46a21bc2997fff851186ce7df",
+            "code-smell-debt-capture": "cc8d29a94eef8c1db388f6ba5842a9d76adfa42bcc59d6668a1a4d954dd85195",
+            "implementation-ci-failure-ownership": "4074ae8e83b6f8be8ce200d88ea7a5bcbc9a1e52abf0dc43433ba084a17ea405",
+            "implementation-durable-git": "6253508b2c08ec584ce8ab52df5147b1f32f755bef2313d8e4c9619c06c4377e",
+            "implementation-host-aware-fix-routing": "9753ffcfd36809948f2f57d8d2e0ed403c7be036db3c4340d74973ef0e520a4f",
+            "implementation-no-self-review-integration": "63cb01f253e328eb323d029f8be7a12fa176fe9c9b9dfcb067b5696cd8bc4f6b",
+            "implementation-remote-first-local-boundary": "b2f69123729ce0187fff56cf368c674fe82d5ba8ecb263295cf894c7e14d2409",
+            "mutation-broker-admission": "2e4067c8e308aef12826d3d4409d65875ff121acb4a361265da5ba0993769a32",
+            "publication-materializer-path": "115ad7d4301693e4735412f4b2b9d613049ef2ca3dde5669b9075c329baded1d",
+            "repository-friction-capture": "67b82f85516f8a4de4012913248af3f20f44df0dd48b597e9b89286f2deafb08",
+            "scope-amplification-checkpoint": "0bf2dc48aa8eb2c41482db12cc6a2fe3901e93257f8648098deb830b04682b6e"
+          },
+          "integration": {
+            "action-first-human-output": "ac108373ee7a2f6e3790359a45714bd8313e22b46a21bc2997fff851186ce7df",
+            "code-smell-debt-capture": "cc8d29a94eef8c1db388f6ba5842a9d76adfa42bcc59d6668a1a4d954dd85195",
+            "integration-local-work-classifier": "23e6efd90ccc99d4999b065803fe1be209bea9c066f61b3f825161f78d13086e",
+            "integration-mechanical-only": "ba200e1786c1d6c0c3502de28106148b3c569f8ba5933d9932025e79c4ea217c",
+            "integration-phase-separated-gates": "ba62208087f5a24452c6748443de9a4d651ef58ca0b332076d0a99cbe04d06fb",
+            "integration-post-merge-writeback": "a4318da9a59f9cff046e7d6921b9eb72c5b113ce2844596e40ba3ae46706eb14",
+            "integration-reviewed-head": "9768f9e6f7e7f636d882c1aa084b3cd652f1547c45c65b191f160608e1014e29",
+            "mutation-broker-admission": "9c5b08f829ced6588fd10534406e8b63585a054a2e6ce1cb4be43433da3ba845",
+            "repository-friction-capture": "67b82f85516f8a4de4012913248af3f20f44df0dd48b597e9b89286f2deafb08"
+          },
+          "postgresql-dark-launch": {
+            "code-smell-debt-capture": "cc8d29a94eef8c1db388f6ba5842a9d76adfa42bcc59d6668a1a4d954dd85195",
+            "postgresql-domain-boundary": "d4f75c442e90a93317aea2d623c74c241b7a1dd1ec1401dadef612fcb8b23433",
+            "postgresql-live-lane": "ec8d50a7c189d7409d0c88e6326549a299ad59fd9e4363fc340a13b092236995",
+            "repository-friction-capture": "67b82f85516f8a4de4012913248af3f20f44df0dd48b597e9b89286f2deafb08"
+          },
+          "review": {
+            "code-smell-debt-capture": "cc8d29a94eef8c1db388f6ba5842a9d76adfa42bcc59d6668a1a4d954dd85195",
+            "repository-friction-capture": "67b82f85516f8a4de4012913248af3f20f44df0dd48b597e9b89286f2deafb08",
+            "review-action-handoff": "3e5dd105abb2c5f7815c5667f5f4091a1a211955675fc276d4b8b9321f271de2",
+            "review-exact-head": "7a148644e6376a9b39ddd0d19ec448f6b880f0dc35372d507fa0276d9657e309",
+            "review-formal-comment": "8dbf6ee167c026d9187336f1f51d3a8ea22ea2a66e36477686693cf66e5b72bb",
+            "review-host-aware-independence-routing": "25434e1e18382cb420336c9c7bb90844a032383ad54fec3ff2e9c18c7f2c87dd",
+            "review-integration-boundary": "d33b76d9d70112444f98dd1da4864dece076528670c1ccde170552e500747954",
+            "review-no-fix": "79c3d749ed5450e948a5251ed9d6738237a05a1236fa4c77fdfba4de076b0404",
+            "review-phase-separated-gates": "3a5237d7381af1817b42d2324b98202cbf985f2efa1d2626e27133704f1b3a6b",
+            "review-repository-context": "14bf874b84158ee54e952124d1ae302df3dc0c37cc84a8e1005d3bde2a97bfc6",
+            "scope-amplification-checkpoint": "0bf2dc48aa8eb2c41482db12cc6a2fe3901e93257f8648098deb830b04682b6e"
+          },
+          "workflow": {
+            "code-smell-debt-capture": "cc8d29a94eef8c1db388f6ba5842a9d76adfa42bcc59d6668a1a4d954dd85195",
+            "repository-friction-capture": "67b82f85516f8a4de4012913248af3f20f44df0dd48b597e9b89286f2deafb08",
+            "workflow-domain-boundary": "4c8ac1be546820eada644836a7b3cf2a9cc6df1130a18c6a93ce9b566482e2b8",
+            "workflow-live-lane": "a2df0dace4dea74e09b3b75b8d73bbf1b18d0a41d4c5cebfd32245821a96d6f0"
+          }
+        },
+        "_shared": {
+          "authenticated-account-provenance": "cdc368b40fa19225dfc14c2d9d3c75ecf16874e568e3ee56e10a1587ae908f78",
+          "authority-separation": "0f8072fef1258740916ae05dc2bd74a40464c67a36833db4225ec76b14ebc848",
+          "canonical-version-gate": "94bb345977ce877eeb992d15784983383bdbeb2f12088d63b88351884d0b0342",
+          "decision-provenance": "9ea0af54fe8894aa8b55bd7a7b3b17fa9bbccac1483510597bc4a1508ca95a6f",
+          "fail-closed-authority": "a20e3adfab2d4be859460eaa2ae3c8e1ce79071b46732b4a328f1f3bc9a1aebb",
+          "fallback-surface": "399b3a88d3a3bef3bba2a86a51e86efdb0d2e8c336b189aebe83648f3b3bf2ec",
+          "live-authority": "f194e47e44a83480217d8279ab56f869385d84018dde7eb92878a4f0988223e0",
+          "no-direct-main": "eb031310abafcf3a88cb54d3b6c6b91af6f54ad9a98a631172935ae39ac056ab",
+          "project-repository-routing": "2a308edbca0097e6255ea91a0d2069ff269a8dcc95a9cdb76d0d8f666498d01a",
+          "repository-lifecycle": "98162a5b4e2eafccc613779cfb54b30884edfd1e8902c7f0755c61431afc38ed",
+          "role-contract-authority": "90b856b5e0652a1185120f9e31016b15ea51ff707bf0f899ed74cc2af191e427",
+          "task-dismissal-history": "eca2cda3c1d837e5956139de08c8133a75cb6e841dcf7e580063b82531134b51",
+          "write-verification": "e7726aa1b5deb824691f146962a6e521a1de23d0ed664cae3896a414ec865e84"
+        }
+      },
+      "from_version": "dish-chatgpt-projects-v2-6c50bf4d89bc",
+      "to_version": "dish-chatgpt-projects-v2-86b8011172ee"
     }
   ],
   "generated_role_files": {
@@ -2378,8 +2568,8 @@
     "review": "review.md",
     "workflow": "workflow.md"
   },
-  "generated_sha256": "7e8816c7b7f1797c4cd86adabd53b7e8ed7c6795ff103ac60afd51ab0fec48c3",
-  "kernel_identity_sha256": "6c50bf4d89bc75f2e064069387bcaf8fe54b823b7a253b2c9498fc09d532555c",
+  "generated_sha256": "44cf1dc0345f545f57e845f3a7d5b8fa940c3108790159cb84aac2d5ad58a277",
+  "kernel_identity_sha256": "86b8011172ee5bbc02ffb78ebe96efe63919f15cd69d6aba47d6bae87a94963a",
   "legacy_bootstrap_floor": {
     "action_boundaries": [
       "*"
@@ -2408,6 +2598,6 @@
   "max_kernel_chars": 7999,
   "schema_version": 2,
   "source_file": "source.json",
-  "source_sha256": "76345cf1a4d6a2262e2285c2629a0fc02fed705c45afd281f34d4586a0feccab",
+  "source_sha256": "7ea0400b88a21291adc639622de663bdb2583d9b5f2eb9f13e6d32ee0254d7be",
   "version_namespace": "dish-chatgpt-projects-v2"
 }

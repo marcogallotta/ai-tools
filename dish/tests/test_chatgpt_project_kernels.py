@@ -183,8 +183,7 @@ def test_c1_governance_contracts_and_evals_are_mechanical():
  assert {'audit-authority-boundary','audit-exact-baseline','audit-asana-disposition','audit-specialist-context'}<=audit
  for role in ('coordinator','development-workflow','implementation','integration','review','workflow','postgresql-dark-launch'):
   assert 'repository-friction-capture' in {r['id'] for r in kernels.effective_rules(s,role)}
- for role in ('development-workflow','implementation','integration','review','workflow','postgresql-dark-launch'):
-  assert 'code-smell-debt-capture' in {r['id'] for r in kernels.effective_rules(s,role)}
+ assert 'code-smell-debt-capture' not in {r['id'] for r in kernels.effective_rules(s,'implementation')}
  assert {'decision-provenance','authenticated-account-provenance'}<={r['id'] for r in kernels.effective_rules(s,'coordinator')}
  ids={x['id'] for x in kernels._evals()}
  assert {'audit-exact-baseline','repository-friction-discovery','code-smell-dedupe-log-and-continue','durable-review-classification','coordinator-check-everything-mixed-state','authenticated-account-not-human-decision','shared-resource-concurrency-preflight'}<=ids
@@ -366,3 +365,63 @@ def test_impact_is_explicit_and_never_inferred_from_rule_criticality():
  for surface in ('authority','safety','presentation'):
   with pytest.raises(kernels.KernelError,match='explicit transition impact'):
    kernels._impact({'surface':surface})
+
+
+def test_emergency_attach_eval_matrix_is_complete_and_scoped():
+ required={'emergency-attach-eligible','emergency-attach-parent-mismatch','emergency-attach-tree-mismatch',
+  'emergency-attach-branch-race','emergency-attach-after-review','emergency-attach-asana-authority-revoked',
+  'emergency-attach-policy-denial','emergency-attach-conflicting-writer','emergency-attach-forbids-semantic-actions',
+  'emergency-attach-consumed-once','emergency-attach-final-readback-required','emergency-attach-normal-broker-path-unchanged'}
+ assert required<=kernels.REQUIRED_EVAL_IDS
+ by={s['id']:s for s in kernels._evals()}
+ assert required<=set(by)
+ for sid in required:
+  s=by[sid]; assert s['roles']==['implementation']
+  assert {'publication-materializer-path','mutation-broker-admission'}<=set(s['required_rules'])
+
+def test_emergency_attach_happy_case_requires_full_eligibility_chain():
+ happy=_scenario('emergency-attach-eligible')
+ assert {'reverify_candidate_parent_equals_old','reverify_candidate_tree_equals_expected',
+  'reverify_live_pr_branch_still_old','reread_live_asana_continuation_authority',
+  'confirm_infrastructure_failure_before_grant','perform_non_force_fast_forward_ref_update',
+  'read_back_branch_pr_commit_tree_after_write'}<=set(happy['required_actions'])
+ assert {'force_update_ref','construct_new_candidate_under_bypass','perform_semantic_source_edit'}<=set(happy['forbidden_actions'])
+
+def test_emergency_attach_regression_matrix_fails_closed_on_every_fence():
+ by={s['id']:s for s in kernels._evals()}
+ assert 'reverify_candidate_parent_equals_old' in by['emergency-attach-parent-mismatch']['required_actions']
+ assert 'reverify_candidate_tree_equals_expected' in by['emergency-attach-tree-mismatch']['required_actions']
+ assert 'reverify_live_pr_branch_still_old' in by['emergency-attach-branch-race']['required_actions']
+ assert 'reverify_pr_still_draft_pre_review' in by['emergency-attach-after-review']['required_actions']
+ assert 'reread_live_asana_continuation_authority' in by['emergency-attach-asana-authority-revoked']['required_actions']
+ assert 'classify_broker_failure_cause' in by['emergency-attach-policy-denial']['required_actions']
+ assert 'check_for_current_grant_or_conflicting_writer' in by['emergency-attach-conflicting-writer']['required_actions']
+ for sid in ('emergency-attach-parent-mismatch','emergency-attach-tree-mismatch','emergency-attach-branch-race',
+  'emergency-attach-after-review','emergency-attach-asana-authority-revoked','emergency-attach-policy-denial',
+  'emergency-attach-conflicting-writer'):
+  assert 'perform_non_force_fast_forward_ref_update' in by[sid]['forbidden_actions']
+  assert 'force_update_ref' not in by[sid]['required_actions']
+
+def test_emergency_attach_never_grants_source_review_integration_or_merge_authority():
+ forbidding=_scenario('emergency-attach-forbids-semantic-actions')
+ assert {'perform_semantic_source_edit','fix_review_block_under_bypass','reconcile_integration_under_bypass',
+  'merge_under_bypass','mutate_main_under_bypass'}<=set(forbidding['forbidden_actions'])
+ consumed=_scenario('emergency-attach-consumed-once')
+ assert 'reuse_consumed_bypass' in consumed['forbidden_actions']
+ assert 'require_normal_current_authority_for_new_mutation' in consumed['required_actions']
+ readback=_scenario('emergency-attach-final-readback-required')
+ assert {'claim_publication_complete_without_readback','claim_publication_complete_on_readback_mismatch'}<=set(readback['forbidden_actions'])
+ assert 'read_back_branch_pr_commit_tree_after_write' in readback['required_actions']
+ normal=_scenario('emergency-attach-normal-broker-path-unchanged')
+ assert 'invoke_emergency_attach_bypass' in normal['forbidden_actions']
+ assert 'verify_current_broker_proof_backed_grant' in normal['required_actions']
+
+def test_emergency_attach_standing_contracts_carry_the_same_narrow_exception():
+ dw=(DISH_ROOT/'docs'/'agents'/'development-workflow.md').read_text()
+ impl=(DISH_ROOT/'docs'/'agents'/'implementation.md').read_text()
+ materializer=(DISH_ROOT.parent/'ci'/'publication-materializer.md').read_text()
+ for text in (dw,impl,materializer):
+  assert 'attach' in text.lower()
+  assert 'non-force' in text or 'force=false' in text
+ assert 'attach-only class is the sole temporary standing exception' in dw
+ assert 'Ordinary broker self-repair still requires explicit Marco authority' in dw

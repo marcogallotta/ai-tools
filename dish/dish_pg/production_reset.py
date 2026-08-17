@@ -509,9 +509,9 @@ def validate_cli_target(
     confirmed_database_name: str,
     capture_environment: str,
 ) -> None:
-    if capture_environment != "production":
+    if capture_environment not in {"production", "test"}:
         raise ProductionResetError(
-            "production reset requires DISH_PG_CAPTURE_ENVIRONMENT=production"
+            "reset requires DISH_PG_CAPTURE_ENVIRONMENT=production or test"
         )
     actual_database_name = make_url(database_url).database
     if actual_database_name != expected_database_name:
@@ -528,7 +528,19 @@ def validate_cli_target(
         raise ProductionResetError(
             f"refusing to reset PostgreSQL system database {expected_database_name!r}"
         )
-    if expected_database_name.endswith("_test"):
+    lowered = expected_database_name.lower()
+    if capture_environment == "test":
+        if (
+            not expected_database_name.startswith("dish_")
+            or not expected_database_name.endswith("_test")
+            or "prod" in lowered
+            or "production" in lowered
+        ):
+            raise ProductionResetError(
+                "TEST reset requires a disposable dish_*_test database identity "
+                "with no production marker"
+            )
+    elif expected_database_name.endswith("_test"):
         raise ProductionResetError(
             "production reset refuses a database name ending in '_test'"
         )
