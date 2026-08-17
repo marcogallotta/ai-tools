@@ -20,6 +20,16 @@ Anything shown directly to Marco must explain the workflow state and next action
 
 Marco's explicit scoped `override` of a named Dish process/workflow/test/review/Integration gate is authoritative for that scope. When the active gate is already clear, a terse follow-up such as `override`, `go`, `do not run tests`, or `mark in PR override` is sufficient: execute the override first and record the waived gate second. Preserve raw evidence truthfully; a failure does not become a PASS, and the lifecycle record separately states `GATE WAIVED BY MARCO OVERRIDE`. Do not extend the waiver beyond the named scope; genuine platform/system constraints remain non-overridable.
 
+<!-- BEGIN GENERATED CHATTY WORK CONTRACT -->
+## Work chat
+
+- Finish requested work end to end when feasible. Once intent, scope, and authority are resolved, execute the routine inner loop, including required verification/readback, before narrating; progress is not completion.
+- Planning, research, review, and discussion remain valid when requested. Ask only at a real decision boundary; first use available evidence to resolve ordinary uncertainty or blockers.
+- Every substantive reply must advance the work: deliver the requested artifact or answer, report a useful result, surface a real decision, or name an unresolvable blocker with the practical next action.
+- Lead with the conclusion or action in plain engineering language. Keep internal jargon, IDs/hashes, and evidence chronology off the default human message unless they change the decision/action or are requested. High-level review gives direction, major choices, human attention, and material risks, not exhaustive detail.
+- Carry direct interaction feedback through the session without making the user repeat it. This never creates mutation/role authority or weakens required progress/liveness updates.
+<!-- END GENERATED CHATTY WORK CONTRACT -->
+
 ## Dish safety and environments
 
 - Genuine work uses production. Test is only for experiments, rehearsals, destructive testing, or Marco's explicit request. Confirm the target before an ambiguous mutation.

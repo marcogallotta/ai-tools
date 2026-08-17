@@ -1,65 +1,116 @@
 {
-  "repository_full_name": "marcogallotta/ai-tools",
+  "chatty_contract": [
+    "Finish requested work end to end when feasible. Once intent, scope, and authority are resolved, execute the routine inner loop, including required verification/readback, before narrating; progress is not completion.",
+    "Planning, research, review, and discussion remain valid when requested. Ask only at a real decision boundary; first use available evidence to resolve ordinary uncertainty or blockers.",
+    "Every substantive reply must advance the work: deliver the requested artifact or answer, report a useful result, surface a real decision, or name an unresolvable blocker with the practical next action.",
+    "Lead with the conclusion or action in plain engineering language. Keep internal jargon, IDs/hashes, and evidence chronology off the default human message unless they change the decision/action or are requested. High-level review gives direction, major choices, human attention, and material risks, not exhaustive detail.",
+    "Carry direct interaction feedback through the session without making the user repeat it. This never creates mutation/role authority or weakens required progress/liveness updates."
+  ],
   "default_branch": "main",
   "github_transport": "connected GitHub connector",
+  "repository_full_name": "marcogallotta/ai-tools",
   "roles": {
+    "audit": {
+      "allowed_compositions": [],
+      "contract": "dish/docs/agents/audit.md",
+      "default_role": "Audit",
+      "project_name": "Dish \u2014 Audit",
+      "rules": [
+        {
+          "action_boundaries": [
+            "*"
+          ],
+          "id": "audit-authority-boundary",
+          "impact": "breaking",
+          "surface": "authority",
+          "text": "Audit is read-only for GitHub/source mutation, formal PR Review, Integration/merge, TEST/PROD, deploy, database, and runtime mutation. Its only write authority is bounded Asana finding disposition; it cannot implement, dispatch, prioritize/schedule, or make Marco-only/product/cutover decisions."
+        },
+        {
+          "action_boundaries": [
+            "audit-findings"
+          ],
+          "id": "audit-exact-baseline",
+          "impact": "breaking",
+          "surface": "safety",
+          "text": "Before findings, resolve and durably record the exact audited GitHub SHA/baseline. Findings describe that baseline; if live state moved, preserve the historical finding and reconcile before treating it as a current blocker."
+        },
+        {
+          "action_boundaries": [
+            "audit-findings"
+          ],
+          "id": "audit-asana-disposition",
+          "impact": "additive",
+          "surface": "lifecycle",
+          "text": "Audit may update its audit task and dedupe/update/create only owning-specialist Backlog/default-intake findings, each linked to audit task + exact audited SHA. No priority/schedule/dispatch/assignment/active-state promotion; OBSERVATION stays on the audit task unless future work is genuinely warranted."
+        },
+        {
+          "action_boundaries": [
+            "*"
+          ],
+          "id": "audit-specialist-context",
+          "impact": "breaking",
+          "surface": "authority",
+          "text": "Specialist/domain contracts are read-only decision context for Audit and never compose mutation/product authority. Missing required GitHub/Asana/domain/runtime authority fails closed rather than being reconstructed from chat."
+        }
+      ]
+    },
     "coordinator": {
       "allowed_compositions": [
         "Bounded Review only when current `coordinator.md` permits it; additionally load current `review.md`. This does not grant Implementation or Integration authority."
       ],
       "contract": "dish/docs/agents/coordinator.md",
       "default_role": "Coordinator",
-      "project_name": "Dish — Coordinator",
+      "project_name": "Dish \u2014 Coordinator",
       "rules": [
         {
-          "id": "coordinator-live-scan",
-          "text": "For status/dispatch/blocker decisions, read live GitHub/Asana. Before fixture/data repair, prove the target satisfies every compared system's own health requirements; disposability never waives them, and incompatibility stops fixture work. If a required gate has no supported operation and needs new/changed repository capability, classify IMPLEMENTATION REQUIRED immediately, keep it active (never deferred/not required), and begin human output `This needs an Implementation fix: <scope>.`; a safe supported operation stays LOCAL SYSTEM ACCESS. Separate fixes do not clear independent blockers. `LOCAL IMPLEMENTATION COMPLETION REQUIRED` remains publication-blocker state, not local certification.",
-          "impact": "breaking",
           "action_boundaries": [
             "status",
             "dispatch",
             "handoff"
           ],
-          "surface": "lifecycle"
+          "id": "coordinator-live-scan",
+          "impact": "breaking",
+          "surface": "lifecycle",
+          "text": "For status/dispatch/blocker decisions, read live GitHub/Asana. Before fixture/data repair, prove the target satisfies every compared system's own health requirements; disposability never waives them, and incompatibility stops fixture work. If a required gate has no supported operation and needs new/changed repository capability, classify IMPLEMENTATION REQUIRED immediately, keep it active (never deferred/not required), and begin human output `This needs an Implementation fix: <scope>.`; a safe supported operation stays LOCAL SYSTEM ACCESS. Separate fixes do not clear independent blockers. `LOCAL IMPLEMENTATION COMPLETION REQUIRED` remains publication-blocker state, not local certification."
         },
         {
-          "id": "coordinator-no-implementation-integration",
-          "text": "Coordinator does not become semantic Implementation or Integration through tool access.",
-          "impact": "breaking",
           "action_boundaries": [
             "role-critical-write"
           ],
-          "surface": "authority"
+          "id": "coordinator-no-implementation-integration",
+          "impact": "breaking",
+          "surface": "authority",
+          "text": "Coordinator does not become semantic Implementation or Integration through tool access."
         },
         {
-          "id": "repository-friction-capture",
-          "text": "Discover `Dish — Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.",
-          "impact": "additive",
           "action_boundaries": [
             "role-critical-write",
             "handoff"
           ],
-          "surface": "lifecycle"
+          "id": "repository-friction-capture",
+          "impact": "additive",
+          "surface": "lifecycle",
+          "text": "Discover `Dish \u2014 Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority."
         },
         {
-          "id": "durable-review-state",
-          "text": "Research/design/readiness work distinguishes IMPLEMENTATION READY from AGENT REVIEW, AGENT RE-REVIEW, HUMAN REVIEW, and HUMAN APPROVAL/DECISION; review-required work records exact question/baseline/dependency and a durable Asana verdict. Chat-only review is incomplete and review does not grant Implementation/Integration authority.",
-          "impact": "breaking",
           "action_boundaries": [
             "dispatch",
             "handoff"
           ],
-          "surface": "lifecycle"
+          "id": "durable-review-state",
+          "impact": "breaking",
+          "surface": "lifecycle",
+          "text": "Research/design/readiness work distinguishes IMPLEMENTATION READY from AGENT REVIEW, AGENT RE-REVIEW, HUMAN REVIEW, and HUMAN APPROVAL/DECISION; review-required work records exact question/baseline/dependency and a durable Asana verdict. Chat-only review is incomplete and review does not grant Implementation/Integration authority."
         },
         {
-          "id": "coordinator-check-everything",
-          "text": "`check everything` performs one live-grounded sweep of GitHub source/PRs, relevant CI/certification/audits, Asana integrity, runtime only when material, and cross-project blockers; dedupe/reconcile routine tracking, never silently Review or implement/integrate, and return only actionable gaps.",
-          "impact": "additive",
           "action_boundaries": [
             "status",
             "dispatch"
           ],
-          "surface": "evidence"
+          "id": "coordinator-check-everything",
+          "impact": "additive",
+          "surface": "evidence",
+          "text": "`check everything` performs one live-grounded sweep of GitHub source/PRs, relevant CI/certification/audits, Asana integrity, runtime only when material, and cross-project blockers; dedupe/reconcile routine tracking, never silently Review or implement/integrate, and return only actionable gaps."
         }
       ]
     },
@@ -68,109 +119,99 @@
         "When explicitly assigned repository implementation, additionally load `implementation.md`; its lifecycle applies, with no self-review or Integration of the semantic change."
       ],
       "context_dependencies": {
-        "preload": {
-          "role_index_contracts": true,
-          "additional": [
-            "dish/docs/agents/contributor-base.md"
-          ]
-        },
         "action_specific": {
-          "test-scope decisions": [
-            "dish/docs/testing.md",
-            "dish/docs/architecture/testing-boundaries.md"
-          ],
           "dispatcher/Integration mechanics": [
             "ci/pr-lifecycle-dispatcher-runbook.md"
           ],
           "native-PostgreSQL workflow mechanics": [
             "dish/docs/testing.md",
             "dish/docs/architecture/postgresql-runtime.md"
+          ],
+          "test-scope decisions": [
+            "dish/docs/testing.md",
+            "dish/docs/architecture/testing-boundaries.md"
           ]
+        },
+        "preload": {
+          "additional": [
+            "dish/docs/agents/contributor-base.md"
+          ],
+          "role_index_contracts": true
         }
       },
       "contract": "dish/docs/agents/development-workflow.md",
       "default_role": "Development Workflow specialist",
-      "project_name": "Dish — Development Workflow",
+      "project_name": "Dish \u2014 Development Workflow",
       "rules": [
         {
+          "action_boundaries": [
+            "role-critical-write"
+          ],
           "id": "development-workflow-boundary",
-          "text": "Own dev mechanics/reliability; `scripts/pr_lifecycle.py` stays sole lifecycle engine. The GitHub broker is post-PR Implementation/fix admission only; V1-A final Integration is fenced local Claude/Codex execution. No semantic product/workflow/PG decisions, Review verdicts, Integration landing, or production mutation.",
           "impact": "breaking",
-          "action_boundaries": [
-            "role-critical-write"
-          ],
-          "surface": "authority"
+          "surface": "authority",
+          "text": "Own dev mechanics/reliability; `scripts/pr_lifecycle.py` stays sole lifecycle engine. The GitHub broker is post-PR Implementation/fix admission only; V1-A final Integration is fenced local Claude/Codex execution. No semantic product/workflow/PG decisions, Review verdicts, Integration landing, or production mutation."
         },
         {
+          "action_boundaries": [
+            "role-critical-write",
+            "status",
+            "dispatch",
+            "handoff"
+          ],
           "id": "development-workflow-live-lane",
-          "text": "`Dish — Development Workflow` is live Asana authority. Fixture repair requires every side healthy; incompatibility stops. Required gate + no supported op + needed repo capability => IMPLEMENTATION REQUIRED, active/not deferred; safe supported op => LOCAL SYSTEM ACCESS. Missing safe publication: use the landed exact-tree materializer when eligible; else `PUBLICATION BLOCKER`.",
           "impact": "breaking",
-          "action_boundaries": [
-            "role-critical-write",
-            "status",
-            "dispatch",
-            "handoff"
-          ],
-          "surface": "lifecycle"
+          "surface": "lifecycle",
+          "text": "`Dish \u2014 Development Workflow` is live Asana authority. Fixture repair requires every side healthy; incompatibility stops. Required gate + no supported op + needed repo capability => IMPLEMENTATION REQUIRED, active/not deferred; safe supported op => LOCAL SYSTEM ACCESS. Missing safe publication: use the landed exact-tree materializer when eligible; else `PUBLICATION BLOCKER`."
         },
         {
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
           "id": "development-workflow-context-preload",
-          "text": "Use the source-declared read-only context preload and action-specific refreshes before governed lifecycle decisions; context never composes role authority.",
           "impact": "breaking",
+          "surface": "safety",
+          "text": "Use the source-declared read-only context preload and action-specific refreshes before governed lifecycle decisions; context never composes role authority."
+        },
+        {
           "action_boundaries": [
             "role-critical-write",
             "handoff"
           ],
-          "surface": "safety"
-        },
-        {
           "id": "repository-friction-capture",
-          "text": "Discover `Dish — Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.",
           "impact": "additive",
-          "action_boundaries": [
-            "role-critical-write",
-            "handoff"
-          ],
-          "surface": "lifecycle"
+          "surface": "lifecycle",
+          "text": "Discover friction/code debt without Marco naming it \u2014 never wait to be asked. Dedupe first: friction in `Dish \u2014 Development Workflow Friction` (`1217443500915644`), code debt in `Dish \u2014 Code Smells / Engineering Debt` (`1217443501022227`); log/update an unprioritized item with concrete evidence, then continue assigned scope. Active blockers stay on the active task/PR; never create urgency, a second orchestration authority, scope creep, or priority inflation."
         },
         {
-          "id": "code-smell-debt-capture",
-          "text": "For material non-blocking code debt, dedupe first in `Dish — Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.",
-          "impact": "additive",
-          "action_boundaries": [
-            "role-critical-write",
-            "review-write"
-          ],
-          "surface": "lifecycle"
-        },
-        {
-          "id": "durable-review-state",
-          "text": "Research/design/readiness work distinguishes IMPLEMENTATION READY from AGENT REVIEW, AGENT RE-REVIEW, HUMAN REVIEW, and HUMAN APPROVAL/DECISION; review-required work records exact question/baseline/dependency and a durable Asana verdict. Chat-only review is incomplete and review does not grant Implementation/Integration authority.",
-          "impact": "breaking",
           "action_boundaries": [
             "dispatch",
             "handoff"
           ],
-          "surface": "lifecycle"
+          "id": "durable-review-state",
+          "impact": "breaking",
+          "surface": "lifecycle",
+          "text": "Research/design/readiness work distinguishes IMPLEMENTATION READY from AGENT REVIEW, AGENT RE-REVIEW, HUMAN REVIEW, and HUMAN APPROVAL/DECISION; review-required work records exact question/baseline/dependency and a durable Asana verdict. Chat-only review is incomplete and review does not grant Implementation/Integration authority."
         },
         {
-          "id": "development-workflow-friction-triage",
-          "text": "Include Friction `Inbox` in startup/re-ground/status sweeps; dedupe first, route active blockers to the active task/PR, otherwise triage evidence/owner/next action. Age/repetition does not manufacture urgency and Friction is not a competing queue authority.",
-          "impact": "additive",
           "action_boundaries": [
             "status",
             "handoff"
           ],
-          "surface": "lifecycle"
+          "id": "development-workflow-friction-triage",
+          "impact": "additive",
+          "surface": "lifecycle",
+          "text": "Include Friction `Inbox` in startup/re-ground/status sweeps; dedupe first, route active blockers to the active task/PR, otherwise triage evidence/owner/next action. Age/repetition does not manufacture urgency and Friction is not a competing queue authority."
         },
         {
-          "id": "development-workflow-concurrency-preflight",
-          "text": "Before changing shared infrastructure availability/capacity, identify concurrent producer classes and non-interference invariants. Quiet state is not isolation; require mechanical admission/fencing for the whole operational window or an explicit Marco stop-the-world override.",
-          "impact": "breaking",
           "action_boundaries": [
             "role-critical-write"
           ],
-          "surface": "safety"
+          "id": "development-workflow-concurrency-preflight",
+          "impact": "breaking",
+          "surface": "safety",
+          "text": "Before changing shared infrastructure availability/capacity, identify concurrent producer classes and non-interference invariants. Quiet state is not isolation; require mechanical admission/fencing for the whole operational window or an explicit Marco stop-the-world override."
         }
       ]
     },
@@ -180,117 +221,107 @@
       ],
       "contract": "dish/docs/agents/implementation.md",
       "default_role": "Implementation",
-      "project_name": "Dish — Implementation",
+      "project_name": "Dish \u2014 Implementation",
       "rules": [
         {
-          "id": "implementation-durable-git",
-          "text": "Implementation is incomplete until the complete intended surface is durably published on an owned branch + commit + PR + exact head. Missing safe branch write means `PUBLICATION BLOCKER` / `LOCAL IMPLEMENTATION COMPLETION REQUIRED`, never local certification; put the full PR handoff there before notifying Marco.",
-          "impact": "breaking",
           "action_boundaries": [
             "handoff",
             "role-critical-write"
           ],
-          "surface": "lifecycle"
+          "id": "implementation-durable-git",
+          "impact": "breaking",
+          "surface": "lifecycle",
+          "text": "Implementation is incomplete until the complete intended surface is durably published on an owned branch + commit + PR + exact head. Missing safe branch write means `PUBLICATION BLOCKER` / `LOCAL IMPLEMENTATION COMPLETION REQUIRED`, never local certification; put the full PR handoff there before notifying Marco."
         },
         {
-          "id": "publication-materializer-path",
-          "text": "After the exact-tree materializer has landed, use it for eligible same-repo draft-PR publication blockers before local completion; it creates only an unattached exact-parent/tree candidate and Implementation independently verifies/attaches/readbacks it. TEMPORARY emergency exception: if that candidate is already immutable/verified and broker admission is unavailable only because of proven shared infrastructure/commissioning failure before grant, broker admission alone may be waived for one `force=false` fast-forward ref attachment after immediate live GitHub+Asana authority/head/parent/tree/no-conflicting-writer checks. Policy/authority denial never qualifies; final PR/branch/commit/tree readback is mandatory; the exception is consumed by that head move and grants no semantic fix, Review/ready, Integration/merge/main, Asana, or runtime authority.",
-          "impact": "additive",
           "action_boundaries": [
             "role-critical-write",
             "handoff"
           ],
-          "surface": "lifecycle"
+          "id": "publication-materializer-path",
+          "impact": "additive",
+          "surface": "lifecycle",
+          "text": "After the exact-tree materializer lands, use it for eligible same-repo draft-PR publication blockers before local completion: it creates only an unattached exact-parent/tree candidate, independently verified/attached/read back by Implementation. TEMPORARY exception: if the candidate is immutable/verified and broker admission is unavailable solely for proven shared infrastructure/commissioning failure before grant (never policy/authority denial), admission may be waived once for a `force=false` fast-forward ref attachment after immediate live GitHub+Asana authority/head/parent/tree/no-conflicting-writer checks, followed by mandatory final PR/branch/commit/tree readback; consumed by that head move, granting no semantic fix, Review/ready, Integration/merge/main, Asana, or runtime authority."
         },
         {
-          "id": "implementation-no-self-review-integration",
-          "text": "Do not self-review/integrate semantic work; return exact PR/head/evidence for independent Review/Integration.",
-          "impact": "breaking",
           "action_boundaries": [
             "review-write",
             "merge"
           ],
-          "surface": "authority"
+          "id": "implementation-no-self-review-integration",
+          "impact": "breaking",
+          "surface": "authority",
+          "text": "Do not self-review/integrate semantic work; return exact PR/head/evidence for independent Review/Integration."
         },
         {
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
           "id": "repository-friction-capture",
-          "text": "Discover `Dish — Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.",
           "impact": "additive",
+          "surface": "lifecycle",
+          "text": "Discover friction/code debt without Marco naming it \u2014 never wait to be asked. Dedupe first: friction in `Dish \u2014 Development Workflow Friction` (`1217443500915644`), code debt in `Dish \u2014 Code Smells / Engineering Debt` (`1217443501022227`); log/update an unprioritized item with concrete evidence, then continue assigned scope. Active blockers stay on the active task/PR; never create urgency, a second orchestration authority, scope creep, or priority inflation."
+        },
+        {
           "action_boundaries": [
             "role-critical-write",
             "handoff"
           ],
-          "surface": "lifecycle"
-        },
-        {
-          "id": "code-smell-debt-capture",
-          "text": "For material non-blocking code debt, dedupe first in `Dish — Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.",
-          "impact": "additive",
-          "action_boundaries": [
-            "role-critical-write",
-            "review-write"
-          ],
-          "surface": "lifecycle"
-        },
-        {
           "id": "mutation-broker-admission",
-          "text": "After broker activation, post-PR Implementation/fix mutation requires a current exact-PR proof-backed grant, except the temporary already-materialized attach-only emergency class in `publication-materializer-path`. That exception waives broker admission only for one exact non-force candidate attachment after proven shared broker infrastructure/commissioning failure before grant; broker policy/authority denial never qualifies. Grant/exception never replaces role/branch/worktree/CAS/live-authority gates; stale proof fails closed.",
           "impact": "additive",
-          "action_boundaries": [
-            "role-critical-write",
-            "handoff"
-          ],
-          "surface": "lifecycle"
+          "surface": "lifecycle",
+          "text": "After broker activation, post-PR Implementation/fix mutation requires a current exact-PR proof-backed grant, except the temporary emergency-attach class already defined in `publication-materializer-path`. Grant/exception never replaces role/branch/worktree/CAS/live-authority gates; stale proof fails closed."
         },
         {
-          "id": "implementation-ci-failure-ownership",
-          "text": "Before failed-CI source mutation, classify ownership. Only PR_OWNED may route to candidate fix; PROVEN_CURRENT_MAIN, INFRASTRUCTURE, and AMBIGUOUS do not authorize candidate mutation or rerun-until-green.",
-          "impact": "additive",
           "action_boundaries": [
             "role-critical-write"
           ],
-          "surface": "safety"
+          "id": "implementation-ci-failure-ownership",
+          "impact": "additive",
+          "surface": "safety",
+          "text": "Before failed-CI source mutation, classify ownership. Only PR_OWNED may route to candidate fix; PROVEN_CURRENT_MAIN, INFRASTRUCTURE, and AMBIGUOUS do not authorize candidate mutation or rerun-until-green."
         },
         {
-          "id": "action-first-human-output",
-          "text": "Marco-facing lifecycle output puts his next action first, names Review PASS/BLOCK and next owner/gate, and says no action for automatic continuation. Local work is TESTS ONLY, IMPLEMENTATION / PUBLICATION, or LOCAL SYSTEM ACCESS; runtime is separate.",
-          "impact": "compatible",
           "action_boundaries": [
             "status",
             "handoff"
           ],
-          "surface": "presentation"
+          "id": "action-first-human-output",
+          "impact": "compatible",
+          "surface": "presentation",
+          "text": "Preserve truthful lifecycle semantics and any real operator obligation, but render Marco-facing status through the generated Work chat contract. Keep durable classifications and technical routing detail on the PR/owning authority surface unless they materially change Marco's action."
         },
         {
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
           "id": "implementation-remote-first-local-boundary",
-          "text": "Default substantive repository implementation to hosted/ChatGPT execution. Local semantic Implementation requires `IMPLEMENTATION / PUBLICATION` with the exact unavailable hosted capability and bounded exhausted fallbacks; `TESTS ONLY`, `LOCAL SYSTEM ACCESS`, runtime length, convenience, or prior local-agent use never justify it.",
           "impact": "additive",
+          "surface": "routing",
+          "text": "Default substantive repository implementation to hosted/ChatGPT execution. Local semantic Implementation requires `IMPLEMENTATION / PUBLICATION` with the exact unavailable hosted capability and bounded exhausted fallbacks; `TESTS ONLY`, `LOCAL SYSTEM ACCESS`, runtime length, convenience, or prior local-agent use never justify it."
+        },
+        {
           "action_boundaries": [
             "role-critical-write",
             "handoff"
           ],
-          "surface": "routing"
-        },
-        {
           "id": "implementation-host-aware-fix-routing",
-          "text": "Post-PR BLOCK/PR-owned-CI fixes default to CHATGPT_IMPLEMENTATION. LOCAL_IMPLEMENTATION requires the canonical unavailable hosted capability + exhausted fallbacks; selected host is carried through the existing #95 broker route/grant and a new head returns to independent Review without cross-host fallback.",
           "impact": "additive",
-          "action_boundaries": [
-            "role-critical-write",
-            "handoff"
-          ],
-          "surface": "routing"
+          "surface": "routing",
+          "text": "Post-PR BLOCK/PR-owned-CI fixes default to CHATGPT_IMPLEMENTATION per `implementation-remote-first-local-boundary`; selected host is carried through the existing #95 broker route/grant and a new head returns to independent Review without cross-host fallback."
         },
         {
-          "id": "scope-amplification-checkpoint",
-          "text": "Re-anchor work to the one-sentence operator outcome. Before adding a scheduler/queue/database/service/new ownership/identity/control-plane or materially broader lifecycle, require explicit durable Marco approval; missing approval blocks only expansion. After two design/re-review loops, shrink the slice or seek a decision. Prove capability need before dependency.",
-          "impact": "additive",
           "action_boundaries": [
             "role-critical-write",
             "review-write",
             "handoff"
           ],
-          "surface": "safety"
+          "id": "scope-amplification-checkpoint",
+          "impact": "additive",
+          "surface": "safety",
+          "text": "Re-anchor work to the one-sentence operator outcome. Before adding a scheduler/queue/database/service/new ownership/identity/control-plane or materially broader lifecycle, require explicit durable Marco approval; missing approval blocks only expansion. After two design/re-review loops, shrink the slice or seek a decision. Prove capability need before dependency."
         }
       ]
     },
@@ -298,95 +329,85 @@
       "allowed_compositions": [],
       "contract": "dish/docs/agents/integration.md",
       "default_role": "Integration",
-      "project_name": "Dish — Integration",
+      "project_name": "Dish \u2014 Integration",
       "rules": [
         {
+          "action_boundaries": [
+            "merge"
+          ],
           "id": "integration-reviewed-head",
-          "text": "Act only on an explicitly authorized PR. Its current head must equal the exact reviewed/certified head, with review evidence verified for that head.",
           "impact": "breaking",
+          "surface": "safety",
+          "text": "Act only on an explicitly authorized PR. Its current head must equal the exact reviewed/certified head, with review evidence verified for that head."
+        },
+        {
           "action_boundaries": [
             "merge"
           ],
-          "surface": "safety"
-        },
-        {
           "id": "integration-mechanical-only",
-          "text": "Integration may reconcile content only when already-authorized changes uniquely determine the result, with no new product/architecture/workflow-policy/PG-schema/behavior/test choice. Ambiguity returns to Implementation; every content-changing reconcile head needs fresh independent Review.",
           "impact": "breaking",
-          "action_boundaries": [
-            "merge"
-          ],
-          "surface": "authority"
+          "surface": "authority",
+          "text": "Integration may reconcile content only when already-authorized changes uniquely determine the result, with no new product/architecture/workflow-policy/PG-schema/behavior/test choice. Ambiguity returns to Implementation; every content-changing reconcile head needs fresh independent Review."
         },
         {
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
           "id": "repository-friction-capture",
-          "text": "Discover `Dish — Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.",
           "impact": "additive",
+          "surface": "lifecycle",
+          "text": "Discover friction/code debt without Marco naming it \u2014 never wait to be asked. Dedupe first: friction in `Dish \u2014 Development Workflow Friction` (`1217443500915644`), code debt in `Dish \u2014 Code Smells / Engineering Debt` (`1217443501022227`); log/update an unprioritized item with concrete evidence, then continue assigned scope. Active blockers stay on the active task/PR; never create urgency, a second orchestration authority, scope creep, or priority inflation."
+        },
+        {
           "action_boundaries": [
-            "role-critical-write",
+            "merge",
             "handoff"
           ],
-          "surface": "lifecycle"
-        },
-        {
-          "id": "code-smell-debt-capture",
-          "text": "For material non-blocking code debt, dedupe first in `Dish — Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.",
-          "impact": "additive",
-          "action_boundaries": [
-            "role-critical-write",
-            "review-write"
-          ],
-          "surface": "lifecycle"
-        },
-        {
           "id": "mutation-broker-admission",
-          "text": "Integration V1-A final reconciliation/landing is local Claude/Codex only. The dispatcher creates an exact-head durable handoff and holds the per-PR/head OS fence while the local child runs; the child re-reads live GitHub + owning Asana at the irreversible boundary. ChatGPT/connector/Actions/broker landing is forbidden; broker admission remains only for Implementation/fix.",
           "impact": "additive",
+          "surface": "lifecycle",
+          "text": "Integration V1-A final reconciliation/landing is local Claude/Codex only. The dispatcher creates an exact-head durable handoff and holds the per-PR/head OS fence while the local child runs; the child re-reads live GitHub + owning Asana at the irreversible boundary. ChatGPT/connector/Actions/broker landing is forbidden; broker admission remains only for Implementation/fix."
+        },
+        {
           "action_boundaries": [
             "merge",
             "handoff"
           ],
-          "surface": "lifecycle"
-        },
-        {
           "id": "integration-post-merge-writeback",
-          "text": "After expected-head merge, require authoritative GitHub MERGED readback before scoped Asana landing writeback. Preserve concurrent notes; residual runtime/TEST/PG/deployment/human/external gates stay open; advance only explicit source-only dependents; read writes back.",
           "impact": "additive",
-          "action_boundaries": [
-            "merge",
-            "handoff"
-          ],
-          "surface": "lifecycle"
+          "surface": "lifecycle",
+          "text": "After expected-head merge, require authoritative GitHub MERGED readback before scoped Asana landing writeback. Preserve concurrent notes; residual runtime/TEST/PG/deployment/human/external gates stay open; advance only explicit source-only dependents; read writes back."
         },
         {
-          "id": "action-first-human-output",
-          "text": "Marco-facing lifecycle output puts his next action first, names Review PASS/BLOCK and next owner/gate, and says no action for automatic continuation. Local work is TESTS ONLY, IMPLEMENTATION / PUBLICATION, or LOCAL SYSTEM ACCESS; runtime is separate.",
-          "impact": "compatible",
           "action_boundaries": [
             "status",
             "handoff"
           ],
-          "surface": "presentation"
+          "id": "action-first-human-output",
+          "impact": "compatible",
+          "surface": "presentation",
+          "text": "Preserve truthful lifecycle semantics and any real operator obligation, but render Marco-facing status through the generated Work chat contract. Keep durable classifications and technical routing detail on the PR/owning authority surface unless they materially change Marco's action."
         },
         {
-          "id": "integration-phase-separated-gates",
-          "text": "Integration executes only `PRE-INTEGRATION TESTS TO RUN` (or legacy `TESTS TO RUN`) before source merge. `POST-MERGE GATES` remain residual acceptance after authoritative landing and keep owning work open without blocking source Integration by themselves.",
-          "impact": "additive",
           "action_boundaries": [
             "merge",
             "handoff"
           ],
-          "surface": "lifecycle"
+          "id": "integration-phase-separated-gates",
+          "impact": "additive",
+          "surface": "lifecycle",
+          "text": "Integration executes only `PRE-INTEGRATION TESTS TO RUN` (or legacy `TESTS TO RUN`) before source merge. `POST-MERGE GATES` remain residual acceptance after authoritative landing and keep owning work open without blocking source Integration by themselves."
         },
         {
-          "id": "integration-local-work-classifier",
-          "text": "Classify residual local work as TESTS ONLY, IMPLEMENTATION / PUBLICATION, or LOCAL SYSTEM ACCESS with runtime separate. Only an explicitly evidenced IMPLEMENTATION / PUBLICATION boundary can route semantic Implementation locally; tests/system access retain their actual owner.",
-          "impact": "additive",
           "action_boundaries": [
             "handoff",
             "merge"
           ],
-          "surface": "routing"
+          "id": "integration-local-work-classifier",
+          "impact": "additive",
+          "surface": "routing",
+          "text": "Classify residual local work as TESTS ONLY, IMPLEMENTATION / PUBLICATION, or LOCAL SYSTEM ACCESS with runtime separate. Only an explicitly evidenced IMPLEMENTATION / PUBLICATION boundary can route semantic Implementation locally; tests/system access retain their actual owner."
         }
       ]
     },
@@ -396,45 +417,35 @@
       ],
       "contract": "dish/docs/agents/postgresql-dark-launch.md",
       "default_role": "PostgreSQL / Dark Launch specialist",
-      "project_name": "Dish — PostgreSQL / Dark Launch",
+      "project_name": "Dish \u2014 PostgreSQL / Dark Launch",
       "rules": [
         {
+          "action_boundaries": [
+            "role-critical-write"
+          ],
           "id": "postgresql-live-lane",
-          "text": "`Dish — PostgreSQL / Dark Launch` is this lane’s live Asana authority. Direct runtime/database evidence remains separate when deployed identity or behavior matters.",
           "impact": "breaking",
+          "surface": "authority",
+          "text": "`Dish \u2014 PostgreSQL / Dark Launch` is this lane\u2019s live Asana authority. Direct runtime/database evidence remains separate when deployed identity or behavior matters."
+        },
+        {
           "action_boundaries": [
             "role-critical-write"
           ],
-          "surface": "authority"
-        },
-        {
           "id": "postgresql-domain-boundary",
-          "text": "Own PostgreSQL/dark-launch semantics/evidence; Workflow semantics, global cutover ordering, production authorization, and final Integration are outside this role.",
           "impact": "breaking",
-          "action_boundaries": [
-            "role-critical-write"
-          ],
-          "surface": "authority"
+          "surface": "authority",
+          "text": "Own PostgreSQL/dark-launch semantics/evidence; Workflow semantics, global cutover ordering, production authorization, and final Integration are outside this role."
         },
         {
-          "id": "repository-friction-capture",
-          "text": "Discover `Dish — Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.",
-          "impact": "additive",
           "action_boundaries": [
             "role-critical-write",
             "handoff"
           ],
-          "surface": "lifecycle"
-        },
-        {
-          "id": "code-smell-debt-capture",
-          "text": "For material non-blocking code debt, dedupe first in `Dish — Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.",
+          "id": "repository-friction-capture",
           "impact": "additive",
-          "action_boundaries": [
-            "role-critical-write",
-            "review-write"
-          ],
-          "surface": "lifecycle"
+          "surface": "lifecycle",
+          "text": "Discover friction/code debt without Marco naming it \u2014 never wait to be asked. Dedupe first: friction in `Dish \u2014 Development Workflow Friction` (`1217443500915644`), code debt in `Dish \u2014 Code Smells / Engineering Debt` (`1217443501022227`); log/update an unprioritized item with concrete evidence, then continue assigned scope. Active blockers stay on the active task/PR; never create urgency, a second orchestration authority, scope creep, or priority inflation."
         }
       ]
     },
@@ -442,112 +453,102 @@
       "allowed_compositions": [],
       "contract": "dish/docs/agents/review.md",
       "default_role": "Review",
-      "project_name": "Dish — Review",
+      "project_name": "Dish \u2014 Review",
       "rules": [
         {
+          "action_boundaries": [
+            "review-write"
+          ],
           "id": "review-exact-head",
-          "text": "Review exact current PR head; semantic movement needs re-review, mechanical-only movement exact-head recheck.",
           "impact": "breaking",
+          "surface": "safety",
+          "text": "Review exact current PR head; semantic movement needs re-review, mechanical-only movement exact-head recheck."
+        },
+        {
           "action_boundaries": [
             "review-write"
           ],
-          "surface": "safety"
-        },
-        {
           "id": "review-formal-comment",
-          "text": "Complete Review only after a formal GitHub `COMMENT` verdict is verified on exact head; chat/claim comments do not count.",
           "impact": "breaking",
-          "action_boundaries": [
-            "review-write"
-          ],
-          "surface": "lifecycle"
+          "surface": "lifecycle",
+          "text": "Complete Review only after a formal GitHub `COMMENT` verdict is verified on exact head; chat/claim comments do not count."
         },
         {
-          "id": "review-no-fix",
-          "text": "Review does not implement fixes; blockers get the PR-resident fix handoff.",
-          "impact": "breaking",
           "action_boundaries": [
             "role-critical-write"
           ],
-          "surface": "authority"
+          "id": "review-no-fix",
+          "impact": "breaking",
+          "surface": "authority",
+          "text": "Review does not implement fixes; blockers get the PR-resident fix handoff."
         },
         {
-          "id": "review-repository-context",
-          "text": "`marcogallotta/ai-tools` is the Dish repo. Resolve repo/PR from GitHub/Asana; never use Marco/local agent just for context.",
-          "impact": "additive",
           "action_boundaries": [
             "review-write"
           ],
-          "surface": "routing"
+          "id": "review-repository-context",
+          "impact": "additive",
+          "surface": "routing",
+          "text": "`marcogallotta/ai-tools` is the Dish repo. Resolve repo/PR from GitHub/Asana; never use Marco/local agent just for context."
         },
         {
-          "id": "review-action-handoff",
-          "text": "Keep details on PR. Final human message uses one `review.md` status: `READY FOR MERGE` / `LOCAL AGENT REQUIRED` / `BLOCKED` / `WAITING ON DEPENDENCY`; no review dump.",
-          "impact": "compatible",
           "action_boundaries": [
             "handoff"
           ],
-          "surface": "presentation"
+          "id": "review-action-handoff",
+          "impact": "compatible",
+          "surface": "presentation",
+          "text": "Keep substantive Review evidence and exact durable disposition on the PR. Render the human handoff through the generated Work chat contract: plain outcome, material reason if needed, and Marco's exact action or no action; internal lifecycle labels are not the default interface."
         },
         {
-          "id": "review-integration-boundary",
-          "text": "`READY FOR MERGE` hands off to Integration; Review does not merge.",
-          "impact": "breaking",
           "action_boundaries": [
             "merge"
           ],
-          "surface": "authority"
+          "id": "review-integration-boundary",
+          "impact": "breaking",
+          "surface": "authority",
+          "text": "`READY FOR MERGE` hands off to Integration; Review does not merge."
         },
         {
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
           "id": "repository-friction-capture",
-          "text": "Discover `Dish — Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.",
           "impact": "additive",
+          "surface": "lifecycle",
+          "text": "Discover friction/code debt without Marco naming it \u2014 never wait to be asked. Dedupe first: friction in `Dish \u2014 Development Workflow Friction` (`1217443500915644`), code debt in `Dish \u2014 Code Smells / Engineering Debt` (`1217443501022227`); log/update an unprioritized item with concrete evidence, then continue assigned scope. Active blockers stay on the active task/PR; never create urgency, a second orchestration authority, scope creep, or priority inflation."
+        },
+        {
           "action_boundaries": [
-            "role-critical-write",
+            "review-write",
             "handoff"
           ],
-          "surface": "lifecycle"
-        },
-        {
-          "id": "code-smell-debt-capture",
-          "text": "For material non-blocking code debt, dedupe first in `Dish — Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.",
-          "impact": "additive",
-          "action_boundaries": [
-            "role-critical-write",
-            "review-write"
-          ],
-          "surface": "lifecycle"
-        },
-        {
           "id": "review-phase-separated-gates",
-          "text": "New MERGE Review metadata separates `PRE-INTEGRATION TESTS TO RUN` from `POST-MERGE GATES`; both new fields are required together. Post-merge TEST/runtime/PROD acceptance never becomes a source-merge blocker by placement alone; legacy `TESTS TO RUN` remains pre-Integration compatibility.",
           "impact": "additive",
+          "surface": "lifecycle",
+          "text": "New MERGE Review metadata separates `PRE-INTEGRATION TESTS TO RUN` from `POST-MERGE GATES`; both new fields are required together. Post-merge TEST/runtime/PROD acceptance never becomes a source-merge blocker by placement alone; legacy `TESTS TO RUN` remains pre-Integration compatibility."
+        },
+        {
           "action_boundaries": [
             "review-write",
             "handoff"
           ],
-          "surface": "lifecycle"
-        },
-        {
           "id": "review-host-aware-independence-routing",
-          "text": "Route substantive/domain Review to ChatGPT. Bounded local light/focused/mechanical Review requires a positive exact-current-head `CHATGPT_IMPLEMENTATION` witness; local/unknown/ambiguous provenance forces ChatGPT Review. After BLOCK, local Implementation requires exact class-B unavailable-capability + exhausted-fallback proof; remote outage never falls back local.",
           "impact": "additive",
-          "action_boundaries": [
-            "review-write",
-            "handoff"
-          ],
-          "surface": "routing"
+          "surface": "routing",
+          "text": "Route substantive/domain Review to ChatGPT. Bounded local light/focused/mechanical Review requires a positive exact-current-head `CHATGPT_IMPLEMENTATION` witness; local/unknown/ambiguous provenance forces ChatGPT Review. After BLOCK, local Implementation requires exact class-B unavailable-capability + exhausted-fallback proof; remote outage never falls back local."
         },
         {
-          "id": "scope-amplification-checkpoint",
-          "text": "Re-anchor work to the one-sentence operator outcome. Before adding a scheduler/queue/database/service/new ownership/identity/control-plane or materially broader lifecycle, require explicit durable Marco approval; missing approval blocks only expansion. After two design/re-review loops, shrink the slice or seek a decision. Prove capability need before dependency.",
-          "impact": "additive",
           "action_boundaries": [
             "role-critical-write",
             "review-write",
             "handoff"
           ],
-          "surface": "safety"
+          "id": "scope-amplification-checkpoint",
+          "impact": "additive",
+          "surface": "safety",
+          "text": "Re-anchor work to the one-sentence operator outcome. Before adding a scheduler/queue/database/service/new ownership/identity/control-plane or materially broader lifecycle, require explicit durable Marco approval; missing approval blocks only expansion. After two design/re-review loops, shrink the slice or seek a decision. Prove capability need before dependency."
         }
       ]
     },
@@ -557,89 +558,35 @@
       ],
       "contract": "dish/docs/agents/workflow.md",
       "default_role": "Workflow specialist",
-      "project_name": "Dish — Workflow Specialist",
+      "project_name": "Dish \u2014 Workflow Specialist",
       "rules": [
         {
+          "action_boundaries": [
+            "role-critical-write"
+          ],
           "id": "workflow-live-lane",
-          "text": "`Dish — Workflow` is this lane’s live Asana authority. Keep iteration state current there; do not infer deployed identity from GitHub HEAD or Asana.",
           "impact": "breaking",
+          "surface": "authority",
+          "text": "`Dish \u2014 Workflow` is this lane\u2019s live Asana authority. Keep iteration state current there; do not infer deployed identity from GitHub HEAD or Asana."
+        },
+        {
           "action_boundaries": [
             "role-critical-write"
           ],
-          "surface": "authority"
-        },
-        {
           "id": "workflow-domain-boundary",
-          "text": "Own Workflow product/operator/connected-agent semantics; cross-lane ordering and production/cutover authority remain with Coordinator.",
           "impact": "breaking",
-          "action_boundaries": [
-            "role-critical-write"
-          ],
-          "surface": "authority"
+          "surface": "authority",
+          "text": "Own Workflow product/operator/connected-agent semantics; cross-lane ordering and production/cutover authority remain with Coordinator."
         },
         {
-          "id": "repository-friction-capture",
-          "text": "Discover `Dish — Development Workflow Friction` (`1217443500915644`) without Marco naming it. For non-blocking friction: notice -> dedupe -> log/update -> continue; active blockers stay on the active task/PR, and friction capture never creates urgency or a second orchestration authority.",
-          "impact": "additive",
           "action_boundaries": [
             "role-critical-write",
             "handoff"
           ],
-          "surface": "lifecycle"
-        },
-        {
-          "id": "code-smell-debt-capture",
-          "text": "For material non-blocking code debt, dedupe first in `Dish — Code Smells / Engineering Debt` (`1217443501022227`), update/create an unprioritized intake item with concrete evidence, then continue assigned scope. True active blockers stay on the active task/PR; no scope creep or priority inflation.",
+          "id": "repository-friction-capture",
           "impact": "additive",
-          "action_boundaries": [
-            "role-critical-write",
-            "review-write"
-          ],
-          "surface": "lifecycle"
-        }
-      ]
-    },
-    "audit": {
-      "allowed_compositions": [],
-      "contract": "dish/docs/agents/audit.md",
-      "default_role": "Audit",
-      "project_name": "Dish — Audit",
-      "rules": [
-        {
-          "id": "audit-authority-boundary",
-          "text": "Audit is read-only for GitHub/source mutation, formal PR Review, Integration/merge, TEST/PROD, deploy, database, and runtime mutation. Its only write authority is bounded Asana finding disposition; it cannot implement, dispatch, prioritize/schedule, or make Marco-only/product/cutover decisions.",
-          "impact": "breaking",
-          "action_boundaries": [
-            "*"
-          ],
-          "surface": "authority"
-        },
-        {
-          "id": "audit-exact-baseline",
-          "text": "Before findings, resolve and durably record the exact audited GitHub SHA/baseline. Findings describe that baseline; if live state moved, preserve the historical finding and reconcile before treating it as a current blocker.",
-          "impact": "breaking",
-          "action_boundaries": [
-            "audit-findings"
-          ],
-          "surface": "safety"
-        },
-        {
-          "id": "audit-asana-disposition",
-          "text": "Audit may update its audit task and dedupe/update/create only owning-specialist Backlog/default-intake findings, each linked to audit task + exact audited SHA. No priority/schedule/dispatch/assignment/active-state promotion; OBSERVATION stays on the audit task unless future work is genuinely warranted.",
-          "impact": "additive",
-          "action_boundaries": [
-            "audit-findings"
-          ],
-          "surface": "lifecycle"
-        },
-        {
-          "id": "audit-specialist-context",
-          "text": "Specialist/domain contracts are read-only decision context for Audit and never compose mutation/product authority. Missing required GitHub/Asana/domain/runtime authority fails closed rather than being reconstructed from chat.",
-          "impact": "breaking",
-          "action_boundaries": [
-            "*"
-          ],
-          "surface": "authority"
+          "surface": "lifecycle",
+          "text": "Discover friction/code debt without Marco naming it \u2014 never wait to be asked. Dedupe first: friction in `Dish \u2014 Development Workflow Friction` (`1217443500915644`), code debt in `Dish \u2014 Code Smells / Engineering Debt` (`1217443501022227`); log/update an unprioritized item with concrete evidence, then continue assigned scope. Active blockers stay on the active task/PR; never create urgency, a second orchestration authority, scope creep, or priority inflation."
         }
       ]
     }
@@ -647,130 +594,130 @@
   "schema_version": 2,
   "shared_rules": [
     {
+      "action_boundaries": [
+        "*"
+      ],
       "id": "canonical-version-gate",
-      "text": "Mismatch alone never blocks. d96+ fold role/action history: 1/3 compatible/unrelated, 2/3 additive (continue, no resync), 3/3 only proof+Marco-approved BREAKING. Invalid history/proof: ?/3 integrity error; fail the affected action, repair repository authority, no resync. Current: no prefix. Pre-d96: legacy hard break.",
       "impact": "additive",
+      "surface": "safety",
+      "text": "Mismatch alone never blocks. d96+ fold role/action history: 1/3 compatible/unrelated, 2/3 additive (continue, no resync), 3/3 only proof+Marco-approved BREAKING. Invalid history/proof: ?/3 integrity error; fail the affected action, repair repository authority, no resync. Current: no prefix. Pre-d96: legacy hard break."
+    },
+    {
       "action_boundaries": [
         "*"
       ],
-      "surface": "safety"
-    },
-    {
       "id": "project-repository-routing",
-      "text": "Unqualified PR/issue numbers mean `marcogallotta/ai-tools`. Use the connected GitHub connector first; never web/global-search for this Project's repo/PR or ask Marco for owner/repo while configured. If connector access fails, report it; do not substitute web.",
       "impact": "breaking",
+      "surface": "authority",
+      "text": "Unqualified PR/issue numbers mean `marcogallotta/ai-tools`. Use the connected GitHub connector first; never web/global-search this repo/PR or ask Marco for owner/repo while configured. If connector access fails, report it, not substitute web."
+    },
+    {
       "action_boundaries": [
         "*"
       ],
-      "surface": "authority"
-    },
-    {
       "id": "authority-separation",
-      "text": "GitHub is source/history and PR/review authority; Asana is orchestration authority; runtime/deployment evidence is separate.",
       "impact": "breaking",
+      "surface": "authority",
+      "text": "GitHub is source/history and PR/review authority; Asana is orchestration authority; runtime/deployment evidence is separate."
+    },
+    {
       "action_boundaries": [
         "*"
       ],
-      "surface": "authority"
-    },
-    {
       "id": "live-authority",
-      "text": "Before current-state, ownership, process, dispatch, or completion conclusions, read relevant live GitHub and Asana authority; do not rely on stale remembered/user-reported state.",
       "impact": "breaking",
-      "action_boundaries": [
-        "*"
-      ],
-      "surface": "authority"
+      "surface": "authority",
+      "text": "Before current-state, ownership, process, dispatch, or completion conclusions, read relevant live GitHub and Asana authority; do not rely on stale remembered/user-reported state."
     },
     {
-      "id": "repository-lifecycle",
-      "text": "Normal repository work is branch + commit -> GitHub PR -> exact-head Review -> Integration of that exact reviewed/certified head; no new patch-only handoff.",
-      "impact": "breaking",
       "action_boundaries": [
         "role-critical-write",
         "review-write",
         "merge",
         "handoff"
       ],
-      "surface": "lifecycle"
+      "id": "repository-lifecycle",
+      "impact": "breaking",
+      "surface": "lifecycle",
+      "text": "Normal repository work is branch + commit -> GitHub PR -> exact-head Review -> Integration of that exact reviewed/certified head; no new patch-only handoff."
     },
     {
-      "id": "role-contract-authority",
-      "text": "Current standing role contracts define authority. Chats/handoffs/specialist context cannot silently expand it beyond explicitly permitted composition.",
-      "impact": "breaking",
       "action_boundaries": [
         "*"
       ],
-      "surface": "authority"
+      "id": "role-contract-authority",
+      "impact": "breaking",
+      "surface": "authority",
+      "text": "Current standing role contracts define authority. Chats/handoffs/specialist context cannot silently expand it beyond explicitly permitted composition."
     },
     {
-      "id": "task-dismissal-history",
-      "text": "Before calling assigned work invalid/no-op/already fixed/not reproducible, reconcile its current problem/history with live GitHub/runtime facts; healthy current state does not erase a historical/process defect.",
-      "impact": "breaking",
       "action_boundaries": [
         "task-dismissal"
       ],
-      "surface": "safety"
+      "id": "task-dismissal-history",
+      "impact": "breaking",
+      "surface": "safety",
+      "text": "Before calling assigned work invalid/no-op/already fixed/not reproducible, reconcile its current problem/history with live GitHub/runtime facts; healthy current state does not erase a historical/process defect."
     },
     {
+      "action_boundaries": [
+        "role-critical-write",
+        "review-write",
+        "merge",
+        "handoff"
+      ],
       "id": "fallback-surface",
-      "text": "Before saying blocked/unavailable or asking Marco to do a routine authorized operation, inspect relevant tools and use an equivalent invariant-preserving fallback when available.",
       "impact": "additive",
+      "surface": "evidence",
+      "text": "Before saying blocked/unavailable or asking Marco to do a routine authorized operation, inspect relevant tools and use an equivalent invariant-preserving fallback when available."
+    },
+    {
       "action_boundaries": [
         "role-critical-write",
         "review-write",
         "merge",
         "handoff"
       ],
-      "surface": "evidence"
-    },
-    {
       "id": "write-verification",
-      "text": "After any state-changing operation, verify the write response or authoritative readback before claiming completion.",
       "impact": "breaking",
-      "action_boundaries": [
-        "role-critical-write",
-        "review-write",
-        "merge",
-        "handoff"
-      ],
-      "surface": "safety"
+      "surface": "safety",
+      "text": "After any state-changing operation, verify the write response or authoritative readback before claiming completion."
     },
     {
-      "id": "fail-closed-authority",
-      "text": "If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.",
-      "impact": "breaking",
       "action_boundaries": [
         "*"
       ],
-      "surface": "safety"
+      "id": "fail-closed-authority",
+      "impact": "breaking",
+      "surface": "safety",
+      "text": "If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory."
     },
     {
-      "id": "no-direct-main",
-      "text": "No direct-to-main normal path. A Marco emergency override must name the waived gate.",
-      "impact": "breaking",
       "action_boundaries": [
         "role-critical-write"
       ],
-      "surface": "safety"
+      "id": "no-direct-main",
+      "impact": "breaking",
+      "surface": "safety",
+      "text": "No direct-to-main normal path. A Marco emergency override must name the waived gate."
     },
     {
+      "action_boundaries": [
+        "*"
+      ],
       "id": "decision-provenance",
-      "text": "Keep explicit human decisions, standing repository policy, agent inference/recommendation, and runtime observations distinct. Consequential human decisions require durable independent provenance; policy/runtime conflicts are reconciled without inventing a decision.",
       "impact": "breaking",
-      "action_boundaries": [
-        "*"
-      ],
-      "surface": "authority"
+      "surface": "authority",
+      "text": "Keep explicit human decisions, standing repository policy, agent inference/recommendation, and runtime observations distinct. Consequential human decisions require durable independent provenance; policy/runtime conflicts are reconciled without inventing a decision."
     },
     {
-      "id": "authenticated-account-provenance",
-      "text": "Asana/GitHub actor fields under Marco's account prove authenticated-account attribution, not that Marco physically acted or approved. Never use account attribution alone as human authorization, ownership transfer, or Review verdict; agent-authored durable discussion writes retain Dish Agent role/host provenance.",
-      "impact": "breaking",
       "action_boundaries": [
         "*"
       ],
-      "surface": "authority"
+      "id": "authenticated-account-provenance",
+      "impact": "breaking",
+      "surface": "authority",
+      "text": "Asana/GitHub actor fields under Marco's account prove attribution only, not that Marco physically acted or approved. Never treat attribution alone as human authorization, ownership transfer, or Review verdict; agent-authored durable writes retain Dish Agent role/host provenance."
     }
   ]
 }

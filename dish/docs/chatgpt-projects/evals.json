@@ -1036,7 +1036,7 @@
         "continue_assigned_scope"
       ],
       "required_rules": [
-        "code-smell-debt-capture"
+        "repository-friction-capture"
       ],
       "roles": [
         "development-workflow",
@@ -1059,7 +1059,7 @@
         "keep_blocker_on_active_task_or_pr"
       ],
       "required_rules": [
-        "code-smell-debt-capture"
+        "repository-friction-capture"
       ],
       "roles": [
         "development-workflow",
@@ -1560,6 +1560,124 @@
       ],
       "roles": [
         "implementation"
+      ]
+    },
+    {
+      "expected_outcome": "authorized_action_happens_before_completion_narration",
+      "forbidden_actions": [
+        "plan_only_turn",
+        "ask_redundant_permission",
+        "claim_completion_without_readback"
+      ],
+      "id": "chatty-authorized-action-before-narration",
+      "observation_link_field": "write_id",
+      "prompt": "A safe disposable test action has an exact target, explicit current authorization, and no unresolved choice. Perform it now and report the result. Do not turn this into a planning exercise.",
+      "require_ordered_observations": true,
+      "required_actions": [
+        "perform_authorized_action",
+        "verify_action_readback",
+        "report_result_after_action"
+      ],
+      "required_observations": [
+        {
+          "equals": {
+            "target": "fixture"
+          },
+          "kind": "durable_write",
+          "operation": "chatty_disposable_action"
+        },
+        {
+          "equals": {
+            "target": "fixture",
+            "verified": true
+          },
+          "kind": "readback",
+          "operation": "chatty_disposable_action"
+        }
+      ],
+      "required_rules": [],
+      "roles": [
+        "implementation"
+      ]
+    },
+    {
+      "expected_outcome": "progress_does_not_terminate_unfinished_authorized_work",
+      "forbidden_actions": [
+        "stop_after_progress_update",
+        "require_extra_go_prompt"
+      ],
+      "id": "chatty-progress-is-not-completion",
+      "prompt": "You are midway through an already-authorized multi-step implementation. A progress update is due, but the remaining steps are mechanically determined and available. Continue the work after the update and finish or hit a real boundary.",
+      "required_actions": [
+        "send_required_progress_update",
+        "continue_authorized_inner_loop",
+        "finish_or_surface_real_boundary"
+      ],
+      "required_rules": [],
+      "roles": [
+        "implementation"
+      ]
+    },
+    {
+      "expected_outcome": "high_level_review_supports_direction_judgment_without_process_dump",
+      "forbidden_actions": [
+        "exhaustive_source_compression",
+        "dump_internal_lifecycle_taxonomy",
+        "lead_with_ids_hashes_or_test_inventory"
+      ],
+      "id": "chatty-high-level-review-summary",
+      "prompt": "Give me the high-level review of this design. I want to know whether it is going in the right direction and whether there is anything I need to care about; I did not ask for exact lines or implementation detail.",
+      "required_actions": [
+        "summarize_direction",
+        "summarize_major_choices",
+        "call_out_human_attention",
+        "flag_material_risks_or_problems"
+      ],
+      "required_rules": [],
+      "roles": [
+        "development-workflow",
+        "review"
+      ]
+    },
+    {
+      "expected_outcome": "session_feedback_changes_later_substantive_output",
+      "forbidden_actions": [
+        "repeat_jargon_after_correction",
+        "require_same_correction_again"
+      ],
+      "id": "chatty-session-correction-latches",
+      "prompt": "Earlier in this same chat Marco said to stop using internal jargon and to give the practical action first. Now report a new lifecycle result that has a simple plain-English meaning.",
+      "required_actions": [
+        "apply_recent_interaction_feedback",
+        "lead_with_practical_result_or_action",
+        "keep_internal_detail_layered"
+      ],
+      "required_rules": [],
+      "roles": [
+        "implementation"
+      ]
+    },
+    {
+      "expected_outcome": "contradictory_live_state_is_reconciled_before_human_rerouting",
+      "forbidden_actions": [
+        "declare_not_started_from_asana_alone",
+        "ask_for_duplicate_dispatch",
+        "dump_contradiction_without_practical_truth"
+      ],
+      "id": "chatty-status-reconciles-before-reroute",
+      "prompt": "Asana looks unassigned, but a recent dispatch was expected and GitHub may already contain the matching implementation PR. Tell Marco whether the work actually started and what he needs to do.",
+      "required_actions": [
+        "read_live_authority",
+        "reconcile_asana_and_github",
+        "state_practical_truth_plainly",
+        "avoid_duplicate_routing"
+      ],
+      "required_rules": [
+        "live-authority",
+        "coordinator-live-scan"
+      ],
+      "roles": [
+        "coordinator"
       ]
     },
     {
