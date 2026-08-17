@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 import re
 import shlex
+import socket
 import subprocess
 import sys
 import time
@@ -190,6 +191,7 @@ class GitHubBackend(Protocol):
     repository: str
 
     def list_prs(self, *, include_closed: bool = False) -> list[dict[str, Any]]: ...
+    def closed_recovery_candidate(self, *, recovery_slot: int) -> dict[str, Any] | None: ...
     def get_pr(self, number: int) -> dict[str, Any]: ...
     def get_comments(self, number: int) -> list[dict[str, Any]]: ...
     def get_reviews(self, number: int) -> list[dict[str, Any]]: ...
@@ -206,8 +208,13 @@ class AsanaBackend(Protocol):
 
 
 class JSONHTTPClient:
-    def __init__(self, *, timeout: float = 30.0) -> None:
+    def __init__(self, *, timeout: float = 10.0) -> None:
+        if timeout <= 0:
+            raise LifecycleError("HTTP timeout must be positive")
         self.timeout = timeout
+
+    def _timeout_error(self, url: str) -> LifecycleError:
+        return LifecycleError(f"request timed out after {self.timeout:g}s for {url}")
 
     def request(
         self,
@@ -239,7 +246,11 @@ class JSONHTTPClient:
             except json.JSONDecodeError:
                 pass
             raise HTTPError(exc.code, str(message), raw[:500]) from exc
+        except (TimeoutError, socket.timeout) as exc:
+            raise self._timeout_error(url) from exc
         except urlerror.URLError as exc:
+            if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+                raise self._timeout_error(url) from exc
             raise LifecycleError(f"request failed for {url}: {exc.reason}") from exc
 
     def request_bytes(
@@ -259,7 +270,11 @@ class JSONHTTPClient:
         except urlerror.HTTPError as exc:
             raw = exc.read().decode("utf-8", errors="replace")
             raise HTTPError(exc.code, str(exc.reason or "request failed"), raw[:500]) from exc
+        except (TimeoutError, socket.timeout) as exc:
+            raise self._timeout_error(url) from exc
         except urlerror.URLError as exc:
+            if isinstance(exc.reason, (TimeoutError, socket.timeout)):
+                raise self._timeout_error(url) from exc
             raise LifecycleError(f"request failed for {url}: {exc.reason}") from exc
 
 
@@ -307,6 +322,52 @@ class GitHubREST:
     def list_prs(self, *, include_closed: bool = False) -> list[dict[str, Any]]:
         state = "all" if include_closed else "open"
         return [dict(item) for item in self._get_paginated("pulls", query={"state": state, "sort": "updated", "direction": "desc"})]
+
+    def list_closed_prs_page(self, *, page: int, per_page: int) -> list[dict[str, Any]]:
+        if page < 1 or per_page < 1:
+            raise LifecycleError("closed-PR recovery page and size must be positive")
+        _, _, payload = self.http.request(
+            "GET",
+            self._url("pulls", {"state": "closed", "sort": "updated", "direction": "desc", "page": page, "per_page": per_page}),
+            headers=self.headers,
+        )
+        if not isinstance(payload, list):
+            raise LifecycleError("expected list from GitHub pulls")
+        return [dict(item) for item in payload]
+
+    @staticmethod
+    def _closed_page_count(headers: Mapping[str, str]) -> int:
+        link = next((value for key, value in headers.items() if key.lower() == "link"), "")
+        for part in link.split(","):
+            if 'rel="last"' not in part:
+                continue
+            target = part.split(";", 1)[0].strip().strip("<>")
+            try:
+                page = int(urlparse.parse_qs(urlparse.urlparse(target).query)["page"][0])
+            except (KeyError, IndexError, TypeError, ValueError) as exc:
+                raise LifecycleError("GitHub closed-PR pagination has an invalid last-page link") from exc
+            if page < 1:
+                raise LifecycleError("GitHub closed-PR pagination has a non-positive last page")
+            return page
+        return 1
+
+    def closed_recovery_candidate(self, *, recovery_slot: int) -> dict[str, Any] | None:
+        if recovery_slot < 0:
+            raise LifecycleError("closed-PR recovery slot must be non-negative")
+        _, headers, payload = self.http.request(
+            "GET",
+            self._url("pulls", {"state": "closed", "sort": "updated", "direction": "desc", "page": 1, "per_page": 1}),
+            headers=self.headers,
+        )
+        if not isinstance(payload, list):
+            raise LifecycleError("expected list from GitHub pulls")
+        if not payload:
+            return None
+        page = (recovery_slot % self._closed_page_count(headers)) + 1
+        if page == 1:
+            return dict(payload[0])
+        candidates = self.list_closed_prs_page(page=page, per_page=1)
+        return candidates[0] if candidates else None
 
     def get_pr(self, number: int) -> dict[str, Any]:
         _, _, value = self.http.request("GET", self._url(f"pulls/{number}"), headers=self.headers)

@@ -273,6 +273,114 @@ def test_duplicate_poll_does_not_duplicate_chatgpt_dispatch():
     assert second[0].state == pr_lifecycle.LifecycleState.REVIEW_IN_PROGRESS
 
 
+class PagedHistoryGitHub(FakeGitHub):
+    """Open work plus a deliberately large terminal history."""
+
+    def __init__(self):
+        super().__init__()
+        self.full_history_reads = 0
+        self.closed_recovery_slots = []
+        self.closed_history_size = 10_000
+        self.closed_candidates = {}
+
+    def list_prs(self, *, include_closed=False):
+        if include_closed:
+            self.full_history_reads += 1
+            raise AssertionError("watch dispatch must not read all closed PRs")
+        return [deepcopy(self.pr)]
+
+    def closed_recovery_candidate(self, *, recovery_slot):
+        self.closed_recovery_slots.append(recovery_slot)
+        page = (recovery_slot % self.closed_history_size) + 1
+        candidate = deepcopy(self.pr)
+        candidate["number"] = 10_000 + page
+        candidate["state"] = "closed"
+        candidate["merged"] = False
+        candidate["merged_at"] = None
+        candidate["head"]["ref"] = "main"
+        self.closed_candidates[candidate["number"]] = candidate
+        return deepcopy(candidate)
+
+    def get_pr(self, number):
+        if number in self.closed_candidates:
+            return deepcopy(self.closed_candidates[number])
+        return super().get_pr(number)
+
+
+def test_fresh_dispatch_processes_rotate_closed_recovery_with_large_history():
+    gh = PagedHistoryGitHub()
+    first = engine(gh, now=NOW).dispatch(workspace=None, local_reviewer=None)
+    second = engine(gh, now=NOW + timedelta(seconds=180)).dispatch(workspace=None, local_reviewer=None)
+
+    assert first[0].number == second[0].number == 31
+    assert first[1].number != second[1].number
+    assert gh.full_history_reads == 0
+    assert gh.closed_recovery_slots == [
+        int(NOW.timestamp() // 180),
+        int((NOW + timedelta(seconds=180)).timestamp() // 180),
+    ]
+
+
+def test_json_status_render_includes_generation_time():
+    gh = FakeGitHub()
+    value = engine(gh).inspect(gh.pr)
+    rendered = json.loads(pr_lifecycle._render_json([value], repository="marcogallotta/ai-tools"))
+
+    assert rendered["generated_at"]
+    assert rendered["pull_requests"][0]["number"] == 31
+
+
+def test_http_timeout_is_bounded_and_reported(monkeypatch):
+    def timeout(*args, **kwargs):
+        assert kwargs["timeout"] == 7.0
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr("pr_lifecycle_support.urlrequest.urlopen", timeout)
+    client = pr_lifecycle.JSONHTTPClient(timeout=7.0)
+
+    with pytest.raises(pr_lifecycle.LifecycleError, match=r"timed out after 7s"):
+        client.request("GET", "https://example.invalid/test")
+
+
+def test_closed_recovery_reads_one_explicit_closed_page():
+    class ClosedPageHTTP:
+        def __init__(self):
+            self.calls = []
+
+        def request(self, method, url, *, headers=None, body=None):
+            self.calls.append((method, url, dict(headers or {}), body))
+            return 200, {}, []
+
+    http = ClosedPageHTTP()
+    github = pr_lifecycle.GitHubREST("marcogallotta/ai-tools", "token", http=http)
+
+    assert github.list_closed_prs_page(page=4, per_page=1) == []
+    assert "state=closed" in http.calls[0][1]
+    assert "page=4" in http.calls[0][1]
+    assert "per_page=1" in http.calls[0][1]
+
+
+def test_closed_recovery_candidate_selects_a_page_from_github_pagination():
+    class RecoveryHTTP:
+        def __init__(self):
+            self.calls = []
+
+        def request(self, method, url, *, headers=None, body=None):
+            self.calls.append(url)
+            if pr_lifecycle.urlparse.parse_qs(pr_lifecycle.urlparse.urlparse(url).query)["page"] == ["1"]:
+                return 200, {"Link": '<https://api.github.com/repos/marcogallotta/ai-tools/pulls?page=3>; rel="last"'}, [pr()]
+            return 200, {}, [pr(head=NEW_HEAD)]
+
+    http = RecoveryHTTP()
+    github = pr_lifecycle.GitHubREST("marcogallotta/ai-tools", "token", http=http)
+
+    candidate = github.closed_recovery_candidate(recovery_slot=1)
+
+    assert candidate["head"]["sha"] == NEW_HEAD
+    assert len(http.calls) == 2
+    assert "page=2" in http.calls[1]
+
+
 def test_semantic_new_head_invalidates_prior_review():
     gh = FakeGitHub(pr(head=NEW_HEAD))
     gh.reviews = [review(head=HEAD, verdict="MERGE")]

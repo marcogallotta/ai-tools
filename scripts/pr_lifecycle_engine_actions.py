@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from pr_lifecycle_support import *
 from pr_lifecycle_helpers import *
-from pr_lifecycle_helpers import _handoff_key, _notice_key, _notice_present
+from pr_lifecycle_helpers import _handoff_key, _notice_key, _notice_present, _pr_number
 from pr_mutation_broker import (
     BrokerError, BrokerProofError, asana_task_allows_mutation, current_verified_grant, parse_request_comment, request_marker,
 )
@@ -37,6 +37,9 @@ def _dispatch_fixer(dispatcher: Any, context: dict[str, Any], *, host: str) -> N
         if host != CHATGPT_IMPLEMENTATION:
             raise LifecycleError("legacy implementation/fix dispatcher is not classified for local execution")
         dispatcher.dispatch(context)
+
+
+TERMINAL_RECOVERY_SLOT_SECONDS = 180
 
 
 def _route_result_marker(*, starting_head: str, new_head: str, host: str, route: str, grant: Any) -> str:
@@ -697,7 +700,26 @@ class LifecycleActionsMixin:
         terminal_cleaner: TerminalCleanupDispatcher | None = None,
         notify: Callable[[str], None] | None = None,
     ) -> list[PRLifecycle]:
-        values = self.status(include_closed=include_closed)
+        # Ordinary dispatch handles open PRs. Closed recovery is stateless but
+        # rotates with the same 180-second cadence as the foreground watcher, so
+        # fresh standalone processes cannot remain pinned to the newest page.
+        values = self.status()
+        candidate_reader = getattr(self.github, "closed_recovery_candidate", None)
+        if callable(candidate_reader):
+            slot = int(self.now().timestamp() // TERMINAL_RECOVERY_SLOT_SECONDS)
+            candidate = candidate_reader(recovery_slot=slot)
+            seen = {value.number for value in values}
+            if candidate is not None and _pr_number(candidate) not in seen:
+                values.append(self.inspect(candidate))
+        elif include_closed:
+            # Compatibility for test/third-party backends that have not yet
+            # implemented the bounded page read. The repository adapter above
+            # always takes the bounded path.
+            seen = {value.number for value in values}
+            values.extend(
+                value for value in self.status(include_closed=True)
+                if value.number not in seen
+            )
         results: list[PRLifecycle] = []
         for value in values:
             results.append(
