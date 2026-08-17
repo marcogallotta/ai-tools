@@ -181,6 +181,22 @@ def load_identity(agent_id: str) -> dict[str, Any]:
     return identity
 
 
+def load_or_bootstrap_identity(agent_id: str, host: str) -> dict[str, Any]:
+    path = identity_path(agent_id)
+    if host == "codex" and not path.exists() and not path.is_symlink():
+        _atomic_write_json(
+            path,
+            {
+                "agent_id": agent_id,
+                "role": "development-workflow",
+                "owning_task_gid": "1217513978263839",
+                "owning_project_gid": "1217419962189616",
+                "workspace": "/home/marco/ai-tools",
+            },
+        )
+    return load_identity(agent_id)
+
+
 def role_contract_from_index(index_text: str, role: str) -> str:
     wanted = role.strip().lower().replace("_", "-")
     paths: list[str] = []
@@ -471,7 +487,7 @@ def perform_reground(payload: dict[str, Any], agent_id: str, host: str) -> dict[
     _atomic_write_json(boundary_path(agent_id), boundary)
 
     try:
-        identity = load_identity(agent_id)
+        identity = load_or_bootstrap_identity(agent_id, host)
         repo = resolve_repo(identity, payload)
         verify_repository(repo)
         root_text = _read_required(repo, "CLAUDE.md")
