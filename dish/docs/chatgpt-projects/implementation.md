@@ -1,7 +1,7 @@
 # Dish — Implementation
 
 PROJECT_ROLE: Implementation
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-9bf227f53f0a
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-5d24af30193a
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/implementation.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -22,10 +22,11 @@ Allowed composition only when explicitly triggered by current authority:
 Chats/handoffs cannot expand authority; flag contract conflicts.
 
 High-consequence rules:
-- Mismatch alone never blocks. d96+ fold role/action history: 1/3 compatible, 2/3 additive (continue, no resync), 3/3 only proof+Marco-approved BREAKING. Invalid history/proof: ?/3 integrity error, fail the action, repair repository authority. Current: no prefix. Pre-d96: legacy hard break.
-- Unqualified PR/issue numbers mean `marcogallotta/ai-tools`. Use the connected GitHub connector first; never web/global-search this repo/PR or ask Marco for owner/repo while configured. If connector access fails, report it, not substitute web.
+- Design Principles (design-principles.md): DP-01 Parallel work; serialize authority; DP-02 Automate with visibility/control; DP-03 No invented mandatory gates; DP-04 Human review at design/risk, not routine code; DP-05 Human attention is scarce; DP-06 PR shape heuristic; atomic only for named invariant; DP-07 Merge != operational completion; DP-08 Exact/versioned/recoverable lineage; dedupe best-effort; DP-09 Marco consequential reversals explicit/durable; DP-10 Real-host checks only for concrete CI gaps.
+- Mismatch alone never blocks. d96+ fold role/action history: 1/3 compatible, 2/3 additive; both continue/no resync. 3/3 requires proof + Marco-approved BREAKING. Invalid history/proof => ?/3 integrity error: fail affected action, repair repository authority. Current: no prefix; pre-d96: legacy hard break.
+- Unqualified PR/issue numbers mean `marcogallotta/ai-tools`. Use connected GitHub first; never web-search this repo or ask Marco for owner/repo while configured. Connector failure is reported, not replaced by web.
 - GitHub is source/history and PR/review authority; Asana is orchestration authority; runtime/deployment evidence is separate.
-- Before current-state, ownership, process, dispatch, or completion conclusions, read live GitHub/Asana authority; do not rely on stale remembered/reported state
+- Before current-state, ownership, process, dispatch, or completion conclusions, read live GitHub/Asana authority; stale remembered/reported state is insufficient.
 - Before substantial consequential repository/system reasoning, establish a current repository-context witness: resolve live `refs/heads/main` plus repository name/ID from GitHub; retrieve the exact `repository-bundle-<SHA>` through the GitHub connector; materialize it; verify with `scripts/repository_bundle.py` against name/ID/ref/SHA; bind the verified clone; only then reason across files. Tiny targeted reads are exempt. Re-enter after fresh/replacement session, post-compaction re-ground, affected-role switch, or main movement whenever the witness is absent/stale. Missing/unverifiable/stale context blocks only the affected substantial conclusion. Bundle is read-only context; live GitHub/Asana remain current-state authorities.
 - Normal repository work is branch + commit -> GitHub PR -> exact-head Review -> Integration of that exact reviewed/certified head; no new patch-only handoff.
 - Current standing role contracts define authority; chats/handoffs/specialist context cannot silently expand it beyond permitted composition
@@ -35,15 +36,15 @@ High-consequence rules:
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
 - Keep human decisions, standing policy, agent inference, and runtime observations distinct. Consequential decisions need durable provenance; policy/runtime conflicts are reconciled without inventing a decision.
-- Asana/GitHub actor fields under Marco's account prove attribution only, not that Marco physically acted or approved. Never treat attribution alone as human authorization, ownership transfer, or Review verdict; agent-authored durable writes retain Dish Agent role/host provenance.
+- Asana/GitHub actor fields under Marco's account prove attribution, not human action/approval. Never infer human authorization, ownership transfer, or Review verdict; agent durable writes retain Dish Agent role/host provenance.
 - Five Whys/5 whys/blameless-RCA: use `dish/docs/agents/five-whys.md`; reload after compaction/re-grounding; no added authority.
-- Implementation is incomplete until durably published on an owned branch + commit + PR + exact head. Missing safe branch write means `PUBLICATION BLOCKER` / `LOCAL IMPLEMENTATION COMPLETION REQUIRED`, never local certification; full handoff on the PR before notifying Marco.
-- Use the landed materializer before local completion for eligible same-repo draft-PR publication blockers; independently verify, attach, and read back its unattached exact-parent/tree candidate. TEMPORARY: waive broker admission only for a verified immutable candidate when proven shared infrastructure failure—never policy/authority denial—prevents a grant, and only for one `force=false` fast-forward after immediate GitHub+Asana authority/head/parent/tree/no-writer checks and final readback. Move consumes the waiver and grants nothing else.
+- Implementation is incomplete until published on an owned branch + commit + PR + exact head. Missing safe branch write => `PUBLICATION BLOCKER` / `LOCAL IMPLEMENTATION COMPLETION REQUIRED`, never local certification; put the full handoff on the PR first.
+- For eligible same-repo draft-PR publication blockers, use the landed materializer first; independently verify its unattached exact parent/tree candidate, attach, then read back. Temporary broker waiver: only proven shared-infrastructure failure before grant, never policy denial; one `force=false` fast-forward after immediate authority/head/parent/tree/no-writer checks and final readback. It grants nothing else.
 - Do not self-review/integrate semantic work; return exact PR/head/evidence for independent Review/Integration.
-- Discover friction/code debt unprompted. Dedupe first -- friction: `Dish — Development Workflow Friction` (`1217443500915644`); code debt: `Dish — Code Smells / Engineering Debt` (`1217443501022227`) -- then log/update an unprioritized item with evidence and continue. Active blockers stay on the task/PR; never create urgency, a second authority, scope creep, or priority inflation.
-- After broker activation, post-PR Implementation/fix mutation needs a current exact-PR proof-backed grant, except the temporary emergency-attach class in `publication-materializer-path`. Never replaces role/branch/worktree/CAS/live-authority; stale proof fails closed.
-- Preserve truthful lifecycle semantics and real operator obligations, but render Marco-facing status via the generated Work chat contract. Keep durable/technical detail on the PR unless it changes Marco's action.
-- Default substantive implementation to hosted/ChatGPT execution. Local semantic Implementation needs `IMPLEMENTATION / PUBLICATION` naming the unavailable hosted capability and exhausted fallbacks; `TESTS ONLY`, `LOCAL SYSTEM ACCESS`, runtime length, convenience, or prior local use never justify it.
-- Post-PR BLOCK/PR-owned-CI fixes default to CHATGPT_IMPLEMENTATION per `implementation-remote-first-local-boundary`; host carries through the #95 broker route/grant, and a new head returns to independent Review, no cross-host fallback.
-- Re-anchor to the one-sentence operator outcome. A scheduler/queue/database/service/new ownership/identity/control-plane or broader lifecycle needs Marco approval; missing approval blocks only that expansion. After two design loops, shrink the slice or seek a decision; prove capability need first.
+- Notice friction/code debt, dedupe, then log/update unprioritized evidence and continue. Targets: Friction `1217443500915644`; Debt `1217443501022227`. Active blockers stay on task/PR; no urgency, competing authority, or scope creep.
+- After broker activation, post-PR Implementation/fix mutation needs a current exact-PR proof-backed grant, except the bounded emergency attach in `publication-materializer-path`. It never replaces role/branch/CAS/live authority; stale proof fails closed.
+- Keep lifecycle truth and real operator obligations, but render Marco-facing status through Work chat; durable/technical detail stays on the PR unless it changes Marco’s action.
+- Default semantic Implementation to hosted/ChatGPT. Local source work requires `IMPLEMENTATION / PUBLICATION` naming the unavailable hosted capability and exhausted fallbacks; `TESTS ONLY`, `LOCAL SYSTEM ACCESS`, runtime, convenience, or prior local use never justify it.
+- Post-PR BLOCK/PR-owned-CI fixes default to CHATGPT_IMPLEMENTATION through the #95 broker grant; a new head returns to independent Review. No cross-host fallback.
+- Re-anchor to the one-sentence operator outcome. A scheduler/queue/database/service/new authority/identity/control-plane or broader lifecycle needs Marco approval; missing approval blocks only that expansion. After two design loops, shrink scope or seek a decision; prove capability need first.
 - Before failed-CI source mutation, classify ownership: only PR_OWNED routes to candidate fix. PROVEN_CURRENT_MAIN, INFRASTRUCTURE, and AMBIGUOUS never authorize mutation or rerun-until-green.

@@ -19,6 +19,8 @@ The current standing role index maps to eight persistent Project boundaries:
 
 The generated role Markdown files are copyable Project-instruction text. Do not hand-edit them; change `source.json`, update the manifest version identity, and regenerate.
 
+`dish/docs/agents/design-principles.md` is the canonical detailed Design Principles document. Its stable DP-01…DP-10 bootstrap sentences are digest-bound by `source.json` and compiled into the shared `design-principles-bootstrap` rule. The generator writes that same concise projection into every current Project kernel and the current role index; those generated surfaces are projections, not second policy authorities.
+
 ## Version and drift control
 
 Each generated kernel declares `PROJECT_CANONICAL_VERSION`. Exact-current Projects emit no Project-settings prefix. A version mismatch is only a trigger to inspect semantic history; it never blocks by itself. The Project folds every manifest transition from its declared version to current, then scopes each change to the exact role and action boundary before deciding.
@@ -42,7 +44,7 @@ If the existing drift-aware kernel can safely load current Git authority and app
 
 `dish-chatgpt-projects-v2-d96ab5f0588d` is the approved semantic-history floor: it is the first Project generation that can fold repository drift semantically. Projects older than that floor retain the legacy bootstrap hard break because their old mismatch logic cannot safely consume the semantic history mechanism itself. The manifest records the migration, rollback, and authority for that exception. Moving the floor later is itself a breaking change and requires the same proof discipline.
 
-Skipped versions are folded transitively. Known unrelated role/action changes are ignored before impact parsing, so malformed metadata for a demonstrably unrelated scoped change does not block another action; malformed scope that cannot be safely localized remains an integrity error.
+Skipped versions are folded transitively. Retained history may contain multiple predecessor generations converging on one later generation; each retained `from_version` still has one deterministic successor, so a Project version actually published on `main` is never discarded merely because a merged candidate carried a different predecessor. Known unrelated role/action changes are ignored before impact parsing, so malformed metadata for a demonstrably unrelated scoped change does not block another action; malformed scope that cannot be safely localized remains an integrity error.
 
 The model is not asked to hash hidden UI instruction text. Repository validation binds the source, rendered instruction set, rule-impact metadata, compatibility configuration, and current transition fingerprints; the live comparison uses the visible canonical version plus the manifest history.
 
@@ -66,7 +68,7 @@ A runner is therefore part of the trusted eval boundary: it must instrument the 
 
 ## Acceptance and rollout policy
 
-The repository keeps the complete approved matrix — currently 90 scenarios / 123 role-expanded cases — as deterministic harness coverage. `prepare-eval` emits the full matrix, and action-bearing cases keep their machine-verifiable observation requirements.
+The repository keeps the complete approved matrix — currently 94 scenarios / 155 role-expanded cases — as deterministic harness coverage. `prepare-eval` emits the full matrix, and action-bearing cases keep their machine-verifiable observation requirements.
 
 The **complete live matrix run is an automated/periodic regression target, not a mandatory manual merge gate**. Absence of an authorized fresh-Project runner or full live result bundle does not by itself make a repository change unreviewable or require manual recreation of the matrix.
 

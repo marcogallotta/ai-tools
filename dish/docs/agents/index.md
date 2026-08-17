@@ -23,6 +23,14 @@ Anything shown directly to Marco must use plain English. State what happened, wh
 
 Marco's explicit scoped override is authoritative over Dish process/workflow/test/review/Integration gates for the named operation. If the active blocked gate is already unambiguous, a clear follow-up such as `override`, `go`, `do not run tests`, or `mark in PR override` applies to that gate without requiring special syntax or another confirmation. Execute the scoped override first and record its provenance second. Preserve factual evidence exactly: a failed or blocked test remains failed or blocked, while the lifecycle record separately states `GATE WAIVED BY MARCO OVERRIDE`. Do not infer unrelated waivers. Genuine platform/system constraints remain outside this policy.
 
+<!-- BEGIN GENERATED DESIGN PRINCIPLES BOOTSTRAP -->
+## Critical Design Principles
+
+Generated projection of [`design-principles.md`](design-principles.md); canonical detail remains in that document.
+
+Design Principles (design-principles.md): DP-01 Parallel work; serialize authority; DP-02 Automate with visibility/control; DP-03 No invented mandatory gates; DP-04 Human review at design/risk, not routine code; DP-05 Human attention is scarce; DP-06 PR shape heuristic; atomic only for named invariant; DP-07 Merge != operational completion; DP-08 Exact/versioned/recoverable lineage; dedupe best-effort; DP-09 Marco consequential reversals explicit/durable; DP-10 Real-host checks only for concrete CI gaps.
+<!-- END GENERATED DESIGN PRINCIPLES BOOTSTRAP -->
+
 ## Shared analysis methods
 
 For any requested Five Whys / root-cause Five Whys analysis, read and follow [`five-whys.md`](five-whys.md) before presenting conclusions. The shared procedure is an analysis method only and does not change role authority.

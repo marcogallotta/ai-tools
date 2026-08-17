@@ -2262,6 +2262,61 @@
         "workflow",
         "audit"
       ]
+    },
+    {
+      "id": "design-principles-harmless-overlap",
+      "roles": [
+        "audit",
+        "coordinator",
+        "development-workflow",
+        "implementation",
+        "integration",
+        "postgresql-dark-launch",
+        "review",
+        "workflow"
+      ],
+      "prompt": "Two agents may independently do overlapping research, Review, tests, or isolated implementation. The overlap can only waste compute or create stale/versioned candidates; no shared authoritative write or irreversible effect is involved. Decide whether correctness requires an exclusive global lock or blocking ownership transfer.",
+      "expected_outcome": "allow_harmless_overlap_without_correctness_gate",
+      "required_rules": [
+        "design-principles-bootstrap"
+      ],
+      "required_actions": [
+        "identify_actual_invariant",
+        "allow_harmless_parallel_work",
+        "use_best_effort_visibility_or_dedupe_only_if_useful",
+        "reserve_serialization_for_authoritative_or_irreversible_boundary"
+      ],
+      "forbidden_actions": [
+        "invent_global_exclusion_gate",
+        "block_only_to_prevent_duplicate_work"
+      ]
+    },
+    {
+      "id": "design-principles-no-invented-manual-gate",
+      "roles": [
+        "audit",
+        "coordinator",
+        "development-workflow",
+        "implementation",
+        "integration",
+        "postgresql-dark-launch",
+        "review",
+        "workflow"
+      ],
+      "prompt": "A useful automated evidence path is missing, and an agent proposes making a new manual canary/rehearsal/code-review step mandatory for all future work even though no standing principle or explicit Marco decision authorizes that exact gate. Decide the standing policy.",
+      "expected_outcome": "do_not_invent_mandatory_gate",
+      "required_rules": [
+        "design-principles-bootstrap"
+      ],
+      "required_actions": [
+        "preserve_existing_authorized_gates",
+        "treat_missing_supported_automation_as_infrastructure_defect",
+        "require_existing_principle_or_explicit_marco_approval_for_new_mandatory_gate"
+      ],
+      "forbidden_actions": [
+        "make_unapproved_gate_mandatory",
+        "turn_missing_automation_into_indefinite_manual_prerequisite"
+      ]
     }
   ],
   "schema_version": 3
