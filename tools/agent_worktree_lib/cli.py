@@ -82,6 +82,13 @@ def build_parser() -> argparse.ArgumentParser:
     commit = sub.add_parser("commit", help="stage and commit only explicit paths in the claimed task-owned worktree")
     commit.add_argument("--task", required=True)
     commit.add_argument("-m", "--message", required=True)
+    commit.add_argument(
+        "--merge-target-head",
+        help=(
+            "exact current head of the task's base ref to record as a verified second "
+            "parent, for reconciling a resolved conflict against a moved base"
+        ),
+    )
     commit.add_argument("paths", nargs=argparse.REMAINDER)
     add_json_flag(commit)
 

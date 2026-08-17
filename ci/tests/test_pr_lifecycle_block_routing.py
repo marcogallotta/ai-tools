@@ -288,6 +288,8 @@ def test_missing_continuation_consumer_uses_only_required_human_message():
     )
 
     assert result.state == pr_lifecycle.LifecycleState.IMPLEMENTATION_CONTINUATION_REQUIRED
-    assert len(notices) == 1
-    assert notices[0].startswith("Your next action: PR #31 still needs Implementation to finish required smoke.")
-    assert "IMPLEMENTATION CONTINUATION REQUIRED" in notices[0]
+    assert notices == [
+        "Your next action: PR #31 still needs Implementation to finish required smoke. "
+        "The same implementation path should finish it before review."
+    ]
+    assert "IMPLEMENTATION CONTINUATION REQUIRED" not in notices[0]

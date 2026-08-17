@@ -5,8 +5,15 @@ import os
 from pathlib import Path
 from typing import Any
 
-from .common import GitRunner, fail, now_utc, path_is_within, require_task_gid
-from .operations import owner_agent_id, payload_from_state, resolve_repository_from_state, verify_owned_worktree
+from .common import GitRunner, fail, now_utc, path_is_within, require_full_sha, require_task_gid
+from .operations import (
+    ensure_commit_object,
+    owner_agent_id,
+    payload_from_state,
+    remote_ref_sha,
+    resolve_repository_from_state,
+    verify_owned_worktree,
+)
 from .ownership import require_active_claim
 from .state import TaskLock, atomic_write_json, load_task_state, state_path
 
@@ -78,6 +85,30 @@ def _verify_staged_subset(staged: set[str], scopes: list[tuple[str, bool]]) -> N
             "STAGED_PATH_OUTSIDE_EXPLICIT_SET",
             "index already contains staged path(s) outside the explicit commit paths: " + ", ".join(outside),
         )
+
+
+def _require_current_merge_target(
+    runner: GitRunner, repo: Any, state: dict[str, Any], expected_head: str
+) -> str:
+    expected_head = require_full_sha(expected_head, "--merge-target-head")
+    base_ref = str(state["base_ref"])
+    current = remote_ref_sha(runner, repo, base_ref)
+    assert current is not None
+    if current != expected_head:
+        fail(
+            "STALE_MERGE_TARGET",
+            f"exact remote {base_ref} head is {current}, not the expected reconciliation target {expected_head}; "
+            "re-verify and retry with the current head",
+        )
+    return current
+
+
+def _resolve_merge_target(
+    runner: GitRunner, repo: Any, state: dict[str, Any], expected_head: str
+) -> str:
+    current = _require_current_merge_target(runner, repo, state, expected_head)
+    ensure_commit_object(runner, repo, current)
+    return current
 
 
 def _show(runner: GitRunner, worktree: Path, spec: str) -> str | None:
@@ -202,6 +233,9 @@ def command_commit(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any
             fail("NOTHING_TO_COMMIT", "explicit paths contain no staged changes")
         _verify_staged_subset(staged, scopes)
 
+        merge_target_head = getattr(args, "merge_target_head", None)
+        merge_target: str | None = None
+
         # Re-resolve identity after staging and immediately before constructing
         # the commit. A concurrent raw branch move after this point is fenced by
         # update-ref's exact old-head compare-and-swap below.
@@ -209,16 +243,26 @@ def command_commit(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any
         if before_commit.head != identity.head or before_commit.branch != identity.branch:
             fail("BRANCH_MOVED", "owned branch moved while preparing the bounded commit")
 
+        if merge_target_head is not None:
+            merge_target = _resolve_merge_target(runner, repo, state, merge_target_head)
+
         _check_dish_version_guard(runner, identity.path)
         tree = runner.run(identity.path, "write-tree").stdout.strip()
+        commit_tree_args = [tree, "-p", identity.head]
+        if merge_target is not None:
+            commit_tree_args.extend(["-p", merge_target])
         commit = runner.run(
             identity.path,
             "commit-tree",
-            tree,
-            "-p",
-            identity.head,
+            *commit_tree_args,
             stdin=args.message.rstrip("\n") + "\n",
         ).stdout.strip()
+        if merge_target is not None:
+            # The first check establishes the requested target and materializes its
+            # object. Re-read the remote after all commit preparation, including
+            # commit-tree, so a base move during that window leaves this commit
+            # unattached and the owned branch unchanged.
+            _require_current_merge_target(runner, repo, state, merge_target)
         ref = f"refs/heads/{identity.branch}"
         moved = runner.run(identity.path, "update-ref", ref, commit, identity.head, check=False)
         if moved.returncode != 0:
@@ -230,9 +274,16 @@ def command_commit(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any
         after = verify_owned_worktree(runner, repo, state)
         if after.head != commit or after.branch != identity.branch:
             fail("COMMIT_VERIFY_FAILED", "post-commit worktree identity does not match the exact created commit")
-        parent = runner.sha(identity.path, f"{commit}^")
+        parent = runner.sha(identity.path, f"{commit}^1")
         if parent != identity.head:
             fail("COMMIT_VERIFY_FAILED", f"new commit parent {parent} != pre-commit head {identity.head}")
+        if merge_target is not None:
+            second_parent = runner.sha(identity.path, f"{commit}^2")
+            if second_parent != merge_target:
+                fail(
+                    "MERGE_COMMIT_VERIFY_FAILED",
+                    f"new merge commit second parent {second_parent} != verified reconciliation target {merge_target}",
+                )
 
         state["local_head"] = after.head
         state["last_verified_at"] = now_utc()
@@ -241,5 +292,6 @@ def command_commit(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any
         payload["committed_paths"] = sorted(staged)
         payload["previous_head"] = identity.head
         payload["new_head"] = after.head
+        payload["merge_target_head"] = merge_target
         payload["next_action"] = f"tools/agent-worktree publish --task {task_gid}"
         return payload
