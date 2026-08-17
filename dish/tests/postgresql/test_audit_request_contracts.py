@@ -292,6 +292,8 @@ def test_postgresql_command_inventory_matches_independent_stage_a_baseline() -> 
         "proposals",
         "apply-proposal",
         "safe-reclaim",
+        "cooked",
+        "archive",
     } == set(COMMAND_DEFINITIONS)
     assert "holds" in ADMIN_COMMANDS
     assert "resolved" in ADMIN_COMMANDS
