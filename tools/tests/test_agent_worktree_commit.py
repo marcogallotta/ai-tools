@@ -93,6 +93,68 @@ def test_commit_requires_live_claim(h: Harness) -> None:
     assert_error(result, "OWNERSHIP_CLAIM_REQUIRED")
 
 
+def test_commit_merge_records_two_parent_reconciliation_commit(h: Harness) -> None:
+    wt = _prepare(h)
+    target = h.advance_main()
+    (wt / "tracked.txt").write_text("changed\n", encoding="utf-8")
+    result = h.tool(
+        "commit", "--task", "1001", "-m", "reconcile", "--merge-target-head", target,
+        "--json", "--", "tracked.txt",
+    )
+    data = payload(result)
+    assert data["merge_target_head"] == target
+    new_head = data["new_head"]
+    parents = git_out(wt, "log", "-1", "--format=%P", new_head).split()
+    assert parents == [h.base, target]
+
+
+def test_commit_merge_rejects_stale_target(h: Harness) -> None:
+    wt = _prepare(h)
+    stale = h.advance_main()
+    h.advance_main()
+    (wt / "tracked.txt").write_text("changed\n", encoding="utf-8")
+    refused = h.tool(
+        "commit", "--task", "1001", "-m", "reconcile", "--merge-target-head", stale,
+        "--", "tracked.txt", check=False,
+    )
+    assert_error(refused, "STALE_MERGE_TARGET")
+    assert git_out(wt, "rev-parse", "HEAD") == h.base
+
+
+def test_commit_merge_rejects_conflict_left_outside_explicit_paths(h: Harness) -> None:
+    wt = _prepare(h)
+    target = h.advance_main()
+    (wt / "conflict.txt").write_text("orig\n", encoding="utf-8")
+    git(wt, "add", "conflict.txt")
+    git(wt, "commit", "-m", "add conflict file")
+    base_blob = git_out(wt, "hash-object", "-w", "--stdin", input="orig\n")
+    ours_blob = git_out(wt, "hash-object", "-w", "--stdin", input="ours\n")
+    theirs_blob = git_out(wt, "hash-object", "-w", "--stdin", input="theirs\n")
+    index_info = (
+        f"100644 {base_blob} 1\tconflict.txt\n"
+        f"100644 {ours_blob} 2\tconflict.txt\n"
+        f"100644 {theirs_blob} 3\tconflict.txt\n"
+    )
+    git(wt, "update-index", "--index-info", input=index_info)
+
+    (wt / "tracked.txt").write_text("changed\n", encoding="utf-8")
+    refused = h.tool(
+        "commit", "--task", "1001", "-m", "reconcile", "--merge-target-head", target,
+        "--", "tracked.txt", check=False,
+    )
+    assert_error(refused, "STAGED_PATH_OUTSIDE_EXPLICIT_SET")
+
+
+def test_commit_without_merge_flag_remains_single_parent(h: Harness) -> None:
+    wt = _prepare(h)
+    h.advance_main()
+    (wt / "tracked.txt").write_text("changed\n", encoding="utf-8")
+    result = h.tool("commit", "--task", "1001", "-m", "ordinary", "--json", "--", "tracked.txt")
+    data = payload(result)
+    parents = git_out(wt, "log", "-1", "--format=%P", data["new_head"]).split()
+    assert parents == [h.base]
+
+
 def test_commit_preserves_dish_version_guard(h: Harness) -> None:
     (h.seed / "DISH_VERSION").write_text(
         "PROTOCOL_VERSION=1\nSCHEMA_VERSION=1\n", encoding="utf-8"

@@ -14,19 +14,19 @@ GIT = shutil.which("git") or "git"
 CANONICAL_ORIGIN = "git@github.com:marcogallotta/ai-tools.git"
 
 
-def run(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
-    completed = subprocess.run(cmd, cwd=cwd, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+def run(cmd: list[str], *, cwd: Path | None = None, env: dict[str, str] | None = None, check: bool = True, input: str | None = None) -> subprocess.CompletedProcess[str]:
+    completed = subprocess.run(cmd, cwd=cwd, env=env, text=True, input=input, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     if check and completed.returncode != 0:
         raise AssertionError(f"command failed {completed.returncode}: {cmd}\nstdout={completed.stdout}\nstderr={completed.stderr}")
     return completed
 
 
-def git(cwd: Path, *args: str, env: dict[str, str] | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
-    return run([GIT, "-C", str(cwd), *args], env=env, check=check)
+def git(cwd: Path, *args: str, env: dict[str, str] | None = None, check: bool = True, input: str | None = None) -> subprocess.CompletedProcess[str]:
+    return run([GIT, "-C", str(cwd), *args], env=env, check=check, input=input)
 
 
-def git_out(cwd: Path, *args: str, env: dict[str, str] | None = None) -> str:
-    return git(cwd, *args, env=env).stdout.strip()
+def git_out(cwd: Path, *args: str, env: dict[str, str] | None = None, input: str | None = None) -> str:
+    return git(cwd, *args, env=env, input=input).stdout.strip()
 
 
 class Harness:
