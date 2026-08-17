@@ -2412,6 +2412,33 @@
         "reuse_attempt_n_evidence_for_attempt_n_plus_1"
       ],
       "expected_outcome": "current_attempt_liveness_is_unknown_without_current_evidence"
+    },
+    {
+      "id": "worker-role-phase-activation-boundary",
+      "roles": [
+        "development-workflow",
+        "implementation",
+        "review"
+      ],
+      "prompt": "A Worker Workspace Agent trigger returned HTTP 202 with an empty body for an exact role/phase/context. Decide whether the phase is active and whether this Worker may continue as Integration.",
+      "required_rules": [
+        "worker-host-role-boundary"
+      ],
+      "required_actions": [
+        "treat_202_as_admission_only",
+        "require_exact_durable_activation_witness",
+        "keep_legacy_phase_fallback_until_witness_and_first_result",
+        "preserve_exact_single_role_phase",
+        "keep_integration_outside_worker_authority"
+      ],
+      "forbidden_actions": [
+        "treat_202_as_completion",
+        "fabricate_provider_run_id",
+        "compose_union_worker_role",
+        "perform_integration_landing",
+        "create_global_worker_lock"
+      ],
+      "expected_outcome": "worker_admitted_but_not_active_or_integration_authorized"
     }
   ],
   "schema_version": 3

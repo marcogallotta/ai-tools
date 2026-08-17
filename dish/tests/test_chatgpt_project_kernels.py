@@ -174,10 +174,10 @@ def test_development_workflow_context_preload_is_role_index_driven_and_read_only
  assert deps['triggered_reads']['dispatcher / Integration mechanics']==['ci/pr-lifecycle-dispatcher-runbook.md#Review routing','ci/pr-lifecycle-dispatcher-runbook.md#BLOCK -> implementation/fix routing','ci/pr-lifecycle-dispatcher-runbook.md#Integration composition']
  assert deps['triggered_reads']['native-PostgreSQL workflow mechanics']==['dish/docs/testing.md#Named lane commands','dish/docs/architecture/postgresql-runtime.md#Proving tests']
  text=kernels.render_role(m,s,'development-workflow')
- assert text.index('Startup:')<text.index('Read-only startup/re-ground context:')
- assert 'load every standing role contract listed by the current role index' in text
+ assert text.index('Startup:')<text.index('Startup/re-ground context:')
+ assert 'role-index standing contracts' in text
  assert '`dish/docs/agents/contributor-base.md`' in text
- assert 'Context grants no role/mutation/Review/Integration/merge/production authority' in text
+ assert 'Read-only; grants no role/mutation/Review/Integration/merge/production authority' in text
  comps=s['roles']['development-workflow']['allowed_compositions']; assert len(comps)==1 and 'implementation.md' in comps[0]
  assert 'review.md' not in comps[0] and 'integration.md' not in comps[0]
 
@@ -242,6 +242,17 @@ def test_external_defect_admission_is_two_stage_and_uses_canonical_handoff():
   assert 'External/current-main defect admission' in kernels.render_role(m,s,role)
  for sid in ('external-defect-continue-original','external-defect-required-owner-lineage'):
   assert _scenario(sid)['required_rules']
+
+
+def test_worker_policy_is_triggered_and_keeps_union_and_integration_authority_out():
+ m,s=kernels.load_canonical(); rule=next(x for x in kernels.shared_rules(s) if x['id']=='worker-host-role-boundary')
+ assert rule['delivery']=={'mode':'TRIGGERED_READ','trigger':'Worker dispatch / phase cutover'}
+ for role in s['roles']:
+  text=kernels.render_role(m,s,role)
+  assert 'Worker dispatch / phase cutover' in text
+  assert 'ci/pr-lifecycle-dispatcher-runbook.md#Worker execution profile' in text
+ runbook=(DISH_ROOT.parent/'ci'/'pr-lifecycle-dispatcher-runbook.md').read_text()
+ assert 'never a union semantic role' in runbook and '202 Accepted' in runbook and 'Integration landing remains outside Worker authority' in runbook
 
 def test_repository_context_admission_is_shared_rendered_and_independently_registered():
  m,s=kernels.load_canonical(); registry=kernels._standing_invariant_registry(); entry=registry['repository-context-admission']

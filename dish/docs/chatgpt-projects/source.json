@@ -1010,7 +1010,8 @@
       "surface": "authority",
       "text": "Unqualified PR/issue numbers mean `marcogallotta/ai-tools`. Use connected GitHub first; never web-search this repo or ask Marco for owner/repo while configured. Connector failure is reported, not replaced by web.",
       "delivery": {
-        "mode": "DIRECT_ALWAYS_ON"
+        "mode": "TRIGGERED_READ",
+        "trigger": "unqualified PR / issue reference"
       }
     },
     {
@@ -1276,6 +1277,9 @@
       ],
       "Worker dispatch / phase cutover": [
         "ci/pr-lifecycle-dispatcher-runbook.md#Worker execution profile"
+      ],
+      "unqualified PR / issue reference": [
+        "dish/docs/agents/repository-routing.md#Unqualified GitHub references"
       ]
     }
   }

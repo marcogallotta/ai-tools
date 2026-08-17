@@ -41,6 +41,9 @@ Recurring ChatGPT role Projects use the concise, versioned kernels in [`../chatg
 
 ## Shared repository lifecycle
 
+For unqualified Dish PR/issue references, use [`repository-routing.md`](repository-routing.md) when the trigger applies.
+
+
 Ratified cross-Project standing invariants that must survive Project regeneration/reconciliation are governed by [`standing-invariants.md`](standing-invariants.md) and its independent machine-readable registry.
 
 
