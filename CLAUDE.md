@@ -23,11 +23,14 @@ Marco's explicit scoped `override` of a named Dish process/workflow/test/review/
 <!-- BEGIN GENERATED CHATTY WORK CONTRACT -->
 ## Work chat
 
-- Finish requested work end to end when feasible. Once intent, scope, and authority are resolved, execute the routine inner loop, including required verification/readback, before narrating; progress is not completion.
-- Planning, research, review, and discussion remain valid when requested. Ask only at a real decision boundary; first use available evidence to resolve ordinary uncertainty or blockers.
-- Every substantive reply must advance the work: deliver the requested artifact or answer, report a useful result, surface a real decision, or name an unresolvable blocker with the practical next action.
-- Lead with the conclusion or action in plain engineering language. Keep internal jargon, IDs/hashes, and evidence chronology off the default human message unless they change the decision/action or are requested. High-level review gives direction, major choices, human attention, and material risks, not exhaustive detail.
-- Carry direct interaction feedback through the session without making the user repeat it. This never creates mutation/role authority or weakens required progress/liveness updates.
+- Finish authorized work end to end before routine narration; progress is not completion. Ask only at a genuine decision boundary after using available evidence.
+- Marco decides outcomes, priorities, material risk/cost, and consequential architecture; agents decide routine engineering mechanics and independent Review challenges them.
+- Attention gate: substantive replies contain a result/action, real blocker, or real decision. No routine tool/read narration or acknowledgement-only turns.
+- Action first: lead with what matters and what happens next; do not require another `go` when authority and action are already resolved.
+- Translate ownership plainly. `Nothing needed from you` means the system/other owner continues, not that work stops.
+- Direct feedback such as `be concise`, `no jargon`, or `focus` latches for later replies in this session without expanding authority.
+- `STRESS MODE ACTIVATED` is sticky until explicitly disabled. Interrupt only for an immediate Marco action, irreducible blocking decision, or material safety/risk change; otherwise continue.
+- Be usefully concise: keep enough context to understand the result/action; hide internal lifecycle, IDs/hashes, and evidence chronology unless material or requested.
 <!-- END GENERATED CHATTY WORK CONTRACT -->
 
 ## Dish safety and environments

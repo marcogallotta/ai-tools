@@ -98,9 +98,27 @@ def test_classified_stable_rule_removal_is_representable_and_unknown_ids_still_f
 def test_generated_kernels_current_bound_and_within_budget():
  m,s=kernels.load_canonical(); results=kernels.render_all(check=True); assert len(results)==8
  for role,p in kernels.generated_paths(m,s).items():
-  text=p.read_text(); assert len(text)<=m['max_kernel_chars']; assert f"PROJECT_CANONICAL_VERSION: {m['canonical_version']}" in text
+  text=p.read_text(); assert len(text)<=m['max_kernel_chars']; assert f"PROJECT_CANONICAL_VERSION: {m['canonical_version']}" in text; assert 'PROJECT_CHANNEL: production' in text
   assert text.index('PROJECT_REPOSITORY: marcogallotta/ai-tools')<text.index('Startup:')
   assert 'Mismatch alone never blocks' in text and '?/3 integrity error' in text
+
+
+def test_git_first_startup_and_test_candidate_binding_are_explicit():
+ m,s=kernels.load_canonical()
+ for role in s['roles']:
+  text=kernels.render_role(m,s,role)
+  assert 'PROJECT_CHANNEL: production' in text
+  assert "fetch this role\'s current generated Project kernel" in text
+  assert 'Installed Project text is bootstrap/version witness after grounding' in text
+  assert 'project-current-git-authority' in {x['id'] for x in kernels.effective_rules(s,role)}
+ test=kernels.render_test_candidate(s,'review',candidate_version='dish-chatgpt-projects-test-candidate',pr_number=140,candidate_ref='refs/pull/140/head',candidate_head='1'*40,candidate_manifest_sha256='2'*64,production_version=m['canonical_version'])
+ assert 'PROJECT_CHANNEL: test' in test
+ assert 'PROJECT_CANDIDATE_PR: 140' in test and 'PROJECT_CANDIDATE_REF: refs/pull/140/head' in test
+ assert f'PROJECT_CANDIDATE_HEAD: {"1"*40}' in test
+ assert f'PROJECT_CANDIDATE_MANIFEST_SHA256: {"2"*64}' in test
+ assert 'never chase a moved TEST head or treat TEST acceptance as production promotion' in test
+ with pytest.raises(kernels.KernelError,match='TEST candidate requires exact'):
+  kernels.render_test_candidate(s,'review',candidate_version='x',pr_number=140,candidate_ref='refs/pull/140/head',candidate_head='bad',candidate_manifest_sha256='2'*64,production_version=m['canonical_version'])
 
 def test_five_whys_preservation_inventory_binds_doc_index_rule_kernels_and_behavior_cases():
  m,s=kernels.load_canonical(); payload=kernels._eval_payload(); preservation=m['preservation_inventory']
@@ -109,8 +127,12 @@ def test_five_whys_preservation_inventory_binds_doc_index_rule_kernels_and_behav
  assert entry['index_link'] in (DISH_ROOT/'docs'/'agents'/'index.md').read_text()
  rule=next(x for x in s['shared_rules'] if x['id']=='five-whys-shared-method')
  for trigger in ('Five Whys','5 whys','blameless-RCA'): assert trigger in rule['text']
- for role,path in kernels.generated_paths(m,s).items():
-  text=path.read_text(); assert 'dish/docs/agents/five-whys.md' in text and rule['text'] in text, role
+ for role in s['roles']:
+  text=kernels.render_role(m,s,role)
+  assert 'Five Whys / 5 whys / blameless RCA' in text
+  assert '`dish/docs/agents/five-whys.md#Procedure`' in text
+  assert '`#Required output`' in text
+  assert rule['text'] not in text, role
  by={x['id']:x for x in payload['scenarios']}
  for sid in entry['behavior_scenario_ids']:
   assert set(by[sid]['roles'])==set(s['roles'])
@@ -132,6 +154,9 @@ def test_five_whys_preservation_rejects_coordinated_silent_deletion():
 
 def test_chatty_contract_is_compiled_into_every_project_and_root():
  m,s=kernels.load_canonical(); rules=kernels.chatty_contract(s)
+ assert any('STRESS MODE ACTIVATED' in x and 'sticky' in x for x in rules)
+ assert any('Nothing needed from you' in x and 'continues' in x for x in rules)
+ assert any('No routine tool/read narration' in x for x in rules)
  for role in s['roles']:
   text=kernels.render_role(m,s,role)
   assert text.index('Work chat:') < text.index(f"Role: **{s['roles'][role]['default_role']}**.")
@@ -145,14 +170,14 @@ def test_development_workflow_context_preload_is_role_index_driven_and_read_only
  expected={'coordinator.md','development-workflow.md','audit.md','implementation.md','integration.md','review.md','workflow.md','postgresql-dark-launch.md'}
  assert kernels.role_index_contracts()==expected
  assert deps['preload']=={'role_index_contracts':True,'additional':['dish/docs/agents/contributor-base.md']}
- assert deps['action_specific']['test-scope decisions']==['dish/docs/testing.md','dish/docs/architecture/testing-boundaries.md']
- assert deps['action_specific']['dispatcher/Integration mechanics']==['ci/pr-lifecycle-dispatcher-runbook.md']
- assert deps['action_specific']['native-PostgreSQL workflow mechanics']==['dish/docs/testing.md','dish/docs/architecture/postgresql-runtime.md']
+ assert deps['triggered_reads']['test-scope decisions']==['dish/docs/testing.md#Autonomous changed-path selection','dish/docs/architecture/testing-boundaries.md#Proving tests']
+ assert deps['triggered_reads']['dispatcher / Integration mechanics']==['ci/pr-lifecycle-dispatcher-runbook.md#Review routing','ci/pr-lifecycle-dispatcher-runbook.md#BLOCK -> implementation/fix routing','ci/pr-lifecycle-dispatcher-runbook.md#Integration composition']
+ assert deps['triggered_reads']['native-PostgreSQL workflow mechanics']==['dish/docs/testing.md#Named lane commands','dish/docs/architecture/postgresql-runtime.md#Proving tests']
  text=kernels.render_role(m,s,'development-workflow')
- assert text.index('Startup:')<text.index('Read-only decision context (startup/re-grounding):')
- assert 'load every standing role contract listed by the current role index' in text
+ assert text.index('Startup:')<text.index('Startup/re-ground context:')
+ assert 'role-index standing contracts' in text
  assert '`dish/docs/agents/contributor-base.md`' in text
- assert 'grants no Implementation, Review, Integration, merge, or production authority' in text
+ assert 'Read-only; grants no role/mutation/Review/Integration/merge/production authority' in text
  comps=s['roles']['development-workflow']['allowed_compositions']; assert len(comps)==1 and 'implementation.md' in comps[0]
  assert 'review.md' not in comps[0] and 'integration.md' not in comps[0]
 
@@ -175,6 +200,59 @@ def test_development_workflow_incident_evals_require_cross_role_and_fallback_con
  assert {'load_contributor_base_context','inspect_authorized_fallback_surface','classify_residual_certification_only_after_fallback_check'}<=set(pr40['required_actions'])
  noauth=_scenario('development-workflow-context-preload-no-authority')
  assert {'treat_context_read_as_implementation_authority','treat_context_read_as_review_authority','treat_context_read_as_integration_authority'}<=set(noauth['forbidden_actions'])
+
+
+def test_progressive_disclosure_classifies_every_rule_and_binds_triggered_rules_to_bounded_sections():
+ m,s=kernels.load_canonical()
+ for role in s['roles']:
+  deps=kernels.context_dependencies(s,role) or {'triggered_reads':{}}
+  rendered=kernels.render_role(m,s,role)
+  for rule in kernels.effective_rules(s,role):
+   delivery=rule['delivery']; assert delivery['mode'] in {'DIRECT_ALWAYS_ON','TRIGGERED_READ'}
+   if delivery['mode']=='DIRECT_ALWAYS_ON':
+    assert rule['text'] in rendered, (role,rule['id'])
+   else:
+    trigger=delivery['trigger']; assert trigger in deps['triggered_reads']
+    assert rule['text'] not in rendered, (role,rule['id'])
+    for locator in deps['triggered_reads'][trigger]:
+     assert '#' in locator
+     path,heading=locator.split('#',1)
+     assert f'## {heading}' in (DISH_ROOT.parent/path).read_text().splitlines()
+
+def test_progressive_disclosure_rejects_orphaned_trigger_and_missing_section():
+ _,s=kernels.load_canonical(); broken=copy.deepcopy(s)
+ rule=next(x for x in broken['shared_rules'] if x['id']=='five-whys-shared-method')
+ rule['delivery']['trigger']='missing-trigger'
+ with pytest.raises(kernels.KernelError,match='lack context destinations'):
+  kernels.render_role_with_version(broken,'implementation','test')
+ broken=copy.deepcopy(s)
+ broken['context_dependencies']['triggered_reads']['Five Whys / 5 whys / blameless RCA']=['dish/docs/agents/five-whys.md#Does not exist']
+ with pytest.raises(kernels.KernelError,match='section does not exist'):
+  kernels.validate_topology(broken)
+
+
+def test_external_defect_admission_is_two_stage_and_uses_canonical_handoff():
+ m,s=kernels.load_canonical(); template=(DISH_ROOT/'docs'/'agents'/'templates'/'implementation-handoff.md').read_text()
+ assert '## External/current-main defect admission' in template
+ for token in ('CONTINUE_ORIGINAL','IMPLEMENTATION_REQUIRED','UNCERTAIN','CONTINUE_EXISTING_LINEAGE','REUSE_OWNER_NEW_LINEAGE','CREATE_BOUNDED_OWNER_LINEAGE'):
+  assert token in template
+ for role in ('coordinator','development-workflow','implementation'):
+  rule=next(x for x in kernels.effective_rules(s,role) if x['id']=='external-defect-admission')
+  assert rule['delivery']['mode']=='TRIGGERED_READ'
+  assert 'External/current-main defect admission' in kernels.render_role(m,s,role)
+ for sid in ('external-defect-continue-original','external-defect-required-owner-lineage'):
+  assert _scenario(sid)['required_rules']
+
+
+def test_worker_policy_is_triggered_and_keeps_union_and_integration_authority_out():
+ m,s=kernels.load_canonical(); rule=next(x for x in kernels.shared_rules(s) if x['id']=='worker-host-role-boundary')
+ assert rule['delivery']=={'mode':'TRIGGERED_READ','trigger':'Worker dispatch / phase cutover'}
+ for role in s['roles']:
+  text=kernels.render_role(m,s,role)
+  assert 'Worker dispatch / phase cutover' in text
+  assert 'ci/pr-lifecycle-dispatcher-runbook.md#Worker execution profile' in text
+ runbook=(DISH_ROOT.parent/'ci'/'pr-lifecycle-dispatcher-runbook.md').read_text()
+ assert 'never a union semantic role' in runbook and '202 Accepted' in runbook and 'Integration landing remains outside Worker authority' in runbook
 
 def test_repository_context_admission_is_shared_rendered_and_independently_registered():
  m,s=kernels.load_canonical(); registry=kernels._standing_invariant_registry(); entry=registry['repository-context-admission']
@@ -476,10 +554,19 @@ def _retirement(version):
 def _changed_source(source,role,rule_id,suffix):
  out=copy.deepcopy(source); rule=next(x for x in out['roles'][role]['rules'] if x['id']==rule_id); assert rule['impact'] in {'compatible','additive'}; rule['text']+=suffix; return out
 
+def test_triggered_rule_text_change_does_not_manufacture_project_settings_version():
+ m,s=kernels.load_canonical()
+ target=_changed_source(s,'implementation','implementation-host-aware-fix-routing',' Triggered module-only detail change.')
+ assert kernels.kernel_identity(target)==kernels.kernel_identity(s)
+ assert kernels._semantic_json_hash(target)!=kernels._semantic_json_hash(s)
+ with pytest.raises(kernels.KernelError,match='same canonical Project identity'):
+  kernels.generate_candidate_manifest(m,s,target)
+
 def test_required_version_inventory_matches_published_first_parent_history_and_restores_losses():
  m,s=kernels.load_canonical(); versions=kernels.required_versions(m)
  expected={f'dish-chatgpt-projects-v2-{x}' for x in ['d96ab5f0588d','708fb9a9a9bc','39ff3abc502e','857d88788c12','23365034a0f1','9575ccfd79c8','28dcb04decc8','9bb70124ca21','694190185f60','712e3b16aa05','d048682742d6','54041bbbc8d8','86b8011172ee','219f34402511','9bf227f53f0a','5d24af30193a']}
- assert set(versions)==expected and len(versions)==16
+ expected.add(m['canonical_version'])
+ assert set(versions)==expected and len(versions)==17
  assert kernels.validate_required_version_topology(m)==versions
  for old in ('dish-chatgpt-projects-v2-39ff3abc502e','dish-chatgpt-projects-v2-9bb70124ca21'):
   path=kernels._change_path(m,old); assert path and path[-1]['to_version']==m['canonical_version']
@@ -519,7 +606,7 @@ def test_historical_correction_does_not_retire_topology_but_explicit_retirement_
 
 def test_single_lineage_generator_preserves_base_history_and_is_deterministic():
  base,s=kernels.load_canonical(); original=json.dumps(base,sort_keys=True,separators=(',',':'))
- target=_changed_source(s,'implementation','implementation-host-aware-fix-routing',' Single-lineage deterministic test.')
+ target=_changed_source(s,'implementation','action-first-human-output',' Single-lineage deterministic test.')
  a=kernels.generate_candidate_manifest(base,s,target); b=kernels.generate_candidate_manifest(base,s,target)
  assert json.dumps(base,sort_keys=True,separators=(',',':'))==original
  assert json.dumps(a,sort_keys=True,separators=(',',':'))==json.dumps(b,sort_keys=True,separators=(',',':'))
@@ -528,10 +615,10 @@ def test_single_lineage_generator_preserves_base_history_and_is_deterministic():
 
 def test_concurrent_compatible_additive_reconciliation_converges_without_truncation_and_is_byte_identical():
  common,s=kernels.load_canonical()
- base_source=_changed_source(s,'implementation','implementation-host-aware-fix-routing',' Authoritative branch delta.')
- candidate_source=_changed_source(s,'review','review-host-aware-independence-routing',' Concurrent branch delta.')
+ base_source=_changed_source(s,'implementation','action-first-human-output',' Authoritative branch delta.')
+ candidate_source=_changed_source(s,'review','review-repository-context',' Concurrent branch delta.')
  base=kernels.generate_candidate_manifest(common,s,base_source); candidate=kernels.generate_candidate_manifest(common,s,candidate_source)
- merged=copy.deepcopy(base_source); next(x for x in merged['roles']['review']['rules'] if x['id']=='review-host-aware-independence-routing')['text']+=' Concurrent branch delta.'
+ merged=copy.deepcopy(base_source); next(x for x in merged['roles']['review']['rules'] if x['id']=='review-repository-context')['text']+=' Concurrent branch delta.'
  a=kernels.reconcile_manifests(base,base_source,candidate,candidate_source,merged); b=kernels.reconcile_manifests(base,base_source,candidate,candidate_source,merged)
  assert json.dumps(a,sort_keys=True,separators=(',',':'))==json.dumps(b,sort_keys=True,separators=(',',':'))
  assert {base['canonical_version'],a['canonical_version']}<=set(kernels.required_versions(a))
@@ -540,7 +627,7 @@ def test_concurrent_compatible_additive_reconciliation_converges_without_truncat
  assert a['current_transition_from']==base['canonical_version']; kernels.validate_authoritative_base_preservation(base,a)
 
 def test_concurrent_ambiguous_rule_edits_fail_closed_without_manifest_surgery():
- common,s=kernels.load_canonical(); rid='implementation-host-aware-fix-routing'
+ common,s=kernels.load_canonical(); rid='action-first-human-output'
  base_source=_changed_source(s,'implementation',rid,' Base edit.'); candidate_source=_changed_source(s,'implementation',rid,' Candidate edit.')
  base=kernels.generate_candidate_manifest(common,s,base_source); candidate=kernels.generate_candidate_manifest(common,s,candidate_source)
  with pytest.raises(kernels.KernelError,match='ambiguous/incompatible concurrent rule history'):

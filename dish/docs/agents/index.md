@@ -41,6 +41,9 @@ Recurring ChatGPT role Projects use the concise, versioned kernels in [`../chatg
 
 ## Shared repository lifecycle
 
+For unqualified Dish PR/issue references, use [`repository-routing.md`](repository-routing.md) when the trigger applies.
+
+
 Ratified cross-Project standing invariants that must survive Project regeneration/reconciliation are governed by [`standing-invariants.md`](standing-invariants.md) and its independent machine-readable registry.
 
 
@@ -109,6 +112,9 @@ Rules:
 - a local-checkout agent (Claude Code, Codex) must record its own current role locally for provenance — see [`identity.md`](identity.md); this does not apply to ChatGPT, and it is never authoritative.
 
 ## Decision and actor provenance
+
+For bounded attribution/approval interpretation, use [`operator-provenance.md`](operator-provenance.md); this keeps service actor metadata distinct from human authorization without duplicating the full rule into every Project kernel.
+
 
 Keep these durable provenance classes distinct:
 
