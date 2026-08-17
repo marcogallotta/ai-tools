@@ -1,5 +1,5 @@
 {
-  "canonical_version": "dish-chatgpt-projects-v2-223992480b5b",
+  "canonical_version": "dish-chatgpt-projects-v2-219f34402511",
   "change_history": [
     {
       "changes": [
@@ -2137,6 +2137,29 @@
           ],
           "rule_id": "mutation-broker-admission",
           "surface": "lifecycle"
+        },
+        {
+          "action_boundaries": [
+            "*"
+          ],
+          "impact": "additive",
+          "roles": [
+            "*"
+          ],
+          "rule_id": "repository-context-admission",
+          "surface": "safety"
+        },
+        {
+          "action_boundaries": [
+            "merge",
+            "handoff"
+          ],
+          "impact": "additive",
+          "roles": [
+            "integration"
+          ],
+          "rule_id": "integration-standing-policy-readback",
+          "surface": "lifecycle"
         }
       ],
       "from_renderer_fingerprint": "e50dd192217d7508624d6e2c1247c24e93177972de40a88705938f9c3f1bc247",
@@ -2232,32 +2255,264 @@
         }
       },
       "from_version": "dish-chatgpt-projects-v2-712e3b16aa05",
-      "to_version": "dish-chatgpt-projects-v2-d048682742d6"
+      "to_version": "dish-chatgpt-projects-v2-223992480b5b"
     },
     {
       "changes": [
         {
           "action_boundaries": [
+            "status",
+            "handoff"
+          ],
+          "impact": "compatible",
+          "roles": [
+            "implementation",
+            "integration"
+          ],
+          "rule_id": "action-first-human-output",
+          "surface": "presentation"
+        },
+        {
+          "action_boundaries": [
+            "handoff"
+          ],
+          "impact": "compatible",
+          "roles": [
+            "review"
+          ],
+          "rule_id": "review-action-handoff",
+          "surface": "presentation"
+        },
+        {
+          "action_boundaries": [
             "*"
           ],
           "impact": "additive",
           "roles": [
             "*"
           ],
-          "rule_id": "repository-context-admission",
-          "surface": "safety"
+          "rule_id": "renderer:chatty-contract",
+          "surface": "presentation"
         },
         {
           "action_boundaries": [
-            "merge",
+            "role-critical-write",
             "handoff"
           ],
           "impact": "additive",
           "roles": [
-            "integration"
+            "implementation"
           ],
-          "rule_id": "integration-standing-policy-readback",
+          "rule_id": "publication-materializer-path",
           "surface": "lifecycle"
+        },
+        {
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "impact": "additive",
+          "roles": [
+            "implementation"
+          ],
+          "rule_id": "mutation-broker-admission",
+          "surface": "lifecycle"
+        },
+        {
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "impact": "compatible",
+          "roles": [
+            "implementation"
+          ],
+          "rule_id": "implementation-host-aware-fix-routing",
+          "surface": "routing"
+        },
+        {
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "impact": "additive",
+          "roles": [
+            "development-workflow",
+            "implementation",
+            "integration",
+            "postgresql-dark-launch",
+            "review",
+            "workflow"
+          ],
+          "rule_id": "repository-friction-capture",
+          "surface": "lifecycle"
+        },
+        {
+          "action_boundaries": [
+            "role-critical-write",
+            "review-write"
+          ],
+          "impact": "compatible",
+          "roles": [
+            "development-workflow",
+            "implementation",
+            "integration",
+            "postgresql-dark-launch",
+            "review",
+            "workflow"
+          ],
+          "rule_id": "code-smell-debt-capture",
+          "surface": "lifecycle"
+        },
+        {
+          "action_boundaries": [
+            "*"
+          ],
+          "impact": "compatible",
+          "roles": [
+            "*"
+          ],
+          "rule_id": "authenticated-account-provenance",
+          "surface": "authority"
+        },
+        {
+          "action_boundaries": [
+            "*"
+          ],
+          "impact": "compatible",
+          "roles": [
+            "*"
+          ],
+          "rule_id": "project-repository-routing",
+          "surface": "authority"
+        },
+        {
+          "action_boundaries": [
+            "handoff",
+            "role-critical-write"
+          ],
+          "impact": "compatible",
+          "roles": [
+            "implementation"
+          ],
+          "rule_id": "implementation-durable-git",
+          "surface": "lifecycle"
+        },
+        {
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "impact": "compatible",
+          "roles": [
+            "implementation"
+          ],
+          "rule_id": "implementation-remote-first-local-boundary",
+          "surface": "routing"
+        },
+        {
+          "action_boundaries": [
+            "role-critical-write",
+            "review-write",
+            "handoff"
+          ],
+          "impact": "compatible",
+          "roles": [
+            "implementation"
+          ],
+          "rule_id": "scope-amplification-checkpoint",
+          "surface": "safety"
+        },
+        {
+          "action_boundaries": [
+            "role-critical-write"
+          ],
+          "impact": "compatible",
+          "roles": [
+            "implementation"
+          ],
+          "rule_id": "implementation-ci-failure-ownership",
+          "surface": "safety"
+        },
+        {
+          "action_boundaries": [
+            "*"
+          ],
+          "impact": "compatible",
+          "roles": [
+            "*"
+          ],
+          "rule_id": "canonical-version-gate",
+          "surface": "safety"
+        },
+        {
+          "action_boundaries": [
+            "*"
+          ],
+          "impact": "compatible",
+          "roles": [
+            "*"
+          ],
+          "rule_id": "decision-provenance",
+          "surface": "authority"
+        },
+        {
+          "action_boundaries": [
+            "task-dismissal"
+          ],
+          "impact": "compatible",
+          "roles": [
+            "*"
+          ],
+          "rule_id": "task-dismissal-history",
+          "surface": "safety"
+        },
+        {
+          "action_boundaries": [
+            "*"
+          ],
+          "impact": "compatible",
+          "roles": [
+            "*"
+          ],
+          "rule_id": "live-authority",
+          "surface": "authority"
+        },
+        {
+          "action_boundaries": [
+            "role-critical-write",
+            "review-write",
+            "merge",
+            "handoff"
+          ],
+          "impact": "compatible",
+          "roles": [
+            "*"
+          ],
+          "rule_id": "fallback-surface",
+          "surface": "evidence"
+        },
+        {
+          "action_boundaries": [
+            "*"
+          ],
+          "impact": "compatible",
+          "roles": [
+            "*"
+          ],
+          "rule_id": "role-contract-authority",
+          "surface": "authority"
+        },
+        {
+          "action_boundaries": [
+            "role-critical-write"
+          ],
+          "impact": "compatible",
+          "roles": [
+            "*"
+          ],
+          "rule_id": "no-direct-main",
+          "surface": "safety"
         }
       ],
       "from_renderer_fingerprint": "e50dd192217d7508624d6e2c1247c24e93177972de40a88705938f9c3f1bc247",
@@ -2307,6 +2562,7 @@
             "integration-phase-separated-gates": "ba62208087f5a24452c6748443de9a4d651ef58ca0b332076d0a99cbe04d06fb",
             "integration-post-merge-writeback": "a4318da9a59f9cff046e7d6921b9eb72c5b113ce2844596e40ba3ae46706eb14",
             "integration-reviewed-head": "9768f9e6f7e7f636d882c1aa084b3cd652f1547c45c65b191f160608e1014e29",
+            "integration-standing-policy-readback": "66c32039154e99f000e5fc64081b7219bb9179a970a583fac4fc25c03921d9e3",
             "mutation-broker-admission": "9c5b08f829ced6588fd10534406e8b63585a054a2e6ce1cb4be43433da3ba845",
             "repository-friction-capture": "67b82f85516f8a4de4012913248af3f20f44df0dd48b597e9b89286f2deafb08"
           },
@@ -2346,14 +2602,15 @@
           "live-authority": "f194e47e44a83480217d8279ab56f869385d84018dde7eb92878a4f0988223e0",
           "no-direct-main": "eb031310abafcf3a88cb54d3b6c6b91af6f54ad9a98a631172935ae39ac056ab",
           "project-repository-routing": "2a308edbca0097e6255ea91a0d2069ff269a8dcc95a9cdb76d0d8f666498d01a",
+          "repository-context-admission": "45190e0b9e9ffe3f4f8f33141f7cdb4e16572c90eb5453f2d2a9e11768734e3d",
           "repository-lifecycle": "98162a5b4e2eafccc613779cfb54b30884edfd1e8902c7f0755c61431afc38ed",
           "role-contract-authority": "90b856b5e0652a1185120f9e31016b15ea51ff707bf0f899ed74cc2af191e427",
           "task-dismissal-history": "eca2cda3c1d837e5956139de08c8133a75cb6e841dcf7e580063b82531134b51",
           "write-verification": "e7726aa1b5deb824691f146962a6e521a1de23d0ed664cae3896a414ec865e84"
         }
       },
-      "from_version": "dish-chatgpt-projects-v2-d048682742d6",
-      "to_version": "dish-chatgpt-projects-v2-223992480b5b"
+      "from_version": "dish-chatgpt-projects-v2-223992480b5b",
+      "to_version": "dish-chatgpt-projects-v2-219f34402511"
     }
   ],
   "generated_role_files": {
@@ -2366,8 +2623,8 @@
     "review": "review.md",
     "workflow": "workflow.md"
   },
-  "generated_sha256": "8ac3373073fd13499061f61918d1a010d5bb5fe9154629564c21ffe782a797d5",
-  "kernel_identity_sha256": "223992480b5b5e99ee5b4e91c11f5fead80319bfed6f2a8ee95a27b43acac703",
+  "generated_sha256": "2d79e67e94c5022bf29a7eb008475138058e92c910fbeb3bda4635b31e9c70f9",
+  "kernel_identity_sha256": "219f34402511fc8d00cda93072bb033f633859b6a1a4bfbf3f7eeddffdfd4365",
   "legacy_bootstrap_floor": {
     "action_boundaries": [
       "*"
@@ -2396,6 +2653,6 @@
   "max_kernel_chars": 7999,
   "schema_version": 2,
   "source_file": "source.json",
-  "source_sha256": "3b0fa617a27217cca6c8c9ba671b64010348fda5512901070168dd324072eddc",
+  "source_sha256": "f085b9052f67d32aba2b8554de8bbd0e44d378d025796ee2f88a335429b46bdd",
   "version_namespace": "dish-chatgpt-projects-v2"
 }

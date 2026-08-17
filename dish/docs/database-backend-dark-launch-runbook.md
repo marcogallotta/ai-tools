@@ -532,6 +532,50 @@ paths outside the TEST state root before migration. It performs the same migrate
 bootstrap, baseline, import, and effects-disabled epoch sequence as production prepare. It does not
 change capture mode, restart a service, operate the kill switch, or start the worker.
 
+The maintained destructive TEST wipe-and-rebuild route is **only** `scripts/dish-pg-test-reset`;
+do not use manual `DROP DATABASE`, `CREATE DATABASE`, `pg_terminate_backend`, inline Python, or
+heredoc SQL for this reset. Use the same TEST prerequisites and environment shown above for
+`dish-pg-test-prepare`. The wrapper forces `DISH_PG_CAPTURE_ENVIRONMENT=test` before entering the
+shared reviewed reset path, so an operator-supplied production capture identity cannot survive the
+wrapper.
+
+For a new TEST reset, `DISH_PG_DATABASE_URL` and `DISH_PG_EXPECTED_DATABASE_NAME` must identify the
+same disposable target, and `--confirm-database-name` must exactly equal that expected database
+name. TEST accepts only a `dish_*_test` identity with no `prod` or `production` marker. Supply a
+**new, non-existing** recovery-record path for each reset lineage, and retain the generated record;
+do not overwrite or reuse it for another reset.
+
+```sh
+DISH_TEST_SERVICE_ENV=/home/marco/.config/dish-service/test.env \
+DISH_DB_PATH=/home/marco/.local/state/dish/test/shared.sqlite3 \
+DISH_PG_DATABASE_URL='postgresql+psycopg://dish:...@127.0.0.1:55432/dish_stage_a_test' \
+DISH_PG_EXPECTED_DATABASE_NAME=dish_stage_a_test \
+DISH_PG_LOCATION_MANIFEST=/home/marco/.local/state/dish/test/dark-launch-evidence/location-manifest.json \
+DISH_PG_LEGACY_NDJSON=/home/marco/.local/state/dish/test/dark-launch-evidence/legacy.ndjson \
+DISH_PG_BOOTSTRAP_RECEIPT=/home/marco/.local/state/dish/test/dark-launch-evidence/bootstrap-receipt.json \
+DISH_DARK_LAUNCH_SOURCE_GENERATION=<exact-test-legacy-release> \
+HONEST_SOURCE_COMMIT=<sha> \
+DISH_DARK_LAUNCH_SPOOL_PATH=/home/marco/.local/state/dish/test/dark-launch-spool.sqlite3 \
+  .venv/bin/python scripts/dish-pg-test-reset \
+    --confirm-database-name dish_stage_a_test \
+    --recovery-record /home/marco/.local/state/dish/test/dark-launch-evidence/test-reset-<reset-id>.json
+```
+
+If a TEST reset is incomplete, do **not** start another reset with a fresh record. Re-run the exact
+same target environment, database confirmation, and retained recovery record with `--resume`:
+
+```sh
+.venv/bin/python scripts/dish-pg-test-reset \
+  --confirm-database-name dish_stage_a_test \
+  --recovery-record /home/marco/.local/state/dish/test/dark-launch-evidence/test-reset-<reset-id>.json \
+  --resume
+```
+
+The shared reset path retains the original recovery snapshot and reset/guard lineage across resume;
+it does not adopt the post-failure ACL state as a new baseline. The production reset guard and
+production authorization above are unchanged: production still requires the production route and
+still refuses database names ending in `_test`.
+
 After prepare succeeds, put its baseline ID in the TEST worker environment. Staged activation is a
 separate operation: first enable capture and verify SQLite/Asana behavior is unchanged, then enable
 execute mode and start the TEST worker. PostgreSQL remains non-authoritative throughout.

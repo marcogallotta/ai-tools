@@ -163,12 +163,12 @@ def test_production_reset_target_gate_is_explicit_and_fail_closed() -> None:
             confirmed_database_name="dish_other_prod",
             capture_environment="production",
         )
-    with pytest.raises(ProductionResetError, match="DISH_PG_CAPTURE_ENVIRONMENT=production"):
+    with pytest.raises(ProductionResetError, match="DISH_PG_CAPTURE_ENVIRONMENT=production or test"):
         validate_cli_target(
             database_url=url,
             expected_database_name="dish_stage_a_prod",
             confirmed_database_name="dish_stage_a_prod",
-            capture_environment="test",
+            capture_environment="rehearsal",
         )
     with pytest.raises(ProductionResetError, match="ending in '_test'"):
         validate_cli_target(
@@ -176,6 +176,31 @@ def test_production_reset_target_gate_is_explicit_and_fail_closed() -> None:
             expected_database_name="dish_stage_a_test",
             confirmed_database_name="dish_stage_a_test",
             capture_environment="production",
+        )
+    with pytest.raises(ProductionResetError, match="disposable dish_\\*_test"):
+        validate_cli_target(
+            database_url=url,
+            expected_database_name="dish_stage_a_prod",
+            confirmed_database_name="dish_stage_a_prod",
+            capture_environment="test",
+        )
+
+
+def test_test_reset_target_gate_accepts_only_disposable_test_database() -> None:
+    test_url = "postgresql+psycopg://dish:secret@127.0.0.1:55432/dish_stage_a_test"
+    validate_cli_target(
+        database_url=test_url,
+        expected_database_name="dish_stage_a_test",
+        confirmed_database_name="dish_stage_a_test",
+        capture_environment="test",
+    )
+
+    with pytest.raises(ProductionResetError, match="disposable dish_\\*_test"):
+        validate_cli_target(
+            database_url="postgresql+psycopg://dish:secret@127.0.0.1:55432/dish_stage_a_production_test",
+            expected_database_name="dish_stage_a_production_test",
+            confirmed_database_name="dish_stage_a_production_test",
+            capture_environment="test",
         )
 
 
