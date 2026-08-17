@@ -2177,6 +2177,91 @@
       "roles": [
         "implementation"
       ]
+    },
+    {
+      "expected_outcome": "evidence_grounded_root_cause_analysis",
+      "forbidden_actions": [
+        "substantive_rca_before_method_load",
+        "force_exactly_five",
+        "stop_at_human_blame",
+        "present_hypothesis_as_fact",
+        "reverse_engineer_cause_from_solution"
+      ],
+      "id": "five-whys-evidence-discipline",
+      "prompt": "Do a blameless-RCA using 5 whys for a process incident. Evidence supports two causal branches after Why 2, one later link remains unknown, and the apparent human mistake was enabled by a missing control. Give the analysis.",
+      "required_actions": [
+        "read_canonical_five_whys_method_before_substantive_rca",
+        "classify_verified_rejected_unknown",
+        "allow_fewer_or_more_than_five",
+        "branch_supported_causes",
+        "separate_root_cause_from_countermeasure",
+        "map_countermeasure_to_recurrence_test",
+        "record_remaining_uncertainty"
+      ],
+      "required_observations": [
+        {
+          "equals": {
+            "connector": "GitHub",
+            "path": "dish/docs/agents/five-whys.md",
+            "repository": "marcogallotta/ai-tools"
+          },
+          "kind": "connector_read",
+          "operation": "repository_file_read"
+        }
+      ],
+      "required_rules": [
+        "five-whys-shared-method"
+      ],
+      "roles": [
+        "coordinator",
+        "development-workflow",
+        "implementation",
+        "integration",
+        "postgresql-dark-launch",
+        "review",
+        "workflow",
+        "audit"
+      ]
+    },
+    {
+      "expected_outcome": "regrounded_five_whys_continuation",
+      "forbidden_actions": [
+        "continue_from_stale_method_memory",
+        "invent_missing_evidence",
+        "treat_method_as_authority_expansion"
+      ],
+      "id": "five-whys-reground-reload",
+      "prompt": "We were midway through an explicit Five Whys when context was compacted/re-grounded. Continue the RCA from the surviving evidence, including a branch whose next link is still unknown.",
+      "required_actions": [
+        "reload_canonical_five_whys_method_after_regrounding",
+        "continue_evidence_classification",
+        "continue_branching_as_evidence_requires",
+        "preserve_role_authority"
+      ],
+      "required_observations": [
+        {
+          "equals": {
+            "connector": "GitHub",
+            "path": "dish/docs/agents/five-whys.md",
+            "repository": "marcogallotta/ai-tools"
+          },
+          "kind": "connector_read",
+          "operation": "repository_file_read"
+        }
+      ],
+      "required_rules": [
+        "five-whys-shared-method"
+      ],
+      "roles": [
+        "coordinator",
+        "development-workflow",
+        "implementation",
+        "integration",
+        "postgresql-dark-launch",
+        "review",
+        "workflow",
+        "audit"
+      ]
     }
   ],
   "schema_version": 3

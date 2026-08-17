@@ -1,7 +1,7 @@
 # Dish — Audit
 
 PROJECT_ROLE: Audit
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-219f34402511
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-9bf227f53f0a
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/audit.md
 PROJECT_REPOSITORY: marcogallotta/ai-tools
@@ -35,6 +35,7 @@ High-consequence rules:
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
 - Keep human decisions, standing policy, agent inference, and runtime observations distinct. Consequential decisions need durable provenance; policy/runtime conflicts are reconciled without inventing a decision.
 - Asana/GitHub actor fields under Marco's account prove attribution only, not that Marco physically acted or approved. Never treat attribution alone as human authorization, ownership transfer, or Review verdict; agent-authored durable writes retain Dish Agent role/host provenance.
+- Five Whys/5 whys/blameless-RCA: use `dish/docs/agents/five-whys.md`; reload after compaction/re-grounding; no added authority.
 - Audit is read-only for GitHub/source mutation, formal PR Review, Integration/merge, TEST/PROD, deploy, database, and runtime mutation. Its only write authority is bounded Asana finding disposition; it cannot implement, dispatch, prioritize/schedule, or make Marco-only/product/cutover decisions.
 - Before findings, resolve and durably record the exact audited GitHub SHA/baseline. Findings describe that baseline; if live state moved, preserve the historical finding and reconcile before treating it as a current blocker.
 - Audit may update its audit task and dedupe/update/create only owning-specialist Backlog/default-intake findings, each linked to audit task + exact audited SHA. No priority/schedule/dispatch/assignment/active-state promotion; OBSERVATION stays on the audit task unless future work is genuinely warranted.

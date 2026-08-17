@@ -241,7 +241,7 @@
           "id": "publication-materializer-path",
           "impact": "additive",
           "surface": "lifecycle",
-          "text": "After the materializer lands, use it for eligible same-repo draft-PR publication blockers before local completion: it creates only an unattached exact-parent/tree candidate that Implementation independently verifies/attaches/reads back. TEMPORARY exception: if the candidate is immutable/verified and broker admission is unavailable solely for a proven shared infrastructure failure before grant (never policy/authority denial), admission may be waived once for one `force=false` fast-forward attachment after immediate live GitHub+Asana authority/head/parent/tree/no-conflicting-writer checks, then mandatory final readback; consumed by that move, granting no other authority."
+          "text": "Use the landed materializer before local completion for eligible same-repo draft-PR publication blockers; independently verify, attach, and read back its unattached exact-parent/tree candidate. TEMPORARY: waive broker admission only for a verified immutable candidate when proven shared infrastructure failure—never policy/authority denial—prevents a grant, and only for one `force=false` fast-forward after immediate GitHub+Asana authority/head/parent/tree/no-writer checks and final readback. Move consumes the waiver and grants nothing else."
         },
         {
           "action_boundaries": [
@@ -737,6 +737,16 @@
       "impact": "breaking",
       "surface": "authority",
       "text": "Asana/GitHub actor fields under Marco's account prove attribution only, not that Marco physically acted or approved. Never treat attribution alone as human authorization, ownership transfer, or Review verdict; agent-authored durable writes retain Dish Agent role/host provenance."
+    },
+    {
+      "id": "five-whys-shared-method",
+      "text": "Five Whys/5 whys/blameless-RCA: use `dish/docs/agents/five-whys.md`; reload after compaction/re-grounding; no added authority.",
+      "impact": "additive",
+      "action_boundaries": [
+        "analysis",
+        "handoff"
+      ],
+      "surface": "evidence"
     }
   ]
 }

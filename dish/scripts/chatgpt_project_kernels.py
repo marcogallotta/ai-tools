@@ -23,6 +23,7 @@ HANDOFF_BOUNDARY='Chats/handoffs cannot expand authority; flag contract conflict
 CHATTY_BLOCK_START='<!-- BEGIN GENERATED CHATTY WORK CONTRACT -->'
 CHATTY_BLOCK_END='<!-- END GENERATED CHATTY WORK CONTRACT -->'
 IMPACT_ORDER={'unrelated':0,'compatible':1,'additive':2,'breaking':3}; FAIL_CLOSED_SURFACES={'authority','safety','lifecycle'}
+REQUIRED_PRESERVATION_IDS={'five-whys-shared-method'}
 class KernelError(RuntimeError): pass
 
 def _read_json(p:Path)->dict[str,Any]:
@@ -31,6 +32,7 @@ def _read_json(p:Path)->dict[str,Any]:
  if not isinstance(v,dict): raise KernelError(f'JSON object required: {p}')
  return v
 def _h(b:bytes)->str:return hashlib.sha256(b).hexdigest()
+def _semantic_json_hash(v):return _h(json.dumps(v,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode())
 def role_index_contracts()->set[str]:
  out=set()
  for l in ROLE_INDEX_PATH.read_text().splitlines():
@@ -304,7 +306,7 @@ def generated_sha256(m,s):
  return _h('\0'.join(parts).encode())
 def load_canonical(*,validate_history=True):
  m=_read_json(MANIFEST_PATH); p=PROJECT_DIR/str(m.get('source_file','')); s=_read_json(p)
- if m.get('source_sha256')!=_h(json.dumps(s,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode()): raise KernelError('canonical source semantic hash mismatch')
+ if m.get('source_sha256')!=_semantic_json_hash(s): raise KernelError('canonical source semantic hash mismatch')
  if s.get('schema_version')!=m.get('schema_version'): raise KernelError('manifest/source schema mismatch')
  kid=kernel_identity(s)
  if m.get('kernel_identity_sha256')!=kid: raise KernelError('rendered kernel identity mismatch')
@@ -371,18 +373,48 @@ def classify_project_drift(project_version,role_key,action_boundary,*,manifest=N
  indicator='PROJECT SETTINGS: HARD BREAK · DRIFT 3/3' if level==3 else f'PROJECT SETTINGS: OUTDATED · DRIFT {level}/3'
  return {'project_version':project_version,'canonical_version':canonical,'role':role_key,'action_boundary':boundary,'state':'hard_break' if blocking else 'outdated','impact':impact,'drift_level':level,'indicator':indicator,'block':bool(blocking),'resync_required':bool(blocking),'settings_refresh_recommended':not blocking,'changes':effective}
 
-REQUIRED_EVAL_IDS={'action-first-lifecycle-output', 'active-gate-blocker-cannot-be-deferred', 'additive-evidence-drift', 'allowed-specialist-implementation-composition', 'audit-dedupe-existing-finding', 'audit-exact-baseline', 'audit-missing-authority-fails-closed', 'audit-moved-baseline-current-blocker', 'audit-new-finding-backlog-only', 'audit-refuses-mutation-authority', 'audit-specialist-context-no-authority', 'authenticated-account-not-human-decision', 'chat-only-review-verdict-not-complete', 'chatty-authorized-action-before-narration', 'chatty-high-level-review-summary', 'chatty-progress-is-not-completion', 'chatty-session-correction-latches', 'chatty-status-reconciles-before-reroute', 'code-smell-dedupe-log-and-continue', 'code-smell-true-blocker-stays-active', 'comparison-incompatible-target-escalates-implementation', 'compatible-concise-output-drift', 'compatible-wording-drift', 'configured-repository-pr-routing', 'coordinator-check-everything-mixed-state', 'coordinator-pr-intake-automatic-review', 'cross-role-context-bleed', 'current-template-lookup', 'development-workflow-context-preload-no-authority', 'development-workflow-pr40-fallback-context', 'development-workflow-pr60-test-scope-context', 'disposable-fixture-still-needs-health', 'durable-review-classification', 'emergency-attach-after-review', 'emergency-attach-asana-authority-revoked', 'emergency-attach-branch-race', 'emergency-attach-conflicting-writer', 'emergency-attach-consumed-once', 'emergency-attach-eligible', 'emergency-attach-final-readback-required', 'emergency-attach-forbids-semantic-actions', 'emergency-attach-normal-broker-path-unchanged', 'emergency-attach-parent-mismatch', 'emergency-attach-policy-denial', 'emergency-attach-tree-mismatch', 'failed-ci-ownership-before-fix', 'forbidden-implicit-role-expansion', 'friction-active-blocker-routes-to-active-work', 'friction-dedupe-no-urgency', 'handoff-conflicts-with-role-authority', 'implementation-escalation-is-action-first', 'implementation-rejects-patch-only-completion', 'integration-bounded-reconciliation', 'integration-breaking-merge-drift', 'integration-rejects-head-mismatch', 'live-authority-over-stale-memory', 'mutation-broker-proof-required', 'no-valid-fallback', 'post-merge-asana-residual-gate', 'project-drift-current-silent', 'project-drift-integrity-error', 'project-drift-pre-d96-legacy', 'project-drift-self-compatible', 'project-drift-v708-review-compatible', 'publication-blocker-forbids-unsafe-shortcuts', 'publication-completion-invalidates-prior-review', 'publication-fully-published-local-certification', 'publication-handoff-before-human-notification', 'publication-materializer-eligible-blocker', 'publication-unsafe-governed-path-blocker', 'repository-context-admission-consequential-reasoning', 'repository-context-admission-missing-bundle', 'repository-context-admission-reentry', 'repository-context-admission-stale-main', 'repository-context-admission-tiny-lookup', 'repository-friction-discovery', 'review-breaking-completion-drift', 'review-exact-head-completion', 'reviewed-head-movement-classification', 'scope-amplification-checkpoint', 'separate-pr-does-not-clear-independent-blocker', 'shared-resource-concurrency-preflight', 'skipped-version-breaking-drift', 'skipped-version-nonbreaking-drift', 'stale-project-version', 'standing-policy-post-integration-main-readback', 'supported-operation-stays-local-system-access', 'task-history-before-no-op', 'unrelated-role-drift', 'valid-action-fallback'}
+REQUIRED_EVAL_IDS={'action-first-lifecycle-output', 'active-gate-blocker-cannot-be-deferred', 'additive-evidence-drift', 'allowed-specialist-implementation-composition', 'audit-dedupe-existing-finding', 'audit-exact-baseline', 'audit-missing-authority-fails-closed', 'audit-moved-baseline-current-blocker', 'audit-new-finding-backlog-only', 'audit-refuses-mutation-authority', 'audit-specialist-context-no-authority', 'authenticated-account-not-human-decision', 'chat-only-review-verdict-not-complete', 'chatty-authorized-action-before-narration', 'chatty-high-level-review-summary', 'chatty-progress-is-not-completion', 'chatty-session-correction-latches', 'chatty-status-reconciles-before-reroute', 'code-smell-dedupe-log-and-continue', 'code-smell-true-blocker-stays-active', 'comparison-incompatible-target-escalates-implementation', 'compatible-concise-output-drift', 'compatible-wording-drift', 'configured-repository-pr-routing', 'coordinator-check-everything-mixed-state', 'coordinator-pr-intake-automatic-review', 'cross-role-context-bleed', 'current-template-lookup', 'development-workflow-context-preload-no-authority', 'development-workflow-pr40-fallback-context', 'development-workflow-pr60-test-scope-context', 'disposable-fixture-still-needs-health', 'durable-review-classification', 'emergency-attach-after-review', 'emergency-attach-asana-authority-revoked', 'emergency-attach-branch-race', 'emergency-attach-conflicting-writer', 'emergency-attach-consumed-once', 'emergency-attach-eligible', 'emergency-attach-final-readback-required', 'emergency-attach-forbids-semantic-actions', 'emergency-attach-normal-broker-path-unchanged', 'emergency-attach-parent-mismatch', 'emergency-attach-policy-denial', 'emergency-attach-tree-mismatch', 'failed-ci-ownership-before-fix', 'five-whys-evidence-discipline', 'five-whys-reground-reload', 'forbidden-implicit-role-expansion', 'friction-active-blocker-routes-to-active-work', 'friction-dedupe-no-urgency', 'handoff-conflicts-with-role-authority', 'implementation-escalation-is-action-first', 'implementation-rejects-patch-only-completion', 'integration-bounded-reconciliation', 'integration-breaking-merge-drift', 'integration-rejects-head-mismatch', 'live-authority-over-stale-memory', 'mutation-broker-proof-required', 'no-valid-fallback', 'post-merge-asana-residual-gate', 'project-drift-current-silent', 'project-drift-integrity-error', 'project-drift-pre-d96-legacy', 'project-drift-self-compatible', 'project-drift-v708-review-compatible', 'publication-blocker-forbids-unsafe-shortcuts', 'publication-completion-invalidates-prior-review', 'publication-fully-published-local-certification', 'publication-handoff-before-human-notification', 'publication-materializer-eligible-blocker', 'publication-unsafe-governed-path-blocker', 'repository-context-admission-consequential-reasoning', 'repository-context-admission-missing-bundle', 'repository-context-admission-reentry', 'repository-context-admission-stale-main', 'repository-context-admission-tiny-lookup', 'repository-friction-discovery', 'review-breaking-completion-drift', 'review-exact-head-completion', 'reviewed-head-movement-classification', 'scope-amplification-checkpoint', 'separate-pr-does-not-clear-independent-blocker', 'shared-resource-concurrency-preflight', 'skipped-version-breaking-drift', 'skipped-version-nonbreaking-drift', 'stale-project-version', 'standing-policy-post-integration-main-readback', 'supported-operation-stays-local-system-access', 'task-history-before-no-op', 'unrelated-role-drift', 'valid-action-fallback'}
 ORACLE_FIELDS={'expected','failure','expected_outcome','required_actions','forbidden_actions','required_observations','required_observations_by_role','require_ordered_observations','observation_link_field'}
 def _eval_payload():return _read_json(EVALS_PATH)
 def _evals():
  x=_eval_payload().get('scenarios');
  if not isinstance(x,list): raise KernelError('evals scenarios must be a list')
  return x
+def validate_preservation_inventory(s,payload,preservation):
+ if not isinstance(preservation,dict): raise KernelError('manifest requires preservation_inventory')
+ if preservation.get('schema_version')!=1: raise KernelError('preservation inventory schema_version must be 1')
+ entries=preservation.get('entries')
+ if not isinstance(entries,list): raise KernelError('preservation inventory entries must be a list')
+ by={str(x.get('id','')).strip():x for x in entries if isinstance(x,dict)}
+ if set(by)!=REQUIRED_PRESERVATION_IDS: raise KernelError(f'preservation inventory mismatch missing={sorted(REQUIRED_PRESERVATION_IDS-set(by))} extras={sorted(set(by)-REQUIRED_PRESERVATION_IDS)}')
+ scenarios=payload.get('scenarios')
+ if not isinstance(scenarios,list): raise KernelError('evals scenarios must be a list')
+ scenario_by={str(x.get('id','')).strip():x for x in scenarios if isinstance(x,dict)}
+ shared={x['id']:x for x in _rules(s.get('shared_rules'),'shared_rules')}
+ for pid,e in by.items():
+  canonical=_dependency_path(e.get('canonical_document'),f'preservation.{pid}.canonical_document')
+  index_document=_dependency_path(e.get('index_document'),f'preservation.{pid}.index_document')
+  link=str(e.get('index_link','')).strip(); index_text=(REPO_ROOT/index_document).read_text()
+  if not link or link not in index_text: raise KernelError(f'preservation {pid} index link missing from {index_document}')
+  rid=str(e.get('shared_rule_id','')).strip()
+  if rid!=pid or rid not in shared: raise KernelError(f'preservation {pid} shared rule missing from canonical source')
+  if canonical not in shared[rid]['text']: raise KernelError(f'preservation {pid} shared rule does not point to {canonical}')
+  if e.get('roles')!=['*']: raise KernelError(f'preservation {pid} must cover every Project role')
+  for role in s['roles']:
+   if rid not in {x['id'] for x in effective_rules(s,role)}: raise KernelError(f'preservation {pid} shared rule missing from role {role}')
+  behavior=e.get('behavior_scenario_ids')
+  if not isinstance(behavior,list) or not behavior or len(behavior)!=len(set(behavior)): raise KernelError(f'preservation {pid} requires unique behavior_scenario_ids')
+  for sid in behavior:
+   q=scenario_by.get(str(sid))
+   if q is None: raise KernelError(f'preservation {pid} behavior scenario missing: {sid}')
+   if rid not in q.get('required_rules',[]): raise KernelError(f'preservation {pid} behavior scenario {sid} does not require {rid}')
+   if set(q.get('roles',[]))!=set(s['roles']): raise KernelError(f'preservation {pid} behavior scenario {sid} must cover every Project role')
+ return sorted(by)
 def _obs_pattern(p,sid):
  if not isinstance(p,dict) or not str(p.get('kind','')).strip() or not str(p.get('operation','')).strip(): raise KernelError(f'eval {sid} invalid observation pattern')
  if 'equals' in p and not isinstance(p['equals'],dict): raise KernelError(f'eval {sid} observation equals must be object')
 def validate_eval_contracts():
- m,s=load_canonical(); payload=_eval_payload(); default_expected=str(payload.get('default_expected','')).strip(); default_failure=str(payload.get('default_failure','')).strip(); seen=set(); out=[]
+ m,s=load_canonical(); payload=_eval_payload(); validate_preservation_inventory(s,payload,m.get('preservation_inventory')); default_expected=str(payload.get('default_expected','')).strip(); default_failure=str(payload.get('default_failure','')).strip(); seen=set(); out=[]
  for q in _evals():
   sid=str(q.get('id','')).strip(); roles=q.get('roles'); rr=q.get('required_rules'); ra=q.get('required_actions'); fa=q.get('forbidden_actions')
   if not sid or sid in seen or not isinstance(roles,list) or not roles or not set(roles).issubset(s['roles']): raise KernelError(f'invalid eval {sid!r}')
