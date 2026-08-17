@@ -110,6 +110,9 @@ Rules:
 
 ## Decision and actor provenance
 
+For bounded attribution/approval interpretation, use [`operator-provenance.md`](operator-provenance.md); this keeps service actor metadata distinct from human authorization without duplicating the full rule into every Project kernel.
+
+
 Keep these durable provenance classes distinct:
 
 - **Human decision** — an explicit Marco/authorized-human decision with an independent durable source when consequential.

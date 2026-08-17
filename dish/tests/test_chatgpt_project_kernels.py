@@ -154,6 +154,9 @@ def test_five_whys_preservation_rejects_coordinated_silent_deletion():
 
 def test_chatty_contract_is_compiled_into_every_project_and_root():
  m,s=kernels.load_canonical(); rules=kernels.chatty_contract(s)
+ assert any('STRESS MODE ACTIVATED' in x and 'sticky' in x for x in rules)
+ assert any('Nothing needed from you' in x and 'continues' in x for x in rules)
+ assert any('No routine tool/read narration' in x for x in rules)
  for role in s['roles']:
   text=kernels.render_role(m,s,role)
   assert text.index('Work chat:') < text.index(f"Role: **{s['roles'][role]['default_role']}**.")
