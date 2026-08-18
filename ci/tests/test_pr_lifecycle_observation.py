@@ -116,6 +116,27 @@ def source(state, **extra):
     }
 
 
+def runtime(*, active="UNKNOWN", operational="UNKNOWN"):
+    return {
+        "status": "COMPLETE",
+        "pull_requests": {
+            "171": {
+                "active": active,
+                "operational": operational,
+                "provenance": "fixture-runtime",
+            }
+        },
+    }
+
+
+def accepted_rollout():
+    return {
+        "schema": "dish-rollout-projection-v1",
+        "complete": True,
+        "stages": [{"stage": "prod", "state": "ACCEPTED", "activated_identity": "activation"}],
+    }
+
+
 def test_pure_read_task_scan_returns_project_projection_without_writes():
     asana = ReadOnlyAsana(completed=False)
     values, scope = pr_lifecycle._task_observation_cycle(ReadOnlyEngine(asana), [lifecycle()])
@@ -238,20 +259,51 @@ def test_landed_source_with_incomplete_asana_work_requires_post_merge_action():
     assert resolved["truth"] == "CONSISTENT"
 
 
-def test_operational_completion_requires_landed_source_completed_task_and_accepted_rollout():
-    rollout = {
-        "schema": "dish-rollout-projection-v1",
-        "complete": True,
-        "stages": [{"stage": "prod", "state": "ACCEPTED", "activated_identity": "activation"}],
-    }
+def test_landed_source_without_runtime_witness_keeps_operational_unknown():
     projection = build_projection(
         [lifecycle(state=pr_lifecycle.LifecycleState.MERGED, completed=True)],
         repository="marcogallotta/ai-tools",
-        tasks=[task(True, rollout=rollout)],
+        tasks=[task(True, rollout=accepted_rollout())],
         source_observation=source("LANDED", publication_state="landed"),
     )
 
-    assert projection["resolved_lifecycle"][0]["state"] == "OPERATIONALLY_COMPLETE"
+    resolved = projection["resolved_lifecycle"][0]
+    assert resolved["state"] == "LANDED_ON_MAIN"
+    assert resolved["runtime"]["active"] == "UNKNOWN"
+    assert resolved["runtime"]["operational"] == "UNKNOWN"
+    assert projection["pull_requests"][0]["active_state"] == "UNKNOWN"
+    assert projection["pull_requests"][0]["operational_state"] == "UNKNOWN"
+    assert "Operational Unknown" in projection["pull_requests"][0]["state_label"]
+
+
+def test_operational_completion_requires_explicit_runtime_witness():
+    projection = build_projection(
+        [lifecycle(state=pr_lifecycle.LifecycleState.MERGED, completed=True)],
+        repository="marcogallotta/ai-tools",
+        tasks=[task(True, rollout=accepted_rollout())],
+        source_observation=source("LANDED", publication_state="landed"),
+        runtime_observation=runtime(active="OBSERVED", operational="OPERATIONAL"),
+    )
+
+    resolved = projection["resolved_lifecycle"][0]
+    assert resolved["state"] == "OPERATIONALLY_COMPLETE"
+    assert resolved["runtime"]["active"] == "OBSERVED"
+    assert resolved["runtime"]["operational"] == "OPERATIONAL"
+    assert projection["pull_requests"][0]["operational_state"] == "OPERATIONAL"
+
+
+def test_runtime_not_operational_requires_post_merge_action():
+    projection = build_projection(
+        [lifecycle(state=pr_lifecycle.LifecycleState.MERGED, completed=True)],
+        repository="marcogallotta/ai-tools",
+        tasks=[task(True, rollout=accepted_rollout())],
+        source_observation=source("LANDED", publication_state="landed"),
+        runtime_observation=runtime(active="OBSERVED", operational="NOT_OPERATIONAL"),
+    )
+
+    resolved = projection["resolved_lifecycle"][0]
+    assert resolved["state"] == "POST_MERGE_ACTION_REQUIRED"
+    assert resolved["runtime"]["operational"] == "NOT_OPERATIONAL"
 
 
 def test_missing_asana_work_state_is_explicit_unknown_in_dashboard_projection():
