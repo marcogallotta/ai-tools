@@ -1,0 +1,421 @@
+name: Temporary Review bundle + FastTrack-R3 implementation
+
+on:
+  push:
+    branches:
+      - agent/review-bundle-fasttrack-r3
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+jobs:
+  implement:
+    if: github.event.head_commit.message == 'Add temporary hosted implementation workflow'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Resolve canonical Python version
+        id: python-bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 dish/scripts/dependency_bundle.py expected \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Setup canonical Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ steps.python-bundle.outputs.python_version }}
+
+      - name: Recreate canonical Python environments
+        uses: ./.github/actions/setup-python-bundle
+        with:
+          github-token: ${{ github.token }}
+
+      - name: Task 1 — resolve Review bundle contradiction
+        id: task1
+        shell: bash
+        env:
+          BASE_SHA: a45f301611d2d950ebb4fa09130f6eb926265d65
+        run: |
+          set -euo pipefail
+          cp dish/docs/chatgpt-projects/source.json /tmp/task1-base-source.json
+          cp dish/docs/chatgpt-projects/manifest.json /tmp/task1-base-manifest.json
+          python3 <<'PY'
+          from pathlib import Path
+          import hashlib, json
+
+          source_path=Path('dish/docs/chatgpt-projects/source.json')
+          source=json.loads(source_path.read_text())
+          hits=[]
+          def walk(v):
+              if isinstance(v,dict):
+                  if v.get('id')=='repository-context-admission': hits.append(v)
+                  for x in v.values(): walk(x)
+              elif isinstance(v,list):
+                  for x in v: walk(x)
+          walk(source)
+          if len(hits)!=1: raise SystemExit(f'expected one repository-context-admission rule, got {len(hits)}')
+          rule=hits[0]
+          old=rule['text']
+          if 'Missing/unverifiable/stale context blocks only the affected substantial conclusion.' not in old:
+              raise SystemExit('repository-context-admission baseline text changed')
+          rule['text']=(
+              'Before substantial consequential repository/system reasoning outside ordinary ChatGPT PR Review, establish a current repository-context witness: resolve live `refs/heads/main` plus repository name/ID from GitHub; retrieve the exact `repository-bundle-<SHA>` through the GitHub connector; materialize it; verify with `scripts/repository_bundle.py` against name/ID/ref/SHA; bind the verified clone; only then reason across files. Ordinary ChatGPT PR Review instead applies `review-bundle-fallback` when the exact bundle cannot be discovered or retrieved but connector-native exact evidence is sufficient. Any bundle actually used by Review remains subject to exact name/ID/ref/SHA verification and stale/mismatched/corrupt/wrong-SHA rejection. Tiny targeted reads are exempt. Re-enter after fresh/replacement session, post-compaction re-ground, affected-role switch, or main movement whenever the witness is absent/stale. Missing/unverifiable/stale context blocks only the affected substantial non-Review conclusion; ordinary Review fails closed only on a named unresolved semantic/tool/environment evidence boundary that connector-native evidence cannot satisfy. Bundle is read-only context; live GitHub/Asana remain current-state authorities.'
+          )
+          source_path.write_text(json.dumps(source,indent=2,sort_keys=True)+'\n')
+
+          payload={k:rule.get(k) for k in ('id','text','impact','surface','action_boundaries')}
+          fingerprint=hashlib.sha256(json.dumps(payload,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+
+          standing_path=Path('dish/docs/agents/standing-invariants.json')
+          standing=json.loads(standing_path.read_text())
+          entries=[x for x in standing['invariants'] if x.get('id')=='repository-context-admission']
+          if len(entries)!=1: raise SystemExit('standing repository-context-admission entry missing/ambiguous')
+          entry=entries[0]
+          entry['ratification']['decision']='Consequential ChatGPT repository/system reasoning outside ordinary ChatGPT PR Review uses the verified exact-current-main repository bundle before substantial cross-file reasoning; ordinary Review may use sufficient connector-native exact evidence when bundle transport is unavailable, while any bundle actually used remains exact-current verified.'
+          refs=entry['ratification']['durable_authority_refs']
+          if 'asana:task:1217594495187308' not in refs: refs.append('asana:task:1217594495187308')
+          entry['semantic_contract']['ordinary_chatgpt_pr_review']={
+              'bundle_unavailable':'connector-native-exact-evidence-fallback',
+              'bundle_used':'exact-current-validation-required'
+          }
+          entry['coverage']['source_rule_fingerprint']=fingerprint
+          standing_path.write_text(json.dumps(standing,indent=2,sort_keys=True)+'\n')
+
+          script_path=Path('dish/scripts/chatgpt_project_kernels.py')
+          script=script_path.read_text()
+          old_refs="REPOSITORY_CONTEXT_RATIFICATION_REFS=('asana:task:1217508843698365','asana:task:1217508843698365#story:1217509740007539')"
+          new_refs="REPOSITORY_CONTEXT_RATIFICATION_REFS=('asana:task:1217508843698365','asana:task:1217508843698365#story:1217509740007539','asana:task:1217594495187308')"
+          if script.count(old_refs)!=1: raise SystemExit('ratification refs baseline changed')
+          script=script.replace(old_refs,new_refs,1)
+          old_fp="REPOSITORY_CONTEXT_SOURCE_RULE_FINGERPRINT='45190e0b9e9ffe3f4f8f33141f7cdb4e16572c90eb5453f2d2a9e11768734e3d'"
+          new_fp=f"REPOSITORY_CONTEXT_SOURCE_RULE_FINGERPRINT='{fingerprint}'"
+          if script.count(old_fp)!=1: raise SystemExit('repository-context fingerprint baseline changed')
+          script=script.replace(old_fp,new_fp,1)
+          old_semantic="expected_semantic={'admission_order':list(REPOSITORY_CONTEXT_ADMISSION_ORDER),'tiny_targeted_reads_exempt':True,'reentry_events':['fresh-or-replacement-session','post-compaction-reground','affected-role-switch','main-movement-with-absent-or-stale-witness'],'failure_scope':'affected-substantial-conclusion-only','bundle_authority':'read-only-context','current_state_authorities':['GitHub','Asana']}"
+          new_semantic="expected_semantic={'admission_order':list(REPOSITORY_CONTEXT_ADMISSION_ORDER),'tiny_targeted_reads_exempt':True,'reentry_events':['fresh-or-replacement-session','post-compaction-reground','affected-role-switch','main-movement-with-absent-or-stale-witness'],'failure_scope':'affected-substantial-conclusion-only','bundle_authority':'read-only-context','current_state_authorities':['GitHub','Asana'],'ordinary_chatgpt_pr_review':{'bundle_unavailable':'connector-native-exact-evidence-fallback','bundle_used':'exact-current-validation-required'}}"
+          if script.count(old_semantic)!=1: raise SystemExit('standing semantic baseline changed')
+          script_path.write_text(script.replace(old_semantic,new_semantic,1))
+
+          root_path=Path('CLAUDE.md')
+          root=root_path.read_text()
+          old_intro='For substantial repository/system reasoning that can affect a consequential Dish decision, use the repository bundle first. Tiny targeted lookups that do not support such reasoning are exempt:'
+          new_intro='For substantial repository/system reasoning that can affect a consequential Dish decision **outside ordinary ChatGPT PR Review**, use the repository bundle first. Tiny targeted lookups that do not support such reasoning are exempt. Ordinary ChatGPT PR Review follows the Review-specific connector-native fallback when the exact bundle cannot be discovered or retrieved; any bundle actually used still must pass exact-current identity/integrity validation:'
+          if root.count(old_intro)!=1: raise SystemExit('root bundle intro baseline changed')
+          root=root.replace(old_intro,new_intro,1)
+          old_fail='- fail closed if connector retrieval, materialization, checksum/manifest verification, `git bundle verify`, advertised-main validation, or cloned-HEAD validation fails.'
+          new_fail='- outside ordinary ChatGPT PR Review, fail closed if connector retrieval, materialization, checksum/manifest verification, `git bundle verify`, advertised-main validation, or cloned-HEAD validation fails; ordinary Review treats bundle unavailability alone as non-blocking when connector-native exact evidence is sufficient.'
+          if root.count(old_fail)!=1: raise SystemExit('root bundle fail-closed baseline changed')
+          root=root.replace(old_fail,new_fail,1)
+          anchor='The publication and verification contract, cadence, retention, and v1 main-only scope are in [`ci/repository-bundle.md`](ci/repository-bundle.md).'
+          carve=('Ordinary ChatGPT PR Review therefore never blocks, routes local, or asks Marco solely for bundle transport when live connector-native exact evidence is sufficient for the merge question. If a bundle is actually used, stale, mismatched, corrupt, or wrong-SHA material remains fail-closed and is never substituted. Review fails closed only on a named unresolved semantic, tool, or environment evidence boundary that connector-native evidence cannot satisfy. This exception does not relax bundle-first admission for broad architecture, Implementation, or other substantial non-Review reasoning.\n\n')
+          if root.count(anchor)!=1: raise SystemExit('root bundle publication anchor changed')
+          root_path.write_text(root.replace(anchor,carve+anchor,1))
+
+          test_path=Path('dish/tests/test_review_bundle_consistency.py')
+          test_path.write_text('''from __future__ import annotations\nimport importlib.util\nfrom pathlib import Path\n\nDISH_ROOT=Path(__file__).resolve().parents[1]\nREPO_ROOT=DISH_ROOT.parent\nSCRIPT=DISH_ROOT/'scripts'/'chatgpt_project_kernels.py'\nSPEC=importlib.util.spec_from_file_location('chatgpt_project_kernels_review_bundle',SCRIPT); assert SPEC and SPEC.loader\nkernels=importlib.util.module_from_spec(SPEC); SPEC.loader.exec_module(kernels)\n\ndef _rule(source,rid):\n    matches=[x for x in kernels.effective_rules(source,'review') if x['id']==rid]\n    assert len(matches)==1\n    return matches[0]\n\ndef test_rendered_review_bundle_instructions_are_noncontradictory():\n    manifest,source=kernels.load_canonical()\n    admission=_rule(source,'repository-context-admission')\n    fallback=_rule(source,'review-bundle-fallback')\n    rendered=kernels.render_role(manifest,source,'review')\n    assert 'outside ordinary ChatGPT PR Review' in admission['text']\n    assert 'ordinary Review fails closed only on a named unresolved semantic/tool/environment evidence boundary' in admission['text']\n    assert 'Missing/unverifiable/stale context blocks only the affected substantial conclusion.' not in admission['text']\n    assert admission['text'] in rendered\n    assert fallback['text'] in rendered\n    assert 'Never block, route local, or ask Marco solely for bundle transport.' in fallback['text']\n\ndef test_root_bootstrap_has_the_same_review_carveout_and_invalid_bundle_fence():\n    root=(REPO_ROOT/'CLAUDE.md').read_text()\n    assert '**outside ordinary ChatGPT PR Review**' in root\n    assert 'ordinary Review treats bundle unavailability alone as non-blocking when connector-native exact evidence is sufficient' in root\n    assert 'stale, mismatched, corrupt, or wrong-SHA material remains fail-closed' in root\n    assert 'does not relax bundle-first admission for broad architecture, Implementation, or other substantial non-Review reasoning' in root\n\ndef test_nonreview_roles_still_receive_bundle_first_admission():\n    manifest,source=kernels.load_canonical()\n    admission=_rule(source,'repository-context-admission')['text']\n    for role in source['roles']:\n        if role=='review':\n            continue\n        rendered=kernels.render_role(manifest,source,role)\n        assert admission in rendered\n        assert 'Before substantial consequential repository/system reasoning outside ordinary ChatGPT PR Review' in rendered\n\ndef test_bundle_unavailable_behavior_case_requires_progress_without_human_transport_action():\n    scenario=next(x for x in kernels._evals() if x['id']=='review-bundle-unavailable-proceeds')\n    assert scenario['roles']==['review']\n    assert {'resolve-exact-pr-and-live-authority','use-connector-native-review-evidence','proceed-substantive-review'} <= set(scenario['required_actions'])\n    assert {'block-for-bundle-transport-only','route-local-for-bundle-transport-only','ask-marco-for-bundle-waiver-or-relay'} <= set(scenario['forbidden_actions'])\n''')
+          PY
+
+          python3 dish/scripts/chatgpt_project_kernels.py reconcile \
+            --base-manifest /tmp/task1-base-manifest.json \
+            --base-source /tmp/task1-base-source.json \
+            --source dish/docs/chatgpt-projects/source.json \
+            --output dish/docs/chatgpt-projects/manifest.json
+          python3 dish/scripts/chatgpt_project_kernels.py render
+          python3 dish/scripts/chatgpt_project_kernels.py check
+          (cd dish && .venv/bin/python -m pytest -q tests/test_chatgpt_project_kernels.py tests/test_review_bundle_consistency.py)
+          git diff --check "$BASE_SHA"...HEAD
+          git config user.name 'Dish Agent'
+          git config user.email 'dish-agent@users.noreply.github.com'
+          git add CLAUDE.md dish/docs/agents/standing-invariants.json dish/docs/chatgpt-projects dish/scripts/chatgpt_project_kernels.py dish/tests/test_review_bundle_consistency.py
+          git commit -m $'Resolve Review bundle admission contradiction\n\nAsana task: 1217594495187308'
+          echo "head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          print('version='+json.load(open('dish/docs/chatgpt-projects/manifest.json'))['canonical_version'])
+          PY
+
+      - name: Task 2 — implement FastTrack-R3 Project overlay
+        id: task2
+        shell: bash
+        env:
+          BASE_SHA: a45f301611d2d950ebb4fa09130f6eb926265d65
+        run: |
+          set -euo pipefail
+          cp dish/docs/chatgpt-projects/source.json /tmp/task2-base-source.json
+          cp dish/docs/chatgpt-projects/manifest.json /tmp/task2-base-manifest.json
+          python3 <<'PY'
+          from pathlib import Path
+          import hashlib, json, re
+
+          task1_manifest=json.loads(Path('/tmp/task2-base-manifest.json').read_text())
+          task1_version=task1_manifest['canonical_version']
+
+          waiver=['exact-current repository-bundle retrieval/materialization/verification prerequisite when bundle transport is unavailable']
+          retains=[
+              'live GitHub repository/current-main identity and source/history authority',
+              'Asana task/orchestration authority',
+              'exact task/branch/PR/head identity',
+              'invalid/stale/mismatched/corrupt/wrong-SHA bundle rejection when any bundle is used',
+              'independent semantic Review',
+              'Integration separation',
+              'production/destructive-operation safeguards',
+              'genuine platform/system impossibilities'
+          ]
+          semantic={'id':'repository-context-bundle-witness','version':1,'waives':waiver,'retains':retains}
+          digest='sha256:'+hashlib.sha256(json.dumps(semantic,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+          registry={
+              'schema_version':1,
+              'overlay_version':'fasttrack-r3',
+              'gates':[{
+                  'id':'repository-context-bundle-witness',
+                  'current_version':1,
+                  'versions':{'1':{'semantic_digest':digest,'waives':waiver,'retains':retains}}
+              }]
+          }
+          Path('dish/docs/chatgpt-projects/fast-track-gates.json').write_text(json.dumps(registry,indent=2,sort_keys=True)+'\n')
+
+          doc='''# Fast-track Project overlay\n\nThe fast-track overlay is a narrow persistence surface for Marco's existing scoped process-override authority. It is not a second approval service, scheduler, queue, database, identity system, merge gate, or lifecycle authority.\n\n## Reserved Project block\n\nA ChatGPT Project may contain exactly one reserved block headed `MARCO OVERRIDE — FAST-TRACK PROCESS` followed by one JSON object:\n\n```text\nMARCO OVERRIDE — FAST-TRACK PROCESS\n{\n  "version": "fasttrack-r3",\n  "state": "ACTIVE",\n  "generation": "<operator-chosen generation>",\n  "scope": ["repository-context-bundle-witness@1"],\n  "expiry": null,\n  "reason": "<operator reason>"\n}\n```\n\nThe overlay digest is `sha256:` plus the SHA-256 of the canonical semantic JSON object (`sort_keys=True`, compact separators, UTF-8) after scope is de-duplicated and sorted. The digest identifies the captured operator input; it is not an anti-forgery signature.\n\n## Procedure\n\n1. **Capture only at a verified Project-settings boundary.** A verified new ChatGPT Project chat/session bootstrap captures the exact reserved block, generation, digest, scope and expiry presented at that bootstrap. Repository grounding has its own independent freshness identity. Ordinary in-session compaction or repository re-ground does **not** refresh, replace or silently re-read the captured Project overlay.\n2. **Resolve scope through current Git.** Every scope entry is an exact `<gate-id>@<version>` present as the current version in `dish/docs/chatgpt-projects/fast-track-gates.json`. Unknown gates, new gate classes and materially changed gate semantics are not inherited by an older overlay. A material gate change requires a new registry version and therefore an updated Project overlay or an ordinary exact Marco override. Wildcards are invalid.\n3. **Apply only an ACTIVE, unexpired captured generation.** When an in-scope gate blocks, preserve the raw failed/red evidence and continue only with the equivalent authoritative evidence or fallback allowed by that gate's registered semantics. Never relabel failed evidence as PASS.\n4. **Record every use on an existing durable lifecycle surface.** Record `GATE WAIVED BY MARCO OVERRIDE` plus overlay generation/digest, exact gate ID/version, task, candidate, action and the raw failed evidence. Downstream Claude/Codex/Review/Integration consume that per-use record; they do not need Project-settings access.\n5. **Current-chat Marco change/revocation is immediate.** `fast-track off`, an exact scope correction, or equivalent clear current-chat direction supersedes the captured generation immediately for that chat and is recorded durably when relevant. Project-settings edits are not presumed visible to an already-running chat.\n6. **Expiry and new sessions are real boundaries.** An expired captured generation cannot be used. A later verified new Project chat/session captures the then-current Project settings instead of carrying the old generation forward. A future live Project-settings refresh primitive becomes an additional boundary only after its platform behavior is verified.\n\n## Retained boundaries\n\nThe default registry does not waive exact task/branch/PR/head identity, independent semantic Review, Integration separation, production/destructive-operation safeguards, or genuine platform/system impossibilities. Adding such authority requires Marco to name that gate explicitly; it is never inherited from a broad phrase. Raw evidence remains truthful even when a gate is waived.\n\n## Current initial gate\n\n`repository-context-bundle-witness@1` waives only the exact-current repository-bundle retrieval/materialization/verification prerequisite when bundle transport is unavailable. GitHub/Asana authority, exact candidate identity, and invalid/stale/mismatched/corrupt/wrong-SHA bundle rejection remain required.\n'''
+          Path('dish/docs/agents/fast-track-process.md').write_text(doc)
+
+          root_path=Path('CLAUDE.md')
+          root=root_path.read_text()
+          anchor='Do not extend the waiver beyond the named scope; genuine platform/system constraints remain non-overridable.\n\n<!-- BEGIN GENERATED CHATTY WORK CONTRACT -->'
+          section='''Do not extend the waiver beyond the named scope; genuine platform/system constraints remain non-overridable.\n\n### Persistent fast-track Project overlay\n\nA reserved `MARCO OVERRIDE — FAST-TRACK PROCESS` block in ChatGPT Project settings is a persistence surface for the same scoped Marco override authority, interpreted only under [`dish/docs/agents/fast-track-process.md`](dish/docs/agents/fast-track-process.md). A verified new Project chat/session bootstrap captures its exact generation/digest separately from repository grounding; ordinary compaction/re-ground does not refresh Project settings. Current-chat Marco change/revocation is immediate. Apply only ACTIVE, unexpired exact gate ID/version scope entries that still match current [`dish/docs/chatgpt-projects/fast-track-gates.json`](dish/docs/chatgpt-projects/fast-track-gates.json); never inherit new/materially changed gates or wildcard future policy. Every use records `GATE WAIVED BY MARCO OVERRIDE` with overlay generation/digest + gate/version + exact task/candidate/action while preserving raw failed evidence. Exact identity, independent Review, Integration separation, destructive/production safeguards and genuine platform impossibilities remain outside the default fast-track scope.\n\n<!-- BEGIN GENERATED CHATTY WORK CONTRACT -->'''
+          if root.count(anchor)!=1: raise SystemExit('root override anchor changed')
+          root_path.write_text(root.replace(anchor,section,1))
+
+          source_path=Path('dish/docs/chatgpt-projects/source.json')
+          source=json.loads(source_path.read_text())
+          parent_hits=[]
+          existing=[]
+          def walk(v):
+              if isinstance(v,list):
+                  for i,x in enumerate(v):
+                      if isinstance(x,dict) and x.get('id')=='repository-context-admission': parent_hits.append(v)
+                      if isinstance(x,dict) and x.get('id')=='fast-track-process-overlay': existing.append(x)
+                      walk(x)
+              elif isinstance(v,dict):
+                  if v.get('id')=='fast-track-process-overlay': existing.append(v)
+                  for x in v.values(): walk(x)
+          walk(source)
+          if len(parent_hits)!=1 or existing: raise SystemExit('shared rule parent missing/ambiguous or fast-track rule already exists')
+          parent_hits[0].append({
+              'action_boundaries':['*'],
+              'id':'fast-track-process-overlay',
+              'impact':'additive',
+              'surface':'authority',
+              'text':'A reserved `MARCO OVERRIDE — FAST-TRACK PROCESS` Project-settings block is session-captured operator authority independent of repository grounding. Capture exact generation/digest only at a verified new Project chat/session bootstrap or future proven refresh; ordinary re-ground never refreshes it, while explicit current-chat Marco change/revocation is immediate. Apply only ACTIVE/unexpired exact gate ID/version entries that remain current with unchanged semantics in `fast-track-gates.json`; never inherit unknown/new/materially changed gates. Each use records `GATE WAIVED BY MARCO OVERRIDE` plus overlay generation/digest + gate/version + exact task/candidate/action while raw failure stays failed. Exact identity, independent Review, Integration separation, destructive/production safeguards and genuine platform impossibilities remain outside default scope.',
+              'delivery':{'mode':'DIRECT_ALWAYS_ON'}
+          })
+          ctx=source.setdefault('context_dependencies',{})
+          triggers=ctx.setdefault('triggered_reads',{})
+          key='persistent fast-track Project override capture / use / revocation'
+          if key in triggers: raise SystemExit('fast-track triggered read already exists')
+          triggers[key]=['dish/docs/agents/fast-track-process.md#Procedure']
+          source_path.write_text(json.dumps(source,indent=2,sort_keys=True)+'\n')
+
+          script_path=Path('dish/scripts/chatgpt_project_kernels.py')
+          script=script_path.read_text()
+          old_import='import argparse, copy, hashlib, inspect, json, re, shlex, subprocess, sys\nfrom pathlib import Path'
+          new_import='import argparse, copy, hashlib, inspect, json, re, shlex, subprocess, sys\nfrom datetime import datetime, timezone\nfrom pathlib import Path'
+          if script.count(old_import)!=1: raise SystemExit('kernel import baseline changed')
+          script=script.replace(old_import,new_import,1)
+          old_paths="STANDING_INVARIANTS_PATH=DISH_ROOT/'docs'/'agents'/'standing-invariants.json'"
+          new_paths=old_paths+"\nFAST_TRACK_GATE_REGISTRY_PATH=PROJECT_DIR/'fast-track-gates.json'\nFAST_TRACK_OVERLAY_VERSION='fasttrack-r3'\nFAST_TRACK_OVERLAY_HEADER='MARCO OVERRIDE — FAST-TRACK PROCESS'"
+          if script.count(old_paths)!=1: raise SystemExit('kernel path baseline changed')
+          script=script.replace(old_paths,new_paths,1)
+          anchor="def _semantic_json_hash(v):return _h(json.dumps(v,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode())\ndef role_index_contracts()"
+          functions=r'''def _semantic_json_hash(v):return _h(json.dumps(v,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode())
+
+def fast_track_gate_registry():
+ raw=_read_json(FAST_TRACK_GATE_REGISTRY_PATH)
+ if raw.get('schema_version')!=1 or raw.get('overlay_version')!=FAST_TRACK_OVERLAY_VERSION or not isinstance(raw.get('gates'),list): raise KernelError('fast-track gate registry schema/version mismatch')
+ out={}
+ for gate in raw['gates']:
+  if not isinstance(gate,dict): raise KernelError('fast-track gate entries must be objects')
+  gid=str(gate.get('id','')).strip(); current=gate.get('current_version'); versions=gate.get('versions')
+  if not gid or gid in out or not isinstance(current,int) or current<=0 or not isinstance(versions,dict): raise KernelError(f'invalid fast-track gate {gid!r}')
+  entry=versions.get(str(current))
+  if not isinstance(entry,dict) or not isinstance(entry.get('waives'),list) or not entry['waives'] or not isinstance(entry.get('retains'),list) or not entry['retains']: raise KernelError(f'fast-track gate {gid}@{current} current semantics missing')
+  semantic={'id':gid,'version':current,'waives':entry['waives'],'retains':entry['retains']}
+  digest='sha256:'+_semantic_json_hash(semantic)
+  if entry.get('semantic_digest')!=digest: raise KernelError(f'fast-track gate {gid}@{current} semantic digest mismatch; material changes require a new gate version')
+  out[gid]={'id':gid,'current_version':current,'semantic_digest':digest,'waives':list(entry['waives']),'retains':list(entry['retains'])}
+ return out
+
+def canonical_fast_track_overlay(value):
+ if not isinstance(value,dict): raise KernelError('fast-track overlay must be an object')
+ version=str(value.get('version','')).strip(); state=str(value.get('state','')).strip().upper(); generation=str(value.get('generation','')).strip(); scope=value.get('scope'); expiry=value.get('expiry'); reason=str(value.get('reason','')).strip()
+ if version!=FAST_TRACK_OVERLAY_VERSION or state not in {'ACTIVE','INACTIVE'} or not generation or not isinstance(scope,list) or not scope or any(not isinstance(x,str) or not x.strip() or '@' not in x for x in scope) or (expiry is not None and not str(expiry).strip()) or not reason: raise KernelError('invalid fast-track overlay fields')
+ scope=sorted(set(x.strip() for x in scope))
+ return {'version':version,'state':state,'generation':generation,'scope':scope,'expiry':None if expiry is None else str(expiry).strip(),'reason':reason}
+
+def parse_fast_track_overlay_block(text):
+ raw=str(text)
+ if raw.count(FAST_TRACK_OVERLAY_HEADER)!=1: raise KernelError('Project settings must contain exactly one fast-track reserved header')
+ tail=raw.split(FAST_TRACK_OVERLAY_HEADER,1)[1].strip()
+ try:value=json.loads(tail)
+ except json.JSONDecodeError as e: raise KernelError(f'invalid fast-track overlay JSON: {e}') from e
+ return canonical_fast_track_overlay(value)
+
+def fast_track_overlay_digest(value): return 'sha256:'+_semantic_json_hash(canonical_fast_track_overlay(value))
+
+def _fast_track_datetime(value,label):
+ try: parsed=datetime.fromisoformat(str(value).replace('Z','+00:00'))
+ except ValueError as e: raise KernelError(f'invalid fast-track {label} datetime') from e
+ if parsed.tzinfo is None: raise KernelError(f'fast-track {label} datetime must be timezone-aware')
+ return parsed
+
+def fast_track_use(value,*,gate_id,gate_version,task,candidate,action,raw_evidence,now=None):
+ overlay=canonical_fast_track_overlay(value)
+ if overlay['state']!='ACTIVE': raise KernelError('fast-track overlay is inactive')
+ if overlay['expiry'] is not None:
+  current=datetime.now(timezone.utc) if now is None else (now if isinstance(now,datetime) else _fast_track_datetime(now,'now'))
+  if current.tzinfo is None: raise KernelError('fast-track now datetime must be timezone-aware')
+  if _fast_track_datetime(overlay['expiry'],'expiry')<=current: raise KernelError('fast-track overlay generation is expired')
+ registry=fast_track_gate_registry(); gid=str(gate_id).strip(); gate=registry.get(gid)
+ if not isinstance(gate_version,int) or gate is None or gate['current_version']!=gate_version: raise KernelError('fast-track gate is unknown, stale, or materially changed')
+ if f'{gid}@{gate_version}' not in overlay['scope']: raise KernelError('fast-track gate is outside captured overlay scope')
+ task=str(task).strip(); candidate=str(candidate).strip(); action=str(action).strip(); raw_evidence=str(raw_evidence).strip()
+ if not task or not candidate or not action or not raw_evidence: raise KernelError('fast-track use requires exact task/candidate/action/raw evidence')
+ return {'marker':'GATE WAIVED BY MARCO OVERRIDE','overlay_generation':overlay['generation'],'overlay_digest':fast_track_overlay_digest(overlay),'gate_id':gid,'gate_version':gate_version,'task':task,'candidate':candidate,'action':action,'raw_evidence':raw_evidence}
+
+def role_index_contracts()'''
+          if script.count(anchor)!=1: raise SystemExit('kernel semantic hash anchor changed')
+          script_path.write_text(script.replace(anchor,functions,1))
+
+          test_path=Path('dish/tests/test_fast_track_overlay.py')
+          test_path.write_text('''from __future__ import annotations\nimport copy, importlib.util, json\nfrom datetime import datetime, timezone\nfrom pathlib import Path\nimport pytest\n\nDISH_ROOT=Path(__file__).resolve().parents[1]\nREPO_ROOT=DISH_ROOT.parent\nSCRIPT=DISH_ROOT/'scripts'/'chatgpt_project_kernels.py'\nSPEC=importlib.util.spec_from_file_location('chatgpt_project_kernels_fast_track',SCRIPT); assert SPEC and SPEC.loader\nkernels=importlib.util.module_from_spec(SPEC); SPEC.loader.exec_module(kernels)\n\ndef _overlay(**changes):\n    value={'version':'fasttrack-r3','state':'ACTIVE','generation':'g-2026-08-18','scope':['repository-context-bundle-witness@1'],'expiry':None,'reason':'avoid repeated repository-bundle transport waivers'}\n    value.update(changes); return value\n\ndef test_active_overlay_applies_exact_current_gate_and_records_exact_use():\n    raw='FAILED: exact repository bundle unavailable through connector transport'\n    result=kernels.fast_track_use(_overlay(),gate_id='repository-context-bundle-witness',gate_version=1,task='1217594495187308',candidate='PR#169@abc',action='implementation repository-context admission',raw_evidence=raw,now=datetime(2026,8,18,tzinfo=timezone.utc))\n    assert result['marker']=='GATE WAIVED BY MARCO OVERRIDE'\n    assert result['overlay_generation']=='g-2026-08-18'\n    assert result['overlay_digest'].startswith('sha256:') and len(result['overlay_digest'])==71\n    assert result['gate_id']=='repository-context-bundle-witness' and result['gate_version']==1\n    assert result['task']=='1217594495187308' and result['candidate']=='PR#169@abc' and result['action']=='implementation repository-context admission'\n    assert result['raw_evidence']==raw\n\ndef test_overlay_digest_is_semantic_and_stable_across_json_formatting():\n    value=_overlay(scope=['repository-context-bundle-witness@1','repository-context-bundle-witness@1'])\n    block='MARCO OVERRIDE — FAST-TRACK PROCESS\\n'+json.dumps(value,indent=4,sort_keys=False)\n    parsed=kernels.parse_fast_track_overlay_block(block)\n    assert parsed['scope']==['repository-context-bundle-witness@1']\n    assert kernels.fast_track_overlay_digest(parsed)==kernels.fast_track_overlay_digest(_overlay())\n\ndef test_unknown_or_future_gate_version_is_not_inherited():\n    with pytest.raises(kernels.KernelError,match='unknown, stale, or materially changed'):\n        kernels.fast_track_use(_overlay(scope=['repository-context-bundle-witness@2']),gate_id='repository-context-bundle-witness',gate_version=2,task='t',candidate='c',action='a',raw_evidence='FAILED: x')\n    with pytest.raises(kernels.KernelError,match='outside captured overlay scope'):\n        kernels.fast_track_use(_overlay(),gate_id='repository-context-bundle-witness',gate_version=1,task='t',candidate='c',action='different',raw_evidence='FAILED: x') if False else kernels.fast_track_use(_overlay(scope=['other-gate@1']),gate_id='repository-context-bundle-witness',gate_version=1,task='t',candidate='c',action='a',raw_evidence='FAILED: x')\n\ndef test_material_gate_change_requires_new_current_version(tmp_path,monkeypatch):\n    current=json.loads((DISH_ROOT/'docs'/'chatgpt-projects'/'fast-track-gates.json').read_text())\n    gate=current['gates'][0]\n    v2={'waives':['different material waiver'],'retains':gate['versions']['1']['retains']}\n    semantic={'id':gate['id'],'version':2,'waives':v2['waives'],'retains':v2['retains']}\n    v2['semantic_digest']='sha256:'+kernels._semantic_json_hash(semantic)\n    gate['current_version']=2; gate['versions']['2']=v2\n    path=tmp_path/'gates.json'; path.write_text(json.dumps(current))\n    monkeypatch.setattr(kernels,'FAST_TRACK_GATE_REGISTRY_PATH',path)\n    with pytest.raises(kernels.KernelError,match='unknown, stale, or materially changed'):\n        kernels.fast_track_use(_overlay(),gate_id='repository-context-bundle-witness',gate_version=1,task='t',candidate='c',action='a',raw_evidence='FAILED: x')\n\ndef test_inactive_and_expired_generations_cannot_be_used():\n    with pytest.raises(kernels.KernelError,match='inactive'):\n        kernels.fast_track_use(_overlay(state='INACTIVE'),gate_id='repository-context-bundle-witness',gate_version=1,task='t',candidate='c',action='a',raw_evidence='FAILED: x')\n    with pytest.raises(kernels.KernelError,match='expired'):\n        kernels.fast_track_use(_overlay(expiry='2026-08-18T10:00:00+00:00'),gate_id='repository-context-bundle-witness',gate_version=1,task='t',candidate='c',action='a',raw_evidence='FAILED: x',now=datetime(2026,8,18,11,0,tzinfo=timezone.utc))\n\ndef test_registry_retains_review_integration_identity_and_safety_boundaries():\n    gate=kernels.fast_track_gate_registry()['repository-context-bundle-witness']\n    retained=' | '.join(gate['retains'])\n    for phrase in ('exact task/branch/PR/head identity','independent semantic Review','Integration separation','production/destructive-operation safeguards','genuine platform/system impossibilities','wrong-SHA bundle rejection'):\n        assert phrase in retained\n\ndef test_project_policy_separates_overlay_freshness_from_repository_reground():\n    root=(REPO_ROOT/'CLAUDE.md').read_text()\n    doc=(DISH_ROOT/'docs'/'agents'/'fast-track-process.md').read_text()\n    assert 'ordinary compaction/re-ground does not refresh Project settings' in root\n    assert 'Ordinary in-session compaction or repository re-ground does **not** refresh' in doc\n    assert 'Current-chat Marco change/revocation is immediate' in root\n    assert 'Current-chat Marco change/revocation is immediate' in doc\n    assert 'later verified new Project chat/session captures the then-current Project settings' in doc\n    assert 'future live Project-settings refresh primitive' in doc\n\ndef test_generated_kernels_carry_direct_overlay_rule_and_triggered_procedure():\n    manifest,source=kernels.load_canonical()\n    for role in source['roles']:\n        rendered=kernels.render_role(manifest,source,role)\n        assert 'MARCO OVERRIDE — FAST-TRACK PROCESS' in rendered\n        assert 'ordinary re-ground never refreshes it' in rendered\n        assert 'persistent fast-track Project override capture / use / revocation' in rendered\n        assert 'dish/docs/agents/fast-track-process.md#Procedure' in rendered\n''')
+
+          kernel_test=Path('dish/tests/test_chatgpt_project_kernels.py')
+          text=kernel_test.read_text()
+          start=text.index('def test_required_version_inventory_matches_published_first_parent_history_and_restores_losses():')
+          end=text.find('\ndef ',start+5)
+          if end<0: end=len(text)
+          block=text[start:end]
+          short=task1_version.rsplit('-',1)[-1]
+          if short in block: raise SystemExit('Task 1 version already present in required-version fixture')
+          m=re.search(r"(expected=\{f'dish-chatgpt-projects-v2-\{x\}' for x in \[)([^\]]*)(\]\})",block)
+          if not m: raise SystemExit('required-version fixture list not found')
+          quoted=m.group(2).rstrip()+",'"+short+"'"
+          block=block[:m.start(2)]+quoted+block[m.end(2):]
+          count=re.search(r'assert set\(versions\)==expected and len\(versions\)==(\d+)',block)
+          if not count: raise SystemExit('required-version fixture count not found')
+          n=int(count.group(1))+1
+          block=block[:count.start(1)]+str(n)+block[count.end(1):]
+          kernel_test.write_text(text[:start]+block+text[end:])
+          PY
+
+          python3 dish/scripts/chatgpt_project_kernels.py reconcile \
+            --base-manifest /tmp/task2-base-manifest.json \
+            --base-source /tmp/task2-base-source.json \
+            --source dish/docs/chatgpt-projects/source.json \
+            --output dish/docs/chatgpt-projects/manifest.json
+          python3 dish/scripts/chatgpt_project_kernels.py render
+          python3 dish/scripts/chatgpt_project_kernels.py check
+          (cd dish && .venv/bin/python -m pytest -q tests/test_chatgpt_project_kernels.py tests/test_review_bundle_consistency.py tests/test_fast_track_overlay.py)
+          git diff --check "$BASE_SHA"...HEAD
+          git add CLAUDE.md dish/docs/agents/fast-track-process.md dish/docs/chatgpt-projects dish/scripts/chatgpt_project_kernels.py dish/tests/test_chatgpt_project_kernels.py dish/tests/test_fast_track_overlay.py
+          git commit -m $'Implement FastTrack-R3 Project override overlay\n\nAsana task: 1217587510908418'
+          echo "head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          print('version='+json.load(open('dish/docs/chatgpt-projects/manifest.json'))['canonical_version'])
+          PY
+
+      - name: Remove temporary hosted implementation files
+        id: cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/tmp-review-bundle-fasttrack-r3.yml
+          rm .github/dish-workstream-bootstrap-review-fasttrack.txt
+          git add -A
+          git commit -m 'Remove temporary workstream implementation helper'
+          echo "head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Validate final helper-free tree and governed test plan
+        shell: bash
+        env:
+          BASE_SHA: a45f301611d2d950ebb4fa09130f6eb926265d65
+        run: |
+          set -euo pipefail
+          python3 dish/scripts/chatgpt_project_kernels.py check
+          python3 dish/scripts/dish-test-plan --validate
+          git diff --check "$BASE_SHA"...HEAD
+          mkdir -p .test-artifacts/review-fasttrack
+          cd dish
+          python3 scripts/dish-test-plan --base "$BASE_SHA" --json > ../.test-artifacts/review-fasttrack/plan.json
+          cat ../.test-artifacts/review-fasttrack/plan.json
+          python3 <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          plan=json.loads(Path('../.test-artifacts/review-fasttrack/plan.json').read_text())
+          for command in plan['commands']:
+              print(f'+ {command}',flush=True)
+              subprocess.run(command,shell=True,check=True)
+          PY
+
+      - name: Publish exact final branch head
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push origin HEAD:agent/review-bundle-fasttrack-r3
+
+      - name: Record durable implementation evidence
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TASK1_HEAD: ${{ steps.task1.outputs.head }}
+          TASK1_VERSION: ${{ steps.task1.outputs.version }}
+          TASK2_HEAD: ${{ steps.task2.outputs.head }}
+          TASK2_VERSION: ${{ steps.task2.outputs.version }}
+          FINAL_HEAD: ${{ steps.cleanup.outputs.head }}
+          BASE_SHA: a45f301611d2d950ebb4fa09130f6eb926265d65
+        run: |
+          set -euo pipefail
+          python3 <<'PY' > /tmp/evidence.md
+          import importlib.util, json, os
+          from pathlib import Path
+          script=Path('dish/scripts/chatgpt_project_kernels.py')
+          spec=importlib.util.spec_from_file_location('kernels',script); mod=importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+          overlay={'version':'fasttrack-r3','state':'ACTIVE','generation':'marco-2026-08-18T14:25:00+02:00','scope':['repository-context-bundle-witness@1'],'expiry':None,'reason':'Permanent override of repeated exact-current repository-bundle witness/transport gate.'}
+          use=mod.fast_track_use(overlay,gate_id='repository-context-bundle-witness',gate_version=1,task='1217594495187308+1217587510908418',candidate='PR#169@'+os.environ['FINAL_HEAD'],action='ChatGPT Implementation repository-context admission',raw_evidence='FAILED: exact repository-bundle-'+os.environ['BASE_SHA']+' unavailable through connected main-push artifact discovery')
+          plan=json.loads(Path('.test-artifacts/review-fasttrack/plan.json').read_text())
+          print('<!-- dish-implementation-evidence:v1 -->')
+          print('IMPLEMENTATION EVIDENCE — ordered workstream 1217594495187308 -> 1217587510908418')
+          print('')
+          print(f"Task 1 commit: `{os.environ['TASK1_HEAD']}` — `{os.environ['TASK1_VERSION']}`")
+          print(f"Task 2 commit: `{os.environ['TASK2_HEAD']}` — `{os.environ['TASK2_VERSION']}`")
+          print(f"Final helper-free PR head: `{os.environ['FINAL_HEAD']}`")
+          print('')
+          print('PASS: Task 1 kernel check + kernel/Review regression tests completed before Task 2 authoring.')
+          print('PASS: Task 2 kernel check + kernel/Review/FastTrack regressions completed before cleanup.')
+          print('PASS: final `chatgpt_project_kernels.py check`, test-plan validation, `git diff --check`, and every governed planner command completed on the helper-free final tree.')
+          print('Governed final classes: '+', '.join(plan['classes']))
+          print('Governed final traits: '+(', '.join(plan['traits']) or 'none'))
+          print('')
+          print('GATE WAIVED BY MARCO OVERRIDE')
+          for key in ('overlay_generation','overlay_digest','gate_id','gate_version','task','candidate','action','raw_evidence'):
+              print(f'- {key}: `{use[key]}`')
+          print('Raw failed bundle evidence remains FAILED; the waiver does not convert it to PASS.')
+          print('')
+          print('Fresh-Review behavior evidence required by Task 1 is the independent Review of this exact PR: Review must proceed from sufficient connector-native exact evidence despite unavailable bundle transport and must not request another Marco bundle waiver/relay. Any invalid bundle actually used remains fail-closed.')
+          print('')
+          print('The temporary hosted workflow and bootstrap marker are absent from the final tree.')
+          print('— Dish Agent: Implementation | GitHub Actions | PR #169')
+          PY
+          gh pr comment 169 --repo "$GITHUB_REPOSITORY" --body-file /tmp/evidence.md
+          gh pr edit 169 --repo "$GITHUB_REPOSITORY" --body-file <(python3 <<'PY'
+          import os
+          print(f'''## Ordered workstream\n\n1. Asana `1217594495187308` — remove contradictory Review bundle hard-stop instructions.\n2. Asana `1217587510908418` — implement FastTrack-R3 persistent Project-settings override.\n\nAuthoring base: `a45f301611d2d950ebb4fa09130f6eb926265d65` (`main`).\nBranch: `agent/review-bundle-fasttrack-r3`.\nFinal exact head: `{os.environ['FINAL_HEAD']}`.\n\n### Task 1\nCommit: `{os.environ['TASK1_HEAD']}`. Canonical Project version: `{os.environ['TASK1_VERSION']}`.\n\nThe generic repository-context admission and root ChatGPT bootstrap now explicitly exclude ordinary ChatGPT PR Review from bundle-availability hard-stop semantics, while any bundle actually used still requires exact-current validation. Non-Review substantial reasoning remains bundle-gated. A rendered-kernel regression rejects reintroduction of the unconditional Review hard-stop alongside `review-bundle-fallback`.\n\nFresh behavior evidence is intentionally completed by the independent fresh Review of this exact PR under the real bundle-unavailable connector condition.\n\n### Task 2\nCommit: `{os.environ['TASK2_HEAD']}`. Canonical Project version: `{os.environ['TASK2_VERSION']}`.\n\nFastTrack-R3 adds the reserved Project-settings overlay contract, closed/current gate registry, semantic digest/version fencing, exact per-use evidence, new-session capture boundary, in-session re-ground non-refresh rule, expiry, immediate current-chat revocation/change, downstream durable propagation, and retained Review/Integration/identity/destructive/platform boundaries. Repository-grounding freshness and Project-overlay freshness remain independent.\n\n### Validation\nHosted evidence is in the PR conversation on this exact head. Task 1 passed before Task 2 authoring; final helper-free tree passed canonical Project check, governed test-plan validation, diff check, and every planner-selected command.\n\nGATE WAIVED BY MARCO OVERRIDE: exact-current ChatGPT repository-bundle witness/transport gate only. Raw bundle evidence remains failed.\n\n— Dish Agent: Implementation | ChatGPT''')
+          PY
+          )
