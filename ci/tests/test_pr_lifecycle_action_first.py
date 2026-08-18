@@ -180,12 +180,13 @@ def test_worker_long_horizon_omitted_reload_drives_real_governed_action_seams():
     assert not any("VERDICT:" in s["text"] for s in surface.stories)
     surface.notes=notes; reread=surface.get_task(design_context["task"]); current_digest=hashlib.sha256(reread["notes"].encode()).hexdigest()
     assert current_digest==design_context["design_digest"]
-    p.assert_worker_review_independent(surface.get_stories(design_context["task"]),digest,design)
+    design_records=[{"body":s["text"]} for s in surface.get_stories(design_context["task"])]
+    p.assert_worker_review_independent(design_records,digest,design)
     surface.add_comment(design_context["task"],"VERDICT: PASS")
     assert any(s["text"]=="VERDICT: PASS" for s in surface.stories)
 
     # override-sensitive action: execute the real fast-track gate; inactive authority stays rejected.
-    ft=_fast_track_module(); gate=ft.fast_track_gate_registry()["repository-context-bundle-witness"]; version=int(gate["current_version"]); semantic=gate["versions"][str(version)]["semantic_digest"]
+    ft=_fast_track_module(); gate=ft.fast_track_gate_registry()["repository-context-bundle-witness"]; version=int(gate["current_version"]); semantic=gate["semantic_digest"]
     overlay={"version":"fasttrack-r3","state":"ACTIVE","generation":"worker-omitted-packet-eval","scope":[f"repository-context-bundle-witness@{version}"],"gate_semantics":{f"repository-context-bundle-witness@{version}":semantic},"expiry":None,"reason":"behavioral qualification"}
     use=ft.fast_track_use(overlay,gate_id="repository-context-bundle-witness",gate_version=version,task="1217591724565043",candidate=f"PR#31@{base.NEW_HEAD}",action="worker omitted-packet override-sensitive qualification",raw_evidence="FAILED: bundle unavailable",now=datetime(2026,8,18,tzinfo=timezone.utc))
     assert use["marker"]=="GATE WAIVED BY MARCO OVERRIDE"
