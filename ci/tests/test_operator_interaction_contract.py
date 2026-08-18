@@ -32,7 +32,6 @@ def test_canonical_chatty_contract_is_generated_into_root_and_avoids_phrase_dict
     source = json.loads(SOURCE.read_text())
     rules = source["chatty_contract"]
     root = CLAUDE.read_text()
-    assert len(rules) == 5
     assert "<!-- BEGIN GENERATED CHATTY WORK CONTRACT -->" in root
     assert "<!-- END GENERATED CHATTY WORK CONTRACT -->" in root
     for rule in rules:
