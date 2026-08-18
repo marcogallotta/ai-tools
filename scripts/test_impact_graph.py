@@ -124,6 +124,42 @@ def _trusted_base_arbiter_union(
     return dict(raw)
 
 
+def _replay_base_arbiter_union(
+    base_envelope: object, candidate_envelope: object, *, paths: tuple[str, ...]
+) -> dict[str, object]:
+    """Build replay-only non-narrowing union evidence without candidate arbiter semantics.
+
+    Historical replay is a simulator, not certification authority. For replay cases
+    that name a graph self-change path, provide the same mechanically checkable
+    union shape that production receives from the independently executed BASE
+    arbiter. Never call candidate ``union_envelopes()`` to construct this fixture.
+    """
+    if not isinstance(base_envelope, dict) or not isinstance(candidate_envelope, dict):
+        raise GraphError("replay union requires object BASE and candidate envelopes")
+    base_obligations = base_envelope.get("obligations")
+    candidate_obligations = candidate_envelope.get("obligations")
+    if not isinstance(base_obligations, list) or not isinstance(candidate_obligations, list):
+        raise GraphError("replay union requires obligation arrays")
+    obligations = [*base_obligations, *candidate_obligations]
+    obligations.sort(
+        key=lambda item: (str(item["path"]), str(item["key"]), str(item["provenance"]))
+    )
+    semantic_keys = sorted({(str(item["path"]), str(item["key"])) for item in obligations})
+    raw = {
+        "format": "dish-test-obligation-union-v1",
+        "base_engine_identity": base_envelope.get("engine_identity"),
+        "candidate_engine_identity": candidate_envelope.get("engine_identity"),
+        "base_obligation_digest": _value_digest(base_obligations),
+        "candidate_obligation_digest": _value_digest(candidate_obligations),
+        "union_digest": _value_digest(obligations),
+        "semantic_keys": [list(value) for value in semantic_keys],
+        "obligations": obligations,
+    }
+    return _trusted_base_arbiter_union(
+        raw, base_envelope=base_envelope, candidate_envelope=candidate_envelope, paths=paths
+    )
+
+
 def _json(path: Path) -> dict[str, object]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -790,9 +826,16 @@ def replay(repo_root: Path = ROOT) -> dict[str, object]:
         paths = [str(value) for value in case["changed_paths"]]
         base = build_legacy_envelope(paths, provenance="base", repo_root=repo_root)
         candidate = build_legacy_envelope(paths, provenance="candidate", repo_root=repo_root)
+        normalized_paths = normalize_paths(paths)
+        replay_union = (
+            _replay_base_arbiter_union(base, candidate, paths=normalized_paths)
+            if set(normalized_paths) & GRAPH_SELF_PATHS
+            else None
+        )
         plan = build_graph_plan(
             paths, base_envelope=base, candidate_envelope=candidate,
             base_paths=paths, candidate_paths=paths, repo_root=repo_root,
+            base_arbiter_union=replay_union,
         )
         boundaries = set(plan["impact_fingerprint"]["execution_boundaries"])  # type: ignore[index]
         target_ids = set(plan["impact_fingerprint"]["target_ids"])  # type: ignore[index]
