@@ -2,7 +2,7 @@
 
 This is the standing contract for Dish implementation and fix agents. All implementation work inherits [`contributor-base.md`](contributor-base.md). Specialist roles that modify repository state inherit this contract as their implementation baseline unless their contract explicitly narrows authority.
 
-Task handoffs should contain only the task-specific goal, scope, exact base, constraints, and known evidence/dependencies.
+Task handoffs carry the task-specific goal, scope, constraints, and known evidence/dependencies. Routine implementation mechanics such as the canonical agent branch name and exact authoring-base SHA are agent-owned: when the owning task/objective and target repository are already authoritative, resolve and record those mechanics from live Git/GitHub instead of asking Marco to supply them.
 
 Implementation/fix work is distinct from review and final integration. The canonical lifecycle for new work is:
 
@@ -14,7 +14,7 @@ GitHub branch/commit/PR identity is the authoritative code artifact and review s
 
 Do not continuously poll `origin` while implementing. Establish the exact authoring base at task start and work against that known base.
 
-For local Claude Code/Codex implementation, the shared `tools/agent-worktree` lifecycle owns the normal freshness boundary. First creation verifies the supplied exact base ref + SHA against authoritative `origin` before it creates the owned branch/worktree. At resume and handoff it re-observes origin and the owned remote branch, but the stored authoring base does not change merely because the target branch moved. Remote-ahead or divergent owned branches require an explicit recovery decision; the tool must not automatically reset, merge, rebase, or force-push.
+For local Claude Code/Codex implementation, the shared `tools/agent-worktree` lifecycle owns the normal freshness boundary. First creation verifies the exact base ref + SHA recorded for the attempt against authoritative `origin` before it creates the owned branch/worktree. When the task/objective is already authoritative but those routine mechanics were not prefilled by orchestration, the Implementation agent resolves the current target/base, chooses the canonical branch, records them, and continues. At resume and handoff it re-observes origin and the owned remote branch, but the stored authoring base does not change merely because the target branch moved. Remote-ahead or divergent owned branches require an explicit recovery decision; the tool must not automatically reset, merge, rebase, or force-push.
 
 Fetch/synchronize during implementation only when:
 
@@ -26,13 +26,15 @@ Do not update task state merely because unrelated commits appear on GitHub.
 
 ## Start from the supplied authority
 
-Use the exact authoritative source supplied with the task. For repository work, record the exact base commit SHA. Do not invent a different source identity.
+Use the exact authoritative task/objective and source identity available from the request plus live authority. For repository work, record the exact base commit SHA. Do not invent a different source identity.
+
+When the implementation objective and owning task are already authoritative, missing prefilled routine mechanics are **not** a Marco decision boundary. Do not stop to ask Marco for an authorized branch name or exact base SHA merely to satisfy the internal assignment tuple. Resolve the current target/base from live Git/GitHub, choose the normal `agent/<short-task-slug>` branch unless a durable existing lineage says otherwise, record the resulting assignment identity, and acquire the worktree claim yourself. Stop only for a real contradiction or ambiguity — for example a conflicting live owner, branch/PR lineage mismatch, or incompatible durable base/claim state that routine reconciliation cannot resolve.
 
 Before changing Dish code, follow root `CLAUDE.md` and start at `dish/docs/architecture/index.md` for subsystem routing.
 
 Do not silently substitute another base or assume unmerged parallel work has landed.
 
-Every repository-changing implementation/fix assignment uses the single canonical handoff contract at [`templates/implementation-handoff.md`](templates/implementation-handoff.md). Treat repository + Asana task GID + authorized branch + existing PR/expected head as one assignment identity. Matching task identity on a different branch or PR never authorizes adopting or modifying that lineage. Local Claude Code/Codex work acquires the matching `tools/agent-worktree claim` before touching task-owned worktree or branch state; replacement/fix/publication handoffs reconcile the same claim before takeover.
+Every repository-changing implementation/fix assignment uses the single canonical handoff contract at [`templates/implementation-handoff.md`](templates/implementation-handoff.md). Treat repository + Asana task GID + authorized branch + existing PR/expected head as one assignment identity. The tuple must be recorded before task-owned branch/worktree mutation, but routine branch/base fields are implementation mechanics and may be derived by the authorized agent from current authority; they are not a standing operator-input ceremony. Matching task identity on a different branch or PR never authorizes adopting or modifying that lineage. Local Claude Code/Codex work acquires the matching `tools/agent-worktree claim` before touching task-owned worktree or branch state; replacement/fix/publication handoffs reconcile the same claim before takeover.
 
 Before returning an assigned implementation as no-op/already-fixed/not-reproducible, apply the inherited assigned-task dismissal gate to the owning task's notes and material history; current source/runtime health alone is not enough to erase a recorded historical defect. Before declaring a routine authorized implementation/publication action blocked, apply the inherited authorized-fallback gate and verify any state-changing fallback before reporting success.
 
@@ -65,7 +67,7 @@ A Review BLOCK fix round remains bound to the exact current `(head, formal BLOCK
 
 For new work:
 
-1. create or take ownership of the implementation branch from the exact supplied base;
+1. create or take ownership of the implementation branch from the exact recorded authoring base;
 2. make the smallest coherent change that satisfies the task;
 3. commit/publish coherent work on the owned branch;
 4. open a **draft pull request** early when useful for durable Git/PR identity;
