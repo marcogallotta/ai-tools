@@ -1,6 +1,7 @@
 """Durable local-only Integration handoff and single-owner execution fence."""
 from __future__ import annotations
 
+import argparse
 from contextlib import AbstractContextManager
 from datetime import datetime, timezone
 import fcntl
@@ -9,9 +10,10 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import socket
 import subprocess
-import shlex
+import sys
 import tempfile
 from typing import Any, Mapping
 import uuid
@@ -22,6 +24,9 @@ from pr_lifecycle_support import FULL_SHA_RE, LifecycleError
 HANDOFF_MARKER = "dish-local-integration-handoff:v1"
 CLAIM_SCHEMA = "dish-local-integration-claim-v1"
 HANDOFF_SCHEMA = "dish-pr-local-integration-v1"
+ATTEMPT_RESULT_SCHEMA = "dish-integration-attempt-result-v1"
+MAX_INTEGRATION_ATTEMPTS = 3
+ATTEMPT_RETENTION = 5
 _PHASES = {
     "claimed",
     "certifying",
@@ -35,6 +40,23 @@ _PHASES = {
     "head-changed",
 }
 _MARKER_RE = re.compile(r"<!--\s*dish-local-integration-handoff:v1\s+(?P<fields>.*?)\s*-->", re.I | re.S)
+_TRANSIENT_TOKENS = (
+    "http 429",
+    "http 500",
+    "http 502",
+    "http 503",
+    "http 504",
+    "rate limit",
+    "timed out",
+    "timeout",
+    "connection reset",
+    "connection refused",
+    "temporary failure",
+    "temporarily unavailable",
+    "service unavailable",
+    "bad gateway",
+    "gateway timeout",
+)
 
 
 def _now() -> str:
@@ -99,6 +121,57 @@ def _read(path: Path) -> dict[str, Any] | None:
     return value
 
 
+def _pid_alive(pid: Any) -> bool:
+    try:
+        value = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if value <= 0:
+        return False
+    try:
+        os.kill(value, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _lock_held(path: Path) -> bool:
+    _ensure_root(path.parent)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    handle = os.fdopen(fd, "r+")
+    try:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return False
+    finally:
+        handle.close()
+
+
+def _tail(path: Path, limit: int = 32768) -> str:
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            size = handle.tell()
+            handle.seek(max(0, size - limit))
+            return handle.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def transient_infrastructure_reason(stdout_path: str | None, stderr_path: str | None) -> str | None:
+    text = "\n".join(
+        _tail(Path(value).expanduser().resolve())
+        for value in (stderr_path, stdout_path)
+        if value
+    ).lower()
+    return next((token for token in _TRANSIENT_TOKENS if token in text), None)
+
+
 def handoff_key(*, repository: str, pr_number: int, branch: str, head: str, review_id: int, main_sha: str) -> str:
     raw = f"{repository}|{pr_number}|{branch}|{head}|{review_id}|{main_sha}".encode("utf-8")
     return hashlib.sha256(raw).hexdigest()[:24]
@@ -151,6 +224,57 @@ def find_handoff(
     return matches[-1]
 
 
+def load_attempt_result(state: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if not state:
+        return None
+    raw_path = state.get("attempt_result_path")
+    if not raw_path:
+        return None
+    path = Path(str(raw_path)).expanduser().resolve()
+    if path.parent != state_root() or path.suffix != ".json":
+        raise LifecycleError("Integration attempt result path is outside the repository-owned state root")
+    result = _read(path)
+    if result is None or result.get("schema") != ATTEMPT_RESULT_SCHEMA:
+        return None
+    if result.get("claim_id") != state.get("claim_id"):
+        raise LifecycleError("Integration attempt result does not match its durable claim")
+    return result
+
+
+def finalize_attempt_result(
+    result: Mapping[str, Any],
+    *,
+    outcome: str,
+    retryable: bool,
+    reason: str,
+    target_proof: Mapping[str, Any] | None = None,
+    next_owner: str | None = None,
+    next_action: str | None = None,
+) -> dict[str, Any]:
+    path = Path(str(result.get("result_path") or "")).expanduser().resolve()
+    if path.parent != state_root() or path.suffix != ".json":
+        raise LifecycleError("Integration attempt result path is outside the repository-owned state root")
+    current = _read(path)
+    if current is None or current.get("schema") != ATTEMPT_RESULT_SCHEMA:
+        raise LifecycleError("Integration attempt result disappeared before classification")
+    current.update(
+        {
+            "outcome": outcome,
+            "retryable": bool(retryable),
+            "reason": reason,
+            "classified_at": _now(),
+        }
+    )
+    if target_proof is not None:
+        current["target_proof"] = dict(target_proof)
+    if next_owner is not None:
+        current["next_owner"] = next_owner
+    if next_action is not None:
+        current["next_action"] = next_action
+    _atomic_write(path, current)
+    return current
+
+
 class LocalIntegrationFence(AbstractContextManager["LocalIntegrationFence"]):
     """One durable, crash-recoverable local owner for an exact PR/head Integration run.
 
@@ -171,6 +295,7 @@ class LocalIntegrationFence(AbstractContextManager["LocalIntegrationFence"]):
         main_sha: str,
         handoff_comment_id: int,
         handoff_key_value: str,
+        target_branch: str | None = None,
         root: Path | None = None,
     ) -> None:
         if pr_number <= 0 or review_id <= 0 or handoff_comment_id <= 0:
@@ -184,6 +309,7 @@ class LocalIntegrationFence(AbstractContextManager["LocalIntegrationFence"]):
         self.review_id = review_id
         self.task_ids = list(task_ids)
         self.main_sha = main_sha.lower()
+        self.target_branch = str(target_branch or "").strip() or "main"
         self.handoff_comment_id = handoff_comment_id
         self.handoff_key = handoff_key_value
         self.root = (root or state_root()).resolve()
@@ -192,6 +318,25 @@ class LocalIntegrationFence(AbstractContextManager["LocalIntegrationFence"]):
         self.lock_path = self.root / f"{prefix}.lock"
         self._handle = None
         self.state: dict[str, Any] | None = None
+
+    def recovery_state(self) -> dict[str, Any] | None:
+        return _read(self.state_path)
+
+    def liveness(self) -> dict[str, Any]:
+        state = self.recovery_state() or {}
+        lock_held = _lock_held(self.lock_path)
+        worker_alive = _pid_alive(state.get("worker_pid"))
+        child_alive = _pid_alive(state.get("child_pid"))
+        process_alive = worker_alive or child_alive
+        return {
+            "lock_held": lock_held,
+            "worker_alive": worker_alive,
+            "child_alive": child_alive,
+            "process_alive": process_alive,
+            "running": bool(lock_held and process_alive),
+            "worker_pid": state.get("worker_pid"),
+            "child_pid": state.get("child_pid"),
+        }
 
     def acquire(self) -> bool:
         _ensure_root(self.root)
@@ -205,9 +350,6 @@ class LocalIntegrationFence(AbstractContextManager["LocalIntegrationFence"]):
         self._handle = handle
         prior = _read(self.state_path)
         if prior is not None:
-            # The lock/state path is already scoped to the exact PR/head. Only durable
-            # owner identity is immutable across generations. Review/main/handoff data
-            # are live authority snapshots and may legitimately change between attempts.
             expected = {
                 "schema": CLAIM_SCHEMA,
                 "repository": self.repository,
@@ -221,6 +363,12 @@ class LocalIntegrationFence(AbstractContextManager["LocalIntegrationFence"]):
                     raise LifecycleError(
                         f"local Integration recovery claim identity changed at {key}: {prior.get(key)!r} != {value!r}"
                     )
+            prior_target = str(prior.get("target_branch") or "").strip()
+            if prior_target and prior_target != self.target_branch:
+                self.release()
+                raise LifecycleError(
+                    f"local Integration recovery target changed: {prior_target!r} != {self.target_branch!r}"
+                )
         generation = int(prior.get("generation") or 0) + 1 if prior else 1
         claim_id = str(uuid.uuid4())
         history = list(prior.get("history") or []) if prior else []
@@ -238,8 +386,12 @@ class LocalIntegrationFence(AbstractContextManager["LocalIntegrationFence"]):
                 "review_id": prior.get("review_id"),
                 "task_ids": list(prior.get("task_ids") or []),
                 "main_sha": prior.get("main_sha"),
+                "target_branch": prior.get("target_branch"),
                 "handoff_comment_id": prior.get("handoff_comment_id"),
                 "handoff_key": prior.get("handoff_key"),
+                "attempt_id": prior.get("attempt_id"),
+                "attempt_result_path": prior.get("attempt_result_path"),
+                "process_exit_code": prior.get("process_exit_code"),
             }
             history.append({**recovery, "superseded_at": _now()})
         self.state = {
@@ -251,6 +403,7 @@ class LocalIntegrationFence(AbstractContextManager["LocalIntegrationFence"]):
             "review_id": self.review_id,
             "task_ids": self.task_ids,
             "main_sha": self.main_sha,
+            "target_branch": self.target_branch,
             "handoff_comment_id": self.handoff_comment_id,
             "handoff_key": self.handoff_key,
             "claim_id": claim_id,
@@ -281,7 +434,18 @@ class LocalIntegrationFence(AbstractContextManager["LocalIntegrationFence"]):
         current = _read(self.state_path)
         if current is None or current.get("claim_id") != self.state.get("claim_id"):
             raise LifecycleError("local Integration claim disappeared or changed while owned")
-        return {**current, "state_path": str(self.state_path)}
+        return {**current, "state_path": str(self.state_path), "lock_path": str(self.lock_path)}
+
+    def update(self, **fields: Any) -> dict[str, Any]:
+        if self.state is None:
+            raise LifecycleError("local Integration fence is not acquired")
+        current = _read(self.state_path)
+        if current is None or current.get("claim_id") != self.state.get("claim_id"):
+            raise LifecycleError("local Integration claim changed while owned")
+        current.update(fields)
+        _atomic_write(self.state_path, current)
+        self.state = current
+        return current
 
     def finish(
         self,
@@ -316,6 +480,12 @@ class LocalIntegrationFence(AbstractContextManager["LocalIntegrationFence"]):
         _atomic_write(self.state_path, current)
         self.state = current
 
+    def detach(self) -> None:
+        """Drop only this process' FD after a worker inherited it; never unlock the shared flock."""
+        if self._handle is not None:
+            self._handle.close()
+            self._handle = None
+
     def release(self) -> None:
         if self._handle is not None:
             try:
@@ -334,17 +504,13 @@ class LocalIntegrationFence(AbstractContextManager["LocalIntegrationFence"]):
 
 
 class LocalIntegrationLauncher:
-    """Run the configured local Integration agent while preserving the fence across parent failure.
-
-    For final Integration the inherited lock FD keeps the kernel flock alive until the
-    child exits even if the dispatcher process crashes. Certification may use the same
-    launcher without a lock FD because it is non-landing evidence execution.
-    """
+    """Run local Integration while preserving real flock ownership and complete attempt evidence."""
 
     def __init__(self, command: str | None) -> None:
         self.command = command
 
     def dispatch(self, context: dict[str, Any], *, lock_fd: int | None = None) -> None:
+        """Synchronous path retained for bounded local certification."""
         if not self.command:
             raise LifecycleError("local Integration launcher command is unavailable")
         env = os.environ.copy()
@@ -372,6 +538,195 @@ class LocalIntegrationLauncher:
                 f"local Integration launcher failed with exit {completed.returncode}"
                 f"{': ' + detail if detail else ''}"
             )
+
+    @staticmethod
+    def _prune_attempt_artifacts(root: Path, prefix: str) -> None:
+        results = sorted(root.glob(f"{prefix}.attempt-*.json"), key=lambda path: path.stat().st_mtime, reverse=True)
+        for stale in results[ATTEMPT_RETENTION:]:
+            stem = stale.with_suffix("")
+            for path in (
+                stale,
+                Path(str(stem) + ".stdout.log"),
+                Path(str(stem) + ".stderr.log"),
+                Path(str(stem) + ".context.json"),
+            ):
+                try:
+                    path.unlink()
+                except FileNotFoundError:
+                    pass
+
+    def dispatch_background(self, context: dict[str, Any], *, fence: LocalIntegrationFence) -> dict[str, Any]:
+        """Start one fenced worker and return immediately so the controller can keep reconciling."""
+        if not self.command:
+            raise LifecycleError("local Integration launcher command is unavailable")
+        claim = fence.payload()
+        generation = int(claim["generation"])
+        if generation > MAX_INTEGRATION_ATTEMPTS:
+            raise LifecycleError(
+                f"bounded Integration attempt budget exhausted ({MAX_INTEGRATION_ATTEMPTS}) for this exact PR/head"
+            )
+        root = fence.root
+        prefix = fence.state_path.stem
+        attempt_id = f"{claim['claim_id']}:{generation}"
+        base = root / f"{prefix}.attempt-{generation}"
+        context_path = Path(str(base) + ".context.json")
+        result_path = Path(str(base) + ".json")
+        stdout_path = Path(str(base) + ".stdout.log")
+        stderr_path = Path(str(base) + ".stderr.log")
+        _atomic_write(context_path, context)
+        fence.update(
+            attempt_id=attempt_id,
+            attempt_result_path=str(result_path),
+            attempt_context_path=str(context_path),
+            stdout_path=str(stdout_path),
+            stderr_path=str(stderr_path),
+            phase="claimed",
+            status="active",
+            next_action="Integration worker is starting; controller reconciliation remains independent",
+        )
+        worker_command = [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "_worker",
+            "--command",
+            self.command,
+            "--context-path",
+            str(context_path),
+            "--result-path",
+            str(result_path),
+            "--stdout-path",
+            str(stdout_path),
+            "--stderr-path",
+            str(stderr_path),
+            "--claim-path",
+            str(fence.state_path),
+            "--claim-id",
+            str(claim["claim_id"]),
+            "--attempt-id",
+            attempt_id,
+            "--lock-fd",
+            str(fence.lock_fd()),
+        ]
+        try:
+            worker = subprocess.Popen(
+                worker_command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                close_fds=True,
+                pass_fds=(fence.lock_fd(),),
+            )
+        except OSError as exc:
+            raise LifecycleError(f"cannot start fenced Integration worker: {exc}") from exc
+        fence.update(
+            worker_pid=worker.pid,
+            worker_started_at=_now(),
+            next_action="Integration child is running under the inherited flock; controller continues reconciliation",
+        )
+        fence.detach()
+        self._prune_attempt_artifacts(root, prefix)
+        return {
+            "attempt_id": attempt_id,
+            "generation": generation,
+            "worker_pid": worker.pid,
+            "result_path": str(result_path),
+            "stdout_path": str(stdout_path),
+            "stderr_path": str(stderr_path),
+        }
+
+
+def _update_worker_claim(claim_path: Path, claim_id: str, **fields: Any) -> None:
+    state = _read(claim_path)
+    if state is None or state.get("schema") != CLAIM_SCHEMA or state.get("claim_id") != claim_id:
+        raise LifecycleError("Integration worker claim disappeared or changed")
+    state.update(fields)
+    state["checkpointed_at"] = _now()
+    _atomic_write(claim_path, state)
+
+
+def _worker(
+    *,
+    command: str,
+    context_path: Path,
+    result_path: Path,
+    stdout_path: Path,
+    stderr_path: Path,
+    claim_path: Path,
+    claim_id: str,
+    attempt_id: str,
+    lock_fd: int,
+) -> int:
+    try:
+        os.fstat(lock_fd)
+    except OSError as exc:
+        raise LifecycleError("Integration worker received an invalid inherited fence fd") from exc
+    context = _read(context_path)
+    if context is None:
+        raise LifecycleError("Integration worker context is missing")
+    started_at = _now()
+    env = os.environ.copy()
+    env["DISH_LOCAL_INTEGRATION_LOCK_FD"] = str(lock_fd)
+    with stdout_path.open("w", encoding="utf-8") as stdout_handle, stderr_path.open("w", encoding="utf-8") as stderr_handle:
+        child = subprocess.Popen(
+            shlex.split(command),
+            stdin=subprocess.PIPE,
+            stdout=stdout_handle,
+            stderr=stderr_handle,
+            text=True,
+            env=env,
+            close_fds=True,
+            pass_fds=(lock_fd,),
+        )
+        _update_worker_claim(
+            claim_path,
+            claim_id,
+            worker_pid=os.getpid(),
+            child_pid=child.pid,
+            phase="premerge",
+            next_action="Integration child is active under real process + flock evidence",
+        )
+        child.communicate(json.dumps(context))
+        exit_code = int(child.returncode)
+    transient = transient_infrastructure_reason(str(stdout_path), str(stderr_path))
+    terminal_detail = (_tail(stderr_path) or _tail(stdout_path)).strip()[-2000:]
+    outcome = "PROCESS_EXIT_ZERO" if exit_code == 0 else "PROCESS_FAILED"
+    retryable = bool(exit_code != 0 and transient)
+    result = {
+        "schema": ATTEMPT_RESULT_SCHEMA,
+        "attempt_id": attempt_id,
+        "claim_id": claim_id,
+        "generation": int((_read(claim_path) or {}).get("generation") or 0),
+        "repository": context.get("repository"),
+        "task_ids": list(context.get("task_ids") or []),
+        "pull_request": dict(context.get("pull_request") or {}),
+        "target": dict(context.get("target") or {}),
+        "started_at": started_at,
+        "finished_at": _now(),
+        "process_exit_code": exit_code,
+        "stdout_path": str(stdout_path),
+        "stderr_path": str(stderr_path),
+        "result_path": str(result_path),
+        "outcome": outcome,
+        "retryable": retryable,
+        "terminal_detail": terminal_detail,
+        "reason": (
+            terminal_detail
+            if terminal_detail
+            else ("process exited zero; authoritative effect readback still required" if exit_code == 0 else f"process exited {exit_code}")
+        ),
+    }
+    _atomic_write(result_path, result)
+    _update_worker_claim(
+        claim_path,
+        claim_id,
+        status="returned",
+        phase="returned",
+        child_pid=child.pid,
+        process_exit_code=exit_code,
+        attempt_result_path=str(result_path),
+        next_action="controller must classify the durable attempt result against live authoritative effect readback",
+    )
+    return 0
 
 
 def checkpoint_claim(
@@ -419,3 +774,43 @@ def checkpoint_claim(
         state["merge_sha"] = merge_sha.lower()
     _atomic_write(path, state)
     return state
+
+
+def _worker_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("mode")
+    parser.add_argument("--command", required=True)
+    parser.add_argument("--context-path", required=True)
+    parser.add_argument("--result-path", required=True)
+    parser.add_argument("--stdout-path", required=True)
+    parser.add_argument("--stderr-path", required=True)
+    parser.add_argument("--claim-path", required=True)
+    parser.add_argument("--claim-id", required=True)
+    parser.add_argument("--attempt-id", required=True)
+    parser.add_argument("--lock-fd", required=True, type=int)
+    return parser
+
+
+def _main() -> int:
+    args = _worker_parser().parse_args()
+    if args.mode != "_worker":
+        raise LifecycleError(f"unsupported local Integration helper mode: {args.mode!r}")
+    return _worker(
+        command=args.command,
+        context_path=Path(args.context_path).expanduser().resolve(),
+        result_path=Path(args.result_path).expanduser().resolve(),
+        stdout_path=Path(args.stdout_path).expanduser().resolve(),
+        stderr_path=Path(args.stderr_path).expanduser().resolve(),
+        claim_path=Path(args.claim_path).expanduser().resolve(),
+        claim_id=args.claim_id,
+        attempt_id=args.attempt_id,
+        lock_fd=args.lock_fd,
+    )
+
+
+if __name__ == "__main__":  # pragma: no cover - exercised through the spawned worker path
+    try:
+        raise SystemExit(_main())
+    except LifecycleError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(2)
