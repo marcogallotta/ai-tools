@@ -88,3 +88,8 @@ def protected_repo(tmp_path, destructive_op_guard, monkeypatch):
 @pytest.fixture
 def agent_reground():
     return load_hook_module("agent-reground")
+
+
+@pytest.fixture
+def agent_grounding():
+    return load_hook_module("agent-grounding")
