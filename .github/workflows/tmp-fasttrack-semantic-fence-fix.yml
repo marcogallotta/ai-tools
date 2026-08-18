@@ -1,0 +1,142 @@
+name: Temporary FastTrack semantic-fence fix
+
+on:
+  pull_request:
+    branches: [main]
+    types: [synchronize]
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+jobs:
+  fix:
+    if: github.event.pull_request.head.ref == 'agent/review-bundle-fasttrack-r3'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Gate exact launch commit
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          subject="$(git log -1 --pretty=%s)"
+          if [[ "$subject" == "Launch FastTrack semantic-fence fix" ]]; then
+            echo 'run=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'run=false' >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Resolve canonical Python version
+        if: steps.gate.outputs.run == 'true'
+        id: python-bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/dependency_bundle.py expected \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Setup canonical Python
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ steps.python-bundle.outputs.python_version }}
+
+      - name: Recreate canonical Python environments
+        if: steps.gate.outputs.run == 'true'
+        uses: ./.github/actions/setup-python-bundle
+        with:
+          github-token: ${{ github.token }}
+
+      - name: Author focused semantic fence fix
+        if: steps.gate.outputs.run == 'true'
+        id: semantic
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/tmp-fasttrack-semantic-fence-fix.sh
+          git diff --check
+          git config user.name 'Dish Agent'
+          git config user.email 'dish-agent@users.noreply.github.com'
+          git add CLAUDE.md dish/docs/agents/fast-track-process.md dish/scripts/chatgpt_project_kernels.py dish/tests/test_fast_track_overlay.py
+          git commit -m $'Fix FastTrack gate semantic immutability fence\n\nAsana task: 1217587510908418\nReview BLOCK: PRR_kwDOTccGWc8AAAABJ71VUA'
+          echo "head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build exact prospective helper-free tree
+        if: steps.gate.outputs.run == 'true'
+        id: prospective
+        shell: bash
+        env:
+          BASE_SHA: ae0c7366429426eb8df02969adf8157b33a61a75
+          SEMANTIC_HEAD: ${{ steps.semantic.outputs.head }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SEMANTIC_HEAD"
+          rm .github/workflows/tmp-fasttrack-semantic-fence-fix.yml
+          rm scripts/tmp-fasttrack-semantic-fence-fix.sh
+          git add -A
+          git commit -m 'Prospective helper-free FastTrack fence validation tree'
+          tested_tree="$(git rev-parse HEAD^{tree})"
+          echo "tested_tree=$tested_tree" >> "$GITHUB_OUTPUT"
+
+          python3 dish/scripts/chatgpt_project_kernels.py check
+          python3 dish/scripts/dish-test-plan --validate
+          git diff --check "$BASE_SHA"...HEAD
+          cd dish
+          .venv/bin/python -m pytest -q tests/test_fast_track_overlay.py tests/test_review_bundle_consistency.py tests/test_chatgpt_project_kernels.py
+          python3 scripts/dish-test-plan --base "$BASE_SHA" --json > ../.test-artifacts/fasttrack-fence-plan.json
+          python3 <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          plan=json.loads(Path('../.test-artifacts/fasttrack-fence-plan.json').read_text())
+          print(json.dumps(plan,indent=2,sort_keys=True))
+          for command in plan['commands']:
+              print(f'+ {command}',flush=True)
+              subprocess.run(command,shell=True,check=True)
+          PY
+
+      - name: Publish semantic fix head only
+        if: steps.gate.outputs.run == 'true'
+        shell: bash
+        env:
+          SEMANTIC_HEAD: ${{ steps.semantic.outputs.head }}
+        run: |
+          set -euo pipefail
+          git reset --hard "$SEMANTIC_HEAD"
+          git push origin "$SEMANTIC_HEAD":agent/review-bundle-fasttrack-r3
+
+      - name: Record focused fix evidence
+        if: steps.gate.outputs.run == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SEMANTIC_HEAD: ${{ steps.semantic.outputs.head }}
+          TESTED_TREE: ${{ steps.prospective.outputs.tested_tree }}
+        run: |
+          set -euo pipefail
+          cat > /tmp/evidence.md <<EOF
+          FOCUSED IMPLEMENTATION FIX — FastTrack semantic immutability fence
+
+          Review BLOCK: \`PRR_kwDOTccGWc8AAAABJ71VUA\` on old head \`032c7db3946111376af2533ea5bf5b919dd7df3d\`.
+          Semantic fix head: \`$SEMANTIC_HEAD\`.
+          Exact prospective helper-free tested tree: \`$TESTED_TREE\`.
+
+          The persisted Project overlay now binds each scoped \`gate@version\` to the exact authorized gate semantic digest. Use compares that persisted digest with the current registry digest, and the durable consumed-waiver record carries the gate semantic digest. A same-version \`waives\`/\`retains\` rewrite remains rejected even if the registry's self-digest is recomputed in place; digestless legacy \`gate@1\` scope is not accepted as persistent authority. A genuine material change requires a new gate version plus an updated overlay semantic binding, or an exact ordinary Marco override.
+
+          PASS: canonical Project kernel check.
+          PASS: focused FastTrack + Task 1 Review-bundle + kernel regressions.
+          PASS: governed selector validation, diff check, and every planner-selected command on the exact prospective helper-free tree.
+
+          Temporary workflow/script are intentionally still present on the published semantic head because Actions cannot delete workflow files. Implementation will remove them connector-side and require the final cleanup head tree to equal \`$TESTED_TREE\` before returning the new exact head for FOCUSED RECHECK.
+
+          GATE WAIVED BY MARCO OVERRIDE: repository-context bundle witness/transport only; raw bundle evidence remains FAILED. No Review/Integration/exact-identity/safety gate is waived.
+
+          — Dish Agent: Implementation | ChatGPT
+          EOF
+          gh pr comment 169 --repo "$GITHUB_REPOSITORY" --body-file /tmp/evidence.md
