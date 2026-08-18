@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Own the long-running local process for the existing PR lifecycle watcher."""
+"""Own the long-running local process for the PR lifecycle watcher."""
 from __future__ import annotations
 
 import argparse
@@ -38,6 +38,7 @@ def _paths(root: Path | None = None) -> dict[str, Path]:
         "state": base / "controller.json",
         "lock": base / "controller.lock",
         "log": base / "controller.log",
+        "projection": base / "lifecycle.json",
     }
 
 
@@ -116,12 +117,14 @@ def _ps(pid: int) -> tuple[str, str]:
     return (" ".join(fields[:5]), fields[5]) if len(fields) == 6 else ("", "")
 
 
-def _watcher_command() -> list[str]:
+def _watcher_command(paths: dict[str, Path] | None = None) -> list[str]:
+    projection = (paths or _paths())["projection"]
     return [
         sys.executable,
         str(WATCHER),
         "--repo", "marcogallotta/ai-tools",
         "--http-timeout", str(HTTP_TIMEOUT),
+        "--projection-path", str(projection),
         "--integration-authority",
         "--local-integration-launcher", str(INTEGRATION_LAUNCHER),
         "watch", "--dispatch", "--interval", str(INTERVAL), "--format", "table",
@@ -239,8 +242,10 @@ def _snapshot(paths: dict[str, Path]) -> dict[str, Any]:
         status = "unmanaged-watcher"
     elif not supervisor_live:
         status = "stopped"
-    return {**state, "status": status, "supervisor_live": supervisor_live, "watcher_live": watcher_live,
-            "unmanaged_watchers": unmanaged, "log_path": str(paths["log"])}
+    return {
+        **state, "status": status, "supervisor_live": supervisor_live, "watcher_live": watcher_live,
+        "unmanaged_watchers": unmanaged, "log_path": str(paths["log"]), "projection_path": str(paths["projection"]),
+    }
 
 
 def _render(value: dict[str, Any]) -> str:
@@ -249,6 +254,8 @@ def _render(value: dict[str, Any]) -> str:
         if value.get(key):
             fields.append(f"{key}={value[key]}")
     fields.append(f"log={value['log_path']}")
+    if value.get("projection_path"):
+        fields.append(f"projection={value['projection_path']}")
     if value.get("unmanaged_watchers"):
         fields.append("unmanaged_watchers=" + ",".join(map(str, value["unmanaged_watchers"])))
     if value.get("restart_count"):
@@ -372,7 +379,7 @@ def supervise(paths: dict[str, Path], run_id: str) -> int:
     while not stopping:
         started = time.monotonic()
         try:
-            child = subprocess.Popen(_watcher_command(), cwd=str(ROOT))
+            child = subprocess.Popen(_watcher_command(paths), cwd=str(ROOT))
         except OSError as exc:
             crash_attempt += 1
             transient_attempt = 0

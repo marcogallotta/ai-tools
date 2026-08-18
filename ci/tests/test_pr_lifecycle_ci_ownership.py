@@ -224,6 +224,7 @@ def test_terminal_state_labels_are_distinct_and_role_aware():
         pr_lifecycle.LifecycleState.LOCAL_CERTIFICATION_REQUIRED: "REVIEW PASSED / LOCAL INTEGRATION CERTIFICATION REQUIRED",
         pr_lifecycle.LifecycleState.WAITING_CI: "REVIEW PASSED / CERTIFICATION PENDING",
         pr_lifecycle.LifecycleState.WAITING_EXTERNAL_DEPENDENCY: "WAITING ON EXTERNAL DEPENDENCY",
+        pr_lifecycle.LifecycleState.WAITING_INFRASTRUCTURE: "WAITING ON INFRASTRUCTURE",
         pr_lifecycle.LifecycleState.INTEGRATION_READY: "INTEGRATION READY",
         pr_lifecycle.LifecycleState.MERGING: "MERGING / INTEGRATION IN PROGRESS",
         pr_lifecycle.LifecycleState.MERGED: "MERGED",

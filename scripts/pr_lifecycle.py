@@ -20,6 +20,8 @@ from pr_lifecycle_integration_certification import LocalIntegrationCertification
 from pr_lifecycle_local_integration import LocalIntegrationLauncher, checkpoint_claim
 from pr_lifecycle_terminal import TerminalCleanupDispatcher
 from pr_lifecycle_operator import action_first_status
+from pr_lifecycle_projection import atomic_write, build_projection
+from pr_lifecycle_task_state import execution_truth, ensure_projection_comment
 from pr_mutation_broker import (
     BrokerError, artifact_name as broker_artifact_name, broker_filter_event, finalize_broker_event,
     prepare_broker_event, route_policy_from_json, write_github_outputs,
@@ -241,6 +243,48 @@ def _notification_printer(message: str) -> None:
     print(message, file=sys.stderr)
 
 
+
+
+def _task_projection_cycle(engine: LifecycleEngine, values: list[PRLifecycle]) -> list[dict[str, Any]]:
+    if engine.asana is None:
+        return []
+    project_ids: set[str] = set()
+    for value in values:
+        for task in value.asana:
+            for membership in task.get("memberships") or []:
+                if isinstance(membership, Mapping) and isinstance(membership.get("project"), Mapping):
+                    gid = str(membership["project"].get("gid") or "")
+                    if gid:
+                        project_ids.add(gid)
+    tasks: dict[str, dict[str, Any]] = {}
+    for project_gid in sorted(project_ids):
+        for task in engine.asana.list_project_tasks(project_gid):
+            gid = str(task.get("gid") or "")
+            if not gid or gid in tasks:
+                continue
+            try:
+                authoritative = engine.asana.get_task(gid)
+                truth = execution_truth(authoritative, engine.asana.get_stories(gid), now=engine.now())
+                projection = {
+                    "gid": gid,
+                    "name": authoritative.get("name"),
+                    "completed": bool(authoritative.get("completed")),
+                    "modified_at": authoritative.get("modified_at"),
+                    "execution": truth,
+                }
+                ensure_projection_comment(engine.asana, gid, projection)
+                tasks[gid] = projection
+            except LifecycleError as exc:
+                tasks[gid] = {"gid": gid, "error": str(exc)}
+    return list(tasks.values())
+
+
+def _publish_projection(engine: LifecycleEngine, values: list[PRLifecycle], args: argparse.Namespace, *, mutate_tasks: bool) -> None:
+    if args.projection_path is None:
+        return
+    tasks = _task_projection_cycle(engine, values) if mutate_tasks else []
+    atomic_write(args.projection_path, build_projection(values, repository=args.repo, tasks=tasks))
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pr_lifecycle", description=__doc__)
     parser.add_argument("--repo", default=os.getenv("GITHUB_REPOSITORY", "marcogallotta/ai-tools"))
@@ -281,6 +325,7 @@ def _parser() -> argparse.ArgumentParser:
         help="declare that this host cannot launch the local Git-capable Integration consumer",
     )
     parser.add_argument("--merge-method", choices=["merge", "squash", "rebase"], default="squash")
+    parser.add_argument("--projection-path", type=Path, help="atomic lifecycle JSON projection path")
     sub = parser.add_subparsers(dest="command", required=True)
 
     status = sub.add_parser("status", help="one-shot lifecycle status")
@@ -405,6 +450,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == "status":
             values = engine.status(include_closed=args.include_closed)
+            _publish_projection(engine, values, args, mutate_tasks=False)
             print(_render_json(values, repository=args.repo) if args.format == "json" else _render_table(values))
             return 0
         if args.command == "dispatch":
@@ -415,6 +461,7 @@ def main(argv: list[str] | None = None) -> int:
                 terminal_cleaner=terminal_cleaner,
                 notify=_notification_printer,
             )
+            _publish_projection(engine, values, args, mutate_tasks=True)
             print(_render_json(values, repository=args.repo) if args.format == "json" else _render_table(values))
             return 0
         if args.interval < 1.0:
@@ -431,6 +478,7 @@ def main(argv: list[str] | None = None) -> int:
                 if args.dispatch
                 else engine.status()
             )
+            _publish_projection(engine, values, args, mutate_tasks=bool(args.dispatch))
             print(_render_json(values, repository=args.repo) if args.format == "json" else _render_table(values), flush=True)
             time.sleep(args.interval)
     except KeyboardInterrupt:
