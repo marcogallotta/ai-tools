@@ -4,6 +4,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import importlib.util
 from pathlib import Path
+import subprocess
 import sys
 
 
@@ -35,6 +36,22 @@ HEADS = [
     "6962119bf1fe490ef5b30366a24dd7af9e8d5630",
     "7af143a9366905b46a2859cb50d59b0344f0f7d0",
 ]
+
+
+def test_pr_lifecycle_command_starts_with_workstream_layer():
+    completed = subprocess.run(
+        [sys.executable, str(SCRIPTS / "pr_lifecycle.py"), "--help"],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "Durable PR lifecycle status and dispatch for Dish." in completed.stdout
+
+
 BRANCHES = [
     "agent/pr-lifecycle-controller",
     "agent/pr-lifecycle-forward-fix",
