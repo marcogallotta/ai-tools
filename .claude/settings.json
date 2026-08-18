@@ -3,13 +3,12 @@
   "hooks": {
     "SessionStart": [
       {
-        "matcher": "compact",
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/hooks/agent-reground",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/hooks/agent-grounding",
             "timeout": 30,
-            "statusMessage": "Re-grounding Dish role and active work"
+            "statusMessage": "Grounding Dish role and active work"
           }
         ]
       }
@@ -19,9 +18,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "\"$CLAUDE_PROJECT_DIR\"/hooks/agent-reground",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR\"/hooks/agent-grounding",
             "timeout": 30,
-            "statusMessage": "Checking post-compaction Dish role state"
+            "statusMessage": "Checking Dish grounding and action state"
           }
         ]
       }
