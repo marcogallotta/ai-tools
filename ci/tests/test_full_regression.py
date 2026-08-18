@@ -98,14 +98,16 @@ def test_workflow_contract_is_independent_force_all_diagnostic_backstop():
     )
 
 
-def test_native_postgresql_skip_waivers_use_structured_bounded_contract():
+def test_native_postgresql_skip_waivers_use_shared_registry_serializer():
     workflow = WORKFLOW.read_text()
-    assert workflow.count("--waive-skip") == 4
-    assert '--waive-skip "tests/postgresql/native/' not in workflow
-    assert workflow.count('\\"owner_task_gid\\":\\"1217428310522281\\"') == 4
-    assert workflow.count('\\"review_by\\":\\"2026-09-07\\"') == 4
-    assert "a73321063eef94cb68f134ff85b48a2a1eda77a2e3d60a5893a40dc8b288ac1b" in workflow
-    assert workflow.count("b318bcda941f247dd3ca65b8444b0b19ab73e8b628f9d91a02917c7df0b69dc1") == 3
+
+    assert "python3 scripts/native_postgresql_waivers.py args" in workflow
+    assert "waiver_rc=0" in workflow
+    assert 'if [ "$waiver_rc" -ne 0 ]' in workflow
+    assert "mapfile -t native_waiver_args" in workflow
+    assert '"${native_waiver_args[@]}"' in workflow
+    assert "--waive-skip" not in workflow
+    assert "1217428310522281" not in workflow
 
 
 def test_workflow_installs_pglite_dependencies_before_python_control_plane_lane():
