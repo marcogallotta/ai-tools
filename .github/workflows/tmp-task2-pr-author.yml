@@ -1,0 +1,182 @@
+name: Temporary Task 2 direct authoring
+
+on:
+  pull_request:
+    branches: [main]
+    types: [synchronize]
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+jobs:
+  author:
+    if: github.event.pull_request.head.ref == 'agent/stable-authoring-base'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Materialize helper-free Task 2 candidate
+        id: candidate
+        shell: bash
+        env:
+          TASK_BASE: f705922ae1201fb3ef785758c5308505960344e4
+        run: |
+          set -euo pipefail
+          git show "$TASK_BASE":dish/docs/chatgpt-projects/source.json > /tmp/base-source.json
+          git show "$TASK_BASE":dish/docs/chatgpt-projects/manifest.json > /tmp/base-manifest.json
+          rm -f .github/workflows/tmp-task2-stable-authoring-base.yml .github/workflows/tmp-task2-pr-author.yml
+          python3 <<'PY'
+          import json, re
+          from pathlib import Path
+
+          def replace_section(path, heading, body):
+              p=Path(path); text=p.read_text()
+              pat=re.compile(rf'^{re.escape(heading)}\n.*?(?=^## |\Z)', re.M|re.S)
+              if len(pat.findall(text))!=1: raise SystemExit(f'section mismatch: {path} {heading}')
+              p.write_text(pat.sub(heading+'\n\n'+body.strip()+'\n\n', text, count=1))
+
+          replace_section('dish/docs/agents/contributor-base.md','## Repository freshness','''At initial task/branch creation, establish one exact fresh authoring base and pin it for that implementation attempt. Re-observing GitHub/origin later may update current-state knowledge, but it does not silently replace the pinned authoring base.
+
+During active authoring, unrelated `main` movement is informational, not an action trigger. Do not repeatedly poll/fetch `origin/main`, and do not reset/rebase/merge/synchronize the owned branch merely because other work landed. Multiple unrelated target movements should normally cause zero branch mutations.
+
+Reconcile the authoring base only for a concrete base-sensitive reason: a required semantic dependency landed and the task actually consumes it; an explicit Coordinator/Review/Integration or other lifecycle boundary requires reconciliation; a real conflict or base-sensitive validation condition is proven; final PR/Integration preparation requires current-target reconciliation; or Marco explicitly asks to sync/rebase/merge.
+
+Starting or resuming after substantial interruption still requires a freshness re-observation, but that read does not itself mutate the pinned base. If one justified reconciliation occurs, finish from that reconciled base; later unrelated `main` movement does not restart the synchronization loop. Current-target conflict handling remains an Integration/publication concern unless one of the concrete triggers above makes it an authoring concern.''')
+
+          replace_section('dish/docs/agents/implementation.md','## Repository freshness','''Pin one exact, freshly verified authoring base at task/branch creation and finish ordinary authoring against it. `main moved` is informational, not an action trigger: unrelated B/C/D target movements during one implementation attempt should cause zero fetch/rebase/merge/reset mutations solely for freshness.
+
+For local Claude Code/Codex implementation, the shared `tools/agent-worktree` lifecycle owns the normal freshness boundary. First creation verifies the supplied exact base ref + SHA against authoritative `origin` before it creates the owned branch/worktree. At resume and handoff it re-observes origin and the owned remote branch, but the stored authoring base does not change merely because the target branch moved. Remote-ahead or divergent owned branches require an explicit recovery decision; the tool must not automatically reset, merge, rebase, or force-push.
+
+Reconcile during authoring only for a named base-sensitive trigger: a required semantic dependency that landed and is actually consumed; an explicit lifecycle/Coordinator/Review/Integration boundary; a proven conflict or base-sensitive validation condition; final PR/Integration preparation; or Marco's explicit sync/rebase/merge instruction. A generic desire to be current is not enough.
+
+Starting or resuming after interruption still requires a freshness read, but observation alone does not mutate the pinned base. If one justified reconciliation occurs, continue from that reconciled base; later unrelated target movement does not trigger a second loop. Implementation owns the candidate against its stable authoring base; current-target reconciliation stays at the appropriate publication/Review/Integration boundary unless one of the named triggers makes it necessary earlier.
+
+Do not update task state or narrate repeated synchronization merely because unrelated commits appear on GitHub.''')
+
+          p=Path('dish/docs/agents/development-workflow.md'); text=p.read_text()
+          block='''## Stable authoring base discipline
+
+Development Workflow treats one exact fresh task/branch base as the implementation authoring base, not as a lease that expires whenever `main` advances. Re-observation at startup/resume may update current-state knowledge, but unrelated target movement must not cause automatic fetch/rebase/merge/reset or repeated sync narration. Reconcile only for a named semantic dependency, explicit lifecycle/Review/Integration boundary, proven conflict/base-sensitive validation, final PR/Integration preparation, or Marco's explicit sync instruction. After one justified reconciliation, later unrelated movement remains informational and does not restart the loop. Preserve stale-start checks, exact-head Review/Integration identity, and final conflict handling.
+
+'''
+          anchor='## Governed decision-context preload\n'
+          if block not in text:
+              if text.count(anchor)!=1: raise SystemExit('development-workflow insertion anchor mismatch')
+              p.write_text(text.replace(anchor,block+anchor,1))
+
+          sp=Path('dish/docs/chatgpt-projects/source.json'); source=json.loads(sp.read_text())
+          rule={'id':'implementation-stable-authoring-base','text':'Pin one exact fresh authoring base per implementation attempt. Unrelated main movement is informational: do not poll/fetch/rebase/merge/reset just to be current. Reconcile only for a consumed semantic dependency, explicit lifecycle/Review/Integration boundary, proven conflict/base-sensitive validation, final PR/Integration preparation, or Marco explicit sync. After one justified reconciliation, later unrelated main movement does not restart the loop.','impact':'additive','surface':'lifecycle','action_boundaries':['role-critical-write','handoff'],'delivery':{'mode':'DIRECT_ALWAYS_ON'}}
+          rules=source['roles']['implementation']['rules']
+          if any(x.get('id')==rule['id'] for x in rules): raise SystemExit('stable-base rule unexpectedly exists')
+          rules.append(rule); sp.write_text(json.dumps(source,indent=2,ensure_ascii=False)+'\n')
+
+          ep=Path('dish/docs/chatgpt-projects/evals.json'); payload=json.loads(ep.read_text())
+          additions=[
+            {'id':'implementation-stable-base-unrelated-main','roles':['implementation'],'required_rules':['implementation-stable-authoring-base'],'prompt':'Implementation starts from exact fresh base A. While it edits and tests, unrelated PRs advance main through B, C, and D. No dependency, conflict, lifecycle handoff, or base-sensitive validation requires those commits. What should the agent do?','expected_outcome':'continue_authoring_on_pinned_base_without_main_chasing','required_actions':['pin-exact-authoring-base','treat-unrelated-main-movement-as-informational','continue-authoring-to-pr-handoff'],'forbidden_actions':['poll-fetch-main-for-freshness','rebase-merge-reset-for-unrelated-main','narrate-sync-loop-as-progress']},
+            {'id':'implementation-stable-base-semantic-trigger','roles':['implementation'],'required_rules':['implementation-stable-authoring-base'],'prompt':'Implementation is authoring on pinned base A. A named required semantic dependency lands on C and the task actually consumes that dependency. No other reconciliation has occurred. What should the agent do?','expected_outcome':'perform_one_deliberate_dependency_reconciliation','required_actions':['name-concrete-reconciliation-trigger','reconcile-authoring-base-once','continue-from-reconciled-base'],'forbidden_actions':['reconcile-for-generic-up-to-date-desire','start-continuous-main-polling']},
+            {'id':'implementation-stable-base-no-restart-after-reconcile','roles':['implementation'],'required_rules':['implementation-stable-authoring-base'],'prompt':'Implementation already performed one justified reconciliation because a required dependency landed on C. While it finishes, main advances to D only for unrelated work. What should the agent do?','expected_outcome':'finish_from_reconciled_base_without_second_sync_loop','required_actions':['retain-reconciled-authoring-base','treat-later-unrelated-main-movement-as-informational','continue-authoring'],'forbidden_actions':['reconcile-again-for-unrelated-main','restart-authoring-freshness-loop']}
+          ]
+          known={x.get('id') for x in payload['scenarios']}
+          if any(x['id'] in known for x in additions): raise SystemExit('Task 2 eval already exists')
+          payload['scenarios'].extend(additions); ep.write_text(json.dumps(payload,indent=2,ensure_ascii=False)+'\n')
+
+          gp=Path('dish/scripts/chatgpt_project_kernels.py'); g=gp.read_text(); m=re.search(r"REQUIRED_EVAL_IDS=\{[^\n]*\}",g)
+          if not m: raise SystemExit('REQUIRED_EVAL_IDS not found')
+          seg=m.group(0)[:-1]+', '+', '.join(repr(x['id']) for x in additions)+'}'
+          gp.write_text(g[:m.start()]+seg+g[m.end():])
+
+          tp=Path('dish/tests/test_chatgpt_project_kernels.py'); t=tp.read_text()
+          old="'bfaeef68aed9']}"; new="'bfaeef68aed9','d3a070d57fb2']}"
+          if t.count(old)!=1 or t.count('len(versions)==18')!=1: raise SystemExit('required-version fixture mismatch')
+          tp.write_text(t.replace(old,new,1).replace('len(versions)==18','len(versions)==19',1))
+          PY
+          python3 dish/scripts/chatgpt_project_kernels.py reconcile --base-manifest /tmp/base-manifest.json --base-source /tmp/base-source.json --source dish/docs/chatgpt-projects/source.json --output dish/docs/chatgpt-projects/manifest.json
+          python3 dish/scripts/chatgpt_project_kernels.py render
+          python3 dish/scripts/chatgpt_project_kernels.py check
+          python3 dish/scripts/dish-test-plan --validate
+          git diff --check "$TASK_BASE"
+          git config user.name 'Dish Agent'
+          git config user.email 'dish-agent@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'Pin stable Implementation authoring bases'
+          echo "head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build governed changed-path plan
+        shell: bash
+        env:
+          TASK_BASE: f705922ae1201fb3ef785758c5308505960344e4
+        run: |
+          set -euo pipefail
+          mkdir -p .test-artifacts/task2
+          cd dish
+          python3 scripts/dish-test-plan --base "$TASK_BASE" --json > ../.test-artifacts/task2/plan.json
+          cat ../.test-artifacts/task2/plan.json
+
+      - name: Resolve canonical Python version
+        id: python-bundle
+        shell: bash
+        run: python3 scripts/dependency_bundle.py expected --repo-root "$GITHUB_WORKSPACE" --github-output "$GITHUB_OUTPUT"
+
+      - name: Setup canonical Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ steps.python-bundle.outputs.python_version }}
+
+      - name: Recreate canonical Python environments
+        uses: ./.github/actions/setup-python-bundle
+        with:
+          github-token: ${{ github.token }}
+
+      - name: Run every planner-required command
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dish
+          python3 <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          p=json.loads(Path('../.test-artifacts/task2/plan.json').read_text())
+          for c in p['commands']:
+              print('+ '+c,flush=True); subprocess.run(c,shell=True,check=True)
+          PY
+
+      - name: Publish exact final branch head
+        shell: bash
+        run: git push origin HEAD:agent/stable-authoring-base
+
+      - name: Record durable Implementation evidence
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FINAL_HEAD: ${{ steps.candidate.outputs.head }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python3 <<'PY' > /tmp/evidence.md
+          import json,os
+          from pathlib import Path
+          p=json.loads(Path('.test-artifacts/task2/plan.json').read_text())
+          print('<!-- dish-implementation-evidence:v1 -->')
+          print('IMPLEMENTATION EVIDENCE — Task 1217558179795693')
+          print(f"Exact head: `{os.environ['FINAL_HEAD']}`")
+          print('PASS: Project kernel check, selector validation, diff check, and every governed planner command.')
+          print('Governed changed-path plan:')
+          print('- Classes: '+', '.join(p['classes']))
+          print('- Traits: '+(', '.join(p['traits']) or 'none'))
+          for c in p['commands']: print(f'- PASS: `{c}`')
+          print('Temporary authoring workflows were removed before the final commit and tests.')
+          print('— Dish Agent: Implementation | GitHub Actions | task 1217558179795693')
+          PY
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/evidence.md
+
+      - name: Record authoring failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "AUTHORING FAILURE — Task 1217558179795693 — GitHub Actions run $GITHUB_RUN_ID. Branch was not promoted to review-ready. — Dish Agent: Implementation | GitHub Actions"
