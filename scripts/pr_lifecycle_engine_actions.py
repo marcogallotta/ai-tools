@@ -10,6 +10,7 @@ from pr_mutation_broker import (
 from pr_lifecycle_operator import action_first_status
 from pr_lifecycle_owner import owning_task_identity_from_references
 from pr_lifecycle_asana_writeback import reconcile_after_merge
+from pr_lifecycle_ci_recovery import recover_failed_ci
 from pr_lifecycle_host_routing import (
     CHATGPT_IMPLEMENTATION, LOCAL_IMPLEMENTATION, classify_requirement,
     implementation_host_for_boundary, implementation_host_for_review,
@@ -426,6 +427,21 @@ class LifecycleActionsMixin:
     ) -> PRLifecycle:
         notify = notify or (lambda _: None)
         current = self.inspect(self.github.get_pr(pr.number))
+        # Replay missed post-merge Asana writeback before terminal cleanup.  Merge is
+        # durable GitHub truth; controller restarts must converge even if the original
+        # local Integration process died before writeback.
+        if current.state == LifecycleState.MERGED and self.asana is not None:
+            raw = self.github.get_pr(current.number)
+            merge_sha = str(raw.get("merge_commit_sha") or "").lower()
+            if FULL_SHA_RE.fullmatch(merge_sha):
+                try:
+                    reconcile_after_merge(
+                        asana=self.asana, lifecycle=current,
+                        repository=self.github.repository, merge_sha=merge_sha,
+                    )
+                except LifecycleError as exc:
+                    current.residual_reason = f"PR merged; post-merge Asana writeback needs recovery: {exc}"
+        current = recover_failed_ci(self, current)
         terminal = self._dispatch_terminal(current, terminal_cleaner=terminal_cleaner, notify=notify)
         if terminal is not None:
             return terminal
