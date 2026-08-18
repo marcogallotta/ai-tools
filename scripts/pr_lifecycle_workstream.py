@@ -52,6 +52,7 @@ class WorkstreamDeclaration:
     task: str
     slot: int
     total: int
+    target: str
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,7 @@ class WorkstreamMember:
     task_ids: tuple[str, ...]
     owning_task: str | None
     integration_order: str | None = None
+    ultimate_target: str = "main"
 
     def semantic_task_ids(self, workstream_task: str) -> tuple[str, ...]:
         values = tuple(task for task in self.task_ids if task != workstream_task)
@@ -82,6 +84,25 @@ class WorkstreamCandidate:
     error: str | None
     shape_id: str
     candidate_id: str
+
+    @property
+    def source_complete(self) -> bool:
+        return self.complete and all(member.publication_state == "landed" for member in self.members)
+
+    @property
+    def recovery_source(self) -> WorkstreamMember | None:
+        """Return one cumulative reviewed source for an ordered missing suffix."""
+        missing = [member for member in self.members if member.publication_state != "landed"]
+        if not missing or any(member.publication_state not in {"merged", "open"} for member in missing):
+            return None
+        by_slot = {member.slot: member for member in self.members}
+        for member in missing:
+            if member.slot == 1:
+                continue
+            predecessor = by_slot.get(member.slot - 1)
+            if predecessor is None or member.base != predecessor.branch:
+                return None
+        return max(missing, key=lambda member: member.slot)
 
     @property
     def anchor(self) -> WorkstreamMember:
@@ -109,6 +130,7 @@ class WorkstreamCandidate:
                     "task_ids": list(member.semantic_task_ids(self.workstream_task)),
                     "owning_task": member.owning_task,
                     "integration_order": member.integration_order,
+                    "ultimate_target": member.ultimate_target,
                 }
                 for member in self.members
             ],
@@ -156,7 +178,10 @@ def declaration_from_pr(pr: Mapping[str, Any]) -> WorkstreamDeclaration | None:
             raise LifecycleError("workstream marker is only valid for multi-PR workstreams (total >= 2)")
         if slot < 1 or slot > total:
             raise LifecycleError("workstream marker slot must be within 1..total")
-        declarations.append(WorkstreamDeclaration(task=task, slot=slot, total=total))
+        target = str(fields.get("target") or "main").strip()
+        if not target or target.startswith("refs/") or any(value in target for value in ("..", "~", "^", ":")):
+            raise LifecycleError("workstream marker target must be a branch name")
+        declarations.append(WorkstreamDeclaration(task=task, slot=slot, total=total, target=target))
     unique = set(declarations)
     if len(unique) != 1:
         raise LifecycleError("PR has conflicting workstream declarations")
@@ -180,6 +205,9 @@ def build_candidate(workstream_task: str, members: Iterable[WorkstreamMember]) -
         errors.append(f"conflicting total declarations: {sorted(totals)}")
     if len(set(slots)) != len(slots):
         errors.append("duplicate workstream slots")
+    targets = {member.ultimate_target for member in ordered}
+    if len(targets) != 1:
+        errors.append(f"conflicting ultimate landing targets: {sorted(targets)}")
     expected = list(range(1, total + 1))
     if sorted(set(slots)) != expected:
         errors.append(f"published slots {sorted(set(slots))}; expected {expected}")
@@ -188,6 +216,7 @@ def build_candidate(workstream_task: str, members: Iterable[WorkstreamMember]) -
     shape = {
         "schema": "dish-workstream-shape-v1",
         "workstream_task": workstream_task,
+        "ultimate_target": ordered[0].ultimate_target,
         "members": [
             {
                 "slot": member.slot,
@@ -197,6 +226,7 @@ def build_candidate(workstream_task: str, members: Iterable[WorkstreamMember]) -
                 "semantic_tasks": list(member.semantic_task_ids(workstream_task)),
                 "owning_task": member.owning_task,
                 "integration_order": member.integration_order,
+                "ultimate_target": member.ultimate_target,
             }
             for member in ordered
         ],
@@ -301,7 +331,7 @@ def current_review_state(candidate: WorkstreamCandidate, github: Any) -> Workstr
         ]
         current = [record for record in exact_shape if record.candidate_id == candidate.candidate_id]
         evidence_seen = evidence_seen or bool(exact_shape_all)
-        if member.publication_state == "merged":
+        if member.publication_state in {"merged", "landed"}:
             inherited = current[-1] if current else next(
                 (record for record in reversed(exact_shape) if record.verdict == "MERGE"),
                 None,
@@ -374,14 +404,14 @@ def previous_complete_candidate(candidate: WorkstreamCandidate, github: Any) -> 
                 newest = max(newest, record.submitted_at)
                 if member.publication_state == "open":
                     open_verdicts.add(record.verdict)
-                elif member.publication_state == "merged" and record.verdict != "MERGE":
+                elif member.publication_state in {"merged", "landed"} and record.verdict != "MERGE":
                     complete = False
                     break
                 elif member.publication_state == "closed":
                     complete = False
                     break
                 continue
-            if member.publication_state != "merged":
+            if member.publication_state not in {"merged", "landed"}:
                 complete = False
                 break
             inherited = [
@@ -515,8 +545,9 @@ def _dispatch_workspace_review(
         "Before verdict, re-read every listed PR and exact head and inspect ordering plus cross-PR interactions. "
         "Return one consolidated blocker set to the workstream owner if blocked. Mechanically submit one formal GitHub "
         "COMMENT review on EACH currently-open listed PR, anchored to that PR's exact listed head, using the SAME broad "
-        "verdict on those open members. A listed merged predecessor is immutable prior Integration history: inspect its "
-        "reviewed interaction context but do not try to submit a new review to the merged PR. Every new formal review body "
+        "verdict on those open members. A predecessor already landed on the ultimate target is immutable prior Integration "
+        "history. A PR merged only into an intermediate stack branch remains cumulative recovery context until target "
+        "ancestry proves it landed; do not try to submit a new review to either closed PR. Every new formal review body "
         "must contain exactly one marker "
         f"`<!-- {WORKSTREAM_REVIEW_MARKER} workstream={candidate.workstream_task} "
         f"candidate={candidate.candidate_id} shape={candidate.shape_id} -->` and `VERDICT: MERGE` or `VERDICT: BLOCK`. "
@@ -558,10 +589,18 @@ def _dispatch_workspace_review(
 class WorkstreamLifecycleMixin:
     """Overlay single-dispatch workstream Review onto the existing stateless lifecycle."""
 
-    @staticmethod
     def _member_from_lifecycle(
-        value: Any, declaration: WorkstreamDeclaration, raw_pr: Mapping[str, Any] | None = None
+        self, value: Any, declaration: WorkstreamDeclaration, raw_pr: Mapping[str, Any] | None = None
     ) -> WorkstreamMember:
+        publication_state = "open"
+        if value.state == LifecycleState.CLOSED:
+            publication_state = "closed"
+        elif value.state == LifecycleState.MERGED:
+            landed = value.base == declaration.target
+            if not landed:
+                target_head = self.github.get_ref_sha(f"heads/{declaration.target}")
+                landed = self.github.is_ancestor(value.head, target_head)
+            publication_state = "landed" if landed else "merged"
         return WorkstreamMember(
             slot=declaration.slot,
             total=declaration.total,
@@ -570,14 +609,11 @@ class WorkstreamLifecycleMixin:
             branch=value.branch,
             base=value.base,
             head=value.head,
-            publication_state=(
-                "merged" if value.state == LifecycleState.MERGED
-                else "closed" if value.state == LifecycleState.CLOSED
-                else "open"
-            ),
+            publication_state=publication_state,
             task_ids=tuple(value.task_ids),
             owning_task=_owning_task_from_refs(value.task_ids),
             integration_order=_integration_order_reason(None, raw_pr or {}),
+            ultimate_target=declaration.target,
         )
 
     def _recover_candidate_from_dispatch(
@@ -639,7 +675,7 @@ class WorkstreamLifecycleMixin:
                 return candidate
             lifecycle = self.inspect(raw)
             recovered_member = self._member_from_lifecycle(lifecycle, declaration, raw)
-            if recovered_member.publication_state == "merged":
+            if recovered_member.publication_state in {"merged", "landed"}:
                 context_order = item.get("integration_order")
                 if context_order is not None and not isinstance(context_order, str):
                     return candidate
@@ -655,6 +691,7 @@ class WorkstreamLifecycleMixin:
                     task_ids=recovered_member.task_ids,
                     owning_task=recovered_member.owning_task,
                     integration_order=context_order,
+                    ultimate_target=recovered_member.ultimate_target,
                 )
             recovered[pr_number] = recovered_member
         rebuilt = build_candidate(candidate.workstream_task, recovered.values())
@@ -702,6 +739,21 @@ class WorkstreamLifecycleMixin:
             state = current_review_state(candidate, self.github)
             review_class, changed_prs, _ = recheck_scope(candidate, self.github)
             if state.status == "merge":
+                if not candidate.source_complete:
+                    recovery = candidate.recovery_source
+                    detail = (
+                        f"; cumulative recovery source PR #{recovery.pr_number} exact head {recovery.head}"
+                        if recovery is not None else "; no safe cumulative recovery source is proven"
+                    )
+                    for value in members:
+                        value.state = LifecycleState.REVIEW_PASSED
+                        value.state_label = STATE_LABELS[LifecycleState.REVIEW_PASSED]
+                        value.review_verdict = "MERGE"
+                        value.residual_reason = (
+                            f"reviewed workstream is not landed on ultimate target "
+                            f"{candidate.members[0].ultimate_target}{detail}"
+                        )
+                        value.human_action = None
                 continue
             if state.status == "block":
                 for value in members:
@@ -936,6 +988,7 @@ class WorkstreamLifecycleMixin:
                 integration_order=_integration_order_reason(
                     None, self.github.get_pr(member.pr_number)
                 ),
+                ultimate_target=member.ultimate_target,
             )
             for member in candidate.members
         )
@@ -1113,7 +1166,11 @@ class WorkstreamLifecycleMixin:
         # workstream Review/fix layer and are never independently Review-dispatched.
         passed_group_numbers: set[int] = set()
         for candidate in candidates.values():
-            if candidate.complete and current_review_state(candidate, self.github).status == "merge":
+            if (
+                candidate.complete
+                and candidate.source_complete
+                and current_review_state(candidate, self.github).status == "merge"
+            ):
                 passed_group_numbers.update(member.pr_number for member in candidate.members)
 
         for value in raw_values:

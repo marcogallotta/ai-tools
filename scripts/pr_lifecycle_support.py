@@ -201,6 +201,7 @@ class GitHubBackend(Protocol):
     def add_comment(self, number: int, body: str) -> dict[str, Any]: ...
     def close_pr(self, number: int) -> dict[str, Any]: ...
     def get_branch(self, branch: str) -> dict[str, Any] | None: ...
+    def is_ancestor(self, ancestor: str, descendant: str) -> bool: ...
     def merge(self, number: int, *, expected_head: str, method: str) -> dict[str, Any]: ...
 
 
@@ -455,6 +456,20 @@ class GitHubREST:
         if FULL_SHA_RE.fullmatch(sha) is None:
             raise LifecycleError("GitHub ref response lacks exact SHA")
         return sha
+
+    def is_ancestor(self, ancestor: str, descendant: str) -> bool:
+        for label, sha in (("ancestor", ancestor), ("descendant", descendant)):
+            if FULL_SHA_RE.fullmatch(str(sha)) is None:
+                raise LifecycleError(f"GitHub comparison {label} must be an exact SHA")
+        _, _, value = self.http.request(
+            "GET", self._url(f"compare/{ancestor}...{descendant}"), headers=self.headers
+        )
+        if not isinstance(value, dict):
+            raise LifecycleError("GitHub comparison response was not an object")
+        status = str(value.get("status") or "").lower()
+        if status not in {"ahead", "behind", "diverged", "identical"}:
+            raise LifecycleError("GitHub comparison response lacks a recognized status")
+        return status in {"ahead", "identical"}
 
     def get_workflow_run_attempt(self, run_id: int, run_attempt: int) -> dict[str, Any]:
         _, _, value = self.http.request(
