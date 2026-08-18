@@ -951,6 +951,7 @@ class LocalIntegrationCertificationMixin:
                 "handoff": {
                     "comment_id": handoff["comment_id"],
                     "key": handoff["key"],
+                    "observed_main_sha": handoff["main_sha"],
                     "observed_target_sha": handoff["main_sha"],
                 },
                 "claim": claim,
