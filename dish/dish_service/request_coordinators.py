@@ -361,3 +361,466 @@ class AdminRequestCoordinator:
         finally:
             service._close_backend(state.backend)
             conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Development Workflow Asana mutation admission / transport (source-only V1)
+# ---------------------------------------------------------------------------
+# This seam consumes upstream authority. It does not derive lifecycle state or
+# design lineage, and it is not wired into DishService/HTTP/OpenAPI/deployment.
+
+from datetime import datetime, timedelta, timezone
+import json
+from typing import Literal
+
+from dish_tool.results import result_envelope
+from dish_tool.task_store import LiveTask, TaskBackend, read_complete_task
+
+
+LEGACY_DIRECT = "LEGACY_DIRECT"
+MEDIATED_ACTION = "MEDIATED_ACTION"
+ASANA_MUTATION_REPLAY_COMMAND = "development-workflow-asana-mutation"
+
+UpstreamAdmissionStatus = Literal[
+    "PERMITTED", "BLOCKED", "CONTRADICTORY", "UNAVAILABLE"
+]
+AdmissionStatus = Literal["PROPOSED", "BLOCKED_UPSTREAM", "WOULD_ADMIT", "STALE"]
+
+
+@dataclass(frozen=True, order=True)
+class AdmissionAuthorityReference:
+    """Opaque upstream identity; this layer never interprets the referenced state."""
+
+    source: str
+    identity: str
+    revision: str
+
+    def data(self) -> dict[str, str]:
+        return {
+            "source": self.source,
+            "identity": self.identity,
+            "revision": self.revision,
+        }
+
+
+@dataclass(frozen=True)
+class UpstreamMutationDecision:
+    """Upstream answer already bound to one exact target and action class."""
+
+    target_task_gid: str
+    action_class: str
+    status: UpstreamAdmissionStatus
+    decision_ref: AdmissionAuthorityReference
+    supporting_refs: tuple[AdmissionAuthorityReference, ...] = ()
+    design_generation_ref: AdmissionAuthorityReference | None = None
+
+    def data(self) -> dict[str, Any]:
+        return {
+            "target_task_gid": self.target_task_gid,
+            "action_class": self.action_class,
+            "status": self.status,
+            "decision_ref": self.decision_ref.data(),
+            "supporting_refs": [
+                ref.data() for ref in sorted(self.supporting_refs)
+            ],
+            "design_generation_ref": (
+                None
+                if self.design_generation_ref is None
+                else self.design_generation_ref.data()
+            ),
+        }
+
+
+@dataclass(frozen=True)
+class TaskStateFingerprint:
+    content_identity: str
+    section_gid: str | None
+    completed: bool
+
+    @classmethod
+    def from_live(cls, live: LiveTask) -> "TaskStateFingerprint":
+        return cls(live.identity, live.section_gid, live.completed)
+
+    def data(self) -> dict[str, Any]:
+        return {
+            "content_identity": self.content_identity,
+            "section_gid": self.section_gid,
+            "completed": self.completed,
+        }
+
+
+@dataclass(frozen=True)
+class AsanaMutationObservation:
+    target: TaskStateFingerprint
+    target_modified_at: str | None
+    upstream: UpstreamMutationDecision
+    transport_mode: Literal["LEGACY_DIRECT", "MEDIATED_ACTION"]
+
+
+@dataclass(frozen=True)
+class AsanaMutationProposal:
+    proposal_id: str
+    action_class: str
+    target_task_gid: str
+    expected_before: TaskStateFingerprint
+    expected_after: TaskStateFingerprint
+    upstream: UpstreamMutationDecision
+    mutation_json: str
+    expires_at: datetime
+    design_bearing: bool
+    transport_mode: Literal["MEDIATED_ACTION"] = MEDIATED_ACTION
+    readback_contract: str = "direct-exact-task-reread"
+    recovery_contract: str = "same-request-id-replay-never-blind-repeat"
+
+    @property
+    def mutation(self) -> dict[str, Any]:
+        return json.loads(self.mutation_json)
+
+    def replay_arguments(self) -> dict[str, Any]:
+        return {
+            "proposal_id": self.proposal_id,
+            "action_class": self.action_class,
+            "target_task_gid": self.target_task_gid,
+            "expected_before": self.expected_before.data(),
+            "expected_after": self.expected_after.data(),
+            "upstream": self.upstream.data(),
+            "mutation": self.mutation,
+            "expires_at": self.expires_at.isoformat(),
+            "design_bearing": self.design_bearing,
+            "transport_mode": self.transport_mode,
+            "readback_contract": self.readback_contract,
+            "recovery_contract": self.recovery_contract,
+        }
+
+
+@dataclass(frozen=True)
+class AsanaMutationAdmission:
+    status: AdmissionStatus
+    observation: AsanaMutationObservation | None
+    proposal: AsanaMutationProposal | None = None
+    reason: str | None = None
+
+
+class UpstreamMutationAuthorityPort(Protocol):
+    def read_mutation_decision(
+        self, *, target_task_gid: str, action_class: str
+    ) -> UpstreamMutationDecision: ...
+
+
+class AsanaMutationEffectPort(Protocol):
+    def apply(self, *, proposal: AsanaMutationProposal) -> None: ...
+
+
+class AsanaMutationAdmissionCoordinator:
+    """Observe, propose, dry-run, and optionally transport one Asana mutation.
+
+    No runtime surface constructs this coordinator. ``writes_enabled`` defaults
+    false and there is no environment/config switch in this change.
+    """
+
+    def __init__(
+        self,
+        *,
+        backend: TaskBackend,
+        project_gid: str,
+        authority: UpstreamMutationAuthorityPort,
+        replay: RequestReplayPort | None = None,
+        effect: AsanaMutationEffectPort | None = None,
+        writes_enabled: bool = False,
+    ) -> None:
+        self.backend = backend
+        self.project_gid = project_gid
+        self.authority = authority
+        self.replay = replay or _default_request_replay()
+        self.effect = effect
+        self.writes_enabled = writes_enabled
+
+    def observe(
+        self,
+        *,
+        target_task_gid: str,
+        action_class: str,
+        transport_mode: Literal[
+            "LEGACY_DIRECT", "MEDIATED_ACTION"
+        ] = MEDIATED_ACTION,
+    ) -> AsanaMutationObservation:
+        if transport_mode not in {LEGACY_DIRECT, MEDIATED_ACTION}:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "unsupported Asana mutation transport mode",
+                rule="asana_mutation_transport_mode_invalid",
+            )
+        upstream = self.authority.read_mutation_decision(
+            target_task_gid=target_task_gid,
+            action_class=action_class,
+        )
+        if (
+            upstream.target_task_gid != target_task_gid
+            or upstream.action_class != action_class
+        ):
+            raise DishRuleError(
+                "CONFLICT",
+                "upstream mutation decision does not match the requested target/action",
+                rule="asana_mutation_upstream_identity_mismatch",
+            )
+        live = read_complete_task(
+            self.backend,
+            task_gid=target_task_gid,
+            project_gid=self.project_gid,
+        )
+        return AsanaMutationObservation(
+            target=TaskStateFingerprint.from_live(live),
+            target_modified_at=live.modified_at,
+            upstream=upstream,
+            transport_mode=transport_mode,
+        )
+
+    def propose(
+        self,
+        *,
+        proposal_id: str,
+        target_task_gid: str,
+        action_class: str,
+        mutation: Mapping[str, Any],
+        expected_after: TaskStateFingerprint,
+        design_bearing: bool = False,
+        ttl_seconds: int = 300,
+        now: datetime | None = None,
+    ) -> AsanaMutationAdmission:
+        observed = self.observe(
+            target_task_gid=target_task_gid,
+            action_class=action_class,
+        )
+        if observed.upstream.status != "PERMITTED":
+            return AsanaMutationAdmission(
+                "BLOCKED_UPSTREAM",
+                observed,
+                reason=f"upstream status is {observed.upstream.status}",
+            )
+        if design_bearing and observed.upstream.design_generation_ref is None:
+            return AsanaMutationAdmission(
+                "BLOCKED_UPSTREAM",
+                observed,
+                reason="design-bearing mutation lacks an exact design-generation reference",
+            )
+        if ttl_seconds <= 0:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "proposal ttl must be positive",
+                rule="asana_mutation_proposal_ttl_invalid",
+            )
+        created = now or datetime.now(timezone.utc)
+        if created.tzinfo is None or created.utcoffset() is None:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "proposal time must be timezone-aware",
+                rule="asana_mutation_proposal_time_invalid",
+            )
+        try:
+            mutation_json = json.dumps(
+                dict(mutation),
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+                allow_nan=False,
+            )
+        except (TypeError, ValueError) as exc:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "mutation payload must be canonical JSON data",
+                rule="asana_mutation_payload_not_json",
+            ) from exc
+        proposal = AsanaMutationProposal(
+            proposal_id=proposal_id,
+            action_class=action_class,
+            target_task_gid=target_task_gid,
+            expected_before=observed.target,
+            expected_after=expected_after,
+            upstream=observed.upstream,
+            mutation_json=mutation_json,
+            expires_at=created.astimezone(timezone.utc)
+            + timedelta(seconds=ttl_seconds),
+            design_bearing=design_bearing,
+        )
+        return AsanaMutationAdmission("PROPOSED", observed, proposal=proposal)
+
+    def shadow_admit(
+        self,
+        proposal: AsanaMutationProposal,
+        *,
+        now: datetime | None = None,
+    ) -> AsanaMutationAdmission:
+        current = now or datetime.now(timezone.utc)
+        if current.tzinfo is None or current.utcoffset() is None:
+            raise DishRuleError(
+                "INVALID_ARGUMENT",
+                "admission time must be timezone-aware",
+                rule="asana_mutation_proposal_time_invalid",
+            )
+        if current.astimezone(timezone.utc) >= proposal.expires_at:
+            return AsanaMutationAdmission(
+                "STALE", None, proposal=proposal, reason="proposal expired"
+            )
+        observed = self.observe(
+            target_task_gid=proposal.target_task_gid,
+            action_class=proposal.action_class,
+        )
+        if observed.upstream.status != "PERMITTED":
+            return AsanaMutationAdmission(
+                "BLOCKED_UPSTREAM",
+                observed,
+                proposal=proposal,
+                reason=f"upstream status is {observed.upstream.status}",
+            )
+        if observed.upstream != proposal.upstream:
+            return AsanaMutationAdmission(
+                "STALE",
+                observed,
+                proposal=proposal,
+                reason="upstream authority reference changed",
+            )
+        if observed.target != proposal.expected_before:
+            return AsanaMutationAdmission(
+                "STALE",
+                observed,
+                proposal=proposal,
+                reason="exact Asana task precondition changed",
+            )
+        return AsanaMutationAdmission(
+            "WOULD_ADMIT", observed, proposal=proposal
+        )
+
+    @staticmethod
+    def _error(
+        proposal: AsanaMutationProposal,
+        error: DishRuleError,
+    ) -> dict[str, Any]:
+        result = error_envelope(
+            ASANA_MUTATION_REPLAY_COMMAND,
+            error,
+            task_gid=proposal.target_task_gid,
+        )
+        result["data"].update(
+            {
+                "proposal_id": proposal.proposal_id,
+                "transport_mode": MEDIATED_ACTION,
+            }
+        )
+        return result
+
+    def execute(
+        self,
+        conn: sqlite3.Connection,
+        proposal: AsanaMutationProposal,
+        *,
+        principal: ServicePrincipal,
+        request_id: str,
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        if not self.writes_enabled or self.effect is None:
+            return self._error(
+                proposal,
+                DishRuleError(
+                    "WRONG_STATE",
+                    "mediated Asana writes are inactive",
+                    rule="asana_mutation_writes_inactive",
+                    retryable=False,
+                ),
+            )
+
+        row, fresh = self.replay.begin(
+            conn,
+            request_id=request_id,
+            owner_id=principal.owner_id,
+            run_id=principal.run_id,
+            command=ASANA_MUTATION_REPLAY_COMMAND,
+            arguments=proposal.replay_arguments(),
+        )
+        stored = self.replay.stored(row)
+        if stored is not None:
+            return stored
+        if not fresh:
+            raise self.replay.pending(ASANA_MUTATION_REPLAY_COMMAND, request_id)
+
+        admission = self.shadow_admit(proposal, now=now)
+        if admission.status != "WOULD_ADMIT":
+            result = self._error(
+                proposal,
+                DishRuleError(
+                    "WRONG_STATE"
+                    if admission.status == "BLOCKED_UPSTREAM"
+                    else "CONFLICT",
+                    admission.reason or "proposal is not admissible",
+                    rule=(
+                        "asana_mutation_upstream_blocked"
+                        if admission.status == "BLOCKED_UPSTREAM"
+                        else "asana_mutation_proposal_stale"
+                    ),
+                    retryable=False,
+                ),
+            )
+            return self.replay.complete(
+                conn, request_id=request_id, result=result
+            )
+
+        try:
+            self.effect.apply(proposal=proposal)
+            live_after = read_complete_task(
+                self.backend,
+                task_gid=proposal.target_task_gid,
+                project_gid=self.project_gid,
+            )
+        except DishRuleError as exc:
+            result = self._error(proposal, exc)
+            return self.replay.complete(
+                conn, request_id=request_id, result=result
+            )
+        except BaseException as exc:
+            result = self._error(
+                proposal,
+                DishRuleError(
+                    "BACKEND_UNCERTAIN",
+                    "mediated Asana mutation outcome is uncertain",
+                    rule="asana_mutation_effect_uncertain",
+                    retryable=False,
+                    details={"error_type": type(exc).__name__},
+                ),
+            )
+            return self.replay.complete(
+                conn, request_id=request_id, result=result
+            )
+
+        observed_after = TaskStateFingerprint.from_live(live_after)
+        if observed_after != proposal.expected_after:
+            result = self._error(
+                proposal,
+                DishRuleError(
+                    "BACKEND_UNCERTAIN",
+                    "mediated Asana mutation readback did not match the proposal",
+                    rule="asana_mutation_readback_mismatch",
+                    retryable=False,
+                    details={
+                        "expected_after": proposal.expected_after.data(),
+                        "observed_after": observed_after.data(),
+                    },
+                ),
+            )
+            return self.replay.complete(
+                conn, request_id=request_id, result=result
+            )
+
+        result = result_envelope(
+            command=ASANA_MUTATION_REPLAY_COMMAND,
+            task_gid=proposal.target_task_gid,
+            data={
+                "proposal_id": proposal.proposal_id,
+                "transport_mode": MEDIATED_ACTION,
+                "admission": "CONFIRMED",
+                "observed_after": observed_after.data(),
+                "readback_contract": proposal.readback_contract,
+                "recovery_contract": proposal.recovery_contract,
+            },
+        )
+        return self.replay.complete(
+            conn, request_id=request_id, result=result
+        )
