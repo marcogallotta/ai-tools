@@ -124,6 +124,18 @@ def test_explicit_human_hold_and_release_are_append_only_and_exact():
     assert released["release_decision"] == "decision-release-001"
 
 
+def test_same_timestamp_hold_lineage_uses_numeric_story_order():
+    same = NOW.isoformat()
+    held = hold_marker("hold", decision="decision-hold-001")
+    released = hold_marker("release", decision="decision-release-001")
+    value = source_landing_hold([
+        {"gid": "10", "created_at": same, "text": released},
+        {"gid": "9", "created_at": same, "text": held},
+    ])
+    assert value["state"] == "CLEAR"
+    assert value["release_decision"] == "decision-release-001"
+
+
 def test_agent_footer_or_mismatched_release_cannot_become_human_hold_authority():
     agent_like = (
         hold_marker("hold", decision="decision-hold-001")
@@ -241,6 +253,47 @@ def test_slow_ci_emits_one_deduped_integrator_case_without_changing_authority():
     assert payload["v3"]["integrator"]["active_cases"][0]["case_key"] == cases[0]["case_key"]
     assert payload["v3"]["integrator"]["provider"] == "codex"
     assert payload["v3"]["integrator"]["integration_authority"] is False
+
+
+def test_repeated_ci_pattern_emits_one_systemic_coordinator_finding():
+    gate = {
+        "diagnosis": "PENDING",
+        "required_workflow_run_started_at": (NOW - timedelta(minutes=31)).isoformat(),
+        "required_status_context": "Dish / exact-head certification",
+    }
+    first = lifecycle(state=LifecycleState.WAITING_CI, gate=gate)
+    second = lifecycle(state=LifecycleState.WAITING_CI, gate=gate)
+    second.number = 180
+    second.url = "https://github.com/marcogallotta/ai-tools/pull/180"
+    second.head = "b" * 40
+    second.reviewed_head = second.head
+    payload = build_projection(
+        [first, second],
+        repository=REPOSITORY,
+        tasks=[task_with_hold(clear_hold())],
+        source_observation={
+            "status": "COMPLETE",
+            "pull_requests": {
+                "179": source()["pull_requests"]["179"],
+                "180": {
+                    "state": "NOT_LANDED",
+                    "ultimate_target": "main",
+                    "publication_state": "open",
+                    "provenance": "fixture",
+                },
+            },
+            "workstreams": [],
+        },
+        generated_at=NOW,
+    )
+    systemic = [
+        case for case in payload["v3"]["attention"]["cases"]
+        if case["reason_class"] == "RECURRING_BUILD_HEALTH_PATTERN"
+    ]
+    assert len(systemic) == 1
+    assert systemic[0]["next_owner"] == "Coordinator"
+    assert systemic[0]["evidence"]["affected_prs"] == [179, 180]
+    assert systemic[0] in payload["v3"]["integrator"]["active_cases"]
 
 
 def test_ci_ownership_routes_without_giving_integrator_scheduler_or_implementation_authority():
