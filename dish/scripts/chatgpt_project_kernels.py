@@ -58,10 +58,16 @@ def fast_track_gate_registry():
 
 def canonical_fast_track_overlay(value):
  if not isinstance(value,dict): raise KernelError('fast-track overlay must be an object')
- version=str(value.get('version','')).strip(); state=str(value.get('state','')).strip().upper(); generation=str(value.get('generation','')).strip(); scope=value.get('scope'); expiry=value.get('expiry'); reason=str(value.get('reason','')).strip()
- if version!=FAST_TRACK_OVERLAY_VERSION or state not in {'ACTIVE','INACTIVE'} or not generation or not isinstance(scope,list) or not scope or any(not isinstance(x,str) or not re.fullmatch(r'[a-z0-9][a-z0-9-]*@[1-9][0-9]*',x.strip()) for x in scope) or (expiry is not None and not str(expiry).strip()): raise KernelError('invalid fast-track overlay fields')
+ version=str(value.get('version','')).strip(); state=str(value.get('state','')).strip().upper(); generation=str(value.get('generation','')).strip(); scope=value.get('scope'); gate_semantics=value.get('gate_semantics'); expiry=value.get('expiry'); reason=str(value.get('reason','')).strip()
+ if version!=FAST_TRACK_OVERLAY_VERSION or state not in {'ACTIVE','INACTIVE'} or not generation or not isinstance(scope,list) or not scope or any(not isinstance(x,str) or not re.fullmatch(r'[a-z0-9][a-z0-9-]*@[1-9][0-9]*',x.strip()) for x in scope) or not isinstance(gate_semantics,dict) or (expiry is not None and not str(expiry).strip()): raise KernelError('invalid fast-track overlay fields')
  scope=sorted(set(x.strip() for x in scope))
- return {'version':version,'state':state,'generation':generation,'scope':scope,'expiry':None if expiry is None else str(expiry).strip(),'reason':reason}
+ if set(gate_semantics)!=set(scope): raise KernelError('fast-track overlay gate semantics must exactly bind scope')
+ normalized_semantics={}
+ for key in scope:
+  digest=str(gate_semantics[key]).strip().lower()
+  if not re.fullmatch(r'sha256:[0-9a-f]{64}',digest): raise KernelError(f'fast-track overlay gate semantic digest invalid for {key}')
+  normalized_semantics[key]=digest
+ return {'version':version,'state':state,'generation':generation,'scope':scope,'gate_semantics':normalized_semantics,'expiry':None if expiry is None else str(expiry).strip(),'reason':reason}
 
 def parse_fast_track_overlay_block(text):
  raw=str(text)
@@ -88,10 +94,13 @@ def fast_track_use(value,*,gate_id,gate_version,task,candidate,action,raw_eviden
   if _fast_track_datetime(overlay['expiry'],'expiry')<=current: raise KernelError('fast-track overlay generation is expired')
  registry=fast_track_gate_registry(); gid=str(gate_id).strip(); gate=registry.get(gid)
  if not isinstance(gate_version,int) or gate is None or gate['current_version']!=gate_version: raise KernelError('fast-track gate is unknown, stale, or materially changed')
- if f'{gid}@{gate_version}' not in overlay['scope']: raise KernelError('fast-track gate is outside captured overlay scope')
+ scope_key=f'{gid}@{gate_version}'
+ if scope_key not in overlay['scope']: raise KernelError('fast-track gate is outside captured overlay scope')
+ authorized_semantic_digest=overlay['gate_semantics'][scope_key]
+ if authorized_semantic_digest!=gate['semantic_digest']: raise KernelError('fast-track gate is unknown, stale, or materially changed')
  task=str(task).strip(); candidate=str(candidate).strip(); action=str(action).strip(); raw_evidence=str(raw_evidence).strip()
  if not task or not candidate or not action or not raw_evidence: raise KernelError('fast-track use requires exact task/candidate/action/raw evidence')
- return {'marker':'GATE WAIVED BY MARCO OVERRIDE','overlay_generation':overlay['generation'],'overlay_digest':fast_track_overlay_digest(overlay),'gate_id':gid,'gate_version':gate_version,'task':task,'candidate':candidate,'action':action,'raw_evidence':raw_evidence}
+ return {'marker':'GATE WAIVED BY MARCO OVERRIDE','overlay_generation':overlay['generation'],'overlay_digest':fast_track_overlay_digest(overlay),'gate_id':gid,'gate_version':gate_version,'gate_semantic_digest':authorized_semantic_digest,'task':task,'candidate':candidate,'action':action,'raw_evidence':raw_evidence}
 
 def role_index_contracts()->set[str]:
  out=set()
