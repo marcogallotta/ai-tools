@@ -17,6 +17,54 @@ def local_work_classification(pr: PRLifecycle) -> tuple[str | None, str | None]:
     return boundary.work_type, boundary.scope
 
 
+def _readiness_fields(pr: PRLifecycle) -> str:
+    state = pr.state
+    action = "NONE"
+    if pr.human_action:
+        lowered = pr.human_action.lower()
+        if "no action for marco" not in lowered and not lowered.startswith("waiting on "):
+            action = pr.human_action
+
+    if state == LifecycleState.MERGED:
+        source = f"LANDED — exact reviewed source `{pr.head}`; target-specific GitHub readback passed"
+        active = "UNKNOWN — runtime/deployed/process generation is a separate witness"
+        status = "ACTIVATION PENDING"
+        proof = (
+            pr.residual_reason
+            if pr.residual_reason
+            else f"target-specific source landing readback for `{pr.head}`; runtime activation proof still separate"
+        )
+    elif state == LifecycleState.MERGING:
+        source = f"NOT LANDED — exact candidate `{pr.head}`"
+        residual = str(pr.residual_reason or "")
+        if residual.startswith("RUNNING —"):
+            active = residual
+        else:
+            active = "UNKNOWN — no current real lock/process witness is rendered"
+        status = "VERIFYING"
+        proof = "authoritative intended-target landing readback is still pending"
+    elif state in {LifecycleState.INTEGRATION_READY, LifecycleState.REVIEW_PASSED, LifecycleState.WAITING_CI}:
+        source = f"NOT LANDED — exact candidate `{pr.head}`"
+        active = "NOT RUNNING — source landing has not completed"
+        status = "FIX NOT LIVE"
+        proof = pr.residual_reason or "review/gate evidence exists; intended-target source landing is still pending"
+    elif state == LifecycleState.WAITING_INFRASTRUCTURE:
+        source = f"UNKNOWN — exact candidate `{pr.head}` cannot advance while infrastructure readback is unavailable"
+        active = "UNKNOWN — missing infrastructure/liveness witness is named in the lifecycle reason"
+        status = "NOT OPERATIONAL"
+        proof = pr.residual_reason or "infrastructure evidence missing"
+    else:
+        source = f"NOT LANDED — exact candidate `{pr.head}`"
+        active = "NOT RUNNING — no source-landing runtime is implied by this lifecycle state"
+        status = "FIX NOT LIVE"
+        proof = pr.residual_reason or f"lifecycle state `{pr.state_label}`"
+
+    return (
+        f"SOURCE: {source} | ACTIVE/RUNNING: {active} | STATUS: {status} | "
+        f"OPERATOR ACTION: {action} | COMPLETION PROOF: {proof}"
+    )
+
+
 def action_first_status(pr: PRLifecycle) -> str:
     state = pr.state
 
@@ -51,6 +99,9 @@ def action_first_status(pr: PRLifecycle) -> str:
     elif state == LifecycleState.WAITING_EXTERNAL_DEPENDENCY:
         first = "This is waiting on an external dependency. Nothing for you to do."
         why = pr.residual_reason or "The dependency owner must finish before this can continue."
+    elif state == LifecycleState.WAITING_INFRASTRUCTURE:
+        first = "Integration infrastructure evidence is unavailable. Nothing for you to do."
+        why = pr.residual_reason or "The lifecycle controller will retry bounded infrastructure readback."
     elif state in {LifecycleState.LOCAL_CERTIFICATION_REQUIRED, LifecycleState.LOCAL_IMPLEMENTATION_REQUIRED}:
         kind, _scope = local_work_classification(pr)
         if kind == "TESTS ONLY":
@@ -63,7 +114,6 @@ def action_first_status(pr: PRLifecycle) -> str:
     elif state == LifecycleState.INTEGRATION_READY:
         first = "Review and required checks passed. Source integration is next. Nothing for you to do."
         why = "The authorized Integration path can continue automatically."
-        owner = "Next owner/system: the configured local Claude/Codex Integration launcher."
     elif state == LifecycleState.MERGING:
         first = "Source integration is in progress. Nothing for you to do."
         why = "The approved candidate is inside the landing step."
@@ -75,4 +125,4 @@ def action_first_status(pr: PRLifecycle) -> str:
         lowered = pr.human_action.lower()
         if "no action for marco" not in lowered and not lowered.startswith("waiting on "):
             first = f"Your next action: {pr.human_action}"
-    return f"{first} {why}"
+    return f"{first} {why} {_readiness_fields(pr)}"
