@@ -99,6 +99,12 @@ def _story_time(story: Mapping[str, Any]) -> datetime | None:
     return value.astimezone(timezone.utc)
 
 
+def _story_order(story_id: str) -> tuple[int, int | str]:
+    if story_id.isdigit():
+        return (0, int(story_id))
+    return (1, story_id)
+
+
 def source_landing_hold(stories: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     """Reconstruct the only Asana-side V3 source-landing veto.
 
@@ -108,7 +114,7 @@ def source_landing_hold(stories: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     is deliberately ignored: the explicit structured decision record is the
     provenance-bearing action, not the service account name.
     """
-    events: list[tuple[datetime, str, dict[str, str]]] = []
+    events: list[tuple[datetime, tuple[int, int | str], str, dict[str, str]]] = []
     malformed: list[dict[str, Any]] = []
 
     for story in stories:
@@ -141,6 +147,7 @@ def source_landing_hold(stories: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
             continue
         events.append((
             when,
+            _story_order(story_id),
             story_id,
             {
                 "action": action,
@@ -169,7 +176,7 @@ def source_landing_hold(stories: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     evidence_story = None
     evidence_time = None
 
-    for when, story_id, event in events:
+    for when, _, story_id, event in events:
         evidence_story = story_id or None
         evidence_time = when.isoformat()
         if event["action"] == "hold":
