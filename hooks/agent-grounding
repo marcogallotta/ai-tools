@@ -1,0 +1,434 @@
+#!/usr/bin/env python3
+"""Cross-session Dish grounding and action-witness wrapper.
+
+The existing ``agent-reground`` implementation remains the recovery/barrier engine.
+This wrapper broadens its entry boundary to fresh/resumed sessions, closes the
+missing-marker recovery gap, resolves shared/inherited context through the same
+ChatGPT Project declarations, and records exact grounding/action witnesses.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import importlib.util
+import json
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+
+
+def _now_utc() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _load_module(name: str, path: Path) -> ModuleType:
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load {name} from {path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _base_path() -> Path:
+    candidates = [
+        Path(__file__).resolve().with_name("agent-reground"),
+        Path.home().resolve() / ".local" / "bin" / "agent-reground",
+    ]
+    for path in candidates:
+        if path.is_file():
+            return path
+    raise RuntimeError("cannot locate existing agent-reground recovery engine")
+
+
+BASE = _load_module("dish_agent_reground_base", _base_path())
+
+
+def _resolver(repo: Path) -> ModuleType:
+    path = repo / "scripts" / "agent_context.py"
+    if not path.is_file():
+        raise BASE.RegroundError(f"shared context resolver is missing: {path}")
+    return _load_module("dish_agent_context", path)
+
+
+def _session_receipt_path(agent_id: str) -> Path:
+    return BASE.reground_dir() / f"{agent_id}.session.json"
+
+
+def _action_receipt_path(agent_id: str) -> Path:
+    return BASE.reground_dir() / f"{agent_id}.action.json"
+
+
+def _sha256(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _authority_record(repo: Path, path: str) -> dict[str, Any]:
+    text = BASE._read_required(repo, path)
+    record = BASE._authority_record(repo, path, text)
+    return {**record, "sha256": _sha256(text)}
+
+
+def _context_record(repo: Path, resolver: ModuleType, locator: str) -> dict[str, Any]:
+    path = locator.split("#", 1)[0]
+    full = BASE._read_required(repo, path)
+    bounded = resolver.section_text(repo, locator)
+    record = BASE._authority_record(repo, path, full)
+    return {
+        **record,
+        "locator": locator,
+        "file_sha256": _sha256(full),
+        "content_sha256": _sha256(bounded),
+    }
+
+
+def _identity_repo(agent_id: str, payload: dict[str, Any]) -> tuple[dict[str, Any], Path, str]:
+    identity = BASE.load_identity(agent_id)
+    repo = BASE.resolve_repo(identity, payload)
+    BASE.verify_repository(repo)
+    role = str(identity["role"]).strip().lower().replace("_", "-")
+    return identity, repo, role
+
+
+def _resolved_startup(
+    agent_id: str, payload: dict[str, Any]
+) -> tuple[dict[str, Any], Path, str, ModuleType, dict[str, Any]]:
+    identity, repo, role = _identity_repo(agent_id, payload)
+    resolver = _resolver(repo)
+    try:
+        resolved = resolver.resolve_context(role, repo_root=repo)
+    except resolver.ContextError as exc:
+        raise BASE.RegroundError(str(exc)) from exc
+    return identity, repo, role, resolver, resolved
+
+
+def _startup_records(repo: Path, resolved: dict[str, Any]) -> list[dict[str, Any]]:
+    return [_authority_record(repo, str(path)) for path in resolved["startup_paths"]]
+
+
+def _startup_context(repo: Path, resolved: dict[str, Any]) -> str:
+    pieces = [
+        "DISH SHARED/INHERITED CONTEXT — resolved from canonical Project source + role index; read-only context grants no new authority."
+    ]
+    for path in resolved["startup_paths"]:
+        path = str(path)
+        pieces.append(f"\n===== RESOLVED STARTUP CONTEXT: {path} =====\n{BASE._read_required(repo, path)}")
+    return "\n".join(pieces)
+
+
+def _augment_session_marker(
+    agent_id: str,
+    payload: dict[str, Any],
+    *,
+    session_source: str,
+) -> tuple[dict[str, Any], str]:
+    marker = BASE._read_json(BASE.marker_path(agent_id), "re-grounding marker")
+    _identity, repo, role, _resolver_module, resolved = _resolved_startup(agent_id, payload)
+    records = _startup_records(repo, resolved)
+    marker["session_grounding"] = {
+        "source": session_source,
+        "grounded_at": _now_utc(),
+        "grounding_generation": marker.get("grounding_generation"),
+        "role": role,
+        "repository_head": BASE._git(repo, "rev-parse", "HEAD"),
+        "declaration_source": resolved["declaration_source"],
+        "role_index": resolved["role_index"],
+        "repository_modifying": resolved["repository_modifying"],
+        "context_records": records,
+    }
+    BASE._atomic_write_json(BASE.marker_path(agent_id), marker)
+    receipt = {
+        "schema_version": 1,
+        "agent_id": agent_id,
+        "host": marker.get("host"),
+        "session_source": session_source,
+        "grounded_at": marker["session_grounding"]["grounded_at"],
+        "grounding_generation": marker.get("grounding_generation"),
+        "role": role,
+        "repository": marker.get("repository"),
+        "repository_head": marker["session_grounding"]["repository_head"],
+        "root_instructions": marker.get("root_instructions"),
+        "role_index": marker.get("role_index"),
+        "role_contract": marker.get("role_contract"),
+        "context_records": records,
+    }
+    BASE._atomic_write_json(_session_receipt_path(agent_id), receipt)
+    return marker, _startup_context(repo, resolved)
+
+
+def _session_ground(
+    payload: dict[str, Any], agent_id: str, host: str, *, session_source: str
+) -> dict[str, Any]:
+    # perform_reground is deliberately reused as the single recovery/barrier engine.
+    result = BASE.perform_reground(payload, agent_id, host)
+    marker, shared_context = _augment_session_marker(
+        agent_id, payload, session_source=session_source
+    )
+    output = dict(result.get("hookSpecificOutput", {}))
+    existing = str(output.get("additionalContext", ""))
+    output["hookEventName"] = "SessionStart"
+    output["additionalContext"] = (
+        f"DISH SESSION GROUNDING — source={session_source}; exact witness generation={marker.get('grounding_generation')}\n"
+        + existing
+        + "\n"
+        + shared_context
+    )
+    return {"hookSpecificOutput": output}
+
+
+def _shared_context_stale(agent_id: str, payload: dict[str, Any]) -> str | None:
+    try:
+        marker = BASE._read_json(BASE.marker_path(agent_id), "re-grounding marker")
+        _identity, repo, _role, _resolver_module, resolved = _resolved_startup(agent_id, payload)
+        session = marker.get("session_grounding")
+        if not isinstance(session, dict):
+            return "shared/inherited session grounding witness is missing"
+        records = session.get("context_records")
+        if not isinstance(records, list):
+            return "shared/inherited session grounding records are missing"
+        by_path = {
+            str(record.get("path")): record
+            for record in records
+            if isinstance(record, dict) and record.get("path")
+        }
+        for expected in resolved["startup_paths"]:
+            expected = str(expected)
+            record = by_path.get(expected)
+            if record is None:
+                return f"required shared/inherited context was not grounded: {expected}"
+            current = BASE._read_required(repo, expected)
+            if record.get("sha256") != _sha256(current):
+                return f"required shared/inherited context changed after grounding: {expected}"
+    except BASE.RegroundError as exc:
+        return str(exc)
+    return None
+
+
+def _pretool_context_after_recovery(
+    agent_id: str, payload: dict[str, Any], *, reason: str
+) -> str:
+    _marker, shared = _augment_session_marker(agent_id, payload, session_source="action-recovery")
+    return f"DISH ACTION-BOUNDARY RE-GROUND — {reason}\n{shared}"
+
+
+def _action_ground(
+    agent_id: str,
+    payload: dict[str, Any],
+    trigger: str,
+    *,
+    tool_name: str | None,
+) -> str:
+    marker = BASE._read_json(BASE.marker_path(agent_id), "re-grounding marker")
+    _identity, repo, role, resolver, _resolved = _resolved_startup(agent_id, payload)
+    try:
+        action = resolver.resolve_context(role, repo_root=repo, trigger=trigger)
+    except resolver.ContextError as exc:
+        raise BASE.RegroundError(str(exc)) from exc
+
+    records: list[dict[str, Any]] = []
+    pieces = [
+        f"DISH ACTION-SPECIFIC GROUNDING — role={role}; trigger={trigger}; generation={marker.get('grounding_generation')}"
+    ]
+    for locator in action["triggered_reads"]:
+        locator = str(locator)
+        records.append(_context_record(repo, resolver, locator))
+        pieces.append(
+            f"\n===== ACTION CONTEXT: {locator} =====\n{resolver.section_text(repo, locator)}"
+        )
+
+    receipt = {
+        "schema_version": 1,
+        "agent_id": agent_id,
+        "host": marker.get("host"),
+        "witnessed_at": _now_utc(),
+        "grounding_generation": marker.get("grounding_generation"),
+        "role": role,
+        "trigger": trigger,
+        "tool_name": tool_name,
+        "repository_head": BASE._git(repo, "rev-parse", "HEAD"),
+        "git": marker.get("git"),
+        "root_instructions": marker.get("root_instructions"),
+        "role_index": marker.get("role_index"),
+        "role_contract": marker.get("role_contract"),
+        "context_records": records,
+    }
+    BASE._atomic_write_json(_action_receipt_path(agent_id), receipt)
+    marker["last_action_witness"] = receipt
+    BASE._atomic_write_json(BASE.marker_path(agent_id), marker)
+    return "\n".join(pieces)
+
+
+def _record_tool_witness(agent_id: str, payload: dict[str, Any], trigger: str | None) -> None:
+    marker = BASE._read_json(BASE.marker_path(agent_id), "re-grounding marker")
+    _identity, repo, role = _identity_repo(agent_id, payload)
+    marker["last_tool_witness"] = {
+        "witnessed_at": _now_utc(),
+        "grounding_generation": marker.get("grounding_generation"),
+        "role": role,
+        "tool_name": payload.get("tool_name") or payload.get("toolName"),
+        "trigger": trigger,
+        "branch": BASE._git(repo, "branch", "--show-current"),
+        "local_head": BASE._git(repo, "rev-parse", "HEAD"),
+        "root_instructions": marker.get("root_instructions"),
+        "role_index": marker.get("role_index"),
+        "role_contract": marker.get("role_contract"),
+    }
+    BASE._atomic_write_json(BASE.marker_path(agent_id), marker)
+
+
+def _pretool(payload: dict[str, Any], agent_id: str, host: str) -> dict[str, Any] | None:
+    additional: list[str] = []
+    generation_before: str | None = None
+    if BASE.marker_path(agent_id).exists():
+        try:
+            generation_before = str(
+                BASE._read_json(BASE.marker_path(agent_id), "re-grounding marker").get(
+                    "grounding_generation", ""
+                )
+            )
+        except BASE.RegroundError:
+            generation_before = None
+
+    if not BASE.boundary_path(agent_id).exists() or not BASE.marker_path(agent_id).exists():
+        try:
+            _session_ground(payload, agent_id, host, session_source="action-recovery")
+        except BASE.RegroundError as exc:
+            return BASE.deny(f"automatic grounding from missing witness failed: {exc}")
+        additional.append(
+            _pretool_context_after_recovery(
+                agent_id, payload, reason="missing session witness recovered before tool use"
+            )
+        )
+    else:
+        decision = BASE.recover_pretool_barrier(payload, agent_id, host)
+        if decision:
+            return decision
+        marker = BASE._read_json(BASE.marker_path(agent_id), "re-grounding marker")
+        generation_after = str(marker.get("grounding_generation", ""))
+        if generation_before and generation_after != generation_before:
+            additional.append(
+                _pretool_context_after_recovery(
+                    agent_id, payload, reason="stale core authority recovered before tool use"
+                )
+            )
+
+    stale = _shared_context_stale(agent_id, payload)
+    if stale:
+        try:
+            _session_ground(payload, agent_id, host, session_source="action-recovery")
+        except BASE.RegroundError as exc:
+            return BASE.deny(f"shared/inherited context recovery failed: {exc}")
+        additional.append(
+            _pretool_context_after_recovery(agent_id, payload, reason=stale)
+        )
+
+    trigger_value = payload.get("dish_action_trigger") or os.environ.get("DISH_ACTION_TRIGGER")
+    trigger = str(trigger_value).strip() if trigger_value else None
+    if trigger:
+        try:
+            additional.append(
+                _action_ground(
+                    agent_id,
+                    payload,
+                    trigger,
+                    tool_name=str(payload.get("tool_name") or payload.get("toolName") or "") or None,
+                )
+            )
+        except BASE.RegroundError as exc:
+            return BASE.deny(f"action-specific grounding failed: {exc}")
+
+    try:
+        _record_tool_witness(agent_id, payload, trigger)
+    except BASE.RegroundError as exc:
+        return BASE.deny(f"cannot record exact action witness: {exc}")
+
+    if not additional:
+        return None
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "additionalContext": "\n".join(additional),
+        }
+    }
+
+
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="command")
+    action = sub.add_parser("action", help="ground one declared action-specific context trigger")
+    action.add_argument("--agent-id")
+    action.add_argument("--trigger", required=True)
+    action.add_argument("--cwd", default=os.getcwd())
+    history = sub.add_parser("history", help="delegate transcript verification to agent-reground")
+    history.add_argument("--agent-id")
+    history.add_argument("--query")
+    return parser.parse_args(argv)
+
+
+def _cli_action(args: argparse.Namespace) -> int:
+    agent_id = args.agent_id or os.environ.get("CODEX_THREAD_ID")
+    if not agent_id:
+        print("ERROR: --agent-id is required when CODEX_THREAD_ID is unavailable", file=sys.stderr)
+        return 2
+    try:
+        safe_id = BASE._validate_agent_id(agent_id)
+        payload = {
+            "hook_event_name": "PreToolUse",
+            "session_id": safe_id,
+            "cwd": args.cwd,
+        }
+        if not BASE.boundary_path(safe_id).exists() or not BASE.marker_path(safe_id).exists():
+            _host = "codex" if os.environ.get("CODEX_THREAD_ID") else "claude"
+            _session_ground(payload, safe_id, _host, session_source="action-recovery")
+        text = _action_ground(safe_id, payload, args.trigger, tool_name=None)
+    except BASE.RegroundError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    print(text)
+    return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] in {"action", "history"}:
+        args = _parse_args(argv)
+        if args.command == "history":
+            agent_id = args.agent_id or os.environ.get("CODEX_THREAD_ID")
+            if not agent_id:
+                print("UNKNOWN: --agent-id is required when CODEX_THREAD_ID is unavailable")
+                return 0
+            try:
+                safe_id = BASE._validate_agent_id(agent_id)
+            except BASE.RegroundError as exc:
+                print(f"UNKNOWN: {exc}")
+                return 0
+            return BASE.history_check(safe_id, args.query)
+        return _cli_action(args)
+
+    try:
+        payload = json.load(sys.stdin)
+        if not isinstance(payload, dict):
+            raise BASE.RegroundError("hook input must be a JSON object")
+        event = BASE.hook_event(payload)
+        agent_id, host = BASE.resolve_agent_id(payload)
+        if event == "SessionStart":
+            source = str(payload.get("source") or "fresh").strip() or "fresh"
+            print(json.dumps(_session_ground(payload, agent_id, host, session_source=source)))
+            return 0
+        if event == "PreToolUse":
+            decision = _pretool(payload, agent_id, host)
+            if decision:
+                print(json.dumps(decision))
+            return 0
+        return 0
+    except (BASE.RegroundError, json.JSONDecodeError, RuntimeError) as exc:
+        print(f"agent-grounding: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
