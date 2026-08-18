@@ -100,14 +100,14 @@ def _write_success_report(
     return report_dir, report
 
 
-def test_config_defaults_are_six_hour_health_grace_and_seven_day_retention(
+def test_config_defaults_are_two_hour_health_grace_and_seven_day_retention(
     tmp_path: Path,
 ) -> None:
     env = _env(tmp_path)
     config = backup.config_from_environ(env, repo_root=tmp_path)
 
     assert config.retention_seconds == 7 * 24 * 60 * 60
-    assert config.max_age_seconds == 7 * 60 * 60
+    assert config.max_age_seconds == 2 * 60 * 60
     assert config.local_dir == tmp_path / "local"
     assert config.off_device_dir == tmp_path / "off-device"
 
@@ -635,12 +635,12 @@ def test_health_reports_latest_age_destination_and_freshness(
     monkeypatch.setattr(backup, "_regular_file", regular)
     result = backup.health(
         config,
-        now=completed + timedelta(hours=6, minutes=30),
+        now=completed + timedelta(hours=1, minutes=30),
     )
 
     assert result["ok"] is True
     assert result["fresh"] is True
-    assert result["latest_success"]["age_seconds"] == 6.5 * 60 * 60
+    assert result["latest_success"]["age_seconds"] == 1.5 * 60 * 60
     assert result["latest_success"]["off_device_path"].endswith("deadbeef.dump")
     assert result["off_device_destination"] == str(off_root)
 
@@ -732,7 +732,7 @@ def test_health_accepts_same_device_latest_backup_with_explicit_override(
     monkeypatch.setattr(backup, "_regular_file", lambda path, *, label: _stat(1))
 
     result = backup.health(
-        config, now=completed + timedelta(hours=6, minutes=30)
+        config, now=completed + timedelta(hours=1, minutes=30)
     )
 
     assert result["ok"] is True

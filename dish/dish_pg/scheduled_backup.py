@@ -37,7 +37,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = ROOT.parent
 DEFAULT_LOCAL_DIR = Path("/home/marco/.local/state/dish/prod/postgresql-backups")
 DEFAULT_RETENTION_SECONDS = 7 * 24 * 60 * 60
-DEFAULT_MAX_AGE_SECONDS = 7 * 60 * 60
+DEFAULT_MAX_AGE_SECONDS = 2 * 60 * 60
 
 
 class BackupError(RuntimeError):
