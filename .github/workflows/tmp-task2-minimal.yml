@@ -1,0 +1,106 @@
+name: Temporary Task 2 minimal authoring
+
+on:
+  pull_request:
+    branches: [main]
+    types: [synchronize]
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+jobs:
+  author:
+    if: github.event.pull_request.head.ref == 'agent/stable-authoring-base'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Build helper-free candidate
+        id: candidate
+        env:
+          TASK_BASE: f705922ae1201fb3ef785758c5308505960344e4
+        run: |
+          set -euo pipefail
+          git show "$TASK_BASE":dish/docs/chatgpt-projects/source.json > /tmp/base-source.json
+          git show "$TASK_BASE":dish/docs/chatgpt-projects/manifest.json > /tmp/base-manifest.json
+          python3 dish/scripts/tmp_task2_author.py
+          rm -f \
+            .github/workflows/tmp-task2-stable-authoring-base.yml \
+            .github/workflows/tmp-task2-pr-author.yml \
+            .github/workflows/tmp-task2-minimal.yml \
+            dish/scripts/tmp_task2_author.py
+          python3 dish/scripts/chatgpt_project_kernels.py reconcile --base-manifest /tmp/base-manifest.json --base-source /tmp/base-source.json --source dish/docs/chatgpt-projects/source.json --output dish/docs/chatgpt-projects/manifest.json
+          python3 dish/scripts/chatgpt_project_kernels.py render
+          python3 dish/scripts/chatgpt_project_kernels.py check
+          python3 dish/scripts/dish-test-plan --validate
+          git diff --check "$TASK_BASE"
+          git config user.name 'Dish Agent'
+          git config user.email 'dish-agent@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'Pin stable Implementation authoring bases'
+          echo "head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Build governed changed-path plan
+        env:
+          TASK_BASE: f705922ae1201fb3ef785758c5308505960344e4
+        run: |
+          set -euo pipefail
+          mkdir -p .test-artifacts/task2
+          cd dish
+          python3 scripts/dish-test-plan --base "$TASK_BASE" --json > ../.test-artifacts/task2/plan.json
+          cat ../.test-artifacts/task2/plan.json
+      - name: Resolve canonical Python version
+        id: python-bundle
+        run: python3 scripts/dependency_bundle.py expected --repo-root "$GITHUB_WORKSPACE" --github-output "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ steps.python-bundle.outputs.python_version }}
+      - uses: ./.github/actions/setup-python-bundle
+        with:
+          github-token: ${{ github.token }}
+      - name: Run planner-required commands
+        run: |
+          set -euo pipefail
+          cd dish
+          python3 - <<'PY'
+          import json, subprocess
+          from pathlib import Path
+          plan=json.loads(Path('../.test-artifacts/task2/plan.json').read_text())
+          for command in plan['commands']:
+              print('+ '+command, flush=True)
+              subprocess.run(command, shell=True, check=True)
+          PY
+      - name: Publish exact head
+        run: git push origin HEAD:agent/stable-authoring-base
+      - name: Record durable evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          FINAL_HEAD: ${{ steps.candidate.outputs.head }}
+        run: |
+          python3 - <<'PY' > /tmp/evidence.md
+          import json, os
+          from pathlib import Path
+          plan=json.loads(Path('.test-artifacts/task2/plan.json').read_text())
+          print('<!-- dish-implementation-evidence:v1 -->')
+          print('IMPLEMENTATION EVIDENCE — Task 1217558179795693')
+          print(f"Exact head: `{os.environ['FINAL_HEAD']}`")
+          print('PASS: Project check, selector validation, diff check, and every governed planner command.')
+          print('Classes: '+', '.join(plan['classes']))
+          print('Traits: '+(', '.join(plan['traits']) or 'none'))
+          for command in plan['commands']:
+              print(f'- PASS: `{command}`')
+          print('All temporary authoring files were removed before the final commit and tests.')
+          print('— Dish Agent: Implementation | GitHub Actions | task 1217558179795693')
+          PY
+          gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/evidence.md
+      - name: Record failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "AUTHORING FAILURE — Task 1217558179795693 — GitHub Actions run $GITHUB_RUN_ID. Branch was not promoted to review-ready. — Dish Agent: Implementation | GitHub Actions"
