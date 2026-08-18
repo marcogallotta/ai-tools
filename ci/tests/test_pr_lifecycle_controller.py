@@ -54,6 +54,23 @@ def test_start_refuses_unmanaged_existing_watcher(tmp_path, monkeypatch):
         c.start(paths)
 
 
+def test_start_refuses_runbook_style_relative_unmanaged_watcher(tmp_path, monkeypatch):
+    paths = c._paths(tmp_path)
+
+    class Result:
+        stdout = "9090 python scripts/pr_lifecycle.py watch --dispatch --interval 180\n"
+
+    monkeypatch.setattr(c.subprocess, "run", lambda *args, **kwargs: Result())
+    with pytest.raises(c.ControllerError, match="refusing duplicate start"):
+        c.start(paths)
+
+
+def test_conflict_discovery_is_broader_than_owned_watcher_identity():
+    command = "python scripts/pr_lifecycle.py watch --interval 180 --dispatch"
+    assert c._conflicting_watcher_signature(command)
+    assert not c._owned_watcher_signature(command)
+
+
 def test_start_detaches_supervisor_and_reads_back(tmp_path, monkeypatch):
     paths = c._paths(tmp_path)
     seen = {}
