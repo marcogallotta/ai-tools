@@ -156,6 +156,159 @@ class LifecycleEconomicsTelemetryTests(unittest.TestCase):
             rc = telemetry.main(["emit", "--event-json", str(event_path), "--output", str(target)])
         self.assertEqual(rc, 0)
 
+    def test_missing_usage_and_execution_are_unknown_while_exact_zero_is_zero(self):
+        missing = telemetry.collect([event("missing")])[0][0]
+        self.assertEqual(missing["execution"], telemetry.UNKNOWN)
+        self.assertEqual(missing["usage"]["total_tokens"]["attributed_value"], telemetry.UNKNOWN)
+        self.assertEqual(missing["usage"]["cost"]["exact_source_units"], telemetry.UNKNOWN)
+
+        zero = telemetry.collect([event(
+            "zero",
+            execution={"execution_id": "run-0", "host": "chatgpt", "provider": "openai", "model": "model-x", "config": "default", "snapshot": "snap-1"},
+            usage={"tool_calls": 0, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0, "cost": {"amount": "0", "currency": "USD", "unit": "provider_charge"}},
+        )])[0][0]
+        self.assertEqual(zero["usage"]["total_tokens"]["attributed_value"], 0)
+        self.assertEqual(zero["usage"]["cost"]["exact_source_units"], [{"currency": "USD", "unit": "provider_charge", "amount": "0"}])
+
+    def test_multi_provider_usage_never_cross_attributes(self):
+        openai = event(
+            "openai", attempt_id="impl-1",
+            execution={"execution_id": "impl-1", "host": "chatgpt", "provider": "openai", "model": "gpt-x", "config": "implementation", "snapshot": "snap-a"},
+            usage={"total_tokens": 100, "cost": {"amount": "0.50", "currency": "USD", "unit": "provider_charge"}},
+        )
+        review = event(
+            "review", attempt_id="review-1",
+            execution={"execution_id": "review-1", "host": "review-host", "provider": "provider-b", "model": "review-y", "config": "review", "snapshot": "snap-b"},
+            usage={"total_tokens": 30, "cost": {"amount": "0.10", "currency": "EUR", "unit": "provider_charge"}},
+            review={"round_id": "round-1", "review_id": "review-1", "phase": "passed", "exact_head_sha": "a" * 40},
+        )
+        record, report = telemetry.collect([openai, review])
+        buckets = record[0]["execution_economics"]
+        self.assertEqual(len(buckets), 2)
+        by_provider = {bucket["identity"]["provider"]: bucket for bucket in buckets}
+        self.assertEqual(by_provider["openai"]["usage"]["total_tokens"]["attributed_value"], 100)
+        self.assertEqual(by_provider["provider-b"]["usage"]["total_tokens"]["attributed_value"], 30)
+        self.assertEqual(by_provider["openai"]["usage"]["cost"]["exact_source_units"][0]["currency"], "USD")
+        self.assertEqual(by_provider["provider-b"]["usage"]["cost"]["exact_source_units"][0]["currency"], "EUR")
+        report_providers = {item["identity"]["provider"] for item in report["by_execution"]}
+        self.assertEqual(report_providers, {"openai", "provider-b"})
+
+    def test_repeated_exact_operator_action_is_counted_once(self):
+        action = {
+            "required": True,
+            "category": "override_waiver_permission_prompt",
+            "action_id": "override-action-1",
+            "gate_id": "repository-bundle-witness",
+            "override": True,
+            "duration_ms": 500,
+        }
+        record = telemetry.collect([event("o1", operator=action), event("o2", operator=action)])[0][0]
+        self.assertEqual(record["operator"]["intervention_count"], 1)
+        self.assertEqual(record["operator"]["override_count"], 1)
+        self.assertEqual(record["operator"]["category_duration_ms"], {"override_waiver_permission_prompt": 500})
+
+    def test_closed_schema_rejects_arbitrary_top_level_and_nested_payload_fields(self):
+        invalid = [
+            event("top-text", text="payload"),
+            event("top-description", description="payload"),
+            event("top-diff", diff="payload"),
+            event("top-raw", raw={"anything": "payload"}),
+            event("nested-execution", execution={"host": "chatgpt", "metadata": {"text": "payload"}}),
+            event("nested-usage", usage={"total_tokens": 1, "raw": "payload"}),
+            event("nested-operator", operator={"required": False, "description": "payload"}),
+        ]
+        for value in invalid:
+            with self.subTest(source_event_id=value["source_event_id"]):
+                with self.assertRaises(telemetry.TelemetryError):
+                    telemetry.validate_event(value)
+
+    def test_authoritative_source_adapter_discards_bodies_and_preserves_exact_ids(self):
+        head = "a" * 40
+        lifecycle = {
+            "number": 168,
+            "head": head,
+            "state": "changes_requested_fix_in_progress",
+            "task_ids": ["1217487779268948"],
+        }
+        raw_pr = {
+            "id": 5181601475, "number": 168, "state": "open",
+            "updated_at": "2026-08-18T12:30:45Z",
+            "head": {"sha": head}, "changed_files": 3, "additions": 824, "deletions": 0,
+        }
+        reviews = [{
+            "id": 4960992929, "submitted_at": "2026-08-18T12:30:45Z",
+            "commit_id": head,
+            "body": "VERDICT: BLOCK\nGATE WAIVED BY MARCO OVERRIDE: repository-bundle witness",
+        }]
+        comments = [{
+            "id": 99, "created_at": "2026-08-18T12:31:00Z",
+            "body": f"<!-- dish-human-notice:v1 kind=local-implementation head={head} key=notice-1 -->\nHuman action notice recorded.",
+        }]
+        adapted = telemetry.events_from_authoritative_pr_sources(
+            repository="marcogallotta/ai-tools", lifecycle=lifecycle, raw_pr=raw_pr, reviews=reviews, comments=comments,
+        )
+        self.assertEqual(len(adapted), 3)
+        encoded = json.dumps(adapted)
+        self.assertNotIn("VERDICT: BLOCK", encoded)
+        self.assertNotIn("Human action notice recorded", encoded)
+        review_event = next(item for item in adapted if item["source"] == "github-formal-review")
+        self.assertEqual(review_event["review"]["review_id"], "4960992929")
+        self.assertEqual(review_event["review"]["exact_head_sha"], head)
+        self.assertEqual(review_event["operator"]["category"], "override_waiver_permission_prompt")
+        self.assertEqual(review_event["execution"], telemetry.UNKNOWN)
+        notice = next(item for item in adapted if item["source"] == "github-human-notice")
+        self.assertEqual(notice["operator"]["action_id"], "notice-1")
+        self.assertEqual(notice["operator"]["category"], "manual_relay_or_queue_routing")
+
+    def test_safe_capture_pr_reads_authoritative_backend_and_remains_fail_open(self):
+        head = "b" * 40
+        class FakeGitHub:
+            def __init__(self):
+                self.calls = []
+            def get_pr(self, number):
+                self.calls.append(("pr", number))
+                return {"id": 1, "number": number, "state": "open", "updated_at": "2026-08-18T12:00:00Z", "head": {"sha": head}}
+            def get_reviews(self, number):
+                self.calls.append(("reviews", number))
+                return []
+            def get_comments(self, number):
+                self.calls.append(("comments", number))
+                return []
+        fake = FakeGitHub()
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "events.jsonl"
+            result = telemetry.safe_capture_pr(
+                output, github=fake, repository="marcogallotta/ai-tools", pr_number=168,
+                lifecycle={"number": 168, "head": head, "state": "review_ready", "task_ids": ["1217487779268948"]},
+            )
+            persisted = [json.loads(line) for line in output.read_text().splitlines()]
+        self.assertEqual(fake.calls, [("pr", 168), ("reviews", 168), ("comments", 168)])
+        self.assertTrue(result["telemetry_written"])
+        self.assertEqual(result["adapted_event_count"], 1)
+        self.assertEqual(persisted[0]["source"], "dish-pr-lifecycle")
+
+    def test_diagnostic_report_covers_outcomes_operator_cost_and_unknowns_by_execution(self):
+        identity = {"execution_id": "impl-1", "host": "chatgpt", "provider": "openai", "model": "gpt-x", "config": "implementation", "snapshot": "snap-a"}
+        merged = event(
+            "merged", execution=identity, attempt_id="impl-1",
+            usage={"total_tokens": 200, "cost": {"amount": "1.25", "currency": "USD", "unit": "provider_charge"}},
+            operator={"required": True, "category": "design_risk_product_decision", "action_id": "decision-1", "duration_ms": 800},
+            outcome={"kind": "merged", "authoritative": True, "terminal": True},
+        )
+        unknown = event("unknown-exec", generation_id="gen-2", execution=telemetry.UNKNOWN, usage=telemetry.UNKNOWN)
+        _, report = telemetry.collect([merged, unknown])
+        self.assertEqual(report["outcomes"]["counts"], {"UNKNOWN": 1, "merged": 1})
+        self.assertEqual(report["operator"]["design_risk_product_decision"]["intervention_count"], 1)
+        known_bucket = next(item for item in report["by_execution"] if item["identity"] != telemetry.UNKNOWN)
+        self.assertEqual(known_bucket["identity"]["provider"], "openai")
+        self.assertEqual(known_bucket["generation_outcomes"], {"merged": 1})
+        self.assertEqual(known_bucket["usage"]["total_tokens"]["p50"], 200)
+        self.assertEqual(known_bucket["cost"][0]["amount"]["p50"], "1.25")
+        self.assertTrue(known_bucket["low_sample"])
+        unknown_bucket = next(item for item in report["by_execution"] if item["identity"] == telemetry.UNKNOWN)
+        self.assertGreaterEqual(unknown_bucket["usage"]["total_tokens"]["unknown_count"], 1)
+        self.assertEqual(report["productivity_score"], telemetry.UNKNOWN)
+
 
 if __name__ == "__main__":
     unittest.main()
