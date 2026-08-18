@@ -728,6 +728,20 @@ def test_safe_reclaim_planning_successor_preserves_intent_gate_and_remains_claim
     assert successor_action["command"] == "start"
     assert successor_action["arguments"]["kind"] == "planning"
 
+    # The safe-reclaim response already advertises the prepared successor. A
+    # subsequent connected read must preserve that fresh-run continuation rather
+    # than treating its intentionally absent lease/run as admin recovery.
+    connected = service.execute_agent(
+        "read", {"agent": "gpt", "task_gid": "t"}, principal=fresh
+    )
+    assert connected["allowed_actions"] == ["start"]
+    assert connected["data"]["service_access"] == {"state": "claimable_by_run"}
+    assert connected["data"].get("recovery_required") is not True
+    assert connected["data"]["required_action"] == {
+        "surface": "connected-agent",
+        **successor_action,
+    }
+
     challenge_request_id = str(uuid.uuid4())
     challenge = service.execute_agent(
         "start",

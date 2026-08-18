@@ -37,6 +37,44 @@ def apply_abandonment_view(
         (operation_id, operation_id, operation_id),
     ).fetchone()
     if abandonment is None:
+        reclaim = conn.execute(
+            """SELECT reclaim.*
+                 FROM safe_reclaims AS reclaim
+                WHERE reclaim.successor_operation_id=? AND reclaim.status='prepared'""",
+            (operation_id,),
+        ).fetchone()
+        if reclaim is not None:
+            successor = conn.execute(
+                "SELECT * FROM operations WHERE operation_id=?", (operation_id,)
+            ).fetchone()
+            if (
+                reclaim["stage"] in {"planning", "research"}
+                and successor is not None
+                and successor["status"] == "open"
+                and successor["phase"] == "prepare_required"
+                and successor["successor_claim_mode"] == "stage_actor"
+            ):
+                # A prepared safe-reclaim successor is deliberately unowned until a
+                # fresh run claims it through start.  It has no abandonment row, so
+                # preserve its exact durable continuation here instead of letting
+                # lease adaptation misclassify the missing lease as recovery work.
+                from .abandonment import _prepared_stage_start_action
+
+                required_action = _prepared_stage_start_action(conn, successor)
+                facts.update(
+                    {
+                        "legal_actions": ["start"],
+                        "required_action": required_action,
+                        "required_start_kind": successor["operation_kind"],
+                        "prepared_operation_id": operation_id,
+                        "safe_reclaim_id": reclaim["reclaim_id"],
+                        "safe_reclaim_status": reclaim["status"],
+                        "safe_reclaim_source_operation_id": reclaim["source_operation_id"],
+                        "recovery_required": False,
+                        "connected_action_available": True,
+                    }
+                )
+                return facts
         facts["legal_actions"] = legal_actions(snapshot)
         return facts
 
