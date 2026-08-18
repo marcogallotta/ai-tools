@@ -124,3 +124,39 @@ def test_generated_kernels_carry_direct_overlay_rule_and_triggered_procedure():
         assert 'Fast-track: read triggered Procedure.' in rendered
         assert 'fast-track' in rendered
         assert 'dish/docs/agents/fast-track-process.md#Procedure' in rendered
+
+
+WORKER_START='<!-- BEGIN MANUAL WORKER PROJECT PROFILE -->\n'
+WORKER_END='\n<!-- END MANUAL WORKER PROJECT PROFILE -->'
+
+
+def _worker_profile():
+    doc=(DISH_ROOT/'docs'/'agents'/'operator-provenance.md').read_text()
+    assert doc.count(WORKER_START)==1 and doc.count(WORKER_END)==1
+    return doc.split(WORKER_START,1)[1].split(WORKER_END,1)[0]
+
+
+def test_manual_worker_profile_size_and_exact_modes():
+    profile=_worker_profile()
+    assert len(profile) <= 8000
+    assert 'Supported explicit modes are exactly: **Implementation**, **Code Review**, **Design Review**, **Audit**.' in profile
+    assert 'No mode means no governed work.' in profile
+    assert 'Integration/merge/deploy/cutover are outside Worker.' in profile
+
+
+def test_manual_worker_profile_preserves_same_attempt_authorship_boundary():
+    profile=_worker_profile()
+    assert 'keep the same `attempt_id + generation`' in profile
+    assert 'Switching modes never mints independence or a new attempt.' in profile
+    assert 'This attempt is now an author and cannot independently Review that candidate.' in profile
+
+
+def test_manual_worker_design_review_stays_exact_snapshot_bound():
+    profile=_worker_profile()
+    for phrase in (
+        'SHA-256 of exact canonical task notes/design snapshot',
+        'immediately before publishing `VERDICT: PASS` or `VERDICT: BLOCK`, reread the canonical task',
+        'publish no verdict for the new candidate',
+        'Chat-only verdict does not count.',
+    ):
+        assert phrase in profile
