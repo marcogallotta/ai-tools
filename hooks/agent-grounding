@@ -160,6 +160,21 @@ def _augment_session_marker(
     return marker, context
 
 
+def _core_context_for_session(context: str, session_source: str) -> str:
+    """Keep compaction-only recovery guidance out of fresh/resumed sessions."""
+    if session_source.casefold() == "compact":
+        return context
+    context = context.replace(
+        "POST-COMPACTION DISH RE-GROUNDING — authoritative reload completed mechanically.",
+        "DISH CORE RE-GROUNDING — authoritative reload completed mechanically.",
+        1,
+    )
+    history_marker = "\n===== SELF-HISTORY VERIFICATION RULE =====\n"
+    if history_marker in context:
+        context = context.split(history_marker, 1)[0].rstrip()
+    return context
+
+
 def _session_ground(
     payload: dict[str, Any], agent_id: str, host: str, *, session_source: str
 ) -> dict[str, Any]:
@@ -169,7 +184,9 @@ def _session_ground(
         agent_id, payload, session_source=session_source
     )
     output = dict(result.get("hookSpecificOutput", {}))
-    existing = str(output.get("additionalContext", ""))
+    existing = _core_context_for_session(
+        str(output.get("additionalContext", "")), session_source
+    )
     output["hookEventName"] = "SessionStart"
     output["additionalContext"] = (
         f"DISH SESSION GROUNDING — source={session_source}; "
