@@ -1,0 +1,125 @@
+name: Temporary Task 1 governed verification
+
+on:
+  push:
+    branches:
+      - agent/review-bundle-fallback
+
+permissions:
+  actions: read
+  contents: write
+  pull-requests: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Materialize final helper-free candidate commit
+        id: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          original="$(git rev-parse HEAD^)"
+          rm .github/workflows/tmp-task1-governed-verification.yml
+          git config user.name 'Dish Agent'
+          git config user.email 'dish-agent@users.noreply.github.com'
+          git add -A
+          git commit -m 'Verify governed Review bundle fallback evidence'
+          test "$(git rev-parse HEAD^{tree})" = "$(git rev-parse "$original^{tree}")"
+          echo "head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Project generator and selector map
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 dish/scripts/chatgpt_project_kernels.py check
+          python3 dish/scripts/dish-test-plan --validate
+          git diff --check be37fbbb3dbd830b37cd1c5221ce75aa8a629add...HEAD
+
+      - name: Build governed changed-path plan
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .test-artifacts/task1
+          cd dish
+          python3 scripts/dish-test-plan \
+            --base be37fbbb3dbd830b37cd1c5221ce75aa8a629add \
+            --json > ../.test-artifacts/task1/plan.json
+          cat ../.test-artifacts/task1/plan.json
+
+      - name: Resolve canonical Python version
+        id: python-bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/dependency_bundle.py expected \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Setup canonical Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ steps.python-bundle.outputs.python_version }}
+
+      - name: Recreate canonical Python environments
+        uses: ./.github/actions/setup-python-bundle
+        with:
+          github-token: ${{ github.token }}
+
+      - name: Run every planner-required command
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dish
+          python3 <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+          plan = json.loads(Path('../.test-artifacts/task1/plan.json').read_text())
+          for command in plan['commands']:
+              print(f'+ {command}', flush=True)
+              subprocess.run(command, shell=True, check=True)
+          PY
+
+      - name: Publish exact final branch head
+        shell: bash
+        run: |
+          set -euo pipefail
+          git push origin HEAD:agent/review-bundle-fallback
+
+      - name: Record durable Implementation evidence on PR
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FINAL_HEAD: ${{ steps.candidate.outputs.head }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY' > /tmp/evidence.md
+          import json
+          import os
+          from pathlib import Path
+          p = json.loads(Path('.test-artifacts/task1/plan.json').read_text())
+          print('<!-- dish-implementation-evidence:v1 -->')
+          print('IMPLEMENTATION EVIDENCE — Task 1217591613117587')
+          print(f"Exact head: `{os.environ['FINAL_HEAD']}`")
+          print('')
+          print('PASS: `python3 dish/scripts/chatgpt_project_kernels.py check`')
+          print('PASS: `python3 dish/scripts/dish-test-plan --validate`')
+          print('PASS: `git diff --check be37fbbb3dbd830b37cd1c5221ce75aa8a629add...HEAD`')
+          print('')
+          print('Governed changed-path plan:')
+          print('- Classes: ' + ', '.join(p['classes']))
+          print('- Traits: ' + (', '.join(p['traits']) or 'none'))
+          print('- Commands:')
+          for command in p['commands']:
+              print(f'  - PASS: `{command}`')
+          print('')
+          print('The temporary verification workflow removed itself before these checks; the tested tree is the exact helper-free final head.')
+          print('')
+          print('— Dish Agent: Implementation | GitHub Actions | task 1217591613117587')
+          PY
+          gh pr comment 164 --repo "$GITHUB_REPOSITORY" --body-file /tmp/evidence.md
