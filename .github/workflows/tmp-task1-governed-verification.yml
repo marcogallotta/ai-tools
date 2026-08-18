@@ -1,9 +1,9 @@
 name: Temporary Task 1 governed verification
 
 on:
-  push:
-    branches:
-      - agent/review-bundle-fallback
+  pull_request:
+    branches: [main]
+    types: [synchronize]
 
 permissions:
   actions: read
@@ -12,10 +12,12 @@ permissions:
 
 jobs:
   verify:
+    if: github.event.pull_request.head.ref == 'agent/review-bundle-fallback'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - name: Materialize final helper-free candidate commit
