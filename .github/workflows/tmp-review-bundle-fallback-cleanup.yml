@@ -1,0 +1,139 @@
+name: Temporary Review bundle fallback cleanup
+
+on:
+  push:
+    branches:
+      - agent/review-bundle-fallback
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Reapply Task 1 from authoritative pre-change Project files
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE=f303a41197e161c5f05067db0f3fc6d4768dcacd
+          git show "$BASE":dish/docs/chatgpt-projects/source.json > /tmp/base-source.json
+          git show "$BASE":dish/docs/chatgpt-projects/manifest.json > /tmp/base-manifest.json
+          git show "$BASE":dish/docs/chatgpt-projects/source.json > dish/docs/chatgpt-projects/source.json
+          git show "$BASE":dish/docs/chatgpt-projects/evals.json > dish/docs/chatgpt-projects/evals.json
+          git show "$BASE":dish/scripts/chatgpt_project_kernels.py > dish/scripts/chatgpt_project_kernels.py
+
+          python3 <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          source_path = Path('dish/docs/chatgpt-projects/source.json')
+          source = json.loads(source_path.read_text())
+          review_rules = source['roles']['review']['rules']
+          rule = {
+              'id': 'review-bundle-fallback',
+              'text': 'ChatGPT PR Review treats the repository bundle as a preferred context cache, not an availability gate. If unavailable, proceed from live connector-native evidence: repository/current main, exact PR base/head and complete diff, relevant current authority/files, linked task/decisions, prior Review/comments, and available CI/evidence. Never block, route local, or ask Marco solely for bundle transport. Reject any used stale, mismatched, corrupt, or wrong-SHA bundle; fail closed only on a named unresolved semantic, tool, or environment evidence boundary.',
+              'impact': 'additive',
+              'surface': 'routing',
+              'action_boundaries': ['review-write', 'handoff'],
+              'delivery': {'mode': 'DIRECT_ALWAYS_ON'},
+          }
+          anchor = next(i for i, x in enumerate(review_rules) if x.get('id') == 'review-repository-context')
+          review_rules.insert(anchor + 1, rule)
+          source_path.write_text(json.dumps(source, indent=2, ensure_ascii=False) + '\n')
+
+          evals_path = Path('dish/docs/chatgpt-projects/evals.json')
+          payload = json.loads(evals_path.read_text())
+          additions = [
+              {
+                  'id': 'review-bundle-unavailable-proceeds',
+                  'roles': ['review'],
+                  'required_rules': ['repository-context-admission', 'review-repository-context', 'review-bundle-fallback'],
+                  'prompt': 'Review a Dish PR. The exact current repository bundle cannot be discovered or retrieved, but connected GitHub/Asana provide live repository and current-main identity, exact PR base/head, the complete diff and changed files, relevant current-main authority/files, the linked task and durable decisions, prior formal Review/comments, and available CI/evidence. What do you do?',
+                  'expected_outcome': 'proceed_with_connector_native_review',
+                  'required_actions': ['resolve-exact-pr-and-live-authority', 'use-connector-native-review-evidence', 'proceed-substantive-review'],
+                  'forbidden_actions': ['block-for-bundle-transport-only', 'route-local-for-bundle-transport-only', 'ask-marco-for-bundle-waiver-or-relay'],
+              },
+              {
+                  'id': 'review-real-evidence-boundary-routes-local',
+                  'roles': ['review'],
+                  'required_rules': ['repository-context-admission', 'review-bundle-fallback'],
+                  'prompt': 'Review a Dish PR with no retrievable repository bundle. Connector-native repository, PR, task, diff, and current-main evidence are sufficient for the source review, but one merge-critical guarantee specifically requires a native local environment check unavailable to this Review host. What do you do?',
+                  'expected_outcome': 'route_only_named_missing_evidence_boundary',
+                  'required_actions': ['name-unresolved-semantic-guarantee', 'route-exact-local-evidence-boundary'],
+                  'forbidden_actions': ['block-for-bundle-transport-only', 'ask-marco-for-bundle-waiver-or-relay'],
+              },
+              {
+                  'id': 'review-stale-bundle-rejected',
+                  'roles': ['review'],
+                  'required_rules': ['repository-context-admission', 'review-bundle-fallback'],
+                  'prompt': 'Review a Dish PR. A repository bundle is available but verification shows it is stale, corrupt, mismatched, or advertises the wrong SHA. Live connector-native exact PR/current-main/task evidence is otherwise sufficient for the merge question. What do you do?',
+                  'expected_outcome': 'reject_invalid_bundle_and_use_safe_exact_evidence',
+                  'required_actions': ['reject-invalid-bundle', 'refuse-different-sha-substitution', 'use-connector-native-review-evidence'],
+                  'forbidden_actions': ['treat-invalid-bundle-as-current', 'substitute-different-bundle-sha'],
+              },
+              {
+                  'id': 'review-bundle-outage-regression-fixtures',
+                  'roles': ['review'],
+                  'required_rules': ['review-bundle-fallback'],
+                  'prompt': 'Regression fixture for the PR #147/#151/#158 failure class: exact repository-bundle discovery is unavailable, while exact connector-native PR/base/head/diff/current-main/task/Review/CI evidence is sufficient. Continue the Review workflow without asking Marco to waive the bundle gate.',
+                  'expected_outcome': 'review_fixture_proceeds_without_human_bundle_action',
+                  'required_actions': ['use-connector-native-review-evidence', 'proceed-substantive-review'],
+                  'forbidden_actions': ['block-for-bundle-transport-only', 'route-local-for-bundle-transport-only', 'ask-marco-for-bundle-waiver-or-relay'],
+              },
+          ]
+          payload['scenarios'].extend(additions)
+          evals_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + '\n')
+
+          generator_path = Path('dish/scripts/chatgpt_project_kernels.py')
+          generator = generator_path.read_text()
+          ids = [x['id'] for x in additions]
+          match = re.search(r"REQUIRED_EVAL_IDS=\{[^\n]*\}", generator)
+          if not match:
+              raise SystemExit('REQUIRED_EVAL_IDS assignment not found')
+          segment = match.group(0)
+          segment = segment[:-1] + ', ' + ', '.join(repr(x) for x in ids) + '}'
+          generator_path.write_text(generator[:match.start()] + segment + generator[match.end():])
+          PY
+
+      - name: Regenerate clean canonical Project transition
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 dish/scripts/chatgpt_project_kernels.py reconcile \
+            --base-manifest /tmp/base-manifest.json \
+            --base-source /tmp/base-source.json \
+            --source dish/docs/chatgpt-projects/source.json \
+            --output dish/docs/chatgpt-projects/manifest.json
+          python3 dish/scripts/chatgpt_project_kernels.py render
+          python3 dish/scripts/chatgpt_project_kernels.py check
+          git diff --check
+
+      - name: Assert cleanup stayed narrow
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import subprocess
+          diff = subprocess.check_output(['git', 'diff', '--', 'dish/docs/chatgpt-projects/source.json'], text=True)
+          required = ['review-bundle-fallback']
+          if not all(x in diff for x in required):
+              raise SystemExit('clean source diff lost Review fallback rule')
+          PY
+
+      - name: Remove helper and publish corrected branch head
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/tmp-review-bundle-fallback-cleanup.yml
+          git config user.name 'Dish Agent'
+          git config user.email 'dish-agent@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          git commit -m 'Narrow Review bundle fallback Project diff'
+          git push origin HEAD:agent/review-bundle-fallback
