@@ -22,9 +22,7 @@ rule=hits[0]
 old=rule['text']
 if 'Missing/unverifiable/stale context blocks only the affected substantial conclusion.' not in old:
     raise SystemExit('repository-context-admission baseline text changed')
-rule['text']=(
-    'Before substantial consequential repository/system reasoning outside ordinary ChatGPT PR Review, establish a current repository-context witness: resolve live `refs/heads/main` plus repository name/ID from GitHub; retrieve the exact `repository-bundle-<SHA>` through the GitHub connector; materialize it; verify with `scripts/repository_bundle.py` against name/ID/ref/SHA; bind the verified clone; only then reason across files. Ordinary ChatGPT PR Review instead applies `review-bundle-fallback` when the exact bundle cannot be discovered or retrieved but connector-native exact evidence is sufficient. Any bundle actually used by Review remains subject to exact name/ID/ref/SHA verification and stale/mismatched/corrupt/wrong-SHA rejection. Tiny targeted reads are exempt. Re-enter after fresh/replacement session, post-compaction re-ground, affected-role switch, or main movement whenever the witness is absent/stale. Missing/unverifiable/stale context blocks only the affected substantial non-Review conclusion; ordinary Review fails closed only on a named unresolved semantic/tool/environment evidence boundary that connector-native evidence cannot satisfy. Bundle is read-only context; live GitHub/Asana remain current-state authorities.'
-)
+rule['text']='Outside ordinary ChatGPT PR Review, substantial cross-file repository/system reasoning requires a verified exact-current-main bundle. Review follows `review-bundle-fallback` when bundle transport is unavailable and connector exact evidence suffices; any bundle used still requires exact validation and rejects stale/mismatched/corrupt/wrong-SHA material. Tiny reads exempt. Re-enter after session/reground/role/main change when witness absent/stale. Missing context blocks non-Review reasoning; Review blocks only on a named semantic/tool/environment evidence gap. Bundle is read-only; GitHub/Asana remain live authority.'
 source_path.write_text(json.dumps(source,indent=2,sort_keys=True)+'\n')
 
 payload={k:rule.get(k) for k in ('id','text','impact','surface','action_boundaries')}
@@ -96,8 +94,8 @@ def test_rendered_review_bundle_instructions_are_noncontradictory():
     admission=_rule(source,'repository-context-admission')
     fallback=_rule(source,'review-bundle-fallback')
     rendered=kernels.render_role(manifest,source,'review')
-    assert 'outside ordinary ChatGPT PR Review' in admission['text']
-    assert 'ordinary Review fails closed only on a named unresolved semantic/tool/environment evidence boundary' in admission['text']
+    assert admission['text'].startswith('Outside ordinary ChatGPT PR Review')
+    assert 'Review blocks only on a named semantic/tool/environment evidence gap' in admission['text']
     assert 'Missing/unverifiable/stale context blocks only the affected substantial conclusion.' not in admission['text']
     assert admission['text'] in rendered
     assert fallback['text'] in rendered
@@ -118,7 +116,7 @@ def test_nonreview_roles_still_receive_bundle_first_admission():
             continue
         rendered=kernels.render_role(manifest,source,role)
         assert admission in rendered
-        assert 'Before substantial consequential repository/system reasoning outside ordinary ChatGPT PR Review' in rendered
+        assert 'substantial cross-file repository/system reasoning requires a verified exact-current-main bundle' in rendered
 
 def test_bundle_unavailable_behavior_case_requires_progress_without_human_transport_action():
     scenario=next(x for x in kernels._evals() if x['id']=='review-bundle-unavailable-proceeds')
