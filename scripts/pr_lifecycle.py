@@ -389,9 +389,6 @@ def _source_observation_cycle(
             error = str(exc)
 
     for candidate in candidates.values():
-        merged_intermediate = any(
-            member.publication_state == "merged" for member in candidate.members
-        )
         workstreams.append({
             "task": candidate.workstream_task,
             "candidate_id": candidate.candidate_id,
@@ -418,7 +415,7 @@ def _source_observation_cycle(
                 "provenance": "existing-workstream-landing-model",
                 **(
                     {"lineage_state": "MERGED_INTERMEDIATE_TARGET"}
-                    if merged_intermediate and not candidate.source_complete
+                    if member.publication_state == "merged" and not candidate.source_complete
                     else {}
                 ),
             }
