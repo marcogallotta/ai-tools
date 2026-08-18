@@ -1,6 +1,7 @@
 """Narrow lifecycle collaborators remain directly constructible and typed."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import inspect
 import sqlite3
 from types import SimpleNamespace
@@ -9,15 +10,24 @@ from typing import get_type_hints
 import pytest
 
 from dish_service.application import DishService
+from dish_service.command_spec import ACTION_COMMANDS
 from dish_service.lease_requests import LeaseRequestCoordinator, LeaseRequestServicePort
 from dish_service.leases import ServicePrincipal
 from dish_service.request_coordinators import (
+    ASANA_MUTATION_REPLAY_COMMAND,
+    LEGACY_DIRECT,
+    MEDIATED_ACTION,
+    AdmissionAuthorityReference,
     AdminRequestCoordinator,
     AdminRequestServicePort,
     AgentRequestCoordinator,
     AgentRequestServicePort,
+    AsanaMutationAdmissionCoordinator,
+    TaskStateFingerprint,
+    UpstreamMutationDecision,
 )
 from dish_service.request_replay import FunctionalRequestReplay, RequestReplayPort
+from dish_tool.database import content_identity
 from dish_tool.errors import DishRuleError
 
 
@@ -63,7 +73,7 @@ def test_coordinator_constructor_dependencies_are_typed_ports() -> None:
         (
             "expire",
             "expire-lease",
-            {"lease_id": "lease", "reason": "stop", "request_id": "req"},
+            {"lease_id": "lease", "reason": "stop", "request_id": "req"}),
         ),
     ),
 )
@@ -103,6 +113,7 @@ def test_dish_service_remains_the_lifecycle_composition_root() -> None:
     for method_name in ("renew_lease", "recover_lease", "expire_lease"):
         method_source = inspect.getsource(getattr(DishService, method_name))
         assert "self._lease_requests" in method_source
+
 
 class _AgentLifecycleService:
     def __init__(self) -> None:
@@ -245,21 +256,6 @@ def test_admin_coordinator_exposes_acquisition_settlement_and_cleanup_order() ->
 
 
 # --- Asana mutation admission / inactive transport -------------------------------
-
-from datetime import datetime, timedelta, timezone
-
-from dish_service.command_spec import ACTION_COMMANDS
-from dish_service.request_coordinators import (
-    ASANA_MUTATION_REPLAY_COMMAND,
-    AdmissionAuthorityReference,
-    AsanaMutationAdmissionCoordinator,
-    TaskStateFingerprint,
-    UpstreamMutationDecision,
-    LEGACY_DIRECT,
-    MEDIATED_ACTION,
-)
-from dish_tool.database import content_identity
-
 
 _ADMISSION_NOW = datetime(2026, 8, 19, 0, 0, tzinfo=timezone.utc)
 _ADMISSION_PROJECT = "project"
