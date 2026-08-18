@@ -310,5 +310,88 @@ class LifecycleEconomicsTelemetryTests(unittest.TestCase):
         self.assertEqual(report["productivity_score"], telemetry.UNKNOWN)
 
 
+    def test_estimate_error_reaches_report_and_missing_estimate_stays_unknown(self):
+        exact = event("estimate-exact", timing={"stage": "implementation", "duration_ms": 1200, "estimate_ms": 1000})
+        missing = event("estimate-missing", timing={"stage": "implementation", "duration_ms": 900})
+        records, report = telemetry.collect([exact, missing])
+        stage_record = records[0]["timing"]["stages"]["implementation"]
+        self.assertEqual(stage_record["known_ms"], [1200, 900])
+        self.assertEqual(stage_record["estimate_known_ms"], [1000])
+        self.assertEqual(stage_record["estimate_unknown_event_count"], 1)
+        self.assertEqual(stage_record["estimate_error_known_ms"], [200])
+        self.assertEqual(stage_record["estimate_error_unknown_event_count"], 1)
+        stage_report = report["timing"]["implementation"]
+        self.assertEqual(stage_report["estimate_ms"]["p50_ms"], 1000)
+        self.assertEqual(stage_report["estimate_ms"]["unknown_event_count"], 1)
+        self.assertEqual(stage_report["estimate_error_ms"]["p50_ms"], 200)
+        self.assertEqual(stage_report["estimate_error_ms"]["p90_ms"], 200)
+        self.assertEqual(stage_report["estimate_error_ms"]["unknown_event_count"], 1)
+
+    def test_unknown_attempts_do_not_become_zero_distribution_samples(self):
+        identity = {"execution_id": "run-unknown", "host": "chatgpt", "provider": "openai", "model": "gpt-x", "config": "implementation", "snapshot": "snap-a"}
+        record, report = telemetry.collect([event("unknown-attempt", execution=identity)])
+        self.assertEqual(record[0]["attempts"]["exact_count"], 0)
+        self.assertEqual(record[0]["attempts"]["unknown_event_count"], 1)
+        flow_attempts = report["flow_economics"]["attempts"]
+        self.assertEqual(flow_attempts["count"], 0)
+        self.assertIsNone(flow_attempts["p50"])
+        self.assertEqual(flow_attempts["unknown_count"], 1)
+        self.assertEqual(flow_attempts["unknown_event_count"], 1)
+        bucket = next(item for item in report["by_execution"] if item["identity"] != telemetry.UNKNOWN)
+        self.assertEqual(bucket["attempts"]["count"], 0)
+        self.assertIsNone(bucket["attempts"]["p50"])
+        self.assertEqual(bucket["attempts"]["unknown_count"], 1)
+        self.assertEqual(bucket["attempts"]["unknown_event_count"], 1)
+
+    def test_override_adapter_requires_canonical_gate_identity(self):
+        head = "c" * 40
+        lifecycle = {"number": 168, "head": head, "state": "changes_requested_fix_in_progress", "task_ids": ["1217487779268948"]}
+        raw_pr = {"id": 1, "number": 168, "state": "open", "updated_at": "2026-08-18T13:34:18Z", "head": {"sha": head}}
+        reviews = [
+            {
+                "id": 10, "submitted_at": "2026-08-18T13:34:18Z", "commit_id": head,
+                "body": "VERDICT: BLOCK\nGATE WAIVED BY MARCO OVERRIDE: repository-bundle witness for this Review/chat. Review used live connector-native evidence.",
+            },
+            {
+                "id": 11, "submitted_at": "2026-08-18T13:35:18Z", "commit_id": head,
+                "body": "VERDICT: BLOCK\nGATE WAIVED BY MARCO OVERRIDE: gate=repository-bundle-witness",
+            },
+        ]
+        adapted = telemetry.events_from_authoritative_pr_sources(
+            repository="marcogallotta/ai-tools", lifecycle=lifecycle, raw_pr=raw_pr, reviews=reviews, comments=[],
+        )
+        by_review = {item["review"]["review_id"]: item for item in adapted if item["source"] == "github-formal-review"}
+        self.assertEqual(by_review["10"]["operator"]["gate_id"], telemetry.UNKNOWN)
+        self.assertEqual(by_review["10"]["operator"]["action_id"], "github-review:10:override")
+        self.assertEqual(by_review["11"]["operator"]["gate_id"], "repository-bundle-witness")
+
+        recurrence = telemetry.collect([
+            event("gate-1", operator={"required": True, "category": "override_waiver_permission_prompt", "action_id": "override-1", "gate_id": "repository-bundle-witness", "override": True}),
+            event("gate-2", operator={"required": True, "category": "override_waiver_permission_prompt", "action_id": "override-2", "gate_id": "repository-bundle-witness", "override": True}),
+        ])[0][0]
+        self.assertEqual(recurrence["operator"]["repeated_same_gate"], {"repository-bundle-witness": 2})
+
+    def test_source_execution_scopes_local_attempt_and_action_ids(self):
+        exec_a = {"execution_id": "run-a", "host": "chatgpt", "provider": "provider-a", "model": "m-a", "config": "implementation", "snapshot": "s-a"}
+        exec_b = {"execution_id": "run-b", "host": "review-host", "provider": "provider-b", "model": "m-b", "config": "review", "snapshot": "s-b"}
+        operator = {"required": True, "category": "manual_relay_or_queue_routing", "action_id": "123", "duration_ms": 10}
+        a = event("scope-a", source="github", execution=exec_a, attempt_id="1", operator=operator)
+        a_repeat = event("scope-a-repeat", source="github", execution=exec_a, attempt_id="1", operator=operator)
+        b = event("scope-b", source="worker", execution=exec_b, attempt_id="1", operator=operator)
+        record, report = telemetry.collect([a, a_repeat, b])
+        generation = record[0]
+        self.assertEqual(generation["attempts"]["exact_count"], 2)
+        self.assertEqual(generation["attempts"]["exact_ids"], ["1", "1"])
+        self.assertEqual(len(generation["attempts"]["exact_scoped_ids"]), 2)
+        self.assertEqual(generation["operator"]["intervention_count"], 2)
+        self.assertEqual(generation["operator"]["action_ids"], ["123", "123"])
+        self.assertEqual(len(generation["operator"]["action_scoped_ids"]), 2)
+        providers = {item["identity"]["provider"]: item for item in report["by_execution"] if item["identity"] != telemetry.UNKNOWN}
+        self.assertEqual(providers["provider-a"]["attempts"]["p50"], 1)
+        self.assertEqual(providers["provider-a"]["operator_interventions"]["p50"], 1)
+        self.assertEqual(providers["provider-b"]["attempts"]["p50"], 1)
+        self.assertEqual(providers["provider-b"]["operator_interventions"]["p50"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

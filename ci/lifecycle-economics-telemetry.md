@@ -28,6 +28,8 @@ Optional exact evidence is allowlisted as:
 
 An absent execution or usage observation normalizes to literal `UNKNOWN`. This is distinct from known zero: `total_tokens: 0` or cost amount `0` remains a real known zero only when the source supplied it exactly.
 
+For timing, `duration_ms` is the source-owned actual interval and `estimate_ms` is an exact source estimate when available. Generation records retain both exact values and signed `estimate_error_ms = duration_ms - estimate_ms`; if either side is unavailable, estimate error remains unknown rather than being imputed.
+
 ## Authoritative source adapters
 
 `events_from_authoritative_pr_sources()` adapts the repository's existing `PRLifecycle` snapshot plus raw GitHub PR/review/comment facts. It does not duplicate lifecycle legality or stage membership. It carries the source-owned state/verdict/marker values, exact GitHub IDs/timestamps/head/size/outcome, and then discards source bodies.
@@ -37,7 +39,7 @@ The adapter recognizes only current durable source facts it can bind mechanicall
 - a GitHub/lifecycle snapshot from the exact PR/head/state;
 - formal exact-head Review submissions, using the durable review ID, submitted timestamp, reviewed commit and formal verdict;
 - durable `dish-human-notice:v1` markers for the bounded currently-known operator-action categories;
-- an explicit `GATE WAIVED BY MARCO OVERRIDE:` line on a formal Review as one exact override action tied to that review ID.
+- an explicit `GATE WAIVED BY MARCO OVERRIDE:` line on a formal Review as one exact override action tied to that review ID. Free-form text after the marker is **not** a gate identity. Same-gate recurrence is available only when the durable line uses the canonical machine-readable form `GATE WAIVED BY MARCO OVERRIDE: gate=<canonical-id>`; otherwise `gate_id` remains `UNKNOWN`.
 
 It does **not** infer provider/model/run economics from GitHub actors, chat text, or timing adjacency. Unavailable execution/lineage/generation IDs remain `UNKNOWN`.
 
@@ -62,13 +64,13 @@ Operator-required events use exactly one category:
 - `integration_merge_controller_babysitting` — manual Integration/merge/controller babysitting;
 - `workflow_incident_firefighting` — incident work caused by Development Workflow process failure.
 
-`operator.required=false` is never counted merely because a source actor is human. When an exact `action_id` exists, repeated observations of that same durable action count once per generation; repeated source observations therefore cannot inflate operator cost or override recurrence. With no exact action ID, each unique source event remains a distinct exact observation and duration stays `UNKNOWN` unless the source supplies it.
+`operator.required=false` is never counted merely because a source actor is human. `action_id` is source-local unless its source contract says otherwise, so exact de-duplication is scoped by `(source, execution identity, action_id)`. Repeated observations of the same scoped durable action count once per generation, while identical local ID strings from different sources/executions remain distinct. With no exact action ID, each unique source event remains a distinct exact observation and duration stays `UNKNOWN` unless the source supplies it.
 
 ## Execution-bound economics
 
 Each generation record keeps a lineage-level diagnostic total **and** `execution_economics` buckets keyed by the complete exact execution identity (`execution_id`, host, provider, model, config, snapshot). Usage/cost from one bucket is never allocated to another bucket. Events without exact execution identity stay in an `UNKNOWN` execution bucket.
 
-Retries remain distinct by exact `attempt_id`. Review rounds and BLOCK/fix/re-review progression are counted only from explicit source review identifiers/phases. Exact monetary evidence is grouped by the source `(currency, unit)` and kept as exact decimal strings. There is no exchange-rate conversion, token-price inference, or current-list-price heuristic.
+Retries remain distinct by exact source-owned attempt identity. `attempt_id` is de-duplicated only within its `(source, execution identity)` namespace; identical local strings from different providers/sources therefore remain separate attempts. If any attempt observation in a generation/execution bucket lacks exact attempt identity, that generation is excluded from the exact attempt-count distribution and contributes to unknown-generation/event coverage instead of appearing as a misleading zero-attempt sample. Review rounds and BLOCK/fix/re-review progression are counted only from explicit source review identifiers/phases. Exact monetary evidence is grouped by the source `(currency, unit)` and kept as exact decimal strings. There is no exchange-rate conversion, token-price inference, or current-list-price heuristic.
 
 A generation terminal outcome is reported separately from a bucket's own source-terminal event. Diagnostic `generation_outcomes` under an execution identity means only that the exact identity appeared in that generation; it is not a causal quality claim about that provider/model.
 
@@ -80,9 +82,9 @@ Scheduled/full-regression health belongs to `repository_health`; it is excluded 
 
 The diagnostic report includes:
 
-- source-stage timing count/p50/p90 plus unknown-event coverage;
+- source-stage actual timing count/p50/p90, exact estimate count/p50/p90, and signed estimate-error (`actual_ms - estimate_ms`) count/p50/p90, each with unknown-event coverage;
 - terminal generation outcome counts;
-- attempts, Review rounds, operator interventions, exact token/tool totals, and exact source-unit cost distributions;
+- attempts, Review rounds, operator interventions, exact token/tool totals, and exact source-unit cost distributions; attempt distributions include only generations/buckets whose attempt identity coverage is complete, with unknown generations/events reported separately;
 - operator category counts and duration distributions with unknown duration coverage;
 - `by_execution` comparisons preserving the exact execution identity, exact usage/cost unit, generation outcome context, unknown coverage, and low-sample flags.
 

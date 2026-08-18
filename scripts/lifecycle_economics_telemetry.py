@@ -54,7 +54,10 @@ NESTED_FIELDS = {
 HUMAN_NOTICE_RE = re.compile(
     r"<!--\s*dish-human-notice:v1\s+kind=(?P<kind>[^\s>]+)\s+head=(?P<head>[0-9a-fA-F]{40})\s+key=(?P<key>[^\s>]+)\s*-->"
 )
-OVERRIDE_RE = re.compile(r"(?im)^\s*GATE WAIVED BY MARCO OVERRIDE:\s*(?P<gate>[^\n]+?)\s*$")
+OVERRIDE_RE = re.compile(r"(?im)^\s*GATE WAIVED BY MARCO OVERRIDE:\s*(?P<value>[^\n]+?)\s*$")
+CANONICAL_OVERRIDE_GATE_RE = re.compile(
+    r"(?im)^\s*GATE WAIVED BY MARCO OVERRIDE:\s*gate=(?P<gate>[A-Za-z0-9][A-Za-z0-9._:/-]{0,127})\s*$"
+)
 NOTICE_CATEGORY = {
     "terminal-cleanup": "workflow_incident_firefighting",
     "review-dispatch-config": "workflow_incident_firefighting",
@@ -287,11 +290,22 @@ def _execution_identity(execution: Any) -> Any:
     return {key: execution.get(key, UNKNOWN) for key in EXECUTION_FIELDS}
 
 
+def _scoped_local_id(event: Mapping[str, Any], value: Any) -> tuple[str, str, str]:
+    """Namespace a source-local identifier by its owning source/execution identity."""
+    return (str(event["source"]), _execution_key(event.get("execution", UNKNOWN)), str(value))
+
+
+def _scoped_id_record(scoped: tuple[str, str, str], *, field_name: str) -> dict[str, Any]:
+    source, execution_key, value = scoped
+    identity = UNKNOWN if execution_key == UNKNOWN else json.loads(execution_key)
+    return {"source": source, "execution": identity, field_name: value}
+
+
 @dataclass
 class ExecutionAccumulator:
     identity: Any
     event_count: int = 0
-    attempts: set[Any] = field(default_factory=set)
+    attempts: set[tuple[str, str, str]] = field(default_factory=set)
     unknown_attempt_events: int = 0
     review_rounds: set[Any] = field(default_factory=set)
     usage_sums: Counter[str] = field(default_factory=Counter)
@@ -300,7 +314,7 @@ class ExecutionAccumulator:
     cost_sums: dict[tuple[str, str], Decimal] = field(default_factory=lambda: defaultdict(Decimal))
     cost_known_events: int = 0
     cost_unknown_events: int = 0
-    operator_actions: set[str] = field(default_factory=set)
+    operator_actions: set[tuple[str, str, str]] = field(default_factory=set)
     operator_unknown_action_events: int = 0
     operator_count: int = 0
     terminal_outcomes: set[str] = field(default_factory=set)
@@ -309,7 +323,7 @@ class ExecutionAccumulator:
         self.event_count += 1
         attempt = event.get("attempt_id", UNKNOWN)
         if _known(attempt):
-            self.attempts.add(attempt)
+            self.attempts.add(_scoped_local_id(event, attempt))
         else:
             self.unknown_attempt_events += 1
         review = event.get("review") or {}
@@ -338,7 +352,7 @@ class ExecutionAccumulator:
         if operator_counted:
             self.operator_count += 1
             if _known(operator.get("action_id")):
-                self.operator_actions.add(str(operator["action_id"]))
+                self.operator_actions.add(_scoped_local_id(event, operator["action_id"]))
             else:
                 self.operator_unknown_action_events += 1
         outcome = event.get("outcome") or {}
@@ -367,13 +381,21 @@ class ExecutionAccumulator:
             "identity": self.identity,
             "event_count": self.event_count,
             "attempts": {
-                "exact_ids": sorted(self.attempts, key=str),
+                "exact_ids": sorted((item[2] for item in self.attempts), key=str),
+                "exact_scoped_ids": [
+                    _scoped_id_record(item, field_name="attempt_id")
+                    for item in sorted(self.attempts, key=str)
+                ],
                 "exact_count": len(self.attempts),
                 "unknown_event_count": self.unknown_attempt_events,
             },
             "review_round_count": len(self.review_rounds),
             "operator_intervention_count": self.operator_count,
-            "operator_action_ids": sorted(self.operator_actions),
+            "operator_action_ids": sorted((item[2] for item in self.operator_actions), key=str),
+            "operator_action_scoped_ids": [
+                _scoped_id_record(item, field_name="action_id")
+                for item in sorted(self.operator_actions, key=str)
+            ],
             "operator_unknown_action_events": self.operator_unknown_action_events,
             "usage": usage,
             "terminal_outcomes": sorted(self.terminal_outcomes) if self.terminal_outcomes else UNKNOWN,
@@ -392,7 +414,7 @@ class GenerationAccumulator:
     replacement_ids: set[Any] = field(default_factory=set)
     event_count: int = 0
     source_events: list[dict[str, Any]] = field(default_factory=list)
-    attempts: set[Any] = field(default_factory=set)
+    attempts: set[tuple[str, str, str]] = field(default_factory=set)
     unknown_attempt_events: int = 0
     review_rounds: set[Any] = field(default_factory=set)
     review_ids: set[Any] = field(default_factory=set)
@@ -400,7 +422,7 @@ class GenerationAccumulator:
     operator_counts: Counter[str] = field(default_factory=Counter)
     operator_duration_ms: Counter[str] = field(default_factory=Counter)
     operator_duration_unknown: Counter[str] = field(default_factory=Counter)
-    operator_action_ids: set[str] = field(default_factory=set)
+    operator_action_ids: set[tuple[str, str, str]] = field(default_factory=set)
     operator_unknown_action_events: int = 0
     override_gate_counts: Counter[str] = field(default_factory=Counter)
     unknown_override_gate_events: int = 0
@@ -412,6 +434,10 @@ class GenerationAccumulator:
     cost_unknown_events: int = 0
     stage_durations: dict[str, list[int]] = field(default_factory=lambda: defaultdict(list))
     unknown_stage_duration_events: Counter[str] = field(default_factory=Counter)
+    stage_estimates: dict[str, list[int]] = field(default_factory=lambda: defaultdict(list))
+    stage_estimate_errors: dict[str, list[int]] = field(default_factory=lambda: defaultdict(list))
+    unknown_stage_estimate_events: Counter[str] = field(default_factory=Counter)
+    unknown_stage_estimate_error_events: Counter[str] = field(default_factory=Counter)
     terminal_outcomes: set[str] = field(default_factory=set)
     size_values: dict[str, set[int]] = field(default_factory=lambda: defaultdict(set))
     execution_buckets: dict[str, ExecutionAccumulator] = field(default_factory=dict)
@@ -428,7 +454,7 @@ class GenerationAccumulator:
                 target.add(value)
         attempt = event.get("attempt_id", UNKNOWN)
         if _known(attempt):
-            self.attempts.add(attempt)
+            self.attempts.add(_scoped_local_id(event, attempt))
         else:
             self.unknown_attempt_events += 1
         review = event.get("review") or {}
@@ -444,9 +470,9 @@ class GenerationAccumulator:
         if operator.get("required") is True:
             action_id = operator.get("action_id", UNKNOWN)
             if _known(action_id):
-                action_id = str(action_id)
-                if action_id not in self.operator_action_ids:
-                    self.operator_action_ids.add(action_id)
+                scoped_action = _scoped_local_id(event, action_id)
+                if scoped_action not in self.operator_action_ids:
+                    self.operator_action_ids.add(scoped_action)
                     operator_counted = True
             else:
                 self.operator_unknown_action_events += 1
@@ -486,11 +512,23 @@ class GenerationAccumulator:
                 self.cost_unknown_events += 1
 
         timing = event.get("timing") or {}
-        stage = timing.get("stage") or event.get("event_type") or UNKNOWN
-        if _known(timing.get("duration_ms")):
-            self.stage_durations[str(stage)].append(int(timing["duration_ms"]))
+        stage = str(timing.get("stage") or event.get("event_type") or UNKNOWN)
+        duration_known = _known(timing.get("duration_ms"))
+        estimate_known = _known(timing.get("estimate_ms"))
+        if duration_known:
+            duration_ms = int(timing["duration_ms"])
+            self.stage_durations[stage].append(duration_ms)
         elif timing:
-            self.unknown_stage_duration_events[str(stage)] += 1
+            self.unknown_stage_duration_events[stage] += 1
+        if estimate_known:
+            estimate_ms = int(timing["estimate_ms"])
+            self.stage_estimates[stage].append(estimate_ms)
+        elif timing:
+            self.unknown_stage_estimate_events[stage] += 1
+        if timing and duration_known and estimate_known:
+            self.stage_estimate_errors[stage].append(duration_ms - estimate_ms)
+        elif timing:
+            self.unknown_stage_estimate_error_events[stage] += 1
         outcome = event.get("outcome") or {}
         if outcome.get("authoritative") is True and outcome.get("terminal") is True and _known(outcome.get("kind")):
             self.terminal_outcomes.add(str(outcome["kind"]))
@@ -508,12 +546,22 @@ class GenerationAccumulator:
     def record(self) -> dict[str, Any]:
         terminal = next(iter(self.terminal_outcomes)) if len(self.terminal_outcomes) == 1 else UNKNOWN
         repeated_gates = {gate: count for gate, count in sorted(self.override_gate_counts.items()) if count > 1}
+        stage_names = (
+            set(self.stage_durations) | set(self.unknown_stage_duration_events) | set(self.stage_estimates)
+            | set(self.stage_estimate_errors) | set(self.unknown_stage_estimate_events)
+            | set(self.unknown_stage_estimate_error_events)
+        )
         durations = {
-            stage: {"known_ms": values, "unknown_event_count": self.unknown_stage_duration_events.get(stage, 0)}
-            for stage, values in sorted(self.stage_durations.items())
+            stage: {
+                "known_ms": list(self.stage_durations.get(stage, [])),
+                "unknown_event_count": self.unknown_stage_duration_events.get(stage, 0),
+                "estimate_known_ms": list(self.stage_estimates.get(stage, [])),
+                "estimate_unknown_event_count": self.unknown_stage_estimate_events.get(stage, 0),
+                "estimate_error_known_ms": list(self.stage_estimate_errors.get(stage, [])),
+                "estimate_error_unknown_event_count": self.unknown_stage_estimate_error_events.get(stage, 0),
+            }
+            for stage in sorted(stage_names)
         }
-        for stage, unknown_count in sorted(self.unknown_stage_duration_events.items()):
-            durations.setdefault(stage, {"known_ms": [], "unknown_event_count": unknown_count})
         usage: dict[str, Any] = {}
         for key in USAGE_FIELDS:
             known = self.usage_known_events.get(key, 0)
@@ -545,14 +593,26 @@ class GenerationAccumulator:
             "head_shas": sorted(self.heads, key=str),
             "event_count": self.event_count,
             "source_events": self.source_events,
-            "attempts": {"exact_ids": sorted(self.attempts, key=str), "exact_count": len(self.attempts), "unknown_event_count": self.unknown_attempt_events},
+            "attempts": {
+                "exact_ids": sorted((item[2] for item in self.attempts), key=str),
+                "exact_scoped_ids": [
+                    _scoped_id_record(item, field_name="attempt_id")
+                    for item in sorted(self.attempts, key=str)
+                ],
+                "exact_count": len(self.attempts),
+                "unknown_event_count": self.unknown_attempt_events,
+            },
             "review": {"round_ids": sorted(self.review_rounds, key=str), "round_count": len(self.review_rounds), "review_ids": sorted(self.review_ids, key=str), "phase_counts": dict(sorted(self.review_phase_counts.items()))},
             "operator": {
                 "intervention_count": sum(self.operator_counts.values()),
                 "category_counts": dict(sorted(self.operator_counts.items())),
                 "category_duration_ms": dict(sorted(self.operator_duration_ms.items())),
                 "category_duration_unknown_events": dict(sorted(self.operator_duration_unknown.items())),
-                "action_ids": sorted(self.operator_action_ids),
+                "action_ids": sorted((item[2] for item in self.operator_action_ids), key=str),
+                "action_scoped_ids": [
+                    _scoped_id_record(item, field_name="action_id")
+                    for item in sorted(self.operator_action_ids, key=str)
+                ],
                 "unknown_action_event_count": self.operator_unknown_action_events,
                 "override_count": sum(self.override_gate_counts.values()) + self.unknown_override_gate_events,
                 "override_gate_counts": dict(sorted(self.override_gate_counts.items())),
@@ -633,8 +693,14 @@ def build_report(records: Sequence[Mapping[str, Any]], *, duplicate_events: int 
     pr_flow = [record for record in records if record.get("series") == PR_FLOW]
     stages: dict[str, list[int]] = defaultdict(list)
     stage_unknowns: Counter[str] = Counter()
+    stage_estimates: dict[str, list[int]] = defaultdict(list)
+    stage_estimate_unknowns: Counter[str] = Counter()
+    stage_estimate_errors: dict[str, list[int]] = defaultdict(list)
+    stage_estimate_error_unknowns: Counter[str] = Counter()
     outcomes: Counter[str] = Counter()
     attempts: list[int] = []
+    attempt_unknown_generations = 0
+    attempt_unknown_events = 0
     review_rounds: list[int] = []
     operator_interventions: list[int] = []
     operator_category_counts: Counter[str] = Counter()
@@ -652,8 +718,18 @@ def build_report(records: Sequence[Mapping[str, Any]], *, duplicate_events: int 
         for stage, payload in (record.get("timing", {}).get("stages", {}) or {}).items():
             stages[stage].extend(payload.get("known_ms", []))
             stage_unknowns[stage] += int(payload.get("unknown_event_count", 0))
+            stage_estimates[stage].extend(payload.get("estimate_known_ms", []))
+            stage_estimate_unknowns[stage] += int(payload.get("estimate_unknown_event_count", 0))
+            stage_estimate_errors[stage].extend(payload.get("estimate_error_known_ms", []))
+            stage_estimate_error_unknowns[stage] += int(payload.get("estimate_error_unknown_event_count", 0))
         outcomes[str(record.get("terminal_outcome", UNKNOWN))] += 1
-        attempts.append(int(record.get("attempts", {}).get("exact_count", 0)))
+        attempt_payload = record.get("attempts", {})
+        unknown_attempts = int(attempt_payload.get("unknown_event_count", 0))
+        attempt_unknown_events += unknown_attempts
+        if unknown_attempts:
+            attempt_unknown_generations += 1
+        else:
+            attempts.append(int(attempt_payload.get("exact_count", 0)))
         review_rounds.append(int(record.get("review", {}).get("round_count", 0)))
         operator_interventions.append(int(record.get("operator", {}).get("intervention_count", 0)))
         for category, count in (record.get("operator", {}).get("category_counts", {}) or {}).items():
@@ -683,15 +759,20 @@ def build_report(records: Sequence[Mapping[str, Any]], *, duplicate_events: int 
             key = _execution_key(identity)
             entry = by_execution.setdefault(key, {
                 "identity": identity, "generation_count": 0, "outcomes": Counter(),
-                "attempts": [], "attempt_unknown": 0, "review_rounds": [], "operator": [],
+                "attempts": [], "attempt_unknown_generations": 0, "attempt_unknown_events": 0, "review_rounds": [], "operator": [],
                 "usage": defaultdict(list), "usage_unknown": Counter(),
                 "cost": defaultdict(list), "cost_unknown": 0, "cost_unknown_events": 0,
                 "usage_unknown_events": Counter(), "source_terminal_outcomes": Counter(),
             })
             entry["generation_count"] += 1
             entry["outcomes"][str(record.get("terminal_outcome", UNKNOWN))] += 1
-            entry["attempts"].append(int(bucket.get("attempts", {}).get("exact_count", 0)))
-            entry["attempt_unknown"] += int(bucket.get("attempts", {}).get("unknown_event_count", 0))
+            bucket_attempts = bucket.get("attempts", {})
+            bucket_unknown_attempts = int(bucket_attempts.get("unknown_event_count", 0))
+            entry["attempt_unknown_events"] += bucket_unknown_attempts
+            if bucket_unknown_attempts:
+                entry["attempt_unknown_generations"] += 1
+            else:
+                entry["attempts"].append(int(bucket_attempts.get("exact_count", 0)))
             entry["review_rounds"].append(int(bucket.get("review_round_count", 0)))
             entry["operator"].append(int(bucket.get("operator_intervention_count", 0)))
             for metric in USAGE_FIELDS:
@@ -721,8 +802,25 @@ def build_report(records: Sequence[Mapping[str, Any]], *, duplicate_events: int 
             "p50_ms": _percentile(stages.get(stage, []), 0.50),
             "p90_ms": _percentile(stages.get(stage, []), 0.90),
             "low_sample": len(stages.get(stage, [])) < low_sample_threshold,
+            "estimate_ms": {
+                "count": len(stage_estimates.get(stage, [])),
+                "unknown_event_count": stage_estimate_unknowns.get(stage, 0),
+                "p50_ms": _percentile(stage_estimates.get(stage, []), 0.50),
+                "p90_ms": _percentile(stage_estimates.get(stage, []), 0.90),
+                "low_sample": len(stage_estimates.get(stage, [])) < low_sample_threshold,
+            },
+            "estimate_error_ms": {
+                "count": len(stage_estimate_errors.get(stage, [])),
+                "unknown_event_count": stage_estimate_error_unknowns.get(stage, 0),
+                "p50_ms": _percentile(stage_estimate_errors.get(stage, []), 0.50),
+                "p90_ms": _percentile(stage_estimate_errors.get(stage, []), 0.90),
+                "low_sample": len(stage_estimate_errors.get(stage, [])) < low_sample_threshold,
+            },
         }
-        for stage in sorted(set(stages) | set(stage_unknowns))
+        for stage in sorted(
+            set(stages) | set(stage_unknowns) | set(stage_estimates) | set(stage_estimate_unknowns)
+            | set(stage_estimate_errors) | set(stage_estimate_error_unknowns)
+        )
     }
     operator_report = {}
     for category in sorted(set(operator_category_counts) | set(operator_category_durations) | set(operator_duration_unknowns)):
@@ -752,7 +850,8 @@ def build_report(records: Sequence[Mapping[str, Any]], *, duplicate_events: int 
             "low_sample": entry["generation_count"] < low_sample_threshold,
             "generation_outcomes": dict(sorted(entry["outcomes"].items())),
             "source_terminal_outcomes": dict(sorted(entry["source_terminal_outcomes"].items())) if entry["source_terminal_outcomes"] else UNKNOWN,
-            "attempts": _distribution(entry["attempts"], unknown_count=entry["attempt_unknown"], low_sample_threshold=low_sample_threshold),
+            "attempts": _distribution(entry["attempts"], unknown_count=entry["attempt_unknown_generations"], low_sample_threshold=low_sample_threshold)
+            | {"unknown_event_count": entry["attempt_unknown_events"]},
             "review_rounds": _distribution(entry["review_rounds"], unknown_count=0, low_sample_threshold=low_sample_threshold),
             "operator_interventions": _distribution(entry["operator"], unknown_count=0, low_sample_threshold=low_sample_threshold),
             "usage": {
@@ -779,7 +878,8 @@ def build_report(records: Sequence[Mapping[str, Any]], *, duplicate_events: int 
         "timing": timing,
         "outcomes": {"counts": dict(sorted(outcomes.items())), "low_sample": len(pr_flow) < low_sample_threshold},
         "flow_economics": {
-            "attempts": _distribution(attempts, unknown_count=0, low_sample_threshold=low_sample_threshold),
+            "attempts": _distribution(attempts, unknown_count=attempt_unknown_generations, low_sample_threshold=low_sample_threshold)
+            | {"unknown_event_count": attempt_unknown_events},
             "review_rounds": _distribution(review_rounds, unknown_count=0, low_sample_threshold=low_sample_threshold),
             "operator_interventions": _distribution(operator_interventions, unknown_count=0, low_sample_threshold=low_sample_threshold),
             "usage": economics_usage,
@@ -907,12 +1007,12 @@ def events_from_authoritative_pr_sources(*, repository: str, lifecycle: Any, raw
         if isinstance(body, str):
             override_match = OVERRIDE_RE.search(body)
             if override_match:
-                gate = override_match.group("gate").strip()[:256]
+                canonical_gate = CANONICAL_OVERRIDE_GATE_RE.search(body)
                 review_event["operator"] = {
                     "required": True,
                     "category": "override_waiver_permission_prompt",
                     "action_id": f"github-review:{review_id}:override",
-                    "gate_id": gate,
+                    "gate_id": canonical_gate.group("gate") if canonical_gate else UNKNOWN,
                     "override": True,
                     "duration_ms": UNKNOWN,
                 }
