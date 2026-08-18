@@ -22,6 +22,7 @@ from pr_lifecycle_terminal import TerminalCleanupDispatcher
 from pr_lifecycle_operator import action_first_status
 from pr_lifecycle_projection import atomic_write, build_projection
 from pr_lifecycle_task_state import execution_truth, ensure_projection_comment
+import pr_lifecycle_controller
 from pr_mutation_broker import (
     BrokerError, artifact_name as broker_artifact_name, broker_filter_event, finalize_broker_event,
     prepare_broker_event, route_policy_from_json, write_github_outputs,
@@ -279,11 +280,40 @@ def _task_projection_cycle(engine: LifecycleEngine, values: list[PRLifecycle]) -
     return list(tasks.values())
 
 
+def _projection_health(engine: LifecycleEngine) -> tuple[dict[str, Any], dict[str, Any]]:
+    try:
+        controller = pr_lifecycle_controller._snapshot(pr_lifecycle_controller._paths())
+    except (OSError, ValueError) as exc:
+        controller = {"status": "unavailable", "error": str(exc)}
+    try:
+        payload = engine.github.full_regression_runs()
+        runs = [item for item in payload.get("workflow_runs", []) if isinstance(item, Mapping)]
+        latest = runs[0] if runs else {}
+        full_regression = {
+            key: latest.get(key)
+            for key in ("id", "status", "conclusion", "head_sha", "updated_at", "html_url")
+            if latest.get(key) is not None
+        }
+    except LifecycleError as exc:
+        full_regression = {"status": "unavailable", "error": str(exc)}
+    return controller, full_regression
+
+
 def _publish_projection(engine: LifecycleEngine, values: list[PRLifecycle], args: argparse.Namespace, *, mutate_tasks: bool) -> None:
     if args.projection_path is None:
         return
     tasks = _task_projection_cycle(engine, values) if mutate_tasks else []
-    atomic_write(args.projection_path, build_projection(values, repository=args.repo, tasks=tasks))
+    controller, full_regression = _projection_health(engine)
+    atomic_write(
+        args.projection_path,
+        build_projection(
+            values,
+            repository=args.repo,
+            tasks=tasks,
+            controller=controller,
+            full_regression=full_regression,
+        ),
+    )
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pr_lifecycle", description=__doc__)
