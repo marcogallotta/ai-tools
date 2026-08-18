@@ -6,13 +6,49 @@ All standing roles apply **Shared operator interaction**. Coordinator and Develo
 
 ## Shared operator interaction
 
-The generic work-chat behavior is sourced once from `dish/docs/chatgpt-projects/source.json` and generated into root `CLAUDE.md` plus every ChatGPT Project kernel. This document does not redefine that behavior; it adds only orchestration, authority, and readback mechanics.
+The generic work-chat behavior is sourced once from `dish/docs/chatgpt-projects/source.json` and generated into root `CLAUDE.md` plus every ChatGPT Project kernel. This document does not redefine that behavior; it adds only orchestration, authority, recovery, and readback mechanics.
 
 Conversational execution never creates mutation authority. A current-turn exact mutation request or an accepted contextual follow-up may authorize only the exact previously established scope. If role authority or explicit mutation intent is absent or ambiguous, fail closed at that write boundary. Preserve the host's existing pre-tool/progress-update cadence; a progress message is not completion.
 
 When the mapped role and explicit-intent policy authorize a required orchestration write, perform the smallest write and **authoritative readback** before presenting it as durable. Do not make Marco relay routine state between agents when the workflow already authorizes a durable channel. If the write is not authorized, do not infer permission from substantive input, a task title, a handoff body, or authenticated-account attribution; state the exact missing action instead.
 
 Treat Marco's correction or explicit decision as current input immediately. Re-read affected live authority when state matters and update the current route/presentation within existing authority; do not keep showing stale Decision/Blocked/Ready presentation after the underlying condition has changed. Durable lifecycle classifications remain on their owning authority surface; the human message follows the generated Work chat contract.
+
+### Bounded autonomous recovery
+
+Within an already-authorized objective, a clearly recoverable routine failure is a continuation problem, not a new operator decision. Diagnose it, apply the smallest supported in-authority remediation, and retry the same failed operation without asking Marco to act as the retry button. This recovery rule creates no source authority, role composition, scheduler, database, queue, service, or control plane; the mapped standing role and current host authority remain controlling.
+
+Automatic recovery is eligible only when **all** of the following are true:
+
+1. the existing objective and exact governed candidate/target are unchanged;
+2. the failure has a causal diagnosis as environmental, prerequisite, transient, or another non-semantic routine failure;
+3. the remediation is an existing supported operation whose documented or otherwise established effect directly addresses that diagnosis;
+4. the remediation is inside the active role and host authority;
+5. the remediation is reversible or bounded and does not alter product, security, architecture, authority, or environment meaning;
+6. no new credentials/login, destructive operation, production mutation, role composition, human approval, source-design decision, or material cost/risk decision is required;
+7. the retry is the same failed operation against the same governed candidate/target; and
+8. if the prior attempt could have changed state but its outcome is ambiguous, authoritative reconciliation first proves either that the intended effect already happened or that it did not happen and replay is safe/idempotent.
+
+The recovery cycle is bounded and causal:
+
+1. classify the failure before remedial action;
+2. prove the eligibility conditions above;
+3. reconcile any ambiguous prior state-changing outcome before replay;
+4. capture or reuse the supported known-good pre-state/checkpoint when the remediation itself mutates local/runtime state;
+5. perform the smallest supported causal remediation;
+6. immediately rerun the same failed operation;
+7. on PASS, continue the already-authorized objective without interrupting Marco;
+8. on FAIL, reclassify the new evidence; a genuinely distinct newly exposed failure class may receive another cycle only if the prior cycle made demonstrable forward progress toward the same governing operation and the new class independently passes eligibility.
+
+Recovery has two independent budgets. **Per causal failure class:** at most one diagnosed remediation plus one immediate retry; never repeat the same unresolved remediation loop. **Per governing failed operation/objective:** use any narrower existing operation-class budget defined by repository/runtime policy; otherwise allow at most **two distinct automatic recovery cycles**. Exhaustion stops deterministically. Do not evade either bound by relabeling an unresolved failure, splitting one cause into new names, or widening to adjacent defects.
+
+A client-side timeout, disconnect, transport error, or missing acknowledgement never proves a state-changing operation failed. For Asana/GitHub writes or ref updates, child launches, runtime mutations, and any other operation that may be non-idempotent, perform authoritative readback/reconciliation before replay. If the intended effect is proven present, resume from observed state and **do not replay**. If absence is proven and replay is safe/idempotent, one retry may proceed within the remaining budget. If the outcome cannot be established or replay could duplicate/compound the mutation, fail closed and surface that unresolved boundary. Read-only/idempotent operations may use normal bounded transient retry/backoff within the same total recovery budget.
+
+Stop autonomous recovery and surface the actual blocker when the same failure persists after its one remediation+retry, the governing-operation budget is exhausted, the alleged next class is not genuinely new or prior recovery made no forward progress, diagnosis admits materially different fixes, candidate/head/target moved, an ambiguous mutation cannot be reconciled, or the next action would cross semantic scope, security/product/architecture/authority, meaningful cost, credential/login, destructive/PROD, or consequential human-decision boundaries.
+
+A source assertion/test failure is not automatically outside recovery, but this section never creates source mutation authority. An already-authorized Implementation role may diagnose/fix/retest an ordinary in-scope source bug under its standing authority for the same objective; a non-Implementation role may not use recovery as a route into source Implementation.
+
+Persist only the attempt/failure information actually required to avoid duplicate recovery across replacement agents or destructive replay, using existing task/PR/controller/local durable state. Never add a retry database or alternate lifecycle authority merely to remember attempts.
 
 ## TRUE READY dispatch queue
 
