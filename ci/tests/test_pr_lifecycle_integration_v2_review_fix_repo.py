@@ -9,6 +9,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 from pr_lifecycle_integration_certification import LocalIntegrationCertificationMixin, TARGET_RECOVERY_MARKER
 from pr_lifecycle_operator import action_first_status
+from pr_lifecycle_projection import build_projection
 from pr_lifecycle_support import LifecycleState, PRLifecycle
 
 
@@ -162,6 +163,36 @@ def projection(state, *, complete=False, generation=3):
     }
 
 
+def runtime(*, operational="OPERATIONAL", generation=3, activated_identity="activation-123"):
+    return {
+        "status": "COMPLETE",
+        "pull_requests": {
+            "10": {
+                "active": "OBSERVED",
+                "operational": operational,
+                "generation": generation,
+                "activated_identity": activated_identity,
+                "provenance": "focused-runtime-witness",
+            }
+        },
+    }
+
+
+def landed_source():
+    return {
+        "status": "COMPLETE",
+        "pull_requests": {
+            "10": {
+                "state": "LANDED",
+                "ultimate_target": "main",
+                "publication_state": "landed",
+                "provenance": "focused-target-readback",
+            }
+        },
+        "workstreams": [],
+    }
+
+
 def test_closed_squash_recovery_is_durable_target_landing_and_not_recreated():
     github = FakeGitHub(recovery_pr())
     engine = Harness(github, asana=FakeAsana())
@@ -219,11 +250,59 @@ def test_merged_without_rollout_is_operational_only_with_explicit_no_activation_
     assert "ACTIVATION PENDING" not in rendered
 
 
-def test_merged_with_accepted_final_rollout_stage_is_operational_with_exact_proof():
+def test_accepted_rollout_without_current_runtime_witness_is_not_operational():
     rendered = action_first_status(merged_lifecycle(rollout_value=projection("ACCEPTED", complete=True)))
+    assert "STATUS: VERIFYING" in rendered
+    assert "STATUS: OPERATIONAL" not in rendered
+    assert "current runtime witness does not prove the expected active generation/identity" in rendered
+    assert "expected 'activation-123'" in rendered
+
+
+def test_accepted_rollout_with_matching_current_runtime_witness_is_operational():
+    rendered = action_first_status(
+        merged_lifecycle(rollout_value=projection("ACCEPTED", complete=True)),
+        runtime(),
+    )
     assert "STATUS: OPERATIONAL" in rendered
-    assert "generation 3 final stage production ACCEPTED" in rendered
-    assert "activation-123" in rendered
+    assert "current runtime witness proves generation 3 activated identity activation-123 OPERATIONAL" in rendered
+
+
+def test_accepted_rollout_with_stale_runtime_identity_stays_verifying():
+    rendered = action_first_status(
+        merged_lifecycle(rollout_value=projection("ACCEPTED", complete=True)),
+        runtime(operational="UNKNOWN", generation=2, activated_identity="activation-old"),
+    )
+    assert "STATUS: VERIFYING" in rendered
+    assert "STATUS: OPERATIONAL" not in rendered
+    assert "expected 3" in rendered
+    assert "expected 'activation-123'" in rendered
+
+
+def test_direct_operator_and_read_only_projection_agree_on_activation_required_operational_truth():
+    lifecycle = merged_lifecycle(rollout_value=projection("ACCEPTED", complete=True))
+    tasks = [{"gid": "task", "completed": True, "rollout": projection("ACCEPTED", complete=True)}]
+
+    without_runtime = build_projection(
+        [lifecycle],
+        repository="marcogallotta/ai-tools",
+        tasks=tasks,
+        source_observation=landed_source(),
+    )
+    rendered = action_first_status(lifecycle)
+    assert without_runtime["resolved_lifecycle"][0]["state"] != "OPERATIONALLY_COMPLETE"
+    assert "STATUS: OPERATIONAL" not in rendered
+
+    witness = runtime()
+    with_runtime = build_projection(
+        [lifecycle],
+        repository="marcogallotta/ai-tools",
+        tasks=tasks,
+        source_observation=landed_source(),
+        runtime_observation=witness,
+    )
+    rendered = action_first_status(lifecycle, witness)
+    assert with_runtime["resolved_lifecycle"][0]["state"] == "OPERATIONALLY_COMPLETE"
+    assert "STATUS: OPERATIONAL" in rendered
 
 
 def test_merged_with_activated_unaccepted_stage_is_verifying():

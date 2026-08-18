@@ -28,8 +28,25 @@ def _operator_action(pr: PRLifecycle) -> str:
     return pr.human_action
 
 
-def _rollout_readiness(pr: PRLifecycle) -> tuple[str, str, str]:
-    """Return ACTIVE/RUNNING, STATUS, COMPLETION PROOF from authoritative rollout projection."""
+def _runtime_witness(pr: PRLifecycle, runtime_observation: Mapping | None) -> Mapping:
+    """Return the current per-PR runtime witness, if one was explicitly observed."""
+    candidate = runtime_observation
+    if candidate is None:
+        candidate = getattr(pr, "runtime", None)
+    if not isinstance(candidate, Mapping):
+        return {}
+    pull_requests = candidate.get("pull_requests")
+    if isinstance(pull_requests, Mapping):
+        witness = pull_requests.get(str(pr.number)) or pull_requests.get(pr.number)
+        return witness if isinstance(witness, Mapping) else {}
+    return candidate
+
+
+def _rollout_readiness(
+    pr: PRLifecycle,
+    runtime_observation: Mapping | None = None,
+) -> tuple[str, str, str]:
+    """Return ACTIVE/RUNNING, STATUS, COMPLETION PROOF from authoritative rollout/runtime evidence."""
     task_ids = list(getattr(pr, "task_ids", []) or [])
     asana = list(getattr(pr, "asana", []) or [])
     if not task_ids:
@@ -97,6 +114,7 @@ def _rollout_readiness(pr: PRLifecycle) -> tuple[str, str, str]:
             f"target-specific source landing passed for task(s) {task_text}; {evidence}",
         )
 
+    runtime = _runtime_witness(pr, runtime_observation)
     descriptors: list[str] = []
     statuses: list[str] = []
     for rollout in rollouts:
@@ -127,12 +145,42 @@ def _rollout_readiness(pr: PRLifecycle) -> tuple[str, str, str]:
                 f"for artifact {item.get('artifact')} config {item.get('config')}"
             )
         elif bool(rollout.get("complete")) and final_state == "ACCEPTED":
-            statuses.append("OPERATIONAL")
-            descriptors.append(
+            expected_identity = final.get("activated_identity")
+            runtime_operational = str(runtime.get("operational") or "UNKNOWN").upper()
+            runtime_generation = runtime.get("generation")
+            runtime_identity = runtime.get("activated_identity")
+            generation_matches = runtime_generation is None or str(runtime_generation) == str(generation)
+            identity_matches = runtime_identity is None or runtime_identity == expected_identity
+            accepted = (
                 f"rollout {plan_id} generation {generation} final stage {final.get('stage')} ACCEPTED "
                 f"for artifact {final.get('artifact')} config {final.get('config')} "
-                f"activated identity {final.get('activated_identity')}"
+                f"activated identity {expected_identity}"
             )
+            if runtime_operational == "OPERATIONAL" and generation_matches and identity_matches:
+                statuses.append("OPERATIONAL")
+                descriptors.append(
+                    f"{accepted}; current runtime witness proves generation {runtime_generation} "
+                    f"activated identity {runtime_identity} OPERATIONAL"
+                )
+            elif runtime_operational == "NOT_OPERATIONAL":
+                statuses.append("NOT OPERATIONAL")
+                descriptors.append(
+                    f"{accepted}; current runtime witness reports NOT_OPERATIONAL for generation "
+                    f"{runtime_generation} activated identity {runtime_identity}"
+                )
+            else:
+                missing: list[str] = []
+                if runtime_operational != "OPERATIONAL":
+                    missing.append(f"operational={runtime_operational}")
+                if not generation_matches:
+                    missing.append(f"generation={runtime_generation!r}, expected {generation!r}")
+                if not identity_matches:
+                    missing.append(f"activated_identity={runtime_identity!r}, expected {expected_identity!r}")
+                statuses.append("VERIFYING")
+                descriptors.append(
+                    f"{accepted}; current runtime witness does not prove the expected active generation/identity "
+                    f"({', '.join(missing)})"
+                )
         elif final_state == "CANCELLED":
             statuses.append("NOT OPERATIONAL")
             descriptors.append(
@@ -165,7 +213,7 @@ def _rollout_readiness(pr: PRLifecycle) -> tuple[str, str, str]:
     if status == "OPERATIONAL":
         active = "PROVEN — " + proof
     elif status == "VERIFYING":
-        active = "RUNNING/ACTIVE — " + proof
+        active = "UNKNOWN/VERIFYING — " + proof
     elif status == "NOT OPERATIONAL":
         active = "NOT OPERATIONAL — " + proof
     else:
@@ -173,13 +221,13 @@ def _rollout_readiness(pr: PRLifecycle) -> tuple[str, str, str]:
     return active, status, proof
 
 
-def _readiness_fields(pr: PRLifecycle) -> str:
+def _readiness_fields(pr: PRLifecycle, runtime_observation: Mapping | None = None) -> str:
     state = pr.state
     action = _operator_action(pr)
 
     if state == LifecycleState.MERGED:
         source = f"LANDED — exact reviewed source `{pr.head}`; target-specific GitHub readback passed"
-        active, status, activation_proof = _rollout_readiness(pr)
+        active, status, activation_proof = _rollout_readiness(pr, runtime_observation)
         proof = (
             f"{pr.residual_reason}; {activation_proof}"
             if pr.residual_reason
@@ -216,20 +264,20 @@ def _readiness_fields(pr: PRLifecycle) -> str:
     )
 
 
-def action_first_status(pr: PRLifecycle) -> str:
+def action_first_status(pr: PRLifecycle, runtime_observation: Mapping | None = None) -> str:
     state = pr.state
 
     if state == LifecycleState.MERGED:
-        _active, merged_status, _proof = _rollout_readiness(pr)
+        _active, merged_status, _proof = _rollout_readiness(pr, runtime_observation)
         if merged_status == "OPERATIONAL":
             first = "Source integration is complete and the required activation boundary is satisfied. Nothing for you to do."
             why = "The lifecycle has authoritative source and activation/no-activation evidence."
         elif merged_status == "VERIFYING":
             first = "Source integration is complete and activation is being verified. Nothing for you to do."
-            why = "The current rollout generation is activated but not yet terminally accepted."
+            why = "The rollout history is accepted/activated, but current runtime liveness is not yet proven."
         elif merged_status == "NOT OPERATIONAL":
             first = "Source integration is complete, but the rollout is not operational. Nothing for you to do unless an exact action is named below."
-            why = "The authoritative rollout state is rejected or cancelled."
+            why = "The authoritative rollout/runtime state is rejected, cancelled, or explicitly non-operational."
         else:
             first = "Source integration is complete. Nothing for you to do."
             why = "A required activation/readback step remains separate."
@@ -287,4 +335,4 @@ def action_first_status(pr: PRLifecycle) -> str:
     if action != "NONE":
         first = f"Your next action: {action}"
     message = f"{first} {why}"
-    return f"{message} {_readiness_fields(pr)}" if state == LifecycleState.MERGED else message
+    return f"{message} {_readiness_fields(pr, runtime_observation)}" if state == LifecycleState.MERGED else message
