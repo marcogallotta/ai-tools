@@ -1,16 +1,20 @@
 # Codex local-agent hooks
 
 `hooks.json` is a user-level Codex hook because the Dish operator context,
-protected-checkout enforcement, and post-compaction re-grounding must be
-available even when a session starts elsewhere. The operator `SessionStart`
-entry invokes `~/.local/bin/dish-operator-context`, so exact-head certification
-can bind both the user hook definition and the operator-policy adapter to the
-same candidate worktree. `SessionStart(source=compact)` invokes
-`~/.local/bin/agent-reground`, which reloads current Dish role/process authority
-plus owning Asana and active Git/PR state from durable identity. A generic
-`PreToolUse` entry enforces the resulting generation marker before substantive
-tool work. The existing Bash-specific hook calls
-`~/.local/bin/codex-protected-checkout` and preserves its hard-deny boundary.
+protected-checkout enforcement, and canonical grounding must be available even
+when a session starts elsewhere. The operator `SessionStart` entry invokes
+`~/.local/bin/dish-operator-context`, so exact-head certification can bind both
+the user hook definition and the operator-policy adapter to the same candidate
+worktree. Every `SessionStart` also invokes `~/.local/bin/agent-grounding` for
+fresh, resumed, and compacted sessions. That wrapper reuses the existing
+`agent-reground` recovery/barrier engine, resolves shared and inherited context
+from the canonical Project source + role index, and records an exact session
+grounding witness. A generic `PreToolUse` entry revalidates the witness, performs
+one bounded same-session recovery when required, and records the exact action
+boundary before substantive tool work. Declared action-specific context can be
+grounded through `agent-grounding action --trigger <declared-trigger>` or an
+explicit `DISH_ACTION_TRIGGER`; undeclared triggers fail closed rather than
+inventing a new policy map.
 
 The shared `hooks/protected_checkout.py` classifier denies direct and visibly
 nested `git checkout`/`git switch` branch changes against the primary
@@ -34,6 +38,7 @@ session and use `/hooks` to review and trust the exact hook definition:
 ln -s /home/marco/ai-tools/codex/hooks.json /home/marco/.codex/hooks.json
 ln -s /home/marco/ai-tools/hooks/dish-operator-context /home/marco/.local/bin/dish-operator-context
 ln -s /home/marco/ai-tools/hooks/agent-reground /home/marco/.local/bin/agent-reground
+ln -s /home/marco/ai-tools/hooks/agent-grounding /home/marco/.local/bin/agent-grounding
 ln -s /home/marco/ai-tools/hooks/codex-protected-checkout /home/marco/.local/bin/codex-protected-checkout
 ```
 
@@ -56,28 +61,31 @@ git -C "$WT" status --short
 
 Temporarily point the user hook and adapter links at that exact worktree head.
 First inspect `~/.codex/hooks.json`, `~/.local/bin/dish-operator-context`,
-`~/.local/bin/agent-reground`, and `~/.local/bin/codex-protected-checkout`;
-move aside and later restore any pre-existing files or links rather than
-overwriting them.
+`~/.local/bin/agent-reground`, `~/.local/bin/agent-grounding`, and
+`~/.local/bin/codex-protected-checkout`; move aside and later restore any
+pre-existing files or links rather than overwriting them.
 
 ```sh
 ln -s "$WT/codex/hooks.json" /home/marco/.codex/hooks.json
 ln -s "$WT/hooks/dish-operator-context" /home/marco/.local/bin/dish-operator-context
 ln -s "$WT/hooks/agent-reground" /home/marco/.local/bin/agent-reground
+ln -s "$WT/hooks/agent-grounding" /home/marco/.local/bin/agent-grounding
 ln -s "$WT/hooks/codex-protected-checkout" /home/marco/.local/bin/codex-protected-checkout
 
 test "$(readlink -f /home/marco/.codex/hooks.json)" = "$WT/codex/hooks.json"
 test "$(readlink -f /home/marco/.local/bin/dish-operator-context)" = "$WT/hooks/dish-operator-context"
+test "$(readlink -f /home/marco/.local/bin/agent-grounding)" = "$WT/hooks/agent-grounding"
 test "$(git -C "$WT" rev-parse HEAD)" = "$EXPECTED"
 ```
 
 Start a fresh installed Codex session, open `/hooks`, and confirm the user
-operator `SessionStart`, compact `SessionStart`, and `PreToolUse` matchers are
-loaded from the exact-head `hooks.json`; review/trust its current hash if
-prompted. The first `SessionStart` must execute the candidate-bound
-`~/.local/bin/dish-operator-context`, so the injected operator policy comes from
-the same `WT`/`EXPECTED` head as the loaded hook definition. Record
-`codex --version`, the PR head, and the active sandbox/approval settings
+operator `SessionStart`, all-session grounding `SessionStart`, and generic
+`PreToolUse` entries are loaded from the exact-head `hooks.json`; review/trust
+their current hashes if prompted. The first `SessionStart` must execute both the
+candidate-bound `~/.local/bin/dish-operator-context` and
+`~/.local/bin/agent-grounding`, so injected operator policy and the grounding
+witness come from the same `WT`/`EXPECTED` head as the loaded hook definition.
+Record `codex --version`, the PR head, and the active sandbox/approval settings
 (`danger-full-access` and `on-request` on the machine at implementation time).
 
 From a session rooted in `/home/marco/ai-tools`, confirm each command is denied
@@ -96,7 +104,8 @@ bash
 The final `bash` check must be denied at launch; no unified-exec session should
 exist for a subsequent `write_stdin`. Also capture one real hook input to
 confirm Codex supplies `tool_name: "Bash"`, `tool_input.command`, and the
-session `cwd`, and confirm the response uses `permissionDecision: "deny"`.
+session `cwd`, and confirm the response uses `permissionDecision: "deny"` when
+grounding or protected-checkout authority fails.
 
 From the exact owned linked worktree, confirm `git switch`/`checkout` remains
 available under ordinary approval policy and a persistent shell can launch.
