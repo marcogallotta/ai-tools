@@ -217,7 +217,7 @@ def _v3_shadow_decision(
     truth: str,
     operator_action: str | None,
 ) -> dict[str, Any]:
-    """Project a deterministic V3 admission decision without acquiring write authority."""
+    """Project existing V1-A admission mechanics without acquiring write authority."""
     lifecycle_state = str(pr.get("state") or "")
     head = str(pr.get("head") or "")
     reviewed_head = str(pr.get("reviewed_head") or "")
@@ -231,12 +231,6 @@ def _v3_shadow_decision(
     elif lifecycle_state == "merging_integration_in_progress":
         decision = "OBSERVE_EXISTING_WRITER"
         reason = "an existing exact-head Integration writer is active; V3 shadow must not contend"
-    elif truth == "CONTRADICTION":
-        decision = "BLOCK_AUTHORITY_CONTRADICTION"
-        reason = "normalized lifecycle truth contains an authority contradiction"
-    elif operator_action:
-        decision = "WAIT_OPERATOR_ACTION"
-        reason = "current lifecycle requires an explicit operator action"
     elif lifecycle_state == "integration_ready":
         if source.get("state") != "NOT_LANDED":
             decision = "BLOCK_SOURCE_IDENTITY"
@@ -259,10 +253,12 @@ def _v3_shadow_decision(
         "head": head or None,
         "decision": decision,
         "reason": reason,
+        "decision_scope": "current-v1a-mechanical-admission",
         "current_lifecycle_state": lifecycle_state,
         "current_review_verdict": review_verdict or None,
         "current_reviewed_head": reviewed_head or None,
         "current_gate_diagnosis": gate.get("diagnosis"),
+        "current_operator_action": operator_action,
         "source_state": source.get("state"),
         "truth": truth,
         "write_authority": False,
@@ -411,6 +407,7 @@ def build_projection(
             "write_authority": False,
             "authoritative_landing_path": V3_AUTHORITATIVE_LANDING_PATH,
             "scope": "current-v1a-admission-equivalence",
+            "human_hold_evaluation": "NOT_IMPLEMENTED_STAGE_1",
             "decisions": v3_shadow_decisions,
         },
     }
