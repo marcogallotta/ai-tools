@@ -82,15 +82,16 @@ class ReadOnlyAsana:
 
 
 class ReadOnlyEngine:
-    def __init__(self, asana):
+    def __init__(self, asana, *, candidate=None):
         self.asana = asana
         self.github = SimpleNamespace()
+        self.candidate = candidate
 
     def now(self):
         return NOW
 
     def _workstream_candidates(self, values):
-        return {}
+        return {TASK: self.candidate} if self.candidate is not None else {}
 
 
 def task(completed, *, rollout=None):
@@ -135,6 +136,32 @@ def accepted_rollout():
         "complete": True,
         "stages": [{"stage": "prod", "state": "ACCEPTED", "activated_identity": "activation"}],
     }
+
+
+def stacked_candidate():
+    merged = SimpleNamespace(
+        pr_number=170,
+        head="b" * 40,
+        branch="agent/stack-1",
+        base="agent/stack-base",
+        publication_state="merged",
+        ultimate_target="main",
+    )
+    downstream = SimpleNamespace(
+        pr_number=171,
+        head=HEAD,
+        branch="agent/observation-test",
+        base="agent/stack-1",
+        publication_state="open",
+        ultimate_target="main",
+    )
+    return SimpleNamespace(
+        workstream_task=TASK,
+        candidate_id="candidate-id",
+        shape_id="shape-id",
+        source_complete=False,
+        members=(merged, downstream),
+    )
 
 
 def test_pure_read_task_scan_returns_project_projection_without_writes():
@@ -198,7 +225,7 @@ def test_review_block_and_fix_in_progress_are_distinct_typed_states():
     assert fixing["resolved_lifecycle"][0]["state"] == "FIXES_IN_PROGRESS"
 
 
-def test_local_implementation_completion_maps_to_review_pass_without_prose_inference():
+def test_local_implementation_completion_without_handoff_stays_implementation_required():
     projection = build_projection(
         [lifecycle(state=pr_lifecycle.LifecycleState.LOCAL_IMPLEMENTATION_REQUIRED)],
         repository="marcogallotta/ai-tools",
@@ -206,7 +233,29 @@ def test_local_implementation_completion_maps_to_review_pass_without_prose_infer
         source_observation=source("NOT_LANDED"),
     )
 
-    assert projection["resolved_lifecycle"][0]["phase"] == "REVIEW_PASS"
+    resolved = projection["resolved_lifecycle"][0]
+    assert resolved["phase"] == "IMPLEMENTATION_COMPLETION_REQUIRED"
+    assert resolved["state"] == "IMPLEMENTATION_COMPLETION_REQUIRED"
+    assert projection["queues"]["In Progress"] == [171]
+    assert projection["queues"]["Integration"] == []
+
+
+def test_local_implementation_completion_with_handoff_preserves_underlying_phase():
+    projection = build_projection(
+        [lifecycle(
+            state=pr_lifecycle.LifecycleState.LOCAL_IMPLEMENTATION_REQUIRED,
+            human_action="give PR #171 to a local Implementation agent",
+        )],
+        repository="marcogallotta/ai-tools",
+        tasks=[task(False)],
+        source_observation=source("NOT_LANDED"),
+    )
+
+    resolved = projection["resolved_lifecycle"][0]
+    assert resolved["phase"] == "IMPLEMENTATION_COMPLETION_REQUIRED"
+    assert resolved["state"] == "BLOCKED_ON_MARCO"
+    assert projection["queues"]["Decision"] == [171]
+    assert projection["queues"]["Integration"] == []
 
 
 def test_explicit_operator_action_is_typed_as_blocked_on_marco():
@@ -243,6 +292,32 @@ def test_intermediate_merge_is_not_laundered_into_main_landing():
     assert resolved["state"] == "MERGED_INTERMEDIATE_TARGET"
     assert resolved["source"]["state"] == "NOT_LANDED"
     assert projection["queues"]["Integration"] == [171]
+
+
+def test_intermediate_merge_is_member_specific_in_real_workstream_projection():
+    candidate = stacked_candidate()
+    values = [lifecycle(state=pr_lifecycle.LifecycleState.REVIEW_READY)]
+    observation = pr_lifecycle._source_observation_cycle(
+        ReadOnlyEngine(None, candidate=candidate), values
+    )
+
+    assert observation["pull_requests"]["170"]["lineage_state"] == "MERGED_INTERMEDIATE_TARGET"
+    assert "lineage_state" not in observation["pull_requests"]["171"]
+    assert [member["publication_state"] for member in observation["workstreams"][0]["members"]] == [
+        "merged", "open"
+    ]
+
+    projection = build_projection(
+        values,
+        repository="marcogallotta/ai-tools",
+        tasks=[task(False)],
+        source_observation=observation,
+    )
+    resolved = projection["resolved_lifecycle"][0]
+    assert resolved["state"] == "READY_FOR_REVIEW"
+    assert resolved["phase"] == "READY_FOR_REVIEW"
+    assert projection["queues"]["Review"] == [171]
+    assert projection["queues"]["Integration"] == []
 
 
 def test_landed_source_with_incomplete_asana_work_requires_post_merge_action():
