@@ -21,6 +21,7 @@ ROLE_INDEX_PATH = "dish/docs/agents/index.md"
 STANDING_PATH = "dish/docs/agents/standing-invariants.json"
 CONTRIBUTOR_PATH = "dish/docs/agents/contributor-base.md"
 OPERATOR_PATH = "OPERATOR_CONTROL_PLANE.md"
+SHARED_OPERATOR_LOCATOR = f"{OPERATOR_PATH}#Shared operator interaction"
 REVIEW_CONTRACT = "dish/docs/agents/review.md"
 CLAUDE_SETTINGS = ".claude/settings.json"
 CODEX_HOOKS = "codex/hooks.json"
@@ -62,7 +63,14 @@ def _extension(standing: dict[str, Any]) -> dict[str, Any]:
     entries = standing.get("invariants")
     if not isinstance(entries, list):
         raise ParityError("standing invariant registry has no invariants list")
-    base = next((entry for entry in entries if isinstance(entry, dict) and entry.get("id") == "repository-context-admission"), None)
+    base = next(
+        (
+            entry
+            for entry in entries
+            if isinstance(entry, dict) and entry.get("id") == "repository-context-admission"
+        ),
+        None,
+    )
     if not isinstance(base, dict):
         raise ParityError("repository-context-admission standing invariant is missing")
     extensions = base.get("delivery_extensions")
@@ -81,8 +89,12 @@ def validate_extension(extension: dict[str, Any]) -> None:
     if status == "superseded":
         supersession = extension.get("supersession")
         required = ("authority_type", "durable_ref", "decision", "effective_at")
-        if not isinstance(supersession, dict) or any(not str(supersession.get(key, "")).strip() for key in required):
-            raise ParityError("superseded cross-host parity extension requires durable explicit supersession")
+        if not isinstance(supersession, dict) or any(
+            not str(supersession.get(key, "")).strip() for key in required
+        ):
+            raise ParityError(
+                "superseded cross-host parity extension requires durable explicit supersession"
+            )
         return
 
     expected = {
@@ -95,60 +107,106 @@ def validate_extension(extension: dict[str, Any]) -> None:
     }
     for key, value in expected.items():
         if extension.get(key) != value:
-            raise ParityError(f"cross-host parity metadata {key} differs from canonical delivery surface")
+            raise ParityError(
+                f"cross-host parity metadata {key} differs from canonical delivery surface"
+            )
     if extension.get("host_specific_transport_differences_allowed") is not True:
         raise ParityError("host-specific transport differences must remain explicitly classified")
     if extension.get("applicability_must_be_derived_or_cross_validated") is not True:
         raise ParityError("cross-host applicability must be derived or cross-validated")
     if extension.get("behavioral_adherence_is_structural_validator_out_of_scope") is not True:
-        raise ParityError("structural parity validator must not become a behavioral-model gate")
+        raise ParityError(
+            "structural parity validator must not become a behavioral-model gate"
+        )
 
     protected = extension.get("protected_delivery")
     if not isinstance(protected, list) or not protected:
         raise ParityError("cross-host parity metadata requires protected delivery entries")
-    by_id = {str(item.get("id", "")): item for item in protected if isinstance(item, dict)}
-    expected_ids = {"operator-control-plane", "contributor-base-inheritance", "friction-and-code-debt-discovery"}
+    by_id = {
+        str(item.get("id", "")): item for item in protected if isinstance(item, dict)
+    }
+    expected_ids = {
+        "operator-control-plane",
+        "contributor-base-inheritance",
+        "friction-and-code-debt-discovery",
+    }
     if set(by_id) != expected_ids:
-        raise ParityError(f"protected delivery set mismatch: {sorted(set(by_id) ^ expected_ids)}")
+        raise ParityError(
+            f"protected delivery set mismatch: {sorted(set(by_id) ^ expected_ids)}"
+        )
     if by_id["operator-control-plane"].get("canonical_source") != OPERATOR_PATH:
         raise ParityError("operator control-plane delivery lost canonical source")
-    for item_id in ("contributor-base-inheritance", "friction-and-code-debt-discovery"):
+    for item_id in (
+        "contributor-base-inheritance",
+        "friction-and-code-debt-discovery",
+    ):
         if by_id[item_id].get("canonical_source") != CONTRIBUTOR_PATH:
-            raise ParityError(f"{item_id} delivery lost canonical contributor-base source")
+            raise ParityError(
+                f"{item_id} delivery lost canonical contributor-base source"
+            )
 
-    # Provisional Review/Assurance semantic content must not enter protected authority.
     protected_text = json.dumps(protected, sort_keys=True).casefold()
-    forbidden = ("attempt_id", "lane a", "lane b", "candidate-binding", "candidate binding")
+    forbidden = (
+        "attempt_id",
+        "lane a",
+        "lane b",
+        "candidate-binding",
+        "candidate binding",
+    )
     leaked = [token for token in forbidden if token in protected_text]
     if leaked:
-        raise ParityError(f"unaccepted Review/Assurance semantics leaked into protected parity metadata: {leaked}")
+        raise ParityError(
+            "unaccepted Review/Assurance semantics leaked into protected parity metadata: "
+            f"{leaked}"
+        )
     deferred = extension.get("deferred")
     if not isinstance(deferred, list) or len(deferred) != 1:
-        raise ParityError("Review/Assurance parity must remain one explicit deferred dependency")
+        raise ParityError(
+            "Review/Assurance parity must remain one explicit deferred dependency"
+        )
     record = deferred[0]
-    if not isinstance(record, dict) or record.get("owner") != DEFERRED_REVIEW_OWNER or record.get("status") != "not-accepted-do-not-promote":
-        raise ParityError("Review/Assurance parity deferral no longer matches its canonical owner/state")
+    if (
+        not isinstance(record, dict)
+        or record.get("owner") != DEFERRED_REVIEW_OWNER
+        or record.get("status") != "not-accepted-do-not-promote"
+    ):
+        raise ParityError(
+            "Review/Assurance parity deferral no longer matches its canonical owner/state"
+        )
 
 
-def _generated_kernels(repo: Path, source: dict[str, Any], manifest: dict[str, Any]) -> dict[str, str]:
+def _generated_kernels(
+    repo: Path, source: dict[str, Any], manifest: dict[str, Any]
+) -> dict[str, str]:
     files = manifest.get("generated_role_files")
     roles = _roles(source)
     if not isinstance(files, dict) or set(files) != set(roles):
         raise ParityError("generated Project role map differs from canonical source roles")
-    return {role: _text(repo, f"dish/docs/chatgpt-projects/{files[role]}") for role in roles}
+    return {
+        role: _text(repo, f"dish/docs/chatgpt-projects/{files[role]}")
+        for role in roles
+    }
 
 
-def _rule(roles: dict[str, dict[str, Any]], role: str, rule_id: str) -> dict[str, Any]:
+def _rule(
+    roles: dict[str, dict[str, Any]], role: str, rule_id: str
+) -> dict[str, Any]:
     rules = roles[role].get("rules")
     if not isinstance(rules, list):
         raise ParityError(f"roles.{role}.rules must be a list")
-    matches = [item for item in rules if isinstance(item, dict) and item.get("id") == rule_id]
+    matches = [
+        item
+        for item in rules
+        if isinstance(item, dict) and item.get("id") == rule_id
+    ]
     if len(matches) != 1:
         raise ParityError(f"role {role} requires exactly one {rule_id} rule")
     return matches[0]
 
 
-def _hook_commands(config: dict[str, Any], event: str) -> list[tuple[str | None, str]]:
+def _hook_commands(
+    config: dict[str, Any], event: str
+) -> list[tuple[str | None, str]]:
     hooks = config.get("hooks")
     if not isinstance(hooks, dict):
         raise ParityError("hook config requires hooks object")
@@ -159,7 +217,9 @@ def _hook_commands(config: dict[str, Any], event: str) -> list[tuple[str | None,
     for entry in entries:
         if not isinstance(entry, dict):
             continue
-        matcher = str(entry.get("matcher")) if entry.get("matcher") is not None else None
+        matcher = (
+            str(entry.get("matcher")) if entry.get("matcher") is not None else None
+        )
         nested = entry.get("hooks")
         if not isinstance(nested, list):
             continue
@@ -174,14 +234,30 @@ def validate_local_hook_config(repo: Path) -> None:
         config = _json(repo, path)
         session = _hook_commands(config, "SessionStart")
         pretool = _hook_commands(config, "PreToolUse")
-        session_grounding = [(matcher, command) for matcher, command in session if "agent-grounding" in command]
-        pretool_grounding = [(matcher, command) for matcher, command in pretool if "agent-grounding" in command]
+        session_grounding = [
+            (matcher, command)
+            for matcher, command in session
+            if "agent-grounding" in command
+        ]
+        pretool_grounding = [
+            (matcher, command)
+            for matcher, command in pretool
+            if "agent-grounding" in command
+        ]
         if len(session_grounding) != 1 or session_grounding[0][0] is not None:
-            raise ParityError(f"{path} must run agent-grounding for every SessionStart source")
+            raise ParityError(
+                f"{path} must run agent-grounding for every SessionStart source"
+            )
         if len(pretool_grounding) != 1 or pretool_grounding[0][0] is not None:
-            raise ParityError(f"{path} must run agent-grounding at every PreToolUse boundary")
-        if any("agent-reground" in command for _matcher, command in session + pretool):
-            raise ParityError(f"{path} bypasses the shared cross-session grounding wrapper")
+            raise ParityError(
+                f"{path} must run agent-grounding at every PreToolUse boundary"
+            )
+        if any(
+            "agent-reground" in command for _matcher, command in session + pretool
+        ):
+            raise ParityError(
+                f"{path} bypasses the shared cross-session grounding wrapper"
+            )
 
     hook = _text(repo, GROUNDING_HOOK)
     required_tokens = (
@@ -195,23 +271,36 @@ def validate_local_hook_config(repo: Path) -> None:
     )
     missing = [token for token in required_tokens if token not in hook]
     if missing:
-        raise ParityError(f"local grounding wrapper lacks required receipt/resolver mechanics: {missing}")
+        raise ParityError(
+            f"local grounding wrapper lacks required receipt/resolver mechanics: {missing}"
+        )
 
 
-def validate_review_handoff_semantics(repo: Path, source: dict[str, Any], kernels: dict[str, str]) -> None:
+def validate_review_handoff_semantics(
+    repo: Path, source: dict[str, Any], kernels: dict[str, str]
+) -> None:
     roles = _roles(source)
     rule = _rule(roles, "review", "review-integration-boundary")
     text = str(rule.get("text", ""))
-    # Host wording may differ, but semantic ownership may not: a successful Review hands
-    # off to Integration and Review itself never merges.
     if "hands off to Integration" not in text or "Review does not merge" not in text:
-        raise ParityError("generated Review handoff semantics drift from standing Integration boundary")
+        raise ParityError(
+            "generated Review handoff semantics drift from standing Integration boundary"
+        )
     if text not in kernels["review"]:
-        raise ParityError("generated Review kernel no longer carries its declared handoff semantics")
+        raise ParityError(
+            "generated Review kernel no longer carries its declared handoff semantics"
+        )
     contract = _text(repo, REVIEW_CONTRACT)
-    for required in ("VERDICT: MERGE", "Review itself never merges", "INTEGRATION READY"):
+    for required in (
+        "VERDICT: MERGE",
+        "Review itself never merges",
+        "INTEGRATION READY",
+    ):
         if required not in contract:
-            raise ParityError(f"standing Review lifecycle vocabulary missing accepted semantic marker: {required}")
+            raise ParityError(
+                "standing Review lifecycle vocabulary missing accepted semantic marker: "
+                f"{required}"
+            )
 
 
 def validate(repo: Path = REPO_ROOT) -> dict[str, Any]:
@@ -224,22 +313,36 @@ def validate(repo: Path = REPO_ROOT) -> dict[str, Any]:
     roles = _roles(source)
     contracts = agent_context.role_contracts(repo)
     if set(roles) != set(contracts):
-        raise ParityError("role topology differs between Project source and canonical role index")
+        raise ParityError(
+            "role topology differs between Project source and canonical role index"
+        )
     modifying = agent_context.repository_modifying_roles(source)
     if not modifying or not {"implementation", "integration"}.issubset(modifying):
         raise ParityError("repository-modifying role derivation lost core modifying roles")
+    operator_extended = agent_context.operator_extended_roles(repo)
 
     kernels = _generated_kernels(repo, source, manifest)
     role_index = _text(repo, ROLE_INDEX_PATH)
     if "OPERATOR_CONTROL_PLANE.md" not in role_index:
-        raise ParityError("role index no longer declares shared operator control plane for all roles")
-    if "All repository-modifying roles inherit" not in role_index or "contributor-base.md" not in role_index:
+        raise ParityError(
+            "role index no longer declares shared operator control plane for all roles"
+        )
+    if (
+        "All repository-modifying roles inherit" not in role_index
+        or "contributor-base.md" not in role_index
+    ):
         raise ParityError("role index no longer declares contributor-base inheritance")
 
     contributor = _text(repo, CONTRIBUTOR_PATH)
-    for required in (FRICTION_GID, DEBT_GID, "notice -> dedupe -> log/update -> continue"):
+    for required in (
+        FRICTION_GID,
+        DEBT_GID,
+        "notice -> dedupe -> log/update -> continue",
+    ):
         if required not in contributor:
-            raise ParityError(f"contributor-base lost protected friction/debt behavior: {required}")
+            raise ParityError(
+                f"contributor-base lost protected friction/debt behavior: {required}"
+            )
 
     for role in sorted(roles):
         try:
@@ -247,32 +350,62 @@ def validate(repo: Path = REPO_ROOT) -> dict[str, Any]:
         except agent_context.ContextError as exc:
             raise ParityError(str(exc)) from exc
         if OPERATOR_PATH not in resolved["startup_paths"]:
-            raise ParityError(f"local {role} startup lost shared operator-control-plane context")
+            raise ParityError(
+                f"local {role} startup lost shared operator-control-plane context"
+            )
+        expected_operator_locator = (
+            OPERATOR_PATH if role in operator_extended else SHARED_OPERATOR_LOCATOR
+        )
+        if expected_operator_locator not in resolved["startup_context"]:
+            raise ParityError(
+                f"local {role} operator context violates role-index applicability: "
+                f"expected {expected_operator_locator}"
+            )
         if role in modifying and CONTRIBUTOR_PATH not in resolved["startup_paths"]:
-            raise ParityError(f"local modifying role {role} lost inherited contributor-base context")
+            raise ParityError(
+                f"local modifying role {role} lost inherited contributor-base context"
+            )
         kernel = kernels[role]
         if "then read `CLAUDE.md`, role index" not in kernel:
             raise ParityError(f"ChatGPT {role} kernel lost role-index startup delivery")
         if role in modifying:
             friction = _rule(roles, role, "repository-friction-capture")
             friction_text = str(friction.get("text", ""))
-            if FRICTION_GID not in friction_text or DEBT_GID not in friction_text or friction_text not in kernel:
-                raise ParityError(f"ChatGPT modifying role {role} lost friction/debt discovery delivery")
+            if (
+                FRICTION_GID not in friction_text
+                or DEBT_GID not in friction_text
+                or friction_text not in kernel
+            ):
+                raise ParityError(
+                    f"ChatGPT modifying role {role} lost friction/debt discovery delivery"
+                )
             try:
                 triggered = agent_context.resolve_context(
-                    role, repo_root=repo, trigger="friction / code-debt finding"
+                    role,
+                    repo_root=repo,
+                    trigger="friction / code-debt finding",
                 )
             except agent_context.ContextError as exc:
-                raise ParityError(f"local modifying role {role} cannot resolve friction/debt trigger: {exc}") from exc
-            if not any(locator.startswith(CONTRIBUTOR_PATH + "#") for locator in triggered["triggered_reads"]):
-                raise ParityError(f"role {role} friction/debt trigger no longer resolves contributor-base sections")
+                raise ParityError(
+                    f"local modifying role {role} cannot resolve friction/debt trigger: {exc}"
+                ) from exc
+            if not any(
+                locator.startswith(CONTRIBUTOR_PATH + "#")
+                for locator in triggered["triggered_reads"]
+            ):
+                raise ParityError(
+                    f"role {role} friction/debt trigger no longer resolves contributor-base sections"
+                )
 
     validate_local_hook_config(repo)
     validate_review_handoff_semantics(repo, source, kernels)
     return {
         "roles": sorted(roles),
         "repository_modifying_roles": sorted(modifying),
-        "protected_delivery": [item["id"] for item in extension["protected_delivery"]],
+        "operator_extended_roles": sorted(operator_extended),
+        "protected_delivery": [
+            item["id"] for item in extension["protected_delivery"]
+        ],
         "deferred_owner": DEFERRED_REVIEW_OWNER,
         "status": "PASS",
     }
