@@ -62,6 +62,68 @@ class LocalIntegrationCertificationMixin:
                 return base_ref
         return "main"
 
+    def _target_compare_status(self, effect_sha: str, target_sha: str) -> str:
+        comparison = None
+        last_error = None
+        for attempt in range(1, 4):
+            try:
+                _, _, comparison = self.github.http.request(
+                    "GET",
+                    self.github._url(f"compare/{effect_sha}...{target_sha}"),
+                    headers=self.github.headers,
+                )
+                break
+            except LifecycleError as exc:
+                last_error = exc
+                lowered = str(exc).lower()
+                transient = any(
+                    token in lowered
+                    for token in (
+                        "http 429", "http 500", "http 502", "http 503", "http 504",
+                        "timed out", "timeout", "connection reset", "temporary",
+                        "service unavailable", "bad gateway", "gateway timeout",
+                    )
+                )
+                if not transient or attempt == 3:
+                    raise LifecycleError(
+                        f"target-specific GitHub readback failed after {attempt}/3 typed attempts: {exc}"
+                    ) from exc
+                time.sleep(0.15 * (2 ** (attempt - 1)))
+        if not isinstance(comparison, dict):
+            raise LifecycleError(
+                f"GitHub target-specific compare response was not an object: {last_error}"
+            )
+        return str(comparison.get("status") or "").lower()
+
+    @staticmethod
+    def _target_recovery_token(source_number: int, source_head: str, target_branch: str) -> str:
+        return (
+            f"<!-- {TARGET_RECOVERY_MARKER} source_pr={source_number} "
+            f"source_head={source_head} target={target_branch} -->"
+        )
+
+    def _target_recovery_pr_for_identity(
+        self,
+        source_number: int,
+        source_head: str,
+        target_branch: str,
+    ) -> dict[str, Any] | None:
+        if source_number <= 0 or FULL_SHA_RE.fullmatch(source_head) is None:
+            return None
+        token = self._target_recovery_token(source_number, source_head, target_branch)
+        matches = []
+        for candidate in self.github.list_prs(include_closed=True):
+            body = str(candidate.get("body") or "")
+            base = candidate.get("base")
+            base_ref = str(base.get("ref") or "") if isinstance(base, dict) else ""
+            state = str(candidate.get("state") or "").lower()
+            merged = bool(candidate.get("merged") or candidate.get("merged_at"))
+            if token in body and base_ref == target_branch and (state == "open" or merged):
+                matches.append(candidate)
+        if len(matches) > 1:
+            raise LifecycleError("multiple Integration target-recovery PRs match the exact source identity")
+        return matches[0] if matches else None
+
     def _target_landing_proof(self, raw_pr: dict[str, Any]) -> dict[str, Any]:
         target_branch = self._ultimate_target_branch(raw_pr)
         target_sha = self.github.get_ref_sha(f"heads/{target_branch}")
@@ -87,55 +149,121 @@ class LocalIntegrationCertificationMixin:
                 "effect_sha": None,
                 "reason": "GitHub merged=true lacks an exact merge_commit_sha for target-specific proof",
             }
-        comparison = None
-        last_error = None
-        for attempt in range(1, 4):
-            try:
-                _, _, comparison = self.github.http.request(
-                    "GET",
-                    self.github._url(f"compare/{merge_effect_sha}...{target_sha}"),
-                    headers=self.github.headers,
-                )
-                break
-            except LifecycleError as exc:
-                last_error = exc
-                lowered = str(exc).lower()
-                transient = any(
-                    token in lowered
-                    for token in (
-                        "http 429", "http 500", "http 502", "http 503", "http 504",
-                        "timed out", "timeout", "connection reset", "temporary",
-                        "service unavailable", "bad gateway", "gateway timeout",
-                    )
-                )
-                if not transient or attempt == 3:
-                    raise LifecycleError(
-                        f"target-specific GitHub readback failed after {attempt}/3 typed attempts: {exc}"
-                    ) from exc
-                time.sleep(0.15 * (2 ** (attempt - 1)))
-        if not isinstance(comparison, dict):
-            raise LifecycleError(
-                f"GitHub target-specific compare response was not an object: {last_error}"
-            )
-        compare_status = str(comparison.get("status") or "").lower()
+        compare_status = self._target_compare_status(merge_effect_sha, target_sha)
         landed = compare_status in {"ahead", "identical"}
+        if landed:
+            return {
+                "landed": True,
+                "target_branch": target_branch,
+                "target_sha": target_sha,
+                "immediate_base": immediate_base,
+                "effect_sha": merge_effect_sha,
+                "compare_status": compare_status,
+                "reason": f"merge effect {merge_effect_sha} is contained by refs/heads/{target_branch} at {target_sha}",
+            }
+
+        try:
+            source_number = int(raw_pr.get("number") or 0)
+        except (TypeError, ValueError):
+            source_number = 0
+        head = raw_pr.get("head")
+        source_head = str(head.get("sha") or "").lower() if isinstance(head, dict) else ""
+        recovery = self._target_recovery_pr_for_identity(source_number, source_head, target_branch)
+        if recovery is not None and bool(recovery.get("merged") or recovery.get("merged_at")):
+            recovery_number = int(recovery.get("number") or 0)
+            recovery_head_value = recovery.get("head")
+            recovery_head = (
+                str(recovery_head_value.get("sha") or "").lower()
+                if isinstance(recovery_head_value, dict)
+                else ""
+            )
+            recovery_effect_sha = str(recovery.get("merge_commit_sha") or "").lower()
+            if FULL_SHA_RE.fullmatch(recovery_effect_sha) is None:
+                return {
+                    "landed": False,
+                    "target_branch": target_branch,
+                    "target_sha": target_sha,
+                    "immediate_base": immediate_base,
+                    "effect_sha": merge_effect_sha,
+                    "compare_status": compare_status,
+                    "recovery_pr": recovery_number,
+                    "recovery_head": recovery_head,
+                    "recovery_effect_sha": None,
+                    "reason": (
+                        f"bound target-recovery PR #{recovery_number} is merged but lacks an exact merge_commit_sha; "
+                        "duplicate recovery is refused until target landing can be proved"
+                    ),
+                }
+            recovery_status = self._target_compare_status(recovery_effect_sha, target_sha)
+            recovery_landed = recovery_status in {"ahead", "identical"}
+            return {
+                "landed": recovery_landed,
+                "target_branch": target_branch,
+                "target_sha": target_sha,
+                "immediate_base": immediate_base,
+                "effect_sha": recovery_effect_sha if recovery_landed else merge_effect_sha,
+                "source_effect_sha": merge_effect_sha,
+                "compare_status": recovery_status if recovery_landed else compare_status,
+                "recovery_pr": recovery_number,
+                "recovery_head": recovery_head,
+                "recovery_effect_sha": recovery_effect_sha,
+                "recovery_compare_status": recovery_status,
+                "reason": (
+                    f"bound target-recovery PR #{recovery_number} merge effect {recovery_effect_sha} is contained by "
+                    f"refs/heads/{target_branch} at {target_sha}; original source {source_head} is landed through "
+                    "durable recovery lineage"
+                    if recovery_landed
+                    else (
+                        f"bound target-recovery PR #{recovery_number} is merged but merge effect {recovery_effect_sha} "
+                        f"is not contained by intended target refs/heads/{target_branch} at {target_sha}; "
+                        "duplicate recovery is refused"
+                    )
+                ),
+            }
+
+        recovery_number = int(recovery.get("number") or 0) if recovery is not None else None
+        recovery_suffix = (
+            f"; bound target-recovery PR #{recovery_number} exists and remains non-terminal"
+            if recovery_number
+            else ""
+        )
         return {
-            "landed": landed,
+            "landed": False,
             "target_branch": target_branch,
             "target_sha": target_sha,
             "immediate_base": immediate_base,
             "effect_sha": merge_effect_sha,
             "compare_status": compare_status,
             "reason": (
-                f"merge effect {merge_effect_sha} is contained by refs/heads/{target_branch} at {target_sha}"
-                if landed
-                else (
-                    f"GitHub merged=true only proves composition into {immediate_base or '(unknown base)'}; "
-                    f"merge effect {merge_effect_sha} is not contained by intended target "
-                    f"refs/heads/{target_branch} at {target_sha}"
-                )
+                f"GitHub merged=true only proves composition into {immediate_base or '(unknown base)'}; "
+                f"merge effect {merge_effect_sha} is not contained by intended target "
+                f"refs/heads/{target_branch} at {target_sha}{recovery_suffix}"
             ),
         }
+
+    def _attach_rollout_readiness(self, lifecycle):
+        if self.asana is None or not lifecycle.task_ids:
+            return lifecycle
+        from pr_lifecycle_rollout import reconstruct, rollout_projection
+
+        by_gid = {
+            str(item.get("gid") or ""): item
+            for item in lifecycle.asana
+            if isinstance(item, dict)
+        }
+        for gid in lifecycle.task_ids:
+            task = by_gid.get(str(gid))
+            if task is None:
+                lifecycle.asana.append({"gid": gid, "error": "owning task missing from lifecycle readback"})
+                continue
+            if task.get("error"):
+                continue
+            try:
+                stories = self.asana.get_stories(gid)
+                task["rollout"] = rollout_projection(reconstruct(stories, task_gid=gid))
+            except LifecycleError as exc:
+                task["rollout_error"] = str(exc)
+        return lifecycle
 
     def inspect(self, pr):
         lifecycle = super().inspect(pr)
@@ -150,7 +278,7 @@ class LocalIntegrationCertificationMixin:
             lifecycle.human_action = None
             return lifecycle
         if proof["landed"]:
-            return lifecycle
+            return self._attach_rollout_readiness(lifecycle)
         lifecycle.state = LifecycleState.REVIEW_PASSED
         lifecycle.state_label = STATE_LABELS[LifecycleState.REVIEW_PASSED]
         lifecycle.residual_reason = (
@@ -316,20 +444,7 @@ class LocalIntegrationCertificationMixin:
         return reread
 
     def _target_recovery_pr(self, current, target_branch: str) -> dict[str, Any] | None:
-        token = (
-            f"<!-- {TARGET_RECOVERY_MARKER} source_pr={current.number} "
-            f"source_head={current.head} target={target_branch} -->"
-        )
-        matches = []
-        for candidate in self.github.list_prs():
-            body = str(candidate.get("body") or "")
-            base = candidate.get("base")
-            base_ref = str(base.get("ref") or "") if isinstance(base, dict) else ""
-            if token in body and base_ref == target_branch:
-                matches.append(candidate)
-        if len(matches) > 1:
-            raise LifecycleError("multiple Integration target-recovery PRs match the exact source identity")
-        return matches[0] if matches else None
+        return self._target_recovery_pr_for_identity(current.number, current.head, target_branch)
 
     @staticmethod
     def _cleanup_deferable(reason: str | None) -> bool:
@@ -369,6 +484,7 @@ class LocalIntegrationCertificationMixin:
             f"attempt {classified['attempt_id']}"
         )
         finalized.human_action = None
+        finalized = self._attach_rollout_readiness(finalized)
         if notify is not None:
             from pr_lifecycle_operator import action_first_status
             notify(action_first_status(finalized))
@@ -495,6 +611,29 @@ class LocalIntegrationCertificationMixin:
         if recovery is not None:
             recovery_number = int(recovery.get("number") or 0)
             recovery_head = str((recovery.get("head") or {}).get("sha") or "")
+            recovery_merged = bool(recovery.get("merged") or recovery.get("merged_at"))
+            if recovery_merged:
+                finalize_attempt_result(
+                    result,
+                    outcome="FAILED",
+                    retryable=False,
+                    reason=(
+                        f"bound target-recovery PR #{recovery_number} is merged but intended-target containment "
+                        "is not proven; duplicate recovery is refused"
+                    ),
+                    target_proof=proof,
+                    next_owner="Integration / Development Workflow",
+                    next_action=(
+                        f"repair target-specific readback for already-merged recovery PR #{recovery_number}; "
+                        "do not create another recovery PR"
+                    ),
+                )
+                reread.residual_reason = (
+                    f"bound target recovery PR #{recovery_number} is already merged but target containment is not "
+                    "proven; duplicate recovery is refused"
+                )
+                reread.human_action = None
+                return reread, False
             finalize_attempt_result(
                 result,
                 outcome="RECOVERY_PR_CREATED",

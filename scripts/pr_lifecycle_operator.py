@@ -5,6 +5,8 @@ lifecycle decision or role authority.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 from pr_lifecycle_host_routing import classify_local_work_item
 from pr_lifecycle_support import LifecycleState, PRLifecycle
 
@@ -17,22 +19,147 @@ def local_work_classification(pr: PRLifecycle) -> tuple[str | None, str | None]:
     return boundary.work_type, boundary.scope
 
 
+def _operator_action(pr: PRLifecycle) -> str:
+    if not pr.human_action:
+        return "NONE"
+    lowered = pr.human_action.lower()
+    if "no action for marco" in lowered or lowered.startswith("waiting on "):
+        return "NONE"
+    return pr.human_action
+
+
+def _rollout_readiness(pr: PRLifecycle) -> tuple[str, str, str]:
+    """Return ACTIVE/RUNNING, STATUS, COMPLETION PROOF from authoritative rollout projection."""
+    if not pr.task_ids:
+        return (
+            "UNKNOWN — no linked task exists to prove whether activation is required",
+            "ACTIVATION PENDING",
+            "source is landed, but activation requirement/readback is unavailable because no owning task is linked",
+        )
+
+    by_gid = {
+        str(item.get("gid") or ""): item
+        for item in pr.asana
+        if isinstance(item, Mapping)
+    }
+    tasks = [by_gid.get(str(gid)) for gid in pr.task_ids]
+    if any(
+        task is None
+        or task.get("error")
+        or task.get("rollout_error")
+        or "rollout" not in task
+        for task in tasks
+    ):
+        missing = next(
+            (
+                str(gid)
+                for gid, task in zip(pr.task_ids, tasks)
+                if task is None or task.get("error") or task.get("rollout_error") or "rollout" not in task
+            ),
+            "unknown",
+        )
+        return (
+            f"UNKNOWN — authoritative rollout reconstruction is unavailable for task {missing}",
+            "ACTIVATION PENDING",
+            f"source is landed, but task {missing} lacks authoritative rollout requirement/readback evidence",
+        )
+
+    rollouts = [task.get("rollout") for task in tasks if isinstance(task, Mapping) and task.get("rollout") is not None]
+    if not rollouts:
+        task_text = ", ".join(str(gid) for gid in pr.task_ids)
+        return (
+            "NOT REQUIRED — authoritative linked-task history declares no staged rollout plan",
+            "OPERATIONAL",
+            f"target-specific source landing passed and authoritative rollout history for task(s) {task_text} has no current plan",
+        )
+
+    descriptors: list[str] = []
+    statuses: list[str] = []
+    for rollout in rollouts:
+        if not isinstance(rollout, Mapping):
+            return (
+                "UNKNOWN — rollout projection is malformed",
+                "ACTIVATION PENDING",
+                "source is landed, but the authoritative rollout projection is malformed",
+            )
+        plan_id = str(rollout.get("plan_id") or "unknown")
+        generation = rollout.get("generation")
+        stages = [item for item in rollout.get("stages") or [] if isinstance(item, Mapping)]
+        if not stages:
+            return (
+                f"UNKNOWN — rollout {plan_id} generation {generation} has no stage projection",
+                "ACTIVATION PENDING",
+                "source is landed, but rollout stage evidence is unavailable",
+            )
+        final = stages[-1]
+        final_state = str(final.get("state") or "PENDING").upper()
+        activated = [item for item in stages if str(item.get("state") or "").upper() == "ACTIVATED"]
+        rejected = [item for item in stages if str(item.get("state") or "").upper() == "REJECTED"]
+        if rejected:
+            item = rejected[-1]
+            statuses.append("NOT OPERATIONAL")
+            descriptors.append(
+                f"rollout {plan_id} generation {generation} stage {item.get('stage')} REJECTED "
+                f"for artifact {item.get('artifact')} config {item.get('config')}"
+            )
+        elif bool(rollout.get("complete")) and final_state == "ACCEPTED":
+            statuses.append("OPERATIONAL")
+            descriptors.append(
+                f"rollout {plan_id} generation {generation} final stage {final.get('stage')} ACCEPTED "
+                f"for artifact {final.get('artifact')} config {final.get('config')} "
+                f"activated identity {final.get('activated_identity')}"
+            )
+        elif final_state == "CANCELLED":
+            statuses.append("NOT OPERATIONAL")
+            descriptors.append(
+                f"rollout {plan_id} generation {generation} final stage {final.get('stage')} CANCELLED"
+            )
+        elif activated:
+            item = activated[-1]
+            statuses.append("VERIFYING")
+            descriptors.append(
+                f"rollout {plan_id} generation {generation} stage {item.get('stage')} ACTIVATED "
+                f"for artifact {item.get('artifact')} config {item.get('config')} "
+                f"activated identity {item.get('activated_identity')}"
+            )
+        else:
+            statuses.append("ACTIVATION PENDING")
+            descriptors.append(
+                f"rollout {plan_id} generation {generation} final stage {final.get('stage')} is {final_state}"
+            )
+
+    if "NOT OPERATIONAL" in statuses:
+        status = "NOT OPERATIONAL"
+    elif "ACTIVATION PENDING" in statuses:
+        status = "ACTIVATION PENDING"
+    elif "VERIFYING" in statuses:
+        status = "VERIFYING"
+    else:
+        status = "OPERATIONAL"
+
+    proof = "; ".join(descriptors)
+    if status == "OPERATIONAL":
+        active = "PROVEN — " + proof
+    elif status == "VERIFYING":
+        active = "RUNNING/ACTIVE — " + proof
+    elif status == "NOT OPERATIONAL":
+        active = "NOT OPERATIONAL — " + proof
+    else:
+        active = "NOT YET PROVEN — " + proof
+    return active, status, proof
+
+
 def _readiness_fields(pr: PRLifecycle) -> str:
     state = pr.state
-    action = "NONE"
-    if pr.human_action:
-        lowered = pr.human_action.lower()
-        if "no action for marco" not in lowered and not lowered.startswith("waiting on "):
-            action = pr.human_action
+    action = _operator_action(pr)
 
     if state == LifecycleState.MERGED:
         source = f"LANDED — exact reviewed source `{pr.head}`; target-specific GitHub readback passed"
-        active = "UNKNOWN — runtime/deployed/process generation is a separate witness"
-        status = "ACTIVATION PENDING"
+        active, status, activation_proof = _rollout_readiness(pr)
         proof = (
-            pr.residual_reason
+            f"{pr.residual_reason}; {activation_proof}"
             if pr.residual_reason
-            else f"target-specific source landing readback for `{pr.head}`; runtime activation proof still separate"
+            else activation_proof
         )
     elif state == LifecycleState.MERGING:
         source = f"NOT LANDED — exact candidate `{pr.head}`"
@@ -69,8 +196,19 @@ def action_first_status(pr: PRLifecycle) -> str:
     state = pr.state
 
     if state == LifecycleState.MERGED:
-        first = "Source integration is complete. Nothing for you to do."
-        why = "Runtime or acceptance work, if any, remains separate."
+        _active, merged_status, _proof = _rollout_readiness(pr)
+        if merged_status == "OPERATIONAL":
+            first = "Source integration is complete and the required activation boundary is satisfied. Nothing for you to do."
+            why = "The lifecycle has authoritative source and activation/no-activation evidence."
+        elif merged_status == "VERIFYING":
+            first = "Source integration is complete and activation is being verified. Nothing for you to do."
+            why = "The current rollout generation is activated but not yet terminally accepted."
+        elif merged_status == "NOT OPERATIONAL":
+            first = "Source integration is complete, but the rollout is not operational. Nothing for you to do unless an exact action is named below."
+            why = "The authoritative rollout state is rejected or cancelled."
+        else:
+            first = "Source integration is complete. Nothing for you to do."
+            why = "A required activation/readback step remains separate."
     elif state == LifecycleState.CLOSED:
         first = "This pull request is closed. Nothing for you to do."
         why = pr.residual_reason or "There is no active source candidate on this lineage."
@@ -121,8 +259,7 @@ def action_first_status(pr: PRLifecycle) -> str:
         first = "The pull request is being re-evaluated. Nothing for you to do."
         why = "The durable lifecycle state will determine the next step."
 
-    if pr.human_action:
-        lowered = pr.human_action.lower()
-        if "no action for marco" not in lowered and not lowered.startswith("waiting on "):
-            first = f"Your next action: {pr.human_action}"
+    action = _operator_action(pr)
+    if action != "NONE":
+        first = f"Your next action: {action}"
     return f"{first} {why} {_readiness_fields(pr)}"
