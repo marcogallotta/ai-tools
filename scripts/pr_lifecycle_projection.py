@@ -9,6 +9,7 @@ from typing import Any, Iterable, Mapping
 import uuid
 
 from pr_lifecycle_support import PRLifecycle
+from pr_lifecycle_v3 import build_v3_projection
 
 SCHEMA = "dish-pr-lifecycle-projection-v1"
 V3_SHADOW_SCHEMA = "dish-pr-lifecycle-v3-shadow-v1"
@@ -383,6 +384,15 @@ def build_projection(
             owner["dependents"].append(pr["number"])
         if operator_action:
             coordinator.append({"pr": pr["number"], "action": operator_action, "head": pr["head"]})
+
+    v3 = build_v3_projection(
+        prs,
+        tasks=task_values,
+        source_observation=dict(source_observation or {}),
+        repository=repository,
+        controller=dict(controller or {}),
+        generated_at=generated_at,
+    )
     return {
         "schema": SCHEMA,
         "repository": repository,
@@ -410,6 +420,7 @@ def build_projection(
             "human_hold_evaluation": "NOT_IMPLEMENTED_STAGE_1",
             "decisions": v3_shadow_decisions,
         },
+        "v3": v3,
     }
 
 
