@@ -1,5 +1,6 @@
 name: Temporary Task 2 stable authoring base
 
+# branch-only authoring helper; removes itself before final candidate publication
 on:
   pull_request:
     branches:
