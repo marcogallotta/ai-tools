@@ -7,14 +7,24 @@ Repository bundles are a ChatGPT-only bootstrap/cache for substantial consequent
 v1 publishes `main` only. The artifact and Release namespace is `repository-bundle-<SHA>`, separate from dependency bundles. Each publication contains:
 
 - `repository-bundle-<SHA>.bundle` — full Git history reachable from `refs/heads/main`;
-- `repository-bundle-<SHA>.manifest.json` — repository full name/numeric identity, exact source SHA/ref, generator workflow identity, bundle checksum, and advertised refs;
+- `repository-bundle-<SHA>.manifest.json` — repository full name/numeric identity, exact source SHA/ref, generator workflow/event identity, bundle checksum, and advertised refs;
 - `repository-bundle-<SHA>.bundle.sha256` — `sha256sum`-format checksum.
 
 PR-head bundles are intentionally unsupported in v1. If they are added later, verification of advertised `main` must become conditional on the requested ref instead of assuming `main == requested SHA`.
 
-## Publication cadence and retention
+## Publication cadence, discovery, and retention
 
-`.github/workflows/repository-bundle.yml` runs on every `main` push and on manual dispatch. It resolves the event SHA, fetches the live `refs/heads/main`, and refuses publication unless `git ls-remote origin refs/heads/main` still equals that exact SHA. Superseded runs therefore fail closed rather than publishing a stale object that merely exists locally.
+`.github/workflows/repository-bundle.yml` runs on every `main` push and on manual dispatch. Each run is bound to its workflow event's exact `GITHUB_SHA` + `refs/heads/main` identity, materializes that exact commit as the bundle's advertised `main`, and may finish even if a later push advances live `main` while the immutable publication is still running. The builder therefore validates event/ref/SHA binding and the exact local advertised commit instead of requiring the pushed SHA to remain equal to live `main` for the duration of the run.
+
+Publication concurrency is exact-SHA scoped so different pushed `main` commits can build and upload independently. The Release/retention stage remains serialized because retention mutates the shared bounded Release set; runs are never canceled merely because another `main` commit arrives.
+
+Every run writes a commit status on its exact event SHA with context `Dish / repository bundle`:
+
+- `pending` while publication is in progress;
+- `success` only after exact build/verification, Actions artifact upload, and immutable Release publication succeed;
+- `failure` when that publication fails.
+
+The status target URL is the exact GitHub Actions run URL. This makes a commit deterministically map to its publication run without a manually supplied run ID. Producer/discovery status is available immediately; activation of mandatory ChatGPT status -> run -> artifact consumption is a separate staged change and does not alter the current consumer requirement by itself.
 
 A successful main/manual run publishes an immutable GitHub Release named `repository-bundle-<SHA>` and uploads the same files as a ChatGPT-accessible GitHub Actions artifact mirror. Re-running an already-published SHA compares all three Release assets byte-for-byte and fails rather than replacing divergent content.
 
