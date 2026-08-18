@@ -278,6 +278,30 @@ def test_accepted_rollout_with_stale_runtime_identity_stays_verifying():
     assert "expected 'activation-123'" in rendered
 
 
+def test_stale_not_operational_runtime_witness_cannot_mark_current_rollout_not_operational():
+    lifecycle = merged_lifecycle(rollout_value=projection("ACCEPTED", complete=True))
+    stale_witnesses = [
+        runtime(operational="NOT_OPERATIONAL", generation=2, activated_identity="activation-123"),
+        runtime(operational="NOT_OPERATIONAL", generation=3, activated_identity="activation-old"),
+        runtime(operational="NOT_OPERATIONAL", generation=None, activated_identity=None),
+    ]
+    for witness in stale_witnesses:
+        rendered = action_first_status(lifecycle, witness)
+        assert "STATUS: VERIFYING" in rendered
+        assert "STATUS: NOT OPERATIONAL" not in rendered
+        assert "operational=NOT_OPERATIONAL is bound to a stale/mismatched runtime witness" in rendered
+
+
+def test_matching_not_operational_runtime_witness_marks_current_rollout_not_operational():
+    rendered = action_first_status(
+        merged_lifecycle(rollout_value=projection("ACCEPTED", complete=True)),
+        runtime(operational="NOT_OPERATIONAL"),
+    )
+    assert "STATUS: NOT OPERATIONAL" in rendered
+    assert "current runtime witness reports NOT_OPERATIONAL for generation 3 activated identity activation-123" in rendered
+    assert "STATUS: VERIFYING" not in rendered
+
+
 def test_direct_operator_and_read_only_projection_agree_on_activation_required_operational_truth():
     lifecycle = merged_lifecycle(rollout_value=projection("ACCEPTED", complete=True))
     tasks = [{"gid": "task", "completed": True, "rollout": projection("ACCEPTED", complete=True)}]

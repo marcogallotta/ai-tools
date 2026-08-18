@@ -151,18 +151,19 @@ def _rollout_readiness(
             runtime_identity = runtime.get("activated_identity")
             generation_matches = str(runtime_generation) == str(generation) if runtime_generation is not None else False
             identity_matches = runtime_identity == expected_identity and expected_identity is not None
+            runtime_matches = generation_matches and identity_matches
             accepted = (
                 f"rollout {plan_id} generation {generation} final stage {final.get('stage')} ACCEPTED "
                 f"for artifact {final.get('artifact')} config {final.get('config')} "
                 f"activated identity {expected_identity}"
             )
-            if runtime_operational == "OPERATIONAL" and generation_matches and identity_matches:
+            if runtime_operational == "OPERATIONAL" and runtime_matches:
                 statuses.append("OPERATIONAL")
                 descriptors.append(
                     f"{accepted}; current runtime witness proves generation {runtime_generation} "
                     f"activated identity {runtime_identity} OPERATIONAL"
                 )
-            elif runtime_operational == "NOT_OPERATIONAL":
+            elif runtime_operational == "NOT_OPERATIONAL" and runtime_matches:
                 statuses.append("NOT OPERATIONAL")
                 descriptors.append(
                     f"{accepted}; current runtime witness reports NOT_OPERATIONAL for generation "
@@ -170,8 +171,10 @@ def _rollout_readiness(
                 )
             else:
                 missing: list[str] = []
-                if runtime_operational != "OPERATIONAL":
+                if runtime_operational not in {"OPERATIONAL", "NOT_OPERATIONAL"}:
                     missing.append(f"operational={runtime_operational}")
+                elif runtime_operational == "NOT_OPERATIONAL":
+                    missing.append("operational=NOT_OPERATIONAL is bound to a stale/mismatched runtime witness")
                 if not generation_matches:
                     missing.append(f"generation={runtime_generation!r}, expected {generation!r}")
                 if not identity_matches:
