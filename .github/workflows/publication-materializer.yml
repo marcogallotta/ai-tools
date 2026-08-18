@@ -14,43 +14,65 @@ jobs:
       contains(github.event.comment.body, 'dish-publication-materialize:v1')
     runs-on: ubuntu-latest
     permissions:
+      actions: read
       contents: read
       issues: read
       pull-requests: read
     outputs:
       valid: ${{ steps.filter.outputs.valid }}
+      classification: ${{ steps.filter.outputs.classification }}
+      route: ${{ steps.filter.outputs.route }}
       pr_number: ${{ steps.filter.outputs.pr_number }}
       request_id: ${{ steps.filter.outputs.request_id }}
+      artifact_id: ${{ steps.filter.outputs.artifact_id }}
+      artifact_name: ${{ steps.filter.outputs.artifact_name }}
+      artifact_digest: ${{ steps.filter.outputs.artifact_digest }}
+      artifact_run_id: ${{ steps.filter.outputs.artifact_run_id }}
     steps:
-      - name: Check out trusted default-branch request parser
+      - name: Resolve exact trusted default-branch source
+        id: authority
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          source_sha="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" --jq '.head_sha')"
+          test "${#source_sha}" -eq 40
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+      - name: Check out exact trusted request parser
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          ref: ${{ steps.authority.outputs.source_sha }}
           persist-credentials: false
-      - name: Validate request without write authority
+      - name: Validate request and select materialize-or-recover route without write authority
         id: filter
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: >-
           python scripts/ci/publication_materializer.py filter
           --event-path "$GITHUB_EVENT_PATH"
+          --run-attempt "${{ github.run_attempt }}"
           --github-output "$GITHUB_OUTPUT"
 
   materialize:
     needs: filter
-    if: needs.filter.outputs.valid == 'true'
+    if: needs.filter.outputs.valid == 'true' && needs.filter.outputs.route == 'materialize'
     runs-on: ubuntu-latest
     concurrency:
       group: dish-publication-materialize-${{ needs.filter.outputs.pr_number }}
       cancel-in-progress: false
     permissions:
+      actions: read
       contents: write
       issues: read
       pull-requests: read
     outputs:
-      candidate_commit: ${{ steps.materialize.outputs.candidate_commit }}
-      tree: ${{ steps.materialize.outputs.tree }}
-      parent: ${{ steps.materialize.outputs.parent }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      artifact_name: ${{ steps.materialize.outputs.artifact_name }}
+      artifact_digest: ${{ steps.upload.outputs.artifact-digest }}
+      artifact_run_id: ${{ github.run_id }}
+      candidate_commit: ${{ steps.verify.outputs.candidate_commit }}
+      tree: ${{ steps.verify.outputs.tree }}
+      parent: ${{ steps.verify.outputs.parent }}
       pr_number: ${{ steps.materialize.outputs.pr_number }}
       request_id: ${{ steps.materialize.outputs.request_id }}
     steps:
@@ -58,10 +80,9 @@ jobs:
         id: authority
         env:
           GH_TOKEN: ${{ github.token }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
-          source_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${DEFAULT_BRANCH}" --jq '.object.sha')"
+          source_sha="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" --jq '.head_sha')"
           test "${#source_sha}" -eq 40
           echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
       - name: Check out exact trusted materializer source
@@ -77,35 +98,76 @@ jobs:
           python scripts/ci/publication_materializer.py materialize
           --event-path "$GITHUB_EVENT_PATH"
           --result-path "$RUNNER_TEMP/publication-materializer-result.json"
+          --source-sha "${{ steps.authority.outputs.source_sha }}"
+          --run-id "${{ github.run_id }}"
+          --run-attempt "${{ github.run_attempt }}"
+          --github-output "$GITHUB_OUTPUT"
+      - name: Persist immutable request/run-attempt result before reporting
+        id: upload
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.materialize.outputs.artifact_name }}
+          path: ${{ runner.temp }}/publication-materializer-result.json
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - name: Fail closed if durable result persistence failed
+        if: steps.upload.outcome != 'success'
+        run: |
+          echo "UNRESOLVED_MATERIALIZED_RESULT: exact candidate exists but durable pre-report result was not persisted" >&2
+          exit 2
+      - name: Re-read durable result and independently verify exact candidate
+        id: verify
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python scripts/ci/publication_materializer.py verify-result-artifact
+          --event-path "$GITHUB_EVENT_PATH"
+          --artifact-id "${{ steps.upload.outputs.artifact-id }}"
+          --artifact-name "${{ steps.materialize.outputs.artifact_name }}"
+          --artifact-digest "${{ steps.upload.outputs.artifact-digest }}"
+          --artifact-run-id "${{ github.run_id }}"
           --github-output "$GITHUB_OUTPUT"
 
   report:
     needs: [filter, materialize]
-    if: needs.materialize.result == 'success'
+    if: >-
+      always() &&
+      needs.filter.outputs.valid == 'true' &&
+      (needs.filter.outputs.route == 'recover' || needs.materialize.result == 'success')
     runs-on: ubuntu-latest
     permissions:
+      actions: read
+      contents: read
       issues: write
+      pull-requests: read
     steps:
-      - name: Report unattached candidate identity without source-write authority
+      - name: Resolve exact trusted default-branch recovery source
+        id: authority
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ needs.materialize.outputs.pr_number }}
-          REQUEST_ID: ${{ needs.materialize.outputs.request_id }}
-          CANDIDATE: ${{ needs.materialize.outputs.candidate_commit }}
-          PARENT: ${{ needs.materialize.outputs.parent }}
-          TREE: ${{ needs.materialize.outputs.tree }}
         run: |
           set -euo pipefail
-          body="$(cat <<EOF
-          Exact-tree publication candidate materialized. No branch ref was updated.
-
-          - Expected parent: \`${PARENT}\`
-          - Candidate commit: \`${CANDIDATE}\`
-          - Tree: \`${TREE}\`
-
-          Implementation must independently verify this exact parent/tree, then attach the candidate to the existing PR branch through the separate expected-head/CAS connector ref update and re-read the authoritative PR/branch/commit/tree state.
-
-          <!-- dish-publication-materialize-result:v1 request=${REQUEST_ID} candidate=${CANDIDATE} parent=${PARENT} tree=${TREE} -->
-          EOF
-          )"
-          gh api --method POST "repos/${GITHUB_REPOSITORY}/issues/${PR_NUMBER}/comments" --raw-field body="$body" >/dev/null
+          source_sha="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" --jq '.head_sha')"
+          test "${#source_sha}" -eq 40
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+      - name: Check out exact trusted recovery/report source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.authority.outputs.source_sha }}
+          persist-credentials: false
+      - name: Recover durable candidate and publish result idempotently
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ needs.filter.outputs.route == 'recover' && needs.filter.outputs.artifact_id || needs.materialize.outputs.artifact_id }}
+          ARTIFACT_NAME: ${{ needs.filter.outputs.route == 'recover' && needs.filter.outputs.artifact_name || needs.materialize.outputs.artifact_name }}
+          ARTIFACT_DIGEST: ${{ needs.filter.outputs.route == 'recover' && needs.filter.outputs.artifact_digest || needs.materialize.outputs.artifact_digest }}
+          ARTIFACT_RUN_ID: ${{ needs.filter.outputs.route == 'recover' && needs.filter.outputs.artifact_run_id || needs.materialize.outputs.artifact_run_id }}
+        run: >-
+          python scripts/ci/publication_materializer.py publish-result
+          --event-path "$GITHUB_EVENT_PATH"
+          --artifact-id "$ARTIFACT_ID"
+          --artifact-name "$ARTIFACT_NAME"
+          --artifact-digest "$ARTIFACT_DIGEST"
+          --artifact-run-id "$ARTIFACT_RUN_ID"

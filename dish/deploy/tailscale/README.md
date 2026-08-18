@@ -48,15 +48,21 @@ Before activation:
 Do not point Funnel at a private or direct Action listener. The same Tailscale HTTPS port cannot be
 both private Serve and public Funnel at once; the most recent configuration wins.
 
-## Future private browser frontend
+## PostgreSQL TEST browser frontend
 
-The authenticated browser frontend is not currently exposed. Its contract requires a dedicated
-private HTTPS hostname distinct from the Action/Funnel hostname; reusing the node hostname on port
-8444 or 8445 is not sufficient because browser cookies are not port-scoped.
+The PostgreSQL-authoritative TEST service can expose the production-shaped authenticated frontend
+through a dedicated private HTTPS hostname distinct from the Action/Funnel hostname. Reusing the
+node Action hostname on port 8444 or 8445 is not sufficient because browser cookies are not
+port-scoped.
 
-Before Stage 2 deployment, provision and document a tailnet-only hostname/certificate path that maps
-to the existing environment's private listener without creating a third service listener. The initial
-frontend implementation ignores forwarded authority and client-address headers, so do not depend on
-`Forwarded` or `X-Forwarded-*` values for Host, scheme, origin, or throttling authority. Follow
-`docs/frontend-deployment-runbook.md` and do not expose the fixture-only build as an
-authenticated application.
+Provision a private hostname and certificate, populate
+`deploy/systemd/frontend-test-caddy.env.example`, and run
+`dish-frontend-test-caddy.service`. Its Caddy configuration terminates HTTPS/HSTS and proxies only to
+the existing TEST private listener at `127.0.0.1:8765`; it does not create another Dish application
+listener and never routes to Action port 8766. Bind Caddy to the intended private interface rather
+than all interfaces. The frontend ignores forwarded authority and client-address headers, so do not
+depend on `Forwarded` or `X-Forwarded-*` values for Host, scheme, origin, or throttling authority.
+
+This TEST origin is rehearsal-only. It does not change the production frontend activation decision.
+Follow `docs/frontend-deployment-runbook.md` and deploy only the ordinary production build, never
+`review-dist/`.

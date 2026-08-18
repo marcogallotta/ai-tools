@@ -7,10 +7,12 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import text
+from alembic.runtime.migration import MigrationContext
+from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
+from dish_pg import models
 from dish_pg.database import DatabaseSettings, create_database_engine, session_factory
 from dish_pg.frontend_admin_query import FrontendAdminQuery
 from dish_pg.frontend_board_query import BoardReadUnavailable, FrontendBoardQuery
@@ -23,6 +25,49 @@ from .frontend_security import FrontendSecurityConfigurationError
 from .frontend_settings import FrontendRuntimeSettings
 
 _PRIVATE_ENVIRONMENT = "private-postgresql-observation"
+
+
+@dataclass(frozen=True, slots=True)
+class FrontendAuthorityIdentity:
+    database: str
+    schema_head: str
+    dish_release: str
+    generation_id: str
+    generation_status: str = "active"
+
+    @classmethod
+    def from_runtime_identity(
+        cls, identity: dict[str, Any]
+    ) -> "FrontendAuthorityIdentity":
+        required = (
+            "database",
+            "schema_head",
+            "dish_release",
+            "generation_id",
+            "generation_status",
+        )
+        missing = [
+            name for name in required if not str(identity.get(name, "")).strip()
+        ]
+        if missing:
+            raise FrontendSecurityConfigurationError(
+                "PostgreSQL frontend authority identity is incomplete: "
+                + ", ".join(missing)
+            )
+        if identity["generation_status"] != "active":
+            raise FrontendSecurityConfigurationError(
+                "PostgreSQL frontend authority identity must bind an active generation"
+            )
+        return cls(**{name: str(identity[name]) for name in required})
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "database": self.database,
+            "schema_head": self.schema_head,
+            "dish_release": self.dish_release,
+            "generation_id": self.generation_id,
+            "generation_status": self.generation_status,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,10 +91,20 @@ class FrontendDataReadsDisabled(RuntimeError):
 class FrontendPrivateRuntime:
     """Own frontend-only PostgreSQL connections and immutable static assets."""
 
-    def __init__(self, settings: FrontendRuntimeSettings) -> None:
+    def __init__(
+        self,
+        settings: FrontendRuntimeSettings,
+        *,
+        authority_identity: FrontendAuthorityIdentity | None = None,
+    ) -> None:
         if not settings.enabled:
             raise ValueError("frontend runtime requires enabled settings")
+        if authority_identity is not None and not settings.postgresql_reads_enabled:
+            raise FrontendSecurityConfigurationError(
+                "PostgreSQL authority-bound frontend requires observation reads"
+            )
         self.settings = settings
+        self.authority_identity = authority_identity
         root = settings.static_root.resolve()  # type: ignore[union-attr]
         if not root.is_dir() or not (root / "index.html").is_file():
             raise FrontendSecurityConfigurationError(f"frontend build directory is incomplete: {root}")
@@ -76,7 +131,11 @@ class FrontendPrivateRuntime:
 
     @property
     def browser_runtime_mode(self) -> str:
-        return "private-postgresql" if self.settings.postgresql_reads_enabled else "private-disabled"
+        if not self.settings.postgresql_reads_enabled:
+            return "private-disabled"
+        if self.authority_identity is not None:
+            return "private-postgresql-authority"
+        return "private-postgresql"
 
     @staticmethod
     def _board_config(settings: FrontendRuntimeSettings) -> FrontendBoardConfig | None:
@@ -109,6 +168,10 @@ class FrontendPrivateRuntime:
                 raise FrontendSecurityConfigurationError(
                     "frontend authentication and observation data must use different "
                     "physical PostgreSQL databases"
+                )
+            if self.authority_identity is not None:
+                self._validate_authority_identity(
+                    self._required_observation_factory(), self.authority_identity
                 )
 
     def board(self) -> dict[str, Any]:
@@ -176,6 +239,48 @@ class FrontendPrivateRuntime:
         if self.observation_factory is None:
             raise FrontendDataReadsDisabled("private PostgreSQL observation reads are not activated")
         return self.observation_factory
+
+    @staticmethod
+    def _validate_authority_identity(
+        factory: sessionmaker[Session], identity: FrontendAuthorityIdentity
+    ) -> None:
+        try:
+            with factory.begin() as session:
+                if session.get_bind().dialect.name != "postgresql":
+                    raise FrontendSecurityConfigurationError(
+                        "private frontend requires PostgreSQL"
+                    )
+                session.execute(text("SET TRANSACTION READ ONLY"))
+                database_name = str(session.scalar(text("SELECT current_database()")))
+                schema_heads = tuple(
+                    sorted(MigrationContext.configure(session.connection()).get_current_heads())
+                )
+                generation = session.scalar(
+                    select(models.AuthorityGeneration).where(
+                        models.AuthorityGeneration.status == "active"
+                    )
+                )
+                observed = {
+                    "database": database_name,
+                    "schema_head": schema_heads[0] if len(schema_heads) == 1 else None,
+                    "dish_release": generation.dish_release if generation is not None else None,
+                    "generation_id": (
+                        str(generation.generation_id) if generation is not None else None
+                    ),
+                    "generation_status": generation.status if generation is not None else None,
+                }
+        except FrontendSecurityConfigurationError:
+            raise
+        except SQLAlchemyError as exc:
+            raise FrontendSecurityConfigurationError(
+                "private frontend could not verify PostgreSQL authority identity"
+            ) from exc
+        expected = identity.as_dict()
+        if observed != expected:
+            raise FrontendSecurityConfigurationError(
+                "private frontend PostgreSQL authority identity mismatch: "
+                f"expected={expected!r} observed={observed!r}"
+            )
 
     @staticmethod
     def _validate_database_connection(

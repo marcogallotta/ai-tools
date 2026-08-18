@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import runpy
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -12,6 +13,9 @@ TEST_POSTGRES_UNIT = ROOT / "deploy/systemd/dish-postgres-test.service"
 TEST_WORKER_ENV = ROOT / "deploy/systemd/dark-launch-test.env.example"
 TEST_SERVICE_ENV = ROOT / "deploy/systemd/service-test.env.example"
 TEST_SERVICE_UNIT = ROOT / "deploy/systemd/dish-service-test.service"
+TEST_FRONTEND_CADDY_UNIT = ROOT / "deploy/systemd/dish-frontend-test-caddy.service"
+TEST_FRONTEND_CADDY_ENV = ROOT / "deploy/systemd/frontend-test-caddy.env.example"
+TEST_FRONTEND_CADDY = ROOT / "deploy/caddy/dish-frontend-test.Caddyfile"
 LEGACY_SERVICE_ENV = ROOT / "deploy/systemd/service-test-legacy.env.example"
 LEGACY_SERVICE_UNIT = ROOT / "deploy/systemd/dish-service-test-legacy.service"
 COMPARATOR_RUNBOOK = ROOT / "docs/test-dual-stack-comparator.md"
@@ -88,6 +92,21 @@ def test_test_service_is_pg_authority_and_legacy_oracle_is_isolated() -> None:
     assert authority["DISH_PG_EXPECTED_SCHEMA_HEAD"] == "0041_test_generation_rollover"
     assert authority["DISH_PG_EXPECTED_DATABASE_NAME"].endswith("_test")
     assert authority["DISH_PG_AUTHORITY_STATE_DIR"].startswith("/home/marco/.local/state/dish/test/")
+    assert authority["DISH_FRONTEND_ENABLED"] == "1"
+    assert authority["DISH_FRONTEND_POSTGRESQL_READS_ENABLED"] == "1"
+    assert authority["DISH_FRONTEND_ORIGIN"].startswith("https://")
+    assert authority["DISH_ACTION_PUBLIC_ORIGIN"].startswith("https://")
+    assert (
+        urlsplit(authority["DISH_FRONTEND_ORIGIN"]).hostname
+        != urlsplit(authority["DISH_ACTION_PUBLIC_ORIGIN"]).hostname
+    )
+    assert (
+        urlsplit(authority["DISH_FRONTEND_DATABASE_URL"]).path
+        != urlsplit(authority["DISH_FRONTEND_OBSERVATION_DATABASE_URL"]).path
+    )
+    assert urlsplit(authority["DISH_FRONTEND_OBSERVATION_DATABASE_URL"]).path == (
+        "/" + authority["DISH_PG_EXPECTED_DATABASE_NAME"]
+    )
     assert not any("ASANA" in name.upper() for name in authority)
     assert "DISH_COOKING_PROJECT_GID" not in authority
     assert "dish-postgres-test.service" in unit
@@ -106,6 +125,33 @@ def test_test_service_is_pg_authority_and_legacy_oracle_is_isolated() -> None:
     assert "EnvironmentFile=/home/marco/.config/dish-service/test-legacy.env" in oracle_unit
     assert "ReadWritePaths=/home/marco/.local/state/dish/test-legacy" in oracle_unit
     assert "dish-service-test.service" not in oracle_unit.split("Conflicts=", 1)[-1].splitlines()[0]
+
+
+def test_test_frontend_caddy_is_dedicated_to_existing_private_listener() -> None:
+    caddy = TEST_FRONTEND_CADDY.read_text(encoding="utf-8")
+    unit = TEST_FRONTEND_CADDY_UNIT.read_text(encoding="utf-8")
+    edge = _assignments(TEST_FRONTEND_CADDY_ENV)
+
+    assert "https://{$DISH_FRONTEND_TEST_HOST}" in caddy
+    assert "bind {$DISH_FRONTEND_TEST_BIND_IP}" in caddy
+    assert "tls {$DISH_FRONTEND_TEST_CERT_FILE} {$DISH_FRONTEND_TEST_KEY_FILE}" in caddy
+    assert 'Strict-Transport-Security "max-age=63072000"' in caddy
+    assert "reverse_proxy 127.0.0.1:8765" in caddy
+    assert "8766" not in caddy
+    assert "4183" not in caddy
+
+    assert "Requires=dish-service-test.service" in unit
+    assert "BindsTo=dish-service-test.service" in unit
+    assert "dish-frontend-private.service" not in unit
+    assert "frontend-test-caddy.env" in unit
+    assert "dish-frontend-test.Caddyfile" in unit
+    assert "CAP_NET_BIND_SERVICE" in unit
+    assert set(edge) == {
+        "DISH_FRONTEND_TEST_HOST",
+        "DISH_FRONTEND_TEST_BIND_IP",
+        "DISH_FRONTEND_TEST_CERT_FILE",
+        "DISH_FRONTEND_TEST_KEY_FILE",
+    }
 
 
 def test_comparator_qualification_stops_legacy_to_pg_shadow_synchronization() -> None:

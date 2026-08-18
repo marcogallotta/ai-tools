@@ -151,13 +151,19 @@ def assert_committed_command_effects(
 
     if not expected.verify_mutation_effects:
         return
-    if task is None or operation is None:
+    if task is None:
         raise CommandEffectMismatch(
-            f"{command_name} effect verification requires task and operation authority"
+            f"{command_name} effect verification requires task authority"
         )
 
     observed: set[str] = set()
     execution_id = execution.execution_id
+    if session.scalar(
+        select(models.TaskCompletionEvent.completion_event_id).where(
+            models.TaskCompletionEvent.command_execution_id == execution_id
+        )
+    ) is not None:
+        observed.add("set_completion")
     if session.scalar(
         select(models.ContentActivation.content_activation_id).where(
             models.ContentActivation.command_execution_id == execution_id
@@ -210,6 +216,15 @@ def assert_committed_command_effects(
         )
     ) is not None:
         observed.add("open_human_review")
+
+    if operation is None:
+        expected_mutations = set(expected.mutation_kinds)
+        if observed != expected_mutations:
+            raise CommandEffectMismatch(
+                f"{command_name} authoritative effects mismatch: "
+                f"expected {sorted(expected_mutations)!r}, observed {sorted(observed)!r}"
+            )
+        return
 
     if command_name == "reject":
         rejected_cycle = session.scalar(

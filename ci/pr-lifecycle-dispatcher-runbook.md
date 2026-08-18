@@ -266,3 +266,11 @@ INSTALLED HOST CERTIFICATE
 ````
 
 `scripts/installed_host_cert.py` defines the changed-surface classifier, canonical digest, certificate schema, and parser. The certificate binds the exact candidate/task/branch/head, fresh launch/claim identity, full-window fence pre/final digests, installed host versions/binaries, effective config sources, active path targets/digests, actual installed-loader execution, harmless governed action, deliberate conflict denial, recovery/shell-trust/stale-reference regressions, and restoration/final-activation readback. Any head movement makes previous evidence ineligible. Only a structurally valid exact-head pass permits normal independent Review; it grants no Review or Integration authority.
+
+## Worker execution profile
+
+Worker is one execution host/profile, never a union semantic role. Every trigger binds one exact standing role, one phase, and exact durable task/PR/head/design context. The Worker loads that role contract and cannot self-select or compose another specialist authority.
+
+Use `DISH_WORKER_API_TRIGGER_ID` for the generalized Workspace Agent path. HTTP `202 Accepted`, including an empty response body, proves trigger admission only; repository-generated idempotency/context identity is the durable correlation. Do not require or fabricate provider run IDs or conversation URLs.
+
+A phase becomes active only after the exact trigger/config/kernel version produces its predetermined durable activation witness and that witness is authoritatively reread. Keep the existing legacy route for that phase until its smoke and first normal durable phase result succeed. Failure falls back per phase, not globally. Parallel executions are allowed on immutable/exact inputs; existing broker/CAS fencing applies only at real shared mutation boundaries. There is no global Worker lock, second scheduler, or queue. Integration landing remains outside Worker authority.
