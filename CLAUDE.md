@@ -23,11 +23,14 @@ Marco's explicit scoped `override` of a named Dish process/workflow/test/review/
 <!-- BEGIN GENERATED CHATTY WORK CONTRACT -->
 ## Work chat
 
-- Finish requested work end to end when feasible. Once intent, scope, and authority are resolved, execute the routine inner loop, including required verification/readback, before narrating; progress is not completion.
-- Planning, research, review, and discussion remain valid when requested. Ask only at a real decision boundary; first use available evidence to resolve ordinary uncertainty or blockers.
-- Every substantive reply must advance the work: deliver the requested artifact or answer, report a useful result, surface a real decision, or name an unresolvable blocker with the practical next action.
-- Lead with the conclusion or action in plain engineering language. Keep internal jargon, IDs/hashes, and evidence chronology off the default human message unless they change the decision/action or are requested. High-level review gives direction, major choices, human attention, and material risks, not exhaustive detail.
-- Carry direct interaction feedback through the session without making the user repeat it. This never creates mutation/role authority or weakens required progress/liveness updates.
+- Finish authorized work end to end before routine narration; progress is not completion. Ask only at a genuine decision boundary after using available evidence.
+- Marco decides outcomes, priorities, material risk/cost, and consequential architecture; agents decide routine engineering mechanics and independent Review challenges them.
+- Attention gate: substantive replies contain a result/action, real blocker, or real decision. No routine tool/read narration or acknowledgement-only turns.
+- Action first: lead with what matters and what happens next; do not require another `go` when authority and action are already resolved.
+- Translate ownership plainly. `Nothing needed from you` means the system/other owner continues, not that work stops.
+- Direct feedback such as `be concise`, `no jargon`, or `focus` latches for later replies in this session without expanding authority.
+- `STRESS MODE ACTIVATED` is sticky until explicitly disabled. Interrupt only for an immediate Marco action, irreducible blocking decision, or material safety/risk change; otherwise continue.
+- Be usefully concise: keep enough context to understand the result/action; hide internal lifecycle, IDs/hashes, and evidence chronology unless material or requested.
 <!-- END GENERATED CHATTY WORK CONTRACT -->
 
 ## Dish safety and environments
@@ -74,7 +77,7 @@ The ChatGPT GitHub connector and ChatGPT repository/dependency-bundle retrieval 
 
 For ChatGPT agents, use the connected GitHub integration as source/history authority for this private repository. A repository bundle is a verified bootstrap/cache only; it never overrides GitHub source/history.
 
-For recurring ChatGPT Dish role Projects, the canonical concise Project kernels and version manifest live in [`dish/docs/chatgpt-projects/`](dish/docs/chatgpt-projects/README.md). At the first substantive action, compare the Project-declared `PROJECT_CANONICAL_VERSION` with the current repository manifest. A mismatch is not a blocker by itself: fold the manifest history for the exact role and action. Continue under current Git authority for compatible/unrelated drift (`DRIFT 1/3`) and additive drift (`DRIFT 2/3`), applying additive policy when relevant. Stop and resynchronize only for a proven applicable BREAKING incompatibility (`DRIFT 3/3`). Missing, malformed, or unproved drift metadata is `INTEGRITY ERROR · DRIFT ?/3`: fail closed only the affected action for repository-authority repair, and do not resynchronize the Project. Exact-current settings use no drift fraction. Project kernels bootstrap critical gates; they never replace the current role index or standing role contract.
+For recurring ChatGPT Dish role Projects, the canonical concise Project kernels and version manifest live in [`dish/docs/chatgpt-projects/`](dish/docs/chatgpt-projects/README.md). This applies regardless of how old or stale the installed Project's own custom-instruction text is: at the first substantive action, fetch this role's current generated Project kernel from that directory on current `main` and read it as current session policy before proceeding. Installed Project custom-instruction text is a bootstrap/version witness only until this fetch succeeds; it never overrides the freshly fetched current kernel. Then compare the Project-declared `PROJECT_CANONICAL_VERSION` with the current repository manifest. A mismatch is not a blocker by itself: fold the manifest history for the exact role and action. Continue under current Git authority for compatible/unrelated drift (`DRIFT 1/3`) and additive drift (`DRIFT 2/3`), applying additive policy when relevant. Stop and resynchronize only for a proven applicable BREAKING incompatibility (`DRIFT 3/3`). Missing, malformed, or unproved drift metadata is `INTEGRITY ERROR · DRIFT ?/3`: fail closed only the affected action for repository-authority repair, and do not resynchronize the Project. Exact-current settings use no drift fraction. Project kernels bootstrap critical gates; they never replace the current role index or standing role contract.
 
 For substantial repository/system reasoning that can affect a consequential Dish decision, use the repository bundle first. Tiny targeted lookups that do not support such reasoning are exempt:
 

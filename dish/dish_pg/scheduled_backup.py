@@ -37,11 +37,25 @@ ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = ROOT.parent
 DEFAULT_LOCAL_DIR = Path("/home/marco/.local/state/dish/prod/postgresql-backups")
 DEFAULT_RETENTION_SECONDS = 7 * 24 * 60 * 60
-DEFAULT_MAX_AGE_SECONDS = 7 * 60 * 60
+DEFAULT_MAX_AGE_SECONDS = 2 * 60 * 60
 
 
 class BackupError(RuntimeError):
     """The backup operation cannot safely continue."""
+
+
+@dataclass(frozen=True)
+class RetentionTier:
+    """One GFS retention band: keep at most one backup per bucket within it.
+
+    ``max_age_seconds`` is the band's outer edge, measured from the pruning
+    instant; bands are implicitly ordered by ascending ``max_age_seconds`` and
+    each covers the age range after the previous band's edge. ``bucket_seconds
+    == 0`` means "keep every backup in this band" (no thinning).
+    """
+
+    max_age_seconds: int
+    bucket_seconds: int
 
 
 @dataclass(frozen=True)
@@ -53,10 +67,60 @@ class BackupConfig:
     off_device_dir: Path
     retention_seconds: int
     max_age_seconds: int
+    allow_same_device: bool = False
+    retention_tiers: tuple[RetentionTier, ...] = ()
     repo_root: Path = REPOSITORY_ROOT
     pg_dump: str = "pg_dump"
     pg_restore: str = "pg_restore"
     psql: str = "psql"
+
+
+def _effective_retention_tiers(config: BackupConfig) -> tuple[RetentionTier, ...]:
+    """Tiers to prune with: configured tiers, or a single flat-cutoff tier.
+
+    A single ``RetentionTier(config.retention_seconds, 0)`` reproduces the
+    original flat-retention behaviour exactly (keep everything younger than
+    ``retention_seconds``, no thinning), so deployments that never set
+    ``DISH_PG_BACKUP_RETENTION_TIERS`` are unaffected by this feature.
+    """
+    if config.retention_tiers:
+        return config.retention_tiers
+    return (RetentionTier(config.retention_seconds, 0),)
+
+
+def _parse_retention_tiers(value: str) -> tuple[RetentionTier, ...]:
+    tiers: list[RetentionTier] = []
+    previous_age = 0
+    for chunk in value.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        age_text, sep, bucket_text = chunk.partition(":")
+        if not sep:
+            raise BackupError(
+                "DISH_PG_BACKUP_RETENTION_TIERS entries must be <age_seconds>:<bucket_seconds>"
+            )
+        age = _positive_int(age_text.strip(), name="DISH_PG_BACKUP_RETENTION_TIERS age")
+        bucket_text = bucket_text.strip()
+        try:
+            bucket = int(bucket_text) if bucket_text else 0
+        except ValueError as exc:
+            raise BackupError(
+                "DISH_PG_BACKUP_RETENTION_TIERS bucket seconds must be an integer"
+            ) from exc
+        if bucket < 0:
+            raise BackupError(
+                "DISH_PG_BACKUP_RETENTION_TIERS bucket seconds must not be negative"
+            )
+        if age <= previous_age:
+            raise BackupError(
+                "DISH_PG_BACKUP_RETENTION_TIERS ages must be strictly increasing"
+            )
+        tiers.append(RetentionTier(max_age_seconds=age, bucket_seconds=bucket))
+        previous_age = age
+    if not tiers:
+        raise BackupError("DISH_PG_BACKUP_RETENTION_TIERS must define at least one tier")
+    return tuple(tiers)
 
 
 def _canonical(value: object) -> bytes:
@@ -134,10 +198,19 @@ def config_from_environ(
         or str(DEFAULT_LOCAL_DIR)
     )
     off_device_dir = Path(_required_env(env, "DISH_PG_BACKUP_OFF_DEVICE_DIR"))
-    retention_seconds = _positive_int(
-        env.get("DISH_PG_BACKUP_RETENTION_SECONDS", str(DEFAULT_RETENTION_SECONDS)),
-        name="DISH_PG_BACKUP_RETENTION_SECONDS",
-    )
+    allow_same_device = env.get("DISH_PG_BACKUP_ALLOW_SAME_DEVICE", "").strip() == "1"
+    tiers_text = env.get("DISH_PG_BACKUP_RETENTION_TIERS", "").strip()
+    retention_tiers = _parse_retention_tiers(tiers_text) if tiers_text else ()
+    if retention_tiers:
+        # Tiers are authoritative once configured: their outer edge is the
+        # effective retention_seconds, so a stale/mismatched flat env var
+        # cannot silently disagree with the active tiering.
+        retention_seconds = retention_tiers[-1].max_age_seconds
+    else:
+        retention_seconds = _positive_int(
+            env.get("DISH_PG_BACKUP_RETENTION_SECONDS", str(DEFAULT_RETENTION_SECONDS)),
+            name="DISH_PG_BACKUP_RETENTION_SECONDS",
+        )
     max_age_seconds = _positive_int(
         env.get("DISH_PG_BACKUP_MAX_AGE_SECONDS", str(DEFAULT_MAX_AGE_SECONDS)),
         name="DISH_PG_BACKUP_MAX_AGE_SECONDS",
@@ -150,6 +223,8 @@ def config_from_environ(
         off_device_dir=off_device_dir,
         retention_seconds=retention_seconds,
         max_age_seconds=max_age_seconds,
+        allow_same_device=allow_same_device,
+        retention_tiers=retention_tiers,
         repo_root=repo_root,
         pg_dump=pg_dump,
         pg_restore=pg_restore,
@@ -339,7 +414,7 @@ def _prepare_off_device_root(
         )
     off_device_root = requested_off_device.resolve(strict=True)
     off_device_metadata = _directory(off_device_root, label="off-device backup root")
-    if local_metadata.st_dev == off_device_metadata.st_dev:
+    if local_metadata.st_dev == off_device_metadata.st_dev and not config.allow_same_device:
         raise BackupError(
             "off-device backup root is on the same filesystem device as the local backup root"
         )
@@ -377,10 +452,11 @@ def _copy_off_device(
     off_device_root: Path,
     backup_id: str,
     expected_sha256: str,
+    allow_same_device: bool = False,
 ) -> tuple[Path, Path]:
     source_metadata = _regular_file(source, label="local backup artifact")
     off_root_metadata = _directory(off_device_root, label="off-device backup root")
-    if source_metadata.st_dev == off_root_metadata.st_dev:
+    if source_metadata.st_dev == off_root_metadata.st_dev and not allow_same_device:
         raise BackupError("off-device destination is on the same filesystem device as the backup")
 
     target = off_device_root / f"{backup_id}.dump"
@@ -461,33 +537,85 @@ def _safe_unlink(path: Path, *, label: str) -> None:
     path.unlink()
 
 
+def _delete_backup(
+    *,
+    backup_dir: Path,
+    off_device_root: Path,
+    report: Mapping[str, Any],
+) -> None:
+    backup_id = backup_dir.name
+    expected_off_device = off_device_root / f"{backup_id}.dump"
+    expected_checksum = off_device_root / f"{backup_id}.dump.sha256"
+    off_device = report.get("off_device")
+    if not isinstance(off_device, Mapping):
+        raise BackupError(f"backup report has no off-device evidence: {backup_dir}")
+    if off_device.get("path") != str(expected_off_device):
+        raise BackupError(f"backup report off-device path is unsafe: {backup_dir}")
+    if off_device.get("checksum_path") != str(expected_checksum):
+        raise BackupError(f"backup report checksum path is unsafe: {backup_dir}")
+    _safe_unlink(expected_checksum, label="retained checksum")
+    _safe_unlink(expected_off_device, label="retained backup")
+    shutil.rmtree(backup_dir)
+
+
 def _prune_retention(
     *,
     local_root: Path,
     off_device_root: Path,
-    retention_seconds: int,
+    retention_tiers: Sequence[RetentionTier],
     now: datetime,
     current_backup_id: str,
 ) -> list[str]:
-    cutoff = now - timedelta(seconds=retention_seconds)
-    deleted: list[str] = []
-    for completed_at, backup_dir, report in _successful_reports(local_root):
-        backup_id = backup_dir.name
-        if backup_id == current_backup_id or completed_at >= cutoff:
+    """Apply tiered (GFS-style) retention.
+
+    ``retention_tiers`` must be ordered by ascending ``max_age_seconds``. Any
+    successful backup older than the last tier's edge is always deleted. Within
+    each band, a non-zero ``bucket_seconds`` keeps only the newest backup per
+    absolute-time bucket, discarding the rest of that band's duplicates; a
+    ``bucket_seconds`` of 0 keeps every backup in the band untouched. This
+    degenerates to the original flat-cutoff behaviour for a single tier with
+    ``bucket_seconds == 0``.
+    """
+    reports = _successful_reports(local_root)
+    reports_by_id = {backup_dir.name: (backup_dir, report) for _, backup_dir, report in reports}
+    outer_cutoff_seconds = retention_tiers[-1].max_age_seconds
+
+    to_delete: set[str] = set()
+    for completed_at, backup_dir, _report in reports:
+        if backup_dir.name == current_backup_id:
             continue
-        expected_off_device = off_device_root / f"{backup_id}.dump"
-        expected_checksum = off_device_root / f"{backup_id}.dump.sha256"
-        off_device = report.get("off_device")
-        if not isinstance(off_device, Mapping):
-            raise BackupError(f"backup report has no off-device evidence: {backup_dir}")
-        if off_device.get("path") != str(expected_off_device):
-            raise BackupError(f"backup report off-device path is unsafe: {backup_dir}")
-        if off_device.get("checksum_path") != str(expected_checksum):
-            raise BackupError(f"backup report checksum path is unsafe: {backup_dir}")
-        _safe_unlink(expected_checksum, label="retained checksum")
-        _safe_unlink(expected_off_device, label="retained backup")
-        shutil.rmtree(backup_dir)
-        deleted.append(backup_id)
+        age_seconds = (now - completed_at).total_seconds()
+        if age_seconds > outer_cutoff_seconds:
+            to_delete.add(backup_dir.name)
+
+    lower_bound = -1.0
+    for tier in retention_tiers:
+        band = [
+            (completed_at, backup_dir)
+            for completed_at, backup_dir, _report in reports
+            if backup_dir.name != current_backup_id
+            and backup_dir.name not in to_delete
+            and lower_bound < (now - completed_at).total_seconds() <= tier.max_age_seconds
+        ]
+        lower_bound = tier.max_age_seconds
+        if tier.bucket_seconds <= 0:
+            continue
+        buckets: dict[int, tuple[datetime, Path]] = {}
+        for completed_at, backup_dir in band:
+            bucket_index = int(completed_at.timestamp() // tier.bucket_seconds)
+            existing = buckets.get(bucket_index)
+            if existing is None:
+                buckets[bucket_index] = (completed_at, backup_dir)
+            elif completed_at > existing[0]:
+                to_delete.add(existing[1].name)
+                buckets[bucket_index] = (completed_at, backup_dir)
+            else:
+                to_delete.add(backup_dir.name)
+
+    deleted = sorted(to_delete)
+    for backup_id in deleted:
+        backup_dir, report = reports_by_id[backup_id]
+        _delete_backup(backup_dir=backup_dir, off_device_root=off_device_root, report=report)
     return deleted
 
 
@@ -626,6 +754,7 @@ def run_backup(
                 off_device_root=off_device_root,
                 backup_id=backup_id,
                 expected_sha256=backup_sha256,
+                allow_same_device=config.allow_same_device,
             )
             _verify_archive(config.pg_restore, retained_backup, env)
             retained_sha256 = _sha256(retained_backup)
@@ -693,7 +822,7 @@ def run_backup(
             retention_deleted = _prune_retention(
                 local_root=local_root,
                 off_device_root=off_device_root,
-                retention_seconds=config.retention_seconds,
+                retention_tiers=_effective_retention_tiers(config),
                 now=completed_at,
                 current_backup_id=backup_id,
             )
@@ -736,6 +865,7 @@ def _verify_latest_report(
     off_device_root: Path,
     report_dir: Path,
     report: Mapping[str, Any],
+    allow_same_device: bool = False,
 ) -> dict[str, Any]:
     backup_id = report_dir.name
     expected_local = report_dir / "postgresql-authority.dump"
@@ -764,7 +894,8 @@ def _verify_latest_report(
     off_metadata = _regular_file(expected_off, label="latest off-device backup")
     _regular_file(expected_local_checksum, label="latest local checksum")
     _regular_file(expected_off_checksum, label="latest off-device checksum")
-    if local_metadata.st_dev == off_metadata.st_dev:
+    same_device = local_metadata.st_dev == off_metadata.st_dev
+    if same_device and not allow_same_device:
         raise BackupError("latest off-device backup is no longer on an independent device")
     local_sha256 = _sha256(expected_local)
     off_sha256 = _sha256(expected_off)
@@ -790,7 +921,7 @@ def _verify_latest_report(
         "sha256": expected_sha256,
         "local_path": str(expected_local),
         "off_device_path": str(expected_off),
-        "off_device_independent": True,
+        "off_device_independent": not same_device,
     }
 
 
@@ -820,6 +951,7 @@ def health(
             off_device_root=off_device_root,
             report_dir=report_dir,
             report=report,
+            allow_same_device=config.allow_same_device,
         )
         age_seconds = max(0.0, (checked_at - completed_at).total_seconds())
         fresh = age_seconds <= config.max_age_seconds

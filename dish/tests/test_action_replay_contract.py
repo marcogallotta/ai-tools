@@ -216,7 +216,10 @@ def test_honest_connected_contract_matches_when_repo_is_supplied():
     if not honest_repo:
         pytest.skip("set DISH_HONEST_REPO for paired cross-repository instruction drift acceptance")
     honest = Path(honest_repo) / "dish-custom-gpt-instructions.md"
-    _assert_honest_connected_contract(honest.read_text(encoding="utf-8"))
+    text = honest.read_text(encoding="utf-8")
+    normalized = " ".join(text.split())
+    assert "stable Planning run A" in normalized
+    _assert_honest_connected_contract(text)
 
 
 

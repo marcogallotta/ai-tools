@@ -107,6 +107,8 @@ COMMAND_DEFINITIONS = {
         CommandDefinition("discard", "R", "admin", True, True, True),
         CommandDefinition("abandon-operation", "R", "admin", True, True, True),
         CommandDefinition("reconcile-abandonment", "R", "admin", True, True, True),
+        CommandDefinition("cooked", "L", "agent", True, True, False),
+        CommandDefinition("archive", "L", "agent", True, True, False),
         CommandDefinition("reopen-planning", "L", "admin", True, True, False),
         CommandDefinition("reopen", "R", "admin", True, True, True, workflow_action="reopen"),
         CommandDefinition("supply-evidence", "R", "admin", True, True, True, workflow_action="supply-evidence"),

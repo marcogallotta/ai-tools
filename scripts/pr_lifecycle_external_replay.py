@@ -15,4 +15,7 @@ def replay_external_dependency(comments):
   if x.action=="blocked": a,z=x,None
   elif a is not None and _id(x)==_id(a): a,z=None,x
  return a,z
-def parse_external_dependency(comments): return replay_external_dependency(comments)[0]
+latest_external_dependency_record = b.parse_external_dependency
+def resolve_external_dependency(comments): return replay_external_dependency(comments)[0]
+# Backward-compatible alias; canonical lifecycle-state API is resolve_external_dependency.
+parse_external_dependency = resolve_external_dependency

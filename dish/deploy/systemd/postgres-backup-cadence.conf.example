@@ -3,4 +3,4 @@
 # Keep DISH_PG_BACKUP_MAX_AGE_SECONDS coherent with the chosen cadence.
 [Timer]
 OnCalendar=
-OnCalendar=*-*-* 00/6:00:00 UTC
+OnCalendar=*-*-* *:00:00 UTC

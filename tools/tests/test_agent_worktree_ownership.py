@@ -304,3 +304,220 @@ def test_local_implementation_handoff_contract_is_terse_executable_and_pr_durabl
         "return only PR number, exact current PR head SHA, PASS/FAIL, and next action",
     ):
         assert token in handoff
+
+
+def _write_launch_provenance(
+    h: Harness,
+    *,
+    agent: str,
+    task: str,
+    branch: str,
+    pr: int,
+    head: str,
+    host: str = "claude",
+    project: str = "1217419962189616",
+    issued_at: str | None = None,
+    **overrides,
+) -> Path:
+    import datetime as dt
+
+    root = h.home / ".local/state/dish/launch-provenance"
+    root.mkdir(parents=True, exist_ok=True)
+    launch_id = f"launch-{agent}-{task}"
+    payload = {
+        "schema": "dish-local-implementation-launch-v1",
+        "repository": "marcogallotta/ai-tools",
+        "agent_id": agent,
+        "host": host,
+        "identity_source": "codex_thread_id" if host == "codex" else "claude_session_id",
+        "role": "implementation",
+        "task_gid": task,
+        "owning_project_gid": project,
+        "branch": branch,
+        "pr_number": pr,
+        "pr_head": head,
+        "workspace": str(h.primary),
+        "launcher": "fixture-local-implementation-launcher",
+        "launch_id": launch_id,
+        "issued_at": issued_at or dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    }
+    payload.update(overrides)
+    path = root / f"{launch_id}.json"
+    path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
+    path.chmod(0o600)
+    return path
+
+
+def test_claim_can_bind_missing_identity_only_from_exact_launch_provenance(h: Harness) -> None:
+    task, branch, agent, pr = "3090", "agent/provenance-bind", "fresh-session", 91
+    head = h.remote_branch_commit(branch, "provenance candidate", start=h.current_remote_main())
+    provenance = _write_launch_provenance(h, agent=agent, task=task, branch=branch, pr=pr, head=head)
+
+    result = h.raw_tool(
+        "claim",
+        "--task", task,
+        "--branch", branch,
+        "--agent-id", agent,
+        "--launch-provenance", str(provenance),
+        "--require-launch-provenance",
+        "--pr-number", str(pr),
+        "--pr-head", head,
+        "--pr-lease-state", "none",
+        "--",
+        "python3", "-c", "pass",
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    identity = json.loads((h.home / f".local/state/dish/agents/{agent}.json").read_text())
+    assert identity["agent_id"] == agent
+    assert identity["role"] == "implementation"
+    assert identity["owning_task_gid"] == task
+    assert identity["launch_provenance"]["pr_head"] == head
+    assert identity["launch_provenance"]["identity_source"] == "claude_session_id"
+    _, claim_record = record(h, task)
+    assert claim_record["launch_provenance_required"] is True
+
+
+def test_claim_required_launch_provenance_missing_fails_without_identity(h: Harness) -> None:
+    task, branch, agent, pr = "3091", "agent/provenance-missing", "unknown-session", 92
+    head = h.remote_branch_commit(branch, "missing provenance candidate", start=h.current_remote_main())
+    result = h.raw_tool(
+        "claim",
+        "--task", task,
+        "--branch", branch,
+        "--agent-id", agent,
+        "--require-launch-provenance",
+        "--pr-number", str(pr),
+        "--pr-head", head,
+        "--pr-lease-state", "none",
+        "--",
+        "python3", "-c", "pass",
+        check=False,
+    )
+    assert_error(result, "LAUNCH_PROVENANCE_REQUIRED")
+    assert not (h.home / f".local/state/dish/agents/{agent}.json").exists()
+
+
+def test_launch_provenance_shell_like_or_malformed_authority_fails_closed_without_execution(h: Harness) -> None:
+    task, branch, agent, pr = "3092", "agent/provenance-shell", "shell-safe", 93
+    head = h.remote_branch_commit(branch, "shell provenance candidate", start=h.current_remote_main())
+    sentinel = h.root / "must-not-exist"
+    provenance = _write_launch_provenance(
+        h,
+        agent=agent,
+        task=task,
+        branch=branch,
+        pr=pr,
+        head=head,
+        project="${PROJECT_GID}",
+        launcher=f"$(touch {sentinel})",
+    )
+    result = h.raw_tool(
+        "claim",
+        "--task", task,
+        "--branch", branch,
+        "--agent-id", agent,
+        "--launch-provenance", str(provenance),
+        "--require-launch-provenance",
+        "--pr-number", str(pr),
+        "--pr-head", head,
+        "--pr-lease-state", "none",
+        "--",
+        "python3", "-c", "pass",
+        check=False,
+    )
+    assert_error(result, "LAUNCH_PROVENANCE_INVALID")
+    assert not sentinel.exists()
+    assert not (h.home / f".local/state/dish/agents/{agent}.json").exists()
+
+
+def test_stale_launch_provenance_fails_before_identity_or_claim(h: Harness) -> None:
+    import datetime as dt
+
+    task, branch, agent, pr = "3093", "agent/provenance-stale", "stale-session", 94
+    head = h.remote_branch_commit(branch, "stale provenance candidate", start=h.current_remote_main())
+    stale = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=1)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    provenance = _write_launch_provenance(
+        h, agent=agent, task=task, branch=branch, pr=pr, head=head, issued_at=stale
+    )
+    result = h.raw_tool(
+        "claim",
+        "--task", task,
+        "--branch", branch,
+        "--agent-id", agent,
+        "--launch-provenance", str(provenance),
+        "--require-launch-provenance",
+        "--pr-number", str(pr),
+        "--pr-head", head,
+        "--pr-lease-state", "none",
+        "--",
+        "python3", "-c", "pass",
+        check=False,
+    )
+    assert_error(result, "LAUNCH_PROVENANCE_STALE")
+    assert not (h.home / f".local/state/dish/agents/{agent}.json").exists()
+
+
+def test_failed_claim_child_restores_launch_identity_when_no_durable_owner(h: Harness) -> None:
+    task, branch, agent, pr = "3094", "agent/provenance-child-fail", "failed-session", 95
+    head = h.remote_branch_commit(branch, "failed provenance candidate", start=h.current_remote_main())
+    provenance = _write_launch_provenance(h, agent=agent, task=task, branch=branch, pr=pr, head=head)
+
+    result = h.raw_tool(
+        "claim",
+        "--task", task,
+        "--branch", branch,
+        "--agent-id", agent,
+        "--launch-provenance", str(provenance),
+        "--require-launch-provenance",
+        "--pr-number", str(pr),
+        "--pr-head", head,
+        "--pr-lease-state", "none",
+        "--",
+        "python3", "-c", "raise SystemExit(7)",
+        check=False,
+    )
+
+    assert result.returncode == 7
+    assert not (h.home / f".local/state/dish/agents/{agent}.json").exists()
+    assert not h.state_path(task).exists()
+    assert not list((h.home / ".local/state/dish/worktrees/claims").glob(f"*/{task}.json"))
+
+
+
+def test_head_movement_invalidation_closes_semantic_mutation_but_allows_readback(h: Harness) -> None:
+    task, branch, agent, pr = "3095", "agent/head-move-fence", "head-move-agent", 96
+    head = h.remote_branch_commit(branch, "head move candidate", start=h.current_remote_main())
+    h.agent_file(agent)
+    new_head = "f" * 40
+    tools_dir = Path(__file__).resolve().parents[1]
+    child = f"""
+import sys
+sys.path.insert(0, {str(tools_dir)!r})
+from agent_worktree_lib.common import AgentWorktreeError
+from agent_worktree_lib.ownership import invalidate_claim_after_head_movement, require_active_claim
+
+task = {task!r}
+branch = {branch!r}
+agent = {agent!r}
+new_head = {new_head!r}
+assert invalidate_claim_after_head_movement(task, new_head) is True
+try:
+    require_active_claim(task, branch, agent)
+except AgentWorktreeError as exc:
+    assert exc.code == "PR_HEAD_MOVED_REDISPATCH_REQUIRED"
+else:
+    raise AssertionError("semantic mutation remained open after PR head movement")
+assert require_active_claim(task, branch, agent, allow_head_moved_readback=True)["head_moved_to"] == new_head
+"""
+    result = h.raw_tool(
+        "claim", "--task", task, "--branch", branch, "--agent-id", agent,
+        "--pr-number", str(pr), "--pr-head", head, "--pr-lease-state", "none",
+        "--", "python3", "-c", child,
+        check=False,
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+    _, claim = record(h, task)
+    assert claim["head_moved_to"] == new_head
+    assert claim["semantic_mutation_closed_at"]

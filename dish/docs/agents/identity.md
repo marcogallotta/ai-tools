@@ -69,3 +69,9 @@ Identity is host-specific; there is no shared scheme:
 - Writing this file is not role assignment. An agent still determines its role from the routing in
   `index.md` and the matching contract; this file only records that determination locally after the
   fact.
+
+## Mechanically bound launch provenance for local Implementation continuation
+
+A pre-Review local Implementation continuation that must exercise installed Claude/Codex hooks uses `tools/agent-worktree claim --require-launch-provenance`. The local launcher must first emit a mode-0600 `dish-local-implementation-launch-v1` record under `~/.local/state/dish/launch-provenance/` containing the actual host session identifier and the already-authorized Implementation task/project/branch/PR/head tuple. `agent-worktree` validates that record and only then records the session identity locally.
+
+`hooks/agent-reground` never bootstraps a missing identity. A missing, stale, malformed, ambiguous, or conflicting identity/provenance record remains unresolved and the guard fails closed. Launch provenance is evidence that this host instance is the named session; it still does not create role, task, branch, Review, or Integration authority.

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import json
+import zipfile
 from pathlib import Path
 import subprocess
 import sys
@@ -313,3 +315,266 @@ def test_helper_contains_no_source_ref_merge_ready_or_asana_write_primitive():
     assert "app.asana.com" not in source
     assert "api.asana.com" not in source
     assert "import asana" not in source.lower()
+
+
+
+def test_materializer_strict_owner_requires_canonical_marker(candidate_repo):
+    admission, manifest_raw, _, _ = build_transport(candidate_repo)
+    github = FakeAdmissionGitHub(admission, manifest_raw)
+    original = github.get_pr
+
+    def human_only(repository, number):
+        pr = dict(original(repository, number))
+        pr["body"] = f"{pm.BLOCKER_HEADING}\nState: LOCAL IMPLEMENTATION COMPLETION REQUIRED\nOwning task: 1217471395822358"
+        return pr
+
+    github.get_pr = human_only
+    with pytest.raises(pm.MaterializerError) as excinfo:
+        pm.admit_event(admission_event(admission), github)
+    assert excinfo.value.outcome == pm.Outcome.REQUEST_REPAIR_REQUIRED
+    assert "canonical dish-owning-task marker is missing" in str(excinfo.value)
+
+
+def test_materializer_strict_owner_conflict_fails_exactness(candidate_repo):
+    admission, manifest_raw, _, _ = build_transport(candidate_repo)
+    github = FakeAdmissionGitHub(admission, manifest_raw)
+    original = github.get_pr
+
+    def conflicting(repository, number):
+        pr = dict(original(repository, number))
+        pr["body"] += "\nOwning task: 1217471395822359"
+        return pr
+
+    github.get_pr = conflicting
+    with pytest.raises(pm.MaterializerError) as excinfo:
+        pm.admit_event(admission_event(admission), github)
+    assert excinfo.value.outcome == pm.Outcome.SECURITY_OR_EXACTNESS_FAILURE
+    assert "conflicts" in str(excinfo.value)
+
+
+class FakeAuthorPreflightGitHub(FakeAdmissionGitHub):
+    def get_authenticated_login(self):
+        return "marcogallotta"
+
+    def list_artifacts(self, repository):
+        return []
+
+
+def test_author_preflight_reuses_live_admission_and_rejects_oversize_before_upload(candidate_repo):
+    admission, manifest_raw, _, _ = build_transport(candidate_repo)
+    github = FakeAuthorPreflightGitHub(admission, manifest_raw)
+    preflight = pm.AuthorPreflight(
+        request_id=admission.request.request_id,
+        repository=admission.repository,
+        repository_id=admission.repository_id,
+        task_gid=admission.request.task_gid,
+        pr_number=admission.request.pr_number,
+        branch=admission.request.branch,
+        expected_old_head=admission.request.expected_old_head,
+        expected_final_tree=admission.request.expected_final_tree,
+        patch_byte_length=pm.MAX_PATCH_BYTES + 1,
+        changed_path_count=len(admission.manifest.changed_paths),
+    )
+    with pytest.raises(pm.MaterializerError) as excinfo:
+        pm.author_preflight(preflight, github)
+    assert excinfo.value.outcome == pm.Outcome.REMOTE_PUBLICATION_INELIGIBLE
+    assert "patch size" in str(excinfo.value)
+
+
+def make_result(admission, fx, *, run_id=9001, run_attempt=1):
+    return pm.MaterializationResult(
+        repository=admission.repository,
+        repository_id=admission.repository_id,
+        request_id=admission.request.request_id,
+        task_gid=admission.request.task_gid,
+        pr_number=admission.request.pr_number,
+        branch=admission.request.branch,
+        expected_old_head=admission.request.expected_old_head,
+        expected_parent=admission.request.expected_old_head,
+        expected_final_tree=admission.request.expected_final_tree,
+        candidate_commit="c" * 40,
+        changed_paths=admission.manifest.changed_paths,
+        workflow_path=pm.WORKFLOW_PATH,
+        source_sha="a" * 40,
+        run_id=run_id,
+        run_attempt=run_attempt,
+    )
+
+
+def make_artifact(result):
+    payload = pm.canonical_json(result.json())
+    stream = io.BytesIO()
+    with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_STORED) as zf:
+        zf.writestr(pm.RESULT_FILENAME, payload)
+    archive = stream.getvalue()
+    evidence = pm.ResultArtifactEvidence(
+        artifact_id=321,
+        name=result.artifact_name,
+        digest=pm.sha256_bytes(archive),
+        run_id=result.run_id,
+        expired=False,
+    )
+    return evidence, archive
+
+
+class FakeRecoveryGitHub:
+    def __init__(self, admission, fx, result, artifact, archive, *, live_run_attempt=None):
+        self.admission = admission
+        self.fx = fx
+        self.result = result
+        self.artifact = artifact
+        self.archive = archive
+        self.live_run_attempt = live_run_attempt or result.run_attempt
+        self.comments = []
+        self.created_comments = 0
+
+    def list_artifacts(self, repository):
+        return [{
+            "id": self.artifact.artifact_id,
+            "name": self.artifact.name,
+            "digest": "sha256:" + self.artifact.digest,
+            "expired": self.artifact.expired,
+            "workflow_run": {"id": self.artifact.run_id},
+        }]
+
+    def get_artifact(self, repository, artifact_id):
+        return self.list_artifacts(repository)[0]
+
+    def download_artifact_zip(self, repository, artifact_id):
+        return self.archive
+
+    def get_workflow_run(self, repository, run_id):
+        return {
+            "id": run_id,
+            "run_attempt": self.live_run_attempt,
+            "event": "issue_comment",
+            "repository": {"id": self.admission.repository_id},
+            "head_branch": "main",
+            "head_sha": self.result.source_sha,
+            "path": pm.WORKFLOW_PATH,
+        }
+
+    def get_repository(self, repository):
+        return {"id": self.admission.repository_id, "default_branch": "main", "private": False}
+
+    def get_commit(self, repository, sha):
+        if sha == self.result.source_sha:
+            return {"sha": sha, "tree": {"sha": "b" * 40}, "parents": []}
+        if sha == self.result.candidate_commit:
+            return {
+                "sha": sha,
+                "tree": {"sha": self.result.expected_final_tree},
+                "parents": [{"sha": self.result.expected_parent}],
+            }
+        raise AssertionError(sha)
+
+    def list_issue_comments(self, repository, number):
+        return list(self.comments)
+
+    def create_issue_comment(self, repository, number, body):
+        self.created_comments += 1
+        item = {"id": 1000 + self.created_comments, "body": body}
+        self.comments.append(item)
+        return item
+
+
+def test_valid_result_for_same_request_forces_recovery_route(candidate_repo):
+    admission, _, _, _ = build_transport(candidate_repo)
+    result = make_result(admission, candidate_repo)
+    artifact, archive = make_artifact(result)
+    github = FakeRecoveryGitHub(admission, candidate_repo, result, artifact, archive)
+    route, found = pm.choose_request_route(admission, github, current_run_attempt=1)
+    assert route == "recover"
+    assert found == artifact
+
+
+def test_missing_result_for_duplicate_or_rerun_fails_closed_without_rematerializing(candidate_repo):
+    admission, _, _, _ = build_transport(candidate_repo)
+    no_artifacts = type("NoArtifacts", (), {"list_artifacts": lambda self, repo: []})()
+    duplicate = pm.Admission(
+        admission.repository, admission.repository_id, admission.request, admission.manifest,
+        admission.comment_id, admission.commenter, (76,),
+    )
+    with pytest.raises(pm.MaterializerError) as excinfo:
+        pm.choose_request_route(duplicate, no_artifacts, current_run_attempt=1)
+    assert excinfo.value.outcome == pm.Outcome.UNRESOLVED_MATERIALIZED_RESULT
+    with pytest.raises(pm.MaterializerError) as excinfo:
+        pm.choose_request_route(admission, no_artifacts, current_run_attempt=2)
+    assert excinfo.value.outcome == pm.Outcome.UNRESOLVED_MATERIALIZED_RESULT
+
+
+def test_duplicate_same_request_result_artifacts_fail_closed(candidate_repo):
+    admission, _, _, _ = build_transport(candidate_repo)
+    result = make_result(admission, candidate_repo)
+    artifact, _ = make_artifact(result)
+    github = type("Duplicates", (), {"list_artifacts": lambda self, repo: [
+        {"id": 1, "name": artifact.name, "digest": "sha256:" + artifact.digest, "expired": False, "workflow_run": {"id": artifact.run_id}},
+        {"id": 2, "name": artifact.name, "digest": "sha256:" + artifact.digest, "expired": False, "workflow_run": {"id": artifact.run_id}},
+    ]})()
+    with pytest.raises(pm.MaterializerError) as excinfo:
+        pm.choose_request_route(admission, github, current_run_attempt=1)
+    assert excinfo.value.outcome == pm.Outcome.UNRESOLVED_MATERIALIZED_RESULT
+    assert "duplicate" in str(excinfo.value)
+
+
+def test_stale_prior_run_attempt_result_cannot_satisfy_recovery(candidate_repo):
+    admission, _, _, _ = build_transport(candidate_repo)
+    result = make_result(admission, candidate_repo, run_attempt=1)
+    artifact, archive = make_artifact(result)
+    github = FakeRecoveryGitHub(admission, candidate_repo, result, artifact, archive, live_run_attempt=2)
+    with pytest.raises(pm.MaterializerError) as excinfo:
+        pm.recover_result(admission, github, artifact, require_current_run_attempt=True)
+    assert excinfo.value.outcome == pm.Outcome.UNRESOLVED_MATERIALIZED_RESULT
+    assert "stale prior" in str(excinfo.value)
+
+
+def test_corrupt_or_expired_result_evidence_fails_closed(candidate_repo):
+    admission, _, _, _ = build_transport(candidate_repo)
+    result = make_result(admission, candidate_repo)
+    artifact, archive = make_artifact(result)
+    corrupt = pm.ResultArtifactEvidence(artifact.artifact_id, artifact.name, "0" * 64, artifact.run_id, False)
+    github = FakeRecoveryGitHub(admission, candidate_repo, result, corrupt, archive)
+    with pytest.raises(pm.MaterializerError) as excinfo:
+        pm.load_result_artifact(github, admission.repository, corrupt)
+    assert excinfo.value.outcome == pm.Outcome.UNRESOLVED_MATERIALIZED_RESULT
+
+    expired = pm.ResultArtifactEvidence(artifact.artifact_id, artifact.name, artifact.digest, artifact.run_id, True)
+    github = FakeRecoveryGitHub(admission, candidate_repo, result, expired, archive)
+    with pytest.raises(pm.MaterializerError) as excinfo:
+        pm.load_result_artifact(github, admission.repository, expired)
+    assert excinfo.value.outcome == pm.Outcome.UNRESOLVED_MATERIALIZED_RESULT
+
+
+def test_fresh_recovery_verifies_same_candidate_and_result_publication_is_idempotent(candidate_repo):
+    admission, _, _, _ = build_transport(candidate_repo)
+    result = make_result(admission, candidate_repo)
+    artifact, archive = make_artifact(result)
+    github = FakeRecoveryGitHub(admission, candidate_repo, result, artifact, archive)
+    recovered = pm.recover_result(admission, github, artifact, require_current_run_attempt=True)
+    assert recovered.candidate_commit == result.candidate_commit
+    first = pm.publish_result(admission, recovered, github)
+    second = pm.publish_result(admission, recovered, github)
+    assert first == second
+    assert github.created_comments == 1
+
+
+def test_report_403_is_materialized_result_unpublished_not_local_fallback(candidate_repo):
+    admission, _, _, _ = build_transport(candidate_repo)
+    result = make_result(admission, candidate_repo)
+    artifact, archive = make_artifact(result)
+    github = FakeRecoveryGitHub(admission, candidate_repo, result, artifact, archive)
+
+    def forbidden(repository, number, body):
+        raise pm.GitHubAPIError("forbidden", method="POST", path="/comments", status=403)
+
+    github.create_issue_comment = forbidden
+    with pytest.raises(pm.MaterializerError) as excinfo:
+        pm.publish_result(admission, result, github)
+    assert excinfo.value.outcome == pm.Outcome.MATERIALIZED_RESULT_UNPUBLISHED
+
+
+def test_recovered_result_model_has_no_ref_review_integration_or_asana_authority_fields(candidate_repo):
+    admission, _, _, _ = build_transport(candidate_repo)
+    result = make_result(admission, candidate_repo)
+    keys = set(result.json())
+    assert not ({"ref", "review", "integration", "asana_authority", "ready_for_review"} & keys)

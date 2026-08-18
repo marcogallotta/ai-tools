@@ -1,0 +1,18 @@
+{
+	admin off
+	auto_https disable_redirects
+	servers {
+		protocols h1 h2
+	}
+}
+
+https://{$DISH_FRONTEND_TEST_HOST} {
+	bind {$DISH_FRONTEND_TEST_BIND_IP}
+	tls {$DISH_FRONTEND_TEST_CERT_FILE} {$DISH_FRONTEND_TEST_KEY_FILE}
+	header Strict-Transport-Security "max-age=63072000"
+	reverse_proxy 127.0.0.1:8765 {
+		transport http {
+			keepalive off
+		}
+	}
+}

@@ -195,6 +195,7 @@ class GitHubBackend(Protocol):
     def list_prs(self, *, include_closed: bool = False) -> list[dict[str, Any]]: ...
     def closed_recovery_candidate(self, *, recovery_slot: int) -> dict[str, Any] | None: ...
     def get_pr(self, number: int) -> dict[str, Any]: ...
+    def get_pr_files(self, number: int) -> list[dict[str, Any]]: ...
     def get_comments(self, number: int) -> list[dict[str, Any]]: ...
     def get_reviews(self, number: int) -> list[dict[str, Any]]: ...
     def get_combined_status(self, sha: str) -> dict[str, Any]: ...
@@ -385,6 +386,9 @@ class GitHubREST:
         if not isinstance(value, dict):
             raise LifecycleError("GitHub pull request response was not an object")
         return value
+
+    def get_pr_files(self, number: int) -> list[dict[str, Any]]:
+        return [dict(item) for item in self._get_paginated(f"pulls/{number}/files")]
 
     def get_repository_id(self) -> int:
         _, _, value = self.http.request(
@@ -684,8 +688,10 @@ class AsanaREST:
 @dataclass(frozen=True)
 class WorkspaceDispatchResult:
     idempotency_key: str
-    conversation_url: str | None
-    run_id: str | None
+    accepted: bool
+    status_code: int
+    conversation_url: str | None = None
+    run_id: str | None = None
 
 
 class WorkspaceAgentDispatcher:
@@ -694,11 +700,13 @@ class WorkspaceAgentDispatcher:
         *,
         access_token: str,
         review_trigger_id: str | None,
+        worker_trigger_id: str | None = None,
         api_root: str = WORKSPACE_API_ROOT,
         http: JSONHTTPClient | None = None,
     ) -> None:
         self.access_token = access_token
         self.review_trigger_id = review_trigger_id
+        self.worker_trigger_id = worker_trigger_id
         self.api_root = api_root.rstrip("/")
         self.http = http or JSONHTTPClient()
 
@@ -758,7 +766,7 @@ class WorkspaceAgentDispatcher:
             "Idempotency-Key": key,
             "Content-Type": "application/json",
         }
-        _, _, value = self.http.request(
+        status, _, value = self.http.request(
             "POST",
             f"{self.api_root}/workspace_agents/{trigger_id}/trigger",
             headers=headers,
@@ -767,13 +775,46 @@ class WorkspaceAgentDispatcher:
                 "input": prompt,
             },
         )
-        if not isinstance(value, dict):
-            raise LifecycleError("Workspace Agent trigger response was not an object")
+        if status != 202:
+            raise LifecycleError(f"Workspace Agent trigger was not accepted: HTTP {status}")
+        payload = value if isinstance(value, dict) else {}
         return WorkspaceDispatchResult(
-            idempotency_key=key,
-            conversation_url=value.get("conversation_url"),
-            run_id=value.get("agent_trigger_run_id"),
+            idempotency_key=key, accepted=True, status_code=status,
+            conversation_url=payload.get("conversation_url"),
+            run_id=payload.get("agent_trigger_run_id"),
         )
+
+    @staticmethod
+    def worker_idempotency_key(*, role: str, phase: str, exact_context: Mapping[str, Any]) -> str:
+        identity = json.dumps({"schema":"dish-worker-dispatch:v1","role":role,"phase":phase,"context":dict(exact_context)}, sort_keys=True, separators=(",",":"))
+        return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
+    def dispatch_worker(self, *, role: str, phase: str, exact_context: Mapping[str, Any]) -> WorkspaceDispatchResult:
+        if not self.access_token:
+            raise LifecycleError("Workspace Agent access token is unavailable")
+        if not self.worker_trigger_id:
+            raise LifecycleError("published ChatGPT Worker Workspace Agent trigger is unavailable")
+        role = str(role).strip(); phase = str(phase).strip()
+        if not role or not phase or not exact_context:
+            raise LifecycleError("Worker dispatch requires exact role, phase, and context")
+        key = self.worker_idempotency_key(role=role, phase=phase, exact_context=exact_context)
+        prompt = (
+            f"Run exactly one Dish Worker phase. Standing role: {role}. Phase: {phase}. "
+            f"Exact durable context: {json.dumps(dict(exact_context), sort_keys=True)}. "
+            "Worker is an execution host/profile, not a union role. Load the mapped standing role contract; "
+            "do not self-select or compose another role. A 202 trigger response proves admission only; completion "
+            "and activation require the phase's normal durable effect/witness and authoritative reread. Integration "
+            "landing remains outside Worker authority."
+        )
+        headers = {"Authorization":f"Bearer {self.access_token}","OpenAI-Beta":WORKSPACE_RUNS_BETA,"Idempotency-Key":key,"Content-Type":"application/json"}
+        status, _, value = self.http.request(
+            "POST", f"{self.api_root}/workspace_agents/{self.worker_trigger_id}/trigger", headers=headers,
+            body={"conversation_key":f"dish-worker-{key[:24]}","input":prompt},
+        )
+        if status != 202:
+            raise LifecycleError(f"Workspace Agent Worker trigger was not accepted: HTTP {status}")
+        payload=value if isinstance(value,dict) else {}
+        return WorkspaceDispatchResult(idempotency_key=key,accepted=True,status_code=status,conversation_url=payload.get("conversation_url"),run_id=payload.get("agent_trigger_run_id"))
 
 
 class LocalReviewDispatcher:

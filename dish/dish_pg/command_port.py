@@ -1571,6 +1571,7 @@ class PostgresCommandPort:
             open_hold_id=self._open_id(wf.EvidenceHold, task.task_id),
             open_human_requirement_id=self._open_id(wf.HumanReviewRequirement, task.task_id),
             open_abandonment_id=self._open_abandonment_id(generation_id, task.task_id),
+            open_operation_id=str(view.operation_id) if view.operation_id else None,
             hold_reject_cycle_exists=hold_reject_cycle_exists,
             hold_reject_evidence_hold_exists=hold_reject_evidence_hold_exists,
             hold_reject_human_review_exists=hold_reject_human_review_exists,
@@ -1711,6 +1712,8 @@ class PostgresCommandPort:
             "discard": self._discard,
             "abandon-operation": self._abandon,
             "reconcile-abandonment": self._reconcile_abandonment,
+            "cooked": self._complete_semantically,
+            "archive": self._complete_semantically,
             "reopen-planning": self._reopen_planning,
             "reopen": self._reopen,
             "supply-evidence": self._supply_evidence,
@@ -4168,6 +4171,55 @@ class PostgresCommandPort:
             raise CommandRuleError("SOURCE_OPERATION_REQUIRED", "abandonment source operation is missing")
         successor = self._publish_abandonment_successor(attempt, source, execution, call.now)
         return {"abandonment_id": str(attempt.abandonment_id), "state": attempt.state, "successor_operation_id": str(successor.operation_id)}
+
+    def _complete_semantically(
+        self, call, generation, _binding, execution, task, _operation
+    ) -> dict[str, Any]:
+        assert task is not None
+        self.workflow.repo.assert_task_fence(execution.execution_id)
+        current = self.session.get(
+            models.CurrentTaskCompletion, (generation.generation_id, task.task_id)
+        )
+        if current is None:
+            raise CommandRuleError(
+                "COMPLETION_AUTHORITY_MISSING",
+                "task completion authority is incomplete",
+            )
+        if current.completed:
+            raise CommandRuleError(
+                "TASK_NOT_ACTIVE", "Cooked/Archive requires an active Dish"
+            )
+        blocking_operation = self.session.scalar(
+            select(wf.WorkflowOperation.operation_id)
+            .where(
+                wf.WorkflowOperation.generation_id == generation.generation_id,
+                wf.WorkflowOperation.task_id == task.task_id,
+                wf.WorkflowOperation.lifecycle == "open",
+            )
+            .limit(1)
+        )
+        if blocking_operation is not None:
+            raise CommandRuleError(
+                "TASK_NOT_RESTING",
+                "Cooked/Archive requires a resting Dish with no open workflow operation",
+                data={"open_operation_id": str(blocking_operation)},
+            )
+        reason = "cooked" if call.command_name == "cooked" else "archive"
+        self._set_completion(
+            generation.generation_id,
+            task.task_id,
+            True,
+            reason,
+            execution.execution_id,
+            call.now,
+        )
+        return {
+            "dish_id": str(task.task_id),
+            "task_id": str(task.task_id),
+            "completed": True,
+            "completion_reason": reason,
+            "completion_state": "cooked" if reason == "cooked" else "archived",
+        }
 
     def _reopen_planning(self, call, generation, _binding, execution, task, _operation) -> dict[str, Any]:
         assert task is not None

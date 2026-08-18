@@ -100,14 +100,14 @@ def _write_success_report(
     return report_dir, report
 
 
-def test_config_defaults_are_six_hour_health_grace_and_seven_day_retention(
+def test_config_defaults_are_two_hour_health_grace_and_seven_day_retention(
     tmp_path: Path,
 ) -> None:
     env = _env(tmp_path)
     config = backup.config_from_environ(env, repo_root=tmp_path)
 
     assert config.retention_seconds == 7 * 24 * 60 * 60
-    assert config.max_age_seconds == 7 * 60 * 60
+    assert config.max_age_seconds == 2 * 60 * 60
     assert config.local_dir == tmp_path / "local"
     assert config.off_device_dir == tmp_path / "off-device"
 
@@ -132,6 +132,73 @@ def test_prepare_roots_refuses_missing_mount_path(tmp_path: Path) -> None:
     )
     with pytest.raises(backup.BackupError, match="must already exist"):
         backup._prepare_roots(config)
+
+
+def test_prepare_off_device_root_refuses_same_device_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path)
+    monkeypatch.setattr(backup, "_directory", lambda path, *, label: _stat(1))
+
+    with pytest.raises(backup.BackupError, match="same filesystem device"):
+        backup._prepare_off_device_root(config, local_metadata=_stat(1))
+
+
+def test_prepare_off_device_root_accepts_same_device_with_explicit_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(tmp_path)
+    env["DISH_PG_BACKUP_ALLOW_SAME_DEVICE"] = "1"
+    (tmp_path / "off-device").mkdir()
+    config = backup.config_from_environ(env, repo_root=tmp_path)
+    assert config.allow_same_device is True
+    monkeypatch.setattr(backup, "_directory", lambda path, *, label: _stat(1))
+
+    off_device_root = backup._prepare_off_device_root(config, local_metadata=_stat(1))
+
+    assert off_device_root == (tmp_path / "off-device").resolve()
+
+
+def test_copy_off_device_refuses_same_device_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.dump"
+    source.write_bytes(b"archive")
+    off_root = tmp_path / "off"
+    off_root.mkdir()
+    monkeypatch.setattr(backup, "_regular_file", lambda path, *, label: _stat(1))
+    monkeypatch.setattr(backup, "_directory", lambda path, *, label: _stat(1))
+
+    with pytest.raises(backup.BackupError, match="same filesystem device"):
+        backup._copy_off_device(
+            source,
+            off_device_root=off_root,
+            backup_id="20260813T060000Z-deadbeef",
+            expected_sha256=backup._sha256(source),
+        )
+
+
+def test_copy_off_device_accepts_same_device_with_explicit_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source.dump"
+    source.write_bytes(b"archive")
+    off_root = tmp_path / "off"
+    off_root.mkdir()
+    expected = backup._sha256(source)
+    monkeypatch.setattr(backup, "_regular_file", lambda path, *, label: _stat(1))
+    monkeypatch.setattr(backup, "_directory", lambda path, *, label: _stat(1))
+
+    target, checksum = backup._copy_off_device(
+        source,
+        off_device_root=off_root,
+        backup_id="20260813T060000Z-deadbeef",
+        expected_sha256=expected,
+        allow_same_device=True,
+    )
+
+    assert backup._sha256(target) == expected
+    assert checksum.exists()
 
 
 def test_run_records_missing_off_device_mount_as_failed_attempt(tmp_path: Path) -> None:
@@ -261,6 +328,7 @@ def test_run_uses_restore_compatible_custom_archive_and_prunes_only_after_copy(
         off_device_root: Path,
         backup_id: str,
         expected_sha256: str,
+        allow_same_device: bool = False,
     ) -> tuple[Path, Path]:
         calls.append("copy")
         target = off_device_root / f"{backup_id}.dump"
@@ -390,7 +458,7 @@ def test_retention_removes_only_expired_successful_backup_after_current_exists(
     deleted = backup._prune_retention(
         local_root=local_root,
         off_device_root=off_root,
-        retention_seconds=7 * 24 * 60 * 60,
+        retention_tiers=(backup.RetentionTier(7 * 24 * 60 * 60, 0),),
         now=datetime(2026, 8, 13, tzinfo=timezone.utc),
         current_backup_id="20260813T000000Z-33333333",
     )
@@ -400,6 +468,139 @@ def test_retention_removes_only_expired_successful_backup_after_current_exists(
     assert (local_root / "20260812T000000Z-22222222").exists()
     assert not (off_root / "20260801T000000Z-11111111.dump").exists()
     assert (off_root / "20260812T000000Z-22222222.dump").exists()
+
+
+def test_config_default_retention_tiers_is_empty_and_backward_compatible(
+    tmp_path: Path,
+) -> None:
+    env = _env(tmp_path)
+    config = backup.config_from_environ(env, repo_root=tmp_path)
+
+    assert config.retention_tiers == ()
+    assert config.retention_seconds == 7 * 24 * 60 * 60
+    assert backup._effective_retention_tiers(config) == (
+        backup.RetentionTier(7 * 24 * 60 * 60, 0),
+    )
+
+
+def test_config_parses_retention_tiers_and_derives_retention_seconds(
+    tmp_path: Path,
+) -> None:
+    env = _env(tmp_path)
+    env["DISH_PG_BACKUP_RETENTION_TIERS"] = "86400:0,604800:14400,7776000:86400"
+    config = backup.config_from_environ(env, repo_root=tmp_path)
+
+    assert config.retention_tiers == (
+        backup.RetentionTier(86400, 0),
+        backup.RetentionTier(604800, 14400),
+        backup.RetentionTier(7776000, 86400),
+    )
+    assert config.retention_seconds == 7776000
+
+
+def test_config_rejects_non_increasing_retention_tiers(tmp_path: Path) -> None:
+    env = _env(tmp_path)
+    env["DISH_PG_BACKUP_RETENTION_TIERS"] = "86400:0,3600:0"
+    with pytest.raises(backup.BackupError, match="strictly increasing"):
+        backup.config_from_environ(env, repo_root=tmp_path)
+
+
+def test_prune_retention_keeps_full_density_within_first_tier(tmp_path: Path) -> None:
+    local_root = tmp_path / "local"
+    off_root = tmp_path / "off"
+    local_root.mkdir()
+    off_root.mkdir()
+    now = datetime(2026, 8, 17, 12, 0, 0, tzinfo=timezone.utc)
+    ids = []
+    for hour_ago in range(1, 24):
+        completed_at = now - timedelta(hours=hour_ago)
+        backup_id = f"{completed_at.strftime('%Y%m%dT%H%M%SZ')}-{hour_ago:08x}"
+        _write_success_report(
+            local_root=local_root,
+            off_root=off_root,
+            backup_id=backup_id,
+            completed_at=completed_at,
+        )
+        ids.append(backup_id)
+
+    deleted = backup._prune_retention(
+        local_root=local_root,
+        off_device_root=off_root,
+        retention_tiers=(
+            backup.RetentionTier(24 * 60 * 60, 0),
+            backup.RetentionTier(7 * 24 * 60 * 60, 4 * 60 * 60),
+        ),
+        now=now,
+        current_backup_id="current",
+    )
+
+    assert deleted == []
+    for backup_id in ids:
+        assert (local_root / backup_id).exists()
+
+
+def test_prune_retention_thins_second_tier_to_one_per_bucket(tmp_path: Path) -> None:
+    local_root = tmp_path / "local"
+    off_root = tmp_path / "off"
+    local_root.mkdir()
+    off_root.mkdir()
+    now = datetime(2026, 8, 17, 12, 0, 0, tzinfo=timezone.utc)
+
+    # Two hourly backups landing in the same 4h bucket, 30h and 29h old
+    # (both within the 24h-7d band): only the newer one should survive.
+    older = now - timedelta(hours=30)
+    newer = now - timedelta(hours=29)
+    older_id = f"{older.strftime('%Y%m%dT%H%M%SZ')}-11111111"
+    newer_id = f"{newer.strftime('%Y%m%dT%H%M%SZ')}-22222222"
+    _write_success_report(
+        local_root=local_root, off_root=off_root, backup_id=older_id, completed_at=older
+    )
+    _write_success_report(
+        local_root=local_root, off_root=off_root, backup_id=newer_id, completed_at=newer
+    )
+
+    deleted = backup._prune_retention(
+        local_root=local_root,
+        off_device_root=off_root,
+        retention_tiers=(
+            backup.RetentionTier(24 * 60 * 60, 0),
+            backup.RetentionTier(7 * 24 * 60 * 60, 4 * 60 * 60),
+        ),
+        now=now,
+        current_backup_id="current",
+    )
+
+    assert deleted == [older_id]
+    assert not (local_root / older_id).exists()
+    assert (local_root / newer_id).exists()
+
+
+def test_prune_retention_deletes_backups_beyond_outer_tier(tmp_path: Path) -> None:
+    local_root = tmp_path / "local"
+    off_root = tmp_path / "off"
+    local_root.mkdir()
+    off_root.mkdir()
+    now = datetime(2026, 8, 17, 12, 0, 0, tzinfo=timezone.utc)
+    ancient = now - timedelta(days=200)
+    ancient_id = f"{ancient.strftime('%Y%m%dT%H%M%SZ')}-99999999"
+    _write_success_report(
+        local_root=local_root, off_root=off_root, backup_id=ancient_id, completed_at=ancient
+    )
+
+    deleted = backup._prune_retention(
+        local_root=local_root,
+        off_device_root=off_root,
+        retention_tiers=(
+            backup.RetentionTier(86400, 0),
+            backup.RetentionTier(604800, 14400),
+            backup.RetentionTier(7776000, 86400),
+        ),
+        now=now,
+        current_backup_id="current",
+    )
+
+    assert deleted == [ancient_id]
+    assert not (local_root / ancient_id).exists()
 
 
 def test_health_reports_latest_age_destination_and_freshness(
@@ -434,12 +635,12 @@ def test_health_reports_latest_age_destination_and_freshness(
     monkeypatch.setattr(backup, "_regular_file", regular)
     result = backup.health(
         config,
-        now=completed + timedelta(hours=6, minutes=30),
+        now=completed + timedelta(hours=1, minutes=30),
     )
 
     assert result["ok"] is True
     assert result["fresh"] is True
-    assert result["latest_success"]["age_seconds"] == 6.5 * 60 * 60
+    assert result["latest_success"]["age_seconds"] == 1.5 * 60 * 60
     assert result["latest_success"]["off_device_path"].endswith("deadbeef.dump")
     assert result["off_device_destination"] == str(off_root)
 
@@ -487,7 +688,58 @@ def test_health_fails_for_stale_backup_or_newer_failed_attempt(
     assert "latest backup attempt failed" in failed["error"]
 
 
-def test_systemd_default_schedule_is_six_hours_persistent_and_configurable() -> None:
+def test_health_refuses_same_device_latest_backup_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _config(tmp_path)
+    local_root = tmp_path / "local"
+    off_root = tmp_path / "off-device"
+    local_root.mkdir(exist_ok=True)
+    completed = datetime(2026, 8, 13, 6, 0, tzinfo=timezone.utc)
+    _write_success_report(
+        local_root=local_root,
+        off_root=off_root,
+        backup_id="20260813T060000Z-deadbeef",
+        completed_at=completed,
+    )
+    monkeypatch.setattr(backup, "_prepare_roots", lambda config: (local_root, off_root))
+    monkeypatch.setattr(backup, "_regular_file", lambda path, *, label: _stat(1))
+
+    result = backup.health(config, now=completed)
+
+    assert result["ok"] is False
+    assert "independent device" in result["error"]
+
+
+def test_health_accepts_same_device_latest_backup_with_explicit_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env = _env(tmp_path)
+    env["DISH_PG_BACKUP_ALLOW_SAME_DEVICE"] = "1"
+    (tmp_path / "off-device").mkdir()
+    config = backup.config_from_environ(env, repo_root=tmp_path)
+    local_root = tmp_path / "local"
+    off_root = tmp_path / "off-device"
+    local_root.mkdir(exist_ok=True)
+    completed = datetime(2026, 8, 13, 6, 0, tzinfo=timezone.utc)
+    _write_success_report(
+        local_root=local_root,
+        off_root=off_root,
+        backup_id="20260813T060000Z-deadbeef",
+        completed_at=completed,
+    )
+    monkeypatch.setattr(backup, "_prepare_roots", lambda config: (local_root, off_root))
+    monkeypatch.setattr(backup, "_regular_file", lambda path, *, label: _stat(1))
+
+    result = backup.health(
+        config, now=completed + timedelta(hours=1, minutes=30)
+    )
+
+    assert result["ok"] is True
+    assert result["latest_success"]["off_device_independent"] is False
+
+
+def test_systemd_default_schedule_is_hourly_persistent_and_configurable() -> None:
     service = (SYSTEMD / "dish-postgres-backup.service").read_text(encoding="utf-8")
     timer = (SYSTEMD / "dish-postgres-backup.timer").read_text(encoding="utf-8")
     override = (SYSTEMD / "postgres-backup-cadence.conf.example").read_text(
@@ -498,11 +750,12 @@ def test_systemd_default_schedule_is_six_hours_persistent_and_configurable() -> 
     assert "Requires=dish-postgres-prod.service" not in service
     assert "After=network-online.target dish-postgres-prod.service" in service
     assert "[Install]" not in service
-    assert "OnCalendar=*-*-* 00/6:00:00 UTC" in timer
+    assert "OnCalendar=*-*-* *:00:00 UTC" in timer
     assert "Persistent=true" in timer
     assert "OnCalendar=\nOnCalendar=" in override
     assert "DISH_PG_BACKUP_RETENTION_SECONDS=604800" in env
-    assert "DISH_PG_BACKUP_MAX_AGE_SECONDS=25200" in env
+    assert "DISH_PG_BACKUP_RETENTION_TIERS=86400:0,604800:14400,7776000:86400" in env
+    assert "DISH_PG_BACKUP_MAX_AGE_SECONDS=7200" in env
 
 
 def test_cli_exposes_run_health_and_status_alias() -> None:

@@ -102,6 +102,7 @@ class FakeGitHub:
         self.merge_response = {"merged": True, "sha": "d" * 40, "message": "Pull Request successfully merged"}
         self.merge_mutates = True
         self.refs = {"heads/main": "c" * 40}
+        self.pr_files = []
 
     def list_prs(self, *, include_closed=False):
         if self.pr["state"] != "open" and not include_closed:
@@ -111,6 +112,10 @@ class FakeGitHub:
     def get_pr(self, number):
         assert number == self.pr["number"]
         return deepcopy(self.pr)
+
+    def get_pr_files(self, number):
+        assert number == self.pr["number"]
+        return deepcopy(self.pr_files)
 
     def get_comments(self, number):
         return deepcopy(self.comments)
@@ -514,6 +519,7 @@ def test_workspace_agent_dispatch_uses_exact_identity_and_idempotency_header():
     )
     second_key = dispatcher.idempotency_key("marcogallotta/ai-tools", 31, HEAD, "substantive")
     assert first.idempotency_key == second_key
+    assert first.accepted is True and first.status_code == 202
     method, url, headers, body = http.calls[0]
     assert method == "POST"
     assert url.endswith("/workspace_agents/agtch_review/trigger")
@@ -523,6 +529,30 @@ def test_workspace_agent_dispatch_uses_exact_identity_and_idempotency_header():
     assert "1217443403986570" in body["input"]
     assert "dish/docs/agents/review.md" in body["input"]
 
+
+
+
+class EmptyAcceptedHTTP(RecordingHTTP):
+    def request(self, method, url, *, headers=None, body=None):
+        self.calls.append((method, url, dict(headers or {}), deepcopy(body)))
+        return 202, {}, None
+
+def test_workspace_agent_review_accepts_202_without_provider_run_identity():
+    http=EmptyAcceptedHTTP(); dispatcher=pr_lifecycle.WorkspaceAgentDispatcher(access_token="secret",review_trigger_id="agtch_review",http=http)
+    result=dispatcher.dispatch(repository="marcogallotta/ai-tools",pr_number=31,pr_url="https://github.com/marcogallotta/ai-tools/pull/31",head=HEAD,review_class="substantive",task_ids=["1217443403986570"])
+    assert result.accepted is True and result.status_code==202
+    assert result.run_id is None and result.conversation_url is None
+
+def test_worker_dispatch_binds_role_phase_context_and_accepts_empty_202():
+    http=EmptyAcceptedHTTP(); dispatcher=pr_lifecycle.WorkspaceAgentDispatcher(access_token="secret",review_trigger_id="agtch_review",worker_trigger_id="agtch_worker",http=http)
+    context={"task":"1217513382665760","pr":140,"head":HEAD,"review_id":"4950000000"}
+    result=dispatcher.dispatch_worker(role="Implementation",phase="fix",exact_context=context)
+    assert result.accepted is True and result.status_code==202 and result.run_id is None
+    method,url,headers,body=http.calls[0]
+    assert method=="POST" and url.endswith("/workspace_agents/agtch_worker/trigger")
+    assert headers["Idempotency-Key"]==dispatcher.worker_idempotency_key(role="Implementation",phase="fix",exact_context=context)
+    assert "not a union role" in body["input"] and "Integration landing remains outside Worker authority" in body["input"]
+    assert HEAD in body["input"] and "1217513382665760" in body["input"]
 
 def test_domain_dispatch_uses_the_one_ordinary_reviewer_not_a_second_specialist():
     dispatcher = pr_lifecycle.WorkspaceAgentDispatcher(
