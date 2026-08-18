@@ -491,9 +491,10 @@ def test_head_movement_invalidation_closes_semantic_mutation_but_allows_readback
     head = h.remote_branch_commit(branch, "head move candidate", start=h.current_remote_main())
     h.agent_file(agent)
     new_head = "f" * 40
+    tools_dir = Path(__file__).resolve().parents[1]
     child = f"""
 import sys
-sys.path.insert(0, '/mnt/data/dish-main/tools')
+sys.path.insert(0, {str(tools_dir)!r})
 from agent_worktree_lib.common import AgentWorktreeError
 from agent_worktree_lib.ownership import invalidate_claim_after_head_movement, require_active_claim
 
