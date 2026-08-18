@@ -20,8 +20,11 @@ TRANSITION_MARKER = "dish-lifecycle-transition:v1"
 PROJECTION_MARKER = "dish-lifecycle-projection:v1"
 ROLLOUT_PLAN_PREFIX = "dish-rollout-plan:v1"
 ROLLOUT_TRANSITION_PREFIX = "dish-rollout-transition:v1"
+SOURCE_LANDING_HOLD_MARKER = "dish-source-landing-hold:v1"
 
 _STATE_LINE_RE = re.compile(r"(?mi)^STATE:\s*(?P<state>[^\n]+)$")
+_HOLD_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{8,80}$")
+_DECISION_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{8,120}$")
 
 
 def _json_digest(value: Any) -> str:
@@ -83,6 +86,155 @@ def structured_story_payload(story: Mapping[str, Any], prefix: str) -> dict[str,
     except json.JSONDecodeError:
         return None
     return dict(value) if isinstance(value, Mapping) else None
+
+
+def _story_time(story: Mapping[str, Any]) -> datetime | None:
+    raw = story.get("created_at") or story.get("updated_at")
+    try:
+        value = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def source_landing_hold(stories: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    """Reconstruct the only Asana-side V3 source-landing veto.
+
+    A valid hold/release is an exact whole-comment structured story.  Agent-authored
+    discussion is required by standing policy to carry a Dish Agent footer, so it
+    cannot accidentally satisfy this exact framing.  Authenticated account metadata
+    is deliberately ignored: the explicit structured decision record is the
+    provenance-bearing action, not the service account name.
+    """
+    events: list[tuple[datetime, str, dict[str, str]]] = []
+    malformed: list[dict[str, Any]] = []
+
+    for story in stories:
+        text = _story_text(story)
+        if SOURCE_LANDING_HOLD_MARKER not in text:
+            continue
+        payload = structured_story_payload(story, SOURCE_LANDING_HOLD_MARKER)
+        when = _story_time(story)
+        story_id = str(story.get("gid") or story.get("id") or "")
+        if payload is None or when is None:
+            malformed.append({
+                "story": story_id or None,
+                "reason": "hold marker must be one exact structured comment with a valid timestamp",
+            })
+            continue
+        action = str(payload.get("action") or "").strip().lower()
+        hold_id = str(payload.get("hold_id") or "").strip()
+        decision = str(payload.get("decision") or "").strip()
+        authority = str(payload.get("authority") or "").strip().lower()
+        if (
+            action not in {"hold", "release"}
+            or _HOLD_ID_RE.fullmatch(hold_id) is None
+            or _DECISION_ID_RE.fullmatch(decision) is None
+            or authority not in {"marco", "authorized-human"}
+        ):
+            malformed.append({
+                "story": story_id or None,
+                "reason": "hold marker fields are invalid",
+            })
+            continue
+        events.append((
+            when,
+            story_id,
+            {
+                "action": action,
+                "hold_id": hold_id,
+                "decision": decision,
+                "authority": authority,
+            },
+        ))
+
+    if malformed:
+        return {
+            "state": "CONTRADICTION",
+            "reason": "malformed explicit human hold evidence",
+            "errors": malformed,
+        }
+    if not events:
+        return {
+            "state": "CLEAR",
+            "reason": "no explicit durable human source-landing hold exists",
+            "active_hold_id": None,
+        }
+
+    events.sort(key=lambda item: (item[0], item[1]))
+    active: dict[str, str] | None = None
+    last_release: dict[str, str] | None = None
+    evidence_story = None
+    evidence_time = None
+
+    for when, story_id, event in events:
+        evidence_story = story_id or None
+        evidence_time = when.isoformat()
+        if event["action"] == "hold":
+            if active is None:
+                active = event
+                last_release = None
+                continue
+            if active == event:
+                continue
+            return {
+                "state": "CONTRADICTION",
+                "reason": "a second distinct hold appeared before explicit release",
+                "active_hold_id": active["hold_id"],
+                "evidence_story": evidence_story,
+                "evidence_at": evidence_time,
+            }
+
+        # release
+        if active is None:
+            if last_release == event:
+                continue
+            return {
+                "state": "CONTRADICTION",
+                "reason": "release has no matching active hold",
+                "evidence_story": evidence_story,
+                "evidence_at": evidence_time,
+            }
+        if event["hold_id"] != active["hold_id"]:
+            return {
+                "state": "CONTRADICTION",
+                "reason": "release does not match the active hold identity",
+                "active_hold_id": active["hold_id"],
+                "evidence_story": evidence_story,
+                "evidence_at": evidence_time,
+            }
+        if event["decision"] == active["decision"]:
+            return {
+                "state": "CONTRADICTION",
+                "reason": "release must carry a distinct explicit human decision identity",
+                "active_hold_id": active["hold_id"],
+                "evidence_story": evidence_story,
+                "evidence_at": evidence_time,
+            }
+        last_release = event
+        active = None
+
+    if active is not None:
+        return {
+            "state": "HELD",
+            "reason": "explicit durable human source-landing hold is active",
+            "active_hold_id": active["hold_id"],
+            "hold_decision": active["decision"],
+            "authority": active["authority"],
+            "evidence_story": evidence_story,
+            "evidence_at": evidence_time,
+        }
+    return {
+        "state": "CLEAR",
+        "reason": "explicit human hold was released by a distinct durable decision",
+        "active_hold_id": None,
+        "release_decision": last_release["decision"] if last_release else None,
+        "authority": last_release["authority"] if last_release else None,
+        "evidence_story": evidence_story,
+        "evidence_at": evidence_time,
+    }
 
 
 def transition_already_recorded(stories: Iterable[Mapping[str, Any]], stable_id: str) -> bool:
@@ -176,15 +328,13 @@ def apply_transition(
 def execution_truth(task: Mapping[str, Any], stories: Iterable[Mapping[str, Any]], *, now: datetime | None = None) -> dict[str, Any]:
     """Project durable handoff/dispatch evidence without upgrading section state to execution truth."""
     now = now or datetime.now(timezone.utc)
+    story_values = list(stories)
+    hold = source_landing_hold(story_values)
     evidence: list[tuple[datetime, str, str]] = []
-    for story in stories:
+    for story in story_values:
         text = _story_text(story)
-        raw = story.get("created_at") or story.get("updated_at")
-        try:
-            ts = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
-            if ts.tzinfo is None:
-                ts = ts.replace(tzinfo=timezone.utc)
-        except (TypeError, ValueError):
+        ts = _story_time(story)
+        if ts is None:
             continue
         upper = text.upper()
         if "RUNNING-SOURCE" in upper or "RUNNING SOURCE" in upper or "SOURCE EVIDENCE" in upper:
@@ -196,12 +346,32 @@ def execution_truth(task: Mapping[str, Any], stories: Iterable[Mapping[str, Any]
         elif "HANDOFF RECORDED" in upper or "HANDOFF PREPARED" in upper or "HANDOFF SENT" in upper:
             evidence.append((ts, "HANDOFF RECORDED", text))
     if not evidence:
-        return {"state": "NO DURABLE EXECUTION EVIDENCE", "stale": False, "timestamp": None}
+        return {
+            "state": "NO DURABLE EXECUTION EVIDENCE",
+            "stale": False,
+            "stale_kind": None,
+            "timestamp": None,
+            "source_landing_hold": hold,
+        }
     ts, state, _ = max(evidence, key=lambda row: row[0])
-    stale = state == "HANDOFF RECORDED" and (now - ts).total_seconds() > 3600
-    if stale:
+    age = (now - ts).total_seconds()
+    stale = False
+    stale_kind = None
+    if state == "DISPATCH REQUESTED" and age > 3600:
+        state = "DISPATCH STALE — ACCEPTANCE NOT PROVEN"
+        stale = True
+        stale_kind = "WORKER_ACCEPTANCE_STALE"
+    elif state == "HANDOFF RECORDED" and age > 3600:
         state = "STALE / EXECUTION UNKNOWN"
-    return {"state": state, "stale": stale, "timestamp": ts.isoformat()}
+        stale = True
+        stale_kind = "WORKER_EXECUTION_STALE"
+    return {
+        "state": state,
+        "stale": stale,
+        "stale_kind": stale_kind,
+        "timestamp": ts.isoformat(),
+        "source_landing_hold": hold,
+    }
 
 
 def projection_comment(task_gid: str, projection: Mapping[str, Any]) -> str:
