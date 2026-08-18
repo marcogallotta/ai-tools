@@ -11,6 +11,9 @@ import uuid
 from pr_lifecycle_support import PRLifecycle
 
 SCHEMA = "dish-pr-lifecycle-projection-v1"
+V3_SHADOW_SCHEMA = "dish-pr-lifecycle-v3-shadow-v1"
+V3_SHADOW_MODE = "SHADOW"
+V3_AUTHORITATIVE_LANDING_PATH = "integration-v1a-local-fenced"
 
 _PHASE_BY_GITHUB_STATE = {
     "authoring_implementation_in_progress": "IMPLEMENTATION_IN_PROGRESS",
@@ -207,6 +210,67 @@ def _state_label(state: str) -> str:
     return state.replace("_", " ").title()
 
 
+def _v3_shadow_decision(
+    pr: Mapping[str, Any],
+    *,
+    source: Mapping[str, Any],
+    truth: str,
+    operator_action: str | None,
+) -> dict[str, Any]:
+    """Project a deterministic V3 admission decision without acquiring write authority."""
+    lifecycle_state = str(pr.get("state") or "")
+    head = str(pr.get("head") or "")
+    reviewed_head = str(pr.get("reviewed_head") or "")
+    review_verdict = str(pr.get("review_verdict") or "")
+    gate = pr.get("gate") if isinstance(pr.get("gate"), Mapping) else {}
+    exact_head_review = bool(head) and review_verdict == "MERGE" and reviewed_head == head
+
+    if lifecycle_state == "merged":
+        decision = "NO_ACTION_ALREADY_MERGED"
+        reason = "authoritative GitHub lifecycle already reports merged"
+    elif lifecycle_state == "merging_integration_in_progress":
+        decision = "OBSERVE_EXISTING_WRITER"
+        reason = "an existing exact-head Integration writer is active; V3 shadow must not contend"
+    elif truth == "CONTRADICTION":
+        decision = "BLOCK_AUTHORITY_CONTRADICTION"
+        reason = "normalized lifecycle truth contains an authority contradiction"
+    elif operator_action:
+        decision = "WAIT_OPERATOR_ACTION"
+        reason = "current lifecycle requires an explicit operator action"
+    elif lifecycle_state == "integration_ready":
+        if source.get("state") != "NOT_LANDED":
+            decision = "BLOCK_SOURCE_IDENTITY"
+            reason = "Integration-ready candidate is not proven NOT_LANDED on its intended source lineage"
+        elif not exact_head_review:
+            decision = "BLOCK_EXACT_HEAD_REVIEW"
+            reason = "Integration-ready candidate lacks matching exact-head MERGE review identity"
+        else:
+            decision = "WOULD_ADMIT_EXISTING_INTEGRATION"
+            reason = (
+                "current V1-A inspector has already proved exact-head Review and Integration gates; "
+                "V3 shadow would admit the existing fenced Integration path if a later cutover authorized it"
+            )
+    else:
+        decision = "WAIT_CURRENT_LIFECYCLE"
+        reason = "candidate has not reached the current controller's Integration-ready boundary"
+
+    return {
+        "pr": int(pr["number"]),
+        "head": head or None,
+        "decision": decision,
+        "reason": reason,
+        "current_lifecycle_state": lifecycle_state,
+        "current_review_verdict": review_verdict or None,
+        "current_reviewed_head": reviewed_head or None,
+        "current_gate_diagnosis": gate.get("diagnosis"),
+        "source_state": source.get("state"),
+        "truth": truth,
+        "write_authority": False,
+        "mutation_permitted": False,
+        "authoritative_landing_path": V3_AUTHORITATIVE_LANDING_PATH,
+    }
+
+
 def build_projection(
     values: Iterable[PRLifecycle],
     *,
@@ -230,6 +294,7 @@ def build_projection(
     coordinator: list[dict[str, Any]] = []
     baseline_owners: dict[str, dict[str, Any]] = {}
     resolved: list[dict[str, Any]] = []
+    v3_shadow_decisions: list[dict[str, Any]] = []
     for pr in prs:
         source = dict(sources.get(str(pr["number"])) or sources.get(pr["number"]) or _default_source(pr))
         runtime = dict(runtimes.get(str(pr["number"])) or runtimes.get(pr["number"]) or _default_runtime())
@@ -253,6 +318,14 @@ def build_projection(
             rollouts=rollouts,
             conflicts=conflicts,
             operator_action=operator_action,
+        )
+        v3_shadow_decisions.append(
+            _v3_shadow_decision(
+                pr,
+                source=source,
+                truth=truth,
+                operator_action=operator_action,
+            )
         )
         record = {
             "pr": int(pr["number"]),
@@ -331,6 +404,15 @@ def build_projection(
         "current_main_corrective_owners": list(baseline_owners.values()),
         "rollouts": [task["rollout"] for task in task_values if isinstance(task.get("rollout"), Mapping)],
         "coordinator_actions": coordinator,
+        "v3_shadow": {
+            "schema": V3_SHADOW_SCHEMA,
+            "mode": V3_SHADOW_MODE,
+            "activation_authorized": False,
+            "write_authority": False,
+            "authoritative_landing_path": V3_AUTHORITATIVE_LANDING_PATH,
+            "scope": "current-v1a-admission-equivalence",
+            "decisions": v3_shadow_decisions,
+        },
     }
 
 
