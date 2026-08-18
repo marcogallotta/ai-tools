@@ -69,7 +69,7 @@ jobs:
         shell: bash
         env:
           BASE_SHA: a45f301611d2d950ebb4fa09130f6eb926265d65
-        run: bash scripts/tmp-review-fasttrack-task2.sh
+        run: bash scripts/tmp-review-fasttrack-compact.sh && bash scripts/tmp-review-fasttrack-task2.sh
 
       - name: Build and validate exact prospective helper-free tree
         if: steps.gate.outputs.run == 'true'
@@ -86,6 +86,7 @@ jobs:
           rm .github/dish-workstream-bootstrap-review-fasttrack.txt
           rm scripts/tmp-review-fasttrack-task1.sh
           rm scripts/tmp-review-fasttrack-task2.sh
+          rm scripts/tmp-review-fasttrack-compact.sh
           git add -A
           git commit -m 'Prospective helper-free validation tree'
           tested_commit="$(git rev-parse HEAD)"
@@ -144,7 +145,7 @@ jobs:
           PASS: Task 2 canonical Project check and focused Review/FastTrack/kernel regressions completed before helper-free validation.
           PASS: exact prospective helper-free tree passed canonical Project check, test-plan validation, diff check, and every governed planner-selected command.
 
-          The remote branch is intentionally published at Task 2 first because GitHub Actions may not mutate workflow files. Implementation will delete the two temporary workflow files, two temporary authoring scripts, and bootstrap marker through the GitHub connector, then prove the resulting final Git tree exactly equals \`$TESTED_TREE\` before marking the PR review-ready.
+          The remote branch is intentionally published at Task 2 first because GitHub Actions may not mutate workflow files. Implementation will delete the two temporary workflow files, three temporary authoring scripts, and bootstrap marker through the GitHub connector, then prove the resulting final Git tree exactly equals \`$TESTED_TREE\` before marking the PR review-ready.
 
           GATE WAIVED BY MARCO OVERRIDE: exact-current repository-bundle witness/transport gate only. Raw bundle-unavailable evidence remains FAILED.
 
