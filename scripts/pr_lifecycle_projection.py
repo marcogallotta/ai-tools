@@ -297,6 +297,16 @@ def build_projection(
                 "detail": conflict.get("detail"),
                 "repair_owner": "authority-owner",
             })
+        if str(pr.get("state") or "") == "merged":
+            for task in pr.get("asana") or []:
+                if isinstance(task, Mapping) and task and task.get("completed") is False:
+                    drift.append({
+                        "pr": pr["number"],
+                        "task": task.get("gid"),
+                        "conflict": "GitHub merged while Asana task is incomplete",
+                        "detail": "GitHub shows the PR merged while the linked Asana task remains incomplete.",
+                        "repair_owner": "controller",
+                    })
         dep = pr.get("external_dependency")
         if isinstance(dep, Mapping):
             key = str(dep.get("task_gid") or "")
