@@ -348,8 +348,8 @@ def test_reviewed_stack_survives_per_pr_integration_and_later_head_change_is_one
     assert len(rereview_workspace.http.calls) == 1
     prompt = rereview_workspace.http.calls[0][3]["input"]
     assert "Changed PRs: [157]" in prompt
-    assert '"publication_state": "merged"' in prompt
-    assert "do not try to submit a new review to the merged PR" in prompt
+    assert '"publication_state": "landed"' in prompt
+    assert "do not try to submit a new review to either closed PR" in prompt
     assert all(value.state == pr_lifecycle.LifecycleState.REVIEW_IN_PROGRESS for value in rereview)
 
     current = lifecycle._workstream_candidates(
@@ -357,7 +357,7 @@ def test_reviewed_stack_survives_per_pr_integration_and_later_head_change_is_one
     )[WORKSTREAM_TASK]
     assert current.complete is True
     assert current.members[0].pr_number == 151
-    assert current.members[0].publication_state == "merged"
+    assert current.members[0].publication_state == "landed"
     add_workstream_reviews(github, current, "MERGE")
     passed = lifecycle.status()
     assert all(value.review_verdict == "MERGE" for value in passed)

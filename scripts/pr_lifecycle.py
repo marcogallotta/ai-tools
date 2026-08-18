@@ -15,7 +15,7 @@ from pr_lifecycle_helpers import _parse_time, _utcnow
 from pr_lifecycle_external_replay import replay_external_dependency
 from pr_lifecycle_engine_inspect import LifecycleInspectMixin
 from pr_lifecycle_engine_actions import LifecycleActionsMixin
-from pr_lifecycle_workstream import WorkstreamLifecycleMixin
+from pr_lifecycle_workstream import WorkstreamLifecycleMixin, current_review_state
 from pr_lifecycle_authoring_actions import LifecycleAuthoringActionsMixin
 from pr_lifecycle_integration_certification import LocalIntegrationCertificationMixin
 from pr_lifecycle_local_integration import LocalIntegrationLauncher, checkpoint_claim
@@ -33,6 +33,51 @@ class LifecycleEngine(
     LifecycleAuthoringActionsMixin,
     LifecycleActionsMixin,
 ):
+    def dispatch(
+        self,
+        *,
+        include_closed=False,
+        workspace=None,
+        local_reviewer=None,
+        implementation_fixer=None,
+        terminal_cleaner=None,
+        notify=None,
+    ):
+        """Release reviewed stacks unless an intermediate merge still needs target recovery."""
+        values = super().dispatch(
+            include_closed=include_closed,
+            workspace=workspace,
+            local_reviewer=local_reviewer,
+            implementation_fixer=implementation_fixer,
+            terminal_cleaner=terminal_cleaner,
+            notify=notify,
+        )
+        candidates = self._workstream_candidates(values)
+        releasable: set[int] = set()
+        for candidate in candidates.values():
+            if (
+                candidate.complete
+                and not candidate.source_complete
+                and current_review_state(candidate, self.github).status == "merge"
+                and not any(member.publication_state == "merged" for member in candidate.members)
+            ):
+                releasable.update(member.pr_number for member in candidate.members)
+        if not releasable:
+            return values
+
+        by_number = {value.number: value for value in values}
+        for number in sorted(releasable & by_number.keys()):
+            current = self.inspect(self.github.get_pr(number))
+            by_number[number] = self.dispatch_one(
+                current,
+                workspace=workspace,
+                local_reviewer=local_reviewer,
+                implementation_fixer=implementation_fixer,
+                terminal_cleaner=terminal_cleaner,
+                notify=notify or (lambda _: None),
+            )
+        return [by_number[value.number] for value in values]
+
     def _external_resolution_boundary(self, lifecycle):
         try:
             active, resolution = replay_external_dependency(
