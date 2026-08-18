@@ -53,6 +53,42 @@ def owning_task_identity_from_pr(pr: Mapping[str, Any]) -> tuple[str | None, str
     return None, "explicit owning Asana task is missing"
 
 
+def materializer_owning_task_identity_from_pr(
+    pr: Mapping[str, Any],
+) -> tuple[str | None, str | None, bool]:
+    """Resolve the materializer owner from exactly one canonical marker.
+
+    The general lifecycle resolver intentionally accepts supported human-readable
+    owner declarations.  The publication materializer is stricter because the
+    owner identity gates a privileged Git-object write.  A missing canonical
+    marker is caller-repairable; ambiguous/duplicate/conflicting declarations are
+    exactness failures and must fail closed.
+
+    Returns ``(owner, error, repairable)``.  ``repairable`` is true only for the
+    missing-marker case so callers can distinguish metadata repair from a
+    security/exactness failure without changing the general resolver contract.
+    """
+    body = str(pr.get("body") or "")
+    marker_matches = list(_OWNING_TASK_MARKER_RE.finditer(body))
+    if not marker_matches:
+        return None, "canonical dish-owning-task marker is missing", True
+    if len(marker_matches) != 1:
+        return None, "materializer requires exactly one canonical dish-owning-task marker", False
+
+    owner = marker_matches[0].group("gid")
+    for pattern in (_OWNING_TASK_LINE_RE, _TASK_ASANA_LINE_RE):
+        for match in pattern.finditer(body):
+            gids = sorted(set(TASK_GID_RE.findall(match.group("value"))))
+            if len(gids) > 1:
+                return None, f"owning-task declaration is ambiguous: {gids!r}", False
+            if len(gids) == 1 and gids[0] != owner:
+                return None, (
+                    "canonical owning-task marker conflicts with human-readable "
+                    f"owner declaration: marker={owner!r} declaration={gids[0]!r}"
+                ), False
+    return owner, None, False
+
+
 def task_ids_from_pr(pr: Mapping[str, Any]) -> list[str]:
     text = "\n".join([str(pr.get("body") or ""), str(pr.get("title") or "")])
     owner, error = owning_task_identity_from_pr(pr)
