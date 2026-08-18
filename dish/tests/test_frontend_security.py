@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+import os
+import uuid
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -15,10 +17,14 @@ from sqlalchemy.pool import StaticPool
 from dish_pg.frontend_security_models import FrontendLoginEvent, FrontendSecurityState, FrontendSession
 from dish_pg.models import Base
 from dish_service import frontend_auth as auth_module
+from dish_service import __main__ as service_main
 from dish_service import frontend_private_runtime as private_runtime_module
 from dish_service.frontend_admission import MAX_LOGIN_BODY_BYTES
 from dish_service.frontend_auth import FrontendAuthFailure, FrontendAuthService
-from dish_service.frontend_private_runtime import FrontendPrivateRuntime
+from dish_service.frontend_private_runtime import (
+    FrontendAuthorityIdentity,
+    FrontendPrivateRuntime,
+)
 from dish_service.frontend_security import (
     Argon2Policy,
     FrontendSecurityConfigurationError,
@@ -261,6 +267,177 @@ def test_frontend_settings_reject_observation_database_password_reuse(tmp_path: 
     )
     with pytest.raises(FrontendSecurityConfigurationError, match="existing service/database secrets"):
         FrontendRuntimeSettings.from_mapping(env, dish_root=tmp_path)
+
+
+def test_postgresql_test_runtime_composes_frontend_with_exact_authority_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dish_pg import postgres_service as postgres_service_module
+    from dish_pg.release import ALEMBIC_HEAD
+
+    for key in list(os.environ):
+        if "ASANA" in key.upper():
+            monkeypatch.delenv(key, raising=False)
+    for name, value in {
+        "DISH_PROFILE": "test",
+        "DISH_SERVICE_BIND": "127.0.0.1",
+        "DISH_ACTION_BIND": "127.0.0.1",
+        "DISH_SERVICE_PORT": "19001",
+        "DISH_ACTION_PORT": "19002",
+        "DISH_SERVICE_AGENT_TOKEN": "test-agent-token",
+        "DISH_SERVICE_ADMIN_TOKEN": "test-admin-token",
+        "DISH_SERVICE_ACTION_TOKEN": "test-action-token",
+    }.items():
+        monkeypatch.setenv(name, value)
+
+    generation_id = uuid.UUID("00000000-0000-4000-8000-000000000123")
+    identity = {
+        "database": "dish_frontend_runtime_test",
+        "schema_head": ALEMBIC_HEAD,
+        "dish_release": "dish@test-frontend",
+        "generation_id": str(generation_id),
+        "generation_status": "active",
+    }
+    events: list[tuple] = []
+
+    class FakePostgresRuntimeService:
+        def __init__(self, config, **kwargs):
+            self.config = config
+            events.append(("service-created", kwargs))
+
+        def startup_check(self):
+            events.append(("service-startup",))
+            return {
+                "ok": True,
+                "identity": identity,
+                "isolation": {"asana_environment_keys": []},
+            }
+
+        def close(self):
+            events.append(("service-closed",))
+
+    class FakeFrontendRuntime:
+        def __init__(self, settings, *, authority_identity):
+            self.settings = settings
+            self.authority_identity = authority_identity
+            events.append(("frontend-created", authority_identity.as_dict()))
+
+        def startup_check(self):
+            events.append(("frontend-startup",))
+
+        def close(self):
+            events.append(("frontend-closed",))
+
+    monkeypatch.setattr(
+        postgres_service_module, "PostgresRuntimeService", FakePostgresRuntimeService
+    )
+    frontend_settings = SimpleNamespace(enabled=True, postgresql_reads_enabled=True)
+    monkeypatch.setattr(
+        service_main,
+        "FrontendRuntimeSettings",
+        SimpleNamespace(from_mapping=lambda *_args, **_kwargs: frontend_settings),
+    )
+    monkeypatch.setattr(service_main, "FrontendPrivateRuntime", FakeFrontendRuntime)
+
+    built: list[tuple[object, object]] = []
+
+    def fake_build_servers(service, *, frontend_runtime=None):
+        built.append((service, frontend_runtime))
+        return object(), object()
+
+    monkeypatch.setattr(service_main, "_build_servers", fake_build_servers)
+    monkeypatch.setattr(
+        service_main,
+        "_run_servers",
+        lambda _private, _action, *, stop_event: (
+            events.append(("servers-run", stop_event)) or 0
+        ),
+    )
+
+    args = SimpleNamespace(
+        postgresql_test_runtime=False,
+        state_dir=tmp_path / "pg-authority",
+        database_url=(
+            "postgresql+psycopg://dish:secret@127.0.0.1/dish_frontend_runtime_test"
+        ),
+        expected_database="dish_frontend_runtime_test",
+        expected_schema_head=ALEMBIC_HEAD,
+        expected_release="dish@test-frontend",
+        expected_generation_id=generation_id,
+        cursor_secret="a-long-enough-test-cursor-secret",
+    )
+
+    assert service_main._run_postgresql_test_runtime(args) == 0
+    assert len(built) == 1
+    assert built[0][1] is not None
+    assert built[0][1].authority_identity.as_dict() == identity
+    assert events.index(("service-startup",)) < events.index(("frontend-startup",))
+    assert events[-2:] == [("frontend-closed",), ("service-closed",)]
+
+
+def test_frontend_authority_identity_requires_complete_active_runtime_identity() -> None:
+    identity = FrontendAuthorityIdentity.from_runtime_identity(
+        {
+            "database": "dish_stage_a_test",
+            "schema_head": "0041_test_generation_rollover",
+            "dish_release": "dish@test",
+            "generation_id": "00000000-0000-4000-8000-000000000123",
+            "generation_status": "active",
+        }
+    )
+    assert identity.as_dict() == {
+        "database": "dish_stage_a_test",
+        "schema_head": "0041_test_generation_rollover",
+        "dish_release": "dish@test",
+        "generation_id": "00000000-0000-4000-8000-000000000123",
+        "generation_status": "active",
+    }
+
+    with pytest.raises(FrontendSecurityConfigurationError, match="incomplete"):
+        FrontendAuthorityIdentity.from_runtime_identity(
+            {
+                "database": "dish_stage_a_test",
+                "schema_head": "0041_test_generation_rollover",
+                "dish_release": "dish@test",
+                "generation_id": "",
+                "generation_status": "active",
+            }
+        )
+    with pytest.raises(FrontendSecurityConfigurationError, match="active generation"):
+        FrontendAuthorityIdentity.from_runtime_identity(
+            {
+                "database": "dish_stage_a_test",
+                "schema_head": "0041_test_generation_rollover",
+                "dish_release": "dish@test",
+                "generation_id": "00000000-0000-4000-8000-000000000123",
+                "generation_status": "retired",
+            }
+        )
+
+
+def test_authority_bound_frontend_requires_observation_reads(tmp_path: Path) -> None:
+    static_root = tmp_path / "dist"
+    static_root.mkdir()
+    (static_root / "index.html").write_text("<!doctype html>", encoding="utf-8")
+    settings = FrontendRuntimeSettings(
+        enabled=True,
+        database_url="postgresql+psycopg://auth:secret@127.0.0.1/auth",
+        static_root=static_root,
+        restore_fence_path=tmp_path / "fence",
+        token_secret=b"t" * 32,
+        session_secret=b"s" * 32,
+        csrf_secret=b"c" * 32,
+        peer_secret=b"p" * 32,
+        postgresql_reads_enabled=False,
+    )
+    identity = FrontendAuthorityIdentity(
+        database="dish_stage_a_test",
+        schema_head="0041_test_generation_rollover",
+        dish_release="dish@test",
+        generation_id="00000000-0000-4000-8000-000000000123",
+    )
+    with pytest.raises(FrontendSecurityConfigurationError, match="observation reads"):
+        FrontendPrivateRuntime(settings, authority_identity=identity)
 
 
 def test_private_runtime_routes_auth_and_observation_to_distinct_factories(

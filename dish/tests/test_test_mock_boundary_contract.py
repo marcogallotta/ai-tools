@@ -58,6 +58,14 @@ REVIEWED_PRIVATE_FAULT_SEAMS = {
     ("test_planning_intent_confirmation.py", "_build_agent_application"): (
         "Application construction boundary for intent confirmation."
     ),
+    ("test_frontend_security.py", "_build_servers"): (
+        "Server-construction isolation boundary used to verify PostgreSQL TEST frontend "
+        "composition without binding sockets."
+    ),
+    ("test_frontend_security.py", "_run_servers"): (
+        "Server-runner isolation boundary used to verify frontend startup/shutdown ordering "
+        "without starting listener threads."
+    ),
     ("test_service_semantic_error_classification.py", "_assert_mutation_ready"): (
         "Mutation-readiness rejection boundary; no-op replacements remain forbidden below."
     ),

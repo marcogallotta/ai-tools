@@ -56,6 +56,8 @@ class TaskCurrentView:
     completion_revision: int
     section_id: uuid.UUID
     completed: bool
+    completion_reason: str
+    completion_state: str
     operation_id: uuid.UUID | None
     operation_phase: str | None
     operation_revision: int | None
@@ -300,6 +302,7 @@ class PostgresReadModel:
                 models.CurrentTaskSectionPlacement.generation_id == generation.generation_id,
                 models.CurrentTaskSectionPlacement.section_id == section.section_id,
                 models.CurrentTaskSectionPlacement.registry_version_id == active.registry_version_id,
+                models.CurrentTaskCompletion.completed.is_(False),
                 models.DishTask.existence_state != "retired",
             )
             .order_by(title_key, models.DishTask.task_id)
@@ -515,6 +518,24 @@ class PostgresReadModel:
         )
         if version is None or placement is None or completion is None:
             raise ReadModelError("task authority bundle is incomplete")
+        latest_completion = self.session.get(
+            models.TaskCompletionEvent, completion.latest_event_id
+        )
+        if latest_completion is None:
+            raise ReadModelError("task completion history is incomplete")
+        if (
+            latest_completion.task_id != task.task_id
+            or latest_completion.generation_id != generation.generation_id
+        ):
+            raise ReadModelError("task completion history does not match current authority")
+        if not completion.completed:
+            completion_state = "active"
+        elif latest_completion.reason == "cooked":
+            completion_state = "cooked"
+        elif latest_completion.reason == "archive":
+            completion_state = "archived"
+        else:
+            completion_state = "completed"
         operation = self.session.scalar(
             select(wf.WorkflowOperation)
             .where(
@@ -548,6 +569,8 @@ class PostgresReadModel:
             completion_revision=head.completion_revision,
             section_id=placement.section_id,
             completed=completion.completed,
+            completion_reason=latest_completion.reason,
+            completion_state=completion_state,
             operation_id=operation.operation_id if operation else None,
             operation_phase=operation.phase if operation else None,
             operation_revision=operation.operation_revision if operation else None,

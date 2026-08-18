@@ -17,7 +17,8 @@ from .application import DishService
 from .config import ServiceConfig
 from .database_ownership import ServiceDatabaseOwnership, database_process_lock_path
 from .http import DishHTTPServer, build_action_server, build_private_server
-from .frontend_private_runtime import FrontendPrivateRuntime
+from .frontend_private_runtime import FrontendAuthorityIdentity, FrontendPrivateRuntime
+from .frontend_security import FrontendSecurityConfigurationError
 from .frontend_settings import FrontendRuntimeSettings
 from .process_lock import DatabaseProcessLock
 from .sd_notify import notify as sd_notify
@@ -370,11 +371,30 @@ def _run_postgresql_test_runtime(args) -> int:
         ),
         profile=profile,
     )
+    frontend_runtime = None
     try:
         startup = service.startup_check()
         if not startup["ok"] or startup["isolation"]["asana_environment_keys"]:
             raise RuntimeError("PostgreSQL rehearsal service startup validation failed")
-        private_server, action_server = _build_servers(service)
+        frontend_settings = FrontendRuntimeSettings.from_mapping(
+            os.environ, dish_root=Path(__file__).resolve().parents[1]
+        )
+        if frontend_settings.enabled:
+            if not frontend_settings.postgresql_reads_enabled:
+                raise FrontendSecurityConfigurationError(
+                    "PostgreSQL authority frontend requires "
+                    "DISH_FRONTEND_POSTGRESQL_READS_ENABLED=1"
+                )
+            frontend_runtime = FrontendPrivateRuntime(
+                frontend_settings,
+                authority_identity=FrontendAuthorityIdentity.from_runtime_identity(
+                    startup["identity"]
+                ),
+            )
+            frontend_runtime.startup_check()
+        private_server, action_server = _build_servers(
+            service, frontend_runtime=frontend_runtime
+        )
         stop_event = threading.Event()
         handler = _signal_handler(stop_event)
         previous: dict[int, Any] = {}
@@ -387,6 +407,8 @@ def _run_postgresql_test_runtime(args) -> int:
             for signum, prior in previous.items():
                 signal.signal(signum, prior)
     finally:
+        if frontend_runtime is not None:
+            frontend_runtime.close()
         service.close()
 
 

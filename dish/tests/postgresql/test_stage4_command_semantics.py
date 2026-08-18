@@ -747,3 +747,152 @@ def test_hold_reject_supply_evidence_resumes_preconstruction_baseline(workflow_d
                 wf.EvidenceHoldEvent.event_kind == "supplied",
             )
         ) == 1
+
+@pytest.mark.parametrize(
+    ("command_name", "reason", "state"),
+    (("cooked", "cooked", "cooked"), ("archive", "archive", "archived")),
+)
+def test_cooked_and_archive_use_completion_authority_and_replay_idempotently(
+    workflow_db, command_name: str, reason: str, state: str
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    run_id, request_id = _next(ids), _next(ids)
+    with session_scope(factory) as session:
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        definition = definition_for(command_name)
+        assert (
+            definition.principal,
+            definition.request_replay,
+            definition.task_required,
+            definition.operation_required,
+            definition.action_exposed,
+        ) == ("agent", True, True, False, False)
+        assert command_name not in ACTION_COMMANDS
+
+        before_page = PostgresReadModel(session, cursor_secret=b"r" * 32).section_tasks(
+            section_reference=context["section_id"]
+        )
+        assert [item.task_id for item in before_page.items] == [task_id]
+        projection_count = session.scalar(
+            select(func.count()).select_from(tx.ProjectionOutboxEvent)
+        )
+        call = _call(
+            command_name,
+            run_id=run_id,
+            request_id=request_id,
+            arguments={"task_id": str(task_id)},
+        )
+
+        first = port.execute(call)
+        replay = port.execute(call)
+
+        assert first.ok is True
+        assert first.data["completed"] is True
+        assert first.data["completion_reason"] == reason
+        assert first.data["completion_state"] == state
+        assert replay.ok is True
+        assert replay.request_replayed is True
+        assert replay.data == first.data
+        assert session.scalar(select(func.count()).select_from(tx.ProjectionOutboxEvent)) == projection_count
+        current = session.get(
+            models.CurrentTaskCompletion, (context["generation_id"], task_id)
+        )
+        assert current is not None and current.completed is True
+        latest = session.get(models.TaskCompletionEvent, current.latest_event_id)
+        assert latest is not None
+        assert latest.completed is True
+        assert latest.reason == reason
+        assert latest.command_execution_id is not None
+        assert session.scalar(
+            select(func.count())
+            .select_from(models.TaskCompletionEvent)
+            .where(
+                models.TaskCompletionEvent.task_id == task_id,
+                models.TaskCompletionEvent.reason == reason,
+            )
+        ) == 1
+
+        view = PostgresReadModel(session, cursor_secret=b"r" * 32).task_view(task_id)
+        assert view.completed is True
+        assert view.completion_reason == reason
+        assert view.completion_state == state
+        after_page = PostgresReadModel(session, cursor_secret=b"r" * 32).section_tasks(
+            section_reference=context["section_id"]
+        )
+        assert after_page.items == ()
+        assert session.get(models.DishTask, task_id) is not None
+
+
+def test_newly_created_incomplete_archive_reason_remains_active_not_archived(
+    workflow_db,
+) -> None:
+    factory, ids, context, _task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        created = port.execute(
+            _call(
+                "create",
+                run_id=run_id,
+                request_id=_next(ids),
+                arguments={"title": "New incomplete Dish"},
+            )
+        )
+        assert created.ok is True
+        task_id = uuid.UUID(created.data["task_id"])
+        current = session.get(
+            models.CurrentTaskCompletion, (context["generation_id"], task_id)
+        )
+        assert current is not None and current.completed is False
+        latest = session.get(models.TaskCompletionEvent, current.latest_event_id)
+        assert latest is not None
+        assert latest.completed is False
+        assert latest.reason == "archive"
+
+        view = PostgresReadModel(session, cursor_secret=b"r" * 32).task_view(task_id)
+
+        assert view.completed is False
+        assert view.completion_reason == "archive"
+        assert view.completion_state == "active"
+        page = PostgresReadModel(session, cursor_secret=b"r" * 32).section_tasks(
+            section_reference=context["section_id"]
+        )
+        assert task_id in {item.task_id for item in page.items}
+
+
+@pytest.mark.parametrize("command_name", ("cooked", "archive"))
+def test_cooked_and_archive_reject_open_workflow_without_partial_completion(
+    workflow_db, command_name: str
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    run_id = _next(ids)
+    with session_scope(factory) as session:
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        started = _start_initial(port, ids, task_id=task_id, run_id=run_id)
+        assert started.ok is True
+        before = session.get(
+            models.CurrentTaskCompletion, (context["generation_id"], task_id)
+        )
+        assert before is not None
+        before_identity = (before.latest_event_id, before.completion_revision, before.completed)
+
+        result = port.execute(
+            _call(
+                command_name,
+                run_id=run_id,
+                request_id=_next(ids),
+                arguments={"task_id": str(task_id)},
+            )
+        )
+
+        assert result.ok is False
+        assert result.code == "TASK_NOT_RESTING"
+        assert "open_operation_id" in result.data["guidance"]
+        current = session.get(
+            models.CurrentTaskCompletion, (context["generation_id"], task_id)
+        )
+        assert current is not None
+        assert (current.latest_event_id, current.completion_revision, current.completed) == before_identity
