@@ -294,7 +294,7 @@ def _safe_extract_archive(payload: bytes, destination: Path) -> None:
 def _base_graph_evidence(
     repo_root: Path, *, merge_base: str, paths: tuple[str, ...],
     candidate_envelope: dict[str, object],
-) -> tuple[dict[str, object] | None, bool]:
+) -> tuple[dict[str, object] | None, dict[str, object] | None, bool]:
     completed = subprocess.run(
         ["git", "archive", "--format=tar", merge_base], cwd=repo_root,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
@@ -306,7 +306,7 @@ def _base_graph_evidence(
         _safe_extract_archive(completed.stdout, base_root)
         engine = base_root / "scripts" / "test_impact_graph.py"
         if not engine.is_file():
-            return None, False
+            return None, None, False
         command = [sys.executable, str(engine), "obligations", "--provenance", "base"]
         for path in paths:
             command.extend(("--path", path))
@@ -315,14 +315,14 @@ def _base_graph_evidence(
             stderr=subprocess.PIPE, check=False,
         )
         if produced.returncode != 0:
-            return None, False
+            return None, None, False
         try:
             base_envelope = json.loads(produced.stdout)
         except json.JSONDecodeError:
-            return None, False
+            return None, None, False
         base_arbiter = base_root / "scripts" / "test_impact_arbiter.py"
         if not base_arbiter.is_file():
-            return base_envelope, False
+            return base_envelope, None, False
         base_path = base_root / "base-envelope.json"
         candidate_path = base_root / "candidate-envelope.json"
         base_path.write_text(json.dumps(base_envelope), encoding="utf-8")
@@ -331,7 +331,15 @@ def _base_graph_evidence(
             [sys.executable, str(base_arbiter), "--base", str(base_path), "--candidate", str(candidate_path)],
             cwd=base_root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
         )
-        return base_envelope, union.returncode == 0
+        if union.returncode != 0:
+            return base_envelope, None, False
+        try:
+            base_arbiter_union = json.loads(union.stdout)
+        except json.JSONDecodeError:
+            return base_envelope, None, False
+        if not isinstance(base_arbiter_union, dict):
+            return base_envelope, None, False
+        return base_envelope, base_arbiter_union, True
 
 
 def _digest(plan: dict[str, object]) -> str:
@@ -372,7 +380,7 @@ def prepare(
     candidate_envelope = certification_plan.impact_graph.build_legacy_envelope(
         paths, provenance="candidate", repo_root=repo_root
     )
-    base_envelope, base_arbiter_compatible = _base_graph_evidence(
+    base_envelope, base_arbiter_union, base_arbiter_compatible = _base_graph_evidence(
         repo_root, merge_base=merge_base, paths=paths, candidate_envelope=candidate_envelope
     )
     plan = certification_plan.build_repository_plan(
@@ -388,6 +396,7 @@ def prepare(
         base_paths=_paths_present(repo_root, merge_base, paths),
         candidate_paths=_paths_present(repo_root, candidate, paths),
         arbiter_compatible=base_arbiter_compatible,
+        base_arbiter_union=base_arbiter_union,
         repo_root=repo_root,
     )
     digest = _digest(plan)

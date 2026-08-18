@@ -149,6 +149,49 @@ def test_missing_base_engine_or_incompatible_arbiter_fails_all_boundaries():
     assert unavailable["selected_groups"] == list(graph.BOUNDARIES)
 
 
+def test_arbiter_self_change_uses_base_arbiter_union_not_candidate_union(monkeypatch):
+    path = "scripts/test_impact_arbiter.py"
+    target_id = "repo-pytest:ci/tests/test_pr_lifecycle.py"
+    base = envelope([path], "base", [
+        obligation(path, f"graph-target:{target_id}", "python-control-plane", preferred=[target_id])
+    ])
+    candidate = envelope([path], "candidate", [])
+    trusted = graph.arbiter.union_envelopes(base, candidate)
+
+    # Simulate the exact Review blocker: candidate arbiter stays format-compatible
+    # but maliciously drops every BASE-only obligation.
+    monkeypatch.setattr(graph.arbiter, "union_envelopes", lambda *_: {
+        "format": graph.arbiter.UNION_FORMAT,
+        "base_engine_identity": "a" * 64,
+        "candidate_engine_identity": "a" * 64,
+        "base_obligation_digest": "0" * 64,
+        "candidate_obligation_digest": "0" * 64,
+        "union_digest": "0" * 64,
+        "semantic_keys": [],
+        "obligations": [],
+    })
+
+    plan = graph.build_graph_plan(
+        [path], base_envelope=base, candidate_envelope=candidate,
+        base_arbiter_union=trusted, base_paths=[path], candidate_paths=[path],
+    )
+    selected = {
+        item["id"] for item in [*plan["selected_targets"], *plan["hosted_required_targets"]]
+    }
+    assert target_id in selected
+    assert plan["obligation_union"] == trusted
+    assert plan["all_boundary_fallback"] is False
+
+    missing = graph.build_graph_plan(
+        [path], base_envelope=base, candidate_envelope=candidate,
+        base_paths=[path], candidate_paths=[path],
+    )
+    assert missing["all_boundary_fallback"] is True
+    assert missing["all_boundary_fallback_reasons"] == [
+        "base-arbiter-union-unavailable-for-self-change"
+    ]
+
+
 def test_execution_guard_runtime_edge_selects_real_mutation_workspace():
     path = "dish/test_selection/execution_guard.py"
     base = graph.build_legacy_envelope([path], provenance="base")

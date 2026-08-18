@@ -341,6 +341,7 @@ def build_repository_plan(
     base_paths: Iterable[str] | None = None,
     candidate_paths: Iterable[str] | None = None,
     arbiter_compatible: bool = True,
+    base_arbiter_union: object | None = None,
     repo_root: Path = ROOT,
     policy_path: Path = POLICY_PATH,
     schema_path: Path = SCHEMA_PATH,
@@ -412,6 +413,7 @@ def build_repository_plan(
             candidate_paths=candidate_paths,
             repo_root=repo_root,
             arbiter_compatible=arbiter_compatible,
+            base_arbiter_union=base_arbiter_union,
         )
     except impact_graph.GraphError as exc:
         graph_plan = impact_graph.build_graph_plan(

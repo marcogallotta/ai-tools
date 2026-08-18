@@ -67,6 +67,63 @@ class GraphError(ValueError):
     """The graph cannot prove a non-narrowing plan."""
 
 
+def _value_digest(value: object) -> str:
+    payload = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _trusted_base_arbiter_union(
+    raw: object, *, base_envelope: object, candidate_envelope: object, paths: tuple[str, ...]
+) -> dict[str, object]:
+    """Mechanically bind a BASE-arbiter union to the exact independently produced envelopes."""
+    if not isinstance(raw, dict) or raw.get("format") != "dish-test-obligation-union-v1":
+        raise GraphError("BASE arbiter union format is invalid")
+    if not isinstance(base_envelope, dict) or not isinstance(candidate_envelope, dict):
+        raise GraphError("BASE arbiter union requires object envelopes")
+    expected: dict[str, tuple[str, object]] = {
+        "base": ("base", base_envelope),
+        "candidate": ("candidate", candidate_envelope),
+    }
+    normalized: dict[str, dict[str, object]] = {}
+    for label, (provenance, envelope) in expected.items():
+        assert isinstance(envelope, dict)
+        if envelope.get("format") != "dish-test-obligations-v1" or envelope.get("provenance") != provenance:
+            raise GraphError(f"{label} obligation envelope identity is invalid")
+        engine_identity = envelope.get("engine_identity")
+        obligations = envelope.get("obligations")
+        if not isinstance(engine_identity, str) or not _SHA_RE.fullmatch(engine_identity):
+            raise GraphError(f"{label} obligation engine identity is invalid")
+        if envelope.get("changed_paths") != list(paths) or not isinstance(obligations, list):
+            raise GraphError(f"{label} obligation envelope does not cover the exact changed paths")
+        if any(not isinstance(item, dict) or item.get("provenance") != provenance for item in obligations):
+            raise GraphError(f"{label} obligation envelope has invalid provenance")
+        normalized[label] = {
+            "engine_identity": engine_identity,
+            "obligations": obligations,
+        }
+    expected_obligations = [
+        *normalized["base"]["obligations"],  # type: ignore[list-item]
+        *normalized["candidate"]["obligations"],  # type: ignore[list-item]
+    ]
+    expected_obligations.sort(
+        key=lambda item: (str(item["path"]), str(item["key"]), str(item["provenance"]))
+    )
+    if raw.get("base_engine_identity") != normalized["base"]["engine_identity"]:
+        raise GraphError("BASE arbiter union is bound to the wrong BASE engine")
+    if raw.get("candidate_engine_identity") != normalized["candidate"]["engine_identity"]:
+        raise GraphError("BASE arbiter union is bound to the wrong candidate engine")
+    if raw.get("base_obligation_digest") != _value_digest(normalized["base"]["obligations"]):
+        raise GraphError("BASE arbiter union BASE obligation digest mismatch")
+    if raw.get("candidate_obligation_digest") != _value_digest(normalized["candidate"]["obligations"]):
+        raise GraphError("BASE arbiter union candidate obligation digest mismatch")
+    if raw.get("obligations") != expected_obligations or raw.get("union_digest") != _value_digest(expected_obligations):
+        raise GraphError("BASE arbiter union narrowed or changed the independent obligation sets")
+    semantic_keys = sorted({(str(item["path"]), str(item["key"])) for item in expected_obligations})
+    if raw.get("semantic_keys") != [list(value) for value in semantic_keys]:
+        raise GraphError("BASE arbiter union semantic key set mismatch")
+    return dict(raw)
+
+
 def _json(path: Path) -> dict[str, object]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -541,6 +598,7 @@ def build_graph_plan(
     candidate_envelope: object, profile: str = "PR_EXACT_HEAD",
     base_paths: Iterable[str] | None = None, candidate_paths: Iterable[str] | None = None,
     repo_root: Path = ROOT, arbiter_compatible: bool = True,
+    base_arbiter_union: object | None = None,
 ) -> dict[str, object]:
     paths = normalize_paths(changed_paths)
     if profile not in PROFILES:
@@ -548,9 +606,16 @@ def build_graph_plan(
     targets = load_targets(repo_root / "ci" / "test-impact" / "targets.json")
     retirements = load_target_retirements(repo_root / "ci" / "test-impact" / "targets.json")
     mappings = load_edges(targets, repo_root / "ci" / "test-impact" / "edges.json")
-    candidate_valid = arbiter.validate_envelope(candidate_envelope, expected_provenance="candidate")
-    candidate_engine_identity = str(candidate_valid["engine_identity"])
     self_change = bool(set(paths) & GRAPH_SELF_PATHS)
+    if self_change:
+        if not isinstance(candidate_envelope, dict):
+            raise GraphError("candidate obligation envelope must be an object")
+        candidate_engine_identity = str(candidate_envelope.get("engine_identity") or "")
+        if not _SHA_RE.fullmatch(candidate_engine_identity):
+            raise GraphError("candidate obligation engine identity is invalid")
+    else:
+        candidate_valid = arbiter.validate_envelope(candidate_envelope, expected_provenance="candidate")
+        candidate_engine_identity = str(candidate_valid["engine_identity"])
     if base_envelope is None:
         reason = "base-engine-obligation-envelope-unavailable"
         return _all_boundary_plan(paths, targets, profile=profile, reason=reason, candidate_engine_identity=candidate_engine_identity)
@@ -559,13 +624,30 @@ def build_graph_plan(
             paths, targets, profile=profile, reason="base-arbiter-incompatible-with-self-change",
             candidate_engine_identity=candidate_engine_identity,
         )
-    try:
-        union = arbiter.union_envelopes(base_envelope, candidate_valid)
-    except arbiter.ArbiterError as exc:
-        return _all_boundary_plan(
-            paths, targets, profile=profile, reason=f"obligation-union-failed:{exc}",
-            candidate_engine_identity=candidate_engine_identity,
-        )
+    if self_change:
+        if base_arbiter_union is None:
+            return _all_boundary_plan(
+                paths, targets, profile=profile, reason="base-arbiter-union-unavailable-for-self-change",
+                candidate_engine_identity=candidate_engine_identity,
+            )
+        try:
+            union = _trusted_base_arbiter_union(
+                base_arbiter_union, base_envelope=base_envelope,
+                candidate_envelope=candidate_envelope, paths=paths,
+            )
+        except GraphError as exc:
+            return _all_boundary_plan(
+                paths, targets, profile=profile, reason=f"base-arbiter-union-invalid:{exc}",
+                candidate_engine_identity=candidate_engine_identity,
+            )
+    else:
+        try:
+            union = arbiter.union_envelopes(base_envelope, candidate_valid)
+        except arbiter.ArbiterError as exc:
+            return _all_boundary_plan(
+                paths, targets, profile=profile, reason=f"obligation-union-failed:{exc}",
+                candidate_engine_identity=candidate_engine_identity,
+            )
     obligations_by_path: dict[str, list[dict[str, object]]] = defaultdict(list)
     for item in union["obligations"]:  # type: ignore[index]
         obligations_by_path[str(item["path"])].append(item)

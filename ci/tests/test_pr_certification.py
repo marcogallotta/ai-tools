@@ -145,3 +145,65 @@ def test_unknown_runner_is_rejected():
         module.build_execution_spec(plan([
             target("bad", "shell", "echo nope", "python-control-plane", [])
         ]), plan_digest="d" * 64)
+
+
+def test_base_graph_evidence_returns_the_base_arbiter_union(monkeypatch, tmp_path: Path):
+    import io
+    import tarfile
+    from types import SimpleNamespace
+
+    changed = ("scripts/test_impact_arbiter.py",)
+    base_envelope = {
+        "format": "dish-test-obligations-v1",
+        "provenance": "base",
+        "engine_identity": "b" * 64,
+        "changed_paths": list(changed),
+        "obligations": [],
+    }
+    candidate_envelope = {
+        "format": "dish-test-obligations-v1",
+        "provenance": "candidate",
+        "engine_identity": "c" * 64,
+        "changed_paths": list(changed),
+        "obligations": [],
+    }
+    base_union = {
+        "format": "dish-test-obligation-union-v1",
+        "base_engine_identity": "b" * 64,
+        "candidate_engine_identity": "c" * 64,
+        "base_obligation_digest": "1" * 64,
+        "candidate_obligation_digest": "2" * 64,
+        "union_digest": "3" * 64,
+        "semantic_keys": [],
+        "obligations": [],
+    }
+    archive_bytes = io.BytesIO()
+    with tarfile.open(fileobj=archive_bytes, mode="w") as archive:
+        for name in ("scripts/test_impact_graph.py", "scripts/test_impact_arbiter.py"):
+            payload = b"# placeholder for BASE materialization test\n"
+            info = tarfile.TarInfo(name)
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
+
+    calls = 0
+    def fake_run(argv, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return SimpleNamespace(returncode=0, stdout=archive_bytes.getvalue(), stderr=b"")
+        if calls == 2:
+            return SimpleNamespace(returncode=0, stdout=json.dumps(base_envelope), stderr="")
+        if calls == 3:
+            return SimpleNamespace(returncode=0, stdout=json.dumps(base_union), stderr="")
+        raise AssertionError(f"unexpected subprocess call: {argv}")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    observed_base, observed_union, compatible = module._base_graph_evidence(
+        tmp_path,
+        merge_base="d" * 40,
+        paths=changed,
+        candidate_envelope=candidate_envelope,
+    )
+    assert compatible is True
+    assert observed_base == base_envelope
+    assert observed_union == base_union
