@@ -5,7 +5,7 @@ cp dish/docs/chatgpt-projects/source.json /tmp/task1-base-source.json
 cp dish/docs/chatgpt-projects/manifest.json /tmp/task1-base-manifest.json
 python3 <<'PY'
 from pathlib import Path
-import hashlib, json
+import hashlib, json, re
 
 source_path=Path('dish/docs/chatgpt-projects/source.json')
 source=json.loads(source_path.read_text())
@@ -124,6 +124,41 @@ def test_bundle_unavailable_behavior_case_requires_progress_without_human_transp
     assert {'resolve-exact-pr-and-live-authority','use-connector-native-review-evidence','proceed-substantive-review'} <= set(scenario['required_actions'])
     assert {'block-for-bundle-transport-only','route-local-for-bundle-transport-only','ask-marco-for-bundle-waiver-or-relay'} <= set(scenario['forbidden_actions'])
 ''')
+
+kernel_test=Path('dish/tests/test_chatgpt_project_kernels.py')
+text=kernel_test.read_text()
+old_test='''def test_published_main_86_generation_is_retained_and_nonblocking():
+ m,s=kernels.load_canonical(); old='dish-chatgpt-projects-v2-86b8011172ee'
+ for role in s['roles']:
+  for boundary in ('startup','status','dispatch','handoff','role-critical-write','review-write','merge','analysis'):
+   d=kernels.classify_project_drift(old,role,boundary,manifest=m,source=s)
+   assert d['state']=='outdated' and not d['block'] and not d['resync_required'], (role,boundary,d)
+   assert d['drift_level'] in {1,2}
+'''
+new_test='''def test_published_main_86_generation_is_retained_and_current_break_history_is_honored():
+ m,s=kernels.load_canonical(); old='dish-chatgpt-projects-v2-86b8011172ee'
+ assert old in kernels.required_versions(m)
+ ordinary=kernels.classify_project_drift(old,'review','review-write',manifest=m,source=s)
+ assert ordinary['state']=='outdated' and not ordinary['block'] and not ordinary['resync_required'] and ordinary['drift_level'] in {1,2}
+ emergency=kernels.classify_project_drift(old,'implementation','handoff',manifest=m,source=s)
+ assert emergency['state']=='hard_break' and emergency['block'] and emergency['resync_required'] and emergency['drift_level']==3
+'''
+if text.count(old_test)!=1: raise SystemExit('published-main-86 test baseline changed')
+text=text.replace(old_test,new_test,1)
+fn='def test_required_version_inventory_matches_published_first_parent_history_and_restores_losses():'
+start=text.index(fn); end=text.find('\ndef ',start+len(fn)); end=len(text) if end<0 else end
+block=text[start:end]
+m=re.search(r"(expected=\{f'dish-chatgpt-projects-v2-\{x\}' for x in \[)([^\]]*)(\]\})",block)
+if not m: raise SystemExit('required-version fixture list not found')
+items=m.group(2)
+for short in ('d3a070d57fb2','443e13732e7f'):
+    if f"'{short}'" not in items: items=items.rstrip()+",'"+short+"'"
+block=block[:m.start(2)]+items+block[m.end(2):]
+count=re.search(r'assert set\(versions\)==expected and len\(versions\)==(\d+)',block)
+if not count: raise SystemExit('required-version fixture count not found')
+expected_count=len(re.findall(r"'[0-9a-f]{12}'",items))+1
+block=block[:count.start(1)]+str(expected_count)+block[count.end(1):]
+kernel_test.write_text(text[:start]+block+text[end:])
 PY
 
 python3 dish/scripts/chatgpt_project_kernels.py reconcile \
@@ -138,7 +173,7 @@ git diff --check
 
 git config user.name 'Dish Agent'
 git config user.email 'dish-agent@users.noreply.github.com'
-git add CLAUDE.md dish/docs/agents/standing-invariants.json dish/docs/chatgpt-projects dish/scripts/chatgpt_project_kernels.py dish/tests/test_review_bundle_consistency.py
+git add CLAUDE.md dish/docs/agents/standing-invariants.json dish/docs/chatgpt-projects dish/scripts/chatgpt_project_kernels.py dish/tests/test_chatgpt_project_kernels.py dish/tests/test_review_bundle_consistency.py
 git commit -m $'Resolve Review bundle admission contradiction\n\nAsana task: 1217594495187308'
 echo "head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 python3 - <<'PY' >> "$GITHUB_OUTPUT"
