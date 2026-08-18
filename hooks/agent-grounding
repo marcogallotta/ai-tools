@@ -168,11 +168,10 @@ def _hook_repository_candidate() -> str:
     return str(Path(__file__).resolve().parents[1])
 
 
-def _pre_role_repository(payload: dict[str, Any]) -> Path:
-    candidates = (
-        ("installed hook target", _hook_repository_candidate()),
-        ("session cwd", str(payload.get("cwd")) if payload.get("cwd") else None),
-    )
+def _pre_role_repository(payload: dict[str, Any], host: str) -> Path:
+    hook = ("installed hook target", _hook_repository_candidate())
+    cwd = ("session cwd", str(payload.get("cwd")) if payload.get("cwd") else None)
+    candidates = (hook, cwd) if host == "codex" else (cwd, hook)
     errors: list[str] = []
     for label, candidate in candidates:
         repo = BASE._repo_from_candidate(candidate)
@@ -198,7 +197,7 @@ def _pre_role_ground(
     *,
     session_source: str,
 ) -> dict[str, Any]:
-    repo = _pre_role_repository(payload)
+    repo = _pre_role_repository(payload, host)
     root_text = BASE._read_required(repo, "CLAUDE.md")
     index_text = BASE._read_required(repo, "dish/docs/agents/index.md")
     generation = str(uuid.uuid4())
