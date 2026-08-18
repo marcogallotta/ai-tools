@@ -67,12 +67,6 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _authority_record(repo: Path, path: str) -> dict[str, Any]:
-    text = BASE._read_required(repo, path)
-    record = BASE._authority_record(repo, path, text)
-    return {**record, "sha256": _sha256(text)}
-
-
 def _context_record(repo: Path, resolver: ModuleType, locator: str) -> dict[str, Any]:
     path = locator.split("#", 1)[0]
     full = BASE._read_required(repo, path)
@@ -106,17 +100,24 @@ def _resolved_startup(
     return identity, repo, role, resolver, resolved
 
 
-def _startup_records(repo: Path, resolved: dict[str, Any]) -> list[dict[str, Any]]:
-    return [_authority_record(repo, str(path)) for path in resolved["startup_paths"]]
+def _startup_records(
+    repo: Path, resolver: ModuleType, resolved: dict[str, Any]
+) -> list[dict[str, Any]]:
+    return [
+        _context_record(repo, resolver, str(locator))
+        for locator in resolved["startup_context"]
+    ]
 
 
-def _startup_context(repo: Path, resolved: dict[str, Any]) -> str:
+def _startup_context(repo: Path, resolver: ModuleType, resolved: dict[str, Any]) -> str:
     pieces = [
         "DISH SHARED/INHERITED CONTEXT — resolved from canonical Project source + role index; read-only context grants no new authority."
     ]
-    for path in resolved["startup_paths"]:
-        path = str(path)
-        pieces.append(f"\n===== RESOLVED STARTUP CONTEXT: {path} =====\n{BASE._read_required(repo, path)}")
+    for locator in resolved["startup_context"]:
+        locator = str(locator)
+        pieces.append(
+            f"\n===== RESOLVED STARTUP CONTEXT: {locator} =====\n{resolver.section_text(repo, locator)}"
+        )
     return "\n".join(pieces)
 
 
@@ -127,8 +128,8 @@ def _augment_session_marker(
     session_source: str,
 ) -> tuple[dict[str, Any], str]:
     marker = BASE._read_json(BASE.marker_path(agent_id), "re-grounding marker")
-    _identity, repo, role, _resolver_module, resolved = _resolved_startup(agent_id, payload)
-    records = _startup_records(repo, resolved)
+    _identity, repo, role, resolver, resolved = _resolved_startup(agent_id, payload)
+    records = _startup_records(repo, resolver, resolved)
     marker["session_grounding"] = {
         "source": session_source,
         "grounded_at": _now_utc(),
@@ -138,6 +139,7 @@ def _augment_session_marker(
         "declaration_source": resolved["declaration_source"],
         "role_index": resolved["role_index"],
         "repository_modifying": resolved["repository_modifying"],
+        "operator_extended": resolved["operator_extended"],
         "context_records": records,
     }
     BASE._atomic_write_json(BASE.marker_path(agent_id), marker)
@@ -157,7 +159,7 @@ def _augment_session_marker(
         "context_records": records,
     }
     BASE._atomic_write_json(_session_receipt_path(agent_id), receipt)
-    return marker, _startup_context(repo, resolved)
+    return marker, _startup_context(repo, resolver, resolved)
 
 
 def _session_ground(
@@ -183,25 +185,25 @@ def _session_ground(
 def _shared_context_stale(agent_id: str, payload: dict[str, Any]) -> str | None:
     try:
         marker = BASE._read_json(BASE.marker_path(agent_id), "re-grounding marker")
-        _identity, repo, _role, _resolver_module, resolved = _resolved_startup(agent_id, payload)
+        _identity, repo, _role, resolver, resolved = _resolved_startup(agent_id, payload)
         session = marker.get("session_grounding")
         if not isinstance(session, dict):
             return "shared/inherited session grounding witness is missing"
         records = session.get("context_records")
         if not isinstance(records, list):
             return "shared/inherited session grounding records are missing"
-        by_path = {
-            str(record.get("path")): record
+        by_locator = {
+            str(record.get("locator")): record
             for record in records
-            if isinstance(record, dict) and record.get("path")
+            if isinstance(record, dict) and record.get("locator")
         }
-        for expected in resolved["startup_paths"]:
+        for expected in resolved["startup_context"]:
             expected = str(expected)
-            record = by_path.get(expected)
+            record = by_locator.get(expected)
             if record is None:
                 return f"required shared/inherited context was not grounded: {expected}"
-            current = BASE._read_required(repo, expected)
-            if record.get("sha256") != _sha256(current):
+            current = resolver.section_text(repo, expected)
+            if record.get("content_sha256") != _sha256(current):
                 return f"required shared/inherited context changed after grounding: {expected}"
     except BASE.RegroundError as exc:
         return str(exc)
@@ -211,7 +213,9 @@ def _shared_context_stale(agent_id: str, payload: dict[str, Any]) -> str | None:
 def _pretool_context_after_recovery(
     agent_id: str, payload: dict[str, Any], *, reason: str
 ) -> str:
-    _marker, shared = _augment_session_marker(agent_id, payload, session_source="action-recovery")
+    _marker, shared = _augment_session_marker(
+        agent_id, payload, session_source="action-recovery"
+    )
     return f"DISH ACTION-BOUNDARY RE-GROUND — {reason}\n{shared}"
 
 
@@ -262,7 +266,9 @@ def _action_ground(
     return "\n".join(pieces)
 
 
-def _record_tool_witness(agent_id: str, payload: dict[str, Any], trigger: str | None) -> None:
+def _record_tool_witness(
+    agent_id: str, payload: dict[str, Any], trigger: str | None
+) -> None:
     marker = BASE._read_json(BASE.marker_path(agent_id), "re-grounding marker")
     _identity, repo, role = _identity_repo(agent_id, payload)
     marker["last_tool_witness"] = {
@@ -280,27 +286,33 @@ def _record_tool_witness(agent_id: str, payload: dict[str, Any], trigger: str | 
     BASE._atomic_write_json(BASE.marker_path(agent_id), marker)
 
 
-def _pretool(payload: dict[str, Any], agent_id: str, host: str) -> dict[str, Any] | None:
+def _pretool(
+    payload: dict[str, Any], agent_id: str, host: str
+) -> dict[str, Any] | None:
     additional: list[str] = []
     generation_before: str | None = None
     if BASE.marker_path(agent_id).exists():
         try:
             generation_before = str(
-                BASE._read_json(BASE.marker_path(agent_id), "re-grounding marker").get(
-                    "grounding_generation", ""
-                )
+                BASE._read_json(
+                    BASE.marker_path(agent_id), "re-grounding marker"
+                ).get("grounding_generation", "")
             )
         except BASE.RegroundError:
             generation_before = None
 
     if not BASE.boundary_path(agent_id).exists() or not BASE.marker_path(agent_id).exists():
         try:
-            _session_ground(payload, agent_id, host, session_source="action-recovery")
+            _session_ground(
+                payload, agent_id, host, session_source="action-recovery"
+            )
         except BASE.RegroundError as exc:
             return BASE.deny(f"automatic grounding from missing witness failed: {exc}")
         additional.append(
             _pretool_context_after_recovery(
-                agent_id, payload, reason="missing session witness recovered before tool use"
+                agent_id,
+                payload,
+                reason="missing session witness recovered before tool use",
             )
         )
     else:
@@ -312,21 +324,27 @@ def _pretool(payload: dict[str, Any], agent_id: str, host: str) -> dict[str, Any
         if generation_before and generation_after != generation_before:
             additional.append(
                 _pretool_context_after_recovery(
-                    agent_id, payload, reason="stale core authority recovered before tool use"
+                    agent_id,
+                    payload,
+                    reason="stale core authority recovered before tool use",
                 )
             )
 
     stale = _shared_context_stale(agent_id, payload)
     if stale:
         try:
-            _session_ground(payload, agent_id, host, session_source="action-recovery")
+            _session_ground(
+                payload, agent_id, host, session_source="action-recovery"
+            )
         except BASE.RegroundError as exc:
             return BASE.deny(f"shared/inherited context recovery failed: {exc}")
         additional.append(
             _pretool_context_after_recovery(agent_id, payload, reason=stale)
         )
 
-    trigger_value = payload.get("dish_action_trigger") or os.environ.get("DISH_ACTION_TRIGGER")
+    trigger_value = payload.get("dish_action_trigger") or os.environ.get(
+        "DISH_ACTION_TRIGGER"
+    )
     trigger = str(trigger_value).strip() if trigger_value else None
     if trigger:
         try:
@@ -335,7 +353,10 @@ def _pretool(payload: dict[str, Any], agent_id: str, host: str) -> dict[str, Any
                     agent_id,
                     payload,
                     trigger,
-                    tool_name=str(payload.get("tool_name") or payload.get("toolName") or "") or None,
+                    tool_name=str(
+                        payload.get("tool_name") or payload.get("toolName") or ""
+                    )
+                    or None,
                 )
             )
         except BASE.RegroundError as exc:
@@ -359,11 +380,15 @@ def _pretool(payload: dict[str, Any], agent_id: str, host: str) -> dict[str, Any
 def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command")
-    action = sub.add_parser("action", help="ground one declared action-specific context trigger")
+    action = sub.add_parser(
+        "action", help="ground one declared action-specific context trigger"
+    )
     action.add_argument("--agent-id")
     action.add_argument("--trigger", required=True)
     action.add_argument("--cwd", default=os.getcwd())
-    history = sub.add_parser("history", help="delegate transcript verification to agent-reground")
+    history = sub.add_parser(
+        "history", help="delegate transcript verification to agent-reground"
+    )
     history.add_argument("--agent-id")
     history.add_argument("--query")
     return parser.parse_args(argv)
@@ -372,7 +397,10 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 def _cli_action(args: argparse.Namespace) -> int:
     agent_id = args.agent_id or os.environ.get("CODEX_THREAD_ID")
     if not agent_id:
-        print("ERROR: --agent-id is required when CODEX_THREAD_ID is unavailable", file=sys.stderr)
+        print(
+            "ERROR: --agent-id is required when CODEX_THREAD_ID is unavailable",
+            file=sys.stderr,
+        )
         return 2
     try:
         safe_id = BASE._validate_agent_id(agent_id)
@@ -381,9 +409,13 @@ def _cli_action(args: argparse.Namespace) -> int:
             "session_id": safe_id,
             "cwd": args.cwd,
         }
-        if not BASE.boundary_path(safe_id).exists() or not BASE.marker_path(safe_id).exists():
-            _host = "codex" if os.environ.get("CODEX_THREAD_ID") else "claude"
-            _session_ground(payload, safe_id, _host, session_source="action-recovery")
+        if not BASE.boundary_path(safe_id).exists() or not BASE.marker_path(
+            safe_id
+        ).exists():
+            host = "codex" if os.environ.get("CODEX_THREAD_ID") else "claude"
+            _session_ground(
+                payload, safe_id, host, session_source="action-recovery"
+            )
         text = _action_ground(safe_id, payload, args.trigger, tool_name=None)
     except BASE.RegroundError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
@@ -399,7 +431,9 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "history":
             agent_id = args.agent_id or os.environ.get("CODEX_THREAD_ID")
             if not agent_id:
-                print("UNKNOWN: --agent-id is required when CODEX_THREAD_ID is unavailable")
+                print(
+                    "UNKNOWN: --agent-id is required when CODEX_THREAD_ID is unavailable"
+                )
                 return 0
             try:
                 safe_id = BASE._validate_agent_id(agent_id)
@@ -417,7 +451,13 @@ def main(argv: list[str] | None = None) -> int:
         agent_id, host = BASE.resolve_agent_id(payload)
         if event == "SessionStart":
             source = str(payload.get("source") or "fresh").strip() or "fresh"
-            print(json.dumps(_session_ground(payload, agent_id, host, session_source=source)))
+            print(
+                json.dumps(
+                    _session_ground(
+                        payload, agent_id, host, session_source=source
+                    )
+                )
+            )
             return 0
         if event == "PreToolUse":
             decision = _pretool(payload, agent_id, host)
