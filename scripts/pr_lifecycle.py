@@ -22,6 +22,7 @@ from pr_lifecycle_terminal import TerminalCleanupDispatcher
 from pr_lifecycle_operator import action_first_status
 from pr_lifecycle_projection import atomic_write, build_projection
 from pr_lifecycle_task_state import execution_truth, ensure_projection_comment
+from pr_lifecycle_rollout import reconstruct as reconstruct_rollout, rollout_projection
 import pr_lifecycle_controller
 from pr_mutation_broker import (
     BrokerError, artifact_name as broker_artifact_name, broker_filter_event, finalize_broker_event,
@@ -265,7 +266,8 @@ def _task_projection_cycle(engine: LifecycleEngine, values: list[PRLifecycle]) -
                 continue
             try:
                 authoritative = engine.asana.get_task(gid)
-                truth = execution_truth(authoritative, engine.asana.get_stories(gid), now=engine.now())
+                stories = engine.asana.get_stories(gid)
+                truth = execution_truth(authoritative, stories, now=engine.now())
                 projection = {
                     "gid": gid,
                     "name": authoritative.get("name"),
@@ -273,6 +275,9 @@ def _task_projection_cycle(engine: LifecycleEngine, values: list[PRLifecycle]) -
                     "modified_at": authoritative.get("modified_at"),
                     "execution": truth,
                 }
+                rollout = rollout_projection(reconstruct_rollout(stories, task_gid=gid))
+                if rollout is not None:
+                    projection["rollout"] = rollout
                 ensure_projection_comment(engine.asana, gid, projection)
                 tasks[gid] = projection
             except LifecycleError as exc:
