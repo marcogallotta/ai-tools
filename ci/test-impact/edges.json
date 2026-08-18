@@ -1,0 +1,82 @@
+{
+  "format": "dish-test-impact-edges-v1",
+  "mappings": [
+    {
+      "path": "scripts/pr_lifecycle.py",
+      "mode": "authoritative",
+      "targets": ["repo-pytest:ci/tests/test_pr_lifecycle.py"],
+      "guarantees": ["pr-lifecycle"],
+      "reason": "R9 lifecycle control-plane migration",
+      "legacy_dispositions": [
+        {"key": "legacy-boundary:python-control-plane:repository control-plane", "kind": "mapped", "targets": ["repo-pytest:ci/tests/test_pr_lifecycle.py"]},
+        {"key": "legacy-boundary:python-control-plane:ordinary full suite", "kind": "retired", "reason": "incidental_broad_coverage", "provenance": "R9 replay 31912433743"},
+        {"key": "legacy-boundary:frontend-static:frontend static", "kind": "retired", "reason": "incidental_broad_coverage", "provenance": "R9 replay 31912433743"},
+        {"key": "legacy-boundary:native-postgresql:native PostgreSQL certification", "kind": "retired", "reason": "incidental_broad_coverage", "provenance": "R9 replay 31912433743"},
+        {"key": "legacy-boundary:browser-acceptance:browser acceptance", "kind": "retired", "reason": "incidental_broad_coverage", "provenance": "R9 replay 31912433743"}
+      ]
+    },
+    {
+      "path": "ci/pr-lifecycle-dispatcher-runbook.md",
+      "mode": "authoritative",
+      "targets": ["repo-pytest:ci/tests/test_pr_lifecycle.py"],
+      "guarantees": ["pr-lifecycle"],
+      "reason": "R9 lifecycle runbook migration",
+      "legacy_dispositions": [
+        {"key": "legacy-boundary:python-control-plane:repository control-plane", "kind": "mapped", "targets": ["repo-pytest:ci/tests/test_pr_lifecycle.py"]},
+        {"key": "legacy-boundary:python-control-plane:ordinary full suite", "kind": "retired", "reason": "incidental_broad_coverage", "provenance": "R9 replay 31913089113"},
+        {"key": "legacy-boundary:frontend-static:frontend static", "kind": "retired", "reason": "incidental_broad_coverage", "provenance": "R9 replay 31913089113"},
+        {"key": "legacy-boundary:native-postgresql:native PostgreSQL certification", "kind": "retired", "reason": "incidental_broad_coverage", "provenance": "R9 replay 31913089113"},
+        {"key": "legacy-boundary:browser-acceptance:browser acceptance", "kind": "retired", "reason": "incidental_broad_coverage", "provenance": "R9 replay 31913089113"}
+      ]
+    },
+    {
+      "path": "scripts/pr_certification.py",
+      "mode": "authoritative",
+      "targets": ["repo-pytest:ci/tests/test_pr_certification.py"],
+      "guarantees": ["exact-head-certification"],
+      "reason": "R9 exact-head preparation migration",
+      "legacy_dispositions": [
+        {"key": "legacy-boundary:python-control-plane:repository control-plane", "kind": "mapped", "targets": ["repo-pytest:ci/tests/test_pr_certification.py"]},
+        {"key": "legacy-boundary:python-control-plane:ordinary full suite", "kind": "retired", "reason": "incidental_broad_coverage", "provenance": "R9 replay 31912346932"},
+        {"key": "legacy-boundary:frontend-static:frontend static", "kind": "retired", "reason": "incidental_broad_coverage", "provenance": "R9 replay 31912346932"},
+        {"key": "legacy-boundary:native-postgresql:native PostgreSQL certification", "kind": "retired", "reason": "incidental_broad_coverage", "provenance": "R9 replay 31912346932"},
+        {"key": "legacy-boundary:browser-acceptance:browser acceptance", "kind": "retired", "reason": "incidental_broad_coverage", "provenance": "R9 replay 31912346932"}
+      ]
+    },
+    {
+      "path": "dish/test_selection/execution_guard.py",
+      "mode": "augment",
+      "targets": ["harness:mutation-real-workspace", "fallback:native-postgresql"],
+      "guarantees": ["pytest-admission", "mutation-workspace", "native-postgresql"],
+      "reason": "selector miss 31955770608: guarded synthetic workspaces are runtime consumers"
+    },
+    {
+      "path": "dish/tests/conftest.py",
+      "mode": "augment",
+      "targets": ["harness:mutation-real-workspace", "harness:pglite-nested-collection", "fallback:native-postgresql", "fallback:browser-acceptance"],
+      "guarantees": ["pytest-admission", "pglite-collection", "native-postgresql", "browser-acceptance"],
+      "reason": "global pytest harness consumers"
+    },
+    {
+      "path": "dish/tests/mutation_runner.py",
+      "mode": "augment",
+      "targets": ["harness:mutation-real-workspace"],
+      "guarantees": ["mutation-workspace"],
+      "reason": "real copied-workspace execution consumer"
+    },
+    {
+      "pattern": "dish/frontend/**/*.js",
+      "mode": "augment",
+      "targets": ["fallback:frontend-static", "fallback:browser-acceptance"],
+      "guarantees": ["frontend-static", "browser-acceptance"],
+      "reason": "frontend parent and browser child launch relationship"
+    },
+    {
+      "pattern": "dish/tests/postgresql/pglite/**",
+      "mode": "augment",
+      "targets": ["harness:pglite-nested-collection"],
+      "guarantees": ["pglite-collection"],
+      "reason": "PGlite governed runner nested collection"
+    }
+  ]
+}

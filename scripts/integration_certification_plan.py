@@ -13,6 +13,7 @@ import hashlib
 import json
 import re
 import sys
+import copy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
@@ -24,14 +25,18 @@ SCHEMA_PATH = ROOT / "ci" / "integration-certification-plan.schema.json"
 
 if str(DISH_ROOT) not in sys.path:
     sys.path.insert(0, str(DISH_ROOT))
+if str(ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(ROOT / "scripts"))
 
 from test_selection.model import ALLOWED_LANES as DISH_ALLOWED_LANES  # noqa: E402
 from test_selection.model import PolicyError as DishPolicyError  # noqa: E402
 from test_selection.planner import build_plan as build_dish_plan  # noqa: E402
 from test_selection.planner import load_git_policy as load_dish_git_policy  # noqa: E402
 
-FORMAT = "repository-certification-plan-v1"
-POLICY_IDENTITY_FORMAT = "repository-certification-policy-identity-v1"
+import test_impact_graph as impact_graph  # noqa: E402
+
+FORMAT = "repository-certification-plan-v2"
+POLICY_IDENTITY_FORMAT = "repository-certification-policy-identity-v2"
 SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 EXPECTED_GROUPS = (
     "python-control-plane",
@@ -208,6 +213,11 @@ def _policy_identity(repo_root: Path, policy_path: Path, schema_path: Path) -> d
         policy_path,
         schema_path,
         Path(__file__).resolve(),
+        repo_root / "scripts" / "test_impact_graph.py",
+        repo_root / "scripts" / "test_impact_arbiter.py",
+        repo_root / "ci" / "test-impact" / "targets.json",
+        repo_root / "ci" / "test-impact" / "edges.json",
+        repo_root / "ci" / "test-impact" / "replay.json",
         repo_root / "dish" / "test_selection" / "ownership.csv",
         repo_root / "dish" / "test_selection" / "model.py",
         repo_root / "dish" / "test_selection" / "planner.py",
@@ -262,31 +272,58 @@ def _dish_selector_payload(plan: object | None) -> dict[str, object]:
     }
 
 
-def _native_postgresql_selection(
-    *,
-    selected_groups: set[str],
-    force_full: bool,
-    dish_plan: object | None,
-) -> dict[str, object]:
-    if "native-postgresql" not in selected_groups:
-        return {"mode": "none", "test_files": [], "reason": "not-selected"}
-    if force_full:
-        return {"mode": "full", "test_files": [], "reason": "repository-plan-force-full"}
+def _as_base_envelope(candidate: dict[str, object]) -> dict[str, object]:
+    result = copy.deepcopy(candidate)
+    result["provenance"] = "base"
+    for item in result["obligations"]:  # type: ignore[index]
+        item["provenance"] = "base"
+    return result
 
-    if (
-        dish_plan is not None
-        and "native PostgreSQL certification" in dish_plan.lanes  # type: ignore[attr-defined]
-        and dish_plan.native_postgresql_fully_bound  # type: ignore[attr-defined]
-    ):
-        test_files = list(dish_plan.native_postgresql_test_files)  # type: ignore[attr-defined]
-        if test_files:
-            return {
-                "mode": "focused",
-                "test_files": test_files,
-                "reason": "dish-selector-native-bindings",
-            }
-    # Every native-triggering path/addition must be exactly bound before narrowing.
-    return {"mode": "full", "test_files": [], "reason": "native-impact-without-test-binding"}
+
+def _add_semantic_targets(
+    graph_plan: dict[str, object], additions: Iterable[str], *, repo_root: Path
+) -> None:
+    policy = load_repository_policy()
+    targets = impact_graph.load_targets(repo_root / "ci" / "test-impact" / "targets.json")
+    selected = {str(item["id"]): item for item in graph_plan["selected_targets"]}  # type: ignore[index]
+    hosted = {str(item["id"]): item for item in graph_plan["hosted_required_targets"]}  # type: ignore[index]
+    for lane in additions:
+        group = _group_for_lane(lane, policy)
+        if group is None:
+            group = "python-control-plane"
+        target_id = impact_graph.ALL_FALLBACKS[group]
+        if target_id in selected or target_id in hosted:
+            continue
+        target = dict(targets[target_id])
+        target["selection_reasons"] = [f"review-semantic-addition:{lane}"]
+        if graph_plan["profile"] in target["profiles"]:
+            selected[target_id] = target
+        else:
+            hosted[target_id] = target
+        for child_id in target.get("child_targets", []):
+            child = dict(targets[str(child_id)])
+            child["selection_reasons"] = [f"child-launch:{target_id}"]
+            if graph_plan["profile"] in child["profiles"]:
+                selected[str(child_id)] = child
+            else:
+                hosted[str(child_id)] = child
+    graph_plan["selected_targets"] = [selected[key] for key in sorted(selected)]
+    graph_plan["hosted_required_targets"] = [hosted[key] for key in sorted(hosted)]
+    graph_plan["selected_groups"] = sorted(
+        {str(item["execution_boundary"]) for item in selected.values()},
+        key=impact_graph.BOUNDARIES.index,
+    )
+    fingerprint = graph_plan["impact_fingerprint"]
+    assert isinstance(fingerprint, dict)
+    all_targets = {**selected, **hosted}
+    fingerprint["target_ids"] = sorted(all_targets)
+    fingerprint["execution_boundaries"] = sorted(
+        {str(item["execution_boundary"]) for item in all_targets.values()},
+        key=impact_graph.BOUNDARIES.index,
+    )
+    fingerprint["guarantees"] = sorted({
+        str(value) for item in all_targets.values() for value in item["guarantees"]
+    })
 
 
 def build_repository_plan(
@@ -297,6 +334,14 @@ def build_repository_plan(
     merge_base_sha: str,
     semantic_additions: Iterable[str] = (),
     semantic_review_complete: bool = False,
+    profile: str = "PR_EXACT_HEAD",
+    input_mode: str = "exact_git_delta",
+    base_obligations: object | None = None,
+    candidate_obligations: object | None = None,
+    base_paths: Iterable[str] | None = None,
+    candidate_paths: Iterable[str] | None = None,
+    arbiter_compatible: bool = True,
+    base_arbiter_union: object | None = None,
     repo_root: Path = ROOT,
     policy_path: Path = POLICY_PATH,
     schema_path: Path = SCHEMA_PATH,
@@ -307,8 +352,9 @@ def build_repository_plan(
     paths = normalize_changed_paths(changed_paths)
     if not paths:
         raise CertificationPlanError("complete changed-path set must contain at least one path")
+    if input_mode not in {"exact_git_delta", "explicit_predicted_paths"}:
+        raise CertificationPlanError("input_mode must be exact_git_delta or explicit_predicted_paths")
 
-    policy = load_repository_policy(policy_path)
     additions = tuple(sorted(set(lane.strip() for lane in semantic_additions if lane.strip())))
     allowed_additions = set(DISH_ALLOWED_LANES) | FUTURE_ADAPTER_LANES
     invalid_additions = sorted(set(additions) - allowed_additions)
@@ -317,13 +363,8 @@ def build_repository_plan(
             "unknown semantic certification lane additions: " + ", ".join(invalid_additions)
         )
 
+    policy = load_repository_policy(policy_path)
     classifications: list[dict[str, str]] = []
-    force_reasons: set[str] = set()
-    selected_lanes: set[str] = set(additions)
-    selected_groups: set[str] = set()
-
-    for path in paths:
-        force_reasons.update(_force_full_reasons_for_path(path, policy))
 
     dish_paths = tuple(path[len("dish/") :] for path in paths if path.startswith("dish/"))
     dish_plan = None
@@ -332,20 +373,7 @@ def build_repository_plan(
             fallback = load_dish_git_policy(repo_root=repo_root / "dish", ref=merge_base)
             dish_plan = build_dish_plan(dish_paths, fallback_policy=fallback)
         except DishPolicyError as exc:
-            force_reasons.add(f"dish-selector-failed-closed:{exc}")
-        else:
-            selected_lanes.update(dish_plan.lanes)
-            ordinary_focused_tests = tuple(
-                test
-                for test in dish_plan.focused_tests
-                if not test.startswith("frontend/tests/")
-                and not test.startswith("tests/postgresql/native/")
-                and not test.startswith("tests/postgresql/pglite/")
-            )
-            if ordinary_focused_tests:
-                selected_groups.add("python-control-plane")
-            if dish_plan.conditional_reviews and not semantic_review_complete:
-                force_reasons.add("unresolved-dish-semantic-review")
+            dish_plan = None
         dish_classification = "dish-selector" if dish_plan is not None else "dish-selector-failed-closed"
         classifications.extend(
             {"path": f"dish/{path}", "scope": "dish", "classification": dish_classification}
@@ -359,35 +387,55 @@ def build_repository_plan(
             classifications.append(
                 {"path": path, "scope": "repository", "classification": "unclassified"}
             )
-            force_reasons.add(f"unclassified-repository-path:{path}")
             continue
         names = sorted({rule.name for rule in matches})
         if len(names) != 1:
             classifications.append(
                 {"path": path, "scope": "repository", "classification": "ambiguous"}
             )
-            force_reasons.add(f"ambiguous-repository-path:{path}:{','.join(names)}")
             continue
         classifications.append(
             {"path": path, "scope": "repository", "classification": names[0]}
         )
-        for rule in matches:
-            selected_lanes.update(rule.lanes)
-            selected_groups.update(rule.groups)
-
-    for lane in tuple(sorted(selected_lanes)):
-        group = _group_for_lane(lane, policy)
-        if group is None:
-            force_reasons.add(f"unmapped-certification-lane:{lane}")
-        else:
-            selected_groups.add(group)
-
-    force_full = bool(force_reasons)
-    if force_full:
-        selected_lanes.update(policy.full_certification_lanes)
-        selected_groups.update(policy.execution_groups)
-
-    group_order = {name: index for index, name in enumerate(policy.execution_groups)}
+    if candidate_obligations is None:
+        candidate_obligations = impact_graph.build_legacy_envelope(
+            paths, provenance="candidate", repo_root=repo_root
+        )
+    if base_obligations is None and not (set(paths) & impact_graph.GRAPH_SELF_PATHS):
+        base_obligations = _as_base_envelope(candidate_obligations)  # type: ignore[arg-type]
+    try:
+        graph_plan = impact_graph.build_graph_plan(
+            paths,
+            base_envelope=base_obligations,
+            candidate_envelope=candidate_obligations,
+            profile=profile,
+            base_paths=base_paths,
+            candidate_paths=candidate_paths,
+            repo_root=repo_root,
+            arbiter_compatible=arbiter_compatible,
+            base_arbiter_union=base_arbiter_union,
+        )
+    except impact_graph.GraphError as exc:
+        graph_plan = impact_graph.build_graph_plan(
+            paths,
+            base_envelope=None,
+            candidate_envelope=candidate_obligations,
+            profile=profile,
+            repo_root=repo_root,
+        )
+        graph_plan["all_boundary_fallback_reasons"] = [f"graph-validation-failed:{exc}"]
+    failed_closed_paths = [
+        item["path"] for item in classifications
+        if item["classification"] in {"unclassified", "ambiguous", "dish-selector-failed-closed"}
+    ]
+    if failed_closed_paths:
+        graph_plan["all_boundary_fallback"] = True
+        graph_plan["all_boundary_fallback_reasons"] = [
+            f"unclassified-impact:{path}" for path in sorted(failed_closed_paths)
+        ]
+        graph_plan["impact_fingerprint"]["all_boundary_fallback"] = True  # type: ignore[index]
+    graph_plan["impact_fingerprint"]["input_mode"] = input_mode  # type: ignore[index]
+    _add_semantic_targets(graph_plan, additions, repo_root=repo_root)
     return {
         "format": FORMAT,
         "identity": {
@@ -396,19 +444,14 @@ def build_repository_plan(
             "merge_base_sha": merge_base,
         },
         "changed_paths": list(paths),
+        "profile": profile,
         "classifications": sorted(classifications, key=lambda item: item["path"]),
         "dish_selector": _dish_selector_payload(dish_plan),
         "semantic_additions": {
             "review_complete": semantic_review_complete,
             "lanes": list(additions),
         },
-        "selected_lanes": sorted(selected_lanes),
-        "selected_groups": sorted(selected_groups, key=group_order.__getitem__),
-        "native_postgresql": _native_postgresql_selection(
-            selected_groups=selected_groups, force_full=force_full, dish_plan=dish_plan
-        ),
-        "force_full": force_full,
-        "force_full_reasons": sorted(force_reasons),
+        **graph_plan,
         "policy_identity": _policy_identity(repo_root, policy_path, schema_path),
     }
 
@@ -423,6 +466,12 @@ def _parser() -> argparse.ArgumentParser:
         action="append",
         default=[],
         help="exact repository-relative changed path; repeat for the complete changed set",
+    )
+    parser.add_argument("--profile", choices=impact_graph.PROFILES, default="PR_EXACT_HEAD")
+    parser.add_argument(
+        "--input-mode",
+        choices=("exact_git_delta", "explicit_predicted_paths"),
+        default="exact_git_delta",
     )
     parser.add_argument(
         "--semantic-add-lane",
@@ -448,6 +497,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             merge_base_sha=args.merge_base_sha,
             semantic_additions=args.semantic_add_lane,
             semantic_review_complete=args.semantic_review_complete,
+            profile=args.profile,
+            input_mode=args.input_mode,
         )
     except CertificationPlanError as exc:
         print(f"integration-certification-plan: {exc}", file=sys.stderr)

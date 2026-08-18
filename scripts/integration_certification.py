@@ -20,8 +20,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
-EVIDENCE_SCHEMA = "dish-integration-certification-v1"
-EXECUTION_SPEC_SCHEMA = "dish-certification-execution-spec-v1"
+EVIDENCE_SCHEMA = "dish-integration-certification-v2"
+EXECUTION_SPEC_SCHEMA = "dish-certification-execution-spec-v2"
 GROUP_ORDER = (
     "python-control-plane",
     "frontend-static",
@@ -50,14 +50,23 @@ class CommandSpec:
 
 
 @dataclass(frozen=True)
+class TargetSpec:
+    target_id: str
+    execution_boundary: str
+    requirements: tuple[str, ...]
+    commands: tuple[CommandSpec, ...]
+
+
+@dataclass(frozen=True)
 class ExecutionSpec:
     candidate_sha: str
     plan_digest: str
-    groups: Mapping[str, tuple[CommandSpec, ...]]
+    targets: tuple[TargetSpec, ...]
 
     @property
     def required_groups(self) -> tuple[str, ...]:
-        return tuple(group for group in GROUP_ORDER if group in self.groups)
+        selected = {target.execution_boundary for target in self.targets}
+        return tuple(group for group in GROUP_ORDER if group in selected)
 
 
 CommandRunner = Callable[[CommandSpec, Path, Path], int]
@@ -90,26 +99,38 @@ def load_execution_spec(path: Path) -> ExecutionSpec:
     if not _DIGEST_RE.fullmatch(plan_digest):
         raise CertificationError("plan_digest must be a lowercase SHA-256 hex digest")
 
-    raw_groups = raw.get("required_groups")
-    if not isinstance(raw_groups, dict):
-        raise CertificationError("required_groups must be an object keyed by execution group")
-
-    unknown = sorted(set(raw_groups) - set(GROUP_ORDER))
-    if unknown:
-        raise CertificationError(f"unknown execution groups: {', '.join(unknown)}")
-
-    groups: dict[str, tuple[CommandSpec, ...]] = {}
-    for group in GROUP_ORDER:
-        if group not in raw_groups:
-            continue
-        raw_commands = raw_groups[group]
+    raw_targets = raw.get("targets")
+    if not isinstance(raw_targets, list):
+        raise CertificationError("targets must be an array")
+    targets: list[TargetSpec] = []
+    seen_ids: set[str] = set()
+    for target_index, raw_target in enumerate(raw_targets):
+        if not isinstance(raw_target, dict):
+            raise CertificationError(f"targets[{target_index}] must be an object")
+        target_id = _require_string(raw_target.get("id"), field=f"targets[{target_index}].id")
+        if target_id in seen_ids:
+            raise CertificationError(f"duplicate target id {target_id}")
+        seen_ids.add(target_id)
+        group = _require_string(
+            raw_target.get("execution_boundary"), field=f"targets[{target_index}].execution_boundary"
+        )
+        if group not in GROUP_ORDER:
+            raise CertificationError(f"target {target_id} has unknown execution boundary {group}")
+        raw_requirements = raw_target.get("requirements")
+        if (
+            not isinstance(raw_requirements, list)
+            or any(not isinstance(value, str) or not value for value in raw_requirements)
+            or len(raw_requirements) != len(set(raw_requirements))
+        ):
+            raise CertificationError(f"target {target_id} requirements must be unique strings")
+        raw_commands = raw_target.get("commands")
         if not isinstance(raw_commands, list) or not raw_commands:
-            raise CertificationError(f"selected group {group!r} must contain commands")
+            raise CertificationError(f"selected target {target_id!r} must contain commands")
         commands: list[CommandSpec] = []
         for index, raw_command in enumerate(raw_commands):
             if not isinstance(raw_command, dict):
-                raise CertificationError(f"{group}[{index}] must be an object")
-            name = _require_string(raw_command.get("name"), field=f"{group}[{index}].name")
+                raise CertificationError(f"{target_id}.commands[{index}] must be an object")
+            name = _require_string(raw_command.get("name"), field=f"{target_id}.commands[{index}].name")
             argv = raw_command.get("argv")
             if (
                 not isinstance(argv, list)
@@ -117,7 +138,7 @@ def load_execution_spec(path: Path) -> ExecutionSpec:
                 or any(not isinstance(arg, str) or not arg for arg in argv)
             ):
                 raise CertificationError(
-                    f"{group}[{index}].argv must be a non-empty array of non-empty strings"
+                    f"{target_id}.commands[{index}].argv must be a non-empty array of non-empty strings"
                 )
             cwd = raw_command.get("cwd")
             if cwd is not None:
@@ -129,32 +150,34 @@ def load_execution_spec(path: Path) -> ExecutionSpec:
                     or any(part in {"", ".", ".."} for part in cwd.split("/"))
                 ):
                     raise CertificationError(
-                        f"{group}[{index}].cwd must be canonical repository-relative POSIX form"
+                        f"{target_id}.commands[{index}].cwd must be canonical repository-relative POSIX form"
                     )
             commands.append(CommandSpec(name=name, argv=tuple(argv), cwd=cwd))
-        groups[group] = tuple(commands)
+        targets.append(TargetSpec(
+            target_id=target_id,
+            execution_boundary=group,
+            requirements=tuple(raw_requirements),
+            commands=tuple(commands),
+        ))
 
     return ExecutionSpec(
         candidate_sha=candidate_sha,
         plan_digest=plan_digest,
-        groups=groups,
+        targets=tuple(targets),
     )
 
 
 def setup_requirements(spec: ExecutionSpec) -> dict[str, bool]:
-    selected = set(spec.required_groups)
+    requirements = {value for target in spec.targets for value in target.requirements}
     return {
-        "python": bool(
-            selected
-            & {"python-control-plane", "native-postgresql", "browser-acceptance"}
+        "python": "python" in requirements,
+        "node": "node" in requirements,
+        "postgresql": "postgresql" in requirements,
+        "chromium": "chromium" in requirements,
+        "flake": any(
+            command.cwd == "dish" and command.argv and command.argv[0].startswith(".venv-flake/")
+            for target in spec.targets for command in target.commands
         ),
-        "node": bool(
-            selected
-            & {"python-control-plane", "frontend-static", "browser-acceptance"}
-        ),
-        "postgresql": "native-postgresql" in selected,
-        "chromium": "browser-acceptance" in selected,
-        "flake": any(command.cwd == "dish" and command.argv and command.argv[0].startswith(".venv-flake/") for commands in spec.groups.values() for command in commands),
     }
 
 
@@ -208,39 +231,37 @@ def execute_certification(
         raise CertificationError("run_attempt must be >= 1")
 
     evidence_path.parent.mkdir(parents=True, exist_ok=True)
-    groups_root = evidence_path.parent / "groups"
+    targets_root = evidence_path.parent / "targets"
     total_start = clock()
     prior_failure = False
-    group_results: dict[str, dict[str, object]] = {}
+    target_results: dict[str, dict[str, object]] = {}
 
-    for group in GROUP_ORDER:
-        commands = spec.groups.get(group)
-        if commands is None:
-            group_results[group] = {
-                "result": "not_selected",
-                "elapsed_seconds": 0.0,
-            }
-            continue
+    ordered_targets = sorted(
+        spec.targets, key=lambda target: (GROUP_ORDER.index(target.execution_boundary), target.target_id)
+    )
+    for target in ordered_targets:
         if prior_failure:
-            group_results[group] = {
+            target_results[target.target_id] = {
+                "execution_boundary": target.execution_boundary,
                 "result": "not_run_due_to_prior_failure",
                 "elapsed_seconds": 0.0,
             }
             continue
 
-        group_start = clock()
+        target_start = clock()
         result = "passed"
-        for command_index, command in enumerate(commands, start=1):
-            log_path = groups_root / group / f"{command_index:02d}-{_safe_name(command.name)}.log"
+        for command_index, command in enumerate(target.commands, start=1):
+            log_path = targets_root / _safe_name(target.target_id) / f"{command_index:02d}-{_safe_name(command.name)}.log"
             returncode = command_runner(command, repo_root, log_path)
             if returncode != 0:
                 result = "failed"
                 prior_failure = True
                 break
-        group_end = clock()
-        group_results[group] = {
+        target_end = clock()
+        target_results[target.target_id] = {
+            "execution_boundary": target.execution_boundary,
             "result": result,
-            "elapsed_seconds": _elapsed(group_start, group_end),
+            "elapsed_seconds": _elapsed(target_start, target_end),
         }
 
     total_end = clock()
@@ -251,9 +272,10 @@ def execute_certification(
         "run_id": run_id,
         "run_attempt": run_attempt,
         "plan_digest": spec.plan_digest,
-        "execution_order": list(GROUP_ORDER),
+        "execution_order": [target.target_id for target in ordered_targets],
         "required_groups": list(spec.required_groups),
-        "group_results": group_results,
+        "required_targets": [target.target_id for target in ordered_targets],
+        "target_results": target_results,
         "elapsed_seconds": _elapsed(total_start, total_end),
         "outcome": outcome,
     }
@@ -271,13 +293,15 @@ def _safe_name(value: str) -> str:
 
 
 def _validate_evidence(payload: Mapping[str, object]) -> None:
-    group_results = payload.get("group_results")
-    if not isinstance(group_results, dict) or tuple(group_results) != GROUP_ORDER:
-        raise CertificationError("evidence must contain every group in deterministic order")
-    for group in GROUP_ORDER:
-        entry = group_results[group]
+    required_targets = payload.get("required_targets")
+    target_results = payload.get("target_results")
+    if not isinstance(required_targets, list) or not isinstance(target_results, dict):
+        raise CertificationError("evidence must contain target-level identity and results")
+    if list(target_results) != required_targets:
+        raise CertificationError("target results must follow deterministic required-target order")
+    for target_id, entry in target_results.items():
         if not isinstance(entry, dict) or entry.get("result") not in RESULTS:
-            raise CertificationError(f"invalid evidence result for {group}")
+            raise CertificationError(f"invalid evidence result for {target_id}")
         elapsed = entry.get("elapsed_seconds")
         if not isinstance(elapsed, (int, float)) or elapsed < 0:
             raise CertificationError(f"invalid elapsed timing for {group}")

@@ -28,7 +28,7 @@ jobs:
       candidate_sha: ${{ steps.prepare.outputs.candidate_sha }}
       plan_digest: ${{ steps.prepare.outputs.plan_digest }}
       selected_groups: ${{ steps.prepare.outputs.selected_groups }}
-      force_full: ${{ steps.prepare.outputs.force_full }}
+      all_boundary_fallback: ${{ steps.prepare.outputs.all_boundary_fallback }}
       selector_ok: ${{ steps.selector.outputs.selector_ok }}
       run_certification: ${{ steps.decision.outputs.run_certification }}
     steps:
@@ -181,7 +181,7 @@ jobs:
           name: pr-certification-plan-${{ needs.plan.outputs.candidate_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: .test-artifacts/pr-certification
 
-      - name: Execute only planner-selected groups
+      - name: Execute only planner-selected targets
         id: certification
         uses: ./.github/actions/run-certification
         with:
@@ -215,12 +215,12 @@ jobs:
         run: |
           set -euo pipefail
           state=failure
-          description='Selected certification groups failed'
+          description='Selected certification targets failed'
           target_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
           if [[ "$CERTIFICATION_OUTCOME" == "success" ]]; then
             if [[ "$EVIDENCE_UPLOAD_OUTCOME" == "success" && -n "$EVIDENCE_ARTIFACT_ID" && -n "$EVIDENCE_ARTIFACT_URL" ]]; then
               state=success
-              description='All planner-required certification groups passed with durable evidence'
+              description='All planner-required certification targets passed with durable evidence'
               target_url="$EVIDENCE_ARTIFACT_URL"
             else
               description='Certification evidence publication failed'

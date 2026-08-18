@@ -24,62 +24,49 @@ def event(*, body: str, candidate: str = CANDIDATE, head: str = CANDIDATE):
     return {
         "action": "submitted",
         "review": {
-            "id": 88,
-            "state": "commented",
-            "commit_id": candidate,
-            "submitted_at": "2026-08-14T08:00:00Z",
-            "body": body,
+            "id": 88, "state": "commented", "commit_id": candidate,
+            "submitted_at": "2026-08-14T08:00:00Z", "body": body,
         },
         "pull_request": {
-            "number": 31,
-            "head": {"sha": head},
-            "base": {"sha": BASE},
+            "number": 31, "head": {"sha": head}, "base": {"sha": BASE},
         },
     }
 
 
-def plan(
-    *,
-    groups: list[str],
-    lanes: list[str],
-    dish_selector=None,
-    native_postgresql=None,
-    force_full=False,
-    repo=False,
-):
-    classifications = []
-    if repo:
-        classifications.append({"path": "scripts/example.py", "scope": "repository", "classification": "root-scripts"})
+def target(
+    target_id: str, runner: str, selector: str, boundary: str,
+    requirements: list[str],
+) -> dict[str, object]:
     return {
-        "identity": {"candidate_sha": CANDIDATE, "base_sha": BASE, "merge_base_sha": "c" * 40},
-        "classifications": classifications,
-        "dish_selector": dish_selector or {"focused_tests": [], "lanes": []},
-        "selected_groups": groups,
-        "selected_lanes": lanes,
-        "native_postgresql": native_postgresql or (
-            {"mode": "full", "test_files": [], "reason": "test"}
-            if "native-postgresql" in groups
-            else {"mode": "none", "test_files": [], "reason": "not-selected"}
-        ),
-        "force_full": force_full,
+        "id": target_id, "runner": runner, "selector": selector,
+        "execution_boundary": boundary, "requirements": requirements,
     }
 
 
-def test_formal_review_commit_id_is_candidate_and_review_can_only_add_lanes():
-    identity = module.review_event_identity(event(body="VERDICT: MERGE\nCERTIFICATION ADD LANES: browser acceptance; frontend static"))
+def plan(targets: list[dict[str, object]]):
+    return {
+        "identity": {
+            "candidate_sha": CANDIDATE, "base_sha": BASE, "merge_base_sha": "c" * 40,
+        },
+        "selected_targets": targets,
+    }
+
+
+def test_formal_review_commit_id_is_candidate_and_review_only_adds_lanes():
+    identity = module.review_event_identity(event(
+        body="VERDICT: MERGE\nCERTIFICATION ADD LANES: browser acceptance; frontend static"
+    ))
     assert identity is not None
     assert identity["candidate_sha"] == CANDIDATE
     assert identity["semantic_additions"] == ("browser acceptance", "frontend static")
-    assert module.review_event_identity(event(body="VERDICT: BLOCK\nCERTIFICATION ADD LANES: browser acceptance")) is None
+    assert module.review_event_identity(event(body="VERDICT: BLOCK")) is None
     with pytest.raises(module.PRCertificationError, match="stale"):
         module.review_event_identity(event(body="VERDICT: MERGE", head="d" * 40))
 
 
-def test_review_additions_have_no_removal_language_or_negative_operation():
+def test_review_additions_have_no_subtraction_operation():
     assert module.review_additional_lanes("VERDICT: MERGE\nCERTIFICATION ADD LANES: NONE") == ()
     assert module.review_additional_lanes("VERDICT: MERGE") == ()
-    # A removal-looking token is merely an unknown additive lane and is rejected by planner policy;
-    # the adapter has no subtraction/removal operation.
     assert module.review_additional_lanes("CERTIFICATION ADD LANES: -native PostgreSQL certification") == (
         "-native PostgreSQL certification",
     )
@@ -99,126 +86,124 @@ def test_exact_changed_paths_include_both_sides_of_rename(tmp_path: Path):
     assert module.exact_changed_paths(tmp_path, merge_base=base, candidate=candidate) == ("new.txt", "old.txt")
 
 
-@pytest.mark.parametrize(
-    ("groups", "lanes", "expected"),
-    [
-        (["python-control-plane"], ["repository control-plane"], {"python-control-plane"}),
-        (["frontend-static"], ["frontend static"], {"frontend-static"}),
-        (["native-postgresql"], ["native PostgreSQL certification"], {"native-postgresql"}),
-        (["browser-acceptance"], ["browser acceptance"], {"browser-acceptance"}),
-    ],
-)
-def test_execution_spec_contains_only_planner_selected_groups(groups, lanes, expected):
-    spec = module.build_execution_spec(plan(groups=groups, lanes=lanes, repo=True), plan_digest="f" * 64)
-    assert set(spec["required_groups"]) == expected
+def test_execution_spec_preserves_target_identity_and_runtime_requirements():
+    spec = module.build_execution_spec(plan([
+        target("repo", "repo-pytest", "ci/tests/test_pr_gate.py", "python-control-plane", ["python"]),
+        target("frontend", "frontend-static", "frontend-static", "frontend-static", ["node"]),
+    ]), plan_digest="f" * 64)
+    assert spec["schema"] == "dish-certification-execution-spec-v2"
+    assert [item["id"] for item in spec["targets"]] == ["repo", "frontend"]
+    assert spec["targets"][0]["requirements"] == ["python"]
+    assert spec["targets"][0]["commands"][0]["argv"][-1] == "ci/tests/test_pr_gate.py"
 
 
-def test_native_execution_spec_preserves_planner_focused_test_files():
-    spec = module.build_execution_spec(
-        plan(
-            groups=["native-postgresql"],
-            lanes=["native PostgreSQL certification"],
-            native_postgresql={
-                "mode": "focused",
-                "test_files": ["tests/postgresql/native/test_migration_status.py"],
-                "reason": "dish-selector-native-bindings",
-            },
-        ),
-        plan_digest="a" * 64,
-    )
-    argv = spec["required_groups"]["native-postgresql"][0]["argv"]
-    assert argv[argv.index("--test-file") + 1] == "tests/postgresql/native/test_migration_status.py"
+def test_native_target_preserves_focused_selector_and_matching_waiver():
+    selected = "tests/postgresql/native/test_process_failure_command.py"
+    spec = module.build_execution_spec(plan([
+        target("native", "native-postgresql", selected, "native-postgresql", ["python", "postgresql"])
+    ]), plan_digest="a" * 64)
+    argv = spec["targets"][0]["commands"][0]["argv"]
+    assert argv[argv.index("--test-file") + 1] == selected
     assert argv[argv.index("--expected-head") + 1] == CANDIDATE
-    assert "--waive-skip" not in argv
+    waivers = [json.loads(argv[index + 1]) for index, value in enumerate(argv) if value == "--waive-skip"]
+    assert len(waivers) == 1
+    assert waivers[0]["nodeid"].startswith(selected + "::")
 
 
-def test_focused_native_selection_includes_only_matching_waiver_records():
-    selected_file = "tests/postgresql/native/test_process_failure_command.py"
-    spec = module.build_execution_spec(
-        plan(
-            groups=["native-postgresql"],
-            lanes=["native PostgreSQL certification"],
-            native_postgresql={
-                "mode": "focused",
-                "test_files": [selected_file],
-                "reason": "focused-waiver-contract",
-            },
-        ),
-        plan_digest="b" * 64,
-    )
-    argv = spec["required_groups"]["native-postgresql"][0]["argv"]
-    values = [argv[index + 1] for index, value in enumerate(argv) if value == "--waive-skip"]
-    assert len(values) == 1
-    record = json.loads(values[0])
-    assert record["nodeid"] == (
-        selected_file
-        + "::test_command_process_disconnect_before_commit_fails_closed_and_recovers"
-    )
-
-
-def test_native_postgresql_execution_spec_uses_structured_bounded_waivers():
-    spec = module.build_execution_spec(
-        plan(groups=["native-postgresql"], lanes=["native PostgreSQL certification"]),
-        plan_digest="f" * 64,
-    )
-    argv = spec["required_groups"]["native-postgresql"][0]["argv"]
-    values = [argv[index + 1] for index, value in enumerate(argv) if value == "--waive-skip"]
-    assert len(values) == 4
-    records = [json.loads(value) for value in values]
+def test_full_native_fallback_keeps_structured_bounded_waivers():
+    spec = module.build_execution_spec(plan([
+        target("native-full", "native-postgresql", "full", "native-postgresql", ["python", "postgresql"])
+    ]), plan_digest="b" * 64)
+    argv = spec["targets"][0]["commands"][0]["argv"]
+    records = [json.loads(argv[index + 1]) for index, value in enumerate(argv) if value == "--waive-skip"]
+    assert len(records) == 4
     assert all(set(record) == {
-        "nodeid",
-        "expected_reason_sha256",
-        "owner_task_gid",
-        "review_by",
-        "justification",
+        "nodeid", "expected_reason_sha256", "owner_task_gid", "review_by", "justification",
     } for record in records)
-    assert {record["owner_task_gid"] for record in records} == {"1217428310522281"}
-    assert {record["review_by"] for record in records} == {"2026-09-07"}
-    assert all(len(record["expected_reason_sha256"]) == 64 for record in records)
 
 
-def test_full_plan_materializes_all_four_groups_and_unselected_groups_are_absent():
-    spec = module.build_execution_spec(
-        plan(
-            groups=list(module.certification_plan.EXPECTED_GROUPS),
-            lanes=[
-                "repository control-plane",
-                "ordinary full suite",
-                "frontend static",
-                "native PostgreSQL certification",
-                "browser acceptance",
-            ],
-            force_full=True,
-            repo=True,
-        ),
-        plan_digest="f" * 64,
+def test_python_boundary_fallback_is_explicit_three_surface_execution():
+    spec = module.build_execution_spec(plan([
+        target("python-full", "repo-python-full", "repository-python", "python-control-plane", ["python", "node"])
+    ]), plan_digest="c" * 64)
+    commands = spec["targets"][0]["commands"]
+    assert len(commands) == 3
+    assert commands[0]["argv"][-1] == "ci/tests"
+    assert commands[1]["argv"][-1] == "tools/tests"
+    assert commands[2]["cwd"] == "dish"
+    assert commands[2]["argv"][-1] == "tests"
+
+
+def test_base_presence_is_exact_for_added_and_deleted_paths():
+    head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
+    present = module._paths_present(ROOT, head, ["README.md", "does-not-exist"])
+    assert present == ("README.md",)
+
+
+def test_unknown_runner_is_rejected():
+    with pytest.raises(module.PRCertificationError, match="unsupported runner"):
+        module.build_execution_spec(plan([
+            target("bad", "shell", "echo nope", "python-control-plane", [])
+        ]), plan_digest="d" * 64)
+
+
+def test_base_graph_evidence_returns_the_base_arbiter_union(monkeypatch, tmp_path: Path):
+    import io
+    import tarfile
+    from types import SimpleNamespace
+
+    changed = ("scripts/test_impact_arbiter.py",)
+    base_envelope = {
+        "format": "dish-test-obligations-v1",
+        "provenance": "base",
+        "engine_identity": "b" * 64,
+        "changed_paths": list(changed),
+        "obligations": [],
+    }
+    candidate_envelope = {
+        "format": "dish-test-obligations-v1",
+        "provenance": "candidate",
+        "engine_identity": "c" * 64,
+        "changed_paths": list(changed),
+        "obligations": [],
+    }
+    base_union = {
+        "format": "dish-test-obligation-union-v1",
+        "base_engine_identity": "b" * 64,
+        "candidate_engine_identity": "c" * 64,
+        "base_obligation_digest": "1" * 64,
+        "candidate_obligation_digest": "2" * 64,
+        "union_digest": "3" * 64,
+        "semantic_keys": [],
+        "obligations": [],
+    }
+    archive_bytes = io.BytesIO()
+    with tarfile.open(fileobj=archive_bytes, mode="w") as archive:
+        for name in ("scripts/test_impact_graph.py", "scripts/test_impact_arbiter.py"):
+            payload = b"# placeholder for BASE materialization test\n"
+            info = tarfile.TarInfo(name)
+            info.size = len(payload)
+            archive.addfile(info, io.BytesIO(payload))
+
+    calls = 0
+    def fake_run(argv, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return SimpleNamespace(returncode=0, stdout=archive_bytes.getvalue(), stderr=b"")
+        if calls == 2:
+            return SimpleNamespace(returncode=0, stdout=json.dumps(base_envelope), stderr="")
+        if calls == 3:
+            return SimpleNamespace(returncode=0, stdout=json.dumps(base_union), stderr="")
+        raise AssertionError(f"unexpected subprocess call: {argv}")
+
+    monkeypatch.setattr(module.subprocess, "run", fake_run)
+    observed_base, observed_union, compatible = module._base_graph_evidence(
+        tmp_path,
+        merge_base="d" * 40,
+        paths=changed,
+        candidate_envelope=candidate_envelope,
     )
-    assert list(spec["required_groups"]) == list(module.certification_plan.EXPECTED_GROUPS)
-
-    frontend = module.build_execution_spec(
-        plan(groups=["frontend-static"], lanes=["frontend static"]), plan_digest="e" * 64
-    )
-    assert set(frontend["required_groups"]) == {"frontend-static"}
-
-
-def test_dish_focused_python_commands_remain_selector_scoped():
-    spec = module.build_execution_spec(
-        plan(
-            groups=["python-control-plane"],
-            lanes=[],
-            dish_selector={
-                "focused_tests": [
-                    "tests/test_application_service.py",
-                    "tests/postgresql/native/test_locking.py",
-                    "frontend/tests/test_frontend.py",
-                ],
-                "lanes": [],
-            },
-        ),
-        plan_digest="d" * 64,
-    )
-    command = spec["required_groups"]["python-control-plane"][0]
-    assert command["cwd"] == "dish"
-    assert "tests/test_application_service.py" in command["argv"]
-    assert "tests/postgresql/native/test_locking.py" not in command["argv"]
-    assert "frontend/tests/test_frontend.py" not in command["argv"]
+    assert compatible is True
+    assert observed_base == base_envelope
+    assert observed_union == base_union

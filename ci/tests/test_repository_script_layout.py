@@ -103,6 +103,9 @@ def test_cleanup_paths_have_narrow_repository_planner_owners() -> None:
             "classification": "root-scripts",
         },
     ]
-    assert plan["force_full"] is False
-    assert plan["selected_lanes"] == ["repository control-plane"]
+    assert plan["all_boundary_fallback"] is False
+    assert plan["legacy_adapter_paths"] == [
+        "ci/tests/test_repository_script_layout.py",
+        "scripts/dish-pg-pglite",
+    ]
     assert plan["selected_groups"] == ["python-control-plane"]

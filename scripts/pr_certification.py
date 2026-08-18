@@ -9,6 +9,9 @@ import re
 import shlex
 import subprocess
 import sys
+import io
+import tarfile
+import tempfile
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -200,48 +203,46 @@ def _command(name: str, argv: Iterable[str], *, cwd: str | None = None) -> dict[
     return value
 
 
-def _python_commands(plan: dict[str, object]) -> list[dict[str, object]]:
-    commands: list[dict[str, object]] = []
-    lanes = set(str(value) for value in plan.get("selected_lanes", []))
-    classifications = plan.get("classifications", [])
-    has_repo_control = any(
-        isinstance(item, dict) and item.get("scope") == "repository" for item in classifications
-    )
-    if "repository control-plane" in lanes or has_repo_control:
-        commands.append(_command(
-            "repository CI contract tests",
-            ("dish/.venv/bin/python", "-m", "pytest", "-q", "ci/tests"),
-        ))
-        commands.append(_command(
-            "tools Python suite",
-            ("tools/.venv/bin/python", "-m", "pytest", "-q", "tools/tests"),
-        ))
-
-    dish_selector = plan.get("dish_selector")
-    if isinstance(dish_selector, dict):
-        focused = [
-            str(test) for test in dish_selector.get("focused_tests", [])
-            if not str(test).startswith("frontend/tests/")
-            and not str(test).startswith("tests/postgresql/native/")
-            and not str(test).startswith("tests/postgresql/pglite/")
+def _commands_for_target(target: dict[str, object], *, candidate: str) -> list[dict[str, object]]:
+    runner = str(target["runner"])
+    selector = str(target["selector"])
+    target_id = str(target["id"])
+    if runner == "repo-pytest":
+        return [_command(target_id, ("dish/.venv/bin/python", "-m", "pytest", "-q", selector))]
+    if runner == "tools-pytest":
+        return [_command(target_id, ("tools/.venv/bin/python", "-m", "pytest", "-q", selector))]
+    if runner == "dish-pytest":
+        return [_command(target_id, (".venv/bin/python", "-m", "pytest", "-q", selector), cwd="dish")]
+    if runner == "repo-python-full":
+        return [
+            _command(f"{target_id}:ci", ("dish/.venv/bin/python", "-m", "pytest", "-q", "ci/tests")),
+            _command(f"{target_id}:tools", ("tools/.venv/bin/python", "-m", "pytest", "-q", "tools/tests")),
+            _command(f"{target_id}:dish", (".venv/bin/python", "-m", "pytest", "-q", "tests"), cwd="dish"),
         ]
-        if focused:
-            commands.append(_command(
-                "Dish focused selector tests",
-                (".venv/bin/python", "-m", "pytest", "-q", *focused),
-                cwd="dish",
-            ))
-
-    for lane, argv in DISH_LANE_COMMANDS.items():
-        if lane in lanes:
-            commands.append(_command(f"Dish lane: {lane}", argv, cwd="dish"))
-
-    if not commands:
-        commands.append(_command(
-            "repository certification contract tests",
-            ("dish/.venv/bin/python", "-m", "pytest", "-q", "ci/tests/test_integration_certification.py"),
-        ))
-    return commands
+    if runner == "frontend-static":
+        return [_command(target_id, ("npm", "--prefix", "dish/frontend", "run", "check:static"))]
+    if runner == "browser":
+        return [
+            _command(f"{target_id}:harness", ("npm", "--prefix", "dish/frontend", "run", "test:browser")),
+            _command(f"{target_id}:acceptance", ("npm", "--prefix", "dish/frontend", "run", "test:acceptance")),
+        ]
+    if runner == "pglite":
+        return [_command(target_id, (".venv/bin/python", "scripts/dish-pg-pglite", "--output", ".test-artifacts/pglite/report.json"), cwd="dish")]
+    if runner == "native-postgresql":
+        argv = [
+            "dish/.venv/bin/python", "dish/scripts/dish-pg-native-certification",
+            "--output", ".test-artifacts/native-postgresql/report.json", "--expected-head", candidate,
+        ]
+        selected_files: list[object] = []
+        mode = "full"
+        if selector != "full":
+            mode = "focused"
+            selected_files = [selector]
+            argv.extend(("--test-file", selector))
+        for waiver in _native_waivers_for_selection(mode=mode, test_files=selected_files):
+            argv.extend(("--waive-skip", waiver))
+        return [_command(target_id, argv)]
+    raise PRCertificationError(f"target {target_id} uses unsupported runner {runner}")
 
 
 def build_execution_spec(plan: dict[str, object], *, plan_digest: str) -> dict[str, object]:
@@ -249,51 +250,96 @@ def build_execution_spec(plan: dict[str, object], *, plan_digest: str) -> dict[s
     if not isinstance(identity, dict):
         raise PRCertificationError("planner output is missing identity")
     candidate = _sha(identity.get("candidate_sha"), label="planner candidate_sha")
-    selected = set(str(value) for value in plan.get("selected_groups", []))
-    unknown = sorted(selected - set(certification_plan.EXPECTED_GROUPS))
-    if unknown:
-        raise PRCertificationError("planner selected unknown execution groups: " + ", ".join(unknown))
-
-    groups: dict[str, list[dict[str, object]]] = {}
-    if "python-control-plane" in selected:
-        groups["python-control-plane"] = _python_commands(plan)
-    if "frontend-static" in selected:
-        groups["frontend-static"] = [
-            _command("frontend static", ("npm", "--prefix", "dish/frontend", "run", "check:static"))
-        ]
-    if "native-postgresql" in selected:
-        native = plan.get("native_postgresql")
-        if not isinstance(native, dict):
-            raise PRCertificationError("planner output is missing native_postgresql selection")
-        mode = native.get("mode")
-        test_files = native.get("test_files")
-        if mode not in {"focused", "full"} or not isinstance(test_files, list):
-            raise PRCertificationError("planner native_postgresql selection is invalid")
-        if mode == "full" and test_files:
-            raise PRCertificationError("full native_postgresql selection must not name test files")
-        if mode == "focused" and not test_files:
-            raise PRCertificationError("focused native_postgresql selection must name test files")
-        argv = [
-            "dish/.venv/bin/python", "dish/scripts/dish-pg-native-certification",
-            "--output", ".test-artifacts/native-postgresql/report.json",
-            "--expected-head", candidate,
-        ]
-        for test_file in test_files:
-            argv.extend(("--test-file", str(test_file)))
-        for waiver in _native_waivers_for_selection(mode=mode, test_files=test_files):
-            argv.extend(("--waive-skip", waiver))
-        groups["native-postgresql"] = [_command("native PostgreSQL certification", argv)]
-    if "browser-acceptance" in selected:
-        groups["browser-acceptance"] = [
-            _command("browser harness", ("npm", "--prefix", "dish/frontend", "run", "test:browser")),
-            _command("browser acceptance", ("npm", "--prefix", "dish/frontend", "run", "test:acceptance")),
-        ]
+    raw_targets = plan.get("selected_targets")
+    if not isinstance(raw_targets, list):
+        raise PRCertificationError("planner output is missing selected_targets")
+    targets: list[dict[str, object]] = []
+    for target in raw_targets:
+        if not isinstance(target, dict):
+            raise PRCertificationError("selected target must be an object")
+        targets.append({
+            "id": target["id"],
+            "execution_boundary": target["execution_boundary"],
+            "requirements": target["requirements"],
+            "commands": _commands_for_target(target, candidate=candidate),
+        })
     return {
-        "schema": "dish-certification-execution-spec-v1",
+        "schema": "dish-certification-execution-spec-v2",
         "candidate_sha": candidate,
         "plan_digest": plan_digest,
-        "required_groups": groups,
+        "targets": targets,
     }
+
+
+def _paths_present(repo_root: Path, revision: str, paths: Iterable[str]) -> tuple[str, ...]:
+    present: list[str] = []
+    for path in paths:
+        completed = subprocess.run(
+            ["git", "cat-file", "-e", f"{revision}:{path}"], cwd=repo_root,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+        )
+        if completed.returncode == 0:
+            present.append(path)
+    return tuple(present)
+
+
+def _safe_extract_archive(payload: bytes, destination: Path) -> None:
+    with tarfile.open(fileobj=io.BytesIO(payload), mode="r:") as archive:
+        for member in archive.getmembers():
+            if member.name.startswith(("/", "\\")) or ".." in Path(member.name).parts:
+                raise PRCertificationError("git archive contains an unsafe member path")
+        archive.extractall(destination, filter="data")
+
+
+def _base_graph_evidence(
+    repo_root: Path, *, merge_base: str, paths: tuple[str, ...],
+    candidate_envelope: dict[str, object],
+) -> tuple[dict[str, object] | None, dict[str, object] | None, bool]:
+    completed = subprocess.run(
+        ["git", "archive", "--format=tar", merge_base], cwd=repo_root,
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+    )
+    if completed.returncode != 0:
+        raise PRCertificationError(f"cannot materialize BASE graph inputs: {completed.stderr.decode(errors='replace').strip()}")
+    with tempfile.TemporaryDirectory(prefix="dish-test-impact-base-") as temporary:
+        base_root = Path(temporary)
+        _safe_extract_archive(completed.stdout, base_root)
+        engine = base_root / "scripts" / "test_impact_graph.py"
+        if not engine.is_file():
+            return None, None, False
+        command = [sys.executable, str(engine), "obligations", "--provenance", "base"]
+        for path in paths:
+            command.extend(("--path", path))
+        produced = subprocess.run(
+            command, cwd=base_root, text=True, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, check=False,
+        )
+        if produced.returncode != 0:
+            return None, None, False
+        try:
+            base_envelope = json.loads(produced.stdout)
+        except json.JSONDecodeError:
+            return None, None, False
+        base_arbiter = base_root / "scripts" / "test_impact_arbiter.py"
+        if not base_arbiter.is_file():
+            return base_envelope, None, False
+        base_path = base_root / "base-envelope.json"
+        candidate_path = base_root / "candidate-envelope.json"
+        base_path.write_text(json.dumps(base_envelope), encoding="utf-8")
+        candidate_path.write_text(json.dumps(candidate_envelope), encoding="utf-8")
+        union = subprocess.run(
+            [sys.executable, str(base_arbiter), "--base", str(base_path), "--candidate", str(candidate_path)],
+            cwd=base_root, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False,
+        )
+        if union.returncode != 0:
+            return base_envelope, None, False
+        try:
+            base_arbiter_union = json.loads(union.stdout)
+        except json.JSONDecodeError:
+            return base_envelope, None, False
+        if not isinstance(base_arbiter_union, dict):
+            return base_envelope, None, False
+        return base_envelope, base_arbiter_union, True
 
 
 def _digest(plan: dict[str, object]) -> str:
@@ -331,6 +377,12 @@ def prepare(
         )
     merge_base = _sha(_git(repo_root, "merge-base", base, candidate), label="merge base")
     paths = exact_changed_paths(repo_root, merge_base=merge_base, candidate=candidate)
+    candidate_envelope = certification_plan.impact_graph.build_legacy_envelope(
+        paths, provenance="candidate", repo_root=repo_root
+    )
+    base_envelope, base_arbiter_union, base_arbiter_compatible = _base_graph_evidence(
+        repo_root, merge_base=merge_base, paths=paths, candidate_envelope=candidate_envelope
+    )
     plan = certification_plan.build_repository_plan(
         paths,
         candidate_sha=candidate,
@@ -338,6 +390,13 @@ def prepare(
         merge_base_sha=merge_base,
         semantic_additions=identity["semantic_additions"],
         semantic_review_complete=True,
+        profile="PR_EXACT_HEAD",
+        base_obligations=base_envelope,
+        candidate_obligations=candidate_envelope,
+        base_paths=_paths_present(repo_root, merge_base, paths),
+        candidate_paths=_paths_present(repo_root, candidate, paths),
+        arbiter_compatible=base_arbiter_compatible,
+        base_arbiter_union=base_arbiter_union,
         repo_root=repo_root,
     )
     digest = _digest(plan)
@@ -352,7 +411,7 @@ def prepare(
         "base_sha": base,
         "merge_base_sha": merge_base,
         "plan_digest": digest,
-        "force_full": "true" if plan["force_full"] else "false",
+        "all_boundary_fallback": "true" if plan["all_boundary_fallback"] else "false",
         "selected_groups": json.dumps(plan["selected_groups"], separators=(",", ":")),
     }
     _write_output(github_output, outputs)
