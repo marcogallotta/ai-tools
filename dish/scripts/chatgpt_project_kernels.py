@@ -10,8 +10,8 @@ STANDING_INVARIANTS_PATH=DISH_ROOT/'docs'/'agents'/'standing-invariants.json'
 REPOSITORY_CONTEXT_ROLES=('audit','coordinator','development-workflow','implementation','integration','postgresql-dark-launch','review','workflow')
 REPOSITORY_CONTEXT_EVAL_IDS=('repository-context-admission-consequential-reasoning','repository-context-admission-missing-bundle','repository-context-admission-reentry','repository-context-admission-stale-main','repository-context-admission-tiny-lookup','standing-policy-post-integration-main-readback')
 REPOSITORY_CONTEXT_ADMISSION_ORDER=('resolve-live-main-and-repository-identity','retrieve-exact-bundle-through-github-connector','materialize-bundle','verify-bundle-against-repository-name-id-ref-sha','bind-verified-clone','substantial-cross-file-reasoning')
-REPOSITORY_CONTEXT_RATIFICATION_REFS=('asana:task:1217508843698365','asana:task:1217508843698365#story:1217509740007539')
-REPOSITORY_CONTEXT_SOURCE_RULE_FINGERPRINT='45190e0b9e9ffe3f4f8f33141f7cdb4e16572c90eb5453f2d2a9e11768734e3d'
+REPOSITORY_CONTEXT_RATIFICATION_REFS=('asana:task:1217508843698365','asana:task:1217508843698365#story:1217509740007539','asana:task:1217594495187308')
+REPOSITORY_CONTEXT_SOURCE_RULE_FINGERPRINT='bef91c9d40a0db7630c541da9af51a8642f458d8a4781f9a6bc53de4d597b16e'
 REPOSITORY_CONTEXT_COMPLETION_RULE_FINGERPRINT='66c32039154e99f000e5fc64081b7219bb9179a970a583fac4fc25c03921d9e3'
 STANDING_SUPERSESSION_FIELDS=('authority_type','durable_ref','decision','effective_at')
 STANDING_SUPERSESSION_AUTHORITY_TYPES=('marco-explicit','authorized-human-explicit')
@@ -545,7 +545,7 @@ def validate_standing_invariants(s,*,registry=None,eval_ids=None,required_eval_i
  if not isinstance(rat,dict) or not str(rat.get('decision','')).strip() or not isinstance(rat.get('durable_authority_refs'),list) or not rat['durable_authority_refs'] or any(not str(x).strip() for x in rat['durable_authority_refs']): raise KernelError('standing invariant repository-context-admission requires durable ratification provenance')
  if not set(REPOSITORY_CONTEXT_RATIFICATION_REFS).issubset(set(map(str,rat['durable_authority_refs']))): raise KernelError('standing invariant repository-context-admission lost durable approval provenance')
  semantic=entry.get('semantic_contract')
- expected_semantic={'admission_order':list(REPOSITORY_CONTEXT_ADMISSION_ORDER),'tiny_targeted_reads_exempt':True,'reentry_events':['fresh-or-replacement-session','post-compaction-reground','affected-role-switch','main-movement-with-absent-or-stale-witness'],'failure_scope':'affected-substantial-conclusion-only','bundle_authority':'read-only-context','current_state_authorities':['GitHub','Asana']}
+ expected_semantic={'admission_order':list(REPOSITORY_CONTEXT_ADMISSION_ORDER),'tiny_targeted_reads_exempt':True,'reentry_events':['fresh-or-replacement-session','post-compaction-reground','affected-role-switch','main-movement-with-absent-or-stale-witness'],'failure_scope':'affected-substantial-conclusion-only','bundle_authority':'read-only-context','current_state_authorities':['GitHub','Asana'],'ordinary_chatgpt_pr_review':{'bundle_unavailable':'connector-native-exact-evidence-fallback','bundle_used':'exact-current-validation-required'}}
  if semantic!=expected_semantic: raise KernelError('standing invariant repository-context-admission semantic contract changed without supersession')
  coverage=entry.get('coverage')
  if not isinstance(coverage,dict): raise KernelError('standing invariant repository-context-admission requires coverage')

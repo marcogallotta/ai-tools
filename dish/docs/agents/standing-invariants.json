@@ -1,15 +1,39 @@
 {
-  "schema_version": 1,
   "invariants": [
     {
+      "coverage": {
+        "completion_role": "integration",
+        "completion_rule_fingerprint": "66c32039154e99f000e5fc64081b7219bb9179a970a583fac4fc25c03921d9e3",
+        "completion_rule_id": "integration-standing-policy-readback",
+        "rendered_roles": [
+          "audit",
+          "coordinator",
+          "development-workflow",
+          "implementation",
+          "integration",
+          "postgresql-dark-launch",
+          "review",
+          "workflow"
+        ],
+        "required_eval_ids": [
+          "repository-context-admission-consequential-reasoning",
+          "repository-context-admission-missing-bundle",
+          "repository-context-admission-reentry",
+          "repository-context-admission-stale-main",
+          "repository-context-admission-tiny-lookup",
+          "standing-policy-post-integration-main-readback"
+        ],
+        "source_rule_fingerprint": "bef91c9d40a0db7630c541da9af51a8642f458d8a4781f9a6bc53de4d597b16e",
+        "source_rule_id": "repository-context-admission"
+      },
       "id": "repository-context-admission",
-      "status": "active",
       "ratification": {
-        "decision": "Consequential ChatGPT repository/system reasoning must use the verified exact-current-main repository bundle before substantial cross-file reasoning; tiny targeted lookups remain exempt.",
+        "decision": "Consequential ChatGPT repository/system reasoning outside ordinary ChatGPT PR Review uses the verified exact-current-main repository bundle before substantial cross-file reasoning; ordinary Review may use sufficient connector-native exact evidence when bundle transport is unavailable, while any bundle actually used remains exact-current verified.",
         "durable_authority_refs": [
           "asana:task:1217508843698365",
           "asana:task:1217508843698365#story:1217509740007539",
-          "asana:task:1217516633258587"
+          "asana:task:1217516633258587",
+          "asana:task:1217594495187308"
         ]
       },
       "semantic_contract": {
@@ -21,51 +45,31 @@
           "bind-verified-clone",
           "substantial-cross-file-reasoning"
         ],
-        "tiny_targeted_reads_exempt": true,
+        "bundle_authority": "read-only-context",
+        "current_state_authorities": [
+          "GitHub",
+          "Asana"
+        ],
+        "failure_scope": "affected-substantial-conclusion-only",
+        "ordinary_chatgpt_pr_review": {
+          "bundle_unavailable": "connector-native-exact-evidence-fallback",
+          "bundle_used": "exact-current-validation-required"
+        },
         "reentry_events": [
           "fresh-or-replacement-session",
           "post-compaction-reground",
           "affected-role-switch",
           "main-movement-with-absent-or-stale-witness"
         ],
-        "failure_scope": "affected-substantial-conclusion-only",
-        "bundle_authority": "read-only-context",
-        "current_state_authorities": [
-          "GitHub",
-          "Asana"
-        ]
+        "tiny_targeted_reads_exempt": true
       },
-      "coverage": {
-        "source_rule_id": "repository-context-admission",
-        "source_rule_fingerprint": "45190e0b9e9ffe3f4f8f33141f7cdb4e16572c90eb5453f2d2a9e11768734e3d",
-        "required_eval_ids": [
-          "repository-context-admission-consequential-reasoning",
-          "repository-context-admission-missing-bundle",
-          "repository-context-admission-reentry",
-          "repository-context-admission-stale-main",
-          "repository-context-admission-tiny-lookup",
-          "standing-policy-post-integration-main-readback"
-        ],
-        "rendered_roles": [
-          "audit",
-          "coordinator",
-          "development-workflow",
-          "implementation",
-          "integration",
-          "postgresql-dark-launch",
-          "review",
-          "workflow"
-        ],
-        "completion_role": "integration",
-        "completion_rule_id": "integration-standing-policy-readback",
-        "completion_rule_fingerprint": "66c32039154e99f000e5fc64081b7219bb9179a970a583fac4fc25c03921d9e3"
-      },
+      "status": "active",
       "supersession_policy": {
-        "durable_explicit_authority_required": true,
         "accepted_authority_types": [
           "marco-explicit",
           "authorized-human-explicit"
         ],
+        "durable_explicit_authority_required": true,
         "required_fields": [
           "authority_type",
           "durable_ref",
@@ -74,5 +78,6 @@
         ]
       }
     }
-  ]
+  ],
+  "schema_version": 1
 }

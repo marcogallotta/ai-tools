@@ -983,3 +983,4 @@ dish_pg/test_comparator.py,production,8,8,dark-launch; native-pg,tests/postgresq
 docs/test-dual-stack-comparator.md,documentation,1,1,architecture; documentation,tests/test_architecture_knowledge_base.py,,none,,,,
 scripts/dish-pg-test-comparator,config-or-runner,3,3,dark-launch; deployment; operator-runner,tests/postgresql/test_dark_launch_test_deployment.py,tests/postgresql/test_dark_launch_test_deployment.py,none,,focused ordinary,,
 tests/postgresql/test_test_dual_stack_comparator.py,test,1,3,isolated-test,,,none,,exact changed test/module,,
+tests/test_review_bundle_consistency.py,test,1,4,isolated-test,,,none,,exact changed test/module,,
