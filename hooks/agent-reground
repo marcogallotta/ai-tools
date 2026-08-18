@@ -18,6 +18,7 @@ from typing import Any
 
 EXPECTED_REPOSITORY = "marcogallotta/ai-tools"
 SCHEMA_VERSION = 1
+ASANA_TOOL = Path.home().resolve() / ".local" / "bin" / "asana"
 AGENT_ID_RE = re.compile(r"^[A-Za-z0-9._:-]+$")
 TASK_GID_RE = re.compile(r"^[0-9]+$")
 PROJECT_GID_RE = re.compile(r"^[0-9]+$")
@@ -267,8 +268,10 @@ def _contract_live_project(contract_text: str) -> str | None:
 
 
 def _asana_get(repo: Path, path: str) -> Any:
-    tool = repo / "tools" / "asana"
-    proc = _command([str(tool), "raw", "GET", path], cwd=repo)
+    # Agent worktrees intentionally do not carry tools/.venv.  Re-grounding
+    # must use the installed shared launcher, whose environment is stable
+    # across worktrees, while retaining the active worktree as command cwd.
+    proc = _command([str(ASANA_TOOL), "raw", "GET", path], cwd=repo)
     try:
         return json.loads(proc.stdout)
     except json.JSONDecodeError as exc:
