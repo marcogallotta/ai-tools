@@ -200,9 +200,10 @@ def claim_prepared_stage_successor(
             and source["terminal_outcome"] == "planning_handoff_confirmed"
         ):
             raise DishRuleError(
-                "INVALID_ARGUMENT",
+                "VALIDATION_FAILED",
                 "completed Planning handoff is not a prepared Research successor",
-                rule="planning_handoff_requires_fresh_research_run",
+                rule="planning_handoff_requires_initial",
+                retryable=True,
                 details={
                     "prepared_operation_id": clean_id,
                     "required_start_kind": "initial",
