@@ -204,6 +204,9 @@ def test_fresh_and_resume_sessions_receive_exact_shared_grounding(agent_groundin
     assert "ROOT CURRENT INSTRUCTIONS" in fresh_context
     assert "SHARED OPERATOR CONTROL PLANE" in fresh_context
     assert "COORDINATOR-ONLY QUEUE DETAIL" not in fresh_context
+    assert "DISH CORE RE-GROUNDING" in fresh_context
+    assert "POST-COMPACTION DISH RE-GROUNDING" not in fresh_context
+    assert "SELF-HISTORY VERIFICATION RULE" not in fresh_context
 
     receipt = json.loads(agent_grounding._session_receipt_path("session-1").read_text())
     first_generation = receipt["grounding_generation"]
@@ -218,10 +221,20 @@ def test_fresh_and_resume_sessions_receive_exact_shared_grounding(agent_groundin
     resumed = agent_grounding._session_ground(
         _session_payload(repo, "resume"), "session-1", "claude", session_source="resume"
     )
-    assert "source=resume" in resumed["hookSpecificOutput"]["additionalContext"]
+    resumed_context = resumed["hookSpecificOutput"]["additionalContext"]
+    assert "source=resume" in resumed_context
+    assert "POST-COMPACTION DISH RE-GROUNDING" not in resumed_context
+    assert "SELF-HISTORY VERIFICATION RULE" not in resumed_context
     receipt = json.loads(agent_grounding._session_receipt_path("session-1").read_text())
     assert receipt["session_source"] == "resume"
     assert receipt["grounding_generation"] != first_generation
+
+    compact = agent_grounding._session_ground(
+        _session_payload(repo, "compact"), "session-1", "claude", session_source="compact"
+    )
+    compact_context = compact["hookSpecificOutput"]["additionalContext"]
+    assert "POST-COMPACTION DISH RE-GROUNDING" in compact_context
+    assert "SELF-HISTORY VERIFICATION RULE" in compact_context
 
 
 def test_missing_session_witness_self_heals_before_first_tool(agent_grounding, tmp_path, monkeypatch):
