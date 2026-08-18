@@ -74,6 +74,19 @@ def test_failed_required_ci_with_valid_external_record_waits_on_external_depende
     )
 
 
+def test_supported_external_dependency_api_separates_record_history_from_active_state():
+    comments = [
+        external_dependency_comment(when=base.NOW - timedelta(minutes=1), comment_id=80),
+        external_dependency_comment(action="resolved", when=base.NOW, comment_id=81),
+    ]
+
+    newest = pr_lifecycle.latest_external_dependency_record(comments)
+
+    assert newest is not None and newest.action == "resolved"
+    assert pr_lifecycle.resolve_external_dependency(comments) is None
+    assert pr_lifecycle.parse_external_dependency(comments) is None
+
+
 def test_resolved_external_record_reenters_gate_evaluation():
     gh = ExternalGitHub()
     gh.reviews = [base.review()]
