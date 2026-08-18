@@ -17,6 +17,7 @@ SCHEMA_VERSION = 1
 ARTIFACT_PREFIX = "repository-bundle-"
 MAIN_REF = "refs/heads/main"
 SHA_RE = re.compile(r"[0-9a-f]{40}")
+PUBLICATION_EVENTS = {"push", "workflow_dispatch"}
 
 
 class BundleError(RuntimeError):
@@ -131,6 +132,31 @@ def verify_authority(repo_root: Path, source_sha: str, source_ref: str) -> None:
     _git(repo_root, "cat-file", "-e", f"{source_sha}^{{commit}}")
 
 
+def verify_publication_event(
+    repo_root: Path,
+    source_sha: str,
+    source_ref: str,
+    event_name: str,
+    event_sha: str,
+    event_ref: str,
+) -> dict[str, str]:
+    source_sha = _require_sha(source_sha, "source SHA")
+    source_ref = _require_main_ref(source_ref)
+    event_sha = _require_sha(event_sha, "event SHA")
+    event_ref = _require_main_ref(event_ref)
+    if event_name not in PUBLICATION_EVENTS:
+        raise BundleError(f"unsupported repository bundle publication event: {event_name!r}")
+    if event_sha != source_sha:
+        raise BundleError(f"workflow event SHA mismatch: {event_sha} != {source_sha}")
+    if event_ref != source_ref:
+        raise BundleError(f"workflow event ref mismatch: {event_ref!r} != {source_ref!r}")
+    local_main = _git(repo_root, "rev-parse", f"{source_ref}^{{commit}}")
+    if local_main != source_sha:
+        raise BundleError(f"local advertised main mismatch: {local_main} != {source_sha}")
+    _git(repo_root, "cat-file", "-e", f"{source_sha}^{{commit}}")
+    return {"name": event_name, "sha": event_sha, "ref": event_ref}
+
+
 def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
     repo_root = Path(args.repo_root).resolve()
     output_dir = Path(args.output_dir).resolve()
@@ -139,7 +165,14 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
     if not args.repository or "/" not in args.repository:
         raise BundleError("repository identity must be owner/name")
 
-    verify_authority(repo_root, source_sha, source_ref)
+    event = verify_publication_event(
+        repo_root,
+        source_sha,
+        source_ref,
+        args.event_name,
+        args.event_sha,
+        args.event_ref,
+    )
     metadata = _artifact_metadata(source_sha)
     output_dir.mkdir(parents=True, exist_ok=True)
     bundle = output_dir / metadata["bundle_name"]
@@ -170,6 +203,7 @@ def build_bundle(args: argparse.Namespace) -> dict[str, Any]:
             "workflow_sha": args.workflow_sha,
             "run_id": str(args.run_id),
             "run_attempt": str(args.run_attempt),
+            "event": event,
         },
         "bundle": {
             "filename": bundle.name,
@@ -330,13 +364,16 @@ def _parser() -> argparse.ArgumentParser:
     authority.add_argument("--source-sha", required=True)
     authority.add_argument("--source-ref", default=MAIN_REF)
 
-    build = subparsers.add_parser("build", help="build manifest/checksum/Git bundle for exact main SHA")
+    build = subparsers.add_parser("build", help="build manifest/checksum/Git bundle for an exact publication event")
     build.add_argument("--repo-root", default=".")
     build.add_argument("--output-dir", required=True)
     build.add_argument("--repository", required=True)
     build.add_argument("--repository-id", required=True)
     build.add_argument("--source-sha", required=True)
     build.add_argument("--source-ref", default=MAIN_REF)
+    build.add_argument("--event-name", required=True)
+    build.add_argument("--event-ref", required=True)
+    build.add_argument("--event-sha", required=True)
     build.add_argument("--workflow", required=True)
     build.add_argument("--workflow-ref", required=True)
     build.add_argument("--workflow-sha", required=True)
