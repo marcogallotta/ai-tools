@@ -166,10 +166,15 @@ implements the current off-device-copy requirement only; it does not add a PITR/
 
 The production backup job is deliberately separate from the PostgreSQL service lifecycle. Starting a
 backup never starts or restarts PostgreSQL; an unavailable database makes the backup service fail and
-remain visible in systemd/journal evidence. The default timer cadence is every six hours at
-00:00/06:00/12:00/18:00 UTC with `Persistent=true`. The default retention window is seven days
-(`604800` seconds), and health becomes stale after seven hours (`25200` seconds), leaving one hour of
-run-time grace beyond the default cadence. All three values are operator-configurable.
+remain visible in systemd/journal evidence. The default timer cadence is hourly, on the hour, with
+`Persistent=true`. Retention is tiered (GFS-style) via `DISH_PG_BACKUP_RETENTION_TIERS`: full hourly
+density for the last 24 hours, thinned to one backup every 4 hours out to 7 days, then one per day out
+to 90 days; backups older than the last tier are deleted. Pruning still runs only after a new backup's
+local and off-device copies both pass checksum/archive verification. A deployment that sets only the
+legacy flat `DISH_PG_BACKUP_RETENTION_SECONDS` (default seven days, `604800` seconds) instead gets the
+original untiered behaviour unchanged. Health becomes stale after two hours (`7200` seconds), leaving
+one hour of run-time grace beyond the default hourly cadence. All of these values are
+operator-configurable.
 
 Before activation, create the mode-0600 environment file from
 `deploy/systemd/postgres-backup.env.example`. `DISH_PG_BACKUP_OFF_DEVICE_DIR` must already exist on a
