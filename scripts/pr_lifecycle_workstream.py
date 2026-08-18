@@ -27,7 +27,7 @@ from pr_lifecycle_support import (
     WORKSPACE_RUNS_BETA,
     WorkspaceDispatchResult,
 )
-from pr_lifecycle_helpers import _marker_fields, _parse_time, _pr_number
+from pr_lifecycle_helpers import _integration_order_reason, _marker_fields, _parse_time, _pr_number
 from pr_lifecycle_engine_actions import (
     TERMINAL_RECOVERY_SLOT_SECONDS,
     _dispatch_fixer,
@@ -66,6 +66,7 @@ class WorkstreamMember:
     publication_state: str
     task_ids: tuple[str, ...]
     owning_task: str | None
+    integration_order: str | None = None
 
     def semantic_task_ids(self, workstream_task: str) -> tuple[str, ...]:
         values = tuple(task for task in self.task_ids if task != workstream_task)
@@ -107,6 +108,7 @@ class WorkstreamCandidate:
                     "publication_state": member.publication_state,
                     "task_ids": list(member.semantic_task_ids(self.workstream_task)),
                     "owning_task": member.owning_task,
+                    "integration_order": member.integration_order,
                 }
                 for member in self.members
             ],
@@ -121,6 +123,7 @@ class WorkstreamReviewRecord:
     candidate_id: str
     shape_id: str
     verdict: str
+    integration_order: str | None
     review: Mapping[str, Any]
     submitted_at: datetime
 
@@ -193,6 +196,7 @@ def build_candidate(workstream_task: str, members: Iterable[WorkstreamMember]) -
                 "base": member.base,
                 "semantic_tasks": list(member.semantic_task_ids(workstream_task)),
                 "owning_task": member.owning_task,
+                "integration_order": member.integration_order,
             }
             for member in ordered
         ],
@@ -255,6 +259,7 @@ def review_records_for_pr(
                     candidate_id=candidate,
                     shape_id=shape,
                     verdict=verdict,
+                    integration_order=_integration_order_reason(review, {}),
                     review=review,
                     submitted_at=_review_time(review),
                 )
@@ -280,13 +285,22 @@ def current_review_state(candidate: WorkstreamCandidate, github: Any) -> Workstr
             pr_number=member.pr_number,
             workstream_task=candidate.workstream_task,
         )
-        exact_shape = [
+        exact_shape_all = [
             record
             for record in records
             if record.head == member.head and record.shape_id == candidate.shape_id
         ]
+        # A formal Review may restate the already-reviewed Integration order, but it
+        # cannot introduce a different order without changing the workstream candidate.
+        # If the Review omits an ordering line, Integration falls back to the PR-side
+        # projection that is already bound into candidate.shape_id.
+        exact_shape = [
+            record
+            for record in exact_shape_all
+            if record.integration_order is None or record.integration_order == member.integration_order
+        ]
         current = [record for record in exact_shape if record.candidate_id == candidate.candidate_id]
-        evidence_seen = evidence_seen or bool(exact_shape)
+        evidence_seen = evidence_seen or bool(exact_shape_all)
         if member.publication_state == "merged":
             inherited = current[-1] if current else next(
                 (record for record in reversed(exact_shape) if record.verdict == "MERGE"),
@@ -476,11 +490,17 @@ def _dispatch_workspace_review(
     context = candidate.context(changed_prs=changed_prs, review_class=review_class)
     context["previous_candidate_id"] = previous_candidate_id
     context_json = json.dumps(context, sort_keys=True)
-    if changed_prs:
+    if review_class == "focused" and changed_prs:
         scope_instruction = (
             f"This is a narrow re-review. Changed PRs: {changed_prs}. Re-read the prior workstream Review trail, "
             "recheck those exact heads plus affected cross-PR interactions, and broaden only if a wider assumption "
             "actually changed; state the reason if you broaden."
+        )
+    elif previous_candidate_id is not None:
+        scope_instruction = (
+            "This is a broad substantive re-review because the publication shape/order or another wider assumption "
+            "changed. Re-read every member task/PR and cross-PR interaction as one candidate; do not inherit the "
+            "previous workstream verdict merely because the Git heads are unchanged."
         )
     else:
         scope_instruction = (
@@ -539,7 +559,9 @@ class WorkstreamLifecycleMixin:
     """Overlay single-dispatch workstream Review onto the existing stateless lifecycle."""
 
     @staticmethod
-    def _member_from_lifecycle(value: Any, declaration: WorkstreamDeclaration) -> WorkstreamMember:
+    def _member_from_lifecycle(
+        value: Any, declaration: WorkstreamDeclaration, raw_pr: Mapping[str, Any] | None = None
+    ) -> WorkstreamMember:
         return WorkstreamMember(
             slot=declaration.slot,
             total=declaration.total,
@@ -555,6 +577,7 @@ class WorkstreamLifecycleMixin:
             ),
             task_ids=tuple(value.task_ids),
             owning_task=_owning_task_from_refs(value.task_ids),
+            integration_order=_integration_order_reason(None, raw_pr or {}),
         )
 
     def _recover_candidate_from_dispatch(
@@ -615,10 +638,29 @@ class WorkstreamLifecycleMixin:
             if declaration.slot != expected_slot or declaration.total != expected_total:
                 return candidate
             lifecycle = self.inspect(raw)
-            recovered[pr_number] = self._member_from_lifecycle(lifecycle, declaration)
+            recovered_member = self._member_from_lifecycle(lifecycle, declaration, raw)
+            if recovered_member.publication_state == "merged":
+                context_order = item.get("integration_order")
+                if context_order is not None and not isinstance(context_order, str):
+                    return candidate
+                recovered_member = WorkstreamMember(
+                    slot=recovered_member.slot,
+                    total=recovered_member.total,
+                    pr_number=recovered_member.pr_number,
+                    pr_url=recovered_member.pr_url,
+                    branch=recovered_member.branch,
+                    base=recovered_member.base,
+                    head=recovered_member.head,
+                    publication_state=recovered_member.publication_state,
+                    task_ids=recovered_member.task_ids,
+                    owning_task=recovered_member.owning_task,
+                    integration_order=context_order,
+                )
+            recovered[pr_number] = recovered_member
         rebuilt = build_candidate(candidate.workstream_task, recovered.values())
         # Recovery context may locate missing PRs, but live PR metadata remains the source
-        # of truth for every head/base/task field used in the rebuilt candidate.
+        # of truth for head/base/task fields. A merged predecessor keeps the Integration-order
+        # snapshot reviewed in the durable dispatch context as immutable interaction history.
         return rebuilt
 
     def _workstream_candidates(self, values: Iterable[Any]) -> dict[str, WorkstreamCandidate]:
@@ -629,7 +671,7 @@ class WorkstreamLifecycleMixin:
             if declaration is None:
                 continue
             grouped.setdefault(declaration.task, []).append(
-                self._member_from_lifecycle(value, declaration)
+                self._member_from_lifecycle(value, declaration, raw)
             )
         candidates: dict[str, WorkstreamCandidate] = {}
         for task, members in grouped.items():
@@ -891,6 +933,9 @@ class WorkstreamLifecycleMixin:
                 ),
                 task_ids=tuple(fresh_values[member.pr_number].task_ids),
                 owning_task=_owning_task_from_refs(fresh_values[member.pr_number].task_ids),
+                integration_order=_integration_order_reason(
+                    None, self.github.get_pr(member.pr_number)
+                ),
             )
             for member in candidate.members
         )
