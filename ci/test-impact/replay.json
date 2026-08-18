@@ -14,7 +14,7 @@
         "native-postgresql",
         "browser-acceptance"
       ],
-      "note": "lifecycle control-plane false all-product fan-out"
+      "note": "lifecycle/broker control-plane false all-product fan-out"
     },
     {
       "id": "31913089113",

@@ -50,10 +50,9 @@ record, mismatched task/branch/base/host, or a cache-only/self-asserted marker y
 remote witness and therefore falls back to ChatGPT Review. The record proves routing provenance
 only; it never grants branch/write/Review authority.
 
-Post-PR fix provenance is separate. The lifecycle dispatcher binds dispatch to the exact current
-task/PR/branch/head and re-reads authoritative GitHub state after consumer return/publication. When
-an independently verifiable exact-head authoring-host witness is unavailable, host provenance stays
-unknown and Review routes conservatively to ChatGPT rather than inferring a local-safe reviewer.
+Post-PR fix provenance is separate: it is produced by the lifecycle dispatcher only after a #95
+broker-proven consumer returns and the proof-backed terminal broker event binds both accepted host
+and exact result head.
 
 The repository + Asana task GID + authorized branch + existing-PR/expected-head tuple is one
 assignment identity. A matching task on another branch or PR is **not authorization** to adopt,

@@ -202,7 +202,7 @@ A failed Asana writeback after verified GitHub merge is recovery work; it never 
 
 ## Marco-facing output
 
-Human rendering is not a second lifecycle engine. Follow the generated Work chat contract: lead with the practical outcome or Marco's real action, use one plain-English reason when needed, and leave task state labels, exact heads, routing classes, and evidence chronology on the durable PR/Asana surface unless they materially change what Marco must decide or do. Review PASS/BLOCK remains durable lifecycle evidence; it does not have to be exposed as internal taxonomy when ordinary language conveys the same result.
+Human rendering is not a second lifecycle engine. Follow the generated Work chat contract: lead with the practical outcome or Marco's real action, use one plain-English reason when needed, and leave task state labels, exact heads, routing classes, broker/grant terms, and evidence chronology on the durable PR/Asana surface unless they materially change what Marco must decide or do. Review PASS/BLOCK remains durable lifecycle evidence; it does not have to be exposed as internal taxonomy when ordinary language conveys the same result.
 
 When continuation is automatic, say there is nothing for Marco to do and continue through the authorized path. When a real manual route is unavoidable, identify the PR and the kind of local work in ordinary language; the complete agent-to-agent handoff belongs on the PR before notification. Internal local-work classification remains `TESTS ONLY`, `IMPLEMENTATION / PUBLICATION`, or `LOCAL SYSTEM ACCESS` with runtime separate, because those categories control authority; do not expose those labels by default merely to explain status.
 

@@ -267,9 +267,9 @@
             "role-critical-write"
           ],
           "id": "development-workflow-boundary",
-          "impact": "additive",
+          "impact": "breaking",
           "surface": "authority",
-          "text": "`scripts/pr_lifecycle.py` solely dispatches exact-state post-PR fixes directly. V1-A final Integration is local Claude/Codex. Own dev mechanics only: no product/workflow/PG decisions, Review, landing, or production mutation.",
+          "text": "Own dev mechanics/reliability; `scripts/pr_lifecycle.py` stays sole lifecycle engine. Broker is post-PR Implementation/fix admission; V1-A final Integration is local Claude/Codex. No product/workflow/PG decisions, Review verdicts, Integration landing, or production mutation.",
           "delivery": {
             "mode": "DIRECT_ALWAYS_ON"
           }
@@ -400,19 +400,6 @@
       "rules": [
         {
           "action_boundaries": [
-            "role-critical-write",
-            "handoff"
-          ],
-          "id": "implementation-bundle-fallback",
-          "impact": "additive",
-          "surface": "routing",
-          "text": "ChatGPT Implementation treats the repository bundle as a preferred context cache, not an availability gate. If unavailable, proceed from exact connector-native repository/current-main, task/decision, source/history, branch/PR/head, and CI evidence. Never block, route local, or ask Marco solely for bundle transport. Reject any stale/mismatched/corrupt/wrong-SHA bundle; fail closed only on a named unresolved semantic, tool, or environment evidence boundary.",
-          "delivery": {
-            "mode": "DIRECT_ALWAYS_ON"
-          }
-        },
-        {
-          "action_boundaries": [
             "handoff",
             "role-critical-write"
           ],
@@ -433,7 +420,7 @@
           "id": "publication-materializer-path",
           "impact": "additive",
           "surface": "lifecycle",
-          "text": "For eligible same-repo draft-PR publication blockers, use the landed materializer first; independently verify its unattached exact parent/tree candidate, attach it only with a non-force expected-head/CAS ref update after immediate authority/head/parent/tree checks, then authoritatively read back the branch, PR, commit, and tree. It grants nothing else.",
+          "text": "For eligible same-repo draft-PR publication blockers, use the landed materializer first; independently verify its unattached exact parent/tree candidate, attach, then read back. Temporary broker waiver: only proven shared-infrastructure failure before grant, never policy denial; one `force=false` fast-forward after immediate authority/head/parent/tree/no-writer checks and final readback. It grants nothing else.",
           "delivery": {
             "mode": "TRIGGERED_READ",
             "trigger": "publication / local completion / materializer"
