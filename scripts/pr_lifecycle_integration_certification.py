@@ -68,6 +68,15 @@ class LocalIntegrationCertificationMixin:
                 return base_ref
         return "main"
 
+    def _target_landing_readback_supported(self) -> bool:
+        github = self.github
+        return bool(
+            callable(getattr(github, "get_ref_sha", None))
+            and callable(getattr(github, "_url", None))
+            and callable(getattr(getattr(github, "http", None), "request", None))
+            and hasattr(github, "headers")
+        )
+
     def _target_compare_status(self, effect_sha: str, target_sha: str) -> str:
         comparison = None
         last_error = None
@@ -118,13 +127,20 @@ class LocalIntegrationCertificationMixin:
             return None
         token = self._target_recovery_token(source_number, source_head, target_branch)
         matches = []
-        for candidate in self.github.list_prs(include_closed=True):
+        legacy_open_only = False
+        try:
+            candidates = self.github.list_prs(include_closed=True)
+        except TypeError:
+            candidates = self.github.list_prs()
+            legacy_open_only = True
+        for candidate in candidates:
             body = str(candidate.get("body") or "")
             base = candidate.get("base")
             base_ref = str(base.get("ref") or "") if isinstance(base, dict) else ""
             state = str(candidate.get("state") or "").lower()
             merged = bool(candidate.get("merged") or candidate.get("merged_at"))
-            if token in body and base_ref == target_branch and (state == "open" or merged):
+            open_candidate = state == "open" or (legacy_open_only and not state)
+            if token in body and base_ref == target_branch and (open_candidate or merged):
                 matches.append(candidate)
         if len(matches) > 1:
             raise LifecycleError("multiple Integration target-recovery PRs match the exact source identity")
@@ -301,6 +317,8 @@ class LocalIntegrationCertificationMixin:
     def inspect(self, pr):
         lifecycle = super().inspect(pr)
         if not bool(pr.get("merged") or pr.get("merged_at")):
+            return lifecycle
+        if not self._target_landing_readback_supported():
             return lifecycle
         try:
             proof = self._target_landing_proof(pr)
@@ -751,6 +769,78 @@ class LocalIntegrationCertificationMixin:
         reread.human_action = None
         return reread, False
 
+    def _dispatch_synchronous_compatibility(
+        self,
+        launcher,
+        fence,
+        before_claim,
+        context,
+        *,
+        terminal_cleaner=None,
+        notify=None,
+    ):
+        try:
+            launcher.dispatch(context, lock_fd=fence.lock_fd())
+        except LifecycleError as exc:
+            fence.finish(
+                status="failed",
+                phase="returned",
+                next_action=f"local Integration launcher failed: {exc}",
+            )
+            before_claim.residual_reason = f"local Integration launcher failed: {exc}"
+            before_claim.human_action = None
+            return before_claim
+
+        raw_after = self.github.get_pr(before_claim.number)
+        reread = self.inspect(raw_after)
+        if reread.head != before_claim.head and reread.state != LifecycleState.MERGED:
+            fence.finish(
+                status="released",
+                phase="head-changed",
+                next_action="fresh independent exact-head Review required before Integration may resume",
+                current_head=reread.head,
+            )
+            return reread
+        if reread.state == LifecycleState.MERGED:
+            merge_sha = str(raw_after.get("merge_commit_sha") or "").lower()
+            result = self._finalize_authoritative_merge(
+                before_claim,
+                raw_after_merge=raw_after,
+                merge_sha=merge_sha,
+            )
+            if result.state == LifecycleState.MERGED:
+                fence.finish(
+                    status="complete",
+                    phase="merged",
+                    next_action="authoritative merge readback complete; post-merge reconciliation/cleanup may continue",
+                    current_head=before_claim.head,
+                    merge_sha=merge_sha or None,
+                )
+                if notify is not None:
+                    from pr_lifecycle_operator import action_first_status
+                    notify(action_first_status(result))
+                if terminal_cleaner is not None:
+                    return self._terminal_cleanup(
+                        result,
+                        disposition="merged",
+                        terminal_cleaner=terminal_cleaner,
+                        notify=notify or (lambda _: None),
+                    )
+            return result
+
+        fence.finish(
+            status="released",
+            phase="returned",
+            next_action="re-read live lifecycle and resume only if exact reviewed head remains Integration-ready",
+            current_head=reread.head,
+        )
+        if reread.state in {LifecycleState.INTEGRATION_READY, LifecycleState.MERGING} or self._integration_reconciliation_required(reread):
+            reread.residual_reason = (
+                "local Integration execution returned without authoritative MERGED readback or a new review head"
+            )
+            reread.human_action = None
+        return reread
+
     def _dispatch_local_integration(
         self,
         current,
@@ -887,8 +977,18 @@ class LocalIntegrationCertificationMixin:
                     "complete stdout/stderr and a typed per-attempt result regardless of process exit code."
                 ),
             }
+            dispatch_background = getattr(launcher, "dispatch_background", None)
+            if not callable(dispatch_background):
+                return self._dispatch_synchronous_compatibility(
+                    launcher,
+                    fence,
+                    before_claim,
+                    context,
+                    terminal_cleaner=terminal_cleaner,
+                    notify=notify,
+                )
             try:
-                attempt = launcher.dispatch_background(context, fence=fence)
+                attempt = dispatch_background(context, fence=fence)
             except LifecycleError as exc:
                 fence.finish(
                     status="failed",

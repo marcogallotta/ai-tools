@@ -30,7 +30,9 @@ def _operator_action(pr: PRLifecycle) -> str:
 
 def _rollout_readiness(pr: PRLifecycle) -> tuple[str, str, str]:
     """Return ACTIVE/RUNNING, STATUS, COMPLETION PROOF from authoritative rollout projection."""
-    if not pr.task_ids:
+    task_ids = list(getattr(pr, "task_ids", []) or [])
+    asana = list(getattr(pr, "asana", []) or [])
+    if not task_ids:
         return (
             "UNKNOWN — no linked task exists to prove whether activation is required",
             "ACTIVATION PENDING",
@@ -39,10 +41,10 @@ def _rollout_readiness(pr: PRLifecycle) -> tuple[str, str, str]:
 
     by_gid = {
         str(item.get("gid") or ""): item
-        for item in pr.asana
+        for item in asana
         if isinstance(item, Mapping)
     }
-    tasks = [by_gid.get(str(gid)) for gid in pr.task_ids]
+    tasks = [by_gid.get(str(gid)) for gid in task_ids]
     if any(
         task is None
         or task.get("error")
@@ -53,7 +55,7 @@ def _rollout_readiness(pr: PRLifecycle) -> tuple[str, str, str]:
         missing = next(
             (
                 str(gid)
-                for gid, task in zip(pr.task_ids, tasks)
+                for gid, task in zip(task_ids, tasks)
                 if task is None or task.get("error") or task.get("rollout_error") or "rollout" not in task
             ),
             "unknown",
@@ -65,7 +67,7 @@ def _rollout_readiness(pr: PRLifecycle) -> tuple[str, str, str]:
         )
 
     no_rollout_pending: list[str] = []
-    for gid, task in zip(pr.task_ids, tasks):
+    for gid, task in zip(task_ids, tasks):
         if not isinstance(task, Mapping) or task.get("rollout") is not None:
             continue
         requirement = str(task.get("activation_requirement") or "unknown")
@@ -83,7 +85,7 @@ def _rollout_readiness(pr: PRLifecycle) -> tuple[str, str, str]:
 
     rollouts = [task.get("rollout") for task in tasks if isinstance(task, Mapping) and task.get("rollout") is not None]
     if not rollouts:
-        task_text = ", ".join(str(gid) for gid in pr.task_ids)
+        task_text = ", ".join(str(gid) for gid in task_ids)
         evidence = "; ".join(
             str(task.get("activation_requirement_evidence") or "").strip()
             for task in tasks
@@ -284,4 +286,5 @@ def action_first_status(pr: PRLifecycle) -> str:
     action = _operator_action(pr)
     if action != "NONE":
         first = f"Your next action: {action}"
-    return f"{first} {why} {_readiness_fields(pr)}"
+    message = f"{first} {why}"
+    return f"{message} {_readiness_fields(pr)}" if state == LifecycleState.MERGED else message
