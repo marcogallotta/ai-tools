@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import sys
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
@@ -312,6 +314,6 @@ def test_provider_switch_reconstructs_same_case_identity_from_live_evidence():
 
 def test_retry_jitter_is_bounded_and_first_retry_stays_deterministic():
     assert controller._retry_delay(1, sample=0.0) == 1
-    assert controller._retry_delay(2, sample=0.0) == 1.6
-    assert controller._retry_delay(2, sample=1.0) == 2.4
+    assert controller._retry_delay(2, sample=0.0) == pytest.approx(1.6)
+    assert controller._retry_delay(2, sample=1.0) == pytest.approx(2.4)
     assert 0.5 <= controller._retry_delay(20, sample=1.0) <= controller.MAX_BACKOFF
