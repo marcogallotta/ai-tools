@@ -18,7 +18,7 @@ _PHASE_BY_GITHUB_STATE = {
     "review_ready": "READY_FOR_REVIEW",
     "review_in_progress": "REVIEW_IN_PROGRESS",
     "review_passed_evaluating_gates": "REVIEW_PASS",
-    "local_implementation_completion_required": "REVIEW_PASS",
+    "local_implementation_completion_required": "IMPLEMENTATION_COMPLETION_REQUIRED",
     "local_certification_required": "REVIEW_PASS",
     "waiting_ci_certification": "REVIEW_PASS",
     "waiting_external_dependency": "BLOCKED_EXTERNAL",
@@ -183,7 +183,7 @@ def _combined_state(
 
 
 def _queue_for_state(state: str) -> str:
-    if state in {"IMPLEMENTATION_IN_PROGRESS", "FIXES_IN_PROGRESS"}:
+    if state in {"IMPLEMENTATION_IN_PROGRESS", "IMPLEMENTATION_COMPLETION_REQUIRED", "FIXES_IN_PROGRESS"}:
         return "In Progress"
     if state in {"READY_FOR_REVIEW", "REVIEW_IN_PROGRESS"}:
         return "Review"
