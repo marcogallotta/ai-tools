@@ -17,11 +17,16 @@ from .operations import (
 from .repository import discover_repository
 from .state import TaskLock, atomic_write_json, clear_agent_reference, load_task_state, state_path
 from .operations import owner_agent_id
-from .ownership import require_active_claim
+from .ownership import invalidate_claim_after_head_movement, require_active_claim
 
-def _claimed_state(task_gid: str) -> dict[str, Any]:
+def _claimed_state(task_gid: str, *, allow_head_moved_readback: bool = False) -> dict[str, Any]:
     state = load_task_state(task_gid)
-    claimed_agent = require_active_claim(task_gid, str(state["branch"]), owner_agent_id(state))["agent_id"]
+    claimed_agent = require_active_claim(
+        task_gid,
+        str(state["branch"]),
+        owner_agent_id(state),
+        allow_head_moved_readback=allow_head_moved_readback,
+    )["agent_id"]
     if owner_agent_id(state) is None:
         # A legacy ownerless active state may be explicitly claimed only through
         # dispatch takeover/resume; writer-only operations must not silently
@@ -59,14 +64,17 @@ def command_publish(args: argparse.Namespace, runner: GitRunner) -> dict[str, An
         state["last_verified_at"] = now_utc()
         state["local_head"] = identity.head
         atomic_write_json(state_path(task_gid), state)
-        return payload_from_state("publish", state, identity, relation="equal", remote_head=verified_remote)
+        moved_pr_head = invalidate_claim_after_head_movement(task_gid, verified_remote)
+        payload = payload_from_state("publish", state, identity, relation="equal", remote_head=verified_remote)
+        payload["head_moved_requires_redispatch"] = moved_pr_head
+        return payload
 
 
 def command_verify_handoff(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]:
     task_gid = require_task_gid(args.task)
-    _claimed_state(task_gid)
+    _claimed_state(task_gid, allow_head_moved_readback=True)
     with TaskLock(task_gid):
-        state = _claimed_state(task_gid)
+        state = _claimed_state(task_gid, allow_head_moved_readback=True)
         repo = resolve_repository_from_state(runner, state)
         identity = verify_owned_worktree(runner, repo, state)
         relation, remote_head, target_head, moved = remote_and_target_observation(runner, repo, state, identity.head)

@@ -23,6 +23,8 @@ def build_parser() -> argparse.ArgumentParser:
     claim.add_argument("--task", required=True)
     claim.add_argument("--branch", required=True)
     claim.add_argument("--agent-id", required=True)
+    claim.add_argument("--launch-provenance", help="mode-0600 launch provenance JSON used to bind a missing/current local host identity")
+    claim.add_argument("--require-launch-provenance", action="store_true", help="require fresh mechanically verified host launch provenance before claiming this lineage")
     claim.add_argument("--repo", default=".", help="existing checkout/worktree used to identify the shared repository")
     claim.add_argument("--takeover", action="store_true", help="explicitly accept a stale/released prior owner after orchestration handoff")
     claim.add_argument("--expected-claim", help="exact prior claim id required with --takeover")

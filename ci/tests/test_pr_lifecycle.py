@@ -102,6 +102,7 @@ class FakeGitHub:
         self.merge_response = {"merged": True, "sha": "d" * 40, "message": "Pull Request successfully merged"}
         self.merge_mutates = True
         self.refs = {"heads/main": "c" * 40}
+        self.pr_files = []
 
     def list_prs(self, *, include_closed=False):
         if self.pr["state"] != "open" and not include_closed:
@@ -111,6 +112,10 @@ class FakeGitHub:
     def get_pr(self, number):
         assert number == self.pr["number"]
         return deepcopy(self.pr)
+
+    def get_pr_files(self, number):
+        assert number == self.pr["number"]
+        return deepcopy(self.pr_files)
 
     def get_comments(self, number):
         return deepcopy(self.comments)

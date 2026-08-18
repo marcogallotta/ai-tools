@@ -247,6 +247,26 @@ At most one unclosed current grant generation exists per PR. A stale grant block
 
 Routine queue movement is silent. Human messages are limited to a real local action/decision or useful terminal result. Every message shown directly to Marco states his next action first, then why, task state, consequential PR/head Review/gate state, and the next owner/system. Review PASS/BLOCK is explicit. Automatic continuation says Marco has no action and never asks him to relay a transcript. Local residuals are classified as `TESTS ONLY`, `IMPLEMENTATION / PUBLICATION`, or `LOCAL SYSTEM ACCESS`; elapsed runtime is reported separately and never changes the work type. The dispatcher records an exact-head `dish-human-notice:v1` idempotency marker before emitting a human-action notice, so repeated polls do not repeat the same notice. For local work, the complete `dish-local-handoff:v1` comment is written and re-read before that notice marker or human message. Detailed handoff remains on the PR.
 
+## Pre-Review installed-host Implementation continuation
+
+A candidate that changes an active repository-owned hook, `.claude/settings.json`, `codex/hooks.json`, or repository install wiring is automatically gated on `exact-head installed Claude/Codex host certification`. The gate is derived from the exact PR changed-file surface, not from a human checklist line; removing draft status or deleting an `IMPLEMENTATION EVIDENCE PENDING` line does not bypass it. An explicit different authoring-evidence line is finished first, after which the host gate remains.
+
+This reuses `IMPLEMENTATION CONTINUATION REQUIRED`; it is not `LOCAL CERTIFICATION REQUIRED` and does not add a lifecycle state. Dispatch selects only `LOCAL_IMPLEMENTATION`, writes the same exact-head continuation handoff, claims the ordinary `phase=implementation` bootstrap lease when broker-free, and sends the same PR/branch/task/head to the configured local Implementation consumer. There is no hook-specific/local mutation-broker route, grant, or proof. If a legacy deployment still has mandatory broker admission enabled, this continuation fails closed on the accepted broker-removal/current-admission dependency rather than creating a local broker route or asking Marco for a per-PR waiver.
+
+The local worker—not Marco—owns the routine real-host loop: re-read live lineage; consume fresh `tools/agent-worktree claim --require-launch-provenance` identity; capture installed versions plus effective config/symlink pre-state; fence all affected shared host-config producers/consumers for the full mutation/test/restore window (or use genuinely isolated host state); activate only the exact candidate; drive the actual installed Claude/Codex loader/tool; diagnose and fix source on the same lineage; repeat after every new head; prove stale removed references are absent; then restore exact prior state or read back separately authorized final activation.
+
+A passing result is durable only as an exact-head comment:
+
+````text
+<!-- dish-installed-host-cert:v1 head=<40-char-sha> result=pass hosts=<claude,codex subset> digest=<sha256> -->
+INSTALLED HOST CERTIFICATE
+```json
+{ ... schema: "dish-installed-host-cert-v1" ... }
+```
+````
+
+`scripts/installed_host_cert.py` defines the changed-surface classifier, canonical digest, certificate schema, and parser. The certificate binds the exact candidate/task/branch/head, fresh launch/claim identity, full-window fence pre/final digests, installed host versions/binaries, effective config sources, active path targets/digests, actual installed-loader execution, harmless governed action, deliberate conflict denial, recovery/shell-trust/stale-reference regressions, and restoration/final-activation readback. Any head movement makes previous evidence ineligible. Only a structurally valid exact-head pass permits normal independent Review; it grants no Review or Integration authority.
+
 ## Worker execution profile
 
 Worker is one execution host/profile, never a union semantic role. Every trigger binds one exact standing role, one phase, and exact durable task/PR/head/design context. The Worker loads that role contract and cannot self-select or compose another specialist authority.
