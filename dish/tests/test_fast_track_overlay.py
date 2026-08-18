@@ -124,3 +124,75 @@ def test_generated_kernels_carry_direct_overlay_rule_and_triggered_procedure():
         assert 'Fast-track: read triggered Procedure.' in rendered
         assert 'fast-track' in rendered
         assert 'dish/docs/agents/fast-track-process.md#Procedure' in rendered
+
+WORKER_START='<!-- BEGIN MANUAL WORKER PROJECT PROFILE -->\n'
+WORKER_END='\n<!-- END MANUAL WORKER PROJECT PROFILE -->'
+
+def _worker_profile():
+    doc=(DISH_ROOT/'docs'/'agents'/'operator-provenance.md').read_text()
+    assert doc.count(WORKER_START)==1 and doc.count(WORKER_END)==1
+    return doc.split(WORKER_START,1)[1].split(WORKER_END,1)[0]
+
+def test_manual_worker_profile_is_one_profile_with_exact_four_explicit_modes_and_real_size_gate():
+    profile=_worker_profile()
+    assert len(profile) <= 8000
+    assert 'Supported explicit modes are exactly: **Implementation**, **Code Review**, **Design Review**, **Audit**.' in profile
+    assert 'No mode means no governed work.' in profile
+    assert 'Only Marco/current orchestration may name the task and mode' in profile
+    assert 'Worker is one execution host/profile, never a union semantic role.' in profile
+    assert 'Integration/merge/deploy/cutover are outside Worker.' in profile
+
+def test_worker_profile_preserves_manual_stop_boundary_and_never_auto_advances():
+    profile=_worker_profile()
+    for phrase in (
+        'No queue pickup',
+        'automatic Implementation→Review',
+        'automatic BLOCK→fix',
+        'automatic re-review',
+        'next-task pickup',
+        'autonomous phase progression',
+        'Stop after the requested action and return the exact resulting candidate to Marco',
+    ):
+        assert phrase in profile
+
+def test_worker_review_to_implementation_switch_retains_attempt_and_forfeits_independence_after_authorship():
+    profile=_worker_profile()
+    provenance=(DISH_ROOT/'docs'/'agents'/'operator-provenance.md').read_text()
+    assert 'keep the same `attempt_id + generation`' in profile
+    assert 'Switching modes never mints independence or a new attempt.' in profile
+    assert 'persist cumulative material-authorship provenance for the new exact candidate' in profile
+    assert 'This attempt is now an author and cannot independently Review that candidate.' in profile
+    assert 'later records may add authors but never erase an earlier material author' in provenance
+    assert 'An attempt that is in the cumulative material-author set cannot satisfy independent Code Review or Design Review' in provenance
+
+def test_worker_design_review_is_exact_snapshot_bound_and_candidate_movement_fails_closed():
+    profile=_worker_profile()
+    provenance=(DISH_ROOT/'docs'/'agents'/'operator-provenance.md').read_text()
+    for phrase in (
+        'SHA-256 of exact canonical task notes/design snapshot',
+        'immediately before publishing `VERDICT: PASS` or `VERDICT: BLOCK`, reread the canonical task',
+        'digest mismatch',
+        'publish no verdict for the new candidate',
+        'Chat-only verdict does not count.',
+    ):
+        assert phrase in profile
+    assert 'Design Review candidate identity is owning task GID + explicit design revision/generation + SHA-256' in provenance
+    assert 'design-digest mismatch invalidates the attempt\'s verdict for the moved candidate' in provenance
+
+def test_worker_late_reload_is_procedure_only_and_omission_never_creates_authority():
+    profile=_worker_profile()
+    provenance=(DISH_ROOT/'docs'/'agents'/'operator-provenance.md').read_text()
+    assert 'fresh procedure reads add current procedure, never authority' in profile
+    assert 'omission can never authorize an unsafe action' in profile
+    assert 'Late procedure reload supplies current procedure only; it never creates authority.' in provenance
+    for invariant in ('exact-candidate','authorship/independence','no-self-review','readback','Integration-separation'):
+        assert invariant in provenance
+
+def test_worker_mode_contract_map_reloads_current_standing_contract_and_design_review_stays_read_only():
+    profile=_worker_profile()
+    assert '**Implementation** → `dish/docs/agents/implementation.md`' in profile
+    assert '**Code Review** → `dish/docs/agents/review.md`' in profile
+    assert '**Audit** → `dish/docs/agents/audit.md`' in profile
+    assert '**Design Review** → standing Review authority plus the Design Review procedure below.' in profile
+    assert 'Read-only for the reviewed design' in profile
+    assert 'Mode entry/re-entry always reloads current Git authority for the mapped contract' in profile
