@@ -163,6 +163,34 @@ def _augment_session_marker(
     return marker, context
 
 
+def _hook_repository_candidate() -> str:
+    """Return the checkout containing the real installed/candidate hook target."""
+    return str(Path(__file__).resolve().parents[1])
+
+
+def _pre_role_repository(payload: dict[str, Any]) -> Path:
+    candidates = (
+        ("installed hook target", _hook_repository_candidate()),
+        ("session cwd", str(payload.get("cwd")) if payload.get("cwd") else None),
+    )
+    errors: list[str] = []
+    for label, candidate in candidates:
+        repo = BASE._repo_from_candidate(candidate)
+        if repo is None:
+            errors.append(f"{label} is not a Git checkout")
+            continue
+        try:
+            BASE.verify_repository(repo)
+        except BASE.RegroundError as exc:
+            errors.append(f"{label} is not the canonical ai-tools checkout: {exc}")
+            continue
+        return repo
+    raise BASE.RegroundError(
+        "pre-role bootstrap cannot resolve the canonical ai-tools checkout from "
+        "the installed hook target or session cwd: " + "; ".join(errors)
+    )
+
+
 def _pre_role_ground(
     payload: dict[str, Any],
     agent_id: str,
@@ -170,13 +198,7 @@ def _pre_role_ground(
     *,
     session_source: str,
 ) -> dict[str, Any]:
-    candidate = payload.get("cwd")
-    repo = BASE._repo_from_candidate(str(candidate) if candidate else None)
-    if repo is None:
-        raise BASE.RegroundError(
-            "pre-role bootstrap cannot resolve the active ai-tools checkout from cwd"
-        )
-    BASE.verify_repository(repo)
+    repo = _pre_role_repository(payload)
     root_text = BASE._read_required(repo, "CLAUDE.md")
     index_text = BASE._read_required(repo, "dish/docs/agents/index.md")
     generation = str(uuid.uuid4())
