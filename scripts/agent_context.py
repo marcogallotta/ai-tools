@@ -17,7 +17,12 @@ ROLE_INDEX_PATH = Path("dish/docs/agents/index.md")
 PROJECT_SOURCE_PATH = Path("dish/docs/chatgpt-projects/source.json")
 CONTRIBUTOR_BASE_PATH = "dish/docs/agents/contributor-base.md"
 OPERATOR_CONTROL_PLANE_PATH = "OPERATOR_CONTROL_PLANE.md"
+SHARED_OPERATOR_LOCATOR = f"{OPERATOR_CONTROL_PLANE_PATH}#Shared operator interaction"
 ROLE_LINK_RE = re.compile(r"\[`[^`]+`\]\((?P<path>[^)]+\.md)\)")
+OPERATOR_EXTENDED_DECLARATION = (
+    "Coordinator and Development Workflow additionally apply its action-specific "
+    "queue/handoff/decision/triage sections"
+)
 
 
 class ContextError(RuntimeError):
@@ -74,6 +79,22 @@ def role_contracts(repo_root: Path = REPO_ROOT) -> dict[str, str]:
     if not contracts:
         raise ContextError("could not parse standing role contracts from role index")
     return contracts
+
+
+def operator_extended_roles(repo_root: Path = REPO_ROOT) -> set[str]:
+    """Derive roles allowed the operator document's action-specific sections.
+
+    The role index is the authority. The two stable role keys are accepted only while
+    the index continues to make the corresponding explicit applicability declaration.
+    """
+    index = _read_text(repo_root, str(ROLE_INDEX_PATH))
+    contracts = role_contracts(repo_root)
+    roles = {"coordinator", "development-workflow"}
+    if OPERATOR_EXTENDED_DECLARATION not in index:
+        raise ContextError("role index lost explicit operator action-section applicability")
+    if not roles.issubset(contracts):
+        raise ContextError("operator action-section applicability names roles absent from role index")
+    return roles
 
 
 def _source(repo_root: Path) -> dict[str, Any]:
@@ -143,7 +164,6 @@ def _declared_dependencies(source: dict[str, Any], role: str) -> tuple[dict[str,
                 raise ContextError(f"conflicting triggered read {trigger!r} for {role}")
             triggered[trigger] = destinations
 
-    # Preserve the existing legacy declaration shape while it is being migrated.
     action_specific = local.get("action_specific")
     for trigger, destinations in _triggered_reads(
         action_specific, f"roles.{role}.context_dependencies.action_specific"
@@ -217,27 +237,36 @@ def resolve_context(
         )
 
     preload, triggered = _declared_dependencies(source, role)
-    startup_paths: list[str] = [source_contract, OPERATOR_CONTROL_PLANE_PATH]
+    extended_operator_roles = operator_extended_roles(repo_root)
+    operator_locator = (
+        OPERATOR_CONTROL_PLANE_PATH if role in extended_operator_roles else SHARED_OPERATOR_LOCATOR
+    )
+    startup_locators: list[str] = [source_contract, operator_locator]
     modifying = repository_modifying_roles(source)
     if role in modifying:
-        startup_paths.append(CONTRIBUTOR_BASE_PATH)
+        startup_locators.append(CONTRIBUTOR_BASE_PATH)
 
     if preload is not None:
         if preload.get("role_index_contracts") is not True:
             raise ContextError(
                 f"roles.{role}.context_dependencies.preload must derive role contracts through the role index"
             )
-        startup_paths.extend(contracts[key] for key in sorted(contracts))
+        startup_locators.extend(contracts[key] for key in sorted(contracts))
         additional = preload.get("additional")
         if not isinstance(additional, list) or not additional:
             raise ContextError(f"roles.{role}.context_dependencies.preload.additional must be non-empty")
-        startup_paths.extend(str(path) for path in additional)
+        startup_locators.extend(str(path) for path in additional)
 
-    startup: list[str] = []
-    for raw in startup_paths:
-        path = _safe_path(repo_root, raw, f"startup context for {role}")
-        if path not in startup:
-            startup.append(path)
+    startup_context: list[str] = []
+    for idx, raw in enumerate(startup_locators):
+        locator = _validate_locator(repo_root, raw, f"startup context for {role}[{idx}]")
+        if locator not in startup_context:
+            startup_context.append(locator)
+    startup_paths: list[str] = []
+    for locator in startup_context:
+        path = locator.split("#", 1)[0]
+        if path not in startup_paths:
+            startup_paths.append(path)
 
     requested: list[str] = []
     if trigger is not None:
@@ -251,7 +280,9 @@ def resolve_context(
         "role": role,
         "contract": source_contract,
         "repository_modifying": role in modifying,
-        "startup_paths": startup,
+        "startup_context": startup_context,
+        "startup_paths": startup_paths,
+        "operator_extended": role in extended_operator_roles,
         "available_triggers": sorted(triggered),
         "trigger": trigger,
         "triggered_reads": requested,
