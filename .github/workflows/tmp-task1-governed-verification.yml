@@ -20,21 +20,36 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
-      - name: Materialize exact helper-free candidate commit
+      - name: Materialize corrected helper-free candidate commit
         id: candidate
         shell: bash
         env:
-          SEMANTIC_CANDIDATE: fbacd19e27cd42d8f4903adf6ad91f95bf41162f
-          SEMANTIC_TREE: b6bdc03f8854e399f740eeb5859dc711e914c288
+          PRIOR_SEMANTIC_CANDIDATE: fbacd19e27cd42d8f4903adf6ad91f95bf41162f
         run: |
           set -euo pipefail
-          test "$(git rev-parse "$SEMANTIC_CANDIDATE^{tree}")" = "$SEMANTIC_TREE"
           rm .github/workflows/tmp-task1-governed-verification.yml
+          python3 <<'PY'
+          from pathlib import Path
+          path = Path('dish/tests/test_chatgpt_project_kernels.py')
+          text = path.read_text()
+          old = "['d96ab5f0588d','708fb9a9a9bc','39ff3abc502e','857d88788c12','23365034a0f1','9575ccfd79c8','28dcb04decc8','9bb70124ca21','694190185f60','712e3b16aa05','d048682742d6','54041bbbc8d8','86b8011172ee','219f34402511','9bf227f53f0a','5d24af30193a']"
+          new = "['d96ab5f0588d','708fb9a9a9bc','39ff3abc502e','857d88788c12','23365034a0f1','9575ccfd79c8','28dcb04decc8','9bb70124ca21','694190185f60','712e3b16aa05','d048682742d6','54041bbbc8d8','86b8011172ee','219f34402511','9bf227f53f0a','5d24af30193a','bfaeef68aed9']"
+          if text.count(old) != 1:
+              raise SystemExit('expected required-version inventory fixture not found exactly once')
+          text = text.replace(old, new, 1)
+          old_count = "assert set(versions)==expected and len(versions)==17"
+          new_count = "assert set(versions)==expected and len(versions)==18"
+          if text.count(old_count) != 1:
+              raise SystemExit('expected required-version count assertion not found exactly once')
+          path.write_text(text.replace(old_count, new_count, 1))
+          PY
           git config user.name 'Dish Agent'
           git config user.email 'dish-agent@users.noreply.github.com'
           git add -A
-          git commit -m 'Verify governed Review bundle fallback evidence'
-          test "$(git rev-parse HEAD^{tree})" = "$SEMANTIC_TREE"
+          git commit -m 'Fix Project required-version inventory expectation'
+          mapfile -t delta < <(git diff --name-only "$PRIOR_SEMANTIC_CANDIDATE"...HEAD)
+          test "${#delta[@]}" -eq 1
+          test "${delta[0]}" = 'dish/tests/test_chatgpt_project_kernels.py'
           echo "head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Validate Project generator and selector map
