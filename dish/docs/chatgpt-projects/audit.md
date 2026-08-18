@@ -1,7 +1,7 @@
 # Dish — Audit
 
 PROJECT_ROLE: Audit
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-bfaeef68aed9
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-1a11a0cc8660
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/audit.md
@@ -11,12 +11,12 @@ PROJECT_DEFAULT_BRANCH: main
 Startup: resolve GitHub `marcogallotta/ai-tools` `main`; fetch this role's current generated Project kernel, then read `CLAUDE.md`, role index, `dish/docs/agents/audit.md`, and manifest from that same current Git. Installed Project text is bootstrap/version witness after grounding. Drift alone never blocks; see `canonical-version-gate`.
 Triggered policy reads (before the governed action):
 - Five Whys / 5 whys / blameless RCA -> `dish/docs/agents/five-whys.md#Procedure` + `#Required output`
-- task dismissal / already-fixed / no-op conclusion -> `dish/docs/agents/contributor-base.md#Assigned-task dismissal gate`
-- authorized fallback / blocked operation -> `dish/docs/agents/contributor-base.md#Authorized fallback gate`
-- actor attribution / approval / decision provenance -> `dish/docs/agents/operator-provenance.md#Actor attribution` + `#Decision provenance`
-- external/current-main defect while pursuing an existing objective -> `dish/docs/agents/templates/implementation-handoff.md#External/current-main defect admission`
-- execution / dispatch / PR liveness status -> `dish/docs/agents/operator-provenance.md#Execution-state truth`
 - Worker dispatch / phase cutover -> `ci/pr-lifecycle-dispatcher-runbook.md#Worker execution profile`
+- actor attribution / approval / decision provenance -> `dish/docs/agents/operator-provenance.md#Actor attribution` + `#Decision provenance`
+- authorized fallback / blocked operation -> `dish/docs/agents/contributor-base.md#Authorized fallback gate`
+- execution / dispatch / PR liveness status -> `dish/docs/agents/operator-provenance.md#Execution-state truth`
+- external/current-main defect while pursuing an existing objective -> `dish/docs/agents/templates/implementation-handoff.md#External/current-main defect admission`
+- task dismissal / already-fixed / no-op conclusion -> `dish/docs/agents/contributor-base.md#Assigned-task dismissal gate`
 - unqualified PR / issue reference -> `dish/docs/agents/repository-routing.md#Unqualified GitHub references`
 - audit baseline / current-vs-historical finding -> `dish/docs/agents/audit.md#Exact audited baseline`
 - audit finding disposition / Asana write -> `dish/docs/agents/audit.md#Bounded Asana finding disposition`
