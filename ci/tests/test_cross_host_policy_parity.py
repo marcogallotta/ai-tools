@@ -13,7 +13,12 @@ STANDING = "dish/docs/agents/standing-invariants.json"
 
 def _run(repo: Path):
     return subprocess.run(
-        [sys.executable, str(repo / "scripts/cross_host_policy_parity.py"), "--repo-root", str(repo)],
+        [
+            sys.executable,
+            str(repo / "scripts/cross_host_policy_parity.py"),
+            "--repo-root",
+            str(repo),
+        ],
         capture_output=True,
         text=True,
         check=False,
@@ -43,7 +48,11 @@ def _fixture(tmp_path: Path) -> Path:
         "scripts/cross_host_policy_parity.py",
     ):
         _copy_file(REPO_ROOT, target, relative)
-    shutil.copytree(REPO_ROOT / "dish/docs/agents", target / "dish/docs/agents", dirs_exist_ok=True)
+    shutil.copytree(
+        REPO_ROOT / "dish/docs/agents",
+        target / "dish/docs/agents",
+        dirs_exist_ok=True,
+    )
     for filename in generated.values():
         _copy_file(REPO_ROOT, target, f"dish/docs/chatgpt-projects/{filename}")
     return target
@@ -52,8 +61,16 @@ def _fixture(tmp_path: Path) -> Path:
 def _standing_extension(repo: Path):
     path = repo / STANDING
     payload = json.loads(path.read_text(encoding="utf-8"))
-    entry = next(item for item in payload["invariants"] if item["id"] == "repository-context-admission")
-    return path, payload, entry["delivery_extensions"]["cross_host_grounding_parity"]
+    entry = next(
+        item
+        for item in payload["invariants"]
+        if item["id"] == "repository-context-admission"
+    )
+    return (
+        path,
+        payload,
+        entry["delivery_extensions"]["cross_host_grounding_parity"],
+    )
 
 
 def test_current_tree_has_cross_host_structural_parity():
@@ -68,6 +85,10 @@ def test_current_tree_has_cross_host_structural_parity():
         "postgresql-dark-launch",
         "workflow",
     ]
+    assert payload["operator_extended_roles"] == [
+        "coordinator",
+        "development-workflow",
+    ]
     assert payload["deferred_owner"] == "asana:task:1217547171327342"
 
 
@@ -75,9 +96,12 @@ def test_local_missing_inherited_contributor_base_fails(tmp_path):
     repo = _fixture(tmp_path)
     resolver = repo / "scripts/agent_context.py"
     text = resolver.read_text(encoding="utf-8")
-    needle = "    if role in modifying:\n        startup_paths.append(CONTRIBUTOR_BASE_PATH)\n"
+    needle = "    if role in modifying:\n        startup_locators.append(CONTRIBUTOR_BASE_PATH)\n"
     assert needle in text
-    resolver.write_text(text.replace(needle, "    if role in modifying:\n        pass\n", 1), encoding="utf-8")
+    resolver.write_text(
+        text.replace(needle, "    if role in modifying:\n        pass\n", 1),
+        encoding="utf-8",
+    )
     result = _run(repo)
     assert result.returncode == 2
     assert "lost inherited contributor-base context" in result.stdout
@@ -87,32 +111,68 @@ def test_local_missing_shared_operator_control_plane_fails(tmp_path):
     repo = _fixture(tmp_path)
     resolver = repo / "scripts/agent_context.py"
     text = resolver.read_text(encoding="utf-8")
-    needle = "    startup_paths: list[str] = [source_contract, OPERATOR_CONTROL_PLANE_PATH]\n"
+    needle = "    startup_locators: list[str] = [source_contract, operator_locator]\n"
     assert needle in text
-    resolver.write_text(text.replace(needle, "    startup_paths: list[str] = [source_contract]\n", 1), encoding="utf-8")
+    resolver.write_text(
+        text.replace(needle, "    startup_locators: list[str] = [source_contract]\n", 1),
+        encoding="utf-8",
+    )
     result = _run(repo)
     assert result.returncode == 2
     assert "lost shared operator-control-plane context" in result.stdout
 
 
+def test_local_operator_scope_broadening_fails(tmp_path):
+    repo = _fixture(tmp_path)
+    resolver = repo / "scripts/agent_context.py"
+    text = resolver.read_text(encoding="utf-8")
+    needle = (
+        "    operator_locator = (\n"
+        "        OPERATOR_CONTROL_PLANE_PATH if role in extended_operator_roles else SHARED_OPERATOR_LOCATOR\n"
+        "    )\n"
+    )
+    assert needle in text
+    resolver.write_text(
+        text.replace(
+            needle,
+            "    operator_locator = OPERATOR_CONTROL_PLANE_PATH\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    result = _run(repo)
+    assert result.returncode == 2
+    assert "operator context violates role-index applicability" in result.stdout
+
+
 def test_chatgpt_only_removal_of_friction_delivery_fails(tmp_path):
     repo = _fixture(tmp_path)
     manifest = json.loads((repo / MANIFEST).read_text(encoding="utf-8"))
-    path = repo / "dish/docs/chatgpt-projects" / manifest["generated_role_files"]["implementation"]
+    path = (
+        repo
+        / "dish/docs/chatgpt-projects"
+        / manifest["generated_role_files"]["implementation"]
+    )
     text = path.read_text(encoding="utf-8")
     assert "1217443500915644" in text
-    path.write_text(text.replace("1217443500915644", "REMOVED-FRICTION-IDENTITY", 1), encoding="utf-8")
+    path.write_text(
+        text.replace("1217443500915644", "REMOVED-FRICTION-IDENTITY", 1),
+        encoding="utf-8",
+    )
     result = _run(repo)
     assert result.returncode == 2
     assert "lost friction/debt discovery delivery" in result.stdout
 
 
-def test_stale_review_handoff_semantics_fail_even_when_source_and_kernel_match(tmp_path):
+def test_stale_review_handoff_semantics_fail_even_when_source_and_kernel_match(
+    tmp_path,
+):
     repo = _fixture(tmp_path)
     source_path = repo / SOURCE
     source = json.loads(source_path.read_text(encoding="utf-8"))
     rule = next(
-        item for item in source["roles"]["review"]["rules"]
+        item
+        for item in source["roles"]["review"]["rules"]
         if item["id"] == "review-integration-boundary"
     )
     old = rule["text"]
@@ -120,8 +180,14 @@ def test_stale_review_handoff_semantics_fail_even_when_source_and_kernel_match(t
     rule["text"] = bad
     source_path.write_text(json.dumps(source, indent=2) + "\n", encoding="utf-8")
     manifest = json.loads((repo / MANIFEST).read_text(encoding="utf-8"))
-    kernel = repo / "dish/docs/chatgpt-projects" / manifest["generated_role_files"]["review"]
-    kernel.write_text(kernel.read_text(encoding="utf-8").replace(old, bad), encoding="utf-8")
+    kernel = (
+        repo
+        / "dish/docs/chatgpt-projects"
+        / manifest["generated_role_files"]["review"]
+    )
+    kernel.write_text(
+        kernel.read_text(encoding="utf-8").replace(old, bad), encoding="utf-8"
+    )
     result = _run(repo)
     assert result.returncode == 2
     assert "generated Review handoff semantics drift" in result.stdout
@@ -133,10 +199,14 @@ def test_explicit_host_transport_difference_remains_valid(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_unaccepted_review_attempt_semantics_cannot_enter_protected_metadata(tmp_path):
+def test_unaccepted_review_attempt_semantics_cannot_enter_protected_metadata(
+    tmp_path,
+):
     repo = _fixture(tmp_path)
     path, payload, extension = _standing_extension(repo)
-    extension["protected_delivery"][0]["chatgpt_delivery"] += " with attempt_id lane A"
+    extension["protected_delivery"][0]["chatgpt_delivery"] += (
+        " with attempt_id lane A"
+    )
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     result = _run(repo)
     assert result.returncode == 2
