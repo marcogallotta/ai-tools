@@ -141,6 +141,29 @@ def test_compaction_reloads_role_asana_and_pr_from_durable_state(
     ) is None
 
 
+def test_compaction_uses_shared_asana_launcher_when_worktree_launcher_is_unavailable(
+    agent_reground, tmp_path, monkeypatch
+):
+    repo = _make_repo(tmp_path)
+    _install_fake_gh(tmp_path, monkeypatch)
+    state_root = tmp_path / "state"
+    monkeypatch.setenv("DISH_AGENT_STATE_ROOT", str(state_root))
+    _write_identity(state_root, repo)
+
+    shared_asana = tmp_path / "shared-asana"
+    shared_asana.write_text((repo / "tools/asana").read_text(encoding="utf-8"), encoding="utf-8")
+    shared_asana.chmod(0o755)
+    (repo / "tools/asana").write_text(
+        "#!/usr/bin/env python3\nraise SystemExit('worktree virtualenv is unavailable')\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(agent_reground, "ASANA_TOOL", shared_asana)
+
+    result = agent_reground.perform_reground(_session_payload(repo), "session-1", "claude")
+
+    assert "Owning task" in result["hookSpecificOutput"]["additionalContext"]
+
+
 def test_pretool_fails_closed_for_missing_or_stale_marker(agent_reground, tmp_path, monkeypatch):
     repo = _make_repo(tmp_path)
     _install_fake_gh(tmp_path, monkeypatch)

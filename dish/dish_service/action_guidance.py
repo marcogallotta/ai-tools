@@ -85,6 +85,15 @@ def action_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
                 "already construct the exact governed fix, use a Large correction so Dish queues that exact proposal for review. "
                 "Use Human Review only when a material Marco-only choice remains before an exact candidate can exist."
             )
+        if error_rule in {
+            "planning_handoff_requires_initial",
+            "planning_handoff_requires_fresh_research_run",
+        }:
+            instructions.append(
+                "Planning is complete. Continue Research with start(kind=initial) on this same task under a fresh "
+                "client.run_id and fresh client.request_id. Omit prepared_operation_id: the completed Planning "
+                "submission/operation is not a prepared successor, and the Planning run ID must not be reused."
+            )
         legal_next = _text(data.get("legal_next_step"))
         if legal_next:
             instructions.append(legal_next)
@@ -120,6 +129,17 @@ def action_agent_guidance(result: Mapping[str, Any]) -> dict[str, Any]:
         if "start" in actions and required_start_kind:
             instructions.append(
                 f"For the returned start continuation, use arguments.kind={required_start_kind} exactly."
+            )
+
+        if (
+            command == "prepare"
+            and data.get("handoff") == "planning-to-research"
+            and "start" in actions
+            and required_start_kind == "initial"
+        ):
+            instructions.append(
+                "This normal Planning→Research handoff is non-prepared. Use the returned start target under a fresh "
+                "client.run_id and fresh client.request_id, and omit prepared_operation_id."
             )
 
         retry = data.get("retry")
@@ -217,5 +237,23 @@ def attach_action_agent_guidance(result: dict[str, Any]) -> dict[str, Any]:
         # Canonical Dish results always use an object here; fail closed rather than
         # replacing malformed application output silently.
         raise ValueError("Action result data must be an object")
+    if (
+        result.get("ok")
+        and result.get("command") == "prepare"
+        and data.get("handoff") == "planning-to-research"
+        and data.get("required_start_kind") == "initial"
+        and "start" in (result.get("allowed_actions") or [])
+    ):
+        task_gid = _text(result.get("task_gid"))
+        if task_gid is not None:
+            data["agent_action"] = {
+                "command": "start",
+                "arguments": {"task_gid": task_gid, "kind": "initial"},
+            }
+            data["continuation_requirements"] = {
+                "fresh_client_run_id": True,
+                "fresh_client_request_id": True,
+                "omit_arguments": ["prepared_operation_id"],
+            }
     data["agent_guidance"] = action_agent_guidance(result)
     return result

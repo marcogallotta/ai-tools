@@ -86,5 +86,9 @@ def protected_repo(tmp_path, destructive_op_guard, monkeypatch):
 
 
 @pytest.fixture
-def agent_reground():
-    return load_hook_module("agent-reground")
+def agent_reground(monkeypatch):
+    module = load_hook_module("agent-reground")
+    # Synthetic repositories provide their shared launcher relative to the
+    # command cwd; production uses the absolute installed launcher.
+    monkeypatch.setattr(module, "ASANA_TOOL", pathlib.Path("tools/asana"))
+    return module

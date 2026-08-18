@@ -184,6 +184,38 @@ def claim_prepared_stage_successor(
             "prepared operation ID is required",
             rule="prepared_operation_id_required",
         )
+    if kind == "initial":
+        source = conn.execute(
+            """SELECT task_gid, operation_kind, status, phase, terminal_outcome
+                 FROM operations
+                WHERE operation_id = ?""",
+            (clean_id,),
+        ).fetchone()
+        if (
+            source is not None
+            and source["task_gid"] == live.gid
+            and source["operation_kind"] == "planning"
+            and source["status"] == "completed"
+            and source["phase"] == "terminal"
+            and source["terminal_outcome"] == "planning_handoff_confirmed"
+        ):
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "completed Planning handoff is not a prepared Research successor",
+                rule="planning_handoff_requires_initial",
+                retryable=True,
+                details={
+                    "prepared_operation_id": clean_id,
+                    "required_start_kind": "initial",
+                    "fresh_run_required": True,
+                    "prepared_operation_id_allowed": False,
+                    "legal_next_step": (
+                        "start with kind=initial under a fresh client.run_id and fresh "
+                        "client.request_id, omitting prepared_operation_id; do not reuse "
+                        "the completed Planning operation or Planning run ID"
+                    ),
+                },
+            )
     result = {
         "prepared_operation_id": clean_id,
         "task_gid": live.gid,

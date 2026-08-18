@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import copy
+import sqlite3
+
+from dish_service.action_guidance import attach_action_agent_guidance
 from dish_service.application import DishService
 from dish_service.config import ServiceConfig
 from dish_service.leases import ServicePrincipal
@@ -27,15 +31,19 @@ def test_service_preserves_planning_handoff_start_contract(tmp_path):
         backend_factory=lambda: backend,
         release_loader=lambda role=None: release(honest, role),
     )
-    principal = ServicePrincipal(
+    planning_principal = ServicePrincipal(
         owner_id="action",
         run_id="11111111-1111-4111-8111-111111111111",
+    )
+    research_principal = ServicePrincipal(
+        owner_id="action",
+        run_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     )
 
     started = confirmed_planning_start(
         service,
         {"agent": "gpt", "task_gid": "123456789", "kind": "planning"},
-        principal=principal,
+        principal=planning_principal,
         challenge_request_id="22222222-2222-4222-8222-222222222222",
         start_request_id="77777777-7777-4777-8777-777777777777",
     )
@@ -49,7 +57,7 @@ def test_service_preserves_planning_handoff_start_contract(tmp_path):
             "submission_id": started["submission_id"],
             "file_text": PLANNING,
         },
-        principal=principal,
+        principal=planning_principal,
         request_id="33333333-3333-4333-8333-333333333333",
     )
 
@@ -59,10 +67,54 @@ def test_service_preserves_planning_handoff_start_contract(tmp_path):
     assert prepared["data"]["required_start_kind"] == "initial"
     assert prepared["data"]["service_access"] == {"state": "handoff"}
 
+    action_prepared = attach_action_agent_guidance(copy.deepcopy(prepared))
+    assert action_prepared["data"]["agent_action"] == {
+        "command": "start",
+        "arguments": {"task_gid": "123456789", "kind": "initial"},
+    }
+    assert action_prepared["data"]["continuation_requirements"] == {
+        "fresh_client_run_id": True,
+        "fresh_client_request_id": True,
+        "omit_arguments": ["prepared_operation_id"],
+    }
+    handoff_guidance = " ".join(
+        action_prepared["data"]["agent_guidance"]["instructions"]
+    )
+    assert "normal Planning→Research handoff is non-prepared" in handoff_guidance
+    assert "fresh client.run_id" in handoff_guidance
+    assert "omit prepared_operation_id" in handoff_guidance
+
+    with sqlite3.connect(service.config.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        planning = conn.execute(
+            """SELECT status, phase, terminal_outcome, run_id
+                 FROM operations WHERE operation_id=?""",
+            (started["submission_id"],),
+        ).fetchone()
+        assert planning is not None
+        assert dict(planning) == {
+            "status": "completed",
+            "phase": "terminal",
+            "terminal_outcome": "planning_handoff_confirmed",
+            "run_id": planning_principal.run_id,
+        }
+        assert conn.execute(
+            "SELECT COUNT(*) FROM abandonment_attempts WHERE source_operation_id=?",
+            (started["submission_id"],),
+        ).fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM operation_successions WHERE source_operation_id=?",
+            (started["submission_id"],),
+        ).fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM safe_reclaims WHERE source_operation_id=?",
+            (started["submission_id"],),
+        ).fetchone()[0] == 0
+
     repeated_planning = confirmed_planning_start(
         service,
         {"agent": "gpt", "task_gid": "123456789", "kind": "planning"},
-        principal=principal,
+        principal=planning_principal,
         challenge_request_id="44444444-4444-4444-8444-444444444444",
         start_request_id="88888888-8888-4888-8888-888888888888",
     )
@@ -85,3 +137,67 @@ def test_service_preserves_planning_handoff_start_contract(tmp_path):
         "start with kind=initial using a fresh client.request_id; "
         "do not start Planning again"
     )
+
+    mistaken_prepared = service.execute_agent(
+        "start",
+        {
+            "agent": "gpt",
+            "task_gid": "123456789",
+            "kind": "initial",
+            "prepared_operation_id": started["submission_id"],
+        },
+        principal=research_principal,
+        request_id="99999999-9999-4999-8999-999999999999",
+    )
+    assert mistaken_prepared["code"] == "VALIDATION_FAILED"
+    assert mistaken_prepared["retryable"] is True
+    assert mistaken_prepared["allowed_actions"] == ["start"]
+    mistaken_error = mistaken_prepared["errors"][0]
+    assert mistaken_error["rule"] == "planning_handoff_requires_initial"
+    assert mistaken_error["prepared_operation_id"] == started["submission_id"]
+    assert mistaken_error["fresh_run_required"] is True
+    assert mistaken_error["prepared_operation_id_allowed"] is False
+    assert mistaken_prepared["data"]["required_start_kind"] == "initial"
+    assert "omitting prepared_operation_id" in mistaken_prepared["data"]["legal_next_step"]
+    assert "fresh client.run_id" in mistaken_prepared["data"]["legal_next_step"]
+    assert "prepared_successor_not_found" not in str(mistaken_prepared)
+
+    mistaken_action = attach_action_agent_guidance(copy.deepcopy(mistaken_prepared))
+    mistaken_guidance = " ".join(
+        mistaken_action["data"]["agent_guidance"]["instructions"]
+    )
+    assert "Planning is complete" in mistaken_guidance
+    assert "fresh client.run_id" in mistaken_guidance
+    assert "Omit prepared_operation_id" in mistaken_guidance
+
+    research = service.execute_agent(
+        "start",
+        {"agent": "gpt", "task_gid": "123456789", "kind": "initial"},
+        principal=research_principal,
+        request_id="aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
+    )
+    assert research["ok"], research
+    assert research["submission_id"] != started["submission_id"]
+    assert research["data"]["operation_kind"] == "initial"
+
+    with sqlite3.connect(service.config.db_path) as conn:
+        conn.row_factory = sqlite3.Row
+        research_op = conn.execute(
+            "SELECT status, operation_kind, run_id FROM operations WHERE operation_id=?",
+            (research["submission_id"],),
+        ).fetchone()
+        assert research_op is not None
+        assert dict(research_op) == {
+            "status": "open",
+            "operation_kind": "initial",
+            "run_id": research_principal.run_id,
+        }
+        assert research_op["run_id"] != planning_principal.run_id
+        assert conn.execute(
+            "SELECT COUNT(*) FROM operation_successions WHERE source_operation_id=?",
+            (started["submission_id"],),
+        ).fetchone()[0] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM safe_reclaims WHERE source_operation_id=?",
+            (started["submission_id"],),
+        ).fetchone()[0] == 0

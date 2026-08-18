@@ -2,16 +2,20 @@
 """Render/version/evaluate canonical ChatGPT Project kernels."""
 from __future__ import annotations
 import argparse, copy, hashlib, inspect, json, re, shlex, subprocess, sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 DISH_ROOT=Path(__file__).resolve().parents[1]; REPO_ROOT=DISH_ROOT.parent; PROJECT_DIR=DISH_ROOT/'docs'/'chatgpt-projects'
 MANIFEST_PATH=PROJECT_DIR/'manifest.json'; EVALS_PATH=PROJECT_DIR/'evals.json'; ROLE_INDEX_PATH=DISH_ROOT/'docs'/'agents'/'index.md'; ROOT_INSTRUCTIONS_PATH=REPO_ROOT/'CLAUDE.md'
 STANDING_INVARIANTS_PATH=DISH_ROOT/'docs'/'agents'/'standing-invariants.json'
+FAST_TRACK_GATE_REGISTRY_PATH=PROJECT_DIR/'fast-track-gates.json'
+FAST_TRACK_OVERLAY_VERSION='fasttrack-r3'
+FAST_TRACK_OVERLAY_HEADER='MARCO OVERRIDE — FAST-TRACK PROCESS'
 REPOSITORY_CONTEXT_ROLES=('audit','coordinator','development-workflow','implementation','integration','postgresql-dark-launch','review','workflow')
 REPOSITORY_CONTEXT_EVAL_IDS=('repository-context-admission-consequential-reasoning','repository-context-admission-missing-bundle','repository-context-admission-reentry','repository-context-admission-stale-main','repository-context-admission-tiny-lookup','standing-policy-post-integration-main-readback')
 REPOSITORY_CONTEXT_ADMISSION_ORDER=('resolve-live-main-and-repository-identity','retrieve-exact-bundle-through-github-connector','materialize-bundle','verify-bundle-against-repository-name-id-ref-sha','bind-verified-clone','substantial-cross-file-reasoning')
-REPOSITORY_CONTEXT_RATIFICATION_REFS=('asana:task:1217508843698365','asana:task:1217508843698365#story:1217509740007539')
-REPOSITORY_CONTEXT_SOURCE_RULE_FINGERPRINT='45190e0b9e9ffe3f4f8f33141f7cdb4e16572c90eb5453f2d2a9e11768734e3d'
+REPOSITORY_CONTEXT_RATIFICATION_REFS=('asana:task:1217508843698365','asana:task:1217508843698365#story:1217509740007539','asana:task:1217594495187308')
+REPOSITORY_CONTEXT_SOURCE_RULE_FINGERPRINT='bef91c9d40a0db7630c541da9af51a8642f458d8a4781f9a6bc53de4d597b16e'
 REPOSITORY_CONTEXT_COMPLETION_RULE_FINGERPRINT='66c32039154e99f000e5fc64081b7219bb9179a970a583fac4fc25c03921d9e3'
 STANDING_SUPERSESSION_FIELDS=('authority_type','durable_ref','decision','effective_at')
 STANDING_SUPERSESSION_AUTHORITY_TYPES=('marco-explicit','authorized-human-explicit')
@@ -35,6 +39,69 @@ def _read_json(p:Path)->dict[str,Any]:
  return v
 def _h(b:bytes)->str:return hashlib.sha256(b).hexdigest()
 def _semantic_json_hash(v):return _h(json.dumps(v,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode())
+
+def fast_track_gate_registry():
+ raw=_read_json(FAST_TRACK_GATE_REGISTRY_PATH)
+ if raw.get('schema_version')!=1 or raw.get('overlay_version')!=FAST_TRACK_OVERLAY_VERSION or not isinstance(raw.get('gates'),list): raise KernelError('fast-track gate registry schema/version mismatch')
+ out={}
+ for gate in raw['gates']:
+  if not isinstance(gate,dict): raise KernelError('fast-track gate entries must be objects')
+  gid=str(gate.get('id','')).strip(); current=gate.get('current_version'); versions=gate.get('versions')
+  if not gid or gid in out or not re.fullmatch(r'[a-z0-9][a-z0-9-]*',gid) or not isinstance(current,int) or current<=0 or not isinstance(versions,dict): raise KernelError(f'invalid fast-track gate {gid!r}')
+  entry=versions.get(str(current))
+  if not isinstance(entry,dict) or not isinstance(entry.get('waives'),list) or not entry['waives'] or not isinstance(entry.get('retains'),list) or not entry['retains']: raise KernelError(f'fast-track gate {gid}@{current} current semantics missing')
+  semantic={'id':gid,'version':current,'waives':entry['waives'],'retains':entry['retains']}
+  digest='sha256:'+_semantic_json_hash(semantic)
+  if entry.get('semantic_digest')!=digest: raise KernelError(f'fast-track gate {gid}@{current} semantic digest mismatch; material changes require a new gate version')
+  out[gid]={'id':gid,'current_version':current,'semantic_digest':digest,'waives':list(entry['waives']),'retains':list(entry['retains'])}
+ return out
+
+def canonical_fast_track_overlay(value):
+ if not isinstance(value,dict): raise KernelError('fast-track overlay must be an object')
+ version=str(value.get('version','')).strip(); state=str(value.get('state','')).strip().upper(); generation=str(value.get('generation','')).strip(); scope=value.get('scope'); gate_semantics=value.get('gate_semantics'); expiry=value.get('expiry'); reason=str(value.get('reason','')).strip()
+ if version!=FAST_TRACK_OVERLAY_VERSION or state not in {'ACTIVE','INACTIVE'} or not generation or not isinstance(scope,list) or not scope or any(not isinstance(x,str) or not re.fullmatch(r'[a-z0-9][a-z0-9-]*@[1-9][0-9]*',x.strip()) for x in scope) or not isinstance(gate_semantics,dict) or (expiry is not None and not str(expiry).strip()): raise KernelError('invalid fast-track overlay fields')
+ scope=sorted(set(x.strip() for x in scope))
+ if set(gate_semantics)!=set(scope): raise KernelError('fast-track overlay gate semantics must exactly bind scope')
+ normalized_semantics={}
+ for key in scope:
+  digest=str(gate_semantics[key]).strip().lower()
+  if not re.fullmatch(r'sha256:[0-9a-f]{64}',digest): raise KernelError(f'fast-track overlay gate semantic digest invalid for {key}')
+  normalized_semantics[key]=digest
+ return {'version':version,'state':state,'generation':generation,'scope':scope,'gate_semantics':normalized_semantics,'expiry':None if expiry is None else str(expiry).strip(),'reason':reason}
+
+def parse_fast_track_overlay_block(text):
+ raw=str(text)
+ if raw.count(FAST_TRACK_OVERLAY_HEADER)!=1: raise KernelError('Project settings must contain exactly one fast-track reserved header')
+ tail=raw.split(FAST_TRACK_OVERLAY_HEADER,1)[1].lstrip()
+ try:value,end=json.JSONDecoder().raw_decode(tail)
+ except json.JSONDecodeError as e: raise KernelError(f'invalid fast-track overlay JSON: {e}') from e
+ return canonical_fast_track_overlay(value)
+
+def fast_track_overlay_digest(value): return 'sha256:'+_semantic_json_hash(canonical_fast_track_overlay(value))
+
+def _fast_track_datetime(value,label):
+ try: parsed=datetime.fromisoformat(str(value).replace('Z','+00:00'))
+ except ValueError as e: raise KernelError(f'invalid fast-track {label} datetime') from e
+ if parsed.tzinfo is None: raise KernelError(f'fast-track {label} datetime must be timezone-aware')
+ return parsed
+
+def fast_track_use(value,*,gate_id,gate_version,task,candidate,action,raw_evidence,now=None):
+ overlay=canonical_fast_track_overlay(value)
+ if overlay['state']!='ACTIVE': raise KernelError('fast-track overlay is inactive')
+ if overlay['expiry'] is not None:
+  current=datetime.now(timezone.utc) if now is None else (now if isinstance(now,datetime) else _fast_track_datetime(now,'now'))
+  if current.tzinfo is None: raise KernelError('fast-track now datetime must be timezone-aware')
+  if _fast_track_datetime(overlay['expiry'],'expiry')<=current: raise KernelError('fast-track overlay generation is expired')
+ registry=fast_track_gate_registry(); gid=str(gate_id).strip(); gate=registry.get(gid)
+ if not isinstance(gate_version,int) or gate is None or gate['current_version']!=gate_version: raise KernelError('fast-track gate is unknown, stale, or materially changed')
+ scope_key=f'{gid}@{gate_version}'
+ if scope_key not in overlay['scope']: raise KernelError('fast-track gate is outside captured overlay scope')
+ authorized_semantic_digest=overlay['gate_semantics'][scope_key]
+ if authorized_semantic_digest!=gate['semantic_digest']: raise KernelError('fast-track gate is unknown, stale, or materially changed')
+ task=str(task).strip(); candidate=str(candidate).strip(); action=str(action).strip(); raw_evidence=str(raw_evidence).strip()
+ if not task or not candidate or not action or not raw_evidence: raise KernelError('fast-track use requires exact task/candidate/action/raw evidence')
+ return {'marker':'GATE WAIVED BY MARCO OVERRIDE','overlay_generation':overlay['generation'],'overlay_digest':fast_track_overlay_digest(overlay),'gate_id':gid,'gate_version':gate_version,'gate_semantic_digest':authorized_semantic_digest,'task':task,'candidate':candidate,'action':action,'raw_evidence':raw_evidence}
+
 def role_index_contracts()->set[str]:
  out=set()
  for l in ROLE_INDEX_PATH.read_text().splitlines():
@@ -545,7 +612,7 @@ def validate_standing_invariants(s,*,registry=None,eval_ids=None,required_eval_i
  if not isinstance(rat,dict) or not str(rat.get('decision','')).strip() or not isinstance(rat.get('durable_authority_refs'),list) or not rat['durable_authority_refs'] or any(not str(x).strip() for x in rat['durable_authority_refs']): raise KernelError('standing invariant repository-context-admission requires durable ratification provenance')
  if not set(REPOSITORY_CONTEXT_RATIFICATION_REFS).issubset(set(map(str,rat['durable_authority_refs']))): raise KernelError('standing invariant repository-context-admission lost durable approval provenance')
  semantic=entry.get('semantic_contract')
- expected_semantic={'admission_order':list(REPOSITORY_CONTEXT_ADMISSION_ORDER),'tiny_targeted_reads_exempt':True,'reentry_events':['fresh-or-replacement-session','post-compaction-reground','affected-role-switch','main-movement-with-absent-or-stale-witness'],'failure_scope':'affected-substantial-conclusion-only','bundle_authority':'read-only-context','current_state_authorities':['GitHub','Asana']}
+ expected_semantic={'admission_order':list(REPOSITORY_CONTEXT_ADMISSION_ORDER),'tiny_targeted_reads_exempt':True,'reentry_events':['fresh-or-replacement-session','post-compaction-reground','affected-role-switch','main-movement-with-absent-or-stale-witness'],'failure_scope':'affected-substantial-conclusion-only','bundle_authority':'read-only-context','current_state_authorities':['GitHub','Asana'],'ordinary_chatgpt_pr_review':{'bundle_unavailable':'connector-native-exact-evidence-fallback','bundle_used':'exact-current-validation-required'}}
  if semantic!=expected_semantic: raise KernelError('standing invariant repository-context-admission semantic contract changed without supersession')
  coverage=entry.get('coverage')
  if not isinstance(coverage,dict): raise KernelError('standing invariant repository-context-admission requires coverage')
