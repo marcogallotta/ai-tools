@@ -160,6 +160,7 @@ class LifecycleEngine(
         )
         lifecycle.human_action = None
         return lifecycle
+
 def _build_engine(
     args: argparse.Namespace,
 ) -> tuple[
@@ -274,11 +275,15 @@ def _notification_printer(message: str) -> None:
     print(message, file=sys.stderr)
 
 
-
-
-def _task_projection_cycle(engine: LifecycleEngine, values: list[PRLifecycle]) -> list[dict[str, Any]]:
+def _task_observation_cycle(
+    engine: LifecycleEngine, values: list[PRLifecycle]
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if engine.asana is None:
-        return []
+        return [], {
+            "status": "UNKNOWN",
+            "projects": [],
+            "reason": "Asana is not configured",
+        }
     project_ids: set[str] = set()
     for value in values:
         for task in value.asana:
@@ -287,9 +292,22 @@ def _task_projection_cycle(engine: LifecycleEngine, values: list[PRLifecycle]) -
                     gid = str(membership["project"].get("gid") or "")
                     if gid:
                         project_ids.add(gid)
+    if not project_ids:
+        return [], {
+            "status": "UNKNOWN",
+            "projects": [],
+            "reason": "no Asana project scope could be established from linked task memberships",
+        }
+
     tasks: dict[str, dict[str, Any]] = {}
+    scope_errors: list[dict[str, str]] = []
     for project_gid in sorted(project_ids):
-        for task in engine.asana.list_project_tasks(project_gid):
+        try:
+            listed = engine.asana.list_project_tasks(project_gid)
+        except LifecycleError as exc:
+            scope_errors.append({"project": project_gid, "error": str(exc)})
+            continue
+        for task in listed:
             gid = str(task.get("gid") or "")
             if not gid or gid in tasks:
                 continue
@@ -301,17 +319,147 @@ def _task_projection_cycle(engine: LifecycleEngine, values: list[PRLifecycle]) -
                     "gid": gid,
                     "name": authoritative.get("name"),
                     "completed": bool(authoritative.get("completed")),
+                    "completed_at": authoritative.get("completed_at"),
                     "modified_at": authoritative.get("modified_at"),
+                    "memberships": list(authoritative.get("memberships") or []),
+                    "dependencies": list(authoritative.get("dependencies") or []),
+                    "dependents": list(authoritative.get("dependents") or []),
                     "execution": truth,
+                    "provenance": {
+                        "task": "asana-direct-read",
+                        "stories": "asana-complete-story-history",
+                    },
                 }
                 rollout = rollout_projection(reconstruct_rollout(stories, task_gid=gid))
                 if rollout is not None:
                     projection["rollout"] = rollout
-                ensure_projection_comment(engine.asana, gid, projection)
                 tasks[gid] = projection
             except LifecycleError as exc:
-                tasks[gid] = {"gid": gid, "error": str(exc)}
-    return list(tasks.values())
+                tasks[gid] = {
+                    "gid": gid,
+                    "error": str(exc),
+                    "provenance": {"task": "asana-direct-read"},
+                }
+    scope = {
+        "status": "COMPLETE" if not scope_errors else "INCOMPLETE",
+        "projects": sorted(project_ids),
+    }
+    if scope_errors:
+        scope["errors"] = scope_errors
+    return list(tasks.values()), scope
+
+
+def _write_task_projection_comments(
+    engine: LifecycleEngine, tasks: Iterable[Mapping[str, Any]]
+) -> None:
+    if engine.asana is None:
+        return
+    for task in tasks:
+        gid = str(task.get("gid") or "")
+        if not gid or task.get("error"):
+            continue
+        projection = {
+            key: task[key]
+            for key in ("gid", "name", "completed", "modified_at", "execution", "rollout")
+            if key in task
+        }
+        ensure_projection_comment(engine.asana, gid, projection)
+
+
+def _task_projection_cycle(engine: LifecycleEngine, values: list[PRLifecycle]) -> list[dict[str, Any]]:
+    tasks, _ = _task_observation_cycle(engine, values)
+    _write_task_projection_comments(engine, tasks)
+    return tasks
+
+
+def _source_observation_cycle(
+    engine: LifecycleEngine, values: list[PRLifecycle]
+) -> dict[str, Any]:
+    by_pr: dict[str, dict[str, Any]] = {}
+    workstreams: list[dict[str, Any]] = []
+    status = "COMPLETE"
+    error = None
+    candidate_reader = getattr(engine, "_workstream_candidates", None)
+    candidates = {}
+    if callable(candidate_reader):
+        try:
+            candidates = candidate_reader(values)
+        except LifecycleError as exc:
+            status = "INCOMPLETE"
+            error = str(exc)
+
+    for candidate in candidates.values():
+        merged_intermediate = any(
+            member.publication_state == "merged" for member in candidate.members
+        )
+        workstreams.append({
+            "task": candidate.workstream_task,
+            "candidate_id": candidate.candidate_id,
+            "shape_id": candidate.shape_id,
+            "ultimate_target": candidate.members[0].ultimate_target,
+            "source_state": "LANDED" if candidate.source_complete else "NOT_LANDED",
+            "members": [
+                {
+                    "pr": member.pr_number,
+                    "head": member.head,
+                    "base": member.base,
+                    "publication_state": member.publication_state,
+                }
+                for member in candidate.members
+            ],
+        })
+        for member in candidate.members:
+            by_pr[str(member.pr_number)] = {
+                "state": "LANDED" if member.publication_state == "landed" else "NOT_LANDED",
+                "ultimate_target": member.ultimate_target,
+                "publication_state": member.publication_state,
+                "workstream_task": candidate.workstream_task,
+                "candidate_id": candidate.candidate_id,
+                "provenance": "existing-workstream-landing-model",
+                **(
+                    {"lineage_state": "MERGED_INTERMEDIATE_TARGET"}
+                    if merged_intermediate and not candidate.source_complete
+                    else {}
+                ),
+            }
+
+    for value in values:
+        key = str(value.number)
+        if key in by_pr:
+            continue
+        if value.state == LifecycleState.MERGED and value.base == "main":
+            by_pr[key] = {
+                "state": "LANDED",
+                "ultimate_target": "main",
+                "publication_state": "landed",
+                "provenance": "github-pr-merged-to-main",
+            }
+        elif value.base == "main":
+            by_pr[key] = {
+                "state": "NOT_LANDED",
+                "ultimate_target": "main",
+                "publication_state": (
+                    "closed" if value.state == LifecycleState.CLOSED else "open"
+                ),
+                "provenance": "github-pr-state",
+            }
+        else:
+            by_pr[key] = {
+                "state": "UNKNOWN",
+                "ultimate_target": None,
+                "publication_state": (
+                    "merged" if value.state == LifecycleState.MERGED else "unknown"
+                ),
+                "provenance": "ultimate-target-not-declared",
+            }
+    result = {
+        "status": status,
+        "pull_requests": by_pr,
+        "workstreams": workstreams,
+    }
+    if error is not None:
+        result["error"] = error
+    return result
 
 
 def _projection_health(engine: LifecycleEngine) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -336,7 +484,10 @@ def _projection_health(engine: LifecycleEngine) -> tuple[dict[str, Any], dict[st
 def _publish_projection(engine: LifecycleEngine, values: list[PRLifecycle], args: argparse.Namespace, *, mutate_tasks: bool) -> None:
     if args.projection_path is None:
         return
-    tasks = _task_projection_cycle(engine, values) if mutate_tasks else []
+    tasks, task_scope = _task_observation_cycle(engine, values)
+    if mutate_tasks:
+        _write_task_projection_comments(engine, tasks)
+    source_observation = _source_observation_cycle(engine, values)
     controller, full_regression = _projection_health(engine)
     atomic_write(
         args.projection_path,
@@ -344,6 +495,8 @@ def _publish_projection(engine: LifecycleEngine, values: list[PRLifecycle], args
             values,
             repository=args.repo,
             tasks=tasks,
+            task_scope=task_scope,
+            source_observation=source_observation,
             controller=controller,
             full_regression=full_regression,
         ),
