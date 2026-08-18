@@ -149,13 +149,15 @@ def test_service_preserves_planning_handoff_start_contract(tmp_path):
         principal=research_principal,
         request_id="99999999-9999-4999-8999-999999999999",
     )
-    assert mistaken_prepared["code"] == "INVALID_ARGUMENT"
-    assert mistaken_prepared["errors"][0]["rule"] == (
-        "planning_handoff_requires_fresh_research_run"
-    )
+    assert mistaken_prepared["code"] == "VALIDATION_FAILED"
+    assert mistaken_prepared["retryable"] is True
+    assert mistaken_prepared["allowed_actions"] == ["start"]
+    mistaken_error = mistaken_prepared["errors"][0]
+    assert mistaken_error["rule"] == "planning_handoff_requires_initial"
+    assert mistaken_error["prepared_operation_id"] == started["submission_id"]
+    assert mistaken_error["fresh_run_required"] is True
+    assert mistaken_error["prepared_operation_id_allowed"] is False
     assert mistaken_prepared["data"]["required_start_kind"] == "initial"
-    assert mistaken_prepared["data"]["fresh_run_required"] is True
-    assert mistaken_prepared["data"]["prepared_operation_id_allowed"] is False
     assert "omitting prepared_operation_id" in mistaken_prepared["data"]["legal_next_step"]
     assert "fresh client.run_id" in mistaken_prepared["data"]["legal_next_step"]
     assert "prepared_successor_not_found" not in str(mistaken_prepared)
