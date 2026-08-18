@@ -27,7 +27,7 @@ TASK = "1217593330664688"
 PROJECT = "1217419962189616"
 
 
-def lifecycle(*, state=None, base="main", completed=False, leases=None):
+def lifecycle(*, state=None, base="main", completed=False, leases=None, human_action=None):
     state = state or pr_lifecycle.LifecycleState.REVIEW_READY
     return pr_lifecycle.PRLifecycle(
         number=171,
@@ -41,6 +41,7 @@ def lifecycle(*, state=None, base="main", completed=False, leases=None):
         state_label=pr_lifecycle.STATE_LABELS[state],
         task_ids=[TASK],
         active_leases=list(leases or []),
+        human_action=human_action,
         asana=[{
             "gid": TASK,
             "completed": completed,
@@ -185,6 +186,24 @@ def test_local_implementation_completion_maps_to_review_pass_without_prose_infer
     )
 
     assert projection["resolved_lifecycle"][0]["phase"] == "REVIEW_PASS"
+
+
+def test_explicit_operator_action_is_typed_as_blocked_on_marco():
+    projection = build_projection(
+        [lifecycle(
+            state=pr_lifecycle.LifecycleState.INTEGRATION_READY,
+            human_action="operator decision required",
+        )],
+        repository="marcogallotta/ai-tools",
+        tasks=[task(False)],
+        source_observation=source("NOT_LANDED"),
+    )
+
+    resolved = projection["resolved_lifecycle"][0]
+    assert resolved["state"] == "BLOCKED_ON_MARCO"
+    assert resolved["phase"] == "INTEGRATION_READY"
+    assert resolved["operator_action"] == "operator decision required"
+    assert projection["queues"]["Decision"] == [171]
 
 
 def test_intermediate_merge_is_not_laundered_into_main_landing():
