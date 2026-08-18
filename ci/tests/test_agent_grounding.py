@@ -59,13 +59,30 @@ def _make_repo(tmp_path: Path) -> Path:
     (repo / "scripts").mkdir()
     (repo / "tools").mkdir()
     (repo / "CLAUDE.md").write_text("ROOT CURRENT INSTRUCTIONS\n", encoding="utf-8")
-    (repo / "OPERATOR_CONTROL_PLANE.md").write_text("SHARED OPERATOR CONTROL PLANE\n", encoding="utf-8")
+    (repo / "OPERATOR_CONTROL_PLANE.md").write_text(
+        "# Shared operator control plane\n\n"
+        "All standing roles apply Shared operator interaction. Coordinator and Development Workflow additionally apply the task-specific sections.\n\n"
+        "## Shared operator interaction\n\n"
+        "SHARED OPERATOR CONTROL PLANE\n\n"
+        "## TRUE READY dispatch queue\n\n"
+        "COORDINATOR-ONLY QUEUE DETAIL\n",
+        encoding="utf-8",
+    )
     (repo / "dish/docs/agents/index.md").write_text(
-        "All roles also apply the shared [control plane](../../../OPERATOR_CONTROL_PLANE.md).\n\n"
+        "All repository-modifying roles inherit [`contributor-base.md`](contributor-base.md).\n\n"
+        "All roles also apply the shared [`Dish operator / orchestration control plane`](../../../OPERATOR_CONTROL_PLANE.md) for presentation mechanics. Coordinator and Development Workflow additionally apply its action-specific queue/handoff/decision/triage sections.\n\n"
         "| Role / common names | Standing contract |\n"
         "|---|---|\n"
+        "| Coordinator | [`coordinator.md`](coordinator.md) |\n"
+        "| Development Workflow specialist | [`development-workflow.md`](development-workflow.md) |\n"
         "| Workflow specialist | [`workflow.md`](workflow.md) |\n",
         encoding="utf-8",
+    )
+    (repo / "dish/docs/agents/coordinator.md").write_text(
+        "# Coordinator\n", encoding="utf-8"
+    )
+    (repo / "dish/docs/agents/development-workflow.md").write_text(
+        "# Development Workflow\n", encoding="utf-8"
     )
     (repo / "dish/docs/agents/workflow.md").write_text(
         "# Workflow specialist\n\n"
@@ -78,6 +95,14 @@ def _make_repo(tmp_path: Path) -> Path:
         json.dumps(
             {
                 "roles": {
+                    "coordinator": {
+                        "contract": "dish/docs/agents/coordinator.md",
+                        "allowed_compositions": [],
+                    },
+                    "development-workflow": {
+                        "contract": "dish/docs/agents/development-workflow.md",
+                        "allowed_compositions": [],
+                    },
                     "workflow": {
                         "contract": "dish/docs/agents/workflow.md",
                         "allowed_compositions": [],
@@ -86,7 +111,7 @@ def _make_repo(tmp_path: Path) -> Path:
                                 "safe action": ["dish/docs/agents/workflow.md#Action context"]
                             }
                         },
-                    }
+                    },
                 },
                 "context_dependencies": {},
             }
@@ -178,16 +203,17 @@ def test_fresh_and_resume_sessions_receive_exact_shared_grounding(agent_groundin
     assert "source=startup" in fresh_context
     assert "ROOT CURRENT INSTRUCTIONS" in fresh_context
     assert "SHARED OPERATOR CONTROL PLANE" in fresh_context
+    assert "COORDINATOR-ONLY QUEUE DETAIL" not in fresh_context
 
     receipt = json.loads(agent_grounding._session_receipt_path("session-1").read_text())
     first_generation = receipt["grounding_generation"]
     assert receipt["session_source"] == "startup"
     assert receipt["role"] == "workflow"
-    assert {record["path"] for record in receipt["context_records"]} == {
+    assert {record["locator"] for record in receipt["context_records"]} == {
         "dish/docs/agents/workflow.md",
-        "OPERATOR_CONTROL_PLANE.md",
+        "OPERATOR_CONTROL_PLANE.md#Shared operator interaction",
     }
-    assert all(len(record["sha256"]) == 64 for record in receipt["context_records"])
+    assert all(len(record["content_sha256"]) == 64 for record in receipt["context_records"])
 
     resumed = agent_grounding._session_ground(
         _session_payload(repo, "resume"), "session-1", "claude", session_source="resume"
@@ -220,7 +246,12 @@ def test_shared_context_drift_reloads_before_tool_use(agent_grounding, tmp_path,
         _session_payload(repo, "startup"), "session-1", "claude", session_source="startup"
     )
     operator = repo / "OPERATOR_CONTROL_PLANE.md"
-    operator.write_text("SHARED OPERATOR CONTROL PLANE\nCURRENT POLICY CHANGE\n", encoding="utf-8")
+    operator.write_text(
+        operator.read_text(encoding="utf-8").replace(
+            "SHARED OPERATOR CONTROL PLANE", "SHARED OPERATOR CONTROL PLANE\nCURRENT POLICY CHANGE"
+        ),
+        encoding="utf-8",
+    )
 
     decision = agent_grounding._pretool(_pretool_payload(repo), "session-1", "claude")
     assert decision is not None
