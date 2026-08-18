@@ -1,28 +1,21 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/marcogallotta/ai-tools/ci/integration-certification-plan.schema.json",
-  "title": "Repository integration certification plan",
+  "title": "Repository affected-target certification plan v2",
   "type": "object",
   "additionalProperties": false,
   "required": [
-    "format",
-    "identity",
-    "changed_paths",
-    "classifications",
-    "dish_selector",
-    "semantic_additions",
-    "selected_lanes",
-    "selected_groups",
-    "native_postgresql",
-    "force_full",
-    "force_full_reasons",
+    "format", "identity", "changed_paths", "profile", "classifications",
+    "dish_selector", "semantic_additions", "graph_identity", "selected_targets",
+    "hosted_required_targets", "selected_groups", "boundary_fallbacks",
+    "legacy_adapter_paths", "retired_legacy_obligations", "all_boundary_fallback",
+    "all_boundary_fallback_reasons", "obligation_union", "impact_fingerprint",
     "policy_identity"
   ],
   "properties": {
-    "format": {"const": "repository-certification-plan-v1"},
+    "format": {"const": "repository-certification-plan-v2"},
     "identity": {
-      "type": "object",
-      "additionalProperties": false,
+      "type": "object", "additionalProperties": false,
       "required": ["candidate_sha", "base_sha", "merge_base_sha"],
       "properties": {
         "candidate_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
@@ -30,37 +23,21 @@
         "merge_base_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
       }
     },
-    "changed_paths": {
-      "type": "array",
-      "items": {"type": "string", "minLength": 1},
-      "minItems": 1,
-      "uniqueItems": true
-    },
+    "changed_paths": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "profile": {"enum": ["LOCAL_FAST", "PR_EXACT_HEAD", "POSTMERGE_FULL"]},
     "classifications": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
+      "type": "array", "items": {
+        "type": "object", "additionalProperties": false,
         "required": ["path", "scope", "classification"],
         "properties": {
-          "path": {"type": "string"},
-          "scope": {"enum": ["dish", "repository"]},
+          "path": {"type": "string"}, "scope": {"enum": ["dish", "repository"]},
           "classification": {"type": "string"}
         }
       }
     },
     "dish_selector": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "format",
-        "changed_paths",
-        "classes",
-        "traits",
-        "focused_tests",
-        "lanes",
-        "conditional_reviews"
-      ],
+      "type": "object", "additionalProperties": false,
+      "required": ["format", "changed_paths", "classes", "traits", "focused_tests", "lanes", "conditional_reviews"],
       "properties": {
         "format": {"const": "dish-test-plan-v1"},
         "changed_paths": {"type": "array", "items": {"type": "string"}},
@@ -72,63 +49,80 @@
       }
     },
     "semantic_additions": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["review_complete", "lanes"],
+      "type": "object", "additionalProperties": false, "required": ["review_complete", "lanes"],
       "properties": {
         "review_complete": {"type": "boolean"},
-        "lanes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true}
+        "lanes": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}
       }
     },
-    "selected_lanes": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "graph_identity": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "selected_targets": {"type": "array", "items": {"$ref": "#/$defs/target"}},
+    "hosted_required_targets": {"type": "array", "items": {"$ref": "#/$defs/target"}},
     "selected_groups": {
-      "type": "array",
-      "items": {
-        "enum": [
-          "python-control-plane",
-          "frontend-static",
-          "native-postgresql",
-          "browser-acceptance"
-        ]
-      },
-      "uniqueItems": true
+      "type": "array", "uniqueItems": true,
+      "items": {"enum": ["python-control-plane", "frontend-static", "native-postgresql", "browser-acceptance"]}
     },
-    "native_postgresql": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["mode", "test_files", "reason"],
-      "properties": {
-        "mode": {"enum": ["none", "focused", "full"]},
-        "test_files": {
-          "type": "array",
-          "items": {"type": "string", "pattern": "^tests/postgresql/native/test_.*\\.py$"},
-          "uniqueItems": true
-        },
-        "reason": {"type": "string", "minLength": 1}
-      }
-    },
-    "force_full": {"type": "boolean"},
-    "force_full_reasons": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
-    "policy_identity": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["format", "combined_sha256", "sources"],
-      "properties": {
-        "format": {"const": "repository-certification-policy-identity-v1"},
-        "combined_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-        "sources": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["path", "sha256"],
-            "properties": {
-              "path": {"type": "string"},
-              "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
-            }
-          }
+    "boundary_fallbacks": {
+      "type": "array", "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["execution_boundary", "reasons"],
+        "properties": {
+          "execution_boundary": {"enum": ["python-control-plane", "frontend-static", "native-postgresql", "browser-acceptance"]},
+          "reasons": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}}
         }
       }
+    },
+    "legacy_adapter_paths": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+    "retired_legacy_obligations": {"type": "array", "items": {"type": "object"}},
+    "all_boundary_fallback": {"type": "boolean"},
+    "all_boundary_fallback_reasons": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+    "obligation_union": {"type": ["object", "null"]},
+    "impact_fingerprint": {
+      "type": "object", "additionalProperties": false,
+      "required": ["format", "graph_identity", "input_mode", "paths", "target_ids", "guarantees", "execution_boundaries", "resource_classes", "boundary_fallbacks", "all_boundary_fallback", "legacy_adapter_paths"],
+      "properties": {
+        "format": {"const": "dish-impact-fingerprint-v1"},
+        "graph_identity": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "input_mode": {"enum": ["exact_git_delta", "explicit_predicted_paths"]},
+        "paths": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "target_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "guarantees": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "execution_boundaries": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "resource_classes": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "boundary_fallbacks": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "all_boundary_fallback": {"type": "boolean"},
+        "legacy_adapter_paths": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}
+      }
+    },
+    "policy_identity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["format", "combined_sha256", "sources"],
+      "properties": {
+        "format": {"const": "repository-certification-policy-identity-v2"},
+        "combined_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "sources": {"type": "array", "items": {
+          "type": "object", "additionalProperties": false, "required": ["path", "sha256"],
+          "properties": {"path": {"type": "string"}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}
+        }}
+      }
+    }
+  },
+  "$defs": {
+    "target": {
+      "type": "object",
+      "required": ["id", "runner", "selector", "execution_boundary", "guarantees", "size", "requirements", "profiles", "selection_reasons"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "runner": {"type": "string", "minLength": 1},
+        "selector": {"type": "string", "minLength": 1},
+        "execution_boundary": {"enum": ["python-control-plane", "frontend-static", "native-postgresql", "browser-acceptance"]},
+        "guarantees": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}},
+        "size": {"enum": ["small", "medium", "large"]},
+        "requirements": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "profiles": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["LOCAL_FAST", "PR_EXACT_HEAD", "POSTMERGE_FULL"]}},
+        "selection_reasons": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string"}}
+      },
+      "additionalProperties": true
     }
   }
 }

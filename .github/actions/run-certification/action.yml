@@ -1,8 +1,8 @@
-name: Run selected Integration certification groups
-description: Conditionally prepare and execute selected exact-head certification groups in one hosted job.
+name: Run selected Integration certification targets
+description: Provision target-declared runtimes and execute the exact affected-target plan in one hosted job.
 inputs:
   execution-spec:
-    description: Path to dish-certification-execution-spec-v1 JSON in the checkout.
+    description: Path to dish-certification-execution-spec-v2 JSON in the checkout.
     required: true
   github-token:
     description: Token with read access to the canonical Python dependency Release when Python setup is selected.
@@ -15,7 +15,7 @@ inputs:
     description: Actions run attempt recorded in combined certification evidence.
     required: true
   evidence-path:
-    description: Output path for dish-integration-certification-v1 evidence.
+    description: Output path for dish-integration-certification-v2 evidence.
     required: false
     default: .test-artifacts/integration-certification/evidence.json
 runs:
@@ -40,13 +40,13 @@ runs:
           --repo-root "$GITHUB_WORKSPACE" \
           --github-output "$GITHUB_OUTPUT"
 
-    - name: Setup Python only when selected groups require it
+    - name: Setup Python only when selected targets require it
       if: steps.runtime.outputs.python == 'true'
       uses: actions/setup-python@v6
       with:
         python-version: ${{ steps.python-bundle.outputs.python_version }}
 
-    - name: Require dependency-bundle token only for Python groups
+    - name: Require dependency-bundle token only for Python targets
       if: steps.runtime.outputs.python == 'true'
       shell: bash
       env:
@@ -65,7 +65,7 @@ runs:
         github-token: ${{ inputs.github-token }}
         include-flake: ${{ steps.runtime.outputs.flake }}
 
-    - name: Setup Node only when selected groups require it
+    - name: Setup Node only when selected targets require it
       if: steps.runtime.outputs.node == 'true'
       uses: actions/setup-node@v6
       with:
@@ -136,7 +136,7 @@ runs:
         dish/.venv/bin/python -m playwright install --with-deps chromium \
           2>&1 | tee .test-artifacts/integration-certification/setup/chromium.log
 
-    - name: Execute selected groups with fail-fast Integration semantics
+    - name: Execute selected targets with fail-fast Integration semantics
       id: certification
       shell: bash
       run: |

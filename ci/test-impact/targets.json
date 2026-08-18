@@ -1,0 +1,127 @@
+{
+  "format": "dish-test-target-catalog-v1",
+  "execution_boundaries": [
+    "python-control-plane",
+    "frontend-static",
+    "native-postgresql",
+    "browser-acceptance"
+  ],
+  "target_retirements": [],
+  "targets": [
+    {
+      "id": "repo-pytest:ci/tests/test_pr_lifecycle.py",
+      "runner": "repo-pytest",
+      "selector": "ci/tests/test_pr_lifecycle.py",
+      "execution_boundary": "python-control-plane",
+      "guarantees": ["pr-lifecycle"],
+      "size": "small",
+      "requirements": ["python"],
+      "profiles": ["LOCAL_FAST", "PR_EXACT_HEAD", "POSTMERGE_FULL"]
+    },
+    {
+      "id": "repo-pytest:ci/tests/test_integration_certification.py",
+      "runner": "repo-pytest",
+      "selector": "ci/tests/test_integration_certification.py",
+      "execution_boundary": "python-control-plane",
+      "guarantees": ["certification-execution"],
+      "size": "small",
+      "requirements": ["python"],
+      "profiles": ["LOCAL_FAST", "PR_EXACT_HEAD", "POSTMERGE_FULL"]
+    },
+    {
+      "id": "repo-pytest:ci/tests/test_integration_certification_plan.py",
+      "runner": "repo-pytest",
+      "selector": "ci/tests/test_integration_certification_plan.py",
+      "execution_boundary": "python-control-plane",
+      "guarantees": ["test-impact-selection"],
+      "size": "small",
+      "requirements": ["python"],
+      "profiles": ["LOCAL_FAST", "PR_EXACT_HEAD", "POSTMERGE_FULL"]
+    },
+    {
+      "id": "repo-pytest:ci/tests/test_test_impact_graph.py",
+      "runner": "repo-pytest",
+      "selector": "ci/tests/test_test_impact_graph.py",
+      "execution_boundary": "python-control-plane",
+      "guarantees": ["test-impact-selection"],
+      "size": "small",
+      "requirements": ["python"],
+      "profiles": ["LOCAL_FAST", "PR_EXACT_HEAD", "POSTMERGE_FULL"]
+    },
+    {
+      "id": "repo-pytest:ci/tests/test_pr_certification.py",
+      "runner": "repo-pytest",
+      "selector": "ci/tests/test_pr_certification.py",
+      "execution_boundary": "python-control-plane",
+      "guarantees": ["exact-head-certification"],
+      "size": "small",
+      "requirements": ["python"],
+      "profiles": ["LOCAL_FAST", "PR_EXACT_HEAD", "POSTMERGE_FULL"]
+    },
+    {
+      "id": "harness:mutation-real-workspace",
+      "runner": "dish-pytest",
+      "selector": "tests/test_mutation_tooling.py::test_run_case_executes_through_real_guarded_temporary_workspace",
+      "execution_boundary": "python-control-plane",
+      "guarantees": ["pytest-admission", "mutation-workspace"],
+      "size": "small",
+      "requirements": ["python", "subprocess"],
+      "profiles": ["LOCAL_FAST", "PR_EXACT_HEAD", "POSTMERGE_FULL"]
+    },
+    {
+      "id": "fallback:python-control-plane",
+      "runner": "repo-python-full",
+      "selector": "repository-python",
+      "execution_boundary": "python-control-plane",
+      "guarantees": ["python-control-plane"],
+      "size": "large",
+      "requirements": ["python", "node", "subprocess"],
+      "profiles": ["PR_EXACT_HEAD", "POSTMERGE_FULL"],
+      "fallback_for": "python-control-plane"
+    },
+    {
+      "id": "fallback:frontend-static",
+      "runner": "frontend-static",
+      "selector": "frontend-static",
+      "execution_boundary": "frontend-static",
+      "guarantees": ["frontend-static"],
+      "size": "medium",
+      "requirements": ["node"],
+      "profiles": ["PR_EXACT_HEAD", "POSTMERGE_FULL"],
+      "fallback_for": "frontend-static"
+    },
+    {
+      "id": "fallback:native-postgresql",
+      "runner": "native-postgresql",
+      "selector": "full",
+      "execution_boundary": "native-postgresql",
+      "guarantees": ["native-postgresql"],
+      "size": "large",
+      "requirements": ["python", "postgresql", "subprocess"],
+      "profiles": ["PR_EXACT_HEAD", "POSTMERGE_FULL"],
+      "fallback_for": "native-postgresql"
+    },
+    {
+      "id": "fallback:browser-acceptance",
+      "runner": "browser",
+      "selector": "full",
+      "execution_boundary": "browser-acceptance",
+      "guarantees": ["browser-acceptance"],
+      "size": "large",
+      "requirements": ["python", "node", "chromium", "network-loopback"],
+      "profiles": ["PR_EXACT_HEAD", "POSTMERGE_FULL"],
+      "fallback_for": "browser-acceptance",
+      "child_targets": ["fallback:frontend-static"]
+    },
+    {
+      "id": "harness:pglite-nested-collection",
+      "runner": "pglite",
+      "selector": "full",
+      "execution_boundary": "python-control-plane",
+      "guarantees": ["pglite-collection"],
+      "size": "large",
+      "requirements": ["python", "node", "subprocess"],
+      "profiles": ["PR_EXACT_HEAD", "POSTMERGE_FULL"]
+    }
+  ]
+}

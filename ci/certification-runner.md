@@ -1,55 +1,58 @@
 # Single-job certification runner primitives
 
-These primitives are intentionally below selector and Integration policy. They do not decide which certification groups a change requires or replace exact-head gate authority. Stage E wires them into `.github/workflows/ci.yml` only after the formal Review event has produced an exact-candidate repository plan.
+These primitives are intentionally below affected-test selection and Integration policy. They do not decide which targets a change requires or replace exact-head gate authority. `.github/workflows/ci.yml` invokes them only after the formal Review event has produced an exact-candidate target plan.
 
 ## Execution spec
 
-`scripts/integration_certification.py` consumes `dish-certification-execution-spec-v1` JSON. The upstream planner/control plane supplies the exact candidate SHA, SHA-256 digest of its durable plan, and commands for only the groups it selected:
+`scripts/integration_certification.py` consumes `dish-certification-execution-spec-v2` JSON. The upstream planner supplies the exact candidate SHA, SHA-256 digest of its durable plan, and target-level runtime identity and commands:
 
 ```json
 {
-  "schema": "dish-certification-execution-spec-v1",
+  "schema": "dish-certification-execution-spec-v2",
   "candidate_sha": "<40-hex commit>",
   "plan_digest": "<64-hex sha256>",
-  "required_groups": {
-    "python-control-plane": [
-      {"name": "focused evidence", "argv": [".venv/bin/python", "-m", "pytest", "..."], "cwd": "dish"}
+  "targets": [{
+    "id": "dish-pytest:tests/test_example.py",
+    "execution_boundary": "python-control-plane",
+    "requirements": ["python"],
+    "commands": [
+      {"name": "dish-pytest:tests/test_example.py", "argv": [".venv/bin/python", "-m", "pytest", "-q", "tests/test_example.py"], "cwd": "dish"}
     ]
-  }
+  }]
 }
 ```
 
-Allowed groups, in execution order, are:
+Target execution is ordered first by these allocation/reporting boundaries and then by stable target ID:
 
 1. `python-control-plane`
 2. `frontend-static`
 3. `native-postgresql`
 4. `browser-acceptance`
 
-Commands are argv arrays, not shell strings. An optional canonical repository-relative `cwd` lets the adapter execute Dish-local commands without shell wrappers. Unknown groups, non-canonical working directories, or malformed selected groups fail closed. Selection and command composition remain upstream policy; the runner only executes the supplied boundary commands.
+Commands are argv arrays, not shell strings. An optional canonical repository-relative `cwd` lets the adapter execute Dish-local commands without shell wrappers. Unknown boundaries, duplicate target IDs, non-canonical working directories, or malformed targets fail closed. Boundaries remain allocation/reporting metadata; target IDs are selection and evidence identity.
 
 ## Conditional runtime setup
 
-`.github/actions/run-certification/action.yml` derives setup from the selected groups and keeps all heavy setup conditional:
+`.github/actions/run-certification/action.yml` derives setup from each selected target's declared requirements and keeps all heavy setup conditional:
 
 - Python + canonical dependency bundle: Python/control-plane, native PostgreSQL, or browser acceptance;
 - Node: frontend static or browser acceptance;
 - isolated PostgreSQL 17.10: native PostgreSQL only;
 - maintained Chromium: browser acceptance only.
 
-The action is a composite action, not a hosted job. The Stage E PR workflow invokes it from exactly one conditional hosted runner job after planning and selector-map validation. Runtime setup is therefore never allocated for an unselected group. `flake diagnostics` additionally requests the optional dependency-bundle flake environment only when that selected command needs it.
+The action is a composite action, not a hosted job. The PR workflow invokes it from exactly one conditional hosted runner job after planning and selector-map validation. Runtime setup is therefore never allocated for an unselected target. `flake diagnostics` additionally requests the optional dependency-bundle flake environment only when a selected command names it.
 
 ## Execution and evidence
 
-Integration execution is deterministic and fail-fast. When a selected group fails, later selected groups are recorded `not_run_due_to_prior_failure`; unselected groups are always recorded `not_selected`.
+Integration execution is deterministic and fail-fast. When a selected target fails, later targets are recorded `not_run_due_to_prior_failure`.
 
-The runner writes `dish-integration-certification-v1` evidence containing candidate SHA, run ID/attempt, plan digest, required groups, deterministic execution order, every group result, per-group elapsed seconds, total elapsed seconds, and terminal outcome. Successful selected groups are `passed`; the first failing selected group is `failed`.
+The runner writes `dish-integration-certification-v2` evidence containing candidate SHA, run ID/attempt, plan digest, derived required groups, deterministic target order, every target result, per-target elapsed seconds, total elapsed seconds, and terminal outcome. Successful targets are `passed`; the first failing target is `failed`.
 
 ## Stage E Review adapter
 
 `scripts/pr_certification.py` is the PR-event adapter. It accepts only a submitted formal `COMMENTED` Review with `VERDICT: MERGE`, takes the candidate exclusively from `review.commit_id`, verifies that commit still equals the PR head in the event, computes the exact merge base and complete rename-aware changed-path set, and calls the repository planner with semantic review complete. The optional Review line `CERTIFICATION ADD LANES: <lane>; <lane>` is additive only; `NONE` means no additions. Unknown lane names fail closed in planner validation and there is no removal/subtraction operation.
 
-The adapter hashes the complete plan and writes `dish-certification-execution-spec-v1` commands only for `selected_groups`. `.github/workflows/ci.yml` runs the cheap global selector-map validation before it allocates the conditional certification job. A PR `synchronize` event participates only in workflow concurrency cancellation, so a superseded candidate does not allocate new heavy work. The terminal `Dish / exact-head certification` status is posted to the Review commit and targets the exact Actions run.
+The adapter runs the BASE graph engine with BASE inputs and the candidate engine with candidate inputs, then gives both normalized obligation envelopes to the narrow non-subtractive arbiter. If the BASE engine/arbiter cannot participate in a graph self-change, the candidate receives all-boundary fallback. The adapter hashes the complete plan and writes `dish-certification-execution-spec-v2` commands only for `selected_targets`. `.github/workflows/ci.yml` runs the cheap global selector-map validation before it allocates the conditional certification job. A PR `synchronize` event participates only in workflow concurrency cancellation, so a superseded candidate does not allocate new heavy work. The terminal `Dish / exact-head certification` status is posted to the Review commit and targets the exact Actions run.
 
 ## Actions cost reporting
 

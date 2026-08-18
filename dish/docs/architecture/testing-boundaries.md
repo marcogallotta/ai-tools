@@ -32,10 +32,12 @@ No test becomes runtime authority. Evidence is only as strong as the boundary ac
 - Browser tests can prove frontend lifecycle and presentation behavior only at the HTTP/browser
   boundary they exercise. They do not certify native PostgreSQL locking, production HTTPS/proxy
   configuration, destructive restore behavior, or live deployment identity.
-- Per-PR certification is an exact-candidate evidence union selected before heavy execution. The formal
-  Review commit identifies the candidate; changed-path ownership and semantic additions determine which
-  execution boundaries are required. A boundary not selected by the governed plan is not implicitly
-  required, while uncertainty in selection authority fails closed broader/full.
+- Per-PR certification is an exact-candidate affected-target union selected before heavy execution. The
+  formal Review commit identifies the candidate; the canonical target catalog, affected graph, legacy
+  adapter, and additive Review guarantees determine the evidence. Execution boundaries are mechanical
+  runtime requirements, not selection authority. Graph self-changes union independently produced BASE
+  and CANDIDATE obligations outside the graph engine; uncertainty fails closed within the affected
+  boundary or across all boundaries when same-boundary proof is unavailable.
 - Periodic full regression is a health backstop, not a substitute for or freshness source for the
   selector-driven exact-head PR certification gate.
 

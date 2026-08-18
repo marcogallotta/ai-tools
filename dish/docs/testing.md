@@ -166,15 +166,18 @@ against the current checkout before deleting/recreating any environment and then
 with `--no-index --require-hashes`. A changed dependency manifest or target does not trigger a hidden
 rebuild or index access; it requires a newly published bundle.
 
-GitHub PR certification consumes the same governed selection policy rather than running a blanket suite.
+GitHub PR certification consumes the governed affected-test graph rather than running a blanket suite.
 A formal exact-head `VERDICT: MERGE` Review starts `.github/workflows/ci.yml`; the candidate is the
 Review `commit_id`, changed paths are computed from its exact merge base, and the repository planner
-selects the union of required `python-control-plane`, `frontend-static`, `native-postgresql`, and
-`browser-acceptance` groups. Review may add validated lanes but cannot remove planner-required evidence.
-Unknown repository paths, selector uncertainty, and certification/self-governance changes fail closed to
-full certification. A cheap `dish-test-plan --validate` guard runs before any heavy runner allocation.
-Unselected groups are neither started nor required by the exact-head gate. Periodic full regression remains
-a separate backstop in `.github/workflows/full-regression.yml`; it is not ordinary per-PR certification.
+selects stable targets from `ci/test-impact/targets.json`, explicit graph edges, and the incremental
+legacy adapter. Review may add validated guarantees but cannot remove planner-required evidence.
+The plan records target identity, execution boundary, runtime requirements, selection reason, profile,
+boundary fallback, and unmigrated paths. Execution groups are derived allocation/reporting metadata,
+not selection authority. Unknown impact and graph self-change uncertainty fail closed; BASE and CANDIDATE
+obligations are produced by their literal engines/inputs and unioned by a non-narrowing external arbiter.
+A cheap `dish-test-plan --validate` guard runs before heavy runner allocation. Periodic full regression
+remains the selector-miss backstop in `.github/workflows/full-regression.yml`; it is not ordinary per-PR
+certification.
 
 ## Autonomous changed-path selection
 

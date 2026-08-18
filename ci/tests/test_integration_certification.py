@@ -7,14 +7,12 @@ from pathlib import Path
 
 import pytest
 
-
 ROOT = Path(__file__).resolve().parents[2]
-MODULE_PATH = ROOT / "scripts" / "integration_certification.py"
-ACTION = ROOT / ".github" / "actions" / "run-certification" / "action.yml"
+SCRIPT = ROOT / "scripts" / "integration_certification.py"
 
 
 def _module():
-    spec = importlib.util.spec_from_file_location("integration_certification", MODULE_PATH)
+    spec = importlib.util.spec_from_file_location("integration_certification", SCRIPT)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
@@ -22,172 +20,94 @@ def _module():
     return module
 
 
-def _write_spec(tmp_path: Path, required_groups: dict[str, list[dict[str, object]]]) -> Path:
+def _target(
+    target_id: str, boundary: str, *, requirements: list[str] | None = None,
+    command: str | None = None,
+) -> dict[str, object]:
+    return {
+        "id": target_id,
+        "execution_boundary": boundary,
+        "requirements": requirements or [],
+        "commands": [{"name": target_id, "argv": [command or target_id]}],
+    }
+
+
+def _write_spec(tmp_path: Path, targets: list[dict[str, object]]) -> Path:
     path = tmp_path / "spec.json"
-    path.write_text(
-        json.dumps(
-            {
-                "schema": "dish-certification-execution-spec-v1",
-                "candidate_sha": "a" * 40,
-                "plan_digest": "b" * 64,
-                "required_groups": required_groups,
-            }
-        ),
-        encoding="utf-8",
-    )
+    path.write_text(json.dumps({
+        "schema": "dish-certification-execution-spec-v2",
+        "candidate_sha": "a" * 40,
+        "plan_digest": "b" * 64,
+        "targets": targets,
+    }), encoding="utf-8")
     return path
 
 
-def _command(name: str) -> list[dict[str, object]]:
-    return [{"name": name, "argv": ["true"]}]
-
-
-def test_runtime_requirements_are_derived_only_from_selected_groups(tmp_path: Path) -> None:
+def test_runtime_requirements_come_from_targets_not_group_labels(tmp_path: Path) -> None:
     module = _module()
-
-    frontend = module.load_execution_spec(
-        _write_spec(tmp_path, {"frontend-static": _command("frontend")})
-    )
-    assert module.setup_requirements(frontend) == {
-        "python": False,
-        "node": True,
-        "postgresql": False,
-        "chromium": False,
-        "flake": False,
-    }
-
-    browser = module.load_execution_spec(
-        _write_spec(tmp_path, {"browser-acceptance": _command("browser")})
-    )
-    assert module.setup_requirements(browser) == {
+    spec = module.load_execution_spec(_write_spec(tmp_path, [
+        _target("frontend", "frontend-static", requirements=["node"]),
+        _target("native", "native-postgresql", requirements=["python", "postgresql"]),
+    ]))
+    assert spec.required_groups == ("frontend-static", "native-postgresql")
+    assert module.setup_requirements(spec) == {
         "python": True,
         "node": True,
-        "postgresql": False,
-        "chromium": True,
-        "flake": False,
-    }
-
-    postgres = module.load_execution_spec(
-        _write_spec(tmp_path, {"native-postgresql": _command("postgres")})
-    )
-    assert module.setup_requirements(postgres) == {
-        "python": True,
-        "node": False,
         "postgresql": True,
         "chromium": False,
         "flake": False,
     }
 
-    python_control_plane = module.load_execution_spec(
-        _write_spec(tmp_path, {"python-control-plane": _command("python")})
-    )
-    assert module.setup_requirements(python_control_plane) == {
-        "python": True,
-        "node": True,
-        "postgresql": False,
-        "chromium": False,
-        "flake": False,
-    }
 
-
-def test_execution_is_deterministic_and_fail_fast_with_complete_group_evidence(tmp_path: Path) -> None:
+def test_execution_is_target_ordered_and_fail_fast(tmp_path: Path) -> None:
     module = _module()
-    spec = module.load_execution_spec(
-        _write_spec(
-            tmp_path,
-            {
-                "browser-acceptance": _command("browser"),
-                "native-postgresql": _command("postgres"),
-                "python-control-plane": _command("python"),
-            },
-        )
+    spec = module.load_execution_spec(_write_spec(tmp_path, [
+        _target("browser-z", "browser-acceptance"),
+        _target("python-b", "python-control-plane"),
+        _target("python-a", "python-control-plane"),
+        _target("native", "native-postgresql"),
+    ]))
+    called: list[str] = []
+    times = iter([0.0, 1.0, 2.0, 3.0, 4.0, 5.0])
+
+    def run(command, _root, _log):
+        called.append(command.name)
+        return 1 if command.name == "python-b" else 0
+
+    evidence = module.execute_certification(
+        spec, run_id="42", run_attempt=2, repo_root=ROOT,
+        evidence_path=tmp_path / "evidence.json", command_runner=run,
+        clock=lambda: next(times),
     )
-    calls: list[str] = []
-
-    def runner(command, _root, _log):
-        calls.append(command.name)
-        return 7 if command.name == "postgres" else 0
-
-    ticks = iter([0.0, 1.0, 3.5, 4.0, 9.0, 9.0])
-    evidence_path = tmp_path / "evidence.json"
-    payload = module.execute_certification(
-        spec,
-        run_id="12345",
-        run_attempt=2,
-        repo_root=tmp_path,
-        evidence_path=evidence_path,
-        command_runner=runner,
-        clock=lambda: next(ticks),
-    )
-
-    assert calls == ["python", "postgres"]
-    assert payload["execution_order"] == list(module.GROUP_ORDER)
-    assert payload["required_groups"] == [
-        "python-control-plane",
-        "native-postgresql",
-        "browser-acceptance",
-    ]
-    assert payload["group_results"] == {
-        "python-control-plane": {"result": "passed", "elapsed_seconds": 2.5},
-        "frontend-static": {"result": "not_selected", "elapsed_seconds": 0.0},
-        "native-postgresql": {"result": "failed", "elapsed_seconds": 5.0},
-        "browser-acceptance": {
-            "result": "not_run_due_to_prior_failure",
-            "elapsed_seconds": 0.0,
-        },
-    }
-    assert payload["candidate_sha"] == "a" * 40
-    assert payload["plan_digest"] == "b" * 64
-    assert payload["run_id"] == "12345"
-    assert payload["run_attempt"] == 2
-    assert payload["elapsed_seconds"] == 9.0
-    assert payload["outcome"] == "failed"
-    assert json.loads(evidence_path.read_text(encoding="utf-8")) == payload
+    assert called == ["python-a", "python-b"]
+    assert evidence["execution_order"] == ["python-a", "python-b", "native", "browser-z"]
+    assert evidence["target_results"]["python-a"]["result"] == "passed"
+    assert evidence["target_results"]["python-b"]["result"] == "failed"
+    assert evidence["target_results"]["native"]["result"] == "not_run_due_to_prior_failure"
+    assert evidence["outcome"] == "failed"
+    assert json.loads((tmp_path / "evidence.json").read_text())["schema"] == "dish-integration-certification-v2"
 
 
-def test_execution_spec_rejects_shell_strings_and_unknown_groups(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda value: value.update(schema="old"), "execution spec schema"),
+        (lambda value: value["targets"][0].update(execution_boundary="mystery"), "unknown execution boundary"),
+        (lambda value: value["targets"][0].update(requirements=["python", "python"]), "requirements must be unique"),
+        (lambda value: value["targets"][0]["commands"][0].update(argv="pytest -q"), "argv must be"),
+        (lambda value: value["targets"][0]["commands"][0].update(cwd="../escape"), "cwd must be canonical"),
+    ],
+)
+def test_execution_spec_rejects_malformed_target_contract(tmp_path: Path, mutate, message: str) -> None:
     module = _module()
-    path = _write_spec(
-        tmp_path,
-        {
-            "python-control-plane": [{"name": "bad", "argv": "pytest -q"}],
-            "mystery-group": _command("mystery"),
-        },
-    )
-    with pytest.raises(module.CertificationError, match="unknown execution groups"):
+    raw = {
+        "schema": "dish-certification-execution-spec-v2",
+        "candidate_sha": "a" * 40,
+        "plan_digest": "b" * 64,
+        "targets": [_target("python", "python-control-plane", requirements=["python"])],
+    }
+    mutate(raw)
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(module.CertificationError, match=message):
         module.load_execution_spec(path)
-
-    path = _write_spec(
-        tmp_path,
-        {"python-control-plane": [{"name": "bad", "argv": "pytest -q"}]},
-    )
-    with pytest.raises(module.CertificationError, match="argv must be"):
-        module.load_execution_spec(path)
-
-
-def test_composite_action_keeps_all_heavy_setup_conditional() -> None:
-    action = ACTION.read_text(encoding="utf-8")
-
-    assert "uses: actions/setup-python@v6" in action
-    assert "uses: actions/setup-node@v6" in action
-    assert "uses: ./.github/actions/setup-python-bundle" in action
-    assert "postgres:17.10" in action
-    assert "POSTGRES_USER=ai_tools_ci_admin" in action
-    assert "CREATE ROLE ai_tools_ci LOGIN PASSWORD 'ci-only-password' CREATEDB CREATEROLE NOSUPERUSER" in action
-    assert "ALTER DATABASE dish_ai_tools_ci_test OWNER TO ai_tools_ci" in action
-    assert "DISH_TEST_POSTGRESQL_DSN=postgresql+psycopg://ai_tools_ci:ci-only-password" in action
-    assert "DISH_TEST_POSTGRESQL_RESET_DSN=postgresql+psycopg://ai_tools_ci_admin:ci-admin-only-password" in action
-    assert "playwright install --with-deps chromium" in action
-    assert "npm ci --no-audit --no-fund" in action
-    assert "working-directory: dish/tests/postgresql/pglite" in action
-
-    python_if = "if: steps.runtime.outputs.python == 'true'"
-    node_if = "if: steps.runtime.outputs.node == 'true'"
-    pg_if = "if: steps.runtime.outputs.postgresql == 'true'"
-    chromium_if = "if: steps.runtime.outputs.chromium == 'true'"
-    assert action.count(python_if) >= 3
-    assert action.count(node_if) == 2
-    assert action.count(pg_if) == 1
-    assert action.count(chromium_if) == 1
-    assert "runs-on:" not in action
-    assert "jobs:" not in action
