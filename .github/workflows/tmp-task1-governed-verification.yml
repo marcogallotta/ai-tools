@@ -20,18 +20,21 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
-      - name: Materialize final helper-free candidate commit
+      - name: Materialize exact helper-free candidate commit
         id: candidate
         shell: bash
+        env:
+          SEMANTIC_CANDIDATE: fbacd19e27cd42d8f4903adf6ad91f95bf41162f
+          SEMANTIC_TREE: b6bdc03f8854e399f740eeb5859dc711e914c288
         run: |
           set -euo pipefail
-          semantic="$(git rev-parse HEAD^^)"
+          test "$(git rev-parse "$SEMANTIC_CANDIDATE^{tree}")" = "$SEMANTIC_TREE"
           rm .github/workflows/tmp-task1-governed-verification.yml
           git config user.name 'Dish Agent'
           git config user.email 'dish-agent@users.noreply.github.com'
           git add -A
           git commit -m 'Verify governed Review bundle fallback evidence'
-          test "$(git rev-parse HEAD^{tree})" = "$(git rev-parse "$semantic^{tree}")"
+          test "$(git rev-parse HEAD^{tree})" = "$SEMANTIC_TREE"
           echo "head=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Validate Project generator and selector map
