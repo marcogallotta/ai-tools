@@ -49,6 +49,7 @@ def build(tmp_path: Path, source: Path, sha: str):
         '--repo-root', str(source), '--output-dir', str(output),
         '--repository', REPOSITORY, '--repository-id', REPOSITORY_ID,
         '--source-sha', sha, '--source-ref', MAIN_REF,
+        '--event-name', 'push', '--event-ref', MAIN_REF, '--event-sha', sha,
         '--workflow', 'Repository bundle publication', '--workflow-ref', 'workflow@main',
         '--workflow-sha', sha, '--run-id', '123', '--run-attempt', '1',
     )
@@ -78,7 +79,7 @@ def verify(tmp_path: Path, output: Path, sha: str, **overrides):
     )
 
 
-def test_pull_request_validation_has_read_only_contents_permission():
+def test_publication_permissions_stay_narrow():
     workflow = WORKFLOW.read_text(encoding='utf-8')
     assert 'permissions:\n  contents: read\n' in workflow
     assert workflow.count('contents: write') == 1
@@ -86,22 +87,60 @@ def test_pull_request_validation_has_read_only_contents_permission():
     build_job = workflow.split('  build-verify-artifact:\n', 1)[1].split(
         '  publish-release-retention:\n', 1
     )[0]
+    assert 'permissions:\n      contents: read\n      statuses: write\n' in build_job
     assert 'contents: write' not in build_job
 
-    publish_job = workflow.split('  publish-release-retention:\n', 1)[1]
+    publish_job = workflow.split('  publish-release-retention:\n', 1)[1].split(
+        '  publish-final-status:\n', 1
+    )[0]
     assert "if: github.ref == 'refs/heads/main'" in publish_job
     assert 'permissions:\n      actions: read\n      contents: write\n' in publish_job
 
+    final_job = workflow.split('  publish-final-status:\n', 1)[1]
+    assert 'permissions:\n      statuses: write\n' in final_job
+    assert 'contents: write' not in final_job
 
-def test_source_sha_selection_is_event_specific():
+
+def test_source_sha_selection_is_bound_to_exact_main_event():
     workflow = WORKFLOW.read_text(encoding='utf-8')
     build_job = workflow.split('  build-verify-artifact:\n', 1)[1].split(
         '  publish-release-retention:\n', 1
     )[0]
     assert 'pull_request:' not in workflow.split('permissions:', 1)[0]
-    assert '# Push/manual publication stays bound to the workflow event/requested commit.' in build_job
     assert 'source_sha="$GITHUB_SHA"' in build_job
+    assert 'if [[ "$GITHUB_REF" != "$SOURCE_REF" ]]' in build_job
+    assert '--event-name "$GITHUB_EVENT_NAME"' in build_job
+    assert '--event-ref "$GITHUB_REF"' in build_job
+    assert '--event-sha "$GITHUB_SHA"' in build_job
     assert 'source_sha="$(git rev-parse FETCH_HEAD)"' not in build_job
+    assert 'git update-ref "$SOURCE_REF" "$source_sha"' in build_job
+
+
+def test_publication_concurrency_is_scoped_to_exact_sha():
+    workflow = WORKFLOW.read_text(encoding='utf-8')
+    assert 'group: repository-bundle-publication-${{ github.sha }}' in workflow
+    publish_job = workflow.split('  publish-release-retention:\n', 1)[1].split(
+        '  publish-final-status:\n', 1
+    )[0]
+    assert 'group: repository-bundle-release-publication' in publish_job
+    assert 'cancel-in-progress: false' in publish_job
+
+
+def test_commit_status_binds_exact_commit_to_actions_run():
+    workflow = WORKFLOW.read_text(encoding='utf-8')
+    assert workflow.count('"/repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA"') == 2
+    assert workflow.count("-f context='Dish / repository bundle'") == 2
+    target = '-f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"'
+    assert workflow.count(target) == 2
+    assert '-f state=pending' in workflow
+
+    final_job = workflow.split('  publish-final-status:\n', 1)[1]
+    assert 'if: always()' in final_job
+    assert 'BUILD_RESULT: ${{ needs.build-verify-artifact.result }}' in final_job
+    assert 'RELEASE_RESULT: ${{ needs.publish-release-retention.result }}' in final_job
+    assert 'if [[ "$BUILD_RESULT" == success && "$RELEASE_RESULT" == success ]]' in final_job
+    assert "description='Exact repository bundle published'" in final_job
+    assert "description='Repository bundle publication failed'" in final_job
 
 
 def test_build_verify_clone_round_trip(tmp_path: Path):
@@ -111,6 +150,7 @@ def test_build_verify_clone_round_trip(tmp_path: Path):
     manifest = json.loads((output / built['manifest_name']).read_text(encoding='utf-8'))
     assert manifest['repository'] == {'full_name': REPOSITORY, 'id': REPOSITORY_ID}
     assert manifest['source'] == {'sha': sha, 'ref': MAIN_REF}
+    assert manifest['generator']['event'] == {'name': 'push', 'sha': sha, 'ref': MAIN_REF}
     assert manifest['advertised_refs'] == [{'sha': sha, 'ref': MAIN_REF}]
 
     completed = verify(tmp_path, output, sha)
@@ -122,19 +162,49 @@ def test_build_verify_clone_round_trip(tmp_path: Path):
     assert git(tmp_path / 'clone', 'log', '--oneline', '-1').endswith(' initial')
 
 
-def test_build_fails_closed_when_requested_sha_is_not_current_remote_main(tmp_path: Path):
+def test_build_allows_pushed_main_event_to_finish_after_remote_main_advances(tmp_path: Path):
     source, _remote, old_sha = make_repo(tmp_path)
-    (source / 'hello.txt').write_text('new local commit\n', encoding='utf-8')
+    (source / 'hello.txt').write_text('new pushed main\n', encoding='utf-8')
     git(source, 'add', 'hello.txt')
-    git(source, 'commit', '-m', 'not pushed')
+    git(source, 'commit', '-m', 'advance main')
     new_sha = git(source, 'rev-parse', 'HEAD')
+    git(source, 'push', 'origin', 'main')
     assert new_sha != old_sha
+    assert git(source, 'ls-remote', '--exit-code', 'origin', MAIN_REF).split()[0] == new_sha
+
+    # Model the older workflow run after a later main push: the event commit still exists,
+    # and the workflow deliberately materializes its own exact advertised main ref.
+    git(source, 'update-ref', MAIN_REF, old_sha)
+    output, built = build(tmp_path, source, old_sha)
+    assert built['source_sha'] == old_sha
+    completed = verify(tmp_path, output, old_sha)
+    assert completed.returncode == 0, completed.stderr
+
+
+def test_build_rejects_workflow_event_sha_mismatch(tmp_path: Path):
+    source, _remote, sha = make_repo(tmp_path)
+    other_sha = '0' * 40
     completed = run(
         sys.executable, str(SCRIPT), 'build', '--repo-root', str(source),
         '--output-dir', str(tmp_path / 'bundle'), '--repository', REPOSITORY,
-        '--repository-id', REPOSITORY_ID, '--source-sha', new_sha,
-        '--source-ref', MAIN_REF, '--workflow', 'test', '--workflow-ref', 'test@main',
-        '--workflow-sha', new_sha, '--run-id', '1', '--run-attempt', '1', check=False,
+        '--repository-id', REPOSITORY_ID, '--source-sha', sha,
+        '--source-ref', MAIN_REF, '--event-name', 'push', '--event-ref', MAIN_REF,
+        '--event-sha', other_sha, '--workflow', 'test', '--workflow-ref', 'test@main',
+        '--workflow-sha', sha, '--run-id', '1', '--run-attempt', '1', check=False,
+    )
+    assert completed.returncode == 2
+    assert 'workflow event SHA mismatch' in completed.stderr
+
+
+def test_authority_command_still_rejects_stale_current_main_sha(tmp_path: Path):
+    source, _remote, old_sha = make_repo(tmp_path)
+    (source / 'hello.txt').write_text('new current main\n', encoding='utf-8')
+    git(source, 'add', 'hello.txt')
+    git(source, 'commit', '-m', 'advance main')
+    git(source, 'push', 'origin', 'main')
+    completed = run(
+        sys.executable, str(SCRIPT), 'authority', '--repo-root', str(source),
+        '--source-sha', old_sha, '--source-ref', MAIN_REF, check=False,
     )
     assert completed.returncode == 2
     assert 'stale or mismatched' in completed.stderr
