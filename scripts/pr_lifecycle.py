@@ -15,6 +15,7 @@ from pr_lifecycle_helpers import _parse_time, _utcnow
 from pr_lifecycle_external_replay import replay_external_dependency
 from pr_lifecycle_engine_inspect import LifecycleInspectMixin
 from pr_lifecycle_engine_actions import LifecycleActionsMixin
+from pr_lifecycle_workstream import WorkstreamLifecycleMixin
 from pr_lifecycle_authoring_actions import LifecycleAuthoringActionsMixin
 from pr_lifecycle_integration_certification import LocalIntegrationCertificationMixin
 from pr_lifecycle_local_integration import LocalIntegrationLauncher, checkpoint_claim
@@ -27,6 +28,7 @@ from pr_mutation_broker import (
 
 class LifecycleEngine(
     LocalIntegrationCertificationMixin,
+    WorkstreamLifecycleMixin,
     LifecycleInspectMixin,
     LifecycleAuthoringActionsMixin,
     LifecycleActionsMixin,
