@@ -149,8 +149,8 @@ def _rollout_readiness(
             runtime_operational = str(runtime.get("operational") or "UNKNOWN").upper()
             runtime_generation = runtime.get("generation")
             runtime_identity = runtime.get("activated_identity")
-            generation_matches = runtime_generation is None or str(runtime_generation) == str(generation)
-            identity_matches = runtime_identity is None or runtime_identity == expected_identity
+            generation_matches = str(runtime_generation) == str(generation) if runtime_generation is not None else False
+            identity_matches = runtime_identity == expected_identity and expected_identity is not None
             accepted = (
                 f"rollout {plan_id} generation {generation} final stage {final.get('stage')} ACCEPTED "
                 f"for artifact {final.get('artifact')} config {final.get('config')} "
