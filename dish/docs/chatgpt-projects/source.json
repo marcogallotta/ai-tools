@@ -31,6 +31,9 @@
       "external/current-main defect while pursuing an existing objective": [
         "dish/docs/agents/templates/implementation-handoff.md#External/current-main defect admission"
       ],
+      "fast-track": [
+        "dish/docs/agents/fast-track-process.md#Procedure"
+      ],
       "task dismissal / already-fixed / no-op conclusion": [
         "dish/docs/agents/contributor-base.md#Assigned-task dismissal gate"
       ],
@@ -1280,6 +1283,18 @@
       "impact": "additive",
       "surface": "authority",
       "text": "Worker is an execution host/profile, not a union role. Each trigger binds one exact standing role + phase + durable context; HTTP 202 is admission only, activation requires a durable exact-version witness/readback, fallback is per phase, and Integration landing remains outside Worker authority."
+    },
+    {
+      "action_boundaries": [
+        "*"
+      ],
+      "delivery": {
+        "mode": "DIRECT_ALWAYS_ON"
+      },
+      "id": "fast-track-process-overlay",
+      "impact": "additive",
+      "surface": "authority",
+      "text": "Fast-track: read triggered Procedure."
     }
   ]
 }

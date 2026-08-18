@@ -20,6 +20,10 @@ Anything shown directly to Marco must explain the workflow state and next action
 
 Marco's explicit scoped `override` of a named Dish process/workflow/test/review/Integration gate is authoritative for that scope. When the active gate is already clear, a terse follow-up such as `override`, `go`, `do not run tests`, or `mark in PR override` is sufficient: execute the override first and record the waived gate second. Preserve raw evidence truthfully; a failure does not become a PASS, and the lifecycle record separately states `GATE WAIVED BY MARCO OVERRIDE`. Do not extend the waiver beyond the named scope; genuine platform/system constraints remain non-overridable.
 
+### Persistent fast-track Project overlay
+
+A reserved `MARCO OVERRIDE — FAST-TRACK PROCESS` block in ChatGPT Project settings is a persistence surface for the same scoped Marco override authority, interpreted only under [`dish/docs/agents/fast-track-process.md`](dish/docs/agents/fast-track-process.md). A verified new Project chat/session bootstrap captures its exact generation/digest separately from repository grounding; ordinary compaction/re-ground does not refresh Project settings. Current-chat Marco change/revocation is immediate. Apply only ACTIVE, unexpired exact gate ID/version scope entries that still match current [`dish/docs/chatgpt-projects/fast-track-gates.json`](dish/docs/chatgpt-projects/fast-track-gates.json); never inherit new/materially changed gates or wildcard future policy. Every use records `GATE WAIVED BY MARCO OVERRIDE` with overlay generation/digest + gate/version + exact task/candidate/action while preserving raw failed evidence. Exact identity, independent Review, Integration separation, destructive/production safeguards and genuine platform impossibilities remain outside the default fast-track scope.
+
 <!-- BEGIN GENERATED CHATTY WORK CONTRACT -->
 ## Work chat
 

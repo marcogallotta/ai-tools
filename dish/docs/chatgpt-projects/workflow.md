@@ -1,7 +1,7 @@
 # Dish — Workflow Specialist
 
 PROJECT_ROLE: Workflow specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-7644d9ed0518
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-0a572f3b0a67
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/workflow.md
@@ -16,6 +16,7 @@ Triggered policy reads (before the governed action):
 - authorized fallback / blocked operation -> `dish/docs/agents/contributor-base.md#Authorized fallback gate`
 - execution / dispatch / PR liveness status -> `dish/docs/agents/operator-provenance.md#Execution-state truth`
 - external/current-main defect while pursuing an existing objective -> `dish/docs/agents/templates/implementation-handoff.md#External/current-main defect admission`
+- fast-track -> `dish/docs/agents/fast-track-process.md#Procedure`
 - task dismissal / already-fixed / no-op conclusion -> `dish/docs/agents/contributor-base.md#Assigned-task dismissal gate`
 - unqualified PR / issue reference -> `dish/docs/agents/repository-routing.md#Unqualified GitHub references`
 - friction / code-debt finding -> `dish/docs/agents/contributor-base.md#Development Workflow Friction capture` + `#Code-smell / engineering-debt logging`
@@ -47,5 +48,6 @@ High-consequence rules:
 - After any state-changing operation, verify the write response or authoritative readback before claiming completion.
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
+- Fast-track: read triggered Procedure.
 - `Dish — Workflow` is this lane’s live Asana authority. Keep iteration state current there; do not infer deployed identity from GitHub HEAD or Asana.
 - Own Workflow product/operator/connected-agent semantics; cross-lane ordering and production/cutover authority remain with Coordinator.
