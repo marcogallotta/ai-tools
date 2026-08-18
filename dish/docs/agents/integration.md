@@ -27,15 +27,13 @@ Before any merge/integration action, resolve the PR from GitHub and verify that 
 
 ### V1-A local Integration admission and recovery
 
-Final Integration landing is executable only on a local Claude Code/Codex host with a live checkout and real Git/worktree tooling. ChatGPT connector-native merge, GitHub Actions Integration consumers, and mutation-broker Integration grants are unavailable for V1-A even when their underlying credentials could technically write. Remote ChatGPT remains valid upstream for authorized Implementation/fix/Review work.
+Final Integration landing is executable only on a local Claude Code/Codex host with a live checkout and real Git/worktree tooling. ChatGPT connector-native merge and GitHub Actions Integration consumers are unavailable for V1-A even when their underlying credentials could technically write. Remote ChatGPT remains valid upstream for authorized Implementation/fix/Review work.
 
-The repository lifecycle dispatcher may classify `INTEGRATION READY`, create/re-read the durable exact-head local handoff, and invoke the configured local Integration launcher. It may not perform the final merge itself and may not fall back to a remote/connector/broker landing route when the laptop or launcher is unavailable.
+The repository lifecycle dispatcher may classify `INTEGRATION READY`, create/re-read the durable exact-head local handoff, and invoke the configured local Integration launcher. It may not perform the final merge itself and may not fall back to a remote/connector landing route when the laptop or launcher is unavailable.
 
 Consequential local Integration mutation requires the repository-owned per-PR/head fence in `scripts/pr_lifecycle_local_integration.py`. Its OS `fcntl` lock is the single-owner admission invariant; its JSON state under `~/.local/state/dish/integration/` is durable recovery context. The claim binds repository, PR, branch, exact reviewed head, exact Review id, observed target-branch SHA, owning task references, durable handoff comment, generation, current head/worktree, reconciliation state, and next action. A replacement may proceed only after acquiring the same OS lock and must reconstruct from the prior checkpoint plus fresh authority reads. An advisory `phase=integration` lease is visibility only and is never mutation admission.
 
 While the parent dispatcher holds that fence, the local Integration child checkpoints recovery state with `scripts/pr_lifecycle.py integration-checkpoint`. Before the first mutation and again immediately before the irreversible merge boundary, the local Integrator must re-read the live GitHub PR/head/base/Review/certification/current-main state and the explicit owning Asana task. Expected-head/CAS and local worktree/source-ownership protections remain mandatory. A head-changing reconciliation stops for fresh independent Review; the old verdict never transfers.
-
-The GitHub-native mutation broker remains available only for post-PR Implementation continuation/fix fencing. It does not accept or grant `integration-reconcile` or `merge` in V1-A.
 
 GitHub is source/history authority. Local refs are caches and may be stale.
 

@@ -424,16 +424,13 @@ def implementation_host_witness(
     """Return independently proven exact-head implementation provenance, else fail closed."""
     hosts: set[str] = set()
     # PR descriptions are editable by the implementation author and can never prove
-    # where implementation ran.  A pre-PR witness must be produced by the trusted
-    # provenance workflow and bound to its immutable artifact; a post-PR result must
-    # validate the broker grant/proof that admitted the mutation.
+    # where implementation ran. A witness must be produced by the trusted prelaunch
+    # provenance workflow and bound to its immutable artifact. Post-PR authoring without
+    # that exact-head witness remains unknown and therefore routes conservatively.
     for comment in comments:
         body = str(comment.get("body") or "")
         for fields in _marker_fields(body, IMPLEMENTATION_HOST_WITNESS_MARKER):
             if _verified_prelaunch_host(pr, fields, current_head=current_head, github=github) == "chatgpt":
-                hosts.add("CHATGPT_IMPLEMENTATION")
-        for fields in _marker_fields(body, IMPLEMENTATION_ROUTE_RESULT_MARKER):
-            if _verified_route_result_host(pr, comments, fields, current_head=current_head, github=github) == "chatgpt":
                 hosts.add("CHATGPT_IMPLEMENTATION")
     return next(iter(hosts)) if len(hosts) == 1 else None
 
@@ -488,41 +485,6 @@ def _verified_prelaunch_host(
     except (AttributeError, KeyError, TypeError, ValueError, zipfile.BadZipFile, json.JSONDecodeError):
         return None
     return "chatgpt"
-
-
-def _verified_route_result_host(
-    pr: Mapping[str, Any], comments: Iterable[Mapping[str, Any]], fields: Mapping[str, str], *, current_head: str,
-    github: Any | None,
-) -> str | None:
-    if github is None or fields.get("head") != current_head:
-        return None
-    required = ("start", "route", "grant", "generation", "broker_event", "host")
-    if any(not fields.get(name) for name in required):
-        return None
-    try:
-        from pr_mutation_broker import current_verified_grant
-
-        repository_id = github.get_repository_id()
-        grant = current_verified_grant(github=github, pr_number=_pr_number(pr), repository_id=repository_id)
-        if grant is None or not grant.closed:
-            return None
-        if (
-            grant.grant_id != fields["grant"]
-            or str(grant.generation) != fields["generation"]
-            or grant.event_comment_id != int(fields["broker_event"])
-            or grant.route != fields["route"]
-            or grant.starting_head != fields["start"]
-            or grant.pr_number != _pr_number(pr)
-            or grant.branch != _pr_branch(pr)
-            or grant.action not in {"fix", "implementation"}
-            or grant.result_head != current_head
-            or grant.accepted_host not in {"chatgpt", "local"}
-            or fields["host"] != grant.accepted_host
-        ):
-            return None
-    except (AttributeError, ValueError, LifecycleError):
-        return None
-    return grant.accepted_host
 
 
 def review_class_for(

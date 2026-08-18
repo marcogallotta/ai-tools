@@ -4,11 +4,7 @@ from __future__ import annotations
 from pr_lifecycle_support import *
 from pr_lifecycle_helpers import *
 from pr_lifecycle_helpers import _handoff_key, _notice_key, _notice_present, _pr_number
-from pr_mutation_broker import (
-    BrokerError, BrokerProofError, asana_task_allows_mutation, current_verified_grant, parse_request_comment, request_marker,
-)
 from pr_lifecycle_operator import action_first_status
-from pr_lifecycle_owner import owning_task_identity_from_references
 from pr_lifecycle_asana_writeback import reconcile_after_merge
 from pr_lifecycle_ci_recovery import recover_failed_ci
 from pr_lifecycle_host_routing import (
@@ -42,136 +38,7 @@ def _dispatch_fixer(dispatcher: Any, context: dict[str, Any], *, host: str) -> N
 
 TERMINAL_RECOVERY_SLOT_SECONDS = 180
 
-
-def _route_result_marker(*, starting_head: str, new_head: str, host: str, route: str, grant: Any) -> str:
-    host_token = "local" if host == LOCAL_IMPLEMENTATION else "chatgpt"
-    return (
-        f"<!-- {IMPLEMENTATION_ROUTE_RESULT_MARKER} start={starting_head} head={new_head} "
-        f"host={host_token} route={route} grant={grant.grant_id} generation={grant.generation} "
-        f"broker_event={grant.event_comment_id} -->"
-    )
-
 class LifecycleActionsMixin:
-    def _broker_repository_id(self) -> int:
-        value = getattr(self, "mutation_broker_repository_id", None)
-        if value is None:
-            getter = getattr(self.github, "get_repository_id", None)
-            if getter is None:
-                raise LifecycleError("mutation broker requires authoritative repository numeric identity")
-            value = int(getter())
-            self.mutation_broker_repository_id = value
-        return int(value)
-
-    def _broker_route(self, action: str) -> str | None:
-        return str(getattr(self, "mutation_broker_routes", {}).get(action) or "") or None
-
-    def _current_broker_grant(self, number: int):
-        if not getattr(self, "mutation_broker_enabled", False):
-            return None
-        return current_verified_grant(
-            github=self.github,
-            pr_number=number,
-            repository_id=self._broker_repository_id(),
-        )
-
-    def _broker_request_exists(
-        self,
-        pr: PRLifecycle,
-        *,
-        action: str,
-        route: str,
-        review_id: int | None,
-        main_sha: str | None,
-        grant_id: str | None = None,
-        generation: int | None = None,
-    ) -> bool:
-        for comment in self.github.get_comments(pr.number):
-            try:
-                request = parse_request_comment(comment)
-            except BrokerError:
-                continue
-            if (
-                request.action == action
-                and request.task_gid in pr.task_ids
-                and request.pr_number == pr.number
-                and request.branch == pr.branch
-                and request.head == pr.head
-                and request.review_id == review_id
-                and request.main_sha == main_sha
-                and request.route == route
-                and request.grant_id == grant_id
-                and request.generation == generation
-            ):
-                return True
-        return False
-
-    def _submit_broker_request(
-        self,
-        pr: PRLifecycle,
-        *,
-        action: str,
-        route: str,
-        review_id: int | None = None,
-        main_sha: str | None = None,
-        grant_id: str | None = None,
-        generation: int | None = None,
-        authority_id: str | None = None,
-    ) -> bool:
-        owner, owner_error = owning_task_identity_from_references(pr.task_ids)
-        if owner_error or owner is None:
-            raise LifecycleError(f"mutation broker requires one explicit owning Asana task: {owner_error}")
-        if self._broker_request_exists(
-            pr, action=action, route=route, review_id=review_id, main_sha=main_sha,
-            grant_id=grant_id, generation=generation,
-        ):
-            return False
-        marker = request_marker(
-            request_id=str(uuid.uuid4()),
-            action=action,
-            task_gid=owner,
-            pr_number=pr.number,
-            branch=pr.branch,
-            head=pr.head,
-            review_id=review_id,
-            main_sha=main_sha,
-            grant_id=grant_id,
-            generation=generation,
-            route=route,
-            authority_id=authority_id,
-        )
-        self.github.add_comment(
-            pr.number,
-            f"{marker}\nMUTATION ADMISSION REQUEST — `{action}` for exact head `{pr.head}`. "
-            "The request is only an optimistic precondition; the default-branch broker must re-read GitHub, "
-            "Asana and standing role authority before any grant.\n\n— Dish PR lifecycle dispatcher",
-        )
-        return True
-
-    def _broker_grant_for(self, pr: PRLifecycle, *, action: str, route: str):
-        grant = self._current_broker_grant(pr.number)
-        if grant is None or grant.closed:
-            return None
-        if grant.is_stale(self.now()):
-            raise LifecycleError(
-                "current mutation grant is stale; it cannot mutate and cannot transfer by age alone (takeover/recovery required)"
-            )
-        owner, owner_error = owning_task_identity_from_references(pr.task_ids)
-        if owner_error or owner is None:
-            raise LifecycleError(f"cannot validate mutation grant owner: {owner_error}")
-        if (
-            grant.action != action
-            or grant.pr_number != pr.number
-            or grant.task_gid != owner
-            or grant.branch != pr.branch
-            or grant.starting_head != pr.head
-            or grant.route != route
-        ):
-            raise LifecycleError(
-                f"active mutation grant is incompatible with requested {action} route/head; current grant is "
-                f"{grant.action} generation {grant.generation} on {grant.starting_head}"
-            )
-        return grant
-
     def _terminal_cleanup(
         self,
         current: PRLifecycle,
@@ -451,7 +318,7 @@ class LifecycleActionsMixin:
                 lease.get("phase") in {"fix", "implementation"}
                 for lease in current.active_leases
             )
-            if active_fix and not getattr(self, "mutation_broker_enabled", False):
+            if active_fix:
                 return current
 
             reviews = self.github.get_reviews(current.number)
@@ -472,41 +339,7 @@ class LifecycleActionsMixin:
                 current.human_action = None
                 return current
 
-            broker_grant = None
-            broker_route = None
-            lease_id = None
-            if getattr(self, "mutation_broker_enabled", False):
-                route_key = "fix-local" if fix_host == LOCAL_IMPLEMENTATION else "fix-chatgpt"
-                broker_route = self._broker_route(route_key)
-                if broker_route is None and fix_host == CHATGPT_IMPLEMENTATION:
-                    broker_route = self._broker_route("fix")
-                if not broker_route:
-                    current.residual_reason = f"mutation broker is active but no {fix_host} Implementation/fix route is configured"
-                    current.human_action = None
-                    return current
-                try:
-                    broker_grant = self._broker_grant_for(current, action="fix", route=broker_route)
-                except LifecycleError as exc:
-                    current.residual_reason = str(exc)
-                    current.human_action = None
-                    return current
-                if broker_grant is None:
-                    review_id = None
-                    if exact_review is not None:
-                        try:
-                            review_id = int(exact_review.get("id"))
-                        except (TypeError, ValueError):
-                            current.residual_reason = "current formal Review lacks numeric id required for brokered fix eligibility"
-                            return current
-                    self._submit_broker_request(
-                        current, action="fix", route=broker_route, review_id=review_id
-                    )
-                    reread = self.inspect(self.github.get_pr(current.number))
-                    reread.residual_reason = "Review/CI fix is eligible; mutation request is waiting for the serialized broker"
-                    reread.human_action = None
-                    return reread
-            else:
-                lease_id = self._post_lease(current, phase="fix")
+            lease_id = self._post_lease(current, phase="fix")
 
             reread = self.inspect(self.github.get_pr(current.number))
             if reread.head != current.head or reread.state != LifecycleState.CHANGES_REQUESTED:
@@ -515,13 +348,6 @@ class LifecycleActionsMixin:
                         current.number, lease_id, reason="exact blocked head moved before fix dispatch"
                     )
                 return reread
-            if getattr(self, "mutation_broker_enabled", False):
-                assert broker_route is not None
-                broker_grant = self._broker_grant_for(reread, action="fix", route=broker_route)
-                if broker_grant is None:
-                    reread.residual_reason = "broker grant disappeared before Implementation/fix dispatch"
-                    return reread
-
             context = {
                 "schema": "dish-pr-fix-dispatch-v1",
                 "repository": self.github.repository,
@@ -534,18 +360,6 @@ class LifecycleActionsMixin:
                 "formal_block_review": exact_review if formal_block else None,
                 "pr_owned_ci_failure": current.gate if pr_owned_ci_failure else None,
                 "lifecycle": reread.json(),
-                "mutation_grant": (
-                    None
-                    if broker_grant is None
-                    else {
-                        "grant_id": broker_grant.grant_id,
-                        "generation": broker_grant.generation,
-                        "consumer_id": broker_grant.consumer_id,
-                        "route": broker_grant.route,
-                        "starting_head": broker_grant.starting_head,
-                        "event_comment_id": broker_grant.event_comment_id,
-                    }
-                ),
                 "instruction": (
                     "Follow the current repository Implementation contract. Update the existing PR/branch, "
                     "treat blocked_head as the exact review identity, re-read GitHub before semantic work, "
@@ -565,32 +379,7 @@ class LifecycleActionsMixin:
                         current.number, lease_id, reason="implementation/fix dispatcher failed"
                     )
                 raise
-            result = self.inspect(self.github.get_pr(current.number))
-            if (
-                broker_grant is not None
-                and broker_route is not None
-                and result.head != current.head
-            ):
-                marker = _route_result_marker(
-                    starting_head=current.head,
-                    new_head=result.head,
-                    host=fix_host,
-                    route=broker_route,
-                    grant=broker_grant,
-                )
-                self.github.add_comment(
-                    current.number,
-                    f"{marker}\nImplementation consumer returned with exact new head `{result.head}`.\n\n— Dish PR lifecycle dispatcher",
-                )
-                self._submit_broker_request(
-                    result,
-                    action="complete",
-                    route=broker_grant.route,
-                    grant_id=broker_grant.grant_id,
-                    generation=broker_grant.generation,
-                )
-                result = self.inspect(self.github.get_pr(current.number))
-            return result
+            return self.inspect(self.github.get_pr(current.number))
 
         if current.state == LifecycleState.REVIEW_READY:
             review_class = current.review_class or "substantive"

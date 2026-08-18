@@ -455,20 +455,6 @@
         },
         {
           "action_boundaries": [
-            "role-critical-write",
-            "handoff"
-          ],
-          "id": "mutation-broker-admission",
-          "impact": "additive",
-          "surface": "lifecycle",
-          "text": "After broker activation, post-PR Implementation/fix mutation needs a current exact-PR proof-backed grant, except the bounded emergency attach in `publication-materializer-path`. It never replaces role/branch/CAS/live authority; stale proof fails closed.",
-          "delivery": {
-            "mode": "TRIGGERED_READ",
-            "trigger": "post-PR mutation admission / fix routing"
-          }
-        },
-        {
-          "action_boundaries": [
             "status",
             "handoff"
           ],
@@ -502,10 +488,10 @@
           "id": "implementation-host-aware-fix-routing",
           "impact": "additive",
           "surface": "routing",
-          "text": "Post-PR BLOCK/PR-owned-CI fixes default to CHATGPT_IMPLEMENTATION through the #95 broker grant; a new head returns to independent Review. No cross-host fallback.",
+          "text": "Post-PR BLOCK/PR-owned-CI fixes default to CHATGPT_IMPLEMENTATION. Re-read exact task/PR/branch/head/Review authority before dispatch and publication; stale work performs no mutation. A new head returns to independent Review, and unknown post-PR host provenance routes conservatively to ChatGPT Review. No cross-host fallback.",
           "delivery": {
             "mode": "TRIGGERED_READ",
-            "trigger": "post-PR mutation admission / fix routing"
+            "trigger": "post-PR fix routing"
           }
         },
         {
@@ -561,7 +547,7 @@
             "dish/docs/agents/contributor-base.md#Development Workflow Friction capture",
             "dish/docs/agents/contributor-base.md#Code-smell / engineering-debt logging"
           ],
-          "post-PR mutation admission / fix routing": [
+          "post-PR fix routing": [
             "dish/docs/agents/implementation.md#Review-head changes",
             "dish/docs/agents/implementation.md#Branch and worktree ownership"
           ],
@@ -623,10 +609,10 @@
             "merge",
             "handoff"
           ],
-          "id": "mutation-broker-admission",
+          "id": "integration-local-only",
           "impact": "additive",
           "surface": "lifecycle",
-          "text": "Integration V1-A final reconciliation/landing is local Claude/Codex only. The dispatcher creates an exact-head durable handoff and holds the per-PR/head OS fence while the local child runs; the child re-reads live GitHub + owning Asana at the irreversible boundary. ChatGPT/connector/Actions/broker landing is forbidden; broker admission remains only for Implementation/fix.",
+          "text": "Integration V1-A final reconciliation/landing is local Claude/Codex only. The dispatcher creates an exact-head durable handoff and holds the per-PR/head OS fence while the local child runs; the child re-reads live GitHub + owning Asana at the irreversible boundary. ChatGPT, connector, and GitHub Actions landing are forbidden.",
           "delivery": {
             "mode": "DIRECT_ALWAYS_ON"
           }

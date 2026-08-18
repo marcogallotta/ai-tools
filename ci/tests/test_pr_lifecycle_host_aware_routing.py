@@ -11,8 +11,6 @@ import pytest
 
 import test_pr_lifecycle as base
 import pr_implementation_provenance as provenance
-import pr_mutation_broker as broker
-from pr_lifecycle_helpers_base import _verified_route_result_host
 from pr_lifecycle_support import AsanaREST, LifecycleError
 
 p = base.pr_lifecycle
@@ -221,7 +219,6 @@ def test_bounded_local_review_requires_positive_chatgpt_implementation_witness()
     assert local.calls == []
     assert len(workspace.calls) == 1
 
-
 def test_self_asserted_prepr_chatgpt_witness_routes_to_chatgpt_review():
     candidate = base.pr(
         body=(
@@ -409,21 +406,3 @@ def test_positive_local_implementation_witness_forces_chatgpt_review():
     lifecycle.dispatch_one(lifecycle.inspect(gh.pr), workspace=workspace, local_reviewer=local)
     assert local.calls == []
     assert len(workspace.calls) == 1
-
-
-def test_route_result_host_must_match_broker_accepted_consumer_and_terminal_head(monkeypatch):
-    candidate = base.pr()
-    grant = broker.GrantState(
-        grant_id="grant-1", generation=1, action="fix", task_gid="1217443403986570",
-        pr_number=31, branch="agent/test", starting_head="c" * 40, review_id=10,
-        main_sha=None, route="fix-local", consumer_id="consumer", issued_at=base.NOW,
-        stale_after=base.NOW, event_comment_id=99, closed=True,
-        accepted_host="local", result_head=base.HEAD,
-    )
-    monkeypatch.setattr(broker, "current_verified_grant", lambda **_: grant)
-    candidate["head"]["sha"] = base.HEAD
-    gh = base.FakeGitHub(candidate)
-    gh.get_repository_id = lambda: 1
-    fields = {"start": "c" * 40, "head": base.HEAD, "route": "fix-local", "grant": "grant-1",
-              "generation": "1", "broker_event": "99", "host": "chatgpt"}
-    assert _verified_route_result_host(candidate, [], fields, current_head=base.HEAD, github=gh) is None

@@ -20,9 +20,6 @@ class LifecycleInspectMixin:
         integration_capable: bool = True,
         merge_method: str = "squash",
         now: Callable[[], datetime] = _utcnow,
-        mutation_broker_enabled: bool = False,
-        mutation_broker_repository_id: int | None = None,
-        mutation_broker_routes: Mapping[str, str] | None = None,
     ) -> None:
         self.github = github
         self.asana = asana
@@ -30,9 +27,6 @@ class LifecycleInspectMixin:
         self.integration_capable = integration_capable
         self.merge_method = merge_method
         self.now = now
-        self.mutation_broker_enabled = mutation_broker_enabled
-        self.mutation_broker_repository_id = mutation_broker_repository_id
-        self.mutation_broker_routes = dict(mutation_broker_routes or {})
 
     def _asana_details(self, task_ids: list[str]) -> list[dict[str, Any]]:
         if not self.asana:

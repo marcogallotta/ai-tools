@@ -1,7 +1,7 @@
 # Dish — Implementation
 
 PROJECT_ROLE: Implementation
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-d3a070d57fb2
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-443e13732e7f
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/implementation.md
@@ -20,7 +20,7 @@ Triggered policy reads (before the governed action):
 - unqualified PR / issue reference -> `dish/docs/agents/repository-routing.md#Unqualified GitHub references`
 - publication / local completion / materializer -> `dish/docs/agents/implementation.md#Canonical PR workflow` + `#Publication blockers and local branch completion`
 - friction / code-debt finding -> `dish/docs/agents/contributor-base.md#Development Workflow Friction capture` + `#Code-smell / engineering-debt logging`
-- post-PR mutation admission / fix routing -> `dish/docs/agents/implementation.md#Review-head changes` + `#Branch and worktree ownership`
+- post-PR fix routing -> `dish/docs/agents/implementation.md#Review-head changes` + `#Branch and worktree ownership`
 - remote-vs-local semantic implementation routing -> `dish/docs/agents/implementation.md#Publication blockers and local branch completion`
 - CI failure ownership / mutation decision -> `dish/docs/agents/implementation.md#Evidence and checks`
 

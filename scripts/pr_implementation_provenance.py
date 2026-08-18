@@ -2,7 +2,7 @@
 
 Pre-PR provenance is accepted only when the post-publication GitHub cache can be
 reconstructed back to the repository control plane's durable, pre-launch Asana
-handoff record. Post-PR provenance remains delegated to the #95 broker verifier.
+handoff record. Post-PR authoring without that exact-head witness is unknown.
 """
 from __future__ import annotations
 
@@ -20,7 +20,6 @@ from pr_lifecycle_owner import task_ids_from_pr
 from pr_lifecycle_support import AsanaREST, LifecycleError
 
 IMPLEMENTATION_HOST_WITNESS_MARKER = "dish-implementation-host-witness:v1"
-IMPLEMENTATION_ROUTE_RESULT_MARKER = "dish-implementation-route-result:v1"
 IMPLEMENTATION_PROVENANCE_SCHEMA = "dish-implementation-prelaunch-proof-v2"
 IMPLEMENTATION_PROVENANCE_WORKFLOW = ".github/workflows/pr-implementation-provenance.yml"
 IMPLEMENTATION_PROVENANCE_FILENAME = "implementation-provenance.json"
@@ -237,14 +236,9 @@ def implementation_host_witness(
     """Return independently proven exact-head Implementation provenance or fail closed."""
     hosts: set[str] = set()
     asana = _asana_from_environment()
-    route_verifier = getattr(base, "_verified_route_result_host", None)
     for comment in comments:
         body = str(comment.get("body") or "")
         for fields in base._marker_fields(body, IMPLEMENTATION_HOST_WITNESS_MARKER):
             if _verified_prelaunch_host(pr, fields, current_head=current_head, github=github, asana=asana) == "chatgpt":
                 hosts.add("CHATGPT_IMPLEMENTATION")
-        if callable(route_verifier):
-            for fields in base._marker_fields(body, IMPLEMENTATION_ROUTE_RESULT_MARKER):
-                if route_verifier(pr, comments, fields, current_head=current_head, github=github) == "chatgpt":
-                    hosts.add("CHATGPT_IMPLEMENTATION")
     return next(iter(hosts)) if len(hosts) == 1 else None

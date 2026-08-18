@@ -77,38 +77,10 @@ class LifecycleAuthoringActionsMixin(PostMergeReviewActionsMixin):
             else CHATGPT_IMPLEMENTATION
         )
 
-        if not getattr(self, "mutation_broker_enabled", False) and any(
+        if any(
             lease.get("phase") in {"implementation", "fix"} for lease in current.active_leases
         ):
             return current
-
-        broker_grant = None
-        broker_route = None
-        if implementation_host == LOCAL_IMPLEMENTATION and getattr(self, "mutation_broker_enabled", False):
-            current.residual_reason = (
-                "legacy mutation broker is active; Revision-6 installed-host continuation intentionally has no local "
-                "broker route and depends on the accepted broker-removal/current canonical admission path"
-            )
-            current.human_action = None
-            return current
-        if getattr(self, "mutation_broker_enabled", False):
-            broker_route = self._broker_route("implementation")
-            if not broker_route:
-                current.residual_reason = "mutation broker is active but no Implementation continuation route is configured"
-                current.human_action = None
-                return current
-            try:
-                broker_grant = self._broker_grant_for(current, action="implementation", route=broker_route)
-            except LifecycleError as exc:
-                current.residual_reason = str(exc)
-                current.human_action = None
-                return current
-            if broker_grant is None:
-                self._submit_broker_request(current, action="implementation", route=broker_route)
-                reread = self.inspect(self.github.get_pr(current.number))
-                reread.residual_reason = "Implementation continuation mutation request is waiting for the serialized broker"
-                reread.human_action = None
-                return reread
 
         selected_command = None if implementation_fixer is None else _fixer_command(implementation_fixer, implementation_host)
         if selected_command is None:
@@ -135,9 +107,7 @@ class LifecycleAuthoringActionsMixin(PostMergeReviewActionsMixin):
         if reread.head != current.head or reread.state != LifecycleState.IMPLEMENTATION_CONTINUATION_REQUIRED:
             return reread
 
-        lease_id = None
-        if not getattr(self, "mutation_broker_enabled", False):
-            lease_id = self._post_lease(reread, phase="implementation")
+        lease_id = self._post_lease(reread, phase="implementation")
         claimed = self.inspect(self.github.get_pr(current.number))
         if claimed.head != current.head or claimed.state != LifecycleState.IMPLEMENTATION_CONTINUATION_REQUIRED:
             if lease_id is not None:
@@ -147,15 +117,6 @@ class LifecycleAuthoringActionsMixin(PostMergeReviewActionsMixin):
                     reason="authoring state moved before Implementation continuation dispatch",
                 )
             return claimed
-
-        # Re-verify the exact proven grant immediately before dispatch; a stale/deleted
-        # proof is a fail-closed recovery boundary rather than permission to continue.
-        if getattr(self, "mutation_broker_enabled", False):
-            assert broker_route is not None
-            broker_grant = self._broker_grant_for(claimed, action="implementation", route=broker_route)
-            if broker_grant is None:
-                claimed.residual_reason = "Implementation continuation broker grant disappeared before dispatch"
-                return claimed
 
         if implementation_host == LOCAL_IMPLEMENTATION:
             refreshed_requirement = requirement_for_files(get_pr_files(current.number)) if callable(get_pr_files) else None
@@ -218,18 +179,6 @@ class LifecycleAuthoringActionsMixin(PostMergeReviewActionsMixin):
                 }
             ),
             "lifecycle": claimed.json(),
-            "mutation_grant": (
-                None
-                if broker_grant is None
-                else {
-                    "grant_id": broker_grant.grant_id,
-                    "generation": broker_grant.generation,
-                    "consumer_id": broker_grant.consumer_id,
-                    "route": broker_grant.route,
-                    "starting_head": broker_grant.starting_head,
-                    "event_comment_id": broker_grant.event_comment_id,
-                }
-            ),
             "instruction": (
                 "Follow the current repository Implementation contract. Continue the existing draft PR, "
                 "branch, and owning task; finish only the named authoring evidence, update the durable PR "

@@ -79,7 +79,7 @@ class LocalIntegrationCertificationMixin:
                 f"Observed target `{current.base}` at handoff creation: `{main_sha}`\n\n"
                 "This is a local-only Integration handoff. Final Integration/merge must run on a local "
                 "Claude/Codex host with a live checkout and real Git/worktree tooling. There is no ChatGPT, "
-                "connector, GitHub Actions, or mutation-broker landing fallback.\n\n"
+                "connector or GitHub Actions landing fallback.\n\n"
                 "Before the first mutation and again immediately before the irreversible merge boundary, re-read "
                 "the live GitHub PR/head/base/Review and the explicit owning Asana task. Fetch current origin state. "
                 "Use expected-head protection for publication/merge and require authoritative GitHub MERGED readback.\n\n"

@@ -12,7 +12,7 @@ def rendered(gh, *, authority=False):
 
 
 def assert_no_internal_default_jargon(text):
-    for token in ("exact-head", "mutation broker", "Next owner/system", "LOCAL WORK TYPE", "LOCAL SCOPE"):
+    for token in ("exact-head", "Next owner/system", "LOCAL WORK TYPE", "LOCAL SCOPE"):
         assert token not in text
     assert " @ " not in text
 
@@ -83,4 +83,3 @@ def test_table_uses_same_plain_renderer_as_notifications():
     lifecycle = base.engine(gh).inspect(gh.pr)
     table = p._render_table([lifecycle])
     assert "Review found a code problem" in table
-    assert "mutation broker" not in table

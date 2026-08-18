@@ -179,27 +179,6 @@ def test_hook_host_continuation_selects_local_worker_and_passes_exact_requiremen
     assert "actual installed-loader/tool execution" in handoff
 
 
-def test_hook_host_continuation_never_adds_or_uses_legacy_local_broker_route():
-    gh = base.FakeGitHub(base.pr(draft=True))
-    gh.pr_files = _hook_files()
-    fixer = RecordingFixRouter()
-    lifecycle = p.LifecycleEngine(
-        gh,
-        now=lambda: base.NOW,
-        mutation_broker_enabled=True,
-        mutation_broker_routes={"implementation": "legacy-default"},
-    )
-
-    result = lifecycle.dispatch_one(
-        lifecycle.inspect(gh.pr), workspace=None, local_reviewer=None, implementation_fixer=fixer
-    )
-
-    assert fixer.calls == []
-    assert "Revision-6" in (result.residual_reason or "")
-    assert "broker-removal" in (result.residual_reason or "")
-    assert not any("dish-mutation-request:v1" in body for kind, body in gh.events if kind == "comment")
-
-
 def test_newer_malformed_exact_head_certificate_invalidates_older_pass():
     gh = base.FakeGitHub(base.pr(draft=False))
     gh.pr_files = _hook_files()

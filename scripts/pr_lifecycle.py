@@ -24,10 +24,6 @@ from pr_lifecycle_projection import atomic_write, build_projection
 from pr_lifecycle_task_state import execution_truth, ensure_projection_comment
 from pr_lifecycle_rollout import reconstruct as reconstruct_rollout, rollout_projection
 import pr_lifecycle_controller
-from pr_mutation_broker import (
-    BrokerError, artifact_name as broker_artifact_name, broker_filter_event, finalize_broker_event,
-    prepare_broker_event, route_policy_from_json, write_github_outputs,
-)
 
 class LifecycleEngine(
     LocalIntegrationCertificationMixin,
@@ -131,32 +127,16 @@ def _build_engine(
     asana_token = args.asana_token or os.getenv("ASANA_ACCESS_TOKEN")
     asana = AsanaREST(asana_token, http=http) if asana_token else None
     authority = args.integration_authority or os.getenv("DISH_INTEGRATION_AUTHORITY") == "bounded-reviewed-head"
-    broker_enabled = os.getenv("DISH_MUTATION_BROKER_ENABLED", "").strip().lower() in {"1", "true", "yes", "on"}
     local_integration_command = (
         args.local_integration_launcher or os.getenv("DISH_LOCAL_INTEGRATION_COMMAND")
     )
     integration_capable = bool(local_integration_command) and not args.no_integration_capability
-    repository_id = None
-    if broker_enabled:
-        raw_repo_id = os.getenv("GITHUB_REPOSITORY_ID")
-        repository_id = int(raw_repo_id) if raw_repo_id else github.get_repository_id()
-    implementation_route = os.getenv("DISH_MUTATION_BROKER_IMPLEMENTATION_ROUTE")
-    legacy_fix_route = os.getenv("DISH_MUTATION_BROKER_FIX_ROUTE") or implementation_route
-    broker_routes = {
-        "implementation": implementation_route,
-        "fix": legacy_fix_route,
-        "fix-chatgpt": os.getenv("DISH_MUTATION_BROKER_CHATGPT_IMPLEMENTATION_ROUTE") or legacy_fix_route,
-        "fix-local": os.getenv("DISH_MUTATION_BROKER_LOCAL_IMPLEMENTATION_ROUTE"),
-    }
     engine = LifecycleEngine(
         github,
         asana=asana,
         integration_authority=authority,
         integration_capable=integration_capable,
         merge_method=args.merge_method,
-        mutation_broker_enabled=broker_enabled,
-        mutation_broker_repository_id=repository_id,
-        mutation_broker_routes={k: v for k, v in broker_routes.items() if v},
     )
     workspace_token = args.workspace_token or os.getenv("DISH_WORKSPACE_AGENT_ACCESS_TOKEN")
     review_trigger = args.review_trigger_id or os.getenv("DISH_REVIEW_API_TRIGGER_ID")
@@ -378,27 +358,6 @@ def _parser() -> argparse.ArgumentParser:
     watch.add_argument("--dispatch", action="store_true", help="perform idempotent routing actions on each poll")
     watch.add_argument("--format", choices=["json", "table"], default="table")
 
-    broker_filter = sub.add_parser("broker-filter", help="validate one issue_comment mutation request without authority reads")
-    broker_filter.add_argument("--event-path", required=True)
-    broker_filter.add_argument("--github-output", required=True)
-
-    broker_prepare = sub.add_parser("broker-prepare", help="re-read authority and create one provisional broker event")
-    broker_prepare.add_argument("--request-comment-id", required=True, type=int)
-    broker_prepare.add_argument("--repository-id", required=True)
-    broker_prepare.add_argument("--run-id", required=True, type=int)
-    broker_prepare.add_argument("--run-attempt", required=True, type=int)
-    broker_prepare.add_argument("--trusted-source-sha", required=True)
-    broker_prepare.add_argument("--proof-path", required=True)
-    broker_prepare.add_argument("--github-output", required=True)
-
-    broker_finalize = sub.add_parser("broker-finalize", help="bind uploaded proof transport metadata to the same broker event comment")
-    broker_finalize.add_argument("--comment-id", required=True, type=int)
-    broker_finalize.add_argument("--artifact-id", required=True, type=int)
-    broker_finalize.add_argument("--artifact-digest", required=True)
-    broker_finalize.add_argument("--repository-id", required=True)
-    broker_finalize.add_argument("--run-id", required=True, type=int)
-    broker_finalize.add_argument("--run-attempt", required=True, type=int)
-
     checkpoint = sub.add_parser(
         "integration-checkpoint",
         help="update the current local Integration recovery claim from the fenced local consumer",
@@ -436,56 +395,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(json.dumps(value, indent=2, sort_keys=True))
             return 0
-        if args.command == "broker-filter":
-            value = json.loads(Path(args.event_path).read_text(encoding="utf-8"))
-            if not isinstance(value, dict):
-                raise BrokerError("GitHub event payload must be a JSON object")
-            valid, pr_number, comment_id = broker_filter_event(value)
-            outputs = {"valid": valid}
-            if valid:
-                outputs.update({"pr_number": pr_number, "request_comment_id": comment_id})
-            write_github_outputs(args.github_output, outputs)
-            return 0
-
         engine, workspace, local, fixer, terminal_cleaner = _build_engine(args)
-        if args.command == "broker-prepare":
-            policy = route_policy_from_json(os.getenv("DISH_MUTATION_BROKER_ALLOWED_ROUTES_JSON"))
-            event = prepare_broker_event(
-                engine=engine,
-                request_comment_id=args.request_comment_id,
-                repository_id=args.repository_id,
-                run_id=args.run_id,
-                run_attempt=args.run_attempt,
-                trusted_source_sha=args.trusted_source_sha,
-                proof_path=args.proof_path,
-                route_policy=policy,
-            )
-            write_github_outputs(
-                args.github_output,
-                {
-                    "requires_proof": True,
-                    "comment_id": event.comment_id,
-                    "artifact_name": broker_artifact_name(args.run_id, args.run_attempt, event.comment_id),
-                    "grant_id": event.payload["grant_id"],
-                    "generation": event.payload["generation"],
-                    "event_digest": event.event_digest,
-                },
-            )
-            return 0
-        if args.command == "broker-finalize":
-            final = finalize_broker_event(
-                github=engine.github,
-                comment_id=args.comment_id,
-                artifact_id=args.artifact_id,
-                artifact_digest=args.artifact_digest,
-                repository_id=args.repository_id,
-                run_id=args.run_id,
-                run_attempt=args.run_attempt,
-            )
-            # A successful exact run attempt is verified by future readers; finalize only
-            # proves same-comment transport readback inside this still-running attempt.
-            print(json.dumps({"comment_id": final.comment_id, "event_digest": final.event_digest}, sort_keys=True))
-            return 0
         if args.command == "status":
             values = engine.status(include_closed=args.include_closed)
             _publish_projection(engine, values, args, mutate_tasks=False)
@@ -521,7 +431,7 @@ def main(argv: list[str] | None = None) -> int:
             time.sleep(args.interval)
     except KeyboardInterrupt:
         return 130
-    except (LifecycleError, BrokerError, pr_gate.GateError) as exc:
+    except (LifecycleError, pr_gate.GateError) as exc:
         print(f"pr_lifecycle: {exc}", file=sys.stderr)
         return 2
 
