@@ -32,12 +32,8 @@ from pr_lifecycle_engine_actions import (
     TERMINAL_RECOVERY_SLOT_SECONDS,
     _dispatch_fixer,
     _fixer_command,
-    _route_result_marker,
 )
-from pr_lifecycle_host_routing import (
-    CHATGPT_IMPLEMENTATION,
-    implementation_host_for_review,
-)
+from pr_lifecycle_host_routing import implementation_host_for_review
 
 WORKSTREAM_MARKER = "dish-workstream:v1"
 WORKSTREAM_REVIEW_MARKER = "dish-workstream-review:v1"
@@ -923,49 +919,15 @@ class WorkstreamLifecycleMixin:
         if selected_command is None:
             return
 
-        grants: dict[int, Any] = {}
-        broker_route: str | None = None
-        lease_id: str | None = None
-        if getattr(self, "mutation_broker_enabled", False):
-            route_key = "fix-local" if host != CHATGPT_IMPLEMENTATION else "fix-chatgpt"
-            broker_route = self._broker_route(route_key)
-            if broker_route is None and host == CHATGPT_IMPLEMENTATION:
-                broker_route = self._broker_route("fix")
-            if not broker_route:
-                raise LifecycleError(
-                    f"mutation broker is active but no {host} Implementation/fix route is configured"
-                )
-            waiting = False
-            for member in open_members:
-                lifecycle = self.inspect(self.github.get_pr(member.pr_number))
-                grant = self._broker_grant_for(lifecycle, action="fix", route=broker_route)
-                if grant is None:
-                    review = review_by_pr[member.pr_number].review
-                    try:
-                        review_id = int(review.get("id"))
-                    except (TypeError, ValueError) as exc:
-                        raise LifecycleError("workstream formal BLOCK review lacks numeric id") from exc
-                    self._submit_broker_request(
-                        lifecycle,
-                        action="fix",
-                        route=broker_route,
-                        review_id=review_id,
-                    )
-                    waiting = True
-                else:
-                    grants[member.pr_number] = grant
-            if waiting:
-                return
-        else:
-            if _active_marker(
-                self.github,
-                candidate,
-                marker=WORKSTREAM_FIX_DISPATCH_MARKER,
-                phase="fix",
-                now=self.now(),
-            ):
-                return
-            lease_id = self._write_shared_lease(candidate, phase="fix")
+        if _active_marker(
+            self.github,
+            candidate,
+            marker=WORKSTREAM_FIX_DISPATCH_MARKER,
+            phase="fix",
+            now=self.now(),
+        ):
+            return
+        lease_id = self._write_shared_lease(candidate, phase="fix")
 
         # Re-read every exact head and candidate Review before the single owner dispatch.
         fresh_values = {member.pr_number: self.inspect(self.github.get_pr(member.pr_number)) for member in candidate.members}
@@ -1025,18 +987,6 @@ class WorkstreamLifecycleMixin:
                         if member.pr_number in review_by_pr and member.publication_state == "open"
                         else None
                     ),
-                    "mutation_grant": (
-                        None
-                        if member.pr_number not in grants
-                        else {
-                            "grant_id": grants[member.pr_number].grant_id,
-                            "generation": grants[member.pr_number].generation,
-                            "consumer_id": grants[member.pr_number].consumer_id,
-                            "route": grants[member.pr_number].route,
-                            "starting_head": grants[member.pr_number].starting_head,
-                            "event_comment_id": grants[member.pr_number].event_comment_id,
-                        }
-                    ),
                 }
                 for member in candidate.members
             ],
@@ -1056,37 +1006,11 @@ class WorkstreamLifecycleMixin:
             raise
 
         changed = False
-        after: dict[int, Any] = {}
         for member in candidate.members:
             lifecycle = self.inspect(self.github.get_pr(member.pr_number))
-            after[member.pr_number] = lifecycle
             changed = changed or lifecycle.head != member.head
         if changed and lease_id is not None:
             self._release_shared_lease(candidate, lease_id, reason="workstream fixer returned changed candidate head(s)")
-        if changed and grants and broker_route is not None:
-            for member in open_members:
-                grant = grants[member.pr_number]
-                lifecycle = after[member.pr_number]
-                if lifecycle.head != member.head:
-                    marker = _route_result_marker(
-                        starting_head=member.head,
-                        new_head=lifecycle.head,
-                        host=host,
-                        route=broker_route,
-                        grant=grant,
-                    )
-                    self.github.add_comment(
-                        member.pr_number,
-                        f"{marker}\nWorkstream Implementation consumer returned exact new head `{lifecycle.head}`.\n\n"
-                        "— Dish PR lifecycle dispatcher",
-                    )
-                self._submit_broker_request(
-                    lifecycle,
-                    action="complete",
-                    route=grant.route,
-                    grant_id=grant.grant_id,
-                    generation=grant.generation,
-                )
 
     def dispatch(
         self,
