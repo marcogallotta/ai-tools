@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -127,7 +128,32 @@ def _watcher_command() -> list[str]:
     ]
 
 
-def _watcher_signature(command: str) -> bool:
+def _command_tokens(command: str) -> list[str]:
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return command.split()
+
+
+def _conflicting_watcher_signature(command: str) -> bool:
+    tokens = _command_tokens(command)
+    script_index = next((
+        index
+        for index, token in enumerate(tokens)
+        if token.replace("\\", "/") == "scripts/pr_lifecycle.py"
+        or token.replace("\\", "/").endswith("/scripts/pr_lifecycle.py")
+    ), None)
+    if script_index is None:
+        return False
+    args = tokens[script_index + 1:]
+    try:
+        watch_index = args.index("watch")
+    except ValueError:
+        return False
+    return "--dispatch" in args[watch_index + 1:]
+
+
+def _owned_watcher_signature(command: str) -> bool:
     required = [str(WATCHER), "--integration-authority", str(INTEGRATION_LAUNCHER), "watch", "--dispatch"]
     return all(value in command for value in required) and f"--interval {INTERVAL}" in command
 
@@ -143,7 +169,7 @@ def _owned_watcher(pid: int, state: dict[str, Any]) -> bool:
     if not _alive(pid) or pid != state.get("watcher_pid"):
         return False
     birth, command = _ps(pid)
-    return birth == state.get("watcher_birth") and _watcher_signature(command)
+    return birth == state.get("watcher_birth") and _owned_watcher_signature(command)
 
 
 def _active_watchers() -> list[int]:
@@ -156,7 +182,7 @@ def _active_watchers() -> list[int]:
     found: list[int] = []
     for line in result.stdout.splitlines():
         fields = line.strip().split(None, 1)
-        if len(fields) == 2 and fields[0].isdigit() and _watcher_signature(fields[1]):
+        if len(fields) == 2 and fields[0].isdigit() and _conflicting_watcher_signature(fields[1]):
             found.append(int(fields[0]))
     return sorted(set(found))
 
