@@ -34,7 +34,9 @@ def _instant(value: Any) -> datetime | None:
 def coordinator_handoff(projection: Mapping[str, Any]) -> str | None:
     actions = [item for item in projection.get("coordinator_actions", []) if isinstance(item, Mapping)]
     drift = [item for item in projection.get("state_drift", []) if isinstance(item, Mapping)]
-    if not actions and not drift:
+    v3 = projection.get("v3") if isinstance(projection.get("v3"), Mapping) else {}
+    outputs = [item for item in v3.get("coordinator_outputs", []) if isinstance(item, Mapping)]
+    if not actions and not drift and not outputs:
         return None
     lines = [
         "COORDINATOR HANDOFF — lifecycle snapshot may be stale; re-read live GitHub and Asana authority before acting."
@@ -44,6 +46,12 @@ def coordinator_handoff(projection: Mapping[str, Any]) -> str | None:
     for item in drift:
         target = f"PR #{item.get('pr')}" if item.get("pr") else f"task {item.get('task')}"
         lines.append(f"- {target}: {item.get('conflict')} — repair owner: {item.get('repair_owner')}")
+    for item in outputs:
+        target = f"PR #{item.get('pr')}" if item.get("pr") else f"task {item.get('task')}"
+        lines.append(
+            f"- {target}: {item.get('reason_class')} — next owner: {item.get('next_owner')} — "
+            f"{item.get('next_action')}"
+        )
     return "\n".join(lines)
 
 
@@ -55,7 +63,11 @@ def dashboard_snapshot(
     age = max(0, int((now - reconciled).total_seconds())) if reconciled else None
     controller = dict(projection.get("controller") or {})
     controller_status = str(controller.get("status") or "unknown")
-    stale = age is None or age > STALE_AFTER_SECONDS or controller_status in {"failed", "stale", "stopped"}
+    stale = (
+        age is None
+        or age > STALE_AFTER_SECONDS
+        or controller_status in {"failed", "stale", "stopped", "offline", "degraded"}
+    )
     value = dict(projection)
     value["dashboard"] = {
         "served_at": now.isoformat(),
@@ -81,9 +93,9 @@ h1{margin:0;font-size:24px}.meta{color:var(--muted);margin:6px 0 20px}.stale{col
 <script>
 const api='/api/dish-lifecycle.json';
 function txt(tag,value,klass){const n=document.createElement(tag);n.textContent=value??'';if(klass)n.className=klass;return n}
-function render(v){const d=v.dashboard||{}, prs=new Map((v.pull_requests||[]).map(p=>[Number(p.number),p]));
+function render(v){const d=v.dashboard||{}, prs=new Map((v.pull_requests||[]).map(p=>[Number(p.number),p])), v3=v.v3||{}, att=(v3.attention||{}).cases||[], integ=(v3.integrator||{}).active_cases||[], writer=v3.writer||{};
  const meta=document.querySelector('#meta');meta.textContent=`Last upstream reconciliation: ${v.reconciled_at||'unknown'} · snapshot age: ${d.snapshot_age_seconds??'unknown'}s · controller: ${d.controller_status}`;meta.className=d.stale?'meta stale':'meta fresh';
- const health=document.querySelector('#health');health.replaceChildren();health.append(txt('div',`Full regression: ${(v.full_regression||{}).conclusion||(v.full_regression||{}).status||'unknown'}`),txt('div',`Drift: ${(v.state_drift||[]).length}`),txt('div',`Corrective owners: ${(v.current_main_corrective_owners||[]).length}`));
+ const health=document.querySelector('#health');health.replaceChildren();health.append(txt('div',`Full regression: ${(v.full_regression||{}).conclusion||(v.full_regression||{}).status||'unknown'}`),txt('div',`Drift: ${(v.state_drift||[]).length}`),txt('div',`Corrective owners: ${(v.current_main_corrective_owners||[]).length}`),txt('div',`V3: ${v3.mode||'unavailable'} · writer ${writer.active||'unknown'}`),txt('div',`V3 attention: ${att.length} · Integrator cases: ${integ.length}`));
  const hand=document.querySelector('#handoff');hand.replaceChildren();if(d.coordinator_handoff){const box=txt('div',d.coordinator_handoff,'handoff'),b=txt('button','Copy coordinator handoff');b.onclick=()=>navigator.clipboard.writeText(d.coordinator_handoff);box.append(b);hand.append(box)}
  const queues=document.querySelector('#queues');queues.replaceChildren();for(const [name,numbers] of Object.entries(v.queues||{})){const q=txt('article','', 'queue');q.append(txt('h2',`${name} · ${numbers.length}`));for(const number of numbers){const p=prs.get(Number(number))||{}, c=txt('div','', 'card');c.append(txt('div',`#${number} ${p.title||''}`),txt('div',`${p.state_label||p.state||''} · ${(p.head||'').slice(0,10)}`,'muted'),txt('div',p.residual_reason||p.human_action||'','muted'));q.append(c)}queues.append(q)}}
 async function refresh(){try{const r=await fetch(api,{cache:'no-store'}),v=await r.json();if(!r.ok)throw Error(v.error||r.statusText);render(v)}catch(e){const m=document.querySelector('#meta');m.textContent=`Dashboard unavailable: ${e.message}`;m.className='meta stale'}}
