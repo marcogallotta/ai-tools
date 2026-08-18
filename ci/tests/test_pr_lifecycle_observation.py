@@ -176,6 +176,17 @@ def test_review_block_and_fix_in_progress_are_distinct_typed_states():
     assert fixing["resolved_lifecycle"][0]["state"] == "FIXES_IN_PROGRESS"
 
 
+def test_local_implementation_completion_maps_to_review_pass_without_prose_inference():
+    projection = build_projection(
+        [lifecycle(state=pr_lifecycle.LifecycleState.LOCAL_IMPLEMENTATION_REQUIRED)],
+        repository="marcogallotta/ai-tools",
+        tasks=[task(False)],
+        source_observation=source("NOT_LANDED"),
+    )
+
+    assert projection["resolved_lifecycle"][0]["phase"] == "REVIEW_PASS"
+
+
 def test_intermediate_merge_is_not_laundered_into_main_landing():
     projection = build_projection(
         [lifecycle(state=pr_lifecycle.LifecycleState.REVIEW_PASSED)],
@@ -222,6 +233,21 @@ def test_operational_completion_requires_landed_source_completed_task_and_accept
     )
 
     assert projection["resolved_lifecycle"][0]["state"] == "OPERATIONALLY_COMPLETE"
+
+
+def test_missing_asana_work_state_is_explicit_unknown_in_dashboard_projection():
+    projection = build_projection(
+        [lifecycle(state=pr_lifecycle.LifecycleState.REVIEW_READY)],
+        repository="marcogallotta/ai-tools",
+        tasks=[],
+        source_observation=source("NOT_LANDED"),
+    )
+
+    resolved = projection["resolved_lifecycle"][0]
+    assert resolved["truth"] == "UNKNOWN"
+    assert resolved["conflicts"][0]["kind"] == "ASANA_WORK_STATE_UNKNOWN"
+    assert projection["pull_requests"][0]["state_label"].endswith("Truth Unknown")
+    assert projection["state_drift"][0]["conflict"] == "ASANA_WORK_STATE_UNKNOWN"
 
 
 def test_conflicting_asana_completion_and_github_landing_is_explicit():
