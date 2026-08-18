@@ -55,39 +55,13 @@ jobs:
         with:
           github-token: ${{ github.token }}
 
-      - name: Extract ordered semantic authoring scripts
-        if: steps.gate.outputs.run == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 <<'PY'
-          from pathlib import Path
-          text=Path('.github/workflows/tmp-review-bundle-fasttrack-r3.yml').read_text()
-          def extract(name,next_name,path):
-              marker=f'      - name: {name}\n'
-              start=text.index(marker)
-              run='        run: |\n'
-              body_start=text.index(run,start)+len(run)
-              end=text.index(f'\n      - name: {next_name}\n',body_start)
-              raw=text[body_start:end]
-              lines=[]
-              for line in raw.splitlines():
-                  if line.startswith('          '): lines.append(line[10:])
-                  elif not line.strip(): lines.append('')
-                  else: raise SystemExit(f'unexpected indentation in {name}: {line!r}')
-              Path(path).write_text('\n'.join(lines)+'\n')
-          extract('Task 1 — resolve Review bundle contradiction','Task 2 — implement FastTrack-R3 Project overlay','/tmp/task1.sh')
-          extract('Task 2 — implement FastTrack-R3 Project overlay','Remove temporary hosted implementation files','/tmp/task2.sh')
-          PY
-          chmod +x /tmp/task1.sh /tmp/task2.sh
-
       - name: Task 1 — resolve Review bundle contradiction
         if: steps.gate.outputs.run == 'true'
         id: task1
         shell: bash
         env:
           BASE_SHA: a45f301611d2d950ebb4fa09130f6eb926265d65
-        run: /tmp/task1.sh
+        run: bash scripts/tmp-review-fasttrack-task1.sh
 
       - name: Task 2 — implement FastTrack-R3 Project overlay
         if: steps.gate.outputs.run == 'true'
@@ -95,7 +69,7 @@ jobs:
         shell: bash
         env:
           BASE_SHA: a45f301611d2d950ebb4fa09130f6eb926265d65
-        run: /tmp/task2.sh
+        run: bash scripts/tmp-review-fasttrack-task2.sh
 
       - name: Build and validate exact prospective helper-free tree
         if: steps.gate.outputs.run == 'true'
@@ -110,6 +84,8 @@ jobs:
           rm .github/workflows/tmp-review-bundle-fasttrack-r3.yml
           rm .github/workflows/tmp-bootstrap-review-fasttrack-trigger.yml
           rm .github/dish-workstream-bootstrap-review-fasttrack.txt
+          rm scripts/tmp-review-fasttrack-task1.sh
+          rm scripts/tmp-review-fasttrack-task2.sh
           git add -A
           git commit -m 'Prospective helper-free validation tree'
           tested_commit="$(git rev-parse HEAD)"
@@ -168,7 +144,7 @@ jobs:
           PASS: Task 2 canonical Project check and focused Review/FastTrack/kernel regressions completed before helper-free validation.
           PASS: exact prospective helper-free tree passed canonical Project check, test-plan validation, diff check, and every governed planner-selected command.
 
-          The remote branch is intentionally published at Task 2 first because GitHub Actions may not mutate workflow files. Implementation will delete the two temporary workflow files and bootstrap marker through the GitHub connector, then prove the resulting final Git tree exactly equals \`$TESTED_TREE\` before marking the PR review-ready.
+          The remote branch is intentionally published at Task 2 first because GitHub Actions may not mutate workflow files. Implementation will delete the two temporary workflow files, two temporary authoring scripts, and bootstrap marker through the GitHub connector, then prove the resulting final Git tree exactly equals \`$TESTED_TREE\` before marking the PR review-ready.
 
           GATE WAIVED BY MARCO OVERRIDE: exact-current repository-bundle witness/transport gate only. Raw bundle-unavailable evidence remains FAILED.
 
