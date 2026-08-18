@@ -1,11 +1,9 @@
 name: Temporary Task 2 stable authoring base
 
-# branch-only authoring helper; removes itself before final candidate publication
 on:
-  pull_request:
+  push:
     branches:
-      - agent/review-bundle-fallback
-    types: [opened, synchronize]
+      - agent/stable-authoring-base
 
 permissions:
   actions: read
@@ -14,12 +12,10 @@ permissions:
 
 jobs:
   author:
-    if: github.event.pull_request.head.ref == 'agent/stable-authoring-base'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - name: Materialize Task 2 candidate
@@ -263,9 +259,10 @@ Development Workflow treats one exact fresh task/branch base as the implementati
         env:
           GH_TOKEN: ${{ github.token }}
           FINAL_HEAD: ${{ steps.candidate.outputs.head }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
+          PR_NUMBER="$(gh pr list --repo "$GITHUB_REPOSITORY" --head agent/stable-authoring-base --state open --json number --jq '.[0].number')"
+          test -n "$PR_NUMBER"
           python3 <<'PY' > /tmp/evidence.md
           import json, os
           from pathlib import Path
@@ -283,3 +280,15 @@ Development Workflow treats one exact fresh task/branch base as the implementati
           print('— Dish Agent: Implementation | GitHub Actions | task 1217558179795693')
           PY
           gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body-file /tmp/evidence.md
+
+      - name: Record authoring failure on PR
+        if: failure()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          PR_NUMBER="$(gh pr list --repo "$GITHUB_REPOSITORY" --head agent/stable-authoring-base --state open --json number --jq '.[0].number')"
+          if [[ -n "$PR_NUMBER" ]]; then
+            gh pr comment "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --body "AUTHORING FAILURE — Task 1217558179795693 — GitHub Actions run $GITHUB_RUN_ID. Branch was not promoted to review-ready. — Dish Agent: Implementation | GitHub Actions"
+          fi
