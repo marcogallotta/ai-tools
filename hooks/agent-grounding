@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Cross-session Dish grounding and exact action-witness wrapper.
 
-The existing ``agent-reground`` implementation remains the recovery/barrier engine.
-This wrapper broadens its entry boundary to fresh/resumed sessions, closes the
-missing-marker recovery gap, resolves shared/inherited context through the same
-ChatGPT Project declarations, and records exact grounding/action witnesses.
+The existing ``agent-reground`` implementation remains the compaction recovery/barrier
+engine. This wrapper adds fresh/resume and action-boundary grounding without inventing
+role authority or manufacturing compaction boundaries.
 """
 from __future__ import annotations
 
@@ -14,6 +13,7 @@ import importlib.util
 import json
 import os
 import sys
+import uuid
 from datetime import datetime, timezone
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
@@ -26,7 +26,6 @@ def _now_utc() -> str:
 
 
 def _load_module(name: str, path: Path) -> ModuleType:
-    """Load repository Python source, including extensionless executable hooks."""
     loader = SourceFileLoader(name, str(path))
     spec = importlib.util.spec_from_loader(name, loader)
     if spec is None:
@@ -70,9 +69,11 @@ def _sha256(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _context_record(
-    repo: Path, resolver: ModuleType, locator: str
-) -> dict[str, Any]:
+def _identity_digest(identity: dict[str, Any]) -> str:
+    return _sha256(json.dumps(identity, sort_keys=True, separators=(",", ":")))
+
+
+def _context_record(repo: Path, resolver: ModuleType, locator: str) -> dict[str, Any]:
     path = locator.split("#", 1)[0]
     full = BASE._read_required(repo, path)
     bounded = resolver.section_text(repo, locator)
@@ -129,6 +130,7 @@ def _augment_session_marker(
     grounded_at = _now_utc()
     session = {
         "source": session_source,
+        "phase": "full-role",
         "grounded_at": grounded_at,
         "grounding_generation": marker.get("grounding_generation"),
         "role": role,
@@ -143,6 +145,7 @@ def _augment_session_marker(
     BASE._atomic_write_json(BASE.marker_path(agent_id), marker)
     receipt = {
         "schema_version": 1,
+        "status": "ready",
         "agent_id": agent_id,
         "host": marker.get("host"),
         "session_source": session_source,
@@ -160,42 +163,237 @@ def _augment_session_marker(
     return marker, context
 
 
-def _core_context_for_session(context: str, session_source: str) -> str:
-    """Keep compaction-only recovery guidance out of fresh/resumed sessions."""
-    if session_source.casefold() == "compact":
-        return context
-    context = context.replace(
-        "POST-COMPACTION DISH RE-GROUNDING — authoritative reload completed mechanically.",
-        "DISH CORE RE-GROUNDING — authoritative reload completed mechanically.",
-        1,
+def _pre_role_ground(
+    payload: dict[str, Any],
+    agent_id: str,
+    host: str,
+    *,
+    session_source: str,
+) -> dict[str, Any]:
+    candidate = payload.get("cwd")
+    repo = BASE._repo_from_candidate(str(candidate) if candidate else None)
+    if repo is None:
+        raise BASE.RegroundError(
+            "pre-role bootstrap cannot resolve the active ai-tools checkout from cwd"
+        )
+    BASE.verify_repository(repo)
+    root_text = BASE._read_required(repo, "CLAUDE.md")
+    index_text = BASE._read_required(repo, "dish/docs/agents/index.md")
+    generation = str(uuid.uuid4())
+    grounded_at = _now_utc()
+    marker = {
+        "schema_version": 1,
+        "status": "pre-role",
+        "grounding_generation": generation,
+        "agent_id": agent_id,
+        "host": host,
+        "resolved_role": None,
+        "grounded_at": grounded_at,
+        "repository": BASE.EXPECTED_REPOSITORY,
+        "workspace": str(repo),
+        "root_instructions": BASE._authority_record(repo, "CLAUDE.md", root_text),
+        "role_index": BASE._authority_record(
+            repo, "dish/docs/agents/index.md", index_text
+        ),
+        "session_grounding": {
+            "source": session_source,
+            "phase": "pre-role",
+            "grounded_at": grounded_at,
+            "grounding_generation": generation,
+            "role": None,
+            "repository_head": BASE._git(repo, "rev-parse", "HEAD"),
+            "context_records": [],
+        },
+    }
+    BASE._atomic_write_json(BASE.marker_path(agent_id), marker)
+    receipt = {
+        "schema_version": 1,
+        "status": "pre-role",
+        "agent_id": agent_id,
+        "host": host,
+        "session_source": session_source,
+        "grounded_at": grounded_at,
+        "grounding_generation": generation,
+        "role": None,
+        "repository": BASE.EXPECTED_REPOSITORY,
+        "repository_head": marker["session_grounding"]["repository_head"],
+        "root_instructions": marker["root_instructions"],
+        "role_index": marker["role_index"],
+        "role_contract": None,
+        "context_records": [],
+    }
+    BASE._atomic_write_json(_session_receipt_path(agent_id), receipt)
+    context = (
+        f"DISH PRE-ROLE SESSION BOOTSTRAP — source={session_source}; "
+        f"exact witness generation={generation}\n"
+        "No role has been inferred or granted. Current root instructions and role index "
+        "are loaded read-only. Before substantive tool use, the existing per-agent identity "
+        "authority must record this session and full role-specific grounding must succeed; "
+        "otherwise tool use fails closed.\n"
+        "\n===== CURRENT ROOT CLAUDE.md =====\n"
+        + root_text
+        + "\n===== CURRENT ROLE INDEX =====\n"
+        + index_text
     )
-    history_marker = "\n===== SELF-HISTORY VERIFICATION RULE =====\n"
-    if history_marker in context:
-        context = context.split(history_marker, 1)[0].rstrip()
-    return context
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": context,
+        }
+    }
+
+
+def _noncompact_role_ground(
+    payload: dict[str, Any],
+    agent_id: str,
+    host: str,
+    *,
+    session_source: str,
+) -> dict[str, Any]:
+    identity, repo, role, _resolver_module, _resolved = _resolved_startup(
+        agent_id, payload
+    )
+    root_text = BASE._read_required(repo, "CLAUDE.md")
+    index_text = BASE._read_required(repo, "dish/docs/agents/index.md")
+    contract_path = BASE.role_contract_from_index(index_text, role)
+    contract_text = BASE._read_required(repo, contract_path)
+    asana = BASE.recover_asana(repo, identity, contract_text)
+    git_pr = BASE.recover_git_pr(repo, identity)
+    generation = str(uuid.uuid4())
+    grounded_at = _now_utc()
+    marker = {
+        "schema_version": 1,
+        "status": "ready",
+        "grounding_generation": generation,
+        "agent_id": agent_id,
+        "host": host,
+        "resolved_role": role,
+        "grounding_source": session_source,
+        "grounded_at": grounded_at,
+        "repository": BASE.EXPECTED_REPOSITORY,
+        "workspace": str(repo),
+        "identity_sha256": _identity_digest(identity),
+        "root_instructions": BASE._authority_record(repo, "CLAUDE.md", root_text),
+        "role_index": BASE._authority_record(
+            repo, "dish/docs/agents/index.md", index_text
+        ),
+        "role_contract": BASE._authority_record(repo, contract_path, contract_text),
+        "owning_task_gid": asana.get("owning_task_gid")
+        if asana
+        else BASE._task_gid(identity),
+        "owning_project_gid": asana.get("owning_project_gid")
+        if asana
+        else BASE._project_gid(identity),
+        "asana_state": asana,
+        "git": {"branch": git_pr["branch"], "local_head": git_pr["local_head"]},
+        "pr": git_pr["pr"],
+    }
+    BASE._atomic_write_json(BASE.marker_path(agent_id), marker)
+    marker, shared_context = _augment_session_marker(
+        agent_id, payload, session_source=session_source
+    )
+    core_context = (
+        "DISH CORE RE-GROUNDING — authoritative role/process reload completed mechanically.\n"
+        f"Grounding generation: {generation}\n"
+        "\n===== CURRENT ROOT CLAUDE.md =====\n"
+        + root_text
+        + "\n===== CURRENT ROLE INDEX =====\n"
+        + index_text
+        + f"\n===== MAPPED ROLE CONTRACT: {contract_path} =====\n"
+        + contract_text
+    )
+    if asana is not None:
+        core_context += (
+            "\n===== LIVE OWNING ASANA STATE =====\n"
+            + json.dumps(asana, indent=2, sort_keys=True)
+        )
+    core_context += (
+        "\n===== ACTIVE GIT / PR IDENTITY =====\n"
+        + json.dumps(git_pr, indent=2, sort_keys=True)
+    )
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": (
+                f"DISH SESSION GROUNDING — source={session_source}; "
+                f"exact witness generation={marker.get('grounding_generation')}\n"
+                + core_context
+                + "\n"
+                + shared_context
+            ),
+        }
+    }
 
 
 def _session_ground(
     payload: dict[str, Any], agent_id: str, host: str, *, session_source: str
 ) -> dict[str, Any]:
-    # Keep one existing recovery engine; this wrapper only broadens the boundary.
-    result = BASE.perform_reground(payload, agent_id, host)
-    marker, shared_context = _augment_session_marker(
-        agent_id, payload, session_source=session_source
+    source = session_source.casefold()
+    identity_exists = BASE.identity_path(agent_id).is_file()
+    if not identity_exists:
+        if source in {"compact", "action-recovery"}:
+            raise BASE.RegroundError(
+                "per-agent identity is not yet available for full role grounding"
+            )
+        return _pre_role_ground(
+            payload, agent_id, host, session_source=session_source
+        )
+
+    if source == "compact":
+        result = BASE.perform_reground(payload, agent_id, host)
+        marker, shared_context = _augment_session_marker(
+            agent_id, payload, session_source="compact"
+        )
+        output = dict(result.get("hookSpecificOutput", {}))
+        output["hookEventName"] = "SessionStart"
+        output["additionalContext"] = (
+            f"DISH SESSION GROUNDING — source=compact; "
+            f"exact witness generation={marker.get('grounding_generation')}\n"
+            + str(output.get("additionalContext", ""))
+            + "\n"
+            + shared_context
+        )
+        return {"hookSpecificOutput": output}
+
+    return _noncompact_role_ground(
+        payload, agent_id, host, session_source=session_source
     )
-    output = dict(result.get("hookSpecificOutput", {}))
-    existing = _core_context_for_session(
-        str(output.get("additionalContext", "")), session_source
-    )
-    output["hookEventName"] = "SessionStart"
-    output["additionalContext"] = (
-        f"DISH SESSION GROUNDING — source={session_source}; "
-        f"exact witness generation={marker.get('grounding_generation')}\n"
-        + existing
-        + "\n"
-        + shared_context
-    )
-    return {"hookSpecificOutput": output}
+
+
+def _core_marker_stale(agent_id: str, payload: dict[str, Any]) -> str | None:
+    try:
+        marker = BASE._read_json(BASE.marker_path(agent_id), "re-grounding marker")
+        if marker.get("status") != "ready":
+            return "full role grounding is not ready"
+        identity = BASE.load_identity(agent_id)
+        if marker.get("identity_sha256") != _identity_digest(identity):
+            return "durable agent identity changed after session grounding"
+        repo = BASE.resolve_repo(identity, payload)
+        BASE.verify_repository(repo)
+        for key, relative in (
+            ("root_instructions", "CLAUDE.md"),
+            ("role_index", "dish/docs/agents/index.md"),
+        ):
+            text = BASE._read_required(repo, relative)
+            record = marker.get(key)
+            if not isinstance(record, dict) or record.get("sha256") != _sha256(text):
+                return f"{relative} changed after session grounding"
+        index_text = BASE._read_required(repo, "dish/docs/agents/index.md")
+        contract_path = BASE.role_contract_from_index(index_text, str(identity["role"]))
+        contract_text = BASE._read_required(repo, contract_path)
+        record = marker.get("role_contract")
+        if (
+            not isinstance(record, dict)
+            or record.get("path") != contract_path
+            or record.get("sha256") != _sha256(contract_text)
+        ):
+            return "mapped role contract changed after session grounding"
+        branch = BASE._git(repo, "branch", "--show-current")
+        if branch != marker.get("git", {}).get("branch"):
+            return "active Git branch changed after session grounding"
+    except BASE.RegroundError as exc:
+        return str(exc)
+    return None
 
 
 def _shared_context_stale(agent_id: str, payload: dict[str, Any]) -> str | None:
@@ -205,8 +403,8 @@ def _shared_context_stale(agent_id: str, payload: dict[str, Any]) -> str | None:
             agent_id, payload
         )
         session = marker.get("session_grounding")
-        if not isinstance(session, dict):
-            return "shared/inherited session grounding witness is missing"
+        if not isinstance(session, dict) or session.get("phase") != "full-role":
+            return "shared/inherited full-role session grounding witness is missing"
         records = session.get("context_records")
         if not isinstance(records, list):
             return "shared/inherited session grounding records are missing"
@@ -231,11 +429,17 @@ def _shared_context_stale(agent_id: str, payload: dict[str, Any]) -> str | None:
     return None
 
 
-def _recovery_context(agent_id: str, payload: dict[str, Any], reason: str) -> str:
-    _marker, shared = _augment_session_marker(
-        agent_id, payload, session_source="action-recovery"
+def _recover_noncompact(
+    payload: dict[str, Any],
+    agent_id: str,
+    host: str,
+    reason: str,
+) -> str:
+    result = _session_ground(
+        payload, agent_id, host, session_source="action-recovery"
     )
-    return f"DISH ACTION-BOUNDARY RE-GROUND — {reason}\n{shared}"
+    context = str(result["hookSpecificOutput"]["additionalContext"])
+    return f"DISH ACTION-BOUNDARY RE-GROUND — {reason}\n{context}"
 
 
 def _action_ground(
@@ -308,61 +512,98 @@ def _record_tool_witness(
     BASE._atomic_write_json(BASE.marker_path(agent_id), marker)
 
 
+def _deny(reason: str) -> dict[str, Any]:
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": (
+                "Dish grounding/action barrier: " + reason + ". "
+                "Substantive tool use remains blocked until full role-specific grounding succeeds."
+            ),
+        }
+    }
+
+
 def _pretool(
     payload: dict[str, Any], agent_id: str, host: str
 ) -> dict[str, Any] | None:
     additional: list[str] = []
-    generation_before: str | None = None
     marker_file = BASE.marker_path(agent_id)
-    boundary_file = BASE.boundary_path(agent_id)
+
+    marker: dict[str, Any] | None = None
     if marker_file.exists():
         try:
-            generation_before = str(
-                BASE._read_json(marker_file, "re-grounding marker").get(
-                    "grounding_generation", ""
-                )
-            )
+            marker = BASE._read_json(marker_file, "re-grounding marker")
         except BASE.RegroundError:
-            generation_before = None
+            marker = None
 
-    if not boundary_file.exists() or not marker_file.exists():
+    if marker is None:
         try:
-            _session_ground(
-                payload, agent_id, host, session_source="action-recovery"
+            additional.append(
+                _recover_noncompact(
+                    payload,
+                    agent_id,
+                    host,
+                    "missing session witness recovered before tool use",
+                )
             )
         except BASE.RegroundError as exc:
-            return BASE.deny(f"automatic grounding from missing witness failed: {exc}")
-        additional.append(
-            _recovery_context(
-                agent_id,
-                payload,
-                "missing session witness recovered before tool use",
-            )
-        )
-    else:
-        decision = BASE.recover_pretool_barrier(payload, agent_id, host)
-        if decision:
-            return decision
+            return _deny(f"automatic grounding from missing witness failed: {exc}")
         marker = BASE._read_json(marker_file, "re-grounding marker")
-        generation_after = str(marker.get("grounding_generation", ""))
-        if generation_before and generation_after != generation_before:
+    elif marker.get("status") == "pre-role":
+        try:
             additional.append(
-                _recovery_context(
-                    agent_id,
+                _recover_noncompact(
                     payload,
-                    "stale core authority recovered before tool use",
+                    agent_id,
+                    host,
+                    "pre-role bootstrap upgraded to full role grounding before tool use",
                 )
             )
+        except BASE.RegroundError as exc:
+            return _deny(
+                f"pre-role bootstrap cannot upgrade to full role grounding: {exc}"
+            )
+        marker = BASE._read_json(marker_file, "re-grounding marker")
+    else:
+        session = marker.get("session_grounding")
+        session_source = (
+            str(session.get("source", "")).casefold()
+            if isinstance(session, dict)
+            else ""
+        )
+        if session_source == "compact":
+            generation_before = str(marker.get("grounding_generation", ""))
+            decision = BASE.recover_pretool_barrier(payload, agent_id, host)
+            if decision:
+                return decision
+            marker = BASE._read_json(marker_file, "re-grounding marker")
+            generation_after = str(marker.get("grounding_generation", ""))
+            if generation_before and generation_after != generation_before:
+                marker, shared = _augment_session_marker(
+                    agent_id, payload, session_source="compact"
+                )
+                additional.append(
+                    "DISH ACTION-BOUNDARY RE-GROUND — stale compact authority "
+                    "recovered before tool use\n" + shared
+                )
+        else:
+            stale = _core_marker_stale(agent_id, payload)
+            if stale:
+                try:
+                    additional.append(
+                        _recover_noncompact(payload, agent_id, host, stale)
+                    )
+                except BASE.RegroundError as exc:
+                    return _deny(f"core session grounding recovery failed: {exc}")
 
     stale = _shared_context_stale(agent_id, payload)
     if stale:
         try:
-            _session_ground(
-                payload, agent_id, host, session_source="action-recovery"
-            )
+            additional.append(_recover_noncompact(payload, agent_id, host, stale))
         except BASE.RegroundError as exc:
-            return BASE.deny(f"shared/inherited context recovery failed: {exc}")
-        additional.append(_recovery_context(agent_id, payload, stale))
+            return _deny(f"shared/inherited context recovery failed: {exc}")
 
     trigger_value = payload.get("dish_action_trigger") or os.environ.get(
         "DISH_ACTION_TRIGGER"
@@ -382,12 +623,12 @@ def _pretool(
                 )
             )
         except BASE.RegroundError as exc:
-            return BASE.deny(f"action-specific grounding failed: {exc}")
+            return _deny(f"action-specific grounding failed: {exc}")
 
     try:
         _record_tool_witness(agent_id, payload, trigger)
     except BASE.RegroundError as exc:
-        return BASE.deny(f"cannot record exact action witness: {exc}")
+        return _deny(f"cannot record exact action witness: {exc}")
 
     if not additional:
         return None
@@ -431,13 +672,13 @@ def _cli_action(args: argparse.Namespace) -> int:
             "session_id": safe_id,
             "cwd": args.cwd,
         }
-        if not BASE.boundary_path(safe_id).exists() or not BASE.marker_path(
-            safe_id
-        ).exists():
+        marker_file = BASE.marker_path(safe_id)
+        marker = None
+        if marker_file.exists():
+            marker = BASE._read_json(marker_file, "re-grounding marker")
+        if marker is None or marker.get("status") != "ready":
             host = "codex" if os.environ.get("CODEX_THREAD_ID") else "claude"
-            _session_ground(
-                payload, safe_id, host, session_source="action-recovery"
-            )
+            _session_ground(payload, safe_id, host, session_source="action-recovery")
         text = _action_ground(safe_id, payload, args.trigger, tool_name=None)
     except BASE.RegroundError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
