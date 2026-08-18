@@ -492,6 +492,49 @@ def attention_cases(
     deduped: dict[str, dict[str, Any]] = {}
     for case in cases:
         deduped[case["case_key"]] = case
+
+    recurring_classes = {
+        "CI_SLOW",
+        "CI_RED_PR_OWNED",
+        "CI_RED_CURRENT_MAIN_OR_EXTERNAL",
+        "CI_INFRASTRUCTURE_OR_NETWORK",
+        "CI_OWNERSHIP_AMBIGUOUS",
+    }
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for case in deduped.values():
+        reason_class = str(case.get("reason_class") or "")
+        if reason_class in recurring_classes:
+            grouped.setdefault(reason_class, []).append(case)
+    for reason_class, members in grouped.items():
+        if len(members) < 2:
+            continue
+        ordered = sorted(members, key=lambda item: str(item["case_key"]))
+        first_seen_values = [
+            value
+            for value in (_instant(item.get("first_seen")) for item in ordered)
+            if value is not None
+        ]
+        systemic = _case(
+            repository=repository,
+            reason_class="RECURRING_BUILD_HEALTH_PATTERN",
+            pr=None,
+            task=None,
+            evidence={
+                "pattern_reason_class": reason_class,
+                "member_case_keys": [item["case_key"] for item in ordered],
+                "affected_prs": sorted(
+                    int(item["pr"]) for item in ordered if item.get("pr") is not None
+                ),
+            },
+            next_owner="Coordinator",
+            next_action=(
+                "schedule a systemic reliability investigation; Integrator diagnosis remains evidence, not scheduling authority"
+            ),
+            observed_at=generated_at,
+            first_seen=min(first_seen_values) if first_seen_values else generated_at,
+        )
+        deduped[systemic["case_key"]] = systemic
+
     return sorted(
         deduped.values(),
         key=lambda item: (str(item["reason_class"]), int(item.get("pr") or 0), str(item["case_key"])),
