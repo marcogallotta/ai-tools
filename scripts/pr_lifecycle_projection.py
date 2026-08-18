@@ -18,7 +18,7 @@ _PHASE_BY_GITHUB_STATE = {
     "review_ready": "READY_FOR_REVIEW",
     "review_in_progress": "REVIEW_IN_PROGRESS",
     "review_passed_evaluating_gates": "REVIEW_PASS",
-    "local_implementation_required": "REVIEW_PASS",
+    "local_implementation_completion_required": "REVIEW_PASS",
     "local_certification_required": "REVIEW_PASS",
     "waiting_ci_certification": "REVIEW_PASS",
     "waiting_external_dependency": "BLOCKED_EXTERNAL",
@@ -105,14 +105,22 @@ def _truth_conflicts(
     completion: str,
 ) -> list[dict[str, Any]]:
     conflicts: list[dict[str, Any]] = []
+    unreadable = False
     for task in pr.get("asana") or []:
         if isinstance(task, Mapping) and task.get("error"):
+            unreadable = True
             conflicts.append({
                 "kind": "ASANA_UNREADABLE",
                 "truth": "UNKNOWN",
                 "task": task.get("gid"),
                 "detail": str(task.get("error")),
             })
+    if pr.get("task_ids") and completion == "UNKNOWN" and not unreadable:
+        conflicts.append({
+            "kind": "ASANA_WORK_STATE_UNKNOWN",
+            "truth": "UNKNOWN",
+            "detail": "Linked Asana work state was not available from the pure-read task observation.",
+        })
     if completion == "COMPLETE" and source.get("state") == "NOT_LANDED":
         conflicts.append({
             "kind": "ASANA_COMPLETE_SOURCE_NOT_LANDED",
@@ -241,7 +249,7 @@ def build_projection(
         pr["source_state"] = source.get("state")
         pr["asana_completion"] = completion
         pr["truth_status"] = truth
-        pr["state_label"] = _state_label(state)
+        pr["state_label"] = _state_label(state) + (" · Truth Unknown" if truth == "UNKNOWN" else "")
         queues[_queue_for_state(state)].append(int(pr["number"]))
         for conflict in conflicts:
             drift.append({
