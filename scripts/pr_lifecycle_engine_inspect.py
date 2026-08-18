@@ -393,6 +393,12 @@ class LifecycleInspectMixin:
             owned_gate["failure_ownership"] = ownership["classification"]
             owned_gate["failure_ownership_evidence"] = ownership["evidence"]
             classification = ownership["classification"]
+            owned_gate["reconciliation_kind"] = {
+                "PR_OWNED": "pr-owned-fix",
+                "PROVEN_CURRENT_MAIN": "current-main-corrective-owner",
+                "INFRASTRUCTURE": "infrastructure-retry",
+                "AMBIGUOUS": "ownership-required",
+            }.get(classification, "ownership-required")
             if classification == "PR_OWNED":
                 residual = "CI FAILURE — PR OWNED — exact-head evidence proves this candidate owns the failure; brokered fix is eligible"
                 if marker_note:

@@ -87,6 +87,7 @@ class LifecycleState(str, Enum):
     LOCAL_CERTIFICATION_REQUIRED = "local_certification_required"
     WAITING_CI = "waiting_ci_certification"
     WAITING_EXTERNAL_DEPENDENCY = "waiting_external_dependency"
+    WAITING_INFRASTRUCTURE = "waiting_infrastructure"
     INTEGRATION_READY = "integration_ready"
     MERGING = "merging_integration_in_progress"
     MERGED = "merged"
@@ -104,6 +105,7 @@ STATE_LABELS: dict[LifecycleState, str] = {
     LifecycleState.LOCAL_CERTIFICATION_REQUIRED: "REVIEW PASSED / LOCAL INTEGRATION CERTIFICATION REQUIRED",
     LifecycleState.WAITING_CI: "REVIEW PASSED / CERTIFICATION PENDING",
     LifecycleState.WAITING_EXTERNAL_DEPENDENCY: "WAITING ON EXTERNAL DEPENDENCY",
+    LifecycleState.WAITING_INFRASTRUCTURE: "WAITING ON INFRASTRUCTURE",
     LifecycleState.INTEGRATION_READY: "INTEGRATION READY",
     LifecycleState.MERGING: "MERGING / INTEGRATION IN PROGRESS",
     LifecycleState.MERGED: "MERGED",
@@ -198,6 +200,8 @@ class GitHubBackend(Protocol):
     def get_reviews(self, number: int) -> list[dict[str, Any]]: ...
     def get_combined_status(self, sha: str) -> dict[str, Any]: ...
     def get_workflow_runs(self) -> dict[str, Any]: ...
+    def rerun_failed_workflow(self, run_id: int) -> None: ...
+    def full_regression_runs(self) -> dict[str, Any]: ...
     def add_comment(self, number: int, body: str) -> dict[str, Any]: ...
     def close_pr(self, number: int) -> dict[str, Any]: ...
     def get_branch(self, branch: str) -> dict[str, Any] | None: ...
@@ -206,6 +210,13 @@ class GitHubBackend(Protocol):
 
 class AsanaBackend(Protocol):
     def get_task(self, gid: str) -> dict[str, Any]: ...
+    def get_stories(self, gid: str) -> list[dict[str, Any]]: ...
+    def add_comment(self, gid: str, text: str) -> dict[str, Any]: ...
+    def list_project_tasks(self, project_gid: str) -> list[dict[str, Any]]: ...
+    def create_task(self, project_gid: str, *, name: str, notes: str) -> dict[str, Any]: ...
+    def find_task_by_marker(self, project_gid: str, marker_name: str, exact_marker: str) -> dict[str, Any] | None: ...
+    def update_projection_fields(self, gid: str, fields: Mapping[str, Any]) -> dict[str, Any]: ...
+    def move_task_to_section(self, gid: str, section_gid: str) -> None: ...
 
 
 class JSONHTTPClient:
@@ -413,6 +424,22 @@ class GitHubREST:
             raise LifecycleError("GitHub workflow-runs response was not an object")
         return value
 
+    def rerun_failed_workflow(self, run_id: int) -> None:
+        if int(run_id) <= 0:
+            raise LifecycleError("workflow run id must be positive")
+        self.http.request(
+            "POST", self._url(f"actions/runs/{int(run_id)}/rerun-failed-jobs"), headers=self.headers
+        )
+
+    def full_regression_runs(self) -> dict[str, Any]:
+        _, _, value = self.http.request(
+            "GET", self._url("actions/workflows/full-regression.yml/runs", {"branch": "main", "per_page": 20}),
+            headers=self.headers,
+        )
+        if not isinstance(value, dict):
+            raise LifecycleError("GitHub full-regression workflow-runs response was not an object")
+        return value
+
     def add_comment(self, number: int, body: str) -> dict[str, Any]:
         _, _, value = self.http.request(
             "POST", self._url(f"issues/{number}/comments"), headers=self.headers, body={"body": body}
@@ -571,6 +598,75 @@ class AsanaREST:
         if not isinstance(value, dict) or not isinstance(value.get("data"), dict):
             raise LifecycleError(f"Asana task {gid} comment response was not an object")
         return dict(value["data"])
+
+    def list_project_tasks(self, project_gid: str) -> list[dict[str, Any]]:
+        offset: str | None = None
+        values: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for _ in range(1000):
+            params = {
+                "opt_fields": "gid,name,notes,completed,completed_at,modified_at,memberships.project.gid,memberships.section.gid,dependencies.gid,dependencies.completed",
+                "limit": 100,
+            }
+            if offset:
+                params["offset"] = offset
+            _, _, payload = self.http.request(
+                "GET", f"{self.api_root}/projects/{project_gid}/tasks?{urlparse.urlencode(params)}", headers=self.headers
+            )
+            if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
+                raise LifecycleError(f"Asana project {project_gid} tasks response was not a list")
+            values.extend(dict(item) for item in payload["data"] if isinstance(item, dict))
+            next_page = payload.get("next_page")
+            if next_page is None:
+                return values
+            if not isinstance(next_page, dict) or not next_page.get("offset"):
+                raise LifecycleError(f"Asana project {project_gid} tasks pagination is malformed")
+            offset = str(next_page["offset"])
+            if offset in seen:
+                raise LifecycleError(f"Asana project {project_gid} tasks pagination repeated offset")
+            seen.add(offset)
+        raise LifecycleError(f"Asana project {project_gid} tasks pagination exceeded bound")
+
+    def create_task(self, project_gid: str, *, name: str, notes: str) -> dict[str, Any]:
+        _, _, value = self.http.request(
+            "POST", f"{self.api_root}/tasks", headers=self.headers,
+            body={"data": {"name": name, "notes": notes, "projects": [project_gid]}},
+        )
+        if not isinstance(value, dict) or not isinstance(value.get("data"), dict):
+            raise LifecycleError("Asana create-task response was not an object")
+        created = dict(value["data"])
+        gid = str(created.get("gid") or "")
+        if not gid:
+            raise LifecycleError("Asana create-task response lacks GID")
+        return self.get_task(gid)
+
+    def find_task_by_marker(self, project_gid: str, marker_name: str, exact_marker: str) -> dict[str, Any] | None:
+        matches = []
+        for task in self.list_project_tasks(project_gid):
+            notes = str(task.get("notes") or "")
+            if marker_name in notes and exact_marker in notes:
+                matches.append(task)
+        if len(matches) > 1:
+            raise LifecycleError(f"multiple Asana corrective owners match {marker_name}")
+        return matches[0] if matches else None
+
+    def update_projection_fields(self, gid: str, fields: Mapping[str, Any]) -> dict[str, Any]:
+        allowed = {"name", "notes", "completed"}
+        unknown = set(fields) - allowed
+        if unknown:
+            raise LifecycleError(f"unsupported Asana projection fields: {sorted(unknown)}")
+        _, _, value = self.http.request(
+            "PUT", f"{self.api_root}/tasks/{gid}", headers=self.headers, body={"data": dict(fields)}
+        )
+        if not isinstance(value, dict) or not isinstance(value.get("data"), dict):
+            raise LifecycleError(f"Asana task {gid} projection update response was not an object")
+        return dict(value["data"])
+
+    def move_task_to_section(self, gid: str, section_gid: str) -> None:
+        self.http.request(
+            "POST", f"{self.api_root}/sections/{section_gid}/addTask", headers=self.headers,
+            body={"data": {"task": gid}},
+        )
 
     def update_task_fields(self, gid: str, fields: Mapping[str, Any]) -> dict[str, Any]:
         forbidden = {"notes", "html_notes", "name"} & set(fields)
