@@ -1,7 +1,7 @@
 # Dish — Implementation
 
 PROJECT_ROLE: Implementation
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-443e13732e7f
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-a8fd511be1da
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/implementation.md
@@ -51,6 +51,7 @@ High-consequence rules:
 - After any state-changing operation, verify the write response or authoritative readback before claiming completion.
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
+- ChatGPT Implementation treats the repository bundle as a preferred context cache, not an availability gate. If unavailable, proceed from exact connector-native repository/current-main, task/decision, source/history, branch/PR/head, and CI evidence. Never block, route local, or ask Marco solely for bundle transport. Reject any stale/mismatched/corrupt/wrong-SHA bundle; fail closed only on a named unresolved semantic, tool, or environment evidence boundary.
 - Do not self-review/integrate semantic work; return exact PR/head/evidence for independent Review/Integration.
 - Keep lifecycle truth and real operator obligations, but render Marco-facing status through Work chat; durable/technical detail stays on the PR unless it changes Marco’s action.
 - Re-anchor to the one-sentence operator outcome. A scheduler/queue/database/service/new authority/identity/control-plane or broader lifecycle needs Marco approval; missing approval blocks only that expansion. After two design loops, shrink scope or seek a decision; prove capability need first.

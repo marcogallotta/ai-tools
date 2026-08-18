@@ -213,6 +213,21 @@ def test_development_workflow_incident_evals_require_cross_role_and_fallback_con
  noauth=_scenario('development-workflow-context-preload-no-authority')
  assert {'treat_context_read_as_implementation_authority','treat_context_read_as_review_authority','treat_context_read_as_integration_authority'}<=set(noauth['forbidden_actions'])
 
+def test_implementation_bundle_fallback_keeps_remote_authoring_available():
+ _,source=kernels.load_canonical()
+ rules={r['id']:r for r in kernels.effective_rules(source,'implementation')}
+ assert rules['implementation-bundle-fallback']['delivery']['mode']=='DIRECT_ALWAYS_ON'
+ rendered=kernels.render_role(kernels.load_canonical()[0],source,'implementation')
+ assert 'repository bundle as a preferred context cache, not an availability gate' in rendered
+ unavailable=_scenario('implementation-bundle-unavailable-proceeds')
+ assert unavailable['roles']==['implementation']
+ assert {'use-connector-native-implementation-evidence','proceed-authorized-implementation'}<=set(unavailable['required_actions'])
+ assert 'ask-marco-for-bundle-waiver-or-relay' in unavailable['forbidden_actions']
+ local=_scenario('implementation-real-evidence-boundary-routes-local')
+ assert 'route-exact-local-implementation-boundary' in local['required_actions']
+ stale=_scenario('implementation-stale-bundle-rejected')
+ assert {'reject-invalid-bundle','refuse-different-sha-substitution'}<=set(stale['required_actions'])
+
 
 def test_progressive_disclosure_classifies_every_rule_and_binds_triggered_rules_to_bounded_sections():
  m,s=kernels.load_canonical()
@@ -544,13 +559,18 @@ def test_invalid_or_unknown_drift_routes_to_integrity_error_without_resync():
  assert d['indicator']=='PROJECT SETTINGS: INTEGRITY ERROR · DRIFT ?/3'
  assert d['repair']=='repository-authority'
 
-def test_published_main_86_generation_is_retained_and_nonblocking():
+def test_published_main_86_generation_is_retained_and_only_broker_removal_breaks():
  m,s=kernels.load_canonical(); old='dish-chatgpt-projects-v2-86b8011172ee'
  for role in s['roles']:
   for boundary in ('startup','status','dispatch','handoff','role-critical-write','review-write','merge','analysis'):
    d=kernels.classify_project_drift(old,role,boundary,manifest=m,source=s)
-   assert d['state']=='outdated' and not d['block'] and not d['resync_required'], (role,boundary,d)
-   assert d['drift_level'] in {1,2}
+   if d['state']=='hard_break':
+    assert d['state']=='hard_break' and d['block'] and d['resync_required'], (role,boundary,d)
+    assert any(change['rule_id']=='mutation-broker-admission' for change in d['changes'])
+    assert d['drift_level']==3
+   else:
+    assert d['state']=='outdated' and not d['block'] and not d['resync_required'], (role,boundary,d)
+    assert d['drift_level'] in {1,2}
 
 def test_change_history_allows_converging_published_lineages():
  m,s=kernels.load_canonical(); target='dish-chatgpt-projects-v2-219f34402511'
@@ -575,13 +595,13 @@ def test_triggered_rule_text_change_does_not_manufacture_project_settings_versio
 
 def test_required_version_inventory_matches_published_first_parent_history_and_restores_losses():
  m,s=kernels.load_canonical(); versions=kernels.required_versions(m)
- expected={f'dish-chatgpt-projects-v2-{x}' for x in ['d96ab5f0588d','708fb9a9a9bc','39ff3abc502e','857d88788c12','23365034a0f1','9575ccfd79c8','28dcb04decc8','9bb70124ca21','694190185f60','712e3b16aa05','d048682742d6','54041bbbc8d8','86b8011172ee','219f34402511','9bf227f53f0a','5d24af30193a','bfaeef68aed9']}
+ expected={f'dish-chatgpt-projects-v2-{x}' for x in ['d96ab5f0588d','708fb9a9a9bc','39ff3abc502e','857d88788c12','23365034a0f1','9575ccfd79c8','28dcb04decc8','9bb70124ca21','694190185f60','712e3b16aa05','d048682742d6','54041bbbc8d8','86b8011172ee','219f34402511','9bf227f53f0a','5d24af30193a','bfaeef68aed9','d3a070d57fb2','443e13732e7f']}
  expected.add(m['canonical_version'])
- assert set(versions)==expected and len(versions)==18
+ assert set(versions)==expected and len(versions)==20
  assert kernels.validate_required_version_topology(m)==versions
  for old in ('dish-chatgpt-projects-v2-39ff3abc502e','dish-chatgpt-projects-v2-9bb70124ca21'):
   path=kernels._change_path(m,old); assert path and path[-1]['to_version']==m['canonical_version']
-  d=kernels.classify_project_drift(old,'implementation','role-critical-write',manifest=m,source=s)
+  d=kernels.classify_project_drift(old,'implementation','status',manifest=m,source=s)
   assert d['state']=='outdated' and not d['block'] and d['drift_level'] in {1,2}
 
 def test_actual_129_124_and_114_113_history_loss_is_rejected_by_authoritative_admission():

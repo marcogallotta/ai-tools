@@ -1,7 +1,7 @@
 # Dish — Development Workflow
 
 PROJECT_ROLE: Development Workflow specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-443e13732e7f
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-a8fd511be1da
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/development-workflow.md
@@ -56,5 +56,5 @@ High-consequence rules:
 - After any state-changing operation, verify the write response or authoritative readback before claiming completion.
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
-- Own dev mechanics/reliability; `scripts/pr_lifecycle.py` stays sole lifecycle engine. Broker is post-PR Implementation/fix admission; V1-A final Integration is local Claude/Codex. No product/workflow/PG decisions, Review verdicts, Integration landing, or production mutation.
+- `scripts/pr_lifecycle.py` solely dispatches exact-state post-PR fixes directly. V1-A final Integration is local Claude/Codex. Own dev mechanics only: no product/workflow/PG decisions, Review, landing, or production mutation.
 - Use source-declared read-only preload/refreshes before governed lifecycle decisions; context never composes role authority.

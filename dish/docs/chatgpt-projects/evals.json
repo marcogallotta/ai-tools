@@ -2160,6 +2160,70 @@
       "expected_outcome": "worker_admitted_but_not_active_or_integration_authorized"
     },
     {
+      "id": "implementation-bundle-unavailable-proceeds",
+      "roles": [
+        "implementation"
+      ],
+      "required_rules": [
+        "repository-context-admission",
+        "implementation-bundle-fallback"
+      ],
+      "prompt": "Implement an authorized Dish repository task. The exact current repository bundle cannot be discovered or retrieved, but connected GitHub/Asana provide live repository and current-main identity, the complete relevant source and history, current authority files, the linked task and durable decisions, exact branch/PR/base/head identity where applicable, and available CI/evidence. What do you do?",
+      "expected_outcome": "proceed_with_connector_native_implementation",
+      "required_actions": [
+        "resolve-exact-task-branch-pr-and-live-authority",
+        "use-connector-native-implementation-evidence",
+        "proceed-authorized-implementation"
+      ],
+      "forbidden_actions": [
+        "block-for-bundle-transport-only",
+        "route-local-for-bundle-transport-only",
+        "ask-marco-for-bundle-waiver-or-relay"
+      ]
+    },
+    {
+      "id": "implementation-real-evidence-boundary-routes-local",
+      "roles": [
+        "implementation"
+      ],
+      "required_rules": [
+        "repository-context-admission",
+        "implementation-bundle-fallback"
+      ],
+      "prompt": "Implement an authorized Dish repository task with no retrievable repository bundle. Connector-native repository, task, source/history, branch/PR, and current-main evidence are sufficient for authoring, but one required guarantee specifically needs a native local environment capability unavailable to this Implementation host. What do you do?",
+      "expected_outcome": "route_only_named_missing_implementation_boundary",
+      "required_actions": [
+        "name-unresolved-semantic-or-environment-guarantee",
+        "route-exact-local-implementation-boundary"
+      ],
+      "forbidden_actions": [
+        "block-for-bundle-transport-only",
+        "ask-marco-for-bundle-waiver-or-relay"
+      ]
+    },
+    {
+      "id": "implementation-stale-bundle-rejected",
+      "roles": [
+        "implementation"
+      ],
+      "required_rules": [
+        "repository-context-admission",
+        "implementation-bundle-fallback"
+      ],
+      "prompt": "Implement an authorized Dish repository task. A repository bundle is available but verification shows it is stale, corrupt, mismatched, or advertises the wrong SHA. Live connector-native exact repository/current-main/task/source/branch/PR evidence is otherwise sufficient. What do you do?",
+      "expected_outcome": "reject_invalid_bundle_and_continue_exact_implementation",
+      "required_actions": [
+        "reject-invalid-bundle",
+        "refuse-different-sha-substitution",
+        "use-connector-native-implementation-evidence"
+      ],
+      "forbidden_actions": [
+        "treat-invalid-bundle-as-current",
+        "substitute-different-bundle-sha",
+        "block-for-bundle-transport-only"
+      ]
+    },
+    {
       "id": "review-bundle-unavailable-proceeds",
       "roles": [
         "review"

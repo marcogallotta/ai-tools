@@ -394,7 +394,7 @@ class LifecycleInspectMixin:
                 "AMBIGUOUS": "ownership-required",
             }.get(classification, "ownership-required")
             if classification == "PR_OWNED":
-                residual = "CI FAILURE — PR OWNED — exact-head evidence proves this candidate owns the failure; brokered fix is eligible"
+                residual = "CI FAILURE — PR OWNED — exact-head evidence proves this candidate owns the failure; direct fix dispatch is eligible"
                 if marker_note:
                     residual = f"{residual}; {marker_note}"
                 return PRLifecycle(
@@ -522,7 +522,7 @@ class LifecycleInspectMixin:
                 gate=gate,
                 residual_reason=(
                     "local Git-capable Integration launcher is unavailable on this host; V1-A has no "
-                    "remote/connector/broker landing fallback"
+                    "remote/connector landing fallback"
                 ),
                 human_action=None,
             )

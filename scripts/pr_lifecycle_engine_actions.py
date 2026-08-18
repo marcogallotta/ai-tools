@@ -273,7 +273,7 @@ class LifecycleActionsMixin:
         return authoritative
 
     def _merge_exact_head(self, pr: PRLifecycle) -> PRLifecycle:
-        """Legacy guard: V1-A forbids dispatcher/ChatGPT/broker-side landing."""
+        """Legacy guard: V1-A forbids dispatcher/ChatGPT-side landing."""
         current = self.inspect(self.github.get_pr(pr.number))
         current.residual_reason = (
             "dispatcher-side merge is disabled by Integration V1-A; final landing belongs only to the fenced "

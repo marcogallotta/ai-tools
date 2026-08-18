@@ -26,7 +26,7 @@ def test_launcher_unavailable_leaves_integration_ready_with_zero_merge():
     lifecycle = base.engine(gh, authority=True, capable=False)
     result = lifecycle.dispatch_one(lifecycle.inspect(gh.pr), workspace=None, local_reviewer=None)
     assert result.state == p.LifecycleState.INTEGRATION_READY
-    assert "no remote/connector/broker landing fallback" in (result.residual_reason or "")
+    assert "no remote/connector landing fallback" in (result.residual_reason or "")
     assert not any(event[0] == "merge" for event in gh.events)
 
 

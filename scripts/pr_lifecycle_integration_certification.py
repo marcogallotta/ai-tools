@@ -185,8 +185,8 @@ class LocalIntegrationCertificationMixin:
         launcher = self.local_integration_launcher
         if launcher is None or not launcher.command or not self.integration_capable:
             current.residual_reason = (
-                "local Git-capable Integration launcher is unavailable on this host; V1-A has no remote/connector/"
-                "broker landing fallback"
+                "local Git-capable Integration launcher is unavailable on this host; V1-A has no remote/connector "
+                "landing fallback"
             )
             current.human_action = None
             return current
@@ -269,7 +269,7 @@ class LocalIntegrationCertificationMixin:
                     "semantic choice stops and routes to Implementation. If content changes the PR head, publish the "
                     "new head and STOP for fresh independent exact-head Review. Merge only the unchanged reviewed head "
                     "with expected-head/current-state protection. Require authoritative GitHub MERGED readback before "
-                    "returning success. There is no remote/connector/broker merge fallback."
+                    "returning success. There is no remote/connector merge fallback."
                 ),
             }
             try:

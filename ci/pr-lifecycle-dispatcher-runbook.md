@@ -195,7 +195,7 @@ DISH_LOCAL_INTEGRATION_COMMAND='<local Claude/Codex Integration launcher>'
 
 or `--local-integration-launcher`. The legacy `--local-integration-certifier` spelling remains an alias during rollout. The command receives `dish-pr-integration-certification-v1` JSON for local certification and `dish-pr-local-integration-v1` JSON for final Integration. Certification success never causes the dispatcher itself to merge; final landing is a separate fenced local Integration execution.
 
-A synchronous certification return without a durable completion marker leaves `LOCAL CERTIFICATION REQUIRED` with a machine-actionable residual reason. A durable pass is re-read and the candidate advances through the remaining exact-head gates. A durable failure returns to the normal Implementation/fix path. Missing local launcher capability is not replaced by ChatGPT, connector, Actions, or broker landing.
+A synchronous certification return without a durable completion marker leaves `LOCAL CERTIFICATION REQUIRED` with a machine-actionable residual reason. A durable pass is re-read and the candidate advances through the remaining exact-head gates. A durable failure returns to the normal Implementation/fix path. Missing local launcher capability is not replaced by ChatGPT, connector, or Actions landing.
 
 ## Integration composition
 
@@ -261,4 +261,4 @@ Worker is one execution host/profile, never a union semantic role. Every trigger
 
 Use `DISH_WORKER_API_TRIGGER_ID` for the generalized Workspace Agent path. HTTP `202 Accepted`, including an empty response body, proves trigger admission only; repository-generated idempotency/context identity is the durable correlation. Do not require or fabricate provider run IDs or conversation URLs.
 
-A phase becomes active only after the exact trigger/config/kernel version produces its predetermined durable activation witness and that witness is authoritatively reread. Keep the existing legacy route for that phase until its smoke and first normal durable phase result succeed. Failure falls back per phase, not globally. Parallel executions are allowed on immutable/exact inputs; existing broker/CAS fencing applies only at real shared mutation boundaries. There is no global Worker lock, second scheduler, or queue. Integration landing remains outside Worker authority.
+A phase becomes active only after the exact trigger/config/kernel version produces its predetermined durable activation witness and that witness is authoritatively reread. Keep the existing legacy route for that phase until its smoke and first normal durable phase result succeed. Failure falls back per phase, not globally. Parallel executions are allowed on immutable/exact inputs; expected-head/CAS fencing applies at real shared mutation boundaries. There is no global Worker lock, second scheduler, or queue. Integration landing remains outside Worker authority.
