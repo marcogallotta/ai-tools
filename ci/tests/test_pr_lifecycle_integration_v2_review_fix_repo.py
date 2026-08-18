@@ -32,9 +32,10 @@ class FakeGitHub:
     repository = "marcogallotta/ai-tools"
     headers = {}
 
-    def __init__(self, recovery):
+    def __init__(self, recovery, *, post_merge_gates="NONE"):
         self.http = FakeHTTP()
         self.recovery = recovery
+        self.post_merge_gates = post_merge_gates
         self.include_closed_calls = []
 
     def _url(self, path):
@@ -47,6 +48,22 @@ class FakeGitHub:
     def list_prs(self, *, include_closed=False):
         self.include_closed_calls.append(include_closed)
         return [self.recovery]
+
+    def get_reviews(self, number):
+        assert number == 10
+        return [
+            {
+                "id": 1,
+                "state": "COMMENTED",
+                "commit_id": SOURCE_HEAD,
+                "submitted_at": "2026-08-18T00:00:00Z",
+                "body": (
+                    "VERDICT: MERGE\n\n"
+                    "PRE-INTEGRATION TESTS TO RUN: NONE\n"
+                    f"POST-MERGE GATES: {self.post_merge_gates}"
+                ),
+            }
+        ]
 
 
 class FakeAsana:
@@ -106,7 +123,7 @@ def source_pr():
     }
 
 
-def merged_lifecycle(*, rollout_value, residual=None):
+def merged_lifecycle(*, rollout_value, activation_requirement="required", evidence="post-merge activation required", residual=None):
     return PRLifecycle(
         number=10,
         url="u",
@@ -118,7 +135,12 @@ def merged_lifecycle(*, rollout_value, residual=None):
         state=LifecycleState.MERGED,
         state_label="MERGED",
         task_ids=["task"],
-        asana=[{"gid": "task", "rollout": rollout_value}],
+        asana=[{
+            "gid": "task",
+            "rollout": rollout_value,
+            "activation_requirement": activation_requirement,
+            "activation_requirement_evidence": evidence,
+        }],
         residual_reason=residual,
     )
 
@@ -153,13 +175,47 @@ def test_closed_squash_recovery_is_durable_target_landing_and_not_recreated():
     lifecycle = engine.inspect(source_pr())
     assert lifecycle.state == LifecycleState.MERGED
     assert lifecycle.asana[0]["rollout"] is None
+    assert lifecycle.asana[0]["activation_requirement"] == "not-required"
     assert github.include_closed_calls == [True, True]
 
 
-def test_merged_without_declared_rollout_is_operational_not_activation_pending():
-    rendered = action_first_status(merged_lifecycle(rollout_value=None))
+def test_exact_review_post_merge_gate_marks_no_plan_as_activation_required():
+    github = FakeGitHub(
+        recovery_pr(),
+        post_merge_gates="Asana task 1217519197662916 — staged rollout activation/acceptance",
+    )
+    lifecycle = Harness(github, asana=FakeAsana()).inspect(source_pr())
+    task = lifecycle.asana[0]
+    assert task["rollout"] is None
+    assert task["activation_requirement"] == "required"
+    assert "staged rollout activation/acceptance" in task["activation_requirement_evidence"]
+
+
+def test_merged_without_rollout_but_activation_required_stays_pending():
+    rendered = action_first_status(
+        merged_lifecycle(
+            rollout_value=None,
+            activation_requirement="required",
+            evidence="exact-head Review requires post-merge gate: staged rollout activation/acceptance",
+        )
+    )
+    assert "STATUS: ACTIVATION PENDING" in rendered
+    assert "ACTIVE/RUNNING: UNKNOWN" in rendered
+    assert "no rollout plan/readback exists yet" in rendered
+    assert "STATUS: OPERATIONAL" not in rendered
+
+
+def test_merged_without_rollout_is_operational_only_with_explicit_no_activation_gate():
+    rendered = action_first_status(
+        merged_lifecycle(
+            rollout_value=None,
+            activation_requirement="not-required",
+            evidence="exact-head Review explicitly declares POST-MERGE GATES: NONE",
+        )
+    )
     assert "STATUS: OPERATIONAL" in rendered
     assert "ACTIVE/RUNNING: NOT REQUIRED" in rendered
+    assert "POST-MERGE GATES: NONE" in rendered
     assert "ACTIVATION PENDING" not in rendered
 
 

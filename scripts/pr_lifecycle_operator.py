@@ -64,13 +64,35 @@ def _rollout_readiness(pr: PRLifecycle) -> tuple[str, str, str]:
             f"source is landed, but task {missing} lacks authoritative rollout requirement/readback evidence",
         )
 
+    no_rollout_pending: list[str] = []
+    for gid, task in zip(pr.task_ids, tasks):
+        if not isinstance(task, Mapping) or task.get("rollout") is not None:
+            continue
+        requirement = str(task.get("activation_requirement") or "unknown")
+        evidence = str(task.get("activation_requirement_evidence") or "").strip()
+        if requirement != "not-required":
+            detail = evidence or "no explicit exact-head no-activation declaration exists"
+            no_rollout_pending.append(f"task {gid}: {detail}; no rollout plan/readback exists yet")
+    if no_rollout_pending:
+        proof = "; ".join(no_rollout_pending)
+        return (
+            "UNKNOWN — required activation/readback is not yet proven",
+            "ACTIVATION PENDING",
+            f"source is landed, but {proof}",
+        )
+
     rollouts = [task.get("rollout") for task in tasks if isinstance(task, Mapping) and task.get("rollout") is not None]
     if not rollouts:
         task_text = ", ".join(str(gid) for gid in pr.task_ids)
+        evidence = "; ".join(
+            str(task.get("activation_requirement_evidence") or "").strip()
+            for task in tasks
+            if isinstance(task, Mapping) and task.get("activation_requirement_evidence")
+        )
         return (
-            "NOT REQUIRED — authoritative linked-task history declares no staged rollout plan",
+            "NOT REQUIRED — exact-head Review explicitly declares no post-merge activation gate",
             "OPERATIONAL",
-            f"target-specific source landing passed and authoritative rollout history for task(s) {task_text} has no current plan",
+            f"target-specific source landing passed for task(s) {task_text}; {evidence}",
         )
 
     descriptors: list[str] = []

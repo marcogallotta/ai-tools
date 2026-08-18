@@ -16,8 +16,14 @@ from pr_lifecycle_local_integration import (
     marker,
     transient_infrastructure_reason,
 )
-from pr_lifecycle_support import FULL_SHA_RE, LifecycleError, LifecycleState, STATE_LABELS
-from pr_lifecycle_helpers import local_work_from_review
+from pr_lifecycle_support import (
+    FULL_SHA_RE,
+    POST_MERGE_GATES_RE,
+    LifecycleError,
+    LifecycleState,
+    STATE_LABELS,
+)
+from pr_lifecycle_helpers import local_work_from_review, review_gate_metadata
 
 
 TARGET_RECOVERY_MARKER = "dish-integration-target-recovery:v1"
@@ -241,11 +247,36 @@ class LocalIntegrationCertificationMixin:
             ),
         }
 
+    def _activation_requirement_from_review(self, lifecycle) -> tuple[str, str]:
+        reviews = self.github.get_reviews(lifecycle.number)
+        exact_review = pr_gate.latest_exact_head_review(reviews, reviewed_head=lifecycle.head)
+        if exact_review is None or str(exact_review.get("verdict") or "") != "MERGE":
+            return (
+                "unknown",
+                "no authoritative exact-head MERGE Review explicitly declares the post-merge activation boundary",
+            )
+        metadata = review_gate_metadata(exact_review)
+        if metadata.error is not None:
+            return "unknown", f"exact-head Review post-merge metadata is invalid: {metadata.error}"
+        match = POST_MERGE_GATES_RE.search(str(exact_review.get("body") or ""))
+        if match is None:
+            return (
+                "unknown",
+                "exact-head Review does not explicitly declare POST-MERGE GATES",
+            )
+        value = match.group("value").strip()
+        if value.rstrip(".").upper() == "NONE":
+            lifecycle.post_merge_gates = []
+            return "not-required", "exact-head Review explicitly declares POST-MERGE GATES: NONE"
+        lifecycle.post_merge_gates = list(metadata.post_merge_gates)
+        return "required", f"exact-head Review requires post-merge gate: {value}"
+
     def _attach_rollout_readiness(self, lifecycle):
         if self.asana is None or not lifecycle.task_ids:
             return lifecycle
         from pr_lifecycle_rollout import reconstruct, rollout_projection
 
+        activation_requirement, requirement_evidence = self._activation_requirement_from_review(lifecycle)
         by_gid = {
             str(item.get("gid") or ""): item
             for item in lifecycle.asana
@@ -258,6 +289,8 @@ class LocalIntegrationCertificationMixin:
                 continue
             if task.get("error"):
                 continue
+            task["activation_requirement"] = activation_requirement
+            task["activation_requirement_evidence"] = requirement_evidence
             try:
                 stories = self.asana.get_stories(gid)
                 task["rollout"] = rollout_projection(reconstruct(stories, task_gid=gid))
