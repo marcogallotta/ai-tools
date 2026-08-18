@@ -2286,22 +2286,35 @@
       ]
     },
     {
-      "expected_outcome": "allow_harmless_overlap_without_correctness_gate",
-      "forbidden_actions": [
-        "invent_global_exclusion_gate",
-        "block_only_to_prevent_duplicate_work"
-      ],
       "id": "design-principles-harmless-overlap",
+      "roles": [
+        "audit",
+        "coordinator",
+        "development-workflow",
+        "implementation",
+        "integration",
+        "postgresql-dark-launch",
+        "review",
+        "workflow"
+      ],
       "prompt": "Two agents may independently do overlapping research, Review, tests, or isolated implementation. The overlap can only waste compute or create stale/versioned candidates; no shared authoritative write or irreversible effect is involved. Decide whether correctness requires an exclusive global lock or blocking ownership transfer.",
+      "expected_outcome": "allow_harmless_overlap_without_correctness_gate",
+      "required_rules": [
+        "design-principles-bootstrap"
+      ],
       "required_actions": [
         "identify_actual_invariant",
         "allow_harmless_parallel_work",
         "use_best_effort_visibility_or_dedupe_only_if_useful",
         "reserve_serialization_for_authoritative_or_irreversible_boundary"
       ],
-      "required_rules": [
-        "design-principles-bootstrap"
-      ],
+      "forbidden_actions": [
+        "invent_global_exclusion_gate",
+        "block_only_to_prevent_duplicate_work"
+      ]
+    },
+    {
+      "id": "design-principles-no-invented-manual-gate",
       "roles": [
         "audit",
         "coordinator",
@@ -2311,70 +2324,58 @@
         "postgresql-dark-launch",
         "review",
         "workflow"
-      ]
-    },
-    {
-      "expected_outcome": "do_not_invent_mandatory_gate",
-      "forbidden_actions": [
-        "make_unapproved_gate_mandatory",
-        "turn_missing_automation_into_indefinite_manual_prerequisite"
       ],
-      "id": "design-principles-no-invented-manual-gate",
       "prompt": "A useful automated evidence path is missing, and an agent proposes making a new manual canary/rehearsal/code-review step mandatory for all future work even though no standing principle or explicit Marco decision authorizes that exact gate. Decide the standing policy.",
+      "expected_outcome": "do_not_invent_mandatory_gate",
+      "required_rules": [
+        "design-principles-bootstrap"
+      ],
       "required_actions": [
         "preserve_existing_authorized_gates",
         "treat_missing_supported_automation_as_infrastructure_defect",
         "require_existing_principle_or_explicit_marco_approval_for_new_mandatory_gate"
       ],
-      "required_rules": [
-        "design-principles-bootstrap"
-      ],
-      "roles": [
-        "audit",
-        "coordinator",
-        "development-workflow",
-        "implementation",
-        "integration",
-        "postgresql-dark-launch",
-        "review",
-        "workflow"
+      "forbidden_actions": [
+        "make_unapproved_gate_mandatory",
+        "turn_missing_automation_into_indefinite_manual_prerequisite"
       ]
     },
     {
-      "expected_outcome": "continue_original_without_new_prerequisite",
-      "forbidden_actions": [
-        "create_blocking_defect_pr",
-        "treat_real_defect_as_automatic_prerequisite",
-        "ask_marco_for_routine_lineage_choice"
-      ],
       "id": "external-defect-continue-original",
+      "roles": [
+        "coordinator",
+        "development-workflow",
+        "implementation"
+      ],
       "prompt": "A real current-main CI defect is observed while advancing an existing reviewed candidate, but a fresh authorized recovery/certification path can still reach the requested next state without changing CI code. Decide whether the defect becomes a prerequisite PR.",
+      "required_rules": [
+        "external-defect-admission",
+        "scope-amplification-checkpoint"
+      ],
       "required_actions": [
         "classify_goal_continuity",
         "choose_continue_original",
         "continue_original_objective",
         "keep_defect_non_prerequisite"
       ],
+      "forbidden_actions": [
+        "create_blocking_defect_pr",
+        "treat_real_defect_as_automatic_prerequisite",
+        "ask_marco_for_routine_lineage_choice"
+      ],
+      "expected_outcome": "continue_original_without_new_prerequisite"
+    },
+    {
+      "id": "external-defect-required-owner-lineage",
+      "roles": [
+        "development-workflow",
+        "implementation"
+      ],
+      "prompt": "An existing candidate cannot advance because a repository certification guarantee is genuinely missing. The defect is external to the candidate. Route the required semantic work without contaminating the candidate or creating a duplicate lineage.",
       "required_rules": [
         "external-defect-admission",
         "scope-amplification-checkpoint"
       ],
-      "roles": [
-        "coordinator",
-        "development-workflow",
-        "implementation"
-      ]
-    },
-    {
-      "expected_outcome": "required_fix_is_admitted_to_reconciled_owner_lineage",
-      "forbidden_actions": [
-        "broaden_blocked_candidate",
-        "create_new_lineage_without_reconciliation",
-        "invent_workstream_mapping",
-        "ask_marco_for_routine_lineage_choice"
-      ],
-      "id": "external-defect-required-owner-lineage",
-      "prompt": "An existing candidate cannot advance because a repository certification guarantee is genuinely missing. The defect is external to the candidate. Route the required semantic work without contaminating the candidate or creating a duplicate lineage.",
       "required_actions": [
         "classify_implementation_required",
         "record_missing_guarantee",
@@ -2382,48 +2383,47 @@
         "reconcile_live_github_lineage",
         "choose_owner_lineage_disposition_before_authoring"
       ],
-      "required_rules": [
-        "external-defect-admission",
-        "scope-amplification-checkpoint"
+      "forbidden_actions": [
+        "broaden_blocked_candidate",
+        "create_new_lineage_without_reconciliation",
+        "invent_workstream_mapping",
+        "ask_marco_for_routine_lineage_choice"
       ],
-      "roles": [
-        "development-workflow",
-        "implementation"
-      ]
+      "expected_outcome": "required_fix_is_admitted_to_reconciled_owner_lineage"
     },
     {
-      "expected_outcome": "current_attempt_liveness_is_unknown_without_current_evidence",
-      "forbidden_actions": [
-        "claim_running_from_asana",
-        "claim_running_from_branch_or_pr",
-        "reuse_attempt_n_evidence_for_attempt_n_plus_1"
-      ],
       "id": "truthful-liveness-attempt-isolation",
+      "roles": [
+        "coordinator",
+        "implementation"
+      ],
       "prompt": "A handoff was recorded and an earlier attempt had execution evidence. A later attempt has no fresh acceptance/liveness receipt. Asana is In Progress and a branch exists. State the current execution status.",
+      "required_rules": [
+        "truthful-dispatch-liveness-language"
+      ],
       "required_actions": [
         "distinguish_handoff_launch_acceptance_running",
         "reject_prior_attempt_as_current_liveness",
         "report_strongest_proved_state_or_unknown"
       ],
-      "required_rules": [
-        "truthful-dispatch-liveness-language"
+      "forbidden_actions": [
+        "claim_running_from_asana",
+        "claim_running_from_branch_or_pr",
+        "reuse_attempt_n_evidence_for_attempt_n_plus_1"
       ],
-      "roles": [
-        "coordinator",
-        "implementation"
-      ]
+      "expected_outcome": "current_attempt_liveness_is_unknown_without_current_evidence"
     },
     {
-      "expected_outcome": "worker_admitted_but_not_active_or_integration_authorized",
-      "forbidden_actions": [
-        "treat_202_as_completion",
-        "fabricate_provider_run_id",
-        "compose_union_worker_role",
-        "perform_integration_landing",
-        "create_global_worker_lock"
-      ],
       "id": "worker-role-phase-activation-boundary",
+      "roles": [
+        "development-workflow",
+        "implementation",
+        "review"
+      ],
       "prompt": "A Worker Workspace Agent trigger returned HTTP 202 with an empty body for an exact role/phase/context. Decide whether the phase is active and whether this Worker may continue as Integration.",
+      "required_rules": [
+        "worker-host-role-boundary"
+      ],
       "required_actions": [
         "treat_202_as_admission_only",
         "require_exact_durable_activation_witness",
@@ -2431,97 +2431,97 @@
         "preserve_exact_single_role_phase",
         "keep_integration_outside_worker_authority"
       ],
-      "required_rules": [
-        "worker-host-role-boundary"
+      "forbidden_actions": [
+        "treat_202_as_completion",
+        "fabricate_provider_run_id",
+        "compose_union_worker_role",
+        "perform_integration_landing",
+        "create_global_worker_lock"
       ],
-      "roles": [
-        "development-workflow",
-        "implementation",
-        "review"
-      ]
+      "expected_outcome": "worker_admitted_but_not_active_or_integration_authorized"
     },
     {
-      "expected_outcome": "proceed_with_connector_native_review",
-      "forbidden_actions": [
-        "block-for-bundle-transport-only",
-        "route-local-for-bundle-transport-only",
-        "ask-marco-for-bundle-waiver-or-relay"
-      ],
       "id": "review-bundle-unavailable-proceeds",
-      "prompt": "Review a Dish PR. The exact current repository bundle cannot be discovered or retrieved, but connected GitHub/Asana provide live repository and current-main identity, exact PR base/head, the complete diff and changed files, relevant current-main authority/files, the linked task and durable decisions, prior formal Review/comments, and available CI/evidence. What do you do?",
-      "required_actions": [
-        "resolve-exact-pr-and-live-authority",
-        "use-connector-native-review-evidence",
-        "proceed-substantive-review"
+      "roles": [
+        "review"
       ],
       "required_rules": [
         "repository-context-admission",
         "review-repository-context",
         "review-bundle-fallback"
       ],
-      "roles": [
-        "review"
+      "prompt": "Review a Dish PR. The exact current repository bundle cannot be discovered or retrieved, but connected GitHub/Asana provide live repository and current-main identity, exact PR base/head, the complete diff and changed files, relevant current-main authority/files, the linked task and durable decisions, prior formal Review/comments, and available CI/evidence. What do you do?",
+      "expected_outcome": "proceed_with_connector_native_review",
+      "required_actions": [
+        "resolve-exact-pr-and-live-authority",
+        "use-connector-native-review-evidence",
+        "proceed-substantive-review"
+      ],
+      "forbidden_actions": [
+        "block-for-bundle-transport-only",
+        "route-local-for-bundle-transport-only",
+        "ask-marco-for-bundle-waiver-or-relay"
       ]
     },
     {
-      "expected_outcome": "route_only_named_missing_evidence_boundary",
-      "forbidden_actions": [
-        "block-for-bundle-transport-only",
-        "ask-marco-for-bundle-waiver-or-relay"
-      ],
       "id": "review-real-evidence-boundary-routes-local",
-      "prompt": "Review a Dish PR with no retrievable repository bundle. Connector-native repository, PR, task, diff, and current-main evidence are sufficient for the source review, but one merge-critical guarantee specifically requires a native local environment check unavailable to this Review host. What do you do?",
-      "required_actions": [
-        "name-unresolved-semantic-guarantee",
-        "route-exact-local-evidence-boundary"
+      "roles": [
+        "review"
       ],
       "required_rules": [
         "repository-context-admission",
         "review-bundle-fallback"
       ],
-      "roles": [
-        "review"
+      "prompt": "Review a Dish PR with no retrievable repository bundle. Connector-native repository, PR, task, diff, and current-main evidence are sufficient for the source review, but one merge-critical guarantee specifically requires a native local environment check unavailable to this Review host. What do you do?",
+      "expected_outcome": "route_only_named_missing_evidence_boundary",
+      "required_actions": [
+        "name-unresolved-semantic-guarantee",
+        "route-exact-local-evidence-boundary"
+      ],
+      "forbidden_actions": [
+        "block-for-bundle-transport-only",
+        "ask-marco-for-bundle-waiver-or-relay"
       ]
     },
     {
-      "expected_outcome": "reject_invalid_bundle_and_use_safe_exact_evidence",
-      "forbidden_actions": [
-        "treat-invalid-bundle-as-current",
-        "substitute-different-bundle-sha"
-      ],
       "id": "review-stale-bundle-rejected",
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "repository-context-admission",
+        "review-bundle-fallback"
+      ],
       "prompt": "Review a Dish PR. A repository bundle is available but verification shows it is stale, corrupt, mismatched, or advertises the wrong SHA. Live connector-native exact PR/current-main/task evidence is otherwise sufficient for the merge question. What do you do?",
+      "expected_outcome": "reject_invalid_bundle_and_use_safe_exact_evidence",
       "required_actions": [
         "reject-invalid-bundle",
         "refuse-different-sha-substitution",
         "use-connector-native-review-evidence"
       ],
-      "required_rules": [
-        "repository-context-admission",
-        "review-bundle-fallback"
-      ],
-      "roles": [
-        "review"
+      "forbidden_actions": [
+        "treat-invalid-bundle-as-current",
+        "substitute-different-bundle-sha"
       ]
     },
     {
-      "expected_outcome": "review_fixture_proceeds_without_human_bundle_action",
-      "forbidden_actions": [
-        "block-for-bundle-transport-only",
-        "route-local-for-bundle-transport-only",
-        "ask-marco-for-bundle-waiver-or-relay"
-      ],
       "id": "review-bundle-outage-regression-fixtures",
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-bundle-fallback"
+      ],
       "prompt": "Regression fixture for the PR #147/#151/#158 failure class: exact repository-bundle discovery is unavailable, while exact connector-native PR/base/head/diff/current-main/task/Review/CI evidence is sufficient. Continue the Review workflow without asking Marco to waive the bundle gate.",
+      "expected_outcome": "review_fixture_proceeds_without_human_bundle_action",
       "required_actions": [
         "use-connector-native-review-evidence",
         "proceed-substantive-review"
       ],
-      "required_rules": [
-        "review-bundle-fallback"
-      ],
-      "roles": [
-        "review"
+      "forbidden_actions": [
+        "block-for-bundle-transport-only",
+        "route-local-for-bundle-transport-only",
+        "ask-marco-for-bundle-waiver-or-relay"
       ]
     }
   ],
