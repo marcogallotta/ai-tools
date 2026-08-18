@@ -39,7 +39,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 dish/scripts/dependency_bundle.py expected \
+          python3 scripts/dependency_bundle.py expected \
             --repo-root "$GITHUB_WORKSPACE" \
             --github-output "$GITHUB_OUTPUT"
 
