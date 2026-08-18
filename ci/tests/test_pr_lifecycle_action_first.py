@@ -147,7 +147,7 @@ def test_worker_attempt_survives_authored_head_transition_and_replacement_is_new
     p.assert_worker_review_independent(gh.get_comments(31), base.NEW_HEAD, replacement)
 
 
-def test_worker_omitted_reload_uses_persistent_exactness_and_authorship_gates_without_long_loop():
+def test_worker_omitted_reload_uses_persistent_exactness_and_authorship_gates():
     gh = base.FakeGitHub(base.pr(draft=True))
     dispatcher = _worker(gh)
     attempt = dispatcher.dispatch_worker_durable(
@@ -158,18 +158,8 @@ def test_worker_omitted_reload_uses_persistent_exactness_and_authorship_gates_wi
         exact_context=_worker_context(),
     )
 
-    # One explicit pass through the other modes is enough to prove a mode switch does
-    # not mint attempt identity. Do not simulate long history by repeatedly dispatching.
-    for mode in ("Code Review", "Design Review", "Audit", "Implementation"):
-        switched = dispatcher.dispatch_worker_durable(
-            surface=gh,
-            surface_id=31,
-            role=mode,
-            phase="switch",
-            exact_context=_worker_context(),
-        )
-        assert (switched.attempt_id, switched.generation) == (attempt.attempt_id, 1)
-
+    # Packet omission is not modeled by replaying history. The governed action must
+    # still fail on stale exact identity using only the persistent gate.
     with pytest.raises(p.LifecycleError, match="PR/branch/head moved"):
         dispatcher.dispatch_worker_durable(
             surface=gh,
@@ -192,11 +182,10 @@ def test_worker_omitted_reload_uses_persistent_exactness_and_authorship_gates_wi
         phase="resume",
         exact_context=_worker_context(base.NEW_HEAD),
     )
+    assert (resumed.attempt_id, resumed.generation) == (attempt.attempt_id, 1)
     with pytest.raises(p.LifecycleError, match="cannot independently Review"):
         p.assert_worker_review_independent(gh.get_comments(31), base.NEW_HEAD, resumed)
 
-    # Review-ready is still derived from authoritative PR draft/head state; no packet
-    # flag participates in the decision.
     assert base.engine(gh).inspect(gh.pr).state == p.LifecycleState.AUTHORING
     gh.pr["draft"] = False
     ready = base.engine(gh).inspect(gh.pr)
