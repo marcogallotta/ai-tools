@@ -38,7 +38,17 @@ Before substantial consequential repository/system reasoning, ChatGPT agents mus
 
 `verify` checks manifest schema and filenames, repository identity, exact source SHA/ref, the external checksum, bundle SHA-256, `git bundle list-heads`, `git bundle verify`, advertised `main`, cloned `HEAD`, cloned `main`, and cloned `origin/main`. Only after those checks does it stamp the clone's `origin` URL back to the canonical GitHub repository URL.
 
-If the exact artifact is missing, expired, stale, mismatched, corrupt, or cannot be materialized, stop and report that capability gap. Do not reconstruct a substantial change file-by-file from a different bundle or silently treat the cache as authority.
+For substantial repository/system reasoning outside ordinary ChatGPT PR Review, if the exact artifact is missing, expired, stale, mismatched, corrupt, or cannot be materialized, stop and report that capability gap. Do not reconstruct a substantial change file-by-file from a different bundle or silently treat the cache as authority.
+
+### Ordinary ChatGPT PR Review fallback
+
+For ordinary ChatGPT PR Review, the repository bundle is a preferred context accelerator/cache, not a blanket Review-availability prerequisite. Review still resolves live repository/current-`main` identity and the exact PR head. If the exact current bundle is readily retrievable, verify and use it normally.
+
+If bundle discovery or retrieval is unavailable, Review proceeds from the connector-native exact evidence path when that path can establish the merge question: exact PR/base/head identity, the complete PR diff/changed files, relevant current-`main` repository authority/files, the linked task and durable decisions, prior formal Review/comments, and available CI/evidence. Bundle unavailability alone must not produce `LOCAL REVIEW REQUIRED`, `BLOCKED`, a Marco waiver request, or a local-agent relay.
+
+Fail closed only when Review can name a concrete unresolved semantic guarantee that actually requires repository/history/tool/environment evidence unavailable through the connector-native path. Route that exact missing capability rather than generic bundle transport. If any bundle is used, stale, mismatched, corrupt, or wrong-SHA material remains fail-closed and must never be substituted for the exact current bundle.
+
+This carve-out is Review-specific. It does not relax bundle-first admission for broad architecture reasoning, Implementation, or other substantial repository/system reasoning.
 
 Tiny targeted lookups may use GitHub Connect directly. The verified bundle is read-only context: GitHub remains live source/history/PR/review authority and Asana remains orchestration authority; current-state conclusions still require those live reads. Unless authenticated Git transport is deliberately added later, publishing branch/commit/PR state remains connector-native.
 
