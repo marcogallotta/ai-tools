@@ -150,7 +150,8 @@ class WorkspaceAgentDispatcher(_BaseWorkspaceAgentDispatcher):
     """Existing Workspace Worker transport with durable R6 attempt recovery."""
     @staticmethod
     def worker_attempt_idempotency_key(*,role,phase,exact_context,attempt):
-        v={"schema":"dish-worker-dispatch:v2","role":role,"phase":phase,"context":_exact_context(exact_context),"attempt_id":attempt.attempt_id,"generation":attempt.generation,"transition":attempt.transition}
+        v={"schema":"dish-worker-dispatch:v2","role":role,"phase":phase,"context":_exact_context(exact_context),"attempt_id":attempt.attempt_id,"generation":attempt.generation}
+        if attempt.transition: v["transition"]=attempt.transition
         return hashlib.sha256(_canon(v).encode()).hexdigest()
     def dispatch_worker_durable(self,*,surface,surface_id,role,phase,exact_context,replacement=False):
         if not self.access_token: raise LifecycleError("Workspace Agent access token is unavailable")
