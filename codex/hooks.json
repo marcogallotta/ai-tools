@@ -1,5 +1,5 @@
 {
-  "description": "Dish operator interaction context plus protected-checkout and post-compaction re-grounding barriers.",
+  "description": "Dish operator interaction context plus protected-checkout and cross-session grounding barriers.",
   "hooks": {
     "SessionStart": [
       {
@@ -12,13 +12,12 @@
         ]
       },
       {
-        "matcher": "^compact$",
         "hooks": [
           {
             "type": "command",
-            "command": "/home/marco/.local/bin/agent-reground",
+            "command": "python3 /home/marco/.local/bin/agent-grounding",
             "timeout": 30,
-            "statusMessage": "Re-grounding Dish role and active work"
+            "statusMessage": "Grounding Dish role and active work"
           }
         ]
       }
@@ -28,9 +27,9 @@
         "hooks": [
           {
             "type": "command",
-            "command": "/home/marco/.local/bin/agent-reground",
+            "command": "python3 /home/marco/.local/bin/agent-grounding",
             "timeout": 30,
-            "statusMessage": "Checking post-compaction Dish role state"
+            "statusMessage": "Checking Dish grounding and action state"
           }
         ]
       },
