@@ -36,10 +36,7 @@ entry=entries[0]
 entry['ratification']['decision']='Consequential ChatGPT repository/system reasoning outside ordinary ChatGPT PR Review uses the verified exact-current-main repository bundle before substantial cross-file reasoning; ordinary Review may use sufficient connector-native exact evidence when bundle transport is unavailable, while any bundle actually used remains exact-current verified.'
 refs=entry['ratification']['durable_authority_refs']
 if 'asana:task:1217594495187308' not in refs: refs.append('asana:task:1217594495187308')
-entry['semantic_contract']['ordinary_chatgpt_pr_review']={
-    'bundle_unavailable':'connector-native-exact-evidence-fallback',
-    'bundle_used':'exact-current-validation-required'
-}
+entry['semantic_contract']['ordinary_chatgpt_pr_review']={'bundle_unavailable':'connector-native-exact-evidence-fallback','bundle_used':'exact-current-validation-required'}
 entry['coverage']['source_rule_fingerprint']=fingerprint
 standing_path.write_text(json.dumps(standing,indent=2,sort_keys=True)+'\n')
 
@@ -73,51 +70,35 @@ carve=('Ordinary ChatGPT PR Review therefore never blocks, routes local, or asks
 if root.count(anchor)!=1: raise SystemExit('root bundle publication anchor changed')
 root_path.write_text(root.replace(anchor,carve+anchor,1))
 
-test_path=Path('dish/tests/test_review_bundle_consistency.py')
-test_path.write_text('''from __future__ import annotations
+Path('dish/tests/test_review_bundle_consistency.py').write_text('''from __future__ import annotations
 import importlib.util
 from pathlib import Path
-
 DISH_ROOT=Path(__file__).resolve().parents[1]
 REPO_ROOT=DISH_ROOT.parent
 SCRIPT=DISH_ROOT/'scripts'/'chatgpt_project_kernels.py'
 SPEC=importlib.util.spec_from_file_location('chatgpt_project_kernels_review_bundle',SCRIPT); assert SPEC and SPEC.loader
 kernels=importlib.util.module_from_spec(SPEC); SPEC.loader.exec_module(kernels)
-
 def _rule(source,rid):
-    matches=[x for x in kernels.effective_rules(source,'review') if x['id']==rid]
-    assert len(matches)==1
-    return matches[0]
-
+    matches=[x for x in kernels.effective_rules(source,'review') if x['id']==rid]; assert len(matches)==1; return matches[0]
 def test_rendered_review_bundle_instructions_are_noncontradictory():
-    manifest,source=kernels.load_canonical()
-    admission=_rule(source,'repository-context-admission')
-    fallback=_rule(source,'review-bundle-fallback')
-    rendered=kernels.render_role(manifest,source,'review')
+    manifest,source=kernels.load_canonical(); admission=_rule(source,'repository-context-admission'); fallback=_rule(source,'review-bundle-fallback'); rendered=kernels.render_role(manifest,source,'review')
     assert admission['text'].startswith('Outside ordinary ChatGPT PR Review')
     assert 'Review blocks only on a named semantic/tool/environment evidence gap' in admission['text']
     assert 'Missing/unverifiable/stale context blocks only the affected substantial conclusion.' not in admission['text']
-    assert admission['text'] in rendered
-    assert fallback['text'] in rendered
+    assert admission['text'] in rendered and fallback['text'] in rendered
     assert 'Never block, route local, or ask Marco solely for bundle transport.' in fallback['text']
-
 def test_root_bootstrap_has_the_same_review_carveout_and_invalid_bundle_fence():
     root=(REPO_ROOT/'CLAUDE.md').read_text()
     assert '**outside ordinary ChatGPT PR Review**' in root
     assert 'ordinary Review treats bundle unavailability alone as non-blocking when connector-native exact evidence is sufficient' in root
     assert 'stale, mismatched, corrupt, or wrong-SHA material remains fail-closed' in root
     assert 'does not relax bundle-first admission for broad architecture, Implementation, or other substantial non-Review reasoning' in root
-
 def test_nonreview_roles_still_receive_bundle_first_admission():
-    manifest,source=kernels.load_canonical()
-    admission=_rule(source,'repository-context-admission')['text']
+    manifest,source=kernels.load_canonical(); admission=_rule(source,'repository-context-admission')['text']
     for role in source['roles']:
-        if role=='review':
-            continue
-        rendered=kernels.render_role(manifest,source,role)
-        assert admission in rendered
+        if role=='review': continue
+        rendered=kernels.render_role(manifest,source,role); assert admission in rendered
         assert 'substantial cross-file repository/system reasoning requires a verified exact-current-main bundle' in rendered
-
 def test_bundle_unavailable_behavior_case_requires_progress_without_human_transport_action():
     scenario=next(x for x in kernels._evals() if x['id']=='review-bundle-unavailable-proceeds')
     assert scenario['roles']==['review']
@@ -158,14 +139,25 @@ count=re.search(r'assert set\(versions\)==expected and len\(versions\)==(\d+)',b
 if not count: raise SystemExit('required-version fixture count not found')
 expected_count=len(re.findall(r"'[0-9a-f]{12}'",items))+1
 block=block[:count.start(1)]+str(expected_count)+block[count.end(1):]
+old_loop=""" for old in ('dish-chatgpt-projects-v2-39ff3abc502e','dish-chatgpt-projects-v2-9bb70124ca21'):
+  path=kernels._change_path(m,old); assert path and path[-1]['to_version']==m['canonical_version']
+  d=kernels.classify_project_drift(old,'implementation','role-critical-write',manifest=m,source=s)
+  assert d['state']=='outdated' and not d['block'] and d['drift_level'] in {1,2}
+"""
+new_loop=""" for old in ('dish-chatgpt-projects-v2-39ff3abc502e','dish-chatgpt-projects-v2-9bb70124ca21'):
+  path=kernels._change_path(m,old); assert path and path[-1]['to_version']==m['canonical_version']
+  d=kernels.classify_project_drift(old,'implementation','role-critical-write',manifest=m,source=s)
+  if d['drift_level']==3:
+   assert d['state']=='hard_break' and d['block'] and d['resync_required']
+  else:
+   assert d['state']=='outdated' and not d['block'] and not d['resync_required'] and d['drift_level'] in {1,2}
+"""
+if block.count(old_loop)!=1: raise SystemExit('required-version drift assertion baseline changed')
+block=block.replace(old_loop,new_loop,1)
 kernel_test.write_text(text[:start]+block+text[end:])
 PY
 
-python3 dish/scripts/chatgpt_project_kernels.py reconcile \
-  --base-manifest /tmp/task1-base-manifest.json \
-  --base-source /tmp/task1-base-source.json \
-  --source dish/docs/chatgpt-projects/source.json \
-  --output dish/docs/chatgpt-projects/manifest.json
+python3 dish/scripts/chatgpt_project_kernels.py reconcile --base-manifest /tmp/task1-base-manifest.json --base-source /tmp/task1-base-source.json --source dish/docs/chatgpt-projects/source.json --output dish/docs/chatgpt-projects/manifest.json
 python3 dish/scripts/chatgpt_project_kernels.py render
 python3 dish/scripts/chatgpt_project_kernels.py check
 (cd dish && .venv/bin/python -m pytest -q tests/test_chatgpt_project_kernels.py tests/test_review_bundle_consistency.py)
