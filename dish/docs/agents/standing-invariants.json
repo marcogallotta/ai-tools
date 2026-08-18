@@ -60,6 +60,60 @@
         "completion_rule_id": "integration-standing-policy-readback",
         "completion_rule_fingerprint": "66c32039154e99f000e5fc64081b7219bb9179a970a583fac4fc25c03921d9e3"
       },
+      "delivery_extensions": {
+        "cross_host_grounding_parity": {
+          "status": "active",
+          "authority_refs": [
+            "asana:task:1217517324134654",
+            "asana:task:1217519199536855",
+            "asana:task:1217519199536855#story:1217580761239215"
+          ],
+          "context_declaration_source": "dish/docs/chatgpt-projects/source.json",
+          "role_topology_source": "dish/docs/agents/index.md",
+          "local_context_resolver": "scripts/agent_context.py",
+          "local_grounding_hook": "hooks/agent-grounding",
+          "structural_validator": "scripts/cross_host_policy_parity.py",
+          "behavioral_eval_source": "dish/docs/chatgpt-projects/evals.json",
+          "phases": [
+            "session-start",
+            "pre-tool-action-boundary",
+            "declared-action-trigger"
+          ],
+          "protected_delivery": [
+            {
+              "id": "operator-control-plane",
+              "canonical_source": "OPERATOR_CONTROL_PLANE.md",
+              "applicability": "all-role-index-roles",
+              "chatgpt_delivery": "role-index pointer plus generated startup role-index read",
+              "local_delivery": "resolved startup/re-ground context"
+            },
+            {
+              "id": "contributor-base-inheritance",
+              "canonical_source": "dish/docs/agents/contributor-base.md",
+              "applicability": "repository-modifying roles derived from canonical role composition",
+              "chatgpt_delivery": "generated triggered read or declared preload",
+              "local_delivery": "resolved startup/re-ground context"
+            },
+            {
+              "id": "friction-and-code-debt-discovery",
+              "canonical_source": "dish/docs/agents/contributor-base.md",
+              "applicability": "repository-modifying roles derived from canonical role composition",
+              "chatgpt_delivery": "generated repository-friction-capture rule plus declared triggered read",
+              "local_delivery": "inherited contributor-base plus declared action-trigger grounding"
+            }
+          ],
+          "host_specific_transport_differences_allowed": true,
+          "applicability_must_be_derived_or_cross_validated": true,
+          "behavioral_adherence_is_structural_validator_out_of_scope": true,
+          "deferred": [
+            {
+              "owner": "asana:task:1217547171327342",
+              "topic": "review-assurance-lane-attempt-parity",
+              "status": "not-accepted-do-not-promote"
+            }
+          ]
+        }
+      },
       "supersession_policy": {
         "durable_explicit_authority_required": true,
         "accepted_authority_types": [
