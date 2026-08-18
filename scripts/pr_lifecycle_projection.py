@@ -98,6 +98,14 @@ def _default_source(pr: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _default_runtime() -> dict[str, Any]:
+    return {
+        "active": "UNKNOWN",
+        "operational": "UNKNOWN",
+        "provenance": "runtime-not-observed-by-this-slice",
+    }
+
+
 def _truth_conflicts(
     pr: Mapping[str, Any],
     *,
@@ -130,10 +138,19 @@ def _truth_conflicts(
     return conflicts
 
 
+def _rollout_accepted(rollouts: list[Mapping[str, Any]]) -> bool:
+    return bool(rollouts) and all(
+        rollout.get("complete") is True
+        and all(stage.get("state") == "ACCEPTED" for stage in rollout.get("stages") or [])
+        for rollout in rollouts
+    )
+
+
 def _combined_state(
     *,
     phase: str,
     source: Mapping[str, Any],
+    runtime: Mapping[str, Any],
     completion: str,
     rollouts: list[Mapping[str, Any]],
     conflicts: list[Mapping[str, Any]],
@@ -150,18 +167,17 @@ def _combined_state(
     if operator_action:
         return "BLOCKED_ON_MARCO"
     if source.get("state") == "LANDED":
-        if rollouts:
-            accepted = all(
-                rollout.get("complete") is True
-                and all(stage.get("state") == "ACCEPTED" for stage in rollout.get("stages") or [])
-                for rollout in rollouts
-            )
-            if accepted and completion == "COMPLETE":
-                return "OPERATIONALLY_COMPLETE"
-            if not accepted or completion == "INCOMPLETE":
-                return "POST_MERGE_ACTION_REQUIRED"
-        if completion == "INCOMPLETE":
+        accepted = _rollout_accepted(rollouts)
+        if completion == "INCOMPLETE" or (rollouts and not accepted):
             return "POST_MERGE_ACTION_REQUIRED"
+        if runtime.get("operational") == "NOT_OPERATIONAL":
+            return "POST_MERGE_ACTION_REQUIRED"
+        if (
+            completion == "COMPLETE"
+            and accepted
+            and runtime.get("operational") == "OPERATIONAL"
+        ):
+            return "OPERATIONALLY_COMPLETE"
         return "LANDED_ON_MAIN" if source.get("ultimate_target") == "main" else "LANDED_ON_TARGET"
     return phase
 
@@ -198,6 +214,7 @@ def build_projection(
     tasks: Iterable[Mapping[str, Any]] = (),
     task_scope: Mapping[str, Any] | None = None,
     source_observation: Mapping[str, Any] | None = None,
+    runtime_observation: Mapping[str, Any] | None = None,
     controller: Mapping[str, Any] | None = None,
     full_regression: Mapping[str, Any] | None = None,
     generated_at: datetime | None = None,
@@ -207,6 +224,7 @@ def build_projection(
     task_values = [dict(task) for task in tasks]
     tasks_by_gid = _task_index(task_values)
     sources = dict((source_observation or {}).get("pull_requests") or {})
+    runtimes = dict((runtime_observation or {}).get("pull_requests") or {})
     queues: dict[str, list[int]] = {name: [] for name in ("Ready", "In Progress", "Review", "Integration", "Blocked", "Decision", "Recent")}
     drift: list[dict[str, Any]] = []
     coordinator: list[dict[str, Any]] = []
@@ -214,6 +232,7 @@ def build_projection(
     resolved: list[dict[str, Any]] = []
     for pr in prs:
         source = dict(sources.get(str(pr["number"])) or sources.get(pr["number"]) or _default_source(pr))
+        runtime = dict(runtimes.get(str(pr["number"])) or runtimes.get(pr["number"]) or _default_runtime())
         completion = _completion_for(pr, tasks_by_gid)
         rollouts = _rollouts_for(pr, tasks_by_gid)
         phase = _phase_for(pr)
@@ -229,6 +248,7 @@ def build_projection(
         state = _combined_state(
             phase=phase,
             source=source,
+            runtime=runtime,
             completion=completion,
             rollouts=rollouts,
             conflicts=conflicts,
@@ -241,6 +261,7 @@ def build_projection(
             "state": state,
             "phase": phase,
             "source": source,
+            "runtime": runtime,
             "completion": completion,
             "truth": truth,
             "operator_action": operator_action,
@@ -248,7 +269,7 @@ def build_projection(
             "provenance": {
                 "github": "pr_lifecycle exact-head inspector",
                 "asana": "direct task read" if completion != "UNKNOWN" else "unknown/incomplete",
-                "runtime": "not resolved by this observation slice",
+                "runtime": runtime.get("provenance") or "unknown",
             },
         }
         if rollouts:
@@ -257,9 +278,16 @@ def build_projection(
         pr["github_state_label"] = pr.get("state_label")
         pr["resolved_state"] = state
         pr["source_state"] = source.get("state")
+        pr["active_state"] = runtime.get("active") or "UNKNOWN"
+        pr["operational_state"] = runtime.get("operational") or "UNKNOWN"
         pr["asana_completion"] = completion
         pr["truth_status"] = truth
-        pr["state_label"] = _state_label(state) + (" · Truth Unknown" if truth == "UNKNOWN" else "")
+        label_suffix = ""
+        if truth == "UNKNOWN":
+            label_suffix += " · Truth Unknown"
+        if source.get("state") == "LANDED" and runtime.get("operational") == "UNKNOWN":
+            label_suffix += " · Operational Unknown"
+        pr["state_label"] = _state_label(state) + label_suffix
         queues[_queue_for_state(state)].append(int(pr["number"]))
         for conflict in conflicts:
             drift.append({
@@ -285,6 +313,7 @@ def build_projection(
         "task_scope": dict(task_scope or {"status": "UNKNOWN", "projects": []}),
         "resolved_lifecycle": resolved,
         "source_observation": dict(source_observation or {}),
+        "runtime_observation": dict(runtime_observation or {}),
         "queues": queues,
         "state_drift": drift,
         "controller": dict(controller or {}),
