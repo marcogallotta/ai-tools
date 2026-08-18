@@ -137,6 +137,7 @@ def _combined_state(
     completion: str,
     rollouts: list[Mapping[str, Any]],
     conflicts: list[Mapping[str, Any]],
+    operator_action: str | None,
 ) -> str:
     if any(item.get("truth") == "CONTRADICTION" for item in conflicts):
         return "CONTRADICTION"
@@ -144,6 +145,10 @@ def _combined_state(
         return "MERGED_INTERMEDIATE_TARGET"
     if phase == "MERGED" and source.get("state") == "NOT_LANDED":
         return "MERGED_INTERMEDIATE_TARGET"
+    if phase == "BLOCKED_EXTERNAL":
+        return "BLOCKED_EXTERNAL"
+    if operator_action:
+        return "BLOCKED_ON_MARCO"
     if source.get("state") == "LANDED":
         if rollouts:
             accepted = all(
@@ -157,7 +162,7 @@ def _combined_state(
                 return "POST_MERGE_ACTION_REQUIRED"
         if completion == "INCOMPLETE":
             return "POST_MERGE_ACTION_REQUIRED"
-        return "LANDED_ON_TARGET"
+        return "LANDED_ON_MAIN" if source.get("ultimate_target") == "main" else "LANDED_ON_TARGET"
     return phase
 
 
@@ -173,7 +178,9 @@ def _queue_for_state(state: str) -> str:
         return "Integration"
     if state in {"REVIEW_BLOCK", "BLOCKED_EXTERNAL", "CONTRADICTION"}:
         return "Blocked"
-    if state in {"LANDED_ON_TARGET", "OPERATIONALLY_COMPLETE", "CLOSED"}:
+    if state == "BLOCKED_ON_MARCO":
+        return "Decision"
+    if state in {"LANDED_ON_MAIN", "LANDED_ON_TARGET", "OPERATIONALLY_COMPLETE", "CLOSED"}:
         return "Recent"
     if state == "POST_MERGE_ACTION_REQUIRED":
         return "Ready"
@@ -218,12 +225,14 @@ def build_projection(
             if conflicts or source.get("state") == "UNKNOWN" or completion == "UNKNOWN"
             else "CONSISTENT"
         )
+        operator_action = str(pr.get("human_action") or "").strip() or None
         state = _combined_state(
             phase=phase,
             source=source,
             completion=completion,
             rollouts=rollouts,
             conflicts=conflicts,
+            operator_action=operator_action,
         )
         record = {
             "pr": int(pr["number"]),
@@ -234,6 +243,7 @@ def build_projection(
             "source": source,
             "completion": completion,
             "truth": truth,
+            "operator_action": operator_action,
             "conflicts": conflicts,
             "provenance": {
                 "github": "pr_lifecycle exact-head inspector",
@@ -264,8 +274,8 @@ def build_projection(
             key = str(dep.get("task_gid") or "")
             owner = baseline_owners.setdefault(key, {"task_gid": key, "main_sha": dep.get("main_sha"), "dependents": []})
             owner["dependents"].append(pr["number"])
-        if pr.get("human_action"):
-            coordinator.append({"pr": pr["number"], "action": pr["human_action"], "head": pr["head"]})
+        if operator_action:
+            coordinator.append({"pr": pr["number"], "action": operator_action, "head": pr["head"]})
     return {
         "schema": SCHEMA,
         "repository": repository,
