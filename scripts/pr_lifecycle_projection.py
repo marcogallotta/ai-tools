@@ -39,6 +39,7 @@ def build_projection(
 ) -> dict[str, Any]:
     generated_at = generated_at or datetime.now(timezone.utc)
     prs = [value.json() for value in values]
+    task_values = [dict(task) for task in tasks]
     queues: dict[str, list[int]] = {name: [] for name in ("Ready", "In Progress", "Review", "Integration", "Blocked", "Decision", "Recent")}
     drift: list[dict[str, Any]] = []
     coordinator: list[dict[str, Any]] = []
@@ -62,12 +63,13 @@ def build_projection(
         "repository": repository,
         "reconciled_at": generated_at.isoformat(),
         "pull_requests": prs,
-        "tasks": [dict(task) for task in tasks],
+        "tasks": task_values,
         "queues": queues,
         "state_drift": drift,
         "controller": dict(controller or {}),
         "full_regression": dict(full_regression or {}),
         "current_main_corrective_owners": list(baseline_owners.values()),
+        "rollouts": [task["rollout"] for task in task_values if isinstance(task.get("rollout"), Mapping)],
         "coordinator_actions": coordinator,
     }
 

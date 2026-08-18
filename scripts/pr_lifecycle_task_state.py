@@ -62,6 +62,29 @@ def _story_text(story: Mapping[str, Any]) -> str:
     return str(story.get("text") or story.get("body") or "")
 
 
+def structured_story(prefix: str, payload: Mapping[str, Any]) -> str:
+    """Encode one exact append-only authority record.
+
+    Exact whole-comment framing is intentional: prose that merely resembles a
+    marker cannot become machine transition authority.
+    """
+    value = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return f"<!-- {prefix} {value} -->"
+
+
+def structured_story_payload(story: Mapping[str, Any], prefix: str) -> dict[str, Any] | None:
+    text = _story_text(story)
+    start = f"<!-- {prefix} "
+    if not text.startswith(start) or not text.endswith(" -->") or "\n" in text:
+        return None
+    raw = text[len(start):-4]
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return dict(value) if isinstance(value, Mapping) else None
+
+
 def transition_already_recorded(stories: Iterable[Mapping[str, Any]], stable_id: str) -> bool:
     token = f"<!-- {TRANSITION_MARKER} id={stable_id} "
     return any(token in _story_text(story) for story in stories)
