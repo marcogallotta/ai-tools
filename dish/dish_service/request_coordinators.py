@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, ContextManager, Mapping, Protocol
 
 from dish_tool.commands import DishApplication
 from dish_tool.errors import DishRuleError
-from dish_tool.results import error_envelope
+from dish_tool.results import error_envelope, result_envelope
+from dish_tool.task_store import LiveTask, TaskBackend, read_complete_task
 
 from .leases import LeaseManager, ServicePrincipal
 from .planning_intent import planning_start_may_resume
@@ -368,14 +371,6 @@ class AdminRequestCoordinator:
 # ---------------------------------------------------------------------------
 # Consumes upstream authority; does not derive lifecycle or design lineage.
 # Nothing below is wired into DishService, HTTP, OpenAPI, config, or deployment.
-
-from dataclasses import asdict
-from datetime import datetime, timedelta, timezone
-import json
-
-from dish_tool.results import result_envelope
-from dish_tool.task_store import LiveTask, TaskBackend, read_complete_task
-
 
 LEGACY_DIRECT = "LEGACY_DIRECT"
 MEDIATED_ACTION = "MEDIATED_ACTION"
