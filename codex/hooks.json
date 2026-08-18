@@ -1,5 +1,5 @@
 {
-  "description": "Dish operator interaction context plus protected-checkout and post-compaction re-grounding barriers.",
+  "description": "Dish operator interaction context, protected-checkout enforcement, and post-compaction re-grounding.",
   "hooks": {
     "SessionStart": [
       {
@@ -24,16 +24,6 @@
       }
     ],
     "PreToolUse": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/home/marco/.local/bin/agent-reground",
-            "timeout": 30,
-            "statusMessage": "Checking post-compaction Dish role state"
-          }
-        ]
-      },
       {
         "matcher": "^Bash$",
         "hooks": [

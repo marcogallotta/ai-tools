@@ -7,9 +7,9 @@ entry invokes `~/.local/bin/dish-operator-context`, so exact-head certification
 can bind both the user hook definition and the operator-policy adapter to the
 same candidate worktree. `SessionStart(source=compact)` invokes
 `~/.local/bin/agent-reground`, which reloads current Dish role/process authority
-plus owning Asana and active Git/PR state from durable identity. A generic
-`PreToolUse` entry enforces the resulting generation marker before substantive
-tool work. The existing Bash-specific hook calls
+plus owning Asana and active Git/PR state from durable identity. Re-grounding is
+informational recovery and is not a global tool-use barrier. The Bash-specific
+hook calls
 `~/.local/bin/codex-protected-checkout` and preserves its hard-deny boundary.
 
 The shared `hooks/protected_checkout.py` classifier denies direct and visibly
@@ -72,8 +72,8 @@ test "$(git -C "$WT" rev-parse HEAD)" = "$EXPECTED"
 ```
 
 Start a fresh installed Codex session, open `/hooks`, and confirm the user
-operator `SessionStart`, compact `SessionStart`, and `PreToolUse` matchers are
-loaded from the exact-head `hooks.json`; review/trust its current hash if
+operator `SessionStart`, compact `SessionStart`, and protected-checkout
+`PreToolUse` matchers are loaded from the exact-head `hooks.json`; review/trust its current hash if
 prompted. The first `SessionStart` must execute the candidate-bound
 `~/.local/bin/dish-operator-context`, so the injected operator policy comes from
 the same `WT`/`EXPECTED` head as the loaded hook definition. Record

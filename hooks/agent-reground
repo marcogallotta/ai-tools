@@ -557,99 +557,6 @@ def perform_reground(payload: dict[str, Any], agent_id: str, host: str) -> dict[
         raise
 
 
-def validate_barrier(payload: dict[str, Any], agent_id: str) -> str | None:
-    boundary_file = boundary_path(agent_id)
-    if not boundary_file.exists():
-        return None
-    try:
-        boundary = _read_json(boundary_file, "compaction boundary")
-        if boundary.get("source") != "compact":
-            return None
-        marker = _read_json(marker_path(agent_id), "re-grounding marker")
-        if boundary.get("status") != "ready" or marker.get("status") != "ready":
-            return "post-compaction re-grounding is incomplete"
-        if marker.get("grounding_generation") != boundary.get("grounding_generation"):
-            return "post-compaction re-grounding marker belongs to a stale compaction generation"
-        identity = load_identity(agent_id)
-        identity_hash = _sha256_text(json.dumps(identity, sort_keys=True, separators=(",", ":")))
-        if marker.get("identity_sha256") != identity_hash:
-            return "durable agent identity changed after post-compaction re-grounding"
-        repo = resolve_repo(identity, payload)
-        verify_repository(repo)
-        for key, relative in (
-            ("root_instructions", "CLAUDE.md"),
-            ("role_index", "dish/docs/agents/index.md"),
-        ):
-            text = _read_required(repo, relative)
-            if marker.get(key, {}).get("sha256") != _sha256_text(text):
-                return f"{relative} changed after post-compaction re-grounding"
-        index_text = _read_required(repo, "dish/docs/agents/index.md")
-        contract_path = role_contract_from_index(index_text, str(identity["role"]))
-        contract_text = _read_required(repo, contract_path)
-        contract_record = marker.get("role_contract")
-        if not isinstance(contract_record, dict):
-            return "re-grounding marker has no role-contract record"
-        if contract_record.get("path") != contract_path or contract_record.get("sha256") != _sha256_text(contract_text):
-            return "mapped role contract changed after post-compaction re-grounding"
-        branch = _git(repo, "branch", "--show-current")
-        if branch != marker.get("git", {}).get("branch"):
-            return "active Git branch changed after post-compaction re-grounding"
-        # Local HEAD is expected to advance during implementation; observe it without fetching/chasing main.
-        marker["git"]["local_head"] = _git(repo, "rev-parse", "HEAD")
-        marker["last_local_validation_at"] = now_utc()
-        _atomic_write_json(marker_path(agent_id), marker)
-    except RegroundError as exc:
-        return str(exc)
-    return None
-
-
-def deny(reason: str) -> dict[str, Any]:
-    return {
-        "hookSpecificOutput": {
-            "hookEventName": "PreToolUse",
-            "permissionDecision": "deny",
-            "permissionDecisionReason": (
-                "Dish post-compaction role/process barrier: " + reason + ". "
-                "Automatic same-session re-grounding was attempted once; the tool remains blocked until the "
-                "reported authority failure is resolved."
-            ),
-        }
-    }
-
-
-def _pretool_recovery_payload(
-    payload: dict[str, Any], agent_id: str, host: str
-) -> dict[str, Any]:
-    boundary = _existing_boundary(agent_id)
-    recovery = dict(payload)
-    recovery["hook_event_name"] = "PreToolUse"
-    recovery["source"] = "compact"
-    if host == "claude":
-        recovery.setdefault("session_id", agent_id)
-    transcript_path = _boundary_transcript_path(payload, boundary)
-    if transcript_path:
-        recovery["transcript_path"] = transcript_path
-    return recovery
-
-
-def recover_pretool_barrier(
-    payload: dict[str, Any], agent_id: str, host: str
-) -> dict[str, Any] | None:
-    reason = validate_barrier(payload, agent_id)
-    if not reason:
-        return None
-
-    recovery_payload = _pretool_recovery_payload(payload, agent_id, host)
-    try:
-        perform_reground(recovery_payload, agent_id, host)
-    except RegroundError as exc:
-        return deny(f"automatic re-ground retry failed: {exc}")
-
-    residual = validate_barrier(payload, agent_id)
-    if residual:
-        return deny(f"automatic re-ground retry completed but validation still fails: {residual}")
-    return None
-
 def history_check(agent_id: str, query: str | None) -> int:
     try:
         marker = _read_json(marker_path(agent_id), "re-grounding marker")
@@ -721,11 +628,6 @@ def main(argv: list[str] | None = None) -> int:
         agent_id, host = resolve_agent_id(payload)
         if event == "SessionStart" and payload.get("source") == "compact":
             print(json.dumps(perform_reground(payload, agent_id, host)))
-            return 0
-        if event == "PreToolUse":
-            decision = recover_pretool_barrier(payload, agent_id, host)
-            if decision:
-                print(json.dumps(decision))
             return 0
         return 0
     except (RegroundError, json.JSONDecodeError) as exc:

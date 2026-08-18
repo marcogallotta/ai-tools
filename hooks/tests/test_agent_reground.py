@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import subprocess
@@ -135,12 +136,6 @@ def test_compaction_reloads_role_asana_and_pr_from_durable_state(
     assert marker["git"]["branch"] == "agent/test-reground"
     assert marker["pr"]["number"] == 77
 
-    assert agent_reground.validate_barrier(
-        {"hook_event_name": "PreToolUse", "session_id": "session-1", "cwd": str(repo)},
-        "session-1",
-    ) is None
-
-
 def test_compaction_uses_shared_asana_launcher_when_worktree_launcher_is_unavailable(
     agent_reground, tmp_path, monkeypatch
 ):
@@ -162,31 +157,6 @@ def test_compaction_uses_shared_asana_launcher_when_worktree_launcher_is_unavail
     result = agent_reground.perform_reground(_session_payload(repo), "session-1", "claude")
 
     assert "Owning task" in result["hookSpecificOutput"]["additionalContext"]
-
-
-def test_pretool_fails_closed_for_missing_or_stale_marker(agent_reground, tmp_path, monkeypatch):
-    repo = _make_repo(tmp_path)
-    _install_fake_gh(tmp_path, monkeypatch)
-    state_root = tmp_path / "state"
-    monkeypatch.setenv("DISH_AGENT_STATE_ROOT", str(state_root))
-    _write_identity(state_root, repo)
-    agent_reground.perform_reground(_session_payload(repo), "session-1", "claude")
-
-    agent_reground.marker_path("session-1").unlink()
-    reason = agent_reground.validate_barrier(
-        {"hook_event_name": "PreToolUse", "session_id": "session-1", "cwd": str(repo)},
-        "session-1",
-    )
-    assert "marker" in reason
-
-    agent_reground.perform_reground(_session_payload(repo), "session-1", "claude")
-    contract = repo / "dish/docs/agents/workflow.md"
-    contract.write_text(contract.read_text() + "changed role authority\n", encoding="utf-8")
-    reason = agent_reground.validate_barrier(
-        {"hook_event_name": "PreToolUse", "session_id": "session-1", "cwd": str(repo)},
-        "session-1",
-    )
-    assert "role contract changed" in reason
 
 
 def test_live_asana_role_requires_owning_task_pointer(agent_reground, tmp_path, monkeypatch):
@@ -235,162 +205,7 @@ def test_history_is_unknown_without_evidence_and_transcript_backed_with_match(
     output = capsys.readouterr().out
     assert output.startswith("UNKNOWN:")
     assert "does not prove" in output
-
-
-
-def _pretool_payload(repo: Path):
-    return {
-        "hook_event_name": "PreToolUse",
-        "session_id": "session-1",
-        "cwd": str(repo),
-    }
-
-
-def test_pretool_self_recovers_after_transient_sessionstart_failure(
-    agent_reground, tmp_path, monkeypatch
-):
-    repo = _make_repo(tmp_path)
-    _install_fake_gh(tmp_path, monkeypatch)
-    state_root = tmp_path / "state"
-    monkeypatch.setenv("DISH_AGENT_STATE_ROOT", str(state_root))
-    _write_identity(state_root, repo)
-
-    real_recover_asana = agent_reground.recover_asana
-    calls = {"count": 0}
-
-    def flaky_recover_asana(*args, **kwargs):
-        calls["count"] += 1
-        if calls["count"] == 1:
-            raise agent_reground.RegroundError("transient Asana read failure")
-        return real_recover_asana(*args, **kwargs)
-
-    monkeypatch.setattr(agent_reground, "recover_asana", flaky_recover_asana)
-    with pytest.raises(agent_reground.RegroundError, match="transient Asana read failure"):
-        agent_reground.perform_reground(_session_payload(repo), "session-1", "claude")
-
-    pending = json.loads(agent_reground.boundary_path("session-1").read_text())
-    assert pending["status"] == "pending"
-    assert pending["last_error"] == "transient Asana read failure"
-    assert pending["last_failure_at"]
-    assert pending["reground_attempt_count"] == 1
-    assert not agent_reground.marker_path("session-1").exists()
-
-    decision = agent_reground.recover_pretool_barrier(
-        _pretool_payload(repo), "session-1", "claude"
-    )
-    assert decision is None
-    assert calls["count"] == 2
-
-    boundary = json.loads(agent_reground.boundary_path("session-1").read_text())
-    marker = json.loads(agent_reground.marker_path("session-1").read_text())
-    assert boundary["status"] == "ready"
-    assert boundary["reground_attempt_count"] == 2
-    assert boundary["last_attempt_event"] == "PreToolUse"
-    assert boundary["last_error"] == "transient Asana read failure"
-    assert marker["status"] == "ready"
-    assert agent_reground.validate_barrier(_pretool_payload(repo), "session-1") is None
-
-
-def test_pretool_persistent_failure_retries_once_then_denies_concrete_cause(
-    agent_reground, tmp_path, monkeypatch
-):
-    repo = _make_repo(tmp_path)
-    _install_fake_gh(tmp_path, monkeypatch)
-    state_root = tmp_path / "state"
-    monkeypatch.setenv("DISH_AGENT_STATE_ROOT", str(state_root))
-    _write_identity(state_root, repo)
-
-    calls = {"count": 0}
-
-    def failed_recover_asana(*_args, **_kwargs):
-        calls["count"] += 1
-        raise agent_reground.RegroundError("Asana API remains unavailable")
-
-    monkeypatch.setattr(agent_reground, "recover_asana", failed_recover_asana)
-    with pytest.raises(agent_reground.RegroundError, match="Asana API remains unavailable"):
-        agent_reground.perform_reground(_session_payload(repo), "session-1", "claude")
-
-    before = calls["count"]
-    decision = agent_reground.recover_pretool_barrier(
-        _pretool_payload(repo), "session-1", "claude"
-    )
-    assert calls["count"] == before + 1
-    reason = decision["hookSpecificOutput"]["permissionDecisionReason"]
-    assert decision["hookSpecificOutput"]["permissionDecision"] == "deny"
-    assert "Asana API remains unavailable" in reason
-    assert "attempted once" in reason
-    assert not agent_reground.marker_path("session-1").exists()
-    boundary = json.loads(agent_reground.boundary_path("session-1").read_text())
-    assert boundary["status"] == "pending"
-    assert boundary["reground_attempt_count"] == 2
-
-
-def test_pretool_invalid_marker_self_heals(agent_reground, tmp_path, monkeypatch):
-    repo = _make_repo(tmp_path)
-    _install_fake_gh(tmp_path, monkeypatch)
-    state_root = tmp_path / "state"
-    monkeypatch.setenv("DISH_AGENT_STATE_ROOT", str(state_root))
-    _write_identity(state_root, repo)
-    agent_reground.perform_reground(_session_payload(repo), "session-1", "claude")
-
-    agent_reground.marker_path("session-1").write_text("{not-json\n", encoding="utf-8")
-    assert "cannot read re-grounding marker" in agent_reground.validate_barrier(
-        _pretool_payload(repo), "session-1"
-    )
-    assert agent_reground.recover_pretool_barrier(
-        _pretool_payload(repo), "session-1", "claude"
-    ) is None
-    assert agent_reground.validate_barrier(_pretool_payload(repo), "session-1") is None
-
-
-def test_pretool_role_authority_drift_self_heals(agent_reground, tmp_path, monkeypatch):
-    repo = _make_repo(tmp_path)
-    _install_fake_gh(tmp_path, monkeypatch)
-    state_root = tmp_path / "state"
-    monkeypatch.setenv("DISH_AGENT_STATE_ROOT", str(state_root))
-    _write_identity(state_root, repo)
-    agent_reground.perform_reground(_session_payload(repo), "session-1", "claude")
-
-    contract = repo / "dish/docs/agents/workflow.md"
-    contract.write_text(contract.read_text() + "CURRENT AUTHORITY CHANGE\n", encoding="utf-8")
-    assert "role contract changed" in agent_reground.validate_barrier(
-        _pretool_payload(repo), "session-1"
-    )
-
-    assert agent_reground.recover_pretool_barrier(
-        _pretool_payload(repo), "session-1", "claude"
-    ) is None
-    marker = json.loads(agent_reground.marker_path("session-1").read_text())
-    assert marker["role_contract"]["sha256"] == agent_reground._sha256_text(contract.read_text())
-    assert agent_reground.validate_barrier(_pretool_payload(repo), "session-1") is None
-
-
-def test_pretool_real_branch_identity_conflict_remains_denied(
-    agent_reground, tmp_path, monkeypatch
-):
-    repo = _make_repo(tmp_path)
-    _install_fake_gh(tmp_path, monkeypatch)
-    state_root = tmp_path / "state"
-    monkeypatch.setenv("DISH_AGENT_STATE_ROOT", str(state_root))
-    _write_identity(state_root, repo)
-    agent_reground.perform_reground(_session_payload(repo), "session-1", "claude")
-
-    identity_path = state_root / "agents/session-1.json"
-    identity = json.loads(identity_path.read_text())
-    identity["active_worktree"]["branch"] = "agent/different-branch"
-    identity_path.write_text(json.dumps(identity), encoding="utf-8")
-
-    decision = agent_reground.recover_pretool_barrier(
-        _pretool_payload(repo), "session-1", "claude"
-    )
-    reason = decision["hookSpecificOutput"]["permissionDecisionReason"]
-    assert decision["hookSpecificOutput"]["permissionDecision"] == "deny"
-    assert "durable identity branch 'agent/different-branch'" in reason
-    boundary = json.loads(agent_reground.boundary_path("session-1").read_text())
-    assert boundary["status"] == "pending"
-
-
-def test_failed_sessionstart_recovery_retains_transcript_context(
+def test_failed_sessionstart_retains_transcript_context(
     agent_reground, tmp_path, monkeypatch
 ):
     repo = _make_repo(tmp_path)
@@ -401,16 +216,10 @@ def test_failed_sessionstart_recovery_retains_transcript_context(
     transcript = tmp_path / "transcript.jsonl"
     transcript.write_text('{"message":"before compaction"}\n', encoding="utf-8")
 
-    real_recover_asana = agent_reground.recover_asana
-    calls = {"count": 0}
+    def failed_recover_asana(*_args, **_kwargs):
+        raise agent_reground.RegroundError("temporary failure")
 
-    def flaky_recover_asana(*args, **kwargs):
-        calls["count"] += 1
-        if calls["count"] == 1:
-            raise agent_reground.RegroundError("temporary failure")
-        return real_recover_asana(*args, **kwargs)
-
-    monkeypatch.setattr(agent_reground, "recover_asana", flaky_recover_asana)
+    monkeypatch.setattr(agent_reground, "recover_asana", failed_recover_asana)
     with pytest.raises(agent_reground.RegroundError):
         agent_reground.perform_reground(
             _session_payload(repo, transcript), "session-1", "claude"
@@ -418,29 +227,11 @@ def test_failed_sessionstart_recovery_retains_transcript_context(
     pending = json.loads(agent_reground.boundary_path("session-1").read_text())
     assert pending["transcript_path"] == str(transcript)
 
-    assert agent_reground.recover_pretool_barrier(
-        _pretool_payload(repo), "session-1", "claude"
-    ) is None
-    marker = json.loads(agent_reground.marker_path("session-1").read_text())
-    assert marker["transcript"]["path"] == str(transcript)
-    assert marker["transcript"]["accessible"] is True
+    assert pending["status"] == "pending"
+    assert pending["last_error"] == "temporary failure"
+    assert not agent_reground.marker_path("session-1").exists()
 
-    # Missing transcript evidence stays UNKNOWN rather than being invented during recovery.
-    other_state = tmp_path / "other-state"
-    monkeypatch.setenv("DISH_AGENT_STATE_ROOT", str(other_state))
-    _write_identity(other_state, repo, agent_id="session-2")
-    payload = {
-        "hook_event_name": "SessionStart",
-        "source": "compact",
-        "session_id": "session-2",
-        "cwd": str(repo),
-    }
-    agent_reground.perform_reground(payload, "session-2", "claude")
-    marker2 = json.loads(agent_reground.marker_path("session-2").read_text())
-    assert marker2["transcript"]["path"] is None
-    assert marker2["transcript"]["accessible"] is False
-
-def test_host_configs_wire_compact_and_pretool_barriers(hooks_dir):
+def test_host_configs_wire_compact_reground_without_global_pretool_barrier(hooks_dir):
     codex = json.loads((hooks_dir.parent / "codex/hooks.json").read_text())
     session = codex["hooks"]["SessionStart"]
     assert any(
@@ -449,28 +240,25 @@ def test_host_configs_wire_compact_and_pretool_barriers(hooks_dir):
         for entry in session
     )
     pretool = codex["hooks"]["PreToolUse"]
-    assert any(entry["hooks"][0]["command"] == "/home/marco/.local/bin/agent-reground" for entry in pretool)
+    assert not any(entry["hooks"][0]["command"] == "/home/marco/.local/bin/agent-reground" for entry in pretool)
     assert any(
         entry.get("matcher") == "^Bash$"
         and entry["hooks"][0]["command"] == "/home/marco/.local/bin/codex-protected-checkout"
         for entry in pretool
     )
 
-    codex_session_timeout = codex["hooks"]["SessionStart"][0]["hooks"][0]["timeout"]
-    codex_reground_pretool = next(
-        entry["hooks"][0]
-        for entry in pretool
-        if entry["hooks"][0]["command"] == "/home/marco/.local/bin/agent-reground"
-    )
-    assert codex_reground_pretool["timeout"] >= codex_session_timeout
-
     claude = json.loads((hooks_dir.parent / ".claude/settings.json").read_text())
     assert claude["hooks"]["SessionStart"][0]["matcher"] == "compact"
     assert "$CLAUDE_PROJECT_DIR" in claude["hooks"]["SessionStart"][0]["hooks"][0]["command"]
-    assert "PreToolUse" in claude["hooks"]
-    claude_session_timeout = claude["hooks"]["SessionStart"][0]["hooks"][0]["timeout"]
-    claude_reground_pretool = claude["hooks"]["PreToolUse"][0]["hooks"][0]
-    assert claude_reground_pretool["timeout"] >= claude_session_timeout
+    assert "PreToolUse" not in claude["hooks"]
+
+
+def test_stale_pretool_invocation_is_non_blocking(agent_reground, monkeypatch, capsys):
+    payload = {"hook_event_name": "PreToolUse", "session_id": "session-1"}
+    monkeypatch.setattr(agent_reground.sys, "stdin", io.StringIO(json.dumps(payload)))
+
+    assert agent_reground.main([]) == 0
+    assert capsys.readouterr().out == ""
 
 
 def test_unidentified_codex_session_never_synthesizes_development_workflow_identity(
