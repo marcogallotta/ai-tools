@@ -17,7 +17,7 @@ _AUTHOR_RE=re.compile(r"<!--\s*dish-worker-authorship:v1\s+(\{.*?\})\s*-->",re.S
 
 @dataclass(frozen=True)
 class WorkerAttempt:
-    assignment_digest:str; candidate_digest:str; attempt_id:str; generation:int; mode:str; state:str
+    assignment_digest:str; candidate_digest:str; attempt_id:str; generation:int; mode:str; state:str; transition:int=0
     @property
     def accepted(self): return self.state=="accepted"
 
@@ -90,9 +90,11 @@ def recover_worker_attempt(records,assignment_digest,candidate_digest=None):
     for v in vals:
         try: gen=int(v.get("generation"))
         except (TypeError,ValueError) as e: raise LifecycleError("Worker attempt generation must be positive") from e
+        try: transition=int(v.get("transition",0))
+        except (TypeError,ValueError) as e: raise LifecycleError("Worker attempt transition must be non-negative") from e
         aid=str(v.get("attempt_id") or ""); cd=str(v.get("candidate_digest") or ""); mode=str(v.get("mode") or ""); state=str(v.get("state") or "")
-        if gen<=0 or aid!=_attempt_id(assignment_digest,gen) or not re.fullmatch(r"[0-9a-f]{64}",cd) or mode not in _WORKER_MODES or state not in {"issued","accepted"}: raise LifecycleError("Worker attempt marker is invalid")
-        parsed.append(WorkerAttempt(assignment_digest,cd,aid,gen,mode,state))
+        if gen<=0 or transition<0 or aid!=_attempt_id(assignment_digest,gen) or not re.fullmatch(r"[0-9a-f]{64}",cd) or mode not in _WORKER_MODES or state not in {"issued","accepted"}: raise LifecycleError("Worker attempt marker is invalid")
+        parsed.append(WorkerAttempt(assignment_digest,cd,aid,gen,mode,state,transition))
     gen=max(x.generation for x in parsed); cur=[x for x in parsed if x.generation==gen]
     if len({x.attempt_id for x in cur})!=1: raise LifecycleError("Worker generation has conflicting attempt identities")
     if candidate_digest is not None:
@@ -101,11 +103,14 @@ def recover_worker_attempt(records,assignment_digest,candidate_digest=None):
     accepted=[x for x in cur if x.accepted]; return accepted[-1] if accepted else cur[-1]
 
 def _attempt_record(a,mode,state):
-    return _marker(WORKER_ATTEMPT_MARKER,{"assignment_digest":a.assignment_digest,"candidate_digest":a.candidate_digest,"attempt_id":a.attempt_id,"generation":a.generation,"mode":mode,"state":state})
+    payload={"assignment_digest":a.assignment_digest,"candidate_digest":a.candidate_digest,"attempt_id":a.attempt_id,"generation":a.generation,"mode":mode,"state":state}
+    if a.transition: payload["transition"]=a.transition
+    return _marker(WORKER_ATTEMPT_MARKER,payload)
 def _prepare(surface,sid,digest,candidate_digest,mode,replacement):
     cur=recover_worker_attempt(_records(surface,sid),digest)
     gen=(cur.generation+1) if cur and replacement else (cur.generation if cur else 1)
-    a=WorkerAttempt(digest,candidate_digest,_attempt_id(digest,gen),gen,mode,"issued")
+    transition=0 if cur is None or replacement else (cur.transition if cur.mode==mode and cur.candidate_digest==candidate_digest else cur.transition+1)
+    a=WorkerAttempt(digest,candidate_digest,_attempt_id(digest,gen),gen,mode,"issued",transition)
     _ensure(surface,sid,_attempt_record(a,mode,"issued")); return a
 
 def worker_material_authors(records,candidate):
@@ -145,7 +150,7 @@ class WorkspaceAgentDispatcher(_BaseWorkspaceAgentDispatcher):
     """Existing Workspace Worker transport with durable R6 attempt recovery."""
     @staticmethod
     def worker_attempt_idempotency_key(*,role,phase,exact_context,attempt):
-        v={"schema":"dish-worker-dispatch:v2","role":role,"phase":phase,"context":_exact_context(exact_context),"attempt_id":attempt.attempt_id,"generation":attempt.generation}
+        v={"schema":"dish-worker-dispatch:v2","role":role,"phase":phase,"context":_exact_context(exact_context),"attempt_id":attempt.attempt_id,"generation":attempt.generation,"transition":attempt.transition}
         return hashlib.sha256(_canon(v).encode()).hexdigest()
     def dispatch_worker_durable(self,*,surface,surface_id,role,phase,exact_context,replacement=False):
         if not self.access_token: raise LifecycleError("Workspace Agent access token is unavailable")
@@ -163,7 +168,7 @@ class WorkspaceAgentDispatcher(_BaseWorkspaceAgentDispatcher):
         headers={"Authorization":f"Bearer {self.access_token}","OpenAI-Beta":WORKSPACE_RUNS_BETA,"Idempotency-Key":key,"Content-Type":"application/json"}
         status,_,value=self.http.request("POST",f"{self.api_root}/workspace_agents/{self.worker_trigger_id}/trigger",headers=headers,body={"conversation_key":f"dish-worker-{attempt.attempt_id}","input":prompt})
         if status!=202: raise LifecycleError(f"Workspace Agent Worker trigger was not accepted: HTTP {status}")
-        accepted=WorkerAttempt(digest,candidate_digest,attempt.attempt_id,attempt.generation,role,"accepted"); _ensure(surface,surface_id,_attempt_record(accepted,role,"accepted"))
+        accepted=WorkerAttempt(digest,candidate_digest,attempt.attempt_id,attempt.generation,role,"accepted",attempt.transition); _ensure(surface,surface_id,_attempt_record(accepted,role,"accepted"))
         recovered=recover_worker_attempt(_records(surface,surface_id),digest,candidate_digest=candidate_digest)
         if recovered is None or not recovered.accepted or recovered.attempt_id!=attempt.attempt_id or recovered.mode!=role: raise LifecycleError("Worker accepted attempt did not survive authoritative recovery")
         payload=value if isinstance(value,dict) else {}
