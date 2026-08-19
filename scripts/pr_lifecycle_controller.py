@@ -7,6 +7,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import random
 import re
 import shlex
 import signal
@@ -213,7 +214,15 @@ def _tail_error(log: Path) -> str:
 
 def _transient(error: str) -> bool:
     value = error.lower()
-    if "request timed out" in value or "request failed for http" in value:
+    if (
+        "request timed out" in value
+        or "request failed for http" in value
+        or "temporary failure in name resolution" in value
+        or "name or service not known" in value
+        or "network is unreachable" in value
+        or "connection reset" in value
+        or "connection refused" in value
+    ):
         return True
     match = re.search(r"http\s+(\d{3})", value)
     if not match:
@@ -224,6 +233,24 @@ def _transient(error: str) -> bool:
 
 def _backoff(attempt: int) -> int:
     return min(MAX_BACKOFF, 2 ** max(0, attempt - 1))
+
+
+def _retry_delay(attempt: int, *, sample: float | None = None) -> float:
+    """Bounded exponential retry delay with ±20% jitter.
+
+    Jitter changes only local retry timing, never lifecycle or merge authority.
+    """
+    base = float(_backoff(attempt))
+    if attempt <= 1:
+        return base
+    unit = random.random() if sample is None else max(0.0, min(float(sample), 1.0))
+    factor = 0.8 + (0.4 * unit)
+    return max(0.5, min(float(MAX_BACKOFF), base * factor))
+
+
+def _integrator_provider() -> str | None:
+    value = str(os.getenv("DISH_V3_INTEGRATOR_PROVIDER") or "").strip()
+    return value or None
 
 
 def _snapshot(paths: dict[str, Path]) -> dict[str, Any]:
@@ -260,6 +287,10 @@ def _render(value: dict[str, Any]) -> str:
         fields.append("unmanaged_watchers=" + ",".join(map(str, value["unmanaged_watchers"])))
     if value.get("restart_count"):
         fields.append(f"restarts={value['restart_count']}")
+    if value.get("next_retry_seconds") is not None:
+        fields.append(f"retry_in={value['next_retry_seconds']:.1f}s")
+    if value.get("integrator_provider"):
+        fields.append(f"integrator_provider={value['integrator_provider']}")
     if value.get("last_error"):
         fields.append(f"last_error={value['last_error']}")
     return " | ".join(fields)
@@ -305,8 +336,18 @@ def start(paths: dict[str, Path]) -> int:
         _ensure(paths)
         paths["log"].touch(exist_ok=True, mode=0o600)
         paths["log"].chmod(0o600)
-        _save(paths, schema="dish-pr-lifecycle-controller-state-v1", run_id=run_id, status="starting",
-              supervisor_pid=None, watcher_pid=None, restart_count=0, last_error=None)
+        _save(
+            paths,
+            schema="dish-pr-lifecycle-controller-state-v1",
+            run_id=run_id,
+            status="starting",
+            supervisor_pid=None,
+            watcher_pid=None,
+            restart_count=0,
+            last_error=None,
+            offline_since=None,
+            integrator_provider=_integrator_provider(),
+        )
         command = [sys.executable, str(Path(__file__).resolve()), "--state-dir", str(paths["root"]),
                    "_supervise", "--run-id", run_id]
         with paths["log"].open("ab", buffering=0) as log:
@@ -318,13 +359,13 @@ def start(paths: dict[str, Path]) -> int:
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
         value = _snapshot(paths)
-        if value["supervisor_live"] and value["status"] in {"running", "reconnecting"}:
+        if value["supervisor_live"] and value["status"] in {"running", "reconnecting", "offline"}:
             print(_render(value))
             return 0
         if value["status"] == "failed" or not _alive(process.pid):
             raise ControllerError(_render(value))
         time.sleep(0.05)
-    raise ControllerError("controller start did not reach running/reconnecting state")
+    raise ControllerError("controller start did not reach running/reconnecting/offline state")
 
 
 def stop(paths: dict[str, Path]) -> int:
@@ -366,6 +407,7 @@ def supervise(paths: dict[str, Path], run_id: str) -> int:
     _await_supervisor_binding(paths, run_id)
     stopping = False
     child: subprocess.Popen[Any] | None = None
+    offline_since: float | None = None
 
     def on_stop(*_: Any) -> None:
         nonlocal stopping
@@ -387,36 +429,55 @@ def supervise(paths: dict[str, Path], run_id: str) -> int:
                 _save(paths, status="failed", watcher_pid=None, last_error=f"watcher launch failed: {exc}")
                 return 2
             restarts += 1
-            delay = _backoff(crash_attempt)
+            delay = _retry_delay(crash_attempt)
             _save(paths, status="reconnecting", watcher_pid=None, restart_count=restarts,
                   next_retry_seconds=delay, last_error=f"watcher launch failed: {exc}")
             time.sleep(delay)
             continue
         birth, _ = _ps(child.pid)
         _save(paths, status="running", watcher_pid=child.pid, watcher_birth=birth,
-              restart_count=restarts, next_retry_seconds=None, last_error=None)
+              restart_count=restarts, next_retry_seconds=None, last_error=None,
+              integrator_provider=_integrator_provider())
         code = child.wait()
         child = None
         if stopping:
             break
-        if time.monotonic() - started >= INTERVAL:
+        ran_for = time.monotonic() - started
+        if ran_for >= INTERVAL:
             transient_attempt = crash_attempt = 0
+            offline_since = None
         error = _tail_error(paths["log"])
         if code == 2 and _transient(error):
             transient_attempt += 1
             crash_attempt = 0
-        elif code == 2:
+            if offline_since is None:
+                offline_since = time.time()
+            restarts += 1
+            delay = _retry_delay(transient_attempt)
+            _save(
+                paths,
+                status="offline",
+                watcher_pid=None,
+                restart_count=restarts,
+                next_retry_seconds=delay,
+                last_error=error or "transient lifecycle transport failure",
+                offline_since=offline_since,
+                integrator_provider=_integrator_provider(),
+            )
+            time.sleep(delay)
+            continue
+        if code == 2:
             _save(paths, status="failed", watcher_pid=None, last_error=error or "watcher exited with code 2")
             return 2
-        else:
-            crash_attempt += 1
-            transient_attempt = 0
-            if crash_attempt > CRASH_RESTART_LIMIT:
-                _save(paths, status="failed", watcher_pid=None,
-                      last_error=error or f"watcher repeatedly exited with code {code}")
-                return code or 2
+
+        crash_attempt += 1
+        transient_attempt = 0
+        if crash_attempt > CRASH_RESTART_LIMIT:
+            _save(paths, status="failed", watcher_pid=None,
+                  last_error=error or f"watcher repeatedly exited with code {code}")
+            return code or 2
         restarts += 1
-        delay = _backoff(transient_attempt or crash_attempt)
+        delay = _retry_delay(crash_attempt)
         _save(paths, status="reconnecting", watcher_pid=None, restart_count=restarts,
               next_retry_seconds=delay, last_error=error or f"watcher exited with code {code}")
         time.sleep(delay)
@@ -470,7 +531,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "status":
             value = _snapshot(paths)
             print(_render(value))
-            return 0 if value["status"] in {"running", "reconnecting"} else 1
+            return 0 if value["status"] in {"running", "reconnecting", "offline"} else 1
         if args.command == "logs":
             return logs(paths, args.lines, args.follow)
         return supervise(paths, args.run_id)
