@@ -123,6 +123,21 @@ class DishHTTPServer(ThreadingHTTPServer):
             return True
         return bool(checker(surface, command))
 
+    def action_command_allowed(self, command: str) -> bool:
+        """Admit legacy Actions or an extension explicitly owned by this runtime.
+
+        The shared listener's built-in allowlist remains the legacy Action contract.
+        PostgreSQL authority may expose an additive Action only when its runtime both
+        supplies the PostgreSQL-specific validator/schema and explicitly reports the
+        exact route as supported. This keeps a PG-only extension such as Search from
+        silently appearing on the legacy/Asana Action service.
+        """
+
+        if command in ACTION_COMMANDS:
+            return True
+        validator = getattr(self.service, "validate_action_request", None)
+        return callable(validator) and self.supports_route("action", command)
+
     @staticmethod
     def _close_socket(connection: socket.socket) -> None:
         try:
@@ -406,7 +421,7 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 credential = self._credential("agent")
             elif surface == "action":
                 credential = self._credential("action")
-                if surface == "action" and command not in ACTION_COMMANDS:
+                if not self.server.action_command_allowed(command):
                     raise DishRuleError("INVALID_ARGUMENT", "command is not exposed to the GPT Action", rule="action_command_forbidden")
             else:
                 credential = self._credential("admin")
