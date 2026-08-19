@@ -39,6 +39,7 @@ A reserved `MARCO OVERRIDE — FAST-TRACK PROCESS` block in ChatGPT Project sett
 
 ## Dish safety and environments
 
+- Before any Asana write, identify the exact target project and freshly read/apply its current repository-owned contract; stale session context is insufficient, project-specific semantics remain distinct, and every state-changing write requires authoritative readback.
 - Genuine work uses production. Test is only for experiments, rehearsals, destructive testing, or Marco's explicit request. Confirm the target before an ambiguous mutation.
 - Agents may use `dish-admin --profile test`; production administration is Marco-only.
 - Do not run raw destructive SQL against production. A reviewed script must be written. Marco's explicit approval is required for genuine exceptions.
