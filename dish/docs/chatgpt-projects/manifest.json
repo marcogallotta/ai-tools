@@ -1,5 +1,5 @@
 {
-  "canonical_version": "dish-chatgpt-projects-v2-e537f97c302f",
+  "canonical_version": "dish-chatgpt-projects-v2-449b53a27d83",
   "change_history": [
     {
       "changes": [
@@ -4437,7 +4437,7 @@
       "changes": [
         {
           "action_boundaries": [
-            "asana-development-workflow-mutation"
+            "asana-mutation"
           ],
           "impact": "additive",
           "roles": [
@@ -4555,7 +4555,7 @@
         }
       },
       "from_version": "dish-chatgpt-projects-v2-98cec53850f6",
-      "to_version": "dish-chatgpt-projects-v2-e537f97c302f"
+      "to_version": "dish-chatgpt-projects-v2-449b53a27d83"
     }
   ],
   "current_transition_from": "dish-chatgpt-projects-v2-98cec53850f6",
@@ -4569,8 +4569,8 @@
     "review": "review.md",
     "workflow": "workflow.md"
   },
-  "generated_sha256": "c35605f3fc35d2169fc0e558e32a5c04d6028ab42734992801264a2fe265a6e4",
-  "kernel_identity_sha256": "e537f97c302fa424783a85eca71e84cb97ce88966b3741b2019c096ba6aadcc9",
+  "generated_sha256": "e5b3b7be75ff2220964fe3d4f0dc5268a8085729e21a0df60fbabd5658fd634a",
+  "kernel_identity_sha256": "449b53a27d83930e26342fb253aa5e3e2430102243884fc0bc2c62dbf08942c6",
   "legacy_bootstrap_floor": {
     "action_boundaries": [
       "*"
@@ -4641,6 +4641,7 @@
       "dish-chatgpt-projects-v2-33e1d8d28254",
       "dish-chatgpt-projects-v2-39ff3abc502e",
       "dish-chatgpt-projects-v2-443e13732e7f",
+      "dish-chatgpt-projects-v2-449b53a27d83",
       "dish-chatgpt-projects-v2-54041bbbc8d8",
       "dish-chatgpt-projects-v2-5d24af30193a",
       "dish-chatgpt-projects-v2-694190185f60",
@@ -4656,12 +4657,11 @@
       "dish-chatgpt-projects-v2-bfaeef68aed9",
       "dish-chatgpt-projects-v2-d048682742d6",
       "dish-chatgpt-projects-v2-d3a070d57fb2",
-      "dish-chatgpt-projects-v2-d96ab5f0588d",
-      "dish-chatgpt-projects-v2-e537f97c302f"
+      "dish-chatgpt-projects-v2-d96ab5f0588d"
     ]
   },
   "schema_version": 2,
   "source_file": "source.json",
-  "source_sha256": "fa79fb2914948a4fd3fd0a712c7274e28399d3c373cb789727e0286806c716cd",
+  "source_sha256": "2daabba61ec65c192460082f2e548e96ed8b08360cc133a742cece25d61e5200",
   "version_namespace": "dish-chatgpt-projects-v2"
 }

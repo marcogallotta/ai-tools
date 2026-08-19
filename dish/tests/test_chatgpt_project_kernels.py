@@ -276,10 +276,40 @@ def test_worker_policy_is_triggered_and_keeps_union_and_integration_authority_ou
  runbook=(DISH_ROOT.parent/'ci'/'pr-lifecycle-dispatcher-runbook.md').read_text()
  assert 'never a union semantic role' in runbook and '202 Accepted' in runbook and 'Integration landing remains outside Worker authority' in runbook
 
-def test_development_workflow_asana_mode_guard_reaches_every_project_and_worker():
+def test_asana_project_contract_router_reaches_every_project_and_worker():
  m,s=kernels.load_canonical(); rule=next(x for x in kernels.shared_rules(s) if x['id']=='development-workflow-asana-mode')
  assert rule['delivery']=={'mode':'DIRECT_ALWAYS_ON'}
- assert rule['action_boundaries']==['asana-development-workflow-mutation']
+ assert rule['action_boundaries']==['asana-mutation']
+ contract=(DISH_ROOT/'docs'/'agents'/'asana-project-contracts.md').read_text()
+ for token in (
+  '1217382473444945', '1217381674871544', '1217404747383060',
+  '1217419962189616', '1217443500915644', '1217443501022227',
+  '1216693403164366', '1217084805070730',
+  'select the intended project by exact GID', 'perform zero',
+  'Never project Development Workflow V2', 'Authoritatively read back',
+ ):
+  assert token in contract
+ for role in s['roles']:
+  assert rule['text'] in kernels.render_role(m,s,role), role
+ index=(DISH_ROOT/'docs'/'agents'/'index.md').read_text()
+ worker=(DISH_ROOT/'docs'/'agents'/'operator-provenance.md').read_text()
+ assert 'asana-project-contracts.md' in index and 'asana-project-contracts.md' in worker
+ assert 'unregistered, ambiguous, unreadable, or contradictory project contracts perform zero mutation' in worker
+
+def test_asana_project_contract_router_behavior_matrix_is_registered():
+ expected={
+  'asana-project-router-workflow-contract',
+  'asana-project-router-postgresql-contract',
+  'asana-project-router-unknown-abort',
+  'asana-project-router-cooking-surface',
+ }
+ for scenario_id in expected:
+  assert _scenario(scenario_id)['required_rules']==['development-workflow-asana-mode']
+
+def test_development_workflow_asana_mode_guard_remains_mapped_by_shared_router():
+ m,s=kernels.load_canonical(); rule=next(x for x in kernels.shared_rules(s) if x['id']=='development-workflow-asana-mode')
+ assert rule['delivery']=={'mode':'DIRECT_ALWAYS_ON'}
+ assert rule['action_boundaries']==['asana-mutation']
  contract=(DISH_ROOT/'docs'/'agents'/'development-workflow-asana-mode.md').read_text()
  for token in ('1217419962189616','Dish — Development Workflow`','Dish — Development Workflow v2','Needs Post-Merge Rollout','Dish — Development Workflow v3','PROJECT MODE V3 REQUIRES UPDATED PROJECT SETTINGS / GPT ACTION PROTOCOL','RECONCILIATION_REQUIRED','freshly read this contract','exact accepted-generation'):
   assert token in contract
