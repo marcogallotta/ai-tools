@@ -40,6 +40,7 @@
               "create",
               "sections",
               "section-tasks",
+              "search",
               "read",
               "proposals",
               "apply-proposal",
@@ -1410,6 +1411,102 @@
         ],
         "summary": "Run PostgreSQL-backed dish safe-reclaim",
         "x-openai-isConsequential": true
+      }
+    },
+    "/v1/action/search": {
+      "post": {
+        "description": "Read-only active-title discovery. Use Search when discovering a Dish by title or partial title. If Marco supplies a canonical Dish UUID, call read(dish_id=...) directly instead of searching or browsing sections. request_id is not accepted.",
+        "operationId": "dish_postgresql_search",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "properties": {
+                  "arguments": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "agent": {
+                        "enum": [
+                          "claude",
+                          "gpt",
+                          "codex"
+                        ],
+                        "type": "string"
+                      },
+                      "cursor": {
+                        "description": "Opaque next_cursor returned by a prior search page. Omit for the first page; a null next_cursor means the result set is exhausted.",
+                        "type": "string"
+                      },
+                      "page_size": {
+                        "default": 50,
+                        "maximum": 100,
+                        "minimum": 1,
+                        "type": "integer"
+                      },
+                      "query": {
+                        "description": "Case-insensitive literal substring matched only against the current canonical active Dish title.",
+                        "maxLength": 160,
+                        "minLength": 1,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "query",
+                      "agent"
+                    ],
+                    "type": "object"
+                  },
+                  "client": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "run_id": {
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID.",
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "client",
+                  "arguments"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResultEnvelope"
+                }
+              }
+            },
+            "description": "Canonical Dish result envelope"
+          },
+          "401": {
+            "description": "Bearer authentication failed before body parsing"
+          }
+        },
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "summary": "Run PostgreSQL-backed dish search",
+        "x-openai-isConsequential": false
       }
     },
     "/v1/action/section-tasks": {

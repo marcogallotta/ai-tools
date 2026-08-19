@@ -19,6 +19,7 @@ from dish_service.config import ServiceConfig
 from dish_service.http import DishHTTPServer
 from dish_service.leases import ServicePrincipal
 from dish_tool.errors import DishRuleError
+from tests.support.postgresql.core import _import_one
 from tests.support.postgresql.runtime_validation import (
     runtime_service,
     without_replay_metadata,
@@ -315,6 +316,107 @@ def test_http_postgresql_validation_persistence_unavailable_is_503(
         "PostgreSQL authority is unavailable; validation failure was not recorded"
     )
     assert validation_calls == 1
+
+
+def test_postgresql_agent_search_normalizes_and_paginates_with_strict_progress(
+    workflow_db, tmp_path: Path
+) -> None:
+    factory, ids, context, first_task_id = workflow_db
+    with session_scope(factory) as session:
+        second = _import_one(session, ids, context, asana_gid="123456790")
+        third = _import_one(session, ids, context, asana_gid="123456791")
+
+    run_id = _next(ids)
+    service = runtime_service(factory, tmp_path)
+    with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="private") as server:
+        thread = start_server_thread(server, name="postgres-search-agent-http")
+        url = f"http://127.0.0.1:{server.server_address[1]}/v1/commands/search"
+        try:
+            cursor = None
+            seen: list[str] = []
+            emitted: list[str] = []
+            for index in range(3):
+                arguments = {
+                    "query": "  IMPORTED  " if index == 0 else "IMPORTED",
+                    "agent": "gpt",
+                    "page_size": 1,
+                }
+                if cursor is not None:
+                    arguments["cursor"] = cursor
+                status, result = _post_json(
+                    url,
+                    body={
+                        "client": {"run_id": str(run_id)},
+                        "arguments": arguments,
+                    },
+                )
+                assert status == 200
+                assert result["ok"] is True
+                assert result["data"]["query"] == "IMPORTED"
+                assert result["data"]["page_size"] == 1
+                assert len(result["data"]["results"]) == 1
+                seen.append(result["data"]["results"][0]["dish_id"])
+                next_cursor = result["data"]["next_cursor"]
+                if next_cursor is not None:
+                    assert next_cursor != cursor
+                    emitted.append(next_cursor)
+                cursor = next_cursor
+        finally:
+            stop_server(server, thread)
+
+    assert seen == sorted(
+        [str(first_task_id), str(second.task_id), str(third.task_id)]
+    )
+    assert len(set(seen)) == 3
+    assert len(set(emitted)) == 2
+    assert cursor is None
+
+
+def test_postgresql_agent_search_rejects_invalid_pagination_before_execution(
+    workflow_db, tmp_path: Path
+) -> None:
+    factory, ids, _context, _task_id = workflow_db
+    run_id = _next(ids)
+    service = runtime_service(factory, tmp_path)
+    with DishHTTPServer(("127.0.0.1", 0), service, surface_mode="private") as server:
+        thread = start_server_thread(server, name="postgres-search-invalid-http")
+        url = f"http://127.0.0.1:{server.server_address[1]}/v1/commands/search"
+        try:
+            for arguments in (
+                {"query": "imported", "agent": "gpt", "page_size": 0},
+                {"query": "imported", "agent": "gpt", "page_size": 101},
+                {"query": "imported", "agent": "gpt", "cursor": ""},
+            ):
+                status, result = _post_json(
+                    url,
+                    body={
+                        "client": {"run_id": str(run_id)},
+                        "arguments": arguments,
+                    },
+                )
+                assert status == 200
+                assert result["ok"] is False
+                assert result["code"] == "INVALID_ARGUMENT"
+                assert "next_cursor" not in result["data"]
+
+            status, result = _post_json(
+                url,
+                body={
+                    "client": {"run_id": str(run_id)},
+                    "arguments": {
+                        "query": "imported",
+                        "agent": "gpt",
+                        "cursor": "not-an-authenticated-search-cursor",
+                    },
+                },
+            )
+            assert status == 200
+            assert result["ok"] is False
+            assert result["code"] == "INVALID_ARGUMENT"
+            assert result["data"]["field"] == "cursor"
+            assert "next_cursor" not in result["data"]
+        finally:
+            stop_server(server, thread)
 
 
 def test_postgresql_runtime_exposes_only_implemented_action_commands(
