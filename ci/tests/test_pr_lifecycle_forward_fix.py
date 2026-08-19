@@ -162,9 +162,9 @@ def test_execution_truth_does_not_upgrade_handoff_to_running():
     now=datetime(2026,8,17,21,tzinfo=timezone.utc)
     handoff=[{"text":"HANDOFF PREPARED — user relay required","created_at":(now-timedelta(minutes=5)).isoformat()}]
     assert execution_truth({},handoff,now=now)["state"]=="HANDOFF RECORDED"
-    accepted=handoff+[{"text":"DESTINATION ACCEPTED / BOUND","created_at":now.isoformat()}]
+    accepted=handoff+[{"text":"DESTINATION ACCEPTED / BOUND attempt_id=wa-1234","created_at":now.isoformat()}]
     assert execution_truth({},accepted,now=now)["state"]=="DISPATCH ACCEPTED / BOUND"
-    running=accepted+[{"text":"RUNNING-SOURCE — commit exists","created_at":(now+timedelta(seconds=1)).isoformat()}]
+    running=accepted+[{"text":"RUNNING-SOURCE attempt_id=wa-1234 — commit exists","created_at":(now+timedelta(seconds=1)).isoformat()}]
     assert execution_truth({},running,now=now+timedelta(seconds=1))["state"]=="RUNNING-SOURCE"
 
 
