@@ -448,39 +448,45 @@ def execution_truth(task: Mapping[str, Any], stories: Iterable[Mapping[str, Any]
     stale = False
     stale_kind = None
     freshness = None
-    active_attempt = latest.get("attempt_id")
+    freshness_age = None
+    active_attempt = None
 
     if latest["kind"] in {"accepted", "producer"}:
-        accepted = [item for item in evidence if item["kind"] == "accepted" and item["timestamp"] <= ts]
+        accepted = [
+            item
+            for item in evidence
+            if item["kind"] == "accepted" and item["timestamp"] <= ts
+        ]
         latest_accepted = accepted[-1] if accepted else None
-        if latest_accepted is not None:
-            active_attempt = latest_accepted.get("attempt_id") or active_attempt
-            freshness_candidates = [latest_accepted]
+
+        if latest_accepted is None:
+            state = "EXECUTION UNBOUND — ACCEPTED ATTEMPT IDENTITY REQUIRED"
+            stale = True
+            stale_kind = "WORKER_EXECUTION_STALE"
+        elif latest_accepted.get("attempt_id") is None:
+            state = "ACCEPTANCE UNBOUND — ATTEMPT IDENTITY REQUIRED"
+            stale = True
+            stale_kind = "WORKER_EXECUTION_STALE"
         else:
-            freshness_candidates = []
+            active_attempt = str(latest_accepted["attempt_id"])
+            freshness_candidates = [latest_accepted]
+            for item in evidence:
+                if item["kind"] != "producer":
+                    continue
+                if item["timestamp"] < latest_accepted["timestamp"] or item["timestamp"] > ts:
+                    continue
+                if item.get("attempt_id") != active_attempt:
+                    continue
+                freshness_candidates.append(item)
 
-        for item in evidence:
-            if item["kind"] != "producer" or item["timestamp"] > ts:
-                continue
-            producer_attempt = item.get("attempt_id")
-            if producer_attempt is None:
-                continue
-            if active_attempt is not None and producer_attempt != active_attempt:
-                continue
-            freshness_candidates.append(item)
-            active_attempt = active_attempt or producer_attempt
-
-        freshness = max(freshness_candidates, key=lambda item: item["timestamp"]) if freshness_candidates else latest_accepted
-        if freshness is not None:
+            freshness = max(freshness_candidates, key=lambda item: item["timestamp"])
+            state = str(freshness["state"])
             freshness_age = max(0.0, (now - freshness["timestamp"]).total_seconds())
             if freshness_age > execution_threshold:
                 state = "EXECUTION STALE — FRESH ATTEMPT-BOUND EVIDENCE REQUIRED"
                 stale = True
                 stale_kind = "WORKER_EXECUTION_STALE"
-        else:
-            freshness_age = None
     else:
-        freshness_age = None
         if state == "DISPATCH REQUESTED" and age > 3600:
             state = "DISPATCH STALE — ACCEPTANCE NOT PROVEN"
             stale = True
