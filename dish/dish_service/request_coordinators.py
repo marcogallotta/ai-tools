@@ -378,11 +378,11 @@ LEGACY_DIRECT = "LEGACY_DIRECT"
 MEDIATED_ACTION = "MEDIATED_ACTION"
 ASANA_MUTATION_REPLAY_COMMAND = "development-workflow-asana-mutation"
 
-# The V1 write contract is deliberately closed to fields the exact task reread
-# observes. Each action has exactly one completion-state payload.
+# The source-only V1 write contract is deliberately closed to one exact field
+# transition whose result the task fingerprint observes. Additional mutation
+# classes require their own separately reviewed read/write contract.
 _SUPPORTED_COMPLETION_ACTIONS: dict[str, bool] = {
     "task.complete": True,
-    "task.reopen": False,
 }
 
 
