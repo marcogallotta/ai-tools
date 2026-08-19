@@ -12,7 +12,12 @@ from dish_pg.command_contract import (
     POSTGRES_CLIENT_REQUEST_ID_SCHEMA,
     POSTGRES_CLIENT_RUN_ID_SCHEMA,
     POSTGRES_DISH_ID_SCHEMA,
+    POSTGRESQL_ACTION_ADDED_COMMANDS,
     POSTGRESQL_ACTION_RETIRED_COMMANDS,
+    SEARCH_COMMAND,
+    SEARCH_PAGE_SIZE_DEFAULT,
+    SEARCH_PAGE_SIZE_MAX,
+    SEARCH_QUERY_MAX_LENGTH,
     postgres_action_argument_schema,
     validate_postgres_action_request,
 )
@@ -78,9 +83,8 @@ def _assert_postgresql_action_contract(document: dict[str, object]) -> None:
 
 
 def test_postgresql_action_metadata_reuses_current_principal_and_replay_policy() -> None:
-    for command in ACTION_COMMANDS:
+    for command, current in ACTION_COMMAND_DEFINITIONS.items():
         target = COMMAND_DEFINITIONS[command]
-        current = ACTION_COMMAND_DEFINITIONS[command]
         assert target.principal == current.principal
         assert target.request_replay is current.request_id_required
 
@@ -179,6 +183,57 @@ def test_postgresql_discovery_reads_reject_malformed_run_id_consistently() -> No
         assert error.value.code == "INVALID_ARGUMENT"
         assert error.value.rule == "uuid_identifier_required"
         assert error.value.details["field"] == "client.run_id"
+
+
+def test_postgresql_search_action_is_read_only_bounded_and_reuses_stable_run_id() -> None:
+    assert POSTGRESQL_ACTION_ADDED_COMMANDS == (SEARCH_COMMAND,)
+    assert SEARCH_COMMAND in ACTION_COMMANDS
+    definition = COMMAND_DEFINITIONS[SEARCH_COMMAND]
+    assert definition.profile == "Q"
+    assert definition.request_replay is False
+
+    schema = postgres_action_argument_schema(SEARCH_COMMAND)
+    assert schema["required"] == ["query", "agent"]
+    assert schema["additionalProperties"] is False
+    assert schema["properties"]["query"]["maxLength"] == SEARCH_QUERY_MAX_LENGTH
+    assert schema["properties"]["page_size"] == {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": SEARCH_PAGE_SIZE_MAX,
+        "default": SEARCH_PAGE_SIZE_DEFAULT,
+    }
+    assert "cursor" in schema["properties"]
+
+    client, arguments = validate_postgres_action_request(
+        SEARCH_COMMAND,
+        {
+            "client": {"run_id": DISCOVERY_RUN_ID},
+            "arguments": {
+                "query": "  Potato  ",
+                "agent": "gpt",
+                "page_size": 2,
+            },
+        },
+    )
+    assert client == {"run_id": DISCOVERY_RUN_ID}
+    assert arguments == {"query": "Potato", "agent": "gpt", "page_size": 2}
+    assert "request_id" not in client
+
+
+def test_postgresql_search_action_rejects_bad_pagination_and_unknown_fields() -> None:
+    base = {"client": {"run_id": DISCOVERY_RUN_ID}}
+    for arguments, rule in (
+        ({"query": "potato", "agent": "gpt", "page_size": 0}, "argument_range_invalid"),
+        ({"query": "potato", "agent": "gpt", "page_size": 101}, "argument_range_invalid"),
+        ({"query": "potato", "agent": "gpt", "cursor": ""}, "argument_type_invalid"),
+        ({"query": "potato", "agent": "gpt", "body": "no"}, "argument_field_forbidden"),
+    ):
+        with pytest.raises(DishRuleError) as error:
+            validate_postgres_action_request(
+                SEARCH_COMMAND,
+                {**base, "arguments": arguments},
+            )
+        assert error.value.rule == rule
 
 
 def test_postgresql_connected_recovery_commands_are_retained() -> None:
