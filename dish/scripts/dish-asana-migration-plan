@@ -1,0 +1,1167 @@
+#!/usr/bin/env python3
+"""
+Read-only planner for migrating a Dish Asana project's task sections.
+
+Purpose
+-------
+Reuse the mature evidence/reconciliation logic from refresh_dish_desk.py, but
+produce a migration ledger instead of an operator dashboard.
+
+This script NEVER mutates Asana or GitHub. It defaults to the Development
+Workflow project, while accepting another exact project GID so the same
+evidence pipeline can be reused for later project migrations.
+
+Outputs
+-------
+- dish-asana-migration-<project-gid>.json
+- dish-asana-migration-<project-gid>.csv
+
+For every task in the selected project, it records:
+- current task/project/section state
+- durable priority evidence
+- GitHub PR / lifecycle evidence where present
+- proposed target section
+- proposed stable title
+- proposed coarse Code Area
+- confidence and reasons
+- migration blockers / human-review flags
+
+Migration policy encoded here
+-----------------------------
+Target sections:
+  Needs Processing
+  Needs Research
+  Needs Agentic Review
+  Needs Human Review
+  Waiting on Dependency
+  Needs Post-Merge Rollout
+  Ready
+  Under Development
+  Done
+
+Important rules:
+- preserve project/task identity;
+- title text is evidence for cleanup, not lifecycle/priority authority;
+- priority is never inferred from audit severity or lifecycle words in titles;
+- handoff sent != Under Development;
+- GitHub/lifecycle owns detailed execution state once development starts;
+- source merge alone != Done when residual rollout/operator/runtime work remains;
+- ambiguous raw findings prefer Needs Processing rather than guessed Research/Ready;
+- deterministic output is a proposal/validation surface, not a replacement for
+  semantic reconciliation when evidence conflicts.
+"""
+
+import argparse
+import csv
+import datetime
+import json
+import os
+import re
+import subprocess
+from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
+DEFAULT_PROJECT_GID = "1217419962189616"
+
+TARGET_SECTIONS = [
+    "Needs Processing",
+    "Needs Research",
+    "Needs Agentic Review",
+    "Needs Human Review",
+    "Waiting on Dependency",
+    "Needs Post-Merge Rollout",
+    "Ready",
+    "Under Development",
+    "Done",
+]
+
+# Small, coarse scheduling vocabulary. This is deliberately not a file-conflict oracle.
+CODE_AREAS = [
+    "Asana / Coordination",
+    "Development Lifecycle / PR",
+    "CI / Tests",
+    "Agent Runtime / Roles",
+    "Infrastructure / Runtime",
+    "Database / PostgreSQL",
+    "Dashboard / Observability",
+    "Docs / Knowledge",
+    "Product Workflow",
+    "Cross-cutting / Unknown",
+]
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ASANA = os.environ.get("ASANA_CLI", os.path.expanduser("~/.local/bin/asana"))
+AI_TOOLS = os.environ.get("AI_TOOLS_REPO", "/home/marco/ai-tools")
+REPO = os.environ.get("DISH_REPO", os.path.join(AI_TOOLS, "dish"))
+CONTROLLER_STATUS = os.environ.get(
+    "DISH_CONTROLLER_STATUS",
+    next(
+        (
+            candidate
+            for candidate in (
+                os.path.join(SCRIPT_DIR, "read_controller_status.py"),
+                "/home/marco/dish-ops-desk/read_controller_status.py",
+            )
+            if os.path.exists(candidate)
+        ),
+        os.path.join(SCRIPT_DIR, "read_controller_status.py"),
+    ),
+)
+
+# Bounded semantic judgments from the current full-corpus audit. Each is
+# freshness-bound: any task-body or comment movement invalidates the override
+# and returns the task to ordinary deterministic classification.
+SEMANTIC_OVERRIDES = {
+    "1217542061354795": {
+        "modified_at": "2026-08-17T21:43:24.838Z",
+        "latest_comment_at": "2026-08-17T20:37:57.723Z",
+        "target": "Done",
+        "reason": "task notes identify exact reviewed head 7a42729e in PR #140, and the canonical owning PR subsequently merged",
+    },
+    "1217545391806442": {
+        "modified_at": "2026-08-18T13:42:56.468Z",
+        "latest_comment_at": "2026-08-18T10:27:42.107Z",
+        "target": "Needs Post-Merge Rollout",
+        "reason": "PR #151 source landed, while autonomous activation remains explicitly withheld",
+    },
+    "1217591596709304": {
+        "modified_at": "2026-08-19T12:09:34.399Z",
+        "latest_comment_at": "2026-08-19T12:09:34.398Z",
+        "target": "Needs Human Review",
+        "reason": "focused design re-review passed; route to Marco review conservatively before further progression",
+    },
+    "1217626783110669": {
+        "modified_at": "2026-08-19T12:09:24.216Z",
+        "latest_comment_at": "2026-08-19T12:09:24.214Z",
+        "target": "Needs Human Review",
+        "reason": "focused design re-review passed; route to Marco review conservatively before further progression",
+    },
+    "1217513658798449": {
+        "modified_at": "2026-08-17T19:30:55.976Z",
+        "latest_comment_at": "2026-08-16T07:43:44.467Z",
+        "target": "Done",
+        "reason": "task scope was explicitly folded into PR #140; its final head was reviewed and merged with no task-specific residual",
+    },
+    "1217539974328252": {
+        "modified_at": "2026-08-17T19:30:58.593Z",
+        "latest_comment_at": "2026-08-17T12:24:43.139Z",
+        "target": "Done",
+        "reason": "task scope was explicitly folded into PR #140; its final head was reviewed and merged with no task-specific residual",
+    },
+    "1217506708779600": {
+        "modified_at": "2026-08-17T19:30:58.630Z",
+        "latest_comment_at": "2026-08-17T12:25:01.637Z",
+        "target": "Done",
+        "reason": "task scope was explicitly folded into PR #140; its final head was reviewed and merged with no task-specific residual",
+    },
+    "1217509484909298": {
+        "modified_at": "2026-08-17T19:30:56.180Z",
+        "latest_comment_at": "2026-08-17T12:25:33.816Z",
+        "target": "Done",
+        "reason": "task scope was explicitly folded into PR #140; its final head was reviewed and merged with no task-specific residual",
+    },
+    "1217628587455132": {
+        "modified_at": "2026-08-19T09:07:24.054Z",
+        "latest_comment_at": "2026-08-19T08:45:11.965Z",
+        "target": "Waiting on Dependency",
+        "reason": "V2 has explicit start conditions on V1 stability, rollout evidence, and the existing telemetry owners",
+    },
+    "1217632643548483": {
+        "modified_at": "2026-08-19T10:45:37.480Z",
+        "latest_comment_at": "2026-08-19T10:44:17.422Z",
+        "target": "Needs Human Review",
+        "reason": "agentic design Review passed and the exact design now awaits Marco's required final stamp",
+    },
+}
+
+
+def sh(cmd, cwd=None, timeout=None):
+    r = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True,
+        cwd=cwd or (REPO if os.path.isdir(REPO) else None),
+        timeout=timeout,
+    )
+    if r.returncode:
+        detail = r.stderr.strip() or r.stdout.strip() or f"exit {r.returncode}"
+        raise RuntimeError(f"{' '.join(cmd[:4])} failed: {detail}")
+    return r.stdout
+
+
+def gh_api(path):
+    return json.loads(sh(["gh", "api", path], cwd=AI_TOOLS if os.path.isdir(AI_TOOLS) else None))
+
+
+def asana_raw(path):
+    raw = sh([ASANA, "raw", "GET", path], cwd=None)
+    return json.loads(raw)
+
+
+def paged_asana_lines(command):
+    lines = []
+    cursor = None
+    while True:
+        args = command + (["--cursor", cursor] if cursor else [])
+        page = sh(args, cwd=None)
+        lines.extend(line for line in page.splitlines() if not line.startswith("# more results:"))
+        match = re.search(r"^# more results: --cursor (\S+)$", page, re.MULTILINE)
+        if not match:
+            return lines
+        cursor = match.group(1)
+
+
+def controller_pr_states():
+    """Use the repository lifecycle resolver in read-only status mode when available."""
+    if not (os.path.exists(CONTROLLER_STATUS) and os.path.isdir(AI_TOOLS)):
+        return {}, "unavailable: local lifecycle resolver not present"
+
+    token_result = subprocess.run(
+        ["gh", "auth", "token"],
+        capture_output=True,
+        text=True,
+        cwd=AI_TOOLS,
+        timeout=5,
+    )
+    if token_result.returncode or not token_result.stdout.strip():
+        return {}, "unavailable: GitHub authentication could not be resolved"
+
+    env = os.environ.copy()
+    env["GH_TOKEN"] = token_result.stdout.strip()
+    try:
+        result = subprocess.run(
+            ["/usr/bin/python3", CONTROLLER_STATUS, "--http-timeout", "10", "status", "--format", "json"],
+            capture_output=True,
+            text=True,
+            cwd=AI_TOOLS,
+            env=env,
+            timeout=45,
+        )
+    except subprocess.TimeoutExpired:
+        return {}, "unavailable: read-only resolver exceeded 45 seconds"
+
+    if result.returncode:
+        detail = (result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}").splitlines()[-1]
+        return {}, f"unavailable: {detail}"
+
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        return {}, f"unavailable: invalid resolver JSON ({exc})"
+
+    if payload.get("schema") != "dish-pr-lifecycle-status-v1":
+        return {}, "unavailable: unexpected resolver schema"
+
+    states = {
+        int(item["number"]): item
+        for item in payload.get("pull_requests", [])
+        if isinstance(item, dict) and str(item.get("number", "")).isdigit()
+    }
+    return states, "repository typed PR resolver (read-only status)"
+
+
+def gh_pr_lineage():
+    lineage = []
+    for page in range(1, 11):
+        batch = gh_api(f"/repos/marcogallotta/ai-tools/pulls?state=all&per_page=100&page={page}")
+        lineage.extend(batch)
+        if len(batch) < 100:
+            break
+    return lineage
+
+
+def extract_owning_task_gids(body):
+    gids = []
+    for gid in re.findall(r"dish-owning-task:v1 task=(\d{10,})", body or "", re.IGNORECASE):
+        if gid not in gids:
+            gids.append(gid)
+    section = re.search(
+        r"^##\s+Owning tasks?\s*$\n(.*?)(?=^##\s|\Z)",
+        body or "",
+        re.IGNORECASE | re.MULTILINE | re.DOTALL,
+    )
+    if section:
+        for gid in re.findall(r"\bAsana\s+`?(\d{10,})", section.group(1), re.IGNORECASE):
+            if gid not in gids:
+                gids.append(gid)
+    for pat in [
+        r"Owning (?:Asana )?task:?\s*`?\[?(\d{10,})",
+        r"Implements Asana task \[?(\d{10,})",
+    ]:
+        match = re.search(pat, body or "", re.IGNORECASE)
+        if match and match.group(1) not in gids:
+            gids.append(match.group(1))
+    return gids
+
+
+def latest_comment(gid):
+    lines = paged_asana_lines([ASANA, "comments", gid])
+    comments = []
+    current = None
+    for line in lines:
+        match = re.match(r"^\d+\s+(\S+)\s+.+$", line)
+        if match:
+            if current:
+                comments.append(current)
+            current = {"created_at": match.group(1), "lines": []}
+        elif current is not None:
+            current["lines"].append(line)
+    if current:
+        comments.append(current)
+    if not comments:
+        return None
+    for item in comments:
+        item["text"] = "\n".join(item.pop("lines")).strip()
+    latest = max(comments, key=lambda item: item["created_at"])
+    latest["history"] = sorted(comments, key=lambda item: item["created_at"], reverse=True)
+    return latest
+
+
+def task_state(notes):
+    match = re.search(r"^STATE:\s*(.+)$", notes or "", re.MULTILINE | re.IGNORECASE)
+    return match.group(1).strip() if match else ""
+
+
+def priority_token(text):
+    """Durable priority evidence only. No title fallback."""
+    patterns = [
+        r"^PRIORITY:\s*(P[- ]?CRITICAL|P0|P1|P2|UNSET)\b",
+        r"\bPRIORITY\s+(?:IS\s+)?(?:NOW|REMAINS)\s+(P[- ]?CRITICAL|P0|P1|P2|UNSET)\b",
+        r"\bCURRENT PRIORITY(?:\s+IS|:)\s*(P[- ]?CRITICAL|P0|P1|P2|UNSET)\b",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text or "", re.IGNORECASE | re.MULTILINE)
+        if match:
+            token = re.sub(r"[ -]", "", match.group(1).upper())
+            if token == "PCRITICAL":
+                return "P-CRITICAL"
+            return token
+    return None
+
+
+def custom_field_value(custom_fields, field_name):
+    for field in custom_fields or []:
+        if (field.get("name") or "").strip().casefold() == field_name.casefold():
+            value = field.get("display_value")
+            if value is not None and str(value).strip():
+                return str(value).strip()
+    return None
+
+
+def current_priority(notes, comment=None, custom_fields=None):
+    """Current durable priority. Unknown is UNSET; never infer from title/severity."""
+    field_value = custom_field_value(custom_fields, "Priority")
+    if field_value:
+        token = priority_token(f"PRIORITY: {field_value}")
+        if token:
+            return token, "Asana Priority custom field"
+    for item in (comment or {}).get("history") or ([comment] if comment else []):
+        text = item.get("text", "")
+        token = priority_token(text)
+        if token:
+            return token, f"comment {item.get('created_at', 'timestamp unavailable')}"
+        if re.search(r"\b(?:REVOKES?|REVOKED)\b.{0,80}\bP[- ]CRITICAL\b", text, re.IGNORECASE | re.DOTALL):
+            return "UNSET", f"priority revocation in comment {item.get('created_at', 'timestamp unavailable')}"
+    token = priority_token(notes)
+    return (token, "task notes PRIORITY record") if token else ("UNSET", "no authoritative priority record")
+
+
+def durable_text(notes, comment):
+    history = "\n\n".join(item.get("text", "") for item in ((comment or {}).get("history") or []))
+    return (notes or "") + "\n\n" + history
+
+
+def latest_comment_text(comment):
+    return (comment or {}).get("text", "")
+
+
+def latest_comment_headline(comment):
+    return next(
+        (line.strip() for line in latest_comment_text(comment).splitlines() if line.strip()),
+        "",
+    )
+
+
+def apply_semantic_override(task, comment, classification, project_gid=DEFAULT_PROJECT_GID):
+    # Current audited exceptions belong only to the Development Workflow
+    # migration. A multi-homed task must not inherit them in another project.
+    override = SEMANTIC_OVERRIDES.get(task["gid"]) if project_gid == DEFAULT_PROJECT_GID else None
+    if not override:
+        return classification, False
+    if task.get("modified_at") != override["modified_at"]:
+        return classification, False
+    if (comment or {}).get("created_at") != override["latest_comment_at"]:
+        return classification, False
+    return (
+        override["target"],
+        "high",
+        "freshness-bound semantic audit: " + override["reason"],
+    ), True
+
+
+def handoff_evidence(comment):
+    for item in (comment or {}).get("history") or ([comment] if comment else []):
+        text = item.get("text", "").upper()
+        if re.search(r"HANDOFF.{0,60}(?:CANCELLED|REVOKED|REJECTED)", text, re.DOTALL) or re.search(
+            r"EXECUTION-STATE CORRECTION[\s\S]{0,500}\bNOT DISPATCHED\b", text
+        ):
+            return False, None
+        if "COORDINATOR DISPATCH RECORD" in text and "SENT / USER RELAYED" in text and "NOT YET PROVEN" in text:
+            return True, item.get("created_at")
+        if "HANDOFF SENT" in text and "NO DESTINATION ACCEPTANCE" in text:
+            return True, item.get("created_at")
+    return False, None
+
+
+def handoff_sent(comment):
+    return handoff_evidence(comment)[0]
+
+
+def age_hours(timestamp, now):
+    parsed = parse_timestamp(timestamp)
+    if not parsed:
+        return None
+    return max(0.0, (now - parsed.astimezone(datetime.timezone.utc)).total_seconds() / 3600)
+
+
+def worker_started_from_evidence(task, prs, controller_states):
+    """
+    Conservative positive proof of development start.
+    Handoff alone is explicitly insufficient.
+    """
+    owning = [pr for pr in prs if task["gid"] in extract_owning_task_gids(pr.get("body", ""))]
+    open_owning = [pr for pr in owning if pr.get("state") == "open"]
+
+    # An open PR owned by the task proves an implementation lineage exists.
+    if open_owning:
+        return True, f"open owning PR(s): {', '.join('#'+str(pr['number']) for pr in open_owning)}"
+
+    # Controller exact state may also prove active implementation.
+    for pr in owning:
+        number = pr.get("number")
+        resolved = controller_states.get(number)
+        if not resolved:
+            continue
+        if resolved.get("state") in {
+            "local_implementation_completion_required",
+            "implementation_continuation_required",
+            "authoring_implementation_in_progress",
+            "changes_requested_fix_in_progress",
+            "review_ready",
+            "review_in_progress",
+            "waiting_ci_certification",
+            "review_passed_evaluating_gates",
+            "local_certification_required",
+            "integration_ready",
+            "merging_integration_in_progress",
+        }:
+            return True, f"lifecycle resolver state on PR #{number}: {resolved.get('state')}"
+
+    return False, "no worker-start proof found"
+
+
+def rollout_or_residual_completion_pending(text):
+    return bool(re.search(
+        r"(?:ROLLOUT|ACTIVATION|RUNTIME|OPERATOR|POST-MERGE).{0,100}"
+        r"(?:REQUIRED|PENDING|STILL OPEN|ACCEPTANCE|VERIFY|VERIFICATION)",
+        text or "",
+        re.IGNORECASE | re.DOTALL,
+    ))
+
+
+def human_review_pending(notes, comment):
+    """Resolve only a current, explicit human-decision record.
+
+    Incidental prose such as "ask Marco after a bootstrap failure" or a policy
+    example containing ``HUMAN DECISION REQUIRED`` is not task state. Comments
+    are evaluated newest-first and only structured state/disposition lines (or
+    an explicit approval/override record) can change the result.
+    """
+    pending = re.compile(
+        r"\bMARCO REVIEW READY\b|\bHUMAN DECISION(?:\s+STILL)?\s+(?:PENDING|REQUIRED)\b|"
+        r"\bMARCO (?:DESIGN )?DECISION (?:PENDING|REQUIRED|NEEDED)\b|"
+        r"\bMARCO APPROVAL STILL REQUIRED\b|\bNEEDS MARCO INPUT\b|\bMARCO (?:DESIGN )?HOLD\b|"
+        r"\bREADY FOR MARCO FINAL STAMP\b|\bMARCO FINAL STAMP(?:\s+REQUIRED)?\b",
+        re.IGNORECASE,
+    )
+    resolved = re.compile(
+        r"\bMARCO (?:DESIGN DECISION\s*[—:-]\s*)?APPROVED\b|"
+        r"\bMARCO EXPLICITLY APPROVES\b|\bHUMAN (?:DESIGN )?DECISION\b.{0,80}\b(?:RESOLVED|APPROVED)\b|"
+        r"\bGATE WAIVED BY MARCO OVERRIDE\b|\bMARCO OVERRIDE\b",
+        re.IGNORECASE | re.DOTALL,
+    )
+
+    for item in (comment or {}).get("history") or ([comment] if comment else []):
+        text = item.get("text", "")
+        headline = next((line.strip() for line in text.splitlines() if line.strip()), "")
+        if resolved.search(headline) or resolved.search(text):
+            return False
+        structured = "\n".join(
+            line.strip()
+            for line in text.splitlines()
+            if re.match(
+                r"^(?:STATE|HUMAN (?:DESIGN )?DECISION|HUMAN INPUT|MARCO (?:DECISION|REVIEW|APPROVAL|DESIGN HOLD|FINAL STAMP)|"
+                r"DISPOSITION)\b",
+                line.strip(),
+                re.IGNORECASE,
+            )
+        )
+        if pending.search(headline + "\n" + structured):
+            return True
+        if re.search(
+            r"MARCO RESEARCH DIRECTION|RETURN (?:THIS TASK )?TO .*?(?:RESEARCH|DESIGN)",
+            headline + "\n" + structured,
+            re.IGNORECASE | re.DOTALL,
+        ):
+            return False
+
+    structured_notes = "\n".join(
+        line.strip()
+        for line in (notes or "").splitlines()
+        if re.match(r"^(?:STATE|HUMAN (?:DESIGN )?DECISION|HUMAN INPUT|MARCO (?:DECISION|REVIEW|APPROVAL|DESIGN HOLD|FINAL STAMP))\b", line.strip(), re.IGNORECASE)
+    )
+    if re.search(r"^HUMAN (?:DESIGN )?DECISION[^\n]*\b(?:NONE|RESOLVED|NOT REQUIRED)\b", structured_notes, re.IGNORECASE | re.MULTILINE):
+        return False
+    return bool(pending.search(structured_notes))
+
+
+def dependency_pending(notes, comment):
+    text = task_state(notes) + "\n" + (notes or "") + "\n" + latest_comment_text(comment)
+    return bool(re.search(
+        r"^BLOCKED ON:\s*\S|^OWNER OF UNBLOCK:\s*\S|^UNBLOCK WHEN:\s*\S|"
+        r"\bWAIT(?:ING)? ON (?:DEPENDENCY|TASK|PR|SYSTEM|EXTERNAL)\b|"
+        r"\bDEPENDENCY(?:\s+STILL)?\s+(?:PENDING|UNRESOLVED)\b|\bWAKE CONDITION\b",
+        text or "",
+        re.IGNORECASE | re.MULTILINE,
+    ))
+
+
+def parse_timestamp(value):
+    try:
+        return datetime.datetime.fromisoformat((value or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def changed_after(task_timestamp, evidence_timestamp):
+    task_time = parse_timestamp(task_timestamp)
+    evidence_time = parse_timestamp(evidence_timestamp)
+    return bool(task_time and evidence_time and task_time > evidence_time + datetime.timedelta(seconds=30))
+
+
+def agentic_review_pending(task):
+    notes = task.get("notes", "")
+    comment = task.get("comment")
+    current = task_state(notes) + "\n" + latest_comment_text(comment)
+    current_state = task_state(notes)
+    for item in (comment or {}).get("history") or []:
+        headline = next((line.strip() for line in item.get("text", "").splitlines() if line.strip()), "")
+        if re.search(r"\b(?:RE-)?REVIEW\s*[—:-]\s*PASS\b", headline, re.IGNORECASE):
+            if changed_after(task.get("modified_at"), item.get("created_at")) and re.search(
+                r"\b(?:AMENDED|CORRECTED|REVISED|REVISION)\b.*\b(?:RE-)?REVIEW\s+(?:READY|REQUIRED|PENDING)\b|"
+                r"\b(?:RE-)?REVIEW\s+(?:READY|REQUIRED|PENDING)\b.*\b(?:AMENDED|CORRECTED|REVISED|REVISION)\b",
+                current_state,
+                re.IGNORECASE,
+            ):
+                return True
+            return False
+        if re.search(r"\b(?:RE-)?REVIEW\s*[—:-]\s*BLOCK\b", headline, re.IGNORECASE):
+            return False
+        if re.search(
+            r"MARCO RESEARCH DIRECTION|RETURN (?:THIS TASK )?TO .*?(?:RESEARCH|DESIGN)|"
+            r"\b(?:AGENT(?:IC)?\s+)?(?:DESIGN\s+)?REVISION\s+REQUIRED\b",
+            item.get("text", ""),
+            re.IGNORECASE | re.DOTALL,
+        ):
+            return False
+        if re.search(
+            r"\b(?:AGENT(?:IC)?\s+)?(?:DESIGN\s+)?(?:RE-)?REVIEW(?:\s+RECOVERY)?\s+(?:READY|REQUIRED|PENDING)\b|"
+            r"\bREADY FOR (?:INDEPENDENT\s+)?(?:AGENT\s+)?REVIEW\b|"
+            r"\bPOST-MERGE REVIEW\b.*\bREQUIRED\b",
+            item.get("text", ""),
+            re.IGNORECASE,
+        ):
+            return True
+    return bool(re.search(
+        r"\b(?:AGENT(?:IC)?\s+)?(?:DESIGN\s+)?(?:RE-)?REVIEW(?:\s+RECOVERY)?\s+(?:READY|REQUIRED|PENDING)\b|"
+        r"\bREADY FOR (?:INDEPENDENT\s+)?(?:AGENT\s+)?REVIEW\b|"
+        r"\bPOST-MERGE REVIEW\b.*\bREQUIRED\b",
+        current,
+        re.IGNORECASE,
+    ))
+
+
+def research_pending(task):
+    notes = task.get("notes", "")
+    comment = task.get("comment")
+    current = task_state(notes) + "\n" + latest_comment_text(comment)
+    current_state = task_state(notes)
+    for item in (comment or {}).get("history") or []:
+        text = item.get("text", "")
+        headline = next((line.strip() for line in text.splitlines() if line.strip()), "")
+        if re.search(r"\b(?:RE-)?REVIEW\s*[—:-]\s*PASS\b", headline, re.IGNORECASE):
+            if changed_after(task.get("modified_at"), item.get("created_at")) and re.search(
+                r"\b(?:AMENDED|CORRECTED|REVISED|REVISION|DESIGN REQUIRED|RESEARCH REQUIRED)\b",
+                current_state,
+                re.IGNORECASE,
+            ):
+                return True
+            return False
+        if re.search(r"\b(?:RE-)?REVIEW\s*[—:-]\s*BLOCK\b", headline, re.IGNORECASE):
+            return True
+        if re.search(
+            r"MARCO RESEARCH DIRECTION|RETURN (?:THIS TASK )?TO .*?(?:RESEARCH|DESIGN)|"
+            r"\b(?:AGENT(?:IC)?\s+)?(?:DESIGN\s+)?REVISION\s+REQUIRED\b|"
+            r"\bNEEDS RESEARCH\b|\bRESEARCH(?:\s*/\s*DESIGN)?\s+(?:READY|REQUIRED|PENDING)\b",
+            text,
+            re.IGNORECASE | re.DOTALL,
+        ):
+            return True
+    return bool(re.search(
+        r"\bNEEDS RESEARCH\b|\bRESEARCH(?:\s*/\s*DESIGN|\s*\+\s*IMPLEMENTATION)?\s+(?:READY|REQUIRED|PENDING)\b|"
+        r"\b(?:AGENT(?:IC)?\s+)?(?:DESIGN\s+)?REVISION\s+REQUIRED\b|"
+        r"\b(?:AGENT(?:IC)?\s+)?DESIGN\s+REQUIRED\b|\bAUDIT\s*/\s*DESIGN\s+REQUIRED\b|\bRESEARCH DIRECTION\b",
+        current,
+        re.IGNORECASE,
+    ))
+
+
+def latest_formal_review(comment):
+    for item in (comment or {}).get("history") or []:
+        text = item.get("text", "")
+        headline = next((line.strip() for line in text.splitlines() if line.strip()), "")
+        match = re.search(r"\b(?:RE-)?REVIEW\s*[—:-]\s*(PASS|BLOCK)\b", headline, re.IGNORECASE)
+        if match:
+            return match.group(1).upper(), item
+    return None, None
+
+
+def raw_intake_signal(text):
+    return bool(re.search(
+        r"\b(?:AUDIT FINDING|FINDING|IDEA INBOX|DESIGN INBOX|NEEDS PROCESSING|RAW INTAKE)\b",
+        text or "",
+        re.IGNORECASE,
+    ))
+
+
+def stable_title(name):
+    """
+    Remove lifecycle/priority wrappers while preserving the semantic subject.
+    Returns (proposal, changed, confidence_note).
+    """
+    original = name.strip()
+    value = original
+
+    # Bracketed transport/priority markers.
+    value = re.sub(r"^\s*\[AGENTIC\]\s*", "", value, flags=re.IGNORECASE)
+    value = re.sub(r"^\s*\[P(?:0|1|2|[- ]?CRITICAL)\]\s*", "", value, flags=re.IGNORECASE)
+
+    # Leading priority token.
+    value = re.sub(r"^\s*P(?:0|1|2|[- ]?CRITICAL)\s*[—:-]\s*", "", value, flags=re.IGNORECASE)
+
+    # Repeat because titles often stack several lifecycle prefixes.
+    lifecycle_prefix = re.compile(
+        r"^\s*(?:"
+        r"DONE(?:\s*/\s*SUPERSEDED)?|SUPERSEDED|SUBSUMED|FOLDED|INVALID\s*/\s*CLOSED|"
+        r"RESEARCH COMPLETE|AUDIT COMPLETE|AUDIT SYNTHESIS COMPLETE|"
+        r"IMPLEMENTATION READY|IMPLEMENTATION REQUIRED|IMPLEMENT NOW|"
+        r"IN PROGRESS|REVIEW READY|REVIEW REQUIRED|REVIEW PENDING|REVIEW PREP REQUIRED|"
+        r"AGENT REVIEW READY|AGENT REVIEW REQUIRED|AGENT DESIGN REVIEW REQUIRED|AGENT DESIGN RE-REVIEW REQUIRED|"
+        r"DESIGN REVIEW REQUIRED|DESIGN INBOX|IDEA INBOX|"
+        r"SOURCE LANDED(?:\s*/\s*[^—:-]+)?|"
+        r"MARCO (?:DESIGN )?(?:HOLD|REVIEW REQUIRED|INPUT REQUIRED)|"
+        r"NEEDS MARCO INPUT|WAITING ON [^—:-]+|BLOCKED|TRIAGED|"
+        r"NOT DISPATCHED|CORRECTION REQUIRED|MAIN LANDING REPAIR REQUIRED|"
+        r"PHASE [A-Z]\s+IMPLEMENTATION READY|STACK PR\d+\s+READY"
+        r")\s*[—:-]\s*",
+        re.IGNORECASE,
+    )
+    while True:
+        new = lifecycle_prefix.sub("", value, count=1)
+        if new == value:
+            break
+        value = new
+
+    value = re.sub(r"^\s*[-—:]+\s*", "", value).strip()
+    if not value:
+        return original, False, "prefix stripping would erase title; keep original for semantic review"
+    return value, value != original, "mechanical lifecycle/priority prefix cleanup"
+
+
+def infer_code_areas(name, notes, custom_fields=None):
+    field_value = custom_field_value(custom_fields, "Code Area")
+    if field_value:
+        values = [value.strip() for value in re.split(r"[,;|]", field_value) if value.strip()]
+        valid = [value for value in values if value in CODE_AREAS]
+        if valid:
+            return valid, "Asana Code Area custom field"
+
+    # Titles are useful for the semantic subject, but never for lifecycle or
+    # priority. Bound note text so old chronology does not make every task
+    # appear cross-cutting.
+    text = f"{name}\n{(notes or '')[:2000]}".lower()
+    areas = []
+
+    def add(area):
+        if area not in areas:
+            areas.append(area)
+
+    if any(k in text for k in ["asana", "coordinator", "dispatch", "handoff", "triage", "project setting"]):
+        add("Asana / Coordination")
+    if any(k in text for k in ["pull request", "pr #", "review", "integration", "worktree", "branch", "merge", "lifecycle"]):
+        add("Development Lifecycle / PR")
+    if any(k in text for k in ["ci", "test", "pytest", "pglite", "browser", "certification"]):
+        add("CI / Tests")
+    if any(k in text for k in ["agent", "worker", "codex", "claude", "chatgpt", "role", "project kernel"]):
+        add("Agent Runtime / Roles")
+    if any(k in text for k in ["runtime", "activation", "deployment", "host", "hook", "infrastructure"]):
+        add("Infrastructure / Runtime")
+    if any(k in text for k in ["postgres", "postgresql", "database", "migration"]):
+        add("Database / PostgreSQL")
+    if any(k in text for k in ["dashboard", "observability", "telemetry", "metrics"]):
+        add("Dashboard / Observability")
+    if any(k in text for k in ["docs", "documentation", "knowledge", "claude.md", "runbook", "architecture"]):
+        add("Docs / Knowledge")
+    if any(k in text for k in ["product workflow", "planning", "research continuation", "dish workflow"]):
+        add("Product Workflow")
+
+    if not areas:
+        return ["Cross-cutting / Unknown"], "no deterministic coarse-area signal"
+    return areas[:2], "bounded keyword suggestion; Coordinator confirmation recommended"
+
+
+def classify_target(task, prs, controller_states):
+    notes = task.get("notes", "")
+    comment = task.get("comment")
+    completed = bool(task.get("completed"))
+    state = task_state(notes)
+    sections = task.get("current_sections") or []
+    current = state + "\n" + notes + "\n" + latest_comment_text(comment)
+
+    worker_started, worker_reason = worker_started_from_evidence(task, prs, controller_states)
+
+    # Asana completion is explicit orchestration authority. A merge alone never
+    # reaches this branch and therefore never implies Done.
+    if completed:
+        return "Done", "high", "Asana completed=true"
+
+    if human_review_pending(notes, comment):
+        return "Needs Human Review", "high", "durable human/Marco decision or approval is pending"
+
+    if dependency_pending(notes, comment):
+        return "Waiting on Dependency", "high", "named dependency/wait state found"
+
+    if worker_started:
+        return "Under Development", "high", worker_reason
+
+    if agentic_review_pending(task):
+        return "Needs Agentic Review", "high", "durable pre-development agent review/re-review signal found"
+
+    if research_pending(task):
+        return "Needs Research", "high", "durable research/design work remains"
+
+    review_verdict, review_item = latest_formal_review(comment)
+    if review_verdict == "PASS" and re.search(
+        r"(?:VERDICT|CURRENT DISPOSITION):?[^\n]*\bIMPLEMENTATION READY\b",
+        review_item.get("text", ""),
+        re.IGNORECASE,
+    ):
+        return "Ready", "high", "latest durable agent Review passed with Implementation Ready disposition"
+    if review_verdict == "PASS" and (
+        handoff_sent(comment)
+        or "Ready" in sections
+        or re.search(r"\bIMPLEMENTATION READY\b|\bSTATE:\s*READY\b", current, re.IGNORECASE)
+    ):
+        return "Ready", "high", "agent Review passed and a later/current Ready or handoff record establishes the next state"
+    if review_verdict == "PASS":
+        return (
+            "Needs Processing",
+            "low",
+            "agent Review passed, but no durable record yet proves the next state is Ready, human decision, dependency, or Done",
+        )
+
+    # Handoff-sent work remains Ready until exact worker-start/PR evidence exists.
+    if handoff_sent(comment):
+        return "Ready", "high", "Implementation handoff recorded, but no worker-start evidence; sent is not running"
+
+    # The legacy Ready section is orchestration evidence once stronger current
+    # gates and active GitHub lineage have been excluded.
+    if "Ready" in sections or re.search(r"\bIMPLEMENTATION READY\b|\bSTATE:\s*READY\b", current, re.IGNORECASE):
+        return "Ready", "high", "current Ready placement/record and no stronger unresolved gate or active PR"
+
+    # Raw/untriaged findings go to intake, not guessed into Research.
+    if raw_intake_signal(current):
+        return "Needs Processing", "high", "raw finding/intake record without stronger later-state proof"
+
+    if any(section in {"Backlog", "Untitled section"} for section in sections):
+        return "Needs Processing", "high", "legacy intake/backlog placement has no direct target state; preserve for triage"
+
+    if "Blocked / Decision" in sections:
+        return "Needs Processing", "low", "legacy blocked placement lacks a mechanically provable human decision or dependency wake contract"
+
+    if "In Progress" in sections:
+        return "Needs Processing", "low", "legacy In Progress placement lacks authoritative worker-start evidence"
+
+    if "Review / Integration" in sections:
+        return "Needs Processing", "low", "legacy Review / Integration placement lacks a current review, dependency, or active PR proof"
+
+    return "Needs Processing", "low", "no stronger target state could be proven; preserve as intake for semantic triage"
+
+
+def load_project_tasks(project_gid):
+    """
+    Enumerate the complete cursor-paginated project corpus, then hydrate the
+    fields needed for migration. The raw wrapper intentionally returns only
+    Asana's ``data`` value, so it cannot expose ``next_page`` metadata.
+    """
+    task_ids = []
+    for line in paged_asana_lines(
+        [ASANA, "tasks", "project", project_gid, "--status", "both"]
+    ):
+        match = re.match(r"^(\d+)\s+\[[ x]\]\s+", line)
+        if match and match.group(1) not in task_ids:
+            task_ids.append(match.group(1))
+
+    def hydrate(gid):
+        path = (
+            f"/tasks/{gid}?"
+            "opt_fields=name,completed,completed_at,created_at,modified_at,notes,assignee.gid,assignee.name,"
+            "memberships.project.gid,memberships.project.name,memberships.section.gid,memberships.section.name,"
+            "custom_fields.gid,custom_fields.name,custom_fields.type,custom_fields.display_value"
+        )
+        return asana_raw(path)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        rows = list(pool.map(hydrate, task_ids))
+    return rows
+
+
+def hydrate_comments(tasks):
+    def one(task):
+        try:
+            return task["gid"], latest_comment(task["gid"])
+        except Exception as exc:
+            return task["gid"], {"error": str(exc), "history": []}
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        return dict(pool.map(one, tasks))
+
+
+def build_ledger(project_gid=DEFAULT_PROJECT_GID, project_name=None):
+    generated_at = datetime.datetime.now(datetime.timezone.utc)
+    tasks = load_project_tasks(project_gid)
+    comments = hydrate_comments(tasks)
+
+    try:
+        prs = gh_pr_lineage()
+    except Exception as exc:
+        prs = []
+        gh_error = str(exc)
+    else:
+        gh_error = None
+
+    controller_states, controller_source = controller_pr_states()
+
+    ledger = []
+    for raw in tasks:
+        memberships = raw.get("memberships") or []
+        selected_memberships = [
+            m for m in memberships
+            if (m.get("project") or {}).get("gid") == project_gid
+        ]
+        current_sections = [
+            (m.get("section") or {}).get("name")
+            for m in selected_memberships
+            if m.get("section")
+        ]
+
+        task = {
+            "gid": raw["gid"],
+            "name": raw.get("name", ""),
+            "completed": bool(raw.get("completed")),
+            "completed_at": raw.get("completed_at"),
+            "created_at": raw.get("created_at"),
+            "modified_at": raw.get("modified_at"),
+            "notes": raw.get("notes") or "",
+            "assignee": raw.get("assignee"),
+            "memberships": memberships,
+            "current_sections": current_sections,
+            "custom_fields": raw.get("custom_fields") or [],
+            "comment": comments.get(raw["gid"]),
+        }
+
+        classification = classify_target(task, prs, controller_states)
+        (target, confidence, reason), semantic_override_used = apply_semantic_override(
+            task, task["comment"], classification, project_gid
+        )
+        proposed_title, title_changed, title_reason = stable_title(task["name"])
+        priority, priority_source = current_priority(
+            task["notes"], task["comment"], task["custom_fields"]
+        )
+        areas, code_area_source = infer_code_areas(
+            task["name"], task["notes"], task["custom_fields"]
+        )
+        started, started_reason = worker_started_from_evidence(task, prs, controller_states)
+        sent, sent_at = handoff_evidence(task["comment"])
+        sent_age = age_hours(sent_at, generated_at)
+        update_age = age_hours(task["modified_at"], generated_at)
+
+        owning_prs = [
+            {
+                "number": pr.get("number"),
+                "state": pr.get("state"),
+                "draft": pr.get("draft"),
+                "merged_at": pr.get("merged_at"),
+                "url": pr.get("html_url"),
+            }
+            for pr in prs
+            if task["gid"] in extract_owning_task_gids(pr.get("body", ""))
+        ]
+
+        flags = []
+        if len(current_sections) != 1:
+            flags.append(f"current Development Workflow section count is {len(current_sections)}")
+        if confidence == "low":
+            flags.append("semantic triage required")
+        if target == "Ready" and confidence != "high":
+            flags.append("verify no hidden prerequisite before cutover")
+        if target == "Under Development":
+            if not started:
+                flags.append("Under Development lacks worker-start evidence")
+            if "In Progress" not in current_sections:
+                flags.append("CRITICAL lifecycle drift: GitHub proves active development but Asana is not In Progress")
+        if not task["completed"] and not started and (
+            "In Progress" in current_sections
+            or re.search(r"\b(?:IMPLEMENTATION|WORKER) (?:STARTED|IN PROGRESS|RUNNING)\b", task_state(task["notes"]), re.IGNORECASE)
+        ):
+            flags.append("stale execution claim: Asana says In Progress but no current worker/open-PR evidence exists")
+        if not task["completed"] and any(pr.get("state") == "closed" and pr.get("merged_at") for pr in owning_prs):
+            flags.append("source landed: owning PR merged; keep residual rollout/acceptance or orchestration reconciliation separate from source state")
+        if not task["completed"] and sent and not started and not owning_prs and sent_age is not None:
+            stale_after = 3 if priority == "P-CRITICAL" else 6 if priority == "P0" else 24
+            if sent_age >= stale_after:
+                flags.append(
+                    f"stale handoff: sent {sent_age:.1f}h ago with no worker/open-PR evidence "
+                    f"(threshold {stale_after}h for {priority})"
+                )
+        if priority == "UNSET":
+            flags.append("priority UNSET")
+        if areas == ["Cross-cutting / Unknown"]:
+            flags.append("Code Area needs semantic review")
+        if title_changed is False and re.search(
+            r"\b(?:READY|REQUIRED|PENDING|IN PROGRESS|DONE|SUPERSEDED|BLOCKED|HOLD|SOURCE LANDED)\b",
+            task["name"],
+            re.IGNORECASE,
+        ):
+            flags.append("title may still contain embedded lifecycle wording")
+
+        ledger.append({
+            "task_gid": task["gid"],
+            "current_name": task["name"],
+            "proposed_stable_title": proposed_title,
+            "title_changed": title_changed,
+            "title_reason": title_reason,
+            "completed": task["completed"],
+            "completed_at": task["completed_at"],
+            "created_at": task["created_at"],
+            "current_sections": current_sections,
+            "current_state_record": task_state(task["notes"]),
+            "target_section": target,
+            "classification_confidence": confidence,
+            "classification_reason": reason,
+            "semantic_override_used": semantic_override_used,
+            "priority": priority,
+            "priority_source": priority_source,
+            "code_areas": areas,
+            "code_area_source": code_area_source,
+            "version": "",
+            "owning_prs": owning_prs,
+            "handoff_sent": sent,
+            "latest_handoff_at": sent_at,
+            "handoff_age_hours": round(sent_age, 1) if sent_age is not None else None,
+            "task_update_age_hours": round(update_age, 1) if update_age is not None else None,
+            "worker_started": started,
+            "worker_start_reason": started_reason,
+            "latest_comment_at": (task["comment"] or {}).get("created_at"),
+            "latest_comment_headline": latest_comment_headline(task["comment"]),
+            "modified_at": task["modified_at"],
+            "flags": flags,
+        })
+
+    ambiguous = [
+        {
+            "task_gid": item["task_gid"],
+            "current_name": item["current_name"],
+            "current_sections": item["current_sections"],
+            "proposed_safe_section": item["target_section"],
+            "reason": item["classification_reason"],
+        }
+        for item in ledger
+        if item["classification_confidence"] == "low"
+    ]
+    section_counts = {section: 0 for section in TARGET_SECTIONS}
+    priority_counts = {value: 0 for value in ["P-CRITICAL", "P0", "P1", "P2", "UNSET"]}
+    for item in ledger:
+        section_counts[item["target_section"]] += 1
+        priority_counts[item["priority"]] += 1
+
+    return {
+        "schema": "dish-asana-project-migration-plan-v1",
+        "generated_at": generated_at.isoformat(),
+        "project_gid": project_gid,
+        "project_name": project_name,
+        "target_sections": TARGET_SECTIONS,
+        "code_area_vocabulary": CODE_AREAS,
+        "controller_source": controller_source,
+        "github_error": gh_error,
+        "task_count": len(ledger),
+        "summary": {
+            "by_proposed_section": section_counts,
+            "by_priority": priority_counts,
+        },
+        "ambiguous_task_count": len(ambiguous),
+        "ambiguous_tasks": ambiguous,
+        "tasks": ledger,
+    }
+
+
+def validate_plan(plan):
+    errors = []
+    seen = set()
+    for item in plan["tasks"]:
+        gid = item["task_gid"]
+        if gid in seen:
+            errors.append(f"duplicate task_gid in plan: {gid}")
+        seen.add(gid)
+
+        if item["target_section"] not in TARGET_SECTIONS:
+            errors.append(f"{gid}: invalid target section {item['target_section']!r}")
+
+        if item["priority"] not in {"P-CRITICAL", "P0", "P1", "P2", "UNSET"}:
+            errors.append(f"{gid}: invalid priority {item['priority']!r}")
+
+        if item["target_section"] == "Under Development" and any(
+            "lacks worker-start evidence" in flag for flag in item["flags"]
+        ):
+            errors.append(f"{gid}: Under Development without worker-start evidence")
+
+        if item["target_section"] == "Done" and not item["completed"] and not item["semantic_override_used"]:
+            errors.append(f"{gid}: Done without Asana completion or freshness-bound semantic audit")
+
+    return errors
+
+
+def write_outputs(plan, json_path, csv_path):
+    Path(json_path).write_text(json.dumps(plan, indent=2, ensure_ascii=False) + "\n")
+
+    fields = [
+        "task_gid",
+        "current_name",
+        "proposed_stable_title",
+        "completed",
+        "completed_at",
+        "created_at",
+        "current_sections",
+        "current_state_record",
+        "target_section",
+        "classification_confidence",
+        "classification_reason",
+        "semantic_override_used",
+        "priority",
+        "priority_source",
+        "code_areas",
+        "code_area_source",
+        "version",
+        "owning_prs",
+        "handoff_sent",
+        "latest_handoff_at",
+        "handoff_age_hours",
+        "task_update_age_hours",
+        "worker_started",
+        "worker_start_reason",
+        "latest_comment_at",
+        "latest_comment_headline",
+        "modified_at",
+        "flags",
+    ]
+    with open(csv_path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        for item in plan["tasks"]:
+            row = dict(item)
+            row["current_sections"] = " | ".join(item["current_sections"])
+            row["code_areas"] = " | ".join(item["code_areas"])
+            row["owning_prs"] = " | ".join(
+                f"#{pr['number']}:{pr['state']}{':draft' if pr.get('draft') else ''}"
+                for pr in item["owning_prs"]
+            )
+            row["flags"] = " | ".join(item["flags"])
+            row.pop("title_changed", None)
+            row.pop("title_reason", None)
+            writer.writerow({key: row.get(key, "") for key in fields})
+
+
+def summarize(plan):
+    counts = {}
+    priorities = {}
+    low_conf = []
+    for item in plan["tasks"]:
+        counts[item["target_section"]] = counts.get(item["target_section"], 0) + 1
+        priorities[item["priority"]] = priorities.get(item["priority"], 0) + 1
+        if item["classification_confidence"] == "low":
+            low_conf.append(item["task_gid"])
+
+    print(f"project: {plan['project_gid']}")
+    print(f"tasks: {plan['task_count']}")
+    print("target sections:")
+    for section in TARGET_SECTIONS:
+        print(f"  {section}: {counts.get(section, 0)}")
+    print("priority:")
+    for value in ["P-CRITICAL", "P0", "P1", "P2", "UNSET"]:
+        print(f"  {value}: {priorities.get(value, 0)}")
+    print(f"semantic-review-required: {len(low_conf)}")
+
+
+def default_output_paths(project_gid):
+    stem = f"dish-asana-migration-{project_gid}"
+    return f"{stem}.json", f"{stem}.csv"
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--project-gid", default=DEFAULT_PROJECT_GID)
+    parser.add_argument("--project-name")
+    parser.add_argument("--json", help="JSON output path (default: project-GID-derived filename in the current directory)")
+    parser.add_argument("--csv", help="CSV output path (default: project-GID-derived filename in the current directory)")
+    parser.add_argument(
+        "--fail-on-plan-errors",
+        action="store_true",
+        help="exit nonzero if deterministic migration invariants fail",
+    )
+    args = parser.parse_args()
+
+    if not re.fullmatch(r"\d{10,}", args.project_gid):
+        parser.error("--project-gid must be an exact numeric Asana project GID")
+    default_json, default_csv = default_output_paths(args.project_gid)
+    json_path = args.json or default_json
+    csv_path = args.csv or default_csv
+
+    plan = build_ledger(args.project_gid, args.project_name)
+    errors = validate_plan(plan)
+    plan["validation_errors"] = errors
+
+    write_outputs(plan, json_path, csv_path)
+    summarize(plan)
+
+    print(f"wrote {json_path}")
+    print(f"wrote {csv_path}")
+
+    if errors:
+        print("validation errors:")
+        for error in errors:
+            print(f"  - {error}")
+        if args.fail_on_plan_errors:
+            raise SystemExit(2)
+
+
+if __name__ == "__main__":
+    main()

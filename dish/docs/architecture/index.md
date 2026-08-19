@@ -46,6 +46,7 @@ flowchart LR
 | Request IDs/replay/idempotency | [Request replay and idempotency](request-replay-and-idempotency.md) |
 | Operations/leases/fencing | [Operations, leases, and fencing](operations-leases-and-fencing.md) |
 | External effects/Asana | [External effects and Asana](external-effects-and-asana.md) |
+| Read-only Asana project migration planning | [`../asana-project-migration-runbook.md`](../asana-project-migration-runbook.md) |
 | PostgreSQL target/runtime | [PostgreSQL runtime](postgresql-runtime.md) |
 | Dark launch | [Dark launch](dark-launch.md) |
 | Review V2 design-generation lineage | [Review V2 design lineage](review-v2-design-lineage.md) |
