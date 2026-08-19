@@ -142,13 +142,17 @@ class PlannerClassificationTests(unittest.TestCase):
         evidence = comment(("2026-08-19T10:00:00.000Z", "FOCUSED DESIGN RE-REVIEW — PASS\nVERDICT: PASS"))
         value = task(comment=evidence, current_sections=["Review / Integration"])
         target, confidence, reason = self.classify(value)
-        self.assertEqual((target, confidence), ("Needs Processing", "low"))
+        self.assertEqual((target, confidence), (planner.RECONCILIATION_REQUIRED, "low"))
         self.assertIn("no durable record", reason)
 
     def test_review_pass_plus_ready_section_is_ready(self):
         evidence = comment(("2026-08-19T10:00:00.000Z", "FOCUSED DESIGN REVIEW — PASS\nVERDICT: PASS"))
         value = task(comment=evidence, current_sections=["Ready"])
         self.assertEqual(self.classify(value)[0], "Ready")
+
+    def test_legacy_ready_placement_alone_requires_reconciliation(self):
+        value = task(notes="STATE: READY", current_sections=["Ready"])
+        self.assertEqual(self.classify(value)[0], planner.RECONCILIATION_REQUIRED)
 
     def test_structured_marco_design_decision_in_review_headline_is_human_review(self):
         evidence = comment((
@@ -158,14 +162,27 @@ class PlannerClassificationTests(unittest.TestCase):
         value = task(comment=evidence, current_sections=["Blocked / Decision"])
         self.assertEqual(self.classify(value)[0], "Needs Human Review")
 
+    def test_plain_language_human_review_required_is_human_review(self):
+        value = task(notes="STATE: HUMAN REVIEW REQUIRED — DO NOT IMPLEMENT")
+        self.assertEqual(self.classify(value)[0], "Needs Human Review")
+
     def test_review_block_routes_to_research(self):
         evidence = comment(("2026-08-19T11:00:00.000Z", "AGENT REVIEW — BLOCK"))
         value = task(comment=evidence)
         self.assertEqual(self.classify(value)[0], "Needs Research")
 
+    def test_incomplete_design_routes_to_research_before_design_review(self):
+        value = task(notes="STATE: DESIGN REQUIRED — independent Design Review required before Implementation")
+        self.assertEqual(self.classify(value)[0], "Needs Research")
+
+    def test_generic_audit_finding_is_not_assumed_to_be_raw_intake(self):
+        evidence = comment(("2026-08-19T11:00:00.000Z", "AUDIT FINDING — detailed acceptance follows"))
+        value = task(comment=evidence, current_sections=["Backlog"])
+        self.assertEqual(self.classify(value)[0], planner.RECONCILIATION_REQUIRED)
+
     def test_title_review_words_do_not_route_task(self):
         value = task(name="AGENT REVIEW REQUIRED — title-only residue")
-        self.assertEqual(self.classify(value)[0], "Needs Processing")
+        self.assertEqual(self.classify(value)[0], planner.RECONCILIATION_REQUIRED)
 
     def test_semantic_override_requires_exact_freshness(self):
         gid = "1217632643548483"
@@ -204,6 +221,298 @@ class PlannerClassificationTests(unittest.TestCase):
             result, used = planner.apply_semantic_override(value, evidence, ("Needs Processing", "low", "base"))
             self.assertTrue(used, gid)
             self.assertEqual(result[0], target, gid)
+
+    def test_marco_reviewed_ten_task_regression_set(self):
+        expected = {
+            "1217632551553551": "Needs Research",
+            "1217632550435438": "Needs Research",
+            "1217632340344322": planner.RECONCILIATION_REQUIRED,
+            "1217632337801506": "Needs Agentic Review",
+            "1217614656977022": "Needs Research",
+            "1217624784161458": "Needs Processing",
+            "1217603621508125": planner.RECONCILIATION_REQUIRED,
+            "1217560696950266": "Ready",
+            "1217518869489828": "Waiting on Dependency",
+            "1217516762073723": "Ready",
+        }
+        for gid, target in expected.items():
+            override = planner.SEMANTIC_OVERRIDES[gid]
+            evidence = (
+                comment((override["latest_comment_at"], "current durable evidence"))
+                if override["latest_comment_at"]
+                else None
+            )
+            value = task(
+                gid=gid,
+                modified_at=override["modified_at"],
+                comment=evidence,
+                current_sections=["Backlog"],
+            )
+            base = planner.classify_target(value, [], {})
+            result, used = planner.apply_semantic_override(value, evidence, base)
+            self.assertTrue(used, gid)
+            self.assertEqual(result[0], target, gid)
+
+    def test_fixed_live_manual_chronology_regression_set(self):
+        fixtures = {
+            "1217513382665760": (
+                task(
+                    gid="1217513382665760",
+                    notes="STATE: SOURCE LANDED — post-merge rollout required",
+                    comment=comment(("2026-08-18T12:17:42Z", "Use task 1217591724565043 as the canonical active owner.")),
+                ),
+                [],
+                planner.RECONCILIATION_REQUIRED,
+            ),
+            "1217516543178705": (
+                task(
+                    gid="1217516543178705",
+                    comment=comment(
+                        ("2026-08-17T11:05:09Z", "AGENT RE-REVIEW REQUIRED"),
+                        ("2026-08-17T13:06:50Z", "ACCEPTED IMPLEMENTATION ADDENDUM"),
+                        ("2026-08-17T18:22:55Z", "HANDOFF SENT"),
+                    ),
+                ),
+                [],
+                "Ready",
+            ),
+            "1217517324134654": (
+                task(
+                    gid="1217517324134654",
+                    comment=comment(
+                        ("2026-08-17T10:00:00Z", "HANDOFF SENT"),
+                        ("2026-08-18T13:23:05Z", "MARCO BLOCK / RECOVERY HOLD\nHold this task until dependency 1217562392297322 is resolved."),
+                    ),
+                ),
+                [],
+                "Waiting on Dependency",
+            ),
+            "1217517555297735": (
+                task(gid="1217517555297735", notes="ACCEPTANCE\n- exact bounded outcome"),
+                [],
+                "Needs Agentic Review",
+            ),
+            "1217539974328252": (
+                task(gid="1217539974328252", notes="STATE: REVIEW / INTEGRATION — FOLDED INTO PR #140"),
+                [{"number": 140, "state": "closed", "merged_at": "2026-08-18T10:00:00Z", "body": ""}],
+                "Done",
+            ),
+            "1217547171327342": (
+                task(gid="1217547171327342", notes="STATE: MARCO DESIGN HOLD — AUTOMATED REVIEW LIFECYCLE NOT APPROVED"),
+                [],
+                "Needs Human Review",
+            ),
+            "1217587472923725": (
+                task(gid="1217587472923725", notes="STATE: AGENT DESIGN REVISION REQUIRED"),
+                [],
+                "Needs Research",
+            ),
+            "1217591715594181": (
+                task(
+                    gid="1217591715594181",
+                    notes="STATE: RESEARCH REQUIRED",
+                    comment=comment(("2026-08-18T12:12:48Z", "Proceed now. No additional pre-Implementation Agent Review is required.")),
+                ),
+                [],
+                "Ready",
+            ),
+            "1217591724565043": (
+                task(
+                    gid="1217591724565043",
+                    notes="STATE: DESIGN RECHECK REQUIRED",
+                    comment=comment(
+                        ("2026-08-18T15:04:00Z", "INDEPENDENT AGENT DESIGN REVIEW — BLOCK"),
+                        ("2026-08-18T15:15:55Z", "FOCUSED INDEPENDENT DESIGN RECHECK — PASS"),
+                        ("2026-08-18T15:23:37Z", "MARCO DISPATCHED"),
+                        ("2026-08-19T08:42:04Z", "POST-MERGE WORKER ROLLOUT — REQUIRED\nThis Worker setup can proceed."),
+                    ),
+                ),
+                [{"number": 173, "state": "closed", "merged_at": "2026-08-19T07:00:00Z", "body": ""}],
+                "Ready",
+            ),
+            "1217606745770074": (
+                task(
+                    gid="1217606745770074",
+                    comment=comment(("2026-08-18T18:31:12Z", "IMPLEMENTATION COMPLETE / REVIEW READY — PR #175")),
+                ),
+                [{"number": 175, "state": "closed", "closed_at": "2026-08-18T19:00:00Z", "merged_at": None, "body": ""}],
+                planner.RECONCILIATION_REQUIRED,
+            ),
+            "1217606746149627": (
+                task(gid="1217606746149627", notes="REQUIRED OUTCOME\nA concrete bounded correction."),
+                [],
+                "Needs Agentic Review",
+            ),
+            "1217608564728454": (
+                task(gid="1217608564728454", notes="STATE: IMPLEMENTATION IN PROGRESS\nACCEPTANCE\n- exact test"),
+                [],
+                planner.RECONCILIATION_REQUIRED,
+            ),
+            "1217608708597303": (
+                task(gid="1217608708597303", notes="Exact implementation point for the physical gate must be resolved by the authorized Implementation task."),
+                [],
+                "Needs Research",
+            ),
+            "1217628242411152": (
+                task(
+                    gid="1217628242411152",
+                    notes="ACCEPTANCE\n- bounded candidate",
+                    current_sections=["Ready"],
+                    comment=comment(("2026-08-19T12:57:41Z", "INDEPENDENT DESIGN REVIEW — PASS")),
+                ),
+                [],
+                "Ready",
+            ),
+            "1217639277058985": (
+                task(gid="1217639277058985", notes="STATE: TRACKING / NOT YET DESIGNED"),
+                [],
+                "Needs Research",
+            ),
+        }
+        for gid, (value, prs, expected) in fixtures.items():
+            self.assertEqual(self.classify(value, prs)[0], expected, gid)
+
+    def test_later_implementation_prohibition_beats_pass_and_ready_language(self):
+        value = task(
+            gid="1217628696934306",
+            notes="ACCEPTANCE\n- bounded candidate",
+            current_sections=["Ready"],
+            comment=comment(
+                ("2026-08-19T10:00:00Z", "INDEPENDENT DESIGN REVIEW — PASS\nCURRENT DISPOSITION: IMPLEMENTATION READY"),
+                ("2026-08-19T11:00:00Z", "No implementation, hook/config activation, or freeze relaxation is authorized by this verdict."),
+            ),
+        )
+        self.assertEqual(self.classify(value)[0], planner.RECONCILIATION_REQUIRED)
+
+    def test_timestamped_github_events_do_not_override_later_asana_hold(self):
+        value = task(
+            gid="1217000000000002",
+            comment=comment(("2026-08-19T11:00:00Z", "MARCO HOLD — do not progress")),
+        )
+        prs = [{
+            "number": 202,
+            "state": "closed",
+            "merged_at": "2026-08-18T11:00:00Z",
+            "body": "dish-owning-task:v1 task=1217000000000002",
+        }]
+        events = planner.build_lifecycle_event_stream(value, prs, {})
+        self.assertLess(
+            next(item["sequence"] for item in events if item["kind"] == "source_merged"),
+            next(item["sequence"] for item in events if item["kind"] == "hold_active"),
+        )
+        self.assertEqual(self.classify(value, prs)[0], "Needs Human Review")
+
+    def test_later_current_folded_state_beats_older_ready_review(self):
+        value = task(
+            gid="1217509484909298",
+            notes="STATE: REVIEW / INTEGRATION — FOLDED INTO PR #140",
+            modified_at="2026-08-19T15:45:18Z",
+            comment=comment((
+                "2026-08-16T23:04:31Z",
+                "INDEPENDENT AGENT RE-REVIEW — PASS\nVERDICT: PASS — IMPLEMENTATION READY.",
+            )),
+        )
+        prs = [{
+            "number": 140,
+            "state": "closed",
+            "merged_at": "2026-08-17T20:09:31Z",
+            "body": "",
+        }]
+        self.assertEqual(self.classify(value, prs)[0], "Done")
+
+    def test_unstructured_backlog_is_reconciliation_not_processing(self):
+        target, confidence, _ = self.classify(task(current_sections=["Backlog"]))
+        self.assertEqual((target, confidence), (planner.RECONCILIATION_REQUIRED, "low"))
+
+    def test_fields_require_explicit_durable_evidence(self):
+        notes = "Review V2 is context. Integration V1 must stabilize."
+        self.assertEqual(planner.explicit_code_areas(notes)[0], [])
+        self.assertEqual(planner.explicit_version(notes)[0], "")
+
+        notes += "\nCODE AREA: Development Lifecycle / PR | CI / Tests\nVERSION: Lifecycle V4 — own generation"
+        self.assertEqual(
+            planner.explicit_code_areas(notes)[0],
+            ["Development Lifecycle / PR", "CI / Tests"],
+        )
+        self.assertEqual(planner.explicit_version(notes)[0], "Lifecycle V4")
+
+    def test_ten_task_field_regression_uses_only_explicit_records(self):
+        fixtures = {
+            "1217632551553551": ("Review V2 is contextual.", "UNSET", ""),
+            "1217632550435438": ("", "UNSET", ""),
+            "1217632340344322": ("", "UNSET", ""),
+            "1217632337801506": ("Review V2 is a dependency.", "UNSET", ""),
+            "1217614656977022": ("VERSION: V4", "UNSET", "V4"),
+            "1217624784161458": ("", "UNSET", ""),
+            "1217603621508125": ("", "UNSET", ""),
+            "1217560696950266": (
+                "PRIORITY: P0\nVERSION: dish-development-lifecycle:v2-pilot1",
+                "P0",
+                "dish-development-lifecycle:v2-pilot1",
+            ),
+            "1217518869489828": ("Blocked until Integration V1 stabilizes.", "UNSET", ""),
+            "1217516762073723": ("PRIORITY: P2", "P2", ""),
+        }
+        for gid, (notes, expected_priority, expected_version) in fixtures.items():
+            self.assertEqual(planner.current_priority(notes)[0], expected_priority, gid)
+            self.assertEqual(planner.explicit_code_areas(notes)[0], [], gid)
+            self.assertEqual(planner.explicit_version(notes)[0], expected_version, gid)
+
+    def test_apply_and_readback_cover_section_and_all_three_fields(self):
+        item = {
+            "task_gid": "1217000000000001",
+            "target_section": "Ready",
+            "applicable": True,
+            "priority": "P0",
+            "code_areas": ["CI / Tests"],
+            "version": "Lifecycle V4",
+        }
+        self.assertEqual(
+            planner.build_apply_spec(item),
+            {
+                "task_gid": item["task_gid"],
+                "section": "Ready",
+                "field_updates": {
+                    "Priority": "P0",
+                    "Code Area": ["CI / Tests"],
+                    "Version": "Lifecycle V4",
+                },
+            },
+        )
+        observed = {
+            "section": "Ready",
+            "priority": "P0",
+            "code_areas": ["CI / Tests"],
+            "version": "Lifecycle V4",
+        }
+        self.assertEqual(planner.readback_mismatches(item, observed), [])
+        observed.update(section="Needs Processing", priority="P1", code_areas=[], version="")
+        self.assertEqual(len(planner.readback_mismatches(item, observed)), 4)
+
+    def test_reconciliation_is_not_applicable(self):
+        item = {
+            "task_gid": "1217000000000001",
+            "target_section": planner.RECONCILIATION_REQUIRED,
+            "applicable": False,
+            "priority": "UNSET",
+            "code_areas": [],
+            "version": "",
+        }
+        with self.assertRaisesRegex(ValueError, "not applicable"):
+            planner.build_apply_spec(item)
+        with self.assertRaisesRegex(ValueError, "not applicable"):
+            planner.readback_mismatches(item, {})
+
+    def test_apply_spec_omits_unset_custom_fields(self):
+        item = {
+            "task_gid": "1217000000000001",
+            "target_section": "Needs Research",
+            "applicable": True,
+            "priority": "UNSET",
+            "code_areas": [],
+            "version": "",
+        }
+        self.assertEqual(planner.build_apply_spec(item)["field_updates"], {})
 
     def test_stable_title_cleanup_is_mechanical(self):
         cleaned, changed, _ = planner.stable_title("P0 — AGENT REVIEW REQUIRED — exact-byte handoff")
@@ -290,7 +599,10 @@ class PlannerProjectTests(unittest.TestCase):
         ):
             plan = planner.build_ledger(selected)
         item = plan["tasks"][0]
-        self.assertEqual((item["target_section"], item["classification_confidence"]), ("Needs Processing", "low"))
+        self.assertEqual(
+            (item["target_section"], item["classification_confidence"], item["applicable"]),
+            (planner.RECONCILIATION_REQUIRED, "low", False),
+        )
         self.assertEqual(plan["comment_errors"][0]["task_gid"], raw["gid"])
         self.assertIn("Asana comment retrieval failed", planner.validate_plan(plan)[0])
 
@@ -338,6 +650,7 @@ class PlannerProjectTests(unittest.TestCase):
                     "current_sections": ["Ready"],
                     "current_state_record": "READY",
                     "target_section": "Ready",
+                    "applicable": True,
                     "classification_confidence": "high",
                     "classification_reason": "test",
                     "semantic_override_used": False,
@@ -346,6 +659,7 @@ class PlannerProjectTests(unittest.TestCase):
                     "code_areas": ["Cross-cutting / Unknown"],
                     "code_area_source": "test",
                     "version": "",
+                    "version_source": "test",
                     "owning_prs": [],
                     "handoff_sent": False,
                     "latest_handoff_at": None,
