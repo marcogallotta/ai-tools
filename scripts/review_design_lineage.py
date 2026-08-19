@@ -105,13 +105,22 @@ class Event:
     occurred_at: str
     actor: str
     successor_generation_id: str | None = None
+    material_delta_set_sha256: str | None = None
 
     def __post_init__(self) -> None:
         _text(self.event_gid, "event_gid")
         _text(self.occurred_at, "occurred_at")
         _text(self.actor, "actor")
-        if self.successor_generation_id is not None and self.event_type is not EventType.SUPERSEDED:
-            raise ValueError("successor_generation_id is valid only on SUPERSEDED")
+        if self.successor_generation_id is not None:
+            _text(self.successor_generation_id, "successor_generation_id")
+            if self.event_type is not EventType.SUPERSEDED:
+                raise ValueError("successor_generation_id is valid only on SUPERSEDED")
+        if self.event_type is EventType.MARCO_APPROVED:
+            if self.material_delta_set_sha256 is None:
+                raise ValueError("MARCO_APPROVED requires material_delta_set_sha256")
+            _sha(self.material_delta_set_sha256)
+        elif self.material_delta_set_sha256 is not None:
+            raise ValueError("material_delta_set_sha256 is valid only on MARCO_APPROVED")
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,8 +242,10 @@ def generation_mapping(record: Generation) -> dict[str, str | None]:
         "created_at": record.created_at,
         "created_by": record.created_by,
     }
-    key = "canonical_snapshot" if record.canonical_snapshot is not None else "canonical_snapshot_ref"
-    result[key] = record.canonical_snapshot or record.canonical_snapshot_ref
+    if record.canonical_snapshot is not None:
+        result["canonical_snapshot"] = record.canonical_snapshot
+    else:
+        result["canonical_snapshot_ref"] = record.canonical_snapshot_ref
     return result
 
 
@@ -252,6 +263,8 @@ def event_mapping(event: Event) -> dict[str, str | None]:
     }
     if event.successor_generation_id is not None:
         result["successor_generation_id"] = event.successor_generation_id
+    if event.material_delta_set_sha256 is not None:
+        result["material_delta_set_sha256"] = event.material_delta_set_sha256
     return result
 
 
@@ -290,7 +303,7 @@ def reconstruct(record: Generation, events: Sequence[Event]) -> Reconstruction:
     contradictions: list[Contradiction] = []
     seen: set[str] = set()
     latest: str | None = None
-    for index, event in enumerate(events):
+    for event in events:
         if event.event_gid in seen:
             contradictions.append(_c("duplicate-event", event.event_gid, "event GID repeated"))
             continue
@@ -298,7 +311,7 @@ def reconstruct(record: Generation, events: Sequence[Event]) -> Reconstruction:
         if event.identity != record.identity:
             contradictions.append(_c("identity-mismatch", event.event_gid, "event identity disagrees with generation"))
             continue
-        next_state, error = _transition(state, event.event_type, index)
+        next_state, error = _transition(state, event.event_type)
         if error:
             contradictions.append(_c("invalid-transition", event.event_gid, error))
             continue
@@ -312,9 +325,9 @@ def reconstruct(record: Generation, events: Sequence[Event]) -> Reconstruction:
     return Reconstruction(record.identity, state, latest, tuple(valid), tuple(contradictions))
 
 
-def _transition(state: State | None, event: EventType, index: int) -> tuple[State | None, str | None]:
+def _transition(state: State | None, event: EventType) -> tuple[State | None, str | None]:
     if state is None:
-        return (State.AUTHORING, None) if index == 0 and event is EventType.CREATED else (None, "first valid event must be CREATED")
+        return (State.AUTHORING, None) if event is EventType.CREATED else (None, "first valid event must be CREATED")
     if state in {State.SUPERSEDED, State.CANCELLED}:
         return state, f"{state.value} is terminal"
     if event is EventType.CREATED:
@@ -340,6 +353,13 @@ def validate_lineage(
     problems: list[Contradiction] = []
     by_id: dict[str, Generation] = {}
     children: dict[str, list[str]] = {}
+    task_gids = {record.task_gid for record in records}
+    if len(task_gids) > 1:
+        problems.append(_c("mixed-task-lineage", "lineage", "validate one task lineage at a time"))
+        return tuple(problems)
+    roots = [record.generation_id for record in records if not record.predecessor_generation_id]
+    if len(roots) > 1:
+        problems.append(_c("multiple-lineage-roots", "lineage", ",".join(sorted(roots))))
     for record in records:
         if record.generation_id in by_id:
             problems.append(_c("generation-redefinition", record.generation_id, "generation_id is not unique"))
