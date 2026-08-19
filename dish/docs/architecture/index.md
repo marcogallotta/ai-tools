@@ -48,6 +48,7 @@ flowchart LR
 | External effects/Asana | [External effects and Asana](external-effects-and-asana.md) |
 | PostgreSQL target/runtime | [PostgreSQL runtime](postgresql-runtime.md) |
 | Dark launch | [Dark launch](dark-launch.md) |
+| Review V2 design-generation lineage | [Review V2 design lineage](review-v2-design-lineage.md) |
 | PostgreSQL cutover policy and ordering | [`../postgresql-cutover.md`](../postgresql-cutover.md) |
 | Dark-launch/reset operations | [`../database-backend-dark-launch-runbook.md`](../database-backend-dark-launch-runbook.md) |
 | Exact cutover operations | [`../database-backend-stage6-runbook.md`](../database-backend-stage6-runbook.md) |

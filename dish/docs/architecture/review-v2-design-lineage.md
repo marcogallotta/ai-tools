@@ -4,7 +4,7 @@
 
 Review V2 is the sole exact design-generation and design-snapshot lineage authority for design-bearing Asana tasks. This contract does not create a database, service, scheduler, second lifecycle controller, or alternate design history.
 
-The mechanical implementation is `scripts/review_design_lineage.py`. It models the immutable generation record, append-only generation events, human-decision provenance binding, projection contradiction checks, exact recovery, cumulative-drift baseline lookup, successor validation, and the R9 bounded challenge/reviewer-replacement rules.
+The mechanical implementation is [review_design_lineage.py](../../../scripts/review_design_lineage.py). It models the immutable generation record, append-only generation events, human-decision provenance binding, projection contradiction checks, exact recovery, cumulative-drift baseline lookup, successor validation, and the R9 bounded challenge/reviewer-replacement rules.
 
 ## Exact generation identity
 
