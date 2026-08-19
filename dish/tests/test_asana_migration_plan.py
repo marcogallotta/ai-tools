@@ -213,18 +213,6 @@ class PlannerClassificationTests(unittest.TestCase):
 
 class PlannerProjectTests(unittest.TestCase):
     @staticmethod
-    def project_snapshot(gid="1217999999999999", name="Dish — Development Workflow"):
-        return {
-            "gid": gid,
-            "name": name,
-            "modified_at": "2026-08-19T10:00:00Z",
-            "sections": [
-                {"gid": str(index), "name": section}
-                for index, section in enumerate(planner.TARGET_SECTIONS, 1)
-            ],
-        }
-
-    @staticmethod
     def raw_task(project_gid="1217999999999999"):
         return {
             "gid": "1217000000000001",
@@ -278,11 +266,6 @@ class PlannerProjectTests(unittest.TestCase):
             {"project": {"gid": "1217888888888888"}, "section": {"name": "Backlog"}}
         )
         with (
-            mock.patch.object(
-                planner,
-                "load_project_snapshot",
-                return_value=self.project_snapshot(selected, "Dish — Example"),
-            ),
             mock.patch.object(planner, "load_project_tasks", return_value=[raw]),
             mock.patch.object(planner, "hydrate_comments", return_value={raw["gid"]: None}),
             mock.patch.object(planner, "gh_pr_lineage", return_value=[]),
@@ -300,9 +283,6 @@ class PlannerProjectTests(unittest.TestCase):
         raw = self.raw_task(selected)
         failure = {"error": "temporary Asana failure", "history": []}
         with (
-            mock.patch.object(
-                planner, "load_project_snapshot", return_value=self.project_snapshot(selected)
-            ),
             mock.patch.object(planner, "load_project_tasks", return_value=[raw]),
             mock.patch.object(planner, "hydrate_comments", return_value={raw["gid"]: failure}),
             mock.patch.object(planner, "gh_pr_lineage", return_value=[]),
@@ -318,9 +298,6 @@ class PlannerProjectTests(unittest.TestCase):
         selected = "1217999999999999"
         raw = self.raw_task(selected)
         with (
-            mock.patch.object(
-                planner, "load_project_snapshot", return_value=self.project_snapshot(selected)
-            ),
             mock.patch.object(planner, "load_project_tasks", return_value=[raw]),
             mock.patch.object(planner, "hydrate_comments", return_value={raw["gid"]: None}),
             mock.patch.object(planner, "gh_pr_lineage", side_effect=RuntimeError("GitHub unavailable")),
@@ -329,72 +306,6 @@ class PlannerProjectTests(unittest.TestCase):
             plan = planner.build_ledger(selected)
         self.assertEqual(plan["github_error"], "GitHub unavailable")
         self.assertIn("GitHub PR lineage retrieval failed", planner.validate_plan(plan)[0])
-
-    def test_v2_contract_preserves_identity_and_renames_last(self):
-        project = self.project_snapshot()
-        plan = {
-            "project_gid": project["gid"],
-            "project_name": project["name"],
-            "project_snapshot": project,
-            "target_version": "v2",
-            "target_project_name": planner.PROJECT_NAMES["v2"],
-            "expected_project_name": planner.LEGACY_PROJECT_NAME,
-            "cutover_contract": {
-                "preserve_project_gid": project["gid"],
-                "rollback_project_name": project["name"],
-                "project_rename_order": "last",
-            },
-            "tasks": [],
-            "comment_errors": [],
-            "github_error": None,
-        }
-        self.assertEqual(planner.validate_plan(plan), [])
-        self.assertEqual(plan["migration_state"], "planned")
-        self.assertEqual(plan["cutover_contract"]["preserve_project_gid"], project["gid"])
-        self.assertEqual(plan["cutover_contract"]["project_rename_order"], "last")
-
-    def test_exact_v2_is_idempotently_complete_but_mixed_v2_fails(self):
-        project = self.project_snapshot(name=planner.PROJECT_NAMES["v2"])
-        plan = {
-            "project_gid": project["gid"],
-            "project_name": project["name"],
-            "project_snapshot": project,
-            "target_version": "v2",
-            "expected_project_name": None,
-            "tasks": [],
-            "comment_errors": [],
-            "github_error": None,
-        }
-        self.assertEqual(planner.validate_plan(plan), [])
-        self.assertEqual(plan["migration_state"], "already-complete")
-
-        plan["project_snapshot"]["sections"] = plan["project_snapshot"]["sections"][:-1]
-        self.assertIn("section structure is incomplete or mixed", planner.validate_plan(plan)[0])
-
-    def test_stale_source_name_fails_and_v3_remains_planning_only(self):
-        project = self.project_snapshot(name="Dish — Development Workflow stale")
-        base = {
-            "project_gid": project["gid"],
-            "project_name": project["name"],
-            "project_snapshot": project,
-            "expected_project_name": None,
-            "tasks": [],
-            "comment_errors": [],
-            "github_error": None,
-        }
-        v2 = {**base, "target_version": "v2"}
-        self.assertIn("v2 migration requires source name", planner.validate_plan(v2)[0])
-
-        v3 = {
-            **base,
-            "target_version": "v3",
-            "apply_supported": False,
-            "apply_authorized": False,
-        }
-        self.assertEqual(planner.validate_plan(v3), [])
-        self.assertEqual(v3["migration_state"], "planned")
-        self.assertFalse(v3["apply_supported"])
-        self.assertFalse(v3["apply_authorized"])
 
     def test_cli_exits_nonzero_for_invalid_evidence_plan(self):
         invalid = {

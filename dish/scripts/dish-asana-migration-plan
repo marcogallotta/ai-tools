@@ -62,11 +62,6 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 DEFAULT_PROJECT_GID = "1217419962189616"
-LEGACY_PROJECT_NAME = "Dish — Development Workflow"
-PROJECT_NAMES = {
-    "v2": "Dish — Development Workflow v2",
-    "v3": "Dish — Development Workflow v3",
-}
 
 TARGET_SECTIONS = [
     "Needs Processing",
@@ -861,21 +856,6 @@ def load_project_tasks(project_gid):
     return rows
 
 
-def load_project_snapshot(project_gid):
-    project = asana_raw(f"/projects/{project_gid}?opt_fields=gid,name,modified_at")
-    sections = []
-    for line in paged_asana_lines([ASANA, "sections", project_gid]):
-        match = re.match(r"^(\d+)\s+(.+)$", line)
-        if match:
-            sections.append({"gid": match.group(1), "name": match.group(2)})
-    return {
-        "gid": project["gid"],
-        "name": project["name"],
-        "modified_at": project.get("modified_at"),
-        "sections": sections,
-    }
-
-
 def hydrate_comments(tasks):
     def one(task):
         try:
@@ -886,9 +866,8 @@ def hydrate_comments(tasks):
         return dict(pool.map(one, tasks))
 
 
-def build_ledger(project_gid=DEFAULT_PROJECT_GID, project_name=None, target_version="v2"):
+def build_ledger(project_gid=DEFAULT_PROJECT_GID, project_name=None):
     generated_at = datetime.datetime.now(datetime.timezone.utc)
-    project = load_project_snapshot(project_gid)
     tasks = load_project_tasks(project_gid)
     comments = hydrate_comments(tasks)
 
@@ -1063,18 +1042,9 @@ def build_ledger(project_gid=DEFAULT_PROJECT_GID, project_name=None, target_vers
         "schema": "dish-asana-project-migration-plan-v1",
         "generated_at": generated_at.isoformat(),
         "project_gid": project_gid,
-        "project_name": project["name"],
-        "expected_project_name": project_name,
-        "project_snapshot": project,
-        "target_version": target_version,
-        "target_project_name": PROJECT_NAMES[target_version],
-        "apply_supported": target_version == "v2",
-        "apply_authorized": False,
-        "cutover_contract": {
-            "preserve_project_gid": project_gid,
-            "rollback_project_name": project["name"],
-            "project_rename_order": "last",
-        },
+        "project_name": project_name,
+        "target_project_name_v2": f"{project_name} v2",
+        "target_project_name_v3": f"{project_name} v3",
         "target_sections": TARGET_SECTIONS,
         "code_area_vocabulary": CODE_AREAS,
         "controller_source": controller_source,
@@ -1093,27 +1063,6 @@ def build_ledger(project_gid=DEFAULT_PROJECT_GID, project_name=None, target_vers
 
 def validate_plan(plan):
     errors = []
-    if plan.get("expected_project_name") and plan["project_name"] != plan["expected_project_name"]:
-        errors.append(
-            f"project name mismatch: expected {plan['expected_project_name']!r}, "
-            f"observed {plan['project_name']!r}"
-        )
-    target_version = plan.get("target_version")
-    target_name = PROJECT_NAMES.get(target_version)
-    if target_name is None:
-        errors.append(f"unsupported target version: {target_version!r}")
-    elif target_version == "v2" and plan["project_name"] == target_name:
-        observed_sections = [item["name"] for item in plan["project_snapshot"]["sections"]]
-        if observed_sections != TARGET_SECTIONS:
-            errors.append("project is named v2 but its section structure is incomplete or mixed")
-        else:
-            plan["migration_state"] = "already-complete"
-    elif target_version == "v2" and plan["project_name"] != LEGACY_PROJECT_NAME:
-        errors.append(
-            f"v2 migration requires source name {LEGACY_PROJECT_NAME!r} or completed target name {target_name!r}"
-        )
-    else:
-        plan["migration_state"] = "planned"
     if plan.get("github_error"):
         errors.append(f"GitHub PR lineage retrieval failed: {plan['github_error']}")
     for failure in plan.get("comment_errors") or []:
@@ -1222,7 +1171,6 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project-gid", default=DEFAULT_PROJECT_GID)
     parser.add_argument("--project-name")
-    parser.add_argument("--target-version", choices=tuple(PROJECT_NAMES), default="v2")
     parser.add_argument("--json", help="JSON output path (default: project-GID-derived filename in the current directory)")
     parser.add_argument("--csv", help="CSV output path (default: project-GID-derived filename in the current directory)")
     args = parser.parse_args()
@@ -1233,7 +1181,7 @@ def main():
     json_path = args.json or default_json
     csv_path = args.csv or default_csv
 
-    plan = build_ledger(args.project_gid, args.project_name, args.target_version)
+    plan = build_ledger(args.project_gid, args.project_name)
     errors = validate_plan(plan)
     plan["validation_errors"] = errors
 
