@@ -12,15 +12,16 @@ scripts/dish-asana-migration-plan \
   --project-gid 1217419962189616 \
   --project-name "Dish — Development Workflow" \
   --json /tmp/dish-asana-migration-1217419962189616.json \
-  --csv /tmp/dish-asana-migration-1217419962189616.csv \
-  --fail-on-plan-errors
+  --csv /tmp/dish-asana-migration-1217419962189616.csv
 ```
 
 The script reads the complete project task corpus, current task bodies and
 comments, canonical GitHub task ownership, and the local lifecycle resolver
 when available. GitHub/lifecycle evidence owns detailed execution truth once
 development starts; an Implementation handoff alone remains `Ready` until
-worker-start evidence exists.
+worker-start evidence exists. A GitHub-lineage failure or any task-comment
+retrieval failure makes the generated plan invalid and exits nonzero; do not
+use a partial ledger for migration decisions.
 
 Review `ambiguous_tasks`, `validation_errors`, and every freshness-bound
 semantic override before approving a migration. Overrides currently apply only

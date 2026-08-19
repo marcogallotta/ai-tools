@@ -469,7 +469,7 @@ def rollout_or_residual_completion_pending(text):
     ))
 
 
-def human_review_pending(notes, comment):
+def human_review_pending(task):
     """Resolve only a current, explicit human-decision record.
 
     Incidental prose such as "ask Marco after a bootstrap failure" or a policy
@@ -477,6 +477,8 @@ def human_review_pending(notes, comment):
     are evaluated newest-first and only structured state/disposition lines (or
     an explicit approval/override record) can change the result.
     """
+    notes = task.get("notes", "")
+    comment = task.get("comment")
     pending = re.compile(
         r"\bMARCO REVIEW READY\b|\bHUMAN DECISION(?:\s+STILL)?\s+(?:PENDING|REQUIRED)\b|"
         r"\bMARCO (?:DESIGN )?DECISION (?:PENDING|REQUIRED|NEEDED)\b|"
@@ -487,14 +489,37 @@ def human_review_pending(notes, comment):
     resolved = re.compile(
         r"\bMARCO (?:DESIGN DECISION\s*[—:-]\s*)?APPROVED\b|"
         r"\bMARCO EXPLICITLY APPROVES\b|\bHUMAN (?:DESIGN )?DECISION\b.{0,80}\b(?:RESOLVED|APPROVED)\b|"
-        r"\bGATE WAIVED BY MARCO OVERRIDE\b|\bMARCO OVERRIDE\b",
+        r"\bHUMAN (?:DESIGN )?DECISION RESOLUTION\b",
         re.IGNORECASE | re.DOTALL,
     )
+    scoped_human_override = re.compile(
+        r"\bGATE WAIVED BY MARCO OVERRIDE\b.{0,240}\b(?:FINAL[- ]STAMP|HUMAN (?:DESIGN )?DECISION|MARCO APPROVAL)\b|"
+        r"\b(?:FINAL[- ]STAMP|HUMAN (?:DESIGN )?DECISION|MARCO APPROVAL)\b.{0,240}\bGATE WAIVED BY MARCO OVERRIDE\b",
+        re.IGNORECASE | re.DOTALL,
+    )
+
+    structured_notes = "\n".join(
+        line.strip()
+        for line in notes.splitlines()
+        if re.match(r"^(?:STATE|HUMAN (?:DESIGN )?DECISION|HUMAN INPUT|MARCO (?:DECISION|REVIEW|APPROVAL|DESIGN HOLD|FINAL STAMP))\b", line.strip(), re.IGNORECASE)
+    )
+    notes_resolve_human = bool(
+        re.search(
+            r"^HUMAN (?:DESIGN )?DECISION[^\n]*\b(?:NONE|RESOLVED|NOT REQUIRED)\b",
+            structured_notes,
+            re.IGNORECASE | re.MULTILINE,
+        )
+    )
+    notes_require_human = not notes_resolve_human and bool(pending.search(structured_notes))
 
     for item in (comment or {}).get("history") or ([comment] if comment else []):
         text = item.get("text", "")
         headline = next((line.strip() for line in text.splitlines() if line.strip()), "")
-        if resolved.search(headline) or resolved.search(text):
+        if resolved.search(headline) or resolved.search(text) or scoped_human_override.search(text):
+            # Current notes written after a resolution/waiver can introduce a
+            # new decision. Older comments must not erase that later state.
+            if notes_require_human and changed_after(task.get("modified_at"), item.get("created_at")):
+                continue
             return False
         structured = "\n".join(
             line.strip()
@@ -515,14 +540,9 @@ def human_review_pending(notes, comment):
         ):
             return False
 
-    structured_notes = "\n".join(
-        line.strip()
-        for line in (notes or "").splitlines()
-        if re.match(r"^(?:STATE|HUMAN (?:DESIGN )?DECISION|HUMAN INPUT|MARCO (?:DECISION|REVIEW|APPROVAL|DESIGN HOLD|FINAL STAMP))\b", line.strip(), re.IGNORECASE)
-    )
-    if re.search(r"^HUMAN (?:DESIGN )?DECISION[^\n]*\b(?:NONE|RESOLVED|NOT REQUIRED)\b", structured_notes, re.IGNORECASE | re.MULTILINE):
+    if notes_resolve_human:
         return False
-    return bool(pending.search(structured_notes))
+    return notes_require_human
 
 
 def dependency_pending(notes, comment):
@@ -745,7 +765,7 @@ def classify_target(task, prs, controller_states):
     if completed:
         return "Done", "high", "Asana completed=true"
 
-    if human_review_pending(notes, comment):
+    if human_review_pending(task):
         return "Needs Human Review", "high", "durable human/Marco decision or approval is pending"
 
     if dependency_pending(notes, comment):
@@ -862,6 +882,7 @@ def build_ledger(project_gid=DEFAULT_PROJECT_GID, project_name=None):
     controller_states, controller_source = controller_pr_states()
 
     ledger = []
+    comment_errors = []
     for raw in tasks:
         memberships = raw.get("memberships") or []
         selected_memberships = [
@@ -889,10 +910,21 @@ def build_ledger(project_gid=DEFAULT_PROJECT_GID, project_name=None):
             "comment": comments.get(raw["gid"]),
         }
 
-        classification = classify_target(task, prs, controller_states)
-        (target, confidence, reason), semantic_override_used = apply_semantic_override(
-            task, task["comment"], classification, project_gid
-        )
+        comment_error = (task["comment"] or {}).get("error")
+        if comment_error:
+            comment_errors.append({"task_gid": task["gid"], "error": comment_error})
+            classification = (
+                "Needs Processing",
+                "low",
+                "comment retrieval failed; current human/review/priority/handoff state is unavailable",
+            )
+            target, confidence, reason = classification
+            semantic_override_used = False
+        else:
+            classification = classify_target(task, prs, controller_states)
+            (target, confidence, reason), semantic_override_used = apply_semantic_override(
+                task, task["comment"], classification, project_gid
+            )
         proposed_title, title_changed, title_reason = stable_title(task["name"])
         priority, priority_source = current_priority(
             task["notes"], task["comment"], task["custom_fields"]
@@ -922,6 +954,8 @@ def build_ledger(project_gid=DEFAULT_PROJECT_GID, project_name=None):
             flags.append(f"current Development Workflow section count is {len(current_sections)}")
         if confidence == "low":
             flags.append("semantic triage required")
+        if comment_error:
+            flags.append(f"FATAL evidence gap: Asana comments unavailable: {comment_error}")
         if target == "Ready" and confidence != "high":
             flags.append("verify no hidden prerequisite before cutover")
         if target == "Under Development":
@@ -1013,6 +1047,7 @@ def build_ledger(project_gid=DEFAULT_PROJECT_GID, project_name=None):
         "code_area_vocabulary": CODE_AREAS,
         "controller_source": controller_source,
         "github_error": gh_error,
+        "comment_errors": comment_errors,
         "task_count": len(ledger),
         "summary": {
             "by_proposed_section": section_counts,
@@ -1026,6 +1061,10 @@ def build_ledger(project_gid=DEFAULT_PROJECT_GID, project_name=None):
 
 def validate_plan(plan):
     errors = []
+    if plan.get("github_error"):
+        errors.append(f"GitHub PR lineage retrieval failed: {plan['github_error']}")
+    for failure in plan.get("comment_errors") or []:
+        errors.append(f"{failure['task_gid']}: Asana comment retrieval failed: {failure['error']}")
     seen = set()
     for item in plan["tasks"]:
         gid = item["task_gid"]
@@ -1132,11 +1171,6 @@ def main():
     parser.add_argument("--project-name")
     parser.add_argument("--json", help="JSON output path (default: project-GID-derived filename in the current directory)")
     parser.add_argument("--csv", help="CSV output path (default: project-GID-derived filename in the current directory)")
-    parser.add_argument(
-        "--fail-on-plan-errors",
-        action="store_true",
-        help="exit nonzero if deterministic migration invariants fail",
-    )
     args = parser.parse_args()
 
     if not re.fullmatch(r"\d{10,}", args.project_gid):
@@ -1159,8 +1193,7 @@ def main():
         print("validation errors:")
         for error in errors:
             print(f"  - {error}")
-        if args.fail_on_plan_errors:
-            raise SystemExit(2)
+        raise SystemExit(2)
 
 
 if __name__ == "__main__":

@@ -2,6 +2,7 @@ import datetime
 import importlib.util
 from importlib.machinery import SourceFileLoader
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -103,11 +104,30 @@ class PlannerClassificationTests(unittest.TestCase):
 
     def test_newest_marco_override_resolves_older_final_stamp(self):
         evidence = comment(
-            ("2026-08-19T11:00:00.000Z", "MARCO OVERRIDE — proceed\nGATE WAIVED BY MARCO OVERRIDE"),
+            (
+                "2026-08-19T11:00:00.000Z",
+                "MARCO OVERRIDE — proceed\nGATE WAIVED BY MARCO OVERRIDE: final-stamp progression gate",
+            ),
             ("2026-08-19T10:00:00.000Z", "DISPOSITION: Ready for Marco final stamp"),
         )
-        value = task(comment=evidence)
+        value = task(
+            notes="STATE: MARCO FINAL STAMP REQUIRED",
+            comment=evidence,
+            modified_at="2026-08-19T11:00:10.000Z",
+        )
         self.assertNotEqual(self.classify(value)[0], "Needs Human Review")
+
+    def test_older_unrelated_override_cannot_erase_current_human_decision(self):
+        evidence = comment((
+            "2026-08-19T10:00:00.000Z",
+            "MARCO OVERRIDE — waive focused CI rerun\nGATE WAIVED BY MARCO OVERRIDE: CI gate only",
+        ))
+        value = task(
+            notes="STATE: HUMAN DECISION PENDING — approve rollout boundary",
+            comment=evidence,
+            modified_at="2026-08-19T11:00:00.000Z",
+        )
+        self.assertEqual(self.classify(value)[0], "Needs Human Review")
 
     def test_formal_pass_can_be_invalidated_by_later_revised_state(self):
         evidence = comment(("2026-08-19T10:00:00.000Z", "AGENT REVIEW — PASS\nVERDICT: IMPLEMENTATION READY"))
@@ -192,6 +212,22 @@ class PlannerClassificationTests(unittest.TestCase):
 
 
 class PlannerProjectTests(unittest.TestCase):
+    @staticmethod
+    def raw_task(project_gid="1217999999999999"):
+        return {
+            "gid": "1217000000000001",
+            "name": "task",
+            "completed": False,
+            "completed_at": None,
+            "created_at": "2026-08-18T10:00:00Z",
+            "modified_at": "2026-08-19T10:00:00Z",
+            "notes": "STATE: READY\nPRIORITY: P0",
+            "memberships": [
+                {"project": {"gid": project_gid}, "section": {"name": "Ready"}},
+            ],
+            "custom_fields": [],
+        }
+
     def test_paged_asana_lines_follows_every_cursor(self):
         pages = [
             "1 [ ] first\n# more results: --cursor next-page\n",
@@ -223,20 +259,12 @@ class PlannerProjectTests(unittest.TestCase):
 
     def test_build_ledger_filters_memberships_to_selected_project(self):
         selected = "1217999999999999"
-        raw = {
-            "gid": "1217000000000001",
-            "name": "completed task",
-            "completed": True,
-            "completed_at": "2026-08-19T10:00:00Z",
-            "created_at": "2026-08-18T10:00:00Z",
-            "modified_at": "2026-08-19T10:00:00Z",
-            "notes": "PRIORITY: P0",
-            "memberships": [
-                {"project": {"gid": selected}, "section": {"name": "Done"}},
-                {"project": {"gid": "1217888888888888"}, "section": {"name": "Backlog"}},
-            ],
-            "custom_fields": [],
-        }
+        raw = self.raw_task(selected)
+        raw.update(completed=True, completed_at="2026-08-19T10:00:00Z", name="completed task")
+        raw["memberships"][0]["section"]["name"] = "Done"
+        raw["memberships"].append(
+            {"project": {"gid": "1217888888888888"}, "section": {"name": "Backlog"}}
+        )
         with (
             mock.patch.object(planner, "load_project_tasks", return_value=[raw]),
             mock.patch.object(planner, "hydrate_comments", return_value={raw["gid"]: None}),
@@ -249,6 +277,53 @@ class PlannerProjectTests(unittest.TestCase):
         self.assertEqual(plan["tasks"][0]["current_sections"], ["Done"])
         self.assertEqual(plan["tasks"][0]["target_section"], "Done")
         self.assertFalse(plan["tasks"][0]["semantic_override_used"])
+
+    def test_comment_retrieval_failure_is_unresolved_and_invalid(self):
+        selected = "1217999999999999"
+        raw = self.raw_task(selected)
+        failure = {"error": "temporary Asana failure", "history": []}
+        with (
+            mock.patch.object(planner, "load_project_tasks", return_value=[raw]),
+            mock.patch.object(planner, "hydrate_comments", return_value={raw["gid"]: failure}),
+            mock.patch.object(planner, "gh_pr_lineage", return_value=[]),
+            mock.patch.object(planner, "controller_pr_states", return_value=({}, "test resolver")),
+        ):
+            plan = planner.build_ledger(selected)
+        item = plan["tasks"][0]
+        self.assertEqual((item["target_section"], item["classification_confidence"]), ("Needs Processing", "low"))
+        self.assertEqual(plan["comment_errors"][0]["task_gid"], raw["gid"])
+        self.assertIn("Asana comment retrieval failed", planner.validate_plan(plan)[0])
+
+    def test_github_lineage_failure_invalidates_plan(self):
+        selected = "1217999999999999"
+        raw = self.raw_task(selected)
+        with (
+            mock.patch.object(planner, "load_project_tasks", return_value=[raw]),
+            mock.patch.object(planner, "hydrate_comments", return_value={raw["gid"]: None}),
+            mock.patch.object(planner, "gh_pr_lineage", side_effect=RuntimeError("GitHub unavailable")),
+            mock.patch.object(planner, "controller_pr_states", return_value=({}, "test resolver")),
+        ):
+            plan = planner.build_ledger(selected)
+        self.assertEqual(plan["github_error"], "GitHub unavailable")
+        self.assertIn("GitHub PR lineage retrieval failed", planner.validate_plan(plan)[0])
+
+    def test_cli_exits_nonzero_for_invalid_evidence_plan(self):
+        invalid = {
+            "project_gid": "1217999999999999",
+            "task_count": 0,
+            "tasks": [],
+            "github_error": "GitHub unavailable",
+            "comment_errors": [],
+        }
+        with (
+            mock.patch.object(sys, "argv", [str(SCRIPT), "--project-gid", "1217999999999999"]),
+            mock.patch.object(planner, "build_ledger", return_value=invalid),
+            mock.patch.object(planner, "write_outputs"),
+            mock.patch.object(planner, "summarize"),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            planner.main()
+        self.assertEqual(raised.exception.code, 2)
 
     def test_json_and_csv_cover_the_same_unique_tasks(self):
         sample = {
