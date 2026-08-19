@@ -25,6 +25,18 @@ SOURCE_LANDING_HOLD_MARKER = "dish-source-landing-hold:v1"
 _STATE_LINE_RE = re.compile(r"(?mi)^STATE:\s*(?P<state>[^\n]+)$")
 _HOLD_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{8,80}$")
 _DECISION_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{8,120}$")
+_PRIORITY_LINE_RE = re.compile(r"(?mi)^\s*PRIORITY\s*:\s*(P-CRITICAL|P0|P1|P2)\b")
+_PRIORITY_TOKEN_RE = re.compile(r"(?i)(?:^|[^A-Z0-9-])(P-CRITICAL|P0|P1|P2)(?:$|[^A-Z0-9-])")
+_ATTEMPT_ID_RE = re.compile(
+    r"(?i)(?:attempt(?:_id)?)[\s\"'=:\-]+(?P<attempt>[A-Za-z0-9._:-]{4,128})"
+)
+_EXECUTION_STALE_SECONDS = {
+    "P-CRITICAL": 3 * 60 * 60,
+    "P0": 6 * 60 * 60,
+    "P1": 24 * 60 * 60,
+    "P2": 24 * 60 * 60,
+}
+_UNKNOWN_PRIORITY_STALE_SECONDS = 24 * 60 * 60
 
 
 def _json_digest(value: Any) -> str:
@@ -194,7 +206,6 @@ def source_landing_hold(stories: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
                 "evidence_at": evidence_time,
             }
 
-        # release
         if active is None:
             if last_release == event:
                 continue
@@ -332,51 +343,167 @@ def apply_transition(
     return TaskTransitionResult(stable_id, True, after)
 
 
+def _normalize_priority(value: Any) -> str | None:
+    text = str(value or "").strip().upper().replace("_", "-")
+    aliases = {
+        "PCRITICAL": "P-CRITICAL",
+        "P-CRIT": "P-CRITICAL",
+        "CRITICAL": "P-CRITICAL",
+    }
+    text = aliases.get(text, text)
+    return text if text in _EXECUTION_STALE_SECONDS else None
+
+
+def _task_priority(task: Mapping[str, Any]) -> tuple[str, int, str]:
+    notes = str(task.get("notes") or "")
+    line = _PRIORITY_LINE_RE.search(notes)
+    if line:
+        priority = line.group(1).upper()
+        return priority, _EXECUTION_STALE_SECONDS[priority], "asana-notes-priority-line"
+
+    name = str(task.get("name") or "")
+    token = _PRIORITY_TOKEN_RE.search(name)
+    if token:
+        priority = token.group(1).upper()
+        return priority, _EXECUTION_STALE_SECONDS[priority], "asana-task-name"
+
+    for field in task.get("custom_fields") or []:
+        if not isinstance(field, Mapping):
+            continue
+        field_name = str(field.get("name") or "").strip().lower()
+        if field_name != "priority":
+            continue
+        candidates = [
+            field.get("display_value"),
+            field.get("text_value"),
+            field.get("number_value"),
+        ]
+        enum_value = field.get("enum_value")
+        if isinstance(enum_value, Mapping):
+            candidates.append(enum_value.get("name"))
+        for candidate in candidates:
+            priority = _normalize_priority(candidate)
+            if priority:
+                return priority, _EXECUTION_STALE_SECONDS[priority], "asana-priority-field"
+
+    return "UNKNOWN", _UNKNOWN_PRIORITY_STALE_SECONDS, "conservative-24h-default"
+
+
+def _attempt_id(text: str) -> str | None:
+    match = _ATTEMPT_ID_RE.search(text)
+    return match.group("attempt") if match else None
+
+
 def execution_truth(task: Mapping[str, Any], stories: Iterable[Mapping[str, Any]], *, now: datetime | None = None) -> dict[str, Any]:
-    """Project durable handoff/dispatch evidence without upgrading section state to execution truth."""
+    """Project durable execution evidence without converting staleness into takeover authority.
+
+    Dispatch invocation is not acceptance.  Once accepted, freshness is measured
+    from attempt-bound producer evidence using the task's priority-sensitive attention
+    clock.  Stale means attention/recovery is due; it never means the worker is dead
+    and never grants claim/worktree theft or semantic takeover authority.
+    """
     now = now or datetime.now(timezone.utc)
     story_values = list(stories)
     hold = source_landing_hold(story_values)
-    evidence: list[tuple[datetime, str, str]] = []
+    priority, execution_threshold, threshold_source = _task_priority(task)
+    evidence: list[dict[str, Any]] = []
     for story in story_values:
         text = _story_text(story)
         ts = _story_time(story)
         if ts is None:
             continue
         upper = text.upper()
+        attempt = _attempt_id(text)
         if "RUNNING-SOURCE" in upper or "RUNNING SOURCE" in upper or "SOURCE EVIDENCE" in upper:
-            evidence.append((ts, "RUNNING-SOURCE", text))
+            evidence.append({"timestamp": ts, "state": "RUNNING-SOURCE", "kind": "producer", "attempt_id": attempt})
         elif "DISPATCH ACCEPTED" in upper or "DESTINATION ACCEPTED" in upper or "DESTINATION BOUND" in upper:
-            evidence.append((ts, "DISPATCH ACCEPTED / BOUND", text))
+            evidence.append({"timestamp": ts, "state": "DISPATCH ACCEPTED / BOUND", "kind": "accepted", "attempt_id": attempt})
         elif "DISPATCH REQUESTED" in upper or "DISPATCH INVOKED" in upper:
-            evidence.append((ts, "DISPATCH REQUESTED", text))
+            evidence.append({"timestamp": ts, "state": "DISPATCH REQUESTED", "kind": "requested", "attempt_id": attempt})
         elif "HANDOFF RECORDED" in upper or "HANDOFF PREPARED" in upper or "HANDOFF SENT" in upper:
-            evidence.append((ts, "HANDOFF RECORDED", text))
+            evidence.append({"timestamp": ts, "state": "HANDOFF RECORDED", "kind": "handoff", "attempt_id": attempt})
     if not evidence:
         return {
             "state": "NO DURABLE EXECUTION EVIDENCE",
             "stale": False,
             "stale_kind": None,
             "timestamp": None,
+            "priority": priority,
+            "attention_threshold_seconds": execution_threshold,
+            "attention_threshold_source": threshold_source,
+            "attempt_id": None,
+            "freshness_timestamp": None,
+            "freshness_age_seconds": None,
+            "stale_is_dead": False,
+            "takeover_authorized": False,
+            "recovery_requires_fresh_attempt_generation": True,
             "source_landing_hold": hold,
         }
-    ts, state, _ = max(evidence, key=lambda row: row[0])
-    age = (now - ts).total_seconds()
+
+    evidence.sort(key=lambda item: item["timestamp"])
+    latest = evidence[-1]
+    ts = latest["timestamp"]
+    state = str(latest["state"])
+    age = max(0.0, (now - ts).total_seconds())
     stale = False
     stale_kind = None
-    if state == "DISPATCH REQUESTED" and age > 3600:
-        state = "DISPATCH STALE — ACCEPTANCE NOT PROVEN"
-        stale = True
-        stale_kind = "WORKER_ACCEPTANCE_STALE"
-    elif state == "HANDOFF RECORDED" and age > 3600:
-        state = "STALE / EXECUTION UNKNOWN"
-        stale = True
-        stale_kind = "WORKER_EXECUTION_STALE"
+    freshness = None
+    active_attempt = latest.get("attempt_id")
+
+    if latest["kind"] in {"accepted", "producer"}:
+        accepted = [item for item in evidence if item["kind"] == "accepted" and item["timestamp"] <= ts]
+        latest_accepted = accepted[-1] if accepted else None
+        if latest_accepted is not None:
+            active_attempt = latest_accepted.get("attempt_id") or active_attempt
+            freshness_candidates = [latest_accepted]
+        else:
+            freshness_candidates = []
+
+        for item in evidence:
+            if item["kind"] != "producer" or item["timestamp"] > ts:
+                continue
+            producer_attempt = item.get("attempt_id")
+            if producer_attempt is None:
+                continue
+            if active_attempt is not None and producer_attempt != active_attempt:
+                continue
+            freshness_candidates.append(item)
+            active_attempt = active_attempt or producer_attempt
+
+        freshness = max(freshness_candidates, key=lambda item: item["timestamp"]) if freshness_candidates else latest_accepted
+        if freshness is not None:
+            freshness_age = max(0.0, (now - freshness["timestamp"]).total_seconds())
+            if freshness_age > execution_threshold:
+                state = "EXECUTION STALE — FRESH ATTEMPT-BOUND EVIDENCE REQUIRED"
+                stale = True
+                stale_kind = "WORKER_EXECUTION_STALE"
+        else:
+            freshness_age = None
+    else:
+        freshness_age = None
+        if state == "DISPATCH REQUESTED" and age > 3600:
+            state = "DISPATCH STALE — ACCEPTANCE NOT PROVEN"
+            stale = True
+            stale_kind = "WORKER_ACCEPTANCE_STALE"
+        elif state == "HANDOFF RECORDED" and age > 3600:
+            state = "STALE / EXECUTION UNKNOWN"
+            stale = True
+            stale_kind = "WORKER_EXECUTION_STALE"
+
     return {
         "state": state,
         "stale": stale,
         "stale_kind": stale_kind,
         "timestamp": ts.isoformat(),
+        "priority": priority,
+        "attention_threshold_seconds": execution_threshold,
+        "attention_threshold_source": threshold_source,
+        "attempt_id": active_attempt,
+        "freshness_timestamp": freshness["timestamp"].isoformat() if freshness is not None else None,
+        "freshness_age_seconds": int(freshness_age) if freshness_age is not None else None,
+        "stale_is_dead": False,
+        "takeover_authorized": False,
+        "recovery_requires_fresh_attempt_generation": True,
         "source_landing_hold": hold,
     }
 
