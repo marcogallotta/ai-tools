@@ -31,7 +31,7 @@ Generation bytes never contain mutable approval/dispatch state.
 
 State is reconstructed from the immutable generation plus the durable ordered event stream. Invalid transitions, duplicate events, and identity mismatches are contradictions; they do not rewrite or replace the design bytes. `SUPERSEDED` and `CANCELLED` are terminal.
 
-Marco approval therefore binds only the exact generation identity that received a valid `MARCO_APPROVED` event. Dispatch similarly freezes only the exact generation that received a valid `DISPATCHED` event.
+A valid `MARCO_APPROVED` event also carries `material_delta_set_sha256`, binding approval to the complete material-delta set shown for that exact generation. Marco approval therefore binds only that exact generation identity plus that exact delta-set digest. Dispatch similarly freezes only the exact generation that received a valid `DISPATCHED` event.
 
 ## Successor and post-dispatch semantics
 
@@ -77,4 +77,4 @@ A materially changed candidate or new material evidence creates a different key 
 6. successor generations stay in the same lineage and projections move to the successor;
 7. author/reviewer replacement preserves challenge history and independence rules.
 
-Additional tests cover invalid event sequences, projection contradictions, post-dispatch successor safety, and cumulative-drift baseline selection.
+Additional tests cover invalid/foreign event handling, exact material-delta approval binding, projection contradictions, post-dispatch successor safety, and cumulative-drift baseline selection.
