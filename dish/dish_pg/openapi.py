@@ -10,6 +10,7 @@ from .command_contract import (
     POSTGRES_CLIENT_REQUEST_ID_SCHEMA,
     POSTGRES_CLIENT_RUN_ID_SCHEMA,
     POSTGRES_DISH_ID_SCHEMA,
+    SEARCH_COMMAND,
     postgres_action_argument_schema,
 )
 
@@ -24,15 +25,23 @@ def postgres_action_openapi(*, server_url: str = "https://dish-postgresql.exampl
             if command == "create"
             else {"$ref": "#/components/schemas/ResultEnvelope"}
         )
+        if command == SEARCH_COMMAND:
+            description = (
+                "Read-only active-title discovery. Use Search when discovering a Dish by title or "
+                "partial title. If Marco supplies a canonical Dish UUID, call read(dish_id=...) "
+                "directly instead of searching or browsing sections. request_id is not accepted."
+            )
+        else:
+            description = (
+                "Replay-bound authoritative mutation; exact request identity is durable."
+                if request_required
+                else "Consistent authoritative query; request_id is not accepted."
+            )
         paths[f"/v1/action/{command}"] = {
             "post": {
                 "operationId": f"dish_postgresql_{command.replace('-', '_')}",
                 "summary": f"Run PostgreSQL-backed dish {command}",
-                "description": (
-                    "Replay-bound authoritative mutation; exact request identity is durable."
-                    if request_required
-                    else "Consistent authoritative query; request_id is not accepted."
-                ),
+                "description": description,
                 "x-openai-isConsequential": request_required,
                 "security": [{"actionBearer": []}],
                 "requestBody": {
