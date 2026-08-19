@@ -22,6 +22,7 @@ from typing import Any, Mapping, Protocol
 
 from sqlalchemy import select, text
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import IntegrityError
 
 from dish_service.path_safety import require_distinct_paths
 from dish_service.shadow_spool import ShadowSpool, ShadowSpoolItem
@@ -72,6 +73,18 @@ _IDENTIFIER_ROLES = {
 
 class ShadowIdentityMappingError(ValueError):
     """A captured source authority identifier has no unique target binding."""
+
+
+class PermanentShadowDeliveryError(ValueError):
+    """A legacy spool item cannot be delivered by retrying unchanged input."""
+
+
+def _is_permanent_spool_delivery_error(exc: BaseException) -> bool:
+    """Classify deterministic delivery failures that cannot heal on retry."""
+    return isinstance(
+        exc,
+        (TransitionAuthorityError, PermanentShadowDeliveryError, IntegrityError),
+    )
 
 
 def _utcnow() -> datetime:
@@ -1691,6 +1704,43 @@ class ShadowWorker:
             try:
                 self._deliver(item)
             except BaseException as exc:
+                if item.state == "complete" and _is_permanent_spool_delivery_error(exc):
+                    LOGGER.warning(
+                        "permanent shadow spool delivery failure; recording comparison gap",
+                        exc_info=True,
+                    )
+                    try:
+                        self._record_permanent_spool_delivery_gap(item, exc)
+                        delivered_at = self.clock()
+                        self.spool.mark_delivered(
+                            item.registration_id, delivered_at=delivered_at
+                        )
+                    except BaseException as terminal_exc:
+                        LOGGER.exception(
+                            "permanent shadow spool delivery terminalization failed"
+                        )
+                        failure = (
+                            f"{type(exc).__name__}: {exc}; terminalization failed: "
+                            f"{type(terminal_exc).__name__}: {terminal_exc}"
+                        )
+                        try:
+                            self.spool.mark_delivery_failed(
+                                item.registration_id, error=failure
+                            )
+                        except BaseException:
+                            LOGGER.exception(
+                                "shadow spool delivery-failure recording failed"
+                            )
+                        return False
+                    try:
+                        self.spool.compact_delivered(
+                            now=delivered_at,
+                            older_than=self.delivered_retention,
+                            limit=1000,
+                        )
+                    except BaseException:
+                        LOGGER.exception("shadow spool delivered-payload compaction failed")
+                    return True
                 LOGGER.exception("shadow spool delivery failed")
                 try:
                     self.spool.mark_delivery_failed(item.registration_id, error=str(exc))
@@ -1709,6 +1759,32 @@ class ShadowWorker:
                 return True
         return self._evaluate_one() or bool(pending)
 
+    def _record_permanent_spool_delivery_gap(
+        self,
+        item: ShadowSpoolItem,
+        exc: BaseException,
+    ) -> None:
+        with session_scope(self.session_maker) as session:
+            baseline = session.get(tx.ShadowBaseline, self.baseline_id)
+            details = {
+                "classification": "permanent",
+                "failure_stage": "spool_delivery",
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "source_request_identity": item.source_request_identity,
+                "source_authority_generation": item.source_authority_generation,
+                "rollout_sequence": item.rollout_sequence,
+            }
+            if baseline is not None:
+                details["baseline_source_generation"] = baseline.source_generation_identity
+            ShadowService(session).record_gap(
+                baseline_id=self.baseline_id,
+                gap_identity=f"spool_delivery:{item.source_request_identity}",
+                gap_kind="uncomparable",
+                details=details,
+                created_at=item.completed_at or item.created_at,
+            )
+
     def _deliver(self, item: ShadowSpoolItem) -> None:
         with session_scope(self.session_maker) as session:
             service = ShadowService(session)
@@ -1722,7 +1798,9 @@ class ShadowWorker:
                 )
                 return
             if item.source_outcome is None or item.source_post_state is None:
-                raise ValueError("complete spool item lacks outcome or post-state")
+                raise PermanentShadowDeliveryError(
+                    "complete spool item lacks outcome or post-state"
+                )
             service.capture_envelope(
                 shadow_baseline_id=self.baseline_id,
                 command_name=item.command_name,
