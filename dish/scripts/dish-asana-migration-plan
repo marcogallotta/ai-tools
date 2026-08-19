@@ -931,6 +931,48 @@ def lifecycle_events_from_text(text, at, source):
     return events
 
 
+def lifecycle_projection_conflicts(current_events, historical_events):
+    """Return true when untimestamped current STATE and older history disagree.
+
+    Asana exposes only task ``modified_at``, which can move for reasons other
+    than a notes edit. It therefore cannot prove that an ordinary STATE line
+    was authored after the comments it contradicts. Explicit amendment labels
+    are handled separately; otherwise opposing lifecycle directions must fail
+    closed instead of inheriting comment precedence.
+    """
+    backward = {
+        "raw_intake",
+        "research_incomplete",
+        "review_requested",
+        "review_block",
+        "human_review_pending",
+        "implementation_prohibited",
+        "hold_active",
+        "dependency_active",
+        "dispatch_cancelled",
+    }
+    forward = {
+        "research_complete",
+        "review_pass",
+        "human_review_resolved",
+        "implementation_authorized",
+        "hold_released",
+        "dependency_resolved",
+        "dispatch_sent",
+        "worker_started",
+        "implementation_complete",
+        "source_merged",
+        "post_merge_resolved",
+        "completed",
+    }
+    current_kinds = {item["kind"] for item in current_events}
+    historical_kinds = {item["kind"] for item in historical_events}
+    return bool(
+        (current_kinds & backward and historical_kinds & forward)
+        or (current_kinds & forward and historical_kinds & backward)
+    )
+
+
 def build_lifecycle_event_stream(task, prs, controller_states):
     """Return chronological lifecycle authority with explicit provenance."""
     events = []
@@ -947,15 +989,20 @@ def build_lifecycle_event_stream(task, prs, controller_states):
     temporal_events = []
     history = list((task.get("comment") or {}).get("history") or [])
     history.sort(key=lambda item: item.get("created_at") or "")
+    comment_events = []
     for comment in history:
         source = f"asana_comment:{comment.get('created_at') or 'timestamp-unavailable'}"
         for item in lifecycle_events_from_text(
             comment.get("text", ""), comment.get("created_at"), source
         ):
             temporal_events.append(item)
+            comment_events.append(item)
 
     latest_comment_at = history[-1].get("created_at") if history else None
     current_state = task_state(task.get("notes", ""))
+    current_state_events = lifecycle_events_from_text(
+        f"STATE: {current_state}", task.get("modified_at"), "task_state_current_projection"
+    ) if current_state else []
     if (
         latest_comment_at
         and changed_after(task.get("modified_at"), latest_comment_at)
@@ -965,6 +1012,17 @@ def build_lifecycle_event_stream(task, prs, controller_states):
             task.get("notes", ""), task.get("modified_at"), "task_notes_current_amendment"
         ):
             temporal_events.append(item)
+    elif (
+        latest_comment_at
+        and changed_after(task.get("modified_at"), latest_comment_at)
+        and lifecycle_projection_conflicts(current_state_events, comment_events)
+    ):
+        temporal_events.append(_event(
+            "authority_ambiguity",
+            task.get("modified_at"),
+            "task_state_current_projection",
+            f"ordinary current STATE conflicts with older lifecycle history: STATE: {current_state}",
+        ))
     elif (
         latest_comment_at
         and changed_after(task.get("modified_at"), latest_comment_at)
@@ -1041,6 +1099,7 @@ def reconstruct_lifecycle_authority(task, prs, controller_states):
         "completed": None,
         "raw_intake": None,
         "bounded_scope": None,
+        "authority_ambiguity": None,
         "closed_unmerged_prs": {},
     }
 
@@ -1106,6 +1165,8 @@ def reconstruct_lifecycle_authority(task, prs, controller_states):
             state["raw_intake"] = ("raw", item)
         elif kind == "bounded_scope":
             state["bounded_scope"] = ("bounded", item)
+        elif kind == "authority_ambiguity":
+            state["authority_ambiguity"] = ("unresolved", item)
         elif kind == "referenced_pr_closed_unmerged":
             state["closed_unmerged_prs"][item.get("detail")] = item
 
@@ -1224,6 +1285,16 @@ def classify_target(task, prs, controller_states):
 
     if authority["completed"]:
         return "Done", "high", authority_reason("current completion authority", authority["completed"])
+
+    if authority["authority_ambiguity"] and not authority["worker_started"]:
+        return (
+            RECONCILIATION_REQUIRED,
+            "low",
+            authority_reason(
+                "current task STATE conflicts with older lifecycle evidence and notes-specific chronology is unavailable",
+                authority["authority_ambiguity"],
+            ),
+        )
 
     ownership = authority["ownership"]
     post_merge_open = authority["post_merge"] and authority["post_merge"][0] == "required"

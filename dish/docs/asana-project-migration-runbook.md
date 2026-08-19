@@ -21,7 +21,10 @@ when available. It reconstructs an ordered lifecycle authority stream: current
 notes are the untimestamped baseline, while comments and GitHub events are
 ordered by their durable timestamps and provenance. Later authoritative holds,
 prohibitions, dependencies, corrections, ownership transfers, or completion
-therefore supersede older review/dispatch language. GitHub/lifecycle evidence
+therefore supersede older review/dispatch language. Because Asana does not
+expose a notes-specific timestamp, an ordinary current `STATE` projection that
+conflicts with older timestamped lifecycle history is reconciliation unless an
+explicit amendment or separate current authority proves the ordering. GitHub/lifecycle evidence
 owns detailed execution truth once development starts; an Implementation
 handoff alone remains `Ready` until worker-start evidence exists. A stale
 `IMPLEMENTATION IN PROGRESS` claim without current worker/owning-PR proof is

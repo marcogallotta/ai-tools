@@ -310,7 +310,7 @@ class PlannerClassificationTests(unittest.TestCase):
             "1217591715594181": (
                 task(
                     gid="1217591715594181",
-                    notes="STATE: RESEARCH REQUIRED",
+                    notes="STATE: IN PROGRESS — IMPLEMENTATION STARTED",
                     comment=comment(("2026-08-18T12:12:48Z", "Proceed now. No additional pre-Implementation Agent Review is required.")),
                 ),
                 [],
@@ -383,6 +383,20 @@ class PlannerClassificationTests(unittest.TestCase):
             ),
         )
         self.assertEqual(self.classify(value)[0], planner.RECONCILIATION_REQUIRED)
+
+    def test_ordinary_current_research_state_conflicting_with_older_ready_fails_closed(self):
+        value = task(
+            gid="1217000000000003",
+            notes="STATE: RESEARCH REQUIRED",
+            modified_at="2026-08-19T12:00:00Z",
+            comment=comment((
+                "2026-08-19T10:00:00Z",
+                "INDEPENDENT DESIGN REVIEW — PASS\nCURRENT DISPOSITION: IMPLEMENTATION READY",
+            )),
+        )
+        target, confidence, reason = self.classify(value)
+        self.assertEqual((target, confidence), (planner.RECONCILIATION_REQUIRED, "low"))
+        self.assertIn("notes-specific chronology is unavailable", reason)
 
     def test_timestamped_github_events_do_not_override_later_asana_hold(self):
         value = task(
