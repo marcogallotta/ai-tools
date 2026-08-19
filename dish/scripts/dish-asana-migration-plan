@@ -1043,6 +1043,8 @@ def build_ledger(project_gid=DEFAULT_PROJECT_GID, project_name=None):
         "generated_at": generated_at.isoformat(),
         "project_gid": project_gid,
         "project_name": project_name,
+        "target_project_name_v2": f"{project_name} v2",
+        "target_project_name_v3": f"{project_name} v3",
         "target_sections": TARGET_SECTIONS,
         "code_area_vocabulary": CODE_AREAS,
         "controller_source": controller_source,
