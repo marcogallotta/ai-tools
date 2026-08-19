@@ -13,6 +13,7 @@ from review_design_lineage import (  # noqa: E402
     Disposition,
     Event,
     EventType,
+    HumanDecisionProvenance,
     Identity,
     Projection,
     ReviewDisposition,
@@ -48,20 +49,42 @@ def gen(gid, text, predecessor=None):
     )
 
 
-def event(record, gid, kind, successor=None):
-    approval = (
-        sha("complete material delta set")
-        if kind is EventType.MARCO_APPROVED
-        else None
+def approval(record, event_gid="2"):
+    delta_sha = sha("complete material delta set")
+    ref = f"asana:decision:{record.generation_id}"
+    decision_sha = sha(
+        f"Marco approved {record.identity.tuple()} with material deltas {delta_sha}"
     )
+    decision = HumanDecisionProvenance(
+        decision_ref=ref,
+        decision_sha256=decision_sha,
+        identity=record.identity,
+        material_delta_set_sha256=delta_sha,
+    )
+    event = Event(
+        event_gid,
+        EventType.MARCO_APPROVED,
+        record.identity,
+        "2026-08-19T00:01:00Z",
+        "Dish Agent",
+        material_delta_set_sha256=delta_sha,
+        human_decision_ref=ref,
+        human_decision_sha256=decision_sha,
+    )
+    return event, {ref: decision}
+
+
+def event(record, gid, kind, successor=None):
+    if kind is EventType.MARCO_APPROVED:
+        approved, _ = approval(record, gid)
+        return approved
     return Event(
         gid,
         kind,
         record.identity,
         "2026-08-19T00:01:00Z",
         "Dish Agent",
-        successor,
-        approval,
+        successor_generation_id=successor,
     )
 
 
@@ -109,9 +132,10 @@ def test_lifecycle_and_service_consume_exact_identity_without_minting():
 
 def test_successor_design_stays_in_review_v2_lineage_and_projection_moves():
     g5 = gen("G5", "dispatched")
+    approved, decisions = approval(g5)
     h5 = [
         event(g5, "1", EventType.CREATED),
-        event(g5, "2", EventType.MARCO_APPROVED),
+        approved,
         event(g5, "3", EventType.DISPATCHED),
         event(g5, "4", EventType.REOPENED),
         event(g5, "5", EventType.SUPERSEDED, "G6"),
@@ -119,7 +143,7 @@ def test_successor_design_stays_in_review_v2_lineage_and_projection_moves():
     g6 = gen("G6", "changed", "G5")
     h6 = [event(g6, "6", EventType.CREATED)]
     states = {
-        "G5": reconstruct(g5, h5),
+        "G5": reconstruct(g5, h5, decisions),
         "G6": reconstruct(g6, h6),
     }
     assert validate_lineage([g5, g6], states) == ()
@@ -158,6 +182,18 @@ def test_material_author_cannot_self_clear_candidate():
         )
 
 
+def test_challenger_cannot_supply_independent_reviewer_disposition():
+    g5 = gen("G5", "candidate")
+    key = ChallengeKey(g5.identity, "blocker", sha("evidence-set"))
+    challenge = Challenge(key, "challenger-only", sha("challenge"))
+    with pytest.raises(ValueError, match="challenger cannot supply"):
+        validate_disposition(
+            challenge,
+            ReviewDisposition(key, "challenger-only", Disposition.UPHOLDS),
+            ["material-author"],
+        )
+
+
 def test_invalid_foreign_event_does_not_hide_later_valid_created_event():
     g5 = gen("G5", "candidate")
     other = gen("G6", "other")
@@ -173,7 +209,7 @@ def test_invalid_foreign_event_does_not_hide_later_valid_created_event():
     assert any(c.code == "identity-mismatch" for c in state.contradictions)
 
 
-def test_marco_approval_binds_complete_material_delta_set_digest():
+def test_marco_approval_requires_material_delta_set_digest():
     g5 = gen("G5", "candidate")
     with pytest.raises(ValueError, match="material_delta_set_sha256"):
         Event(
@@ -183,8 +219,72 @@ def test_marco_approval_binds_complete_material_delta_set_digest():
             "2026-08-19T00:01:00Z",
             "Moinudin",
         )
-    approved = event(g5, "2", EventType.MARCO_APPROVED)
-    assert approved.material_delta_set_sha256 == sha("complete material delta set")
+
+
+def test_actor_only_approval_cannot_count_but_exact_human_provenance_can():
+    g5 = gen("G5", "candidate")
+    delta_sha = sha("complete material delta set")
+    actor_only = Event(
+        "2",
+        EventType.MARCO_APPROVED,
+        g5.identity,
+        "2026-08-19T00:01:00Z",
+        "Marco",
+        material_delta_set_sha256=delta_sha,
+    )
+    actor_only_state = reconstruct(
+        g5,
+        [event(g5, "1", EventType.CREATED), actor_only],
+    )
+    assert actor_only_state.state is State.AUTHORING
+    assert "2" not in actor_only_state.valid_event_gids
+    assert any(
+        c.code == "invalid-marco-approval-provenance"
+        for c in actor_only_state.contradictions
+    )
+    assert cumulative_drift_baseline(
+        "G5",
+        [g5],
+        {"G5": [event(g5, "1", EventType.CREATED), actor_only]},
+    ) is None
+
+    approved, decisions = approval(g5)
+    bound_state = reconstruct(
+        g5,
+        [event(g5, "1", EventType.CREATED), approved],
+        decisions,
+    )
+    assert bound_state.state is State.MARCO_APPROVED
+    assert bound_state.contradictions == ()
+    assert cumulative_drift_baseline(
+        "G5",
+        [g5],
+        {"G5": [event(g5, "1", EventType.CREATED), approved]},
+        decisions,
+    ) == g5
+
+
+def test_recovered_human_decision_must_match_exact_identity_and_delta_set():
+    g5 = gen("G5", "candidate")
+    approved, decisions = approval(g5)
+    ref = approved.human_decision_ref
+    assert ref is not None
+    bad = HumanDecisionProvenance(
+        decision_ref=ref,
+        decision_sha256=approved.human_decision_sha256,
+        identity=gen("G6", "other").identity,
+        material_delta_set_sha256=approved.material_delta_set_sha256,
+    )
+    state = reconstruct(
+        g5,
+        [event(g5, "1", EventType.CREATED), approved],
+        {ref: bad},
+    )
+    assert state.state is State.AUTHORING
+    assert any(
+        c.code == "invalid-marco-approval-provenance"
+        for c in state.contradictions
+    )
 
 
 def test_invalid_events_and_pointer_disagreement_are_contradictions():
@@ -213,13 +313,15 @@ def test_invalid_events_and_pointer_disagreement_are_contradictions():
 
 def test_dispatched_successor_without_reopen_is_surfaced():
     g5 = gen("G5", "dispatched")
+    approved, decisions = approval(g5)
     state = reconstruct(
         g5,
         [
             event(g5, "1", EventType.CREATED),
-            event(g5, "2", EventType.MARCO_APPROVED),
+            approved,
             event(g5, "3", EventType.DISPATCHED),
         ],
+        decisions,
     )
     g6 = gen("G6", "changed", "G5")
     problems = validate_lineage([g5, g6], {"G5": state})
@@ -229,14 +331,59 @@ def test_dispatched_successor_without_reopen_is_surfaced():
     )
 
 
+def test_superseded_requires_successor_identity():
+    g5 = gen("G5", "candidate")
+    with pytest.raises(ValueError, match="successor_generation_id"):
+        Event(
+            "5",
+            EventType.SUPERSEDED,
+            g5.identity,
+            "2026-08-19T00:01:00Z",
+            "Dish Agent",
+        )
+
+
+def test_superseded_event_successor_mismatch_is_surfaced():
+    g5 = gen("G5", "candidate")
+    g6 = gen("G6", "actual child", "G5")
+    g5_state = reconstruct(
+        g5,
+        [
+            event(g5, "1", EventType.CREATED),
+            event(g5, "5", EventType.SUPERSEDED, "G7"),
+        ],
+    )
+    problems = validate_lineage([g5, g6], {"G5": g5_state})
+    assert any(
+        c.code == "superseded-successor-mismatch"
+        and "G7" in c.message
+        and "G6" in c.message
+        for c in problems
+    )
+
+
+def test_superseded_event_successor_matches_actual_lineage():
+    g5 = gen("G5", "candidate")
+    g6 = gen("G6", "actual child", "G5")
+    g5_state = reconstruct(
+        g5,
+        [
+            event(g5, "1", EventType.CREATED),
+            event(g5, "5", EventType.SUPERSEDED, "G6"),
+        ],
+    )
+    assert validate_lineage([g5, g6], {"G5": g5_state}) == ()
+
+
 def test_cumulative_drift_uses_last_exact_marco_approved_ancestor():
     g4 = gen("G4", "approved")
     g5 = gen("G5", "delta1", "G4")
     g6 = gen("G6", "delta2", "G5")
+    approved, decisions = approval(g4)
     histories = {
         "G4": [
             event(g4, "1", EventType.CREATED),
-            event(g4, "2", EventType.MARCO_APPROVED),
+            approved,
         ],
         "G5": [event(g5, "3", EventType.CREATED)],
         "G6": [event(g6, "4", EventType.CREATED)],
@@ -245,4 +392,5 @@ def test_cumulative_drift_uses_last_exact_marco_approved_ancestor():
         "G6",
         [g4, g5, g6],
         histories,
+        decisions,
     ) == g4
