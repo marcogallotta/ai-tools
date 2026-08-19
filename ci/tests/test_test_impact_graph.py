@@ -44,7 +44,27 @@ def test_catalog_bootstraps_owned_test_files_with_stable_target_ids():
     assert first == second
     assert target_id in first
     assert first[target_id]["generated_from"] == "dish/test_selection/ownership.csv"
-    assert len(first) >= 376
+    assert len(first) >= 370
+
+
+def test_pglite_owner_tests_use_the_governed_lane_target():
+    test = "tests/postgresql/pglite/test_0025_reconciliation_observation_boundary.py"
+    target = graph._test_target(test)
+
+    assert target == graph.load_targets()["harness:pglite-nested-collection"]
+    assert target["runner"] == "pglite"
+    assert target["selector"] == "full"
+    assert f"dish-pytest:{test}" not in graph.load_targets()
+
+    envelope = graph.build_legacy_envelope(
+        ["dish/dish_pg/command_contract.py"], provenance="candidate"
+    )
+    obligation = next(
+        item
+        for item in envelope["obligations"]
+        if item["guarantee"] == f"test-file:{test}"
+    )
+    assert obligation["preferred_targets"] == ["harness:pglite-nested-collection"]
 
 
 def test_python_import_edges_are_additive_target_evidence():
