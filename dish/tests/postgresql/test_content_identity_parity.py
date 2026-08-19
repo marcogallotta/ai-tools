@@ -50,7 +50,9 @@ def test_warm_potato_salad_uses_canonical_source_content_identity(workflow_db) -
         ).hexdigest()
 
 
-def test_postgresql_content_identity_uses_canonical_newline_normalization(workflow_db) -> None:
+def test_postgresql_content_identity_uses_canonical_newline_normalization(
+    workflow_db,
+) -> None:
     factory, ids, context, _task_id = workflow_db
     title = "Warm potato salad with yarrow"
     body_lf = "First line\nSecond line\n"
@@ -64,7 +66,11 @@ def test_postgresql_content_identity_uses_canonical_newline_normalization(workfl
             session, ids, context, title=title, body=body_crlf
         )
 
-        assert lf_version.identity_scheme == crlf_version.identity_scheme == CONTENT_IDENTITY_SCHEME
+        assert (
+            lf_version.identity_scheme
+            == crlf_version.identity_scheme
+            == CONTENT_IDENTITY_SCHEME
+        )
         assert lf_version.content_identity == crlf_version.content_identity
         assert lf_version.content_identity == content_identity(title, body_lf)
         assert crlf_version.content_identity == content_identity(title, body_crlf)
