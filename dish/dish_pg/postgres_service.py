@@ -12,7 +12,7 @@ import os
 import socket
 import uuid
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Mapping
 
 from alembic.runtime.migration import MigrationContext
@@ -29,15 +29,21 @@ from .command_contract import (
     ACTION_COMMANDS,
     ADMIN_COMMANDS,
     COMMAND_DEFINITIONS,
+    SEARCH_COMMAND,
+    SEARCH_PAGE_SIZE_DEFAULT,
     validate_postgres_action_request,
 )
-from .command_port import CommandCall, CommandPortError, PostgresCommandPort
+from .command_port import CommandCall, CommandPortError, CommandResult, PostgresCommandPort
 from .database import DatabaseSettings, create_database_engine, session_factory, session_scope
+from .frontend_board_query import FrontendBoardQuery
 from .openapi import postgres_action_openapi
+from .read_model import InvalidCursor, PostgresReadModel
 from .workflow import RequestIdentityConflict, WorkflowAuthorityError
 
 
 _SUPPORTED_PROFILES = ("test", "prod")
+_SEARCH_CURSOR_KIND = "active-title-search-v1"
+_SEARCH_PROJECTION_DELAY = timedelta(seconds=1)
 
 # Retained admin-principal commands are exposed only through the private admin
 # transport; every other retained command remains reachable from the agent
@@ -510,6 +516,153 @@ class PostgresRuntimeService:
             request_id=request_id,
         )
 
+    def _execute_search(
+        self,
+        session,
+        arguments: Mapping[str, Any],
+    ) -> CommandResult:
+        query = str(arguments["query"])
+        page_size = int(arguments.get("page_size", SEARCH_PAGE_SIZE_DEFAULT))
+        reads = PostgresReadModel(session, cursor_secret=self._cursor_secret)
+        board = FrontendBoardQuery(session)
+        context = board.context()
+        normalized_query = query.lower()
+        offset = 0
+        cursor = arguments.get("cursor")
+        if cursor is not None:
+            try:
+                payload = reads.cursor_codec.decode(str(cursor))
+            except InvalidCursor as exc:
+                return CommandResult(
+                    False,
+                    SEARCH_COMMAND,
+                    "INVALID_ARGUMENT",
+                    400,
+                    {"message": str(exc), "field": "cursor"},
+                )
+            expected = {
+                "kind": _SEARCH_CURSOR_KIND,
+                "generation_id": str(context.generation_id),
+                "registry_version_id": str(context.registry_version_id),
+                "registry_revision": context.registry_revision,
+                "query": normalized_query,
+                "page_size": page_size,
+            }
+            if any(payload.get(key) != value for key, value in expected.items()):
+                return CommandResult(
+                    False,
+                    SEARCH_COMMAND,
+                    "INVALID_ARGUMENT",
+                    400,
+                    {"message": "cursor is stale or belongs to another search query", "field": "cursor"},
+                )
+            try:
+                offset = int(payload["offset"])
+            except (KeyError, TypeError, ValueError):
+                return CommandResult(
+                    False,
+                    SEARCH_COMMAND,
+                    "INVALID_ARGUMENT",
+                    400,
+                    {"message": "cursor page boundary is invalid", "field": "cursor"},
+                )
+            if offset < 0:
+                return CommandResult(
+                    False,
+                    SEARCH_COMMAND,
+                    "INVALID_ARGUMENT",
+                    400,
+                    {"message": "cursor page boundary is invalid", "field": "cursor"},
+                )
+
+        # The settled frontend primitive owns title matching and deterministic ordering.
+        # projection_delay only feeds attention/projection columns that SearchFact discards;
+        # it does not change active-corpus membership, title matching, or ordering.
+        facts = board.search_titles(
+            query=query,
+            projection_delay=_SEARCH_PROJECTION_DELAY,
+            max_results=offset + page_size + 1,
+        )
+        visible = facts.results[offset : offset + page_size]
+        has_more = facts.truncated or len(facts.results) > offset + page_size
+        sections = {item["section_id"]: item for item in reads.sections()}
+        results: list[dict[str, Any]] = []
+        for fact in visible:
+            placement = session.get(
+                models.CurrentTaskSectionPlacement,
+                (context.generation_id, fact.task_id),
+            )
+            task_gid = session.scalar(
+                select(models.TaskExternalAlias.external_id).where(
+                    models.TaskExternalAlias.task_id == fact.task_id,
+                    models.TaskExternalAlias.external_system == "asana",
+                    models.TaskExternalAlias.state == "active",
+                )
+            )
+            if placement is None or task_gid is None:
+                return CommandResult(
+                    False,
+                    SEARCH_COMMAND,
+                    "BACKEND_REJECTED",
+                    409,
+                    {
+                        "message": "active Search result lacks canonical placement or exact task alias",
+                        "dish_id": str(fact.task_id),
+                    },
+                )
+            section = sections.get(str(placement.section_id))
+            if section is None:
+                return CommandResult(
+                    False,
+                    SEARCH_COMMAND,
+                    "BACKEND_REJECTED",
+                    409,
+                    {
+                        "message": "active Search result is outside the current section registry",
+                        "dish_id": str(fact.task_id),
+                    },
+                )
+            results.append(
+                {
+                    "dish_id": str(fact.task_id),
+                    "task_gid": str(task_gid),
+                    "title": fact.title,
+                    "section_id": str(placement.section_id),
+                    "section_label": fact.section_label,
+                    "workflow_role": section["workflow_role"],
+                    "project_label": fact.project_label,
+                }
+            )
+
+        next_cursor = None
+        if has_more:
+            next_cursor = reads.cursor_codec.encode(
+                {
+                    "kind": _SEARCH_CURSOR_KIND,
+                    "generation_id": str(context.generation_id),
+                    "registry_version_id": str(context.registry_version_id),
+                    "registry_revision": context.registry_revision,
+                    "query": normalized_query,
+                    "page_size": page_size,
+                    "offset": offset + page_size,
+                }
+            )
+        return CommandResult(
+            True,
+            SEARCH_COMMAND,
+            "OK",
+            200,
+            {
+                "query": query,
+                "results": results,
+                "next_cursor": next_cursor,
+                "page_size": page_size,
+                "generation_id": str(context.generation_id),
+                "registry_version_id": str(context.registry_version_id),
+                "registry_revision": context.registry_revision,
+            },
+        )
+
     def _execute_command(
         self,
         command: str,
@@ -537,20 +690,32 @@ class PostgresRuntimeService:
 
         try:
             with session_scope(self._session_maker) as session:
-                result = PostgresCommandPort(
-                    session,
-                    cursor_secret=self._cursor_secret,
-                ).execute(
-                    CommandCall(
-                        command_name=command,
-                        arguments=dict(arguments),
-                        owner_id=principal.owner_id,
-                        principal_class=principal_class,
-                        run_id=run_id,
-                        request_id=parsed_request_id,
-                        now=datetime.now(timezone.utc),
+                if command == SEARCH_COMMAND:
+                    if parsed_request_id is not None:
+                        result = CommandResult(
+                            False,
+                            SEARCH_COMMAND,
+                            "INVALID_ARGUMENT",
+                            400,
+                            {"message": "read-only Search does not accept request_id"},
+                        )
+                    else:
+                        result = self._execute_search(session, arguments)
+                else:
+                    result = PostgresCommandPort(
+                        session,
+                        cursor_secret=self._cursor_secret,
+                    ).execute(
+                        CommandCall(
+                            command_name=command,
+                            arguments=dict(arguments),
+                            owner_id=principal.owner_id,
+                            principal_class=principal_class,
+                            run_id=run_id,
+                            request_id=parsed_request_id,
+                            now=datetime.now(timezone.utc),
+                        )
                     )
-                )
                 session.flush()
                 _section4_control_point(
                     point="after_execute_before_commit",
