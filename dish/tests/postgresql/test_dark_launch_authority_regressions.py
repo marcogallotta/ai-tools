@@ -367,8 +367,23 @@ def test_worker_delivery_failure_returns_idle_signal_instead_of_busy_loop(
         clock=lambda: NOW,
     )
 
-    assert worker.run_once() is False
-    pending = spool.pending()
-    assert len(pending) == 1
-    assert pending[0].delivery_attempts == 1
-    assert "source generation" in pending[0].last_delivery_error
+    assert worker.run_once() is True
+    assert spool.pending() == ()
+    status = spool.status()
+    assert status["counts"]["delivered"] == 1
+    assert status["oldest_pending_sequence"] is None
+    with session_scope(factory) as session:
+        gap = session.scalar(
+            select(tx.ShadowGap).where(
+                tx.ShadowGap.gap_identity == "spool_delivery:delivery-fails"
+            )
+        )
+        assert gap is not None
+        assert gap.gap_kind == "uncomparable"
+        assert gap.state == "open"
+        assert gap.details["classification"] == "permanent"
+        assert gap.details["error_type"] == "TransitionAuthorityError"
+        assert gap.details["source_authority_generation"] == "legacy-2"
+        assert gap.details["baseline_source_generation"] == "legacy-1"
+        assert "source generation" in gap.details["error"]
+        assert session.scalar(select(tx.ShadowEnvelope)) is None
