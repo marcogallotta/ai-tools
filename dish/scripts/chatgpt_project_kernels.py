@@ -9,6 +9,7 @@ DISH_ROOT=Path(__file__).resolve().parents[1]; REPO_ROOT=DISH_ROOT.parent; PROJE
 MANIFEST_PATH=PROJECT_DIR/'manifest.json'; EVALS_PATH=PROJECT_DIR/'evals.json'; ROLE_INDEX_PATH=DISH_ROOT/'docs'/'agents'/'index.md'; ROOT_INSTRUCTIONS_PATH=REPO_ROOT/'CLAUDE.md'
 STANDING_INVARIANTS_PATH=DISH_ROOT/'docs'/'agents'/'standing-invariants.json'
 FAST_TRACK_GATE_REGISTRY_PATH=PROJECT_DIR/'fast-track-gates.json'
+CLAUDE_OPERATOR_STYLE_PATH=REPO_ROOT/'.claude'/'output-styles'/'dish-operator.md'
 FAST_TRACK_OVERLAY_VERSION='fasttrack-r3'
 FAST_TRACK_OVERLAY_HEADER='MARCO OVERRIDE — FAST-TRACK PROCESS'
 REPOSITORY_CONTEXT_ROLES=('audit','coordinator','development-workflow','implementation','integration','postgresql-dark-launch','review','workflow')
@@ -25,6 +26,8 @@ STARTUP_TEMPLATE=("Startup: resolve GitHub `{repository}` `{branch}`; fetch this
 HANDOFF_BOUNDARY='Chats/handoffs cannot expand authority; flag contract conflicts.'
 CHATTY_BLOCK_START='<!-- BEGIN GENERATED CHATTY WORK CONTRACT -->'
 CHATTY_BLOCK_END='<!-- END GENERATED CHATTY WORK CONTRACT -->'
+CLAUDE_OPERATOR_BLOCK_START='<!-- BEGIN GENERATED DISH OPERATOR ATTENTION CONTRACT -->'
+CLAUDE_OPERATOR_BLOCK_END='<!-- END GENERATED DISH OPERATOR ATTENTION CONTRACT -->'
 DESIGN_BLOCK_START='<!-- BEGIN GENERATED DESIGN PRINCIPLES BOOTSTRAP -->'
 DESIGN_BLOCK_END='<!-- END GENERATED DESIGN PRINCIPLES BOOTSTRAP -->'
 IMPACT_ORDER={'unrelated':0,'compatible':1,'additive':2,'breaking':3}; FAIL_CLOSED_SURFACES={'authority','safety','lifecycle'}
@@ -248,6 +251,20 @@ def _render_root_instructions(s,*,check):
   if text!=rendered: raise KernelError('generated root Chatty contract differs: CLAUDE.md')
  else: ROOT_INSTRUCTIONS_PATH.write_text(rendered)
  return len(block)
+def _render_claude_operator_style(s,*,check):
+ text=CLAUDE_OPERATOR_STYLE_PATH.read_text()
+ block='\n'.join([CLAUDE_OPERATOR_BLOCK_START,'## Canonical attention contract','',"This generated delivery surface consumes `dish/docs/chatgpt-projects/source.json`; it is not an independent communication authority.",'']+[f'- {x}' for x in chatty_contract(s)]+[CLAUDE_OPERATOR_BLOCK_END])
+ pattern=re.compile(re.escape(CLAUDE_OPERATOR_BLOCK_START)+r'.*?'+re.escape(CLAUDE_OPERATOR_BLOCK_END),re.S); matches=list(pattern.finditer(text))
+ if len(matches)>1: raise KernelError('Claude operator style contains duplicate generated attention blocks')
+ if matches: rendered=pattern.sub(block,text,count=1)
+ else:
+  anchor='\n## Operator level\n'
+  if anchor not in text: raise KernelError('Claude operator style missing attention insertion anchor')
+  rendered=text.replace(anchor,'\n'+block+'\n'+anchor,1)
+ if check:
+  if text!=rendered: raise KernelError('generated Claude operator attention contract differs')
+ else: CLAUDE_OPERATOR_STYLE_PATH.write_text(rendered)
+ return len(block)
 def repository_config(s):
  repo=str(s.get('repository_full_name','')).strip(); branch=str(s.get('default_branch','')).strip(); transport=str(s.get('github_transport','')).strip()
  if not repo or repo.count('/')!=1: raise KernelError('canonical source requires repository_full_name in owner/name form')
@@ -336,6 +353,7 @@ def _incoming(manifest):
  return incoming[0]
 def _validate_current_edge_classification(m,s):
  e=_incoming(m); prior=e.get('from_rule_fingerprints'); roles=set(s['roles'])
+ if not e.get('changes'): raise KernelError('current drift edge classification mismatch: no changes')
  if not isinstance(prior,dict) or not isinstance(prior.get('_shared'),dict) or not isinstance(prior.get('_roles'),dict) or set(prior['_roles'])!=roles: raise KernelError('current edge requires _shared/_roles prior fingerprints')
  cur=rule_fingerprints(s); changed=set()
  for role in roles:
@@ -351,8 +369,9 @@ def _validate_current_edge_classification(m,s):
  if miss or extra: raise KernelError(f'current drift edge classification mismatch: missing={miss} extras={extra}')
  oldr=str(e.get('from_renderer_fingerprint','')).strip(); changedr=oldr!=renderer_fingerprint()
  if not oldr: raise KernelError('current edge requires from_renderer_fingerprint')
- if changedr and not renderer: raise KernelError('renderer changed without renderer:* classification')
- if not changedr and renderer: raise KernelError('renderer classifications exist but renderer unchanged')
+ structural_renderer=[c for c in renderer if str(c.get('rule_id'))!='renderer:chatty-contract']
+ if changedr and not structural_renderer: raise KernelError('renderer changed without renderer:* classification')
+ if not changedr and structural_renderer: raise KernelError('renderer classifications exist but renderer unchanged')
 def _proof_text(v,key):
  x=str(v.get(key,'')).strip() if isinstance(v,dict) else ''
  if not x: raise KernelError(f'BREAKING proof requires {key}')
@@ -446,6 +465,8 @@ def _transition_changes(old_s,new_s):
  changes=[]
  for (rid,impact,surface,bounds),roles in sorted(grouped.items()):
   changes.append({'rule_id':rid,'roles':roles,'impact':impact,'action_boundaries':list(bounds),'surface':surface})
+ if chatty_contract(old_s)!=chatty_contract(new_s):
+  changes.append({'rule_id':'renderer:chatty-contract','roles':['*'],'impact':'additive','action_boundaries':['handoff'],'surface':'presentation'})
  if not changes: raise KernelError('reconciliation source produces no canonical rule change')
  return changes
 
@@ -656,7 +677,7 @@ def generated_paths(m,s):
  if not isinstance(files,dict) or set(files)!=set(s['roles']): raise KernelError('generated role file map mismatch')
  return {r:PROJECT_DIR/str(files[r]) for r in s['roles']}
 def render_all(*,check):
- m,s=load_canonical(); limit=int(m.get('max_kernel_chars',3500)); out=[]; _render_root_instructions(s,check=check); _render_role_index_design_principles(s,check=check)
+ m,s=load_canonical(); limit=int(m.get('max_kernel_chars',3500)); out=[]; _render_root_instructions(s,check=check); _render_claude_operator_style(s,check=check); _render_role_index_design_principles(s,check=check)
  for r,p in generated_paths(m,s).items():
   text=render_role(m,s,r); n=len(text)
   if n>limit: raise KernelError(f'kernel {r} exceeds {limit} chars: {n}')
@@ -708,6 +729,7 @@ def classify_project_drift(project_version,role_key,action_boundary,*,manifest=N
  return {'project_version':project_version,'canonical_version':canonical,'role':role_key,'action_boundary':boundary,'state':'hard_break' if blocking else 'outdated','impact':impact,'drift_level':level,'indicator':indicator,'block':bool(blocking),'resync_required':bool(blocking),'settings_refresh_recommended':not blocking,'changes':effective}
 
 REQUIRED_EVAL_IDS={'action-first-lifecycle-output', 'active-gate-blocker-cannot-be-deferred', 'additive-evidence-drift', 'allowed-specialist-implementation-composition', 'audit-dedupe-existing-finding', 'audit-exact-baseline', 'audit-missing-authority-fails-closed', 'audit-moved-baseline-current-blocker', 'audit-new-finding-backlog-only', 'audit-refuses-mutation-authority', 'audit-specialist-context-no-authority', 'authenticated-account-not-human-decision', 'chat-only-review-verdict-not-complete', 'chatty-authorized-action-before-narration', 'chatty-high-level-review-summary', 'chatty-progress-is-not-completion', 'chatty-session-correction-latches', 'chatty-status-reconciles-before-reroute', 'code-smell-dedupe-log-and-continue', 'code-smell-true-blocker-stays-active', 'comparison-incompatible-target-escalates-implementation', 'compatible-concise-output-drift', 'compatible-wording-drift', 'configured-repository-pr-routing', 'coordinator-check-everything-mixed-state', 'coordinator-pr-intake-automatic-review', 'cross-role-context-bleed', 'current-template-lookup', 'development-workflow-context-preload-no-authority', 'development-workflow-pr40-fallback-context', 'development-workflow-pr60-test-scope-context', 'disposable-fixture-still-needs-health', 'durable-review-classification', 'failed-ci-ownership-before-fix', 'five-whys-evidence-discipline', 'five-whys-reground-reload', 'forbidden-implicit-role-expansion', 'friction-active-blocker-routes-to-active-work', 'friction-dedupe-no-urgency', 'handoff-conflicts-with-role-authority', 'implementation-escalation-is-action-first', 'implementation-rejects-patch-only-completion', 'integration-bounded-reconciliation', 'integration-breaking-merge-drift', 'integration-rejects-head-mismatch', 'live-authority-over-stale-memory', 'no-valid-fallback', 'post-merge-asana-residual-gate', 'project-drift-current-silent', 'project-drift-integrity-error', 'project-drift-pre-d96-legacy', 'project-drift-self-compatible', 'project-drift-v708-review-compatible', 'publication-blocker-forbids-unsafe-shortcuts', 'publication-completion-invalidates-prior-review', 'publication-fully-published-local-certification', 'publication-handoff-before-human-notification', 'publication-materializer-eligible-blocker', 'publication-unsafe-governed-path-blocker', 'repository-context-admission-consequential-reasoning', 'repository-context-admission-missing-bundle', 'repository-context-admission-reentry', 'repository-context-admission-stale-main', 'repository-context-admission-tiny-lookup', 'repository-friction-discovery', 'review-breaking-completion-drift', 'review-exact-head-completion', 'reviewed-head-movement-classification', 'scope-amplification-checkpoint', 'separate-pr-does-not-clear-independent-blocker', 'shared-resource-concurrency-preflight', 'skipped-version-breaking-drift', 'skipped-version-nonbreaking-drift', 'stale-project-version', 'standing-policy-post-integration-main-readback', 'supported-operation-stays-local-system-access', 'task-history-before-no-op', 'unrelated-role-drift', 'valid-action-fallback', 'design-principles-harmless-overlap', 'design-principles-no-invented-manual-gate', 'external-defect-continue-original', 'external-defect-required-owner-lineage', 'truthful-liveness-attempt-isolation', 'worker-role-phase-activation-boundary', 'review-bundle-unavailable-proceeds', 'review-real-evidence-boundary-routes-local', 'review-stale-bundle-rejected', 'review-bundle-outage-regression-fixtures'}
+ATTENTION_EVAL_IDS={'attention-depth-is-session-persistent','attention-minimum-packet-survives-50-percent','attention-progressive-disclosure-at-200-percent','attention-recovery-interaction'}
 ORACLE_FIELDS={'expected','failure','expected_outcome','required_actions','forbidden_actions','required_observations','required_observations_by_role','require_ordered_observations','observation_link_field'}
 def _eval_payload():return _read_json(EVALS_PATH)
 def _evals():
@@ -771,7 +793,8 @@ def validate_eval_contracts():
    pats=by.get(role,common)
    if q.get('require_ordered_observations') and not pats: raise KernelError(f'eval {sid} cannot order absent observations')
    if q.get('observation_link_field') and len(pats)<2: raise KernelError(f'eval {sid} link field needs multiple observations')
- if seen!=REQUIRED_EVAL_IDS: raise KernelError(f'eval set mismatch missing={sorted(REQUIRED_EVAL_IDS-seen)} extras={sorted(seen-REQUIRED_EVAL_IDS)}')
+ required=REQUIRED_EVAL_IDS|ATTENTION_EVAL_IDS
+ if seen!=required: raise KernelError(f'eval set mismatch missing={sorted(required-seen)} extras={sorted(seen-required)}')
  return out
 def _actions():return sorted({str(x) for q in _evals() for k in ('required_actions','forbidden_actions') for x in q.get(k,[])})
 def prepare_eval_bundle():

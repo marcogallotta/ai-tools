@@ -6,6 +6,7 @@ INDEX = ROOT / "dish" / "docs" / "agents" / "index.md"
 POLICY = ROOT / "OPERATOR_CONTROL_PLANE.md"
 SOURCE = ROOT / "dish" / "docs" / "chatgpt-projects" / "source.json"
 CLAUDE = ROOT / "CLAUDE.md"
+CLAUDE_OPERATOR_STYLE = ROOT / ".claude" / "output-styles" / "dish-operator.md"
 
 
 def test_role_index_routes_every_role_through_one_shared_operator_contract():
@@ -38,3 +39,16 @@ def test_canonical_chatty_contract_is_generated_into_root_and_avoids_phrase_dict
         assert f"- {rule}" in root
     for brittle in ("give handoff", "YES OR NO", "speak in actions"):
         assert brittle not in "\n".join(rules)
+
+
+def test_attention_contract_keeps_depth_and_minimum_packet_in_one_generated_source():
+    rules = json.loads(SOURCE.read_text())["chatty_contract"]
+    text = "\n".join(rules)
+    assert "50%, 100%, or 200%" in text
+    assert "Every depth retains:" in text
+    assert "not truth, authority, completion" in text
+    assert "never chronology/process dumps" in text
+    style = CLAUDE_OPERATOR_STYLE.read_text()
+    assert "not an independent communication authority" in style
+    for rule in rules:
+        assert f"- {rule}" in style
