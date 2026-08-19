@@ -14,14 +14,18 @@ from dish_pg.command_contract import (
     POSTGRES_DISH_ID_SCHEMA,
     POSTGRESQL_ACTION_RETIRED_COMMANDS,
     postgres_action_argument_schema,
+    validate_postgres_action_request,
 )
 from dish_pg.openapi import postgres_action_openapi
 from dish_service.command_spec import ACTION_COMMAND_DEFINITIONS
+from dish_tool.errors import DishRuleError
 
 
 pytestmark = pytest.mark.smoke
 
 ROOT = Path(__file__).resolve().parents[2]
+DISCOVERY_RUN_ID = "11111111-1111-4111-8111-111111111111"
+DISCOVERY_SECTION_ID = "22222222-2222-4222-8222-222222222222"
 
 
 def _assert_postgresql_action_contract(document: dict[str, object]) -> None:
@@ -116,6 +120,65 @@ def test_postgresql_action_identity_fields_are_canonical_with_local_gid_aliases(
 
     read_schema = postgres_action_argument_schema("read")
     assert read_schema["oneOf"][0]["required"] == ["dish_id", "agent"]
+
+
+def test_postgresql_discovery_reads_reuse_one_stable_run_id_and_expose_pagination() -> None:
+    sections_request = {
+        "client": {"run_id": DISCOVERY_RUN_ID},
+        "arguments": {"agent": "gpt"},
+    }
+    first_client, first_arguments = validate_postgres_action_request(
+        "sections", sections_request
+    )
+    repeated_client, repeated_arguments = validate_postgres_action_request(
+        "sections", sections_request
+    )
+    section_client, section_arguments = validate_postgres_action_request(
+        "section-tasks",
+        {
+            "client": {"run_id": DISCOVERY_RUN_ID},
+            "arguments": {
+                "section_id": DISCOVERY_SECTION_ID,
+                "agent": "gpt",
+                "cursor": "opaque-next-page-token",
+            },
+        },
+    )
+
+    assert first_client == repeated_client == section_client == {
+        "run_id": DISCOVERY_RUN_ID
+    }
+    assert first_arguments == repeated_arguments == {"agent": "gpt"}
+    assert section_arguments == {
+        "section_id": DISCOVERY_SECTION_ID,
+        "agent": "gpt",
+        "cursor": "opaque-next-page-token",
+    }
+    section_schema = postgres_action_argument_schema("section-tasks")
+    assert "cursor" in section_schema["properties"]
+    assert "request_id" not in POSTGRES_CLIENT_RUN_ID_SCHEMA
+
+
+def test_postgresql_discovery_reads_reject_malformed_run_id_consistently() -> None:
+    requests = (
+        ("sections", {"agent": "gpt"}),
+        (
+            "section-tasks",
+            {"section_id": DISCOVERY_SECTION_ID, "agent": "gpt"},
+        ),
+    )
+    for command, arguments in requests:
+        with pytest.raises(DishRuleError) as error:
+            validate_postgres_action_request(
+                command,
+                {
+                    "client": {"run_id": "NOT-A-CANONICAL-UUID"},
+                    "arguments": arguments,
+                },
+            )
+        assert error.value.code == "INVALID_ARGUMENT"
+        assert error.value.rule == "uuid_identifier_required"
+        assert error.value.details["field"] == "client.run_id"
 
 
 def test_postgresql_connected_recovery_commands_are_retained() -> None:
