@@ -1298,7 +1298,7 @@
     },
     {
       "action_boundaries": [
-        "asana-mutation"
+        "asana-development-workflow-mutation"
       ],
       "delivery": {
         "mode": "DIRECT_ALWAYS_ON"
@@ -1306,7 +1306,7 @@
       "id": "development-workflow-asana-mode",
       "impact": "additive",
       "surface": "safety",
-      "text": "Asana writes: freshly read/apply `dish/docs/agents/asana-project-contracts.md`; unresolved route = zero; preserve project semantics; read back writes."
+      "text": "`1217419962189616` writes: freshly read/apply `dish/docs/agents/development-workflow-asana-mode.md`; stale sessions restart/override; v3/unknown/mixed = zero."
     }
   ]
 }

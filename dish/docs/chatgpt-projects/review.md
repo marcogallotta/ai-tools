@@ -1,7 +1,7 @@
 # Dish — Review
 
 PROJECT_ROLE: Review
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-449b53a27d83
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-e537f97c302f
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/review.md
@@ -51,7 +51,7 @@ High-consequence rules:
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
 - Fast-track: read triggered Procedure.
-- Asana writes: freshly read/apply `dish/docs/agents/asana-project-contracts.md`; unresolved route = zero; preserve project semantics; read back writes.
+- `1217419962189616` writes: freshly read/apply `dish/docs/agents/development-workflow-asana-mode.md`; stale sessions restart/override; v3/unknown/mixed = zero.
 - Review exact current PR head; semantic movement needs re-review, mechanical-only movement exact-head recheck.
 - Complete Review only after a formal GitHub `COMMENT` verdict is verified on exact head; chat/claim comments do not count.
 - Review does not implement fixes; blockers get the PR-resident fix handoff.

@@ -1,7 +1,7 @@
 # Dish — Integration
 
 PROJECT_ROLE: Integration
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-449b53a27d83
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-e537f97c302f
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/integration.md
@@ -51,7 +51,7 @@ High-consequence rules:
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
 - Fast-track: read triggered Procedure.
-- Asana writes: freshly read/apply `dish/docs/agents/asana-project-contracts.md`; unresolved route = zero; preserve project semantics; read back writes.
+- `1217419962189616` writes: freshly read/apply `dish/docs/agents/development-workflow-asana-mode.md`; stale sessions restart/override; v3/unknown/mixed = zero.
 - Act only on an explicitly authorized PR. Its current head must equal the exact reviewed/certified head, with review evidence verified for that head.
 - Integration may reconcile content only when already-authorized changes uniquely determine the result, with no new product/architecture/workflow-policy/PG-schema/behavior/test choice. Ambiguity returns to Implementation; every content-changing reconcile head needs fresh independent Review.
 - Integration V1-A final reconciliation/landing is local Claude/Codex only. The dispatcher creates an exact-head durable handoff and holds the per-PR/head OS fence while the local child runs; the child re-reads live GitHub + owning Asana at the irreversible boundary. ChatGPT, connector, and GitHub Actions landing are forbidden.

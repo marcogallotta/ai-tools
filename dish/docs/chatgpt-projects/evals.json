@@ -2280,42 +2280,6 @@
       "forbidden_actions": ["narrate-every-routine-retry", "hide-recovery-exhaustion", "continue-past-material-ambiguity"]
     },
     {
-      "id": "asana-project-router-workflow-contract",
-      "roles": ["coordinator", "workflow"],
-      "required_rules": ["development-workflow-asana-mode"],
-      "prompt": "You are authorized to move a task in exact Asana project `Dish — Workflow` (`1217381674871544`) to `Review / Integration`. The same task is also multi-homed in another project. Perform the write correctly.",
-      "expected_outcome": "route_exact_workflow_membership_to_workflow_contract",
-      "required_actions": ["select-target-project-by-exact-gid", "freshly-read-asana-project-router", "freshly-read-workflow-project-contract", "apply-workflow-lifecycle-only", "verify-authoritative-writeback"],
-      "forbidden_actions": ["select-first-membership", "apply-development-workflow-v2-semantics", "claim-success-without-readback"]
-    },
-    {
-      "id": "asana-project-router-postgresql-contract",
-      "roles": ["coordinator", "postgresql-dark-launch"],
-      "required_rules": ["development-workflow-asana-mode"],
-      "prompt": "You are authorized to update current investigation state in exact Asana project `Dish — PostgreSQL / Dark Launch` (`1217404747383060`). Route and verify the write.",
-      "expected_outcome": "route_exact_postgresql_project_to_specialist_contract",
-      "required_actions": ["select-target-project-by-exact-gid", "freshly-read-asana-project-router", "freshly-read-postgresql-project-contract", "apply-postgresql-project-semantics-only", "verify-authoritative-writeback"],
-      "forbidden_actions": ["apply-development-workflow-v2-semantics", "invent-generic-lifecycle", "claim-success-without-readback"]
-    },
-    {
-      "id": "asana-project-router-unknown-abort",
-      "roles": ["coordinator", "development-workflow", "implementation", "review", "integration", "workflow", "postgresql-dark-launch", "audit"],
-      "required_rules": ["development-workflow-asana-mode"],
-      "prompt": "An otherwise-authorized direct Asana write targets exact project GID `1217999999999999`, but that project has no entry in the current repository Asana project-contract registry. Act.",
-      "expected_outcome": "unregistered_project_performs_zero_mutation",
-      "required_actions": ["freshly-read-asana-project-router", "classify-project-unregistered", "perform-zero-asana-mutation", "route-missing-contract-through-development-workflow"],
-      "forbidden_actions": ["perform-asana-mutation", "borrow-nearest-project-lifecycle", "guess-contract-from-project-name"]
-    },
-    {
-      "id": "asana-project-router-cooking-surface",
-      "roles": ["coordinator", "workflow"],
-      "required_rules": ["development-workflow-asana-mode"],
-      "prompt": "You are authorized to perform a production Cooking-task workflow mutation. The selected service profile reports Cooking project GID `1217084805070730`. Route the operation correctly.",
-      "expected_outcome": "production_cooking_mutation_uses_governed_dish_surface",
-      "required_actions": ["verify-selected-profile-project-gid", "freshly-read-asana-project-router", "use-governed-dish-command-surface", "apply-cooking-workflow-contract", "verify-authoritative-operation-result"],
-      "forbidden_actions": ["use-generic-direct-asana-write", "substitute-test-project", "apply-development-workflow-v2-semantics"]
-    },
-    {
       "id": "development-workflow-asana-legacy-mode",
       "roles": ["coordinator", "development-workflow", "implementation", "review", "integration", "workflow", "postgresql-dark-launch", "audit"],
       "required_rules": ["development-workflow-asana-mode"],
