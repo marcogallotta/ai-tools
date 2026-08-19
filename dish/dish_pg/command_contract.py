@@ -266,23 +266,17 @@ def postgres_action_argument_schema(command: str) -> dict[str, Any]:
     return deepcopy(base)
 
 
-def _validate_search_action_request(
-    request: Mapping[str, Any],
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    raw_arguments = request.get("arguments") if isinstance(request, Mapping) else None
-    agent = raw_arguments.get("agent") if isinstance(raw_arguments, Mapping) else None
-    adapted = dict(request) if isinstance(request, Mapping) else request
-    if isinstance(adapted, dict):
-        adapted["arguments"] = {"agent": agent}
-    client, _ = validate_legacy_action_request(SECTIONS_COMMAND.name, adapted)
-    if not isinstance(raw_arguments, Mapping):
+def normalize_postgres_search_arguments(arguments: Mapping[str, Any]) -> dict[str, Any]:
+    """Normalize the one PostgreSQL Search argument contract for every transport."""
+
+    if not isinstance(arguments, Mapping):
         raise DishRuleError(
             "INVALID_ARGUMENT",
             "arguments must be an object",
             rule="argument_object_required",
         )
     allowed = {"query", "agent", "cursor", "page_size"}
-    unknown = sorted(set(raw_arguments) - allowed)
+    unknown = sorted(set(arguments) - allowed)
     if unknown:
         raise DishRuleError(
             "INVALID_ARGUMENT",
@@ -290,7 +284,15 @@ def _validate_search_action_request(
             rule="argument_field_forbidden",
             details={"fields": unknown},
         )
-    query = raw_arguments.get("query")
+    agent = arguments.get("agent")
+    if not isinstance(agent, str) or agent not in _SEARCH_AGENT_VALUES:
+        raise DishRuleError(
+            "INVALID_ARGUMENT",
+            "agent must name a supported agent family",
+            rule="argument_value_invalid",
+            details={"field": "agent", "allowed": list(_SEARCH_AGENT_VALUES)},
+        )
+    query = arguments.get("query")
     if not isinstance(query, str):
         raise DishRuleError(
             "INVALID_ARGUMENT",
@@ -313,7 +315,7 @@ def _validate_search_action_request(
             rule="search_query_too_long",
             details={"field": "query", "maximum": SEARCH_QUERY_MAX_LENGTH},
         )
-    cursor = raw_arguments.get("cursor")
+    cursor = arguments.get("cursor")
     if cursor is not None and (not isinstance(cursor, str) or not cursor):
         raise DishRuleError(
             "INVALID_ARGUMENT",
@@ -321,7 +323,7 @@ def _validate_search_action_request(
             rule="argument_type_invalid",
             details={"field": "cursor"},
         )
-    page_size = raw_arguments.get("page_size", SEARCH_PAGE_SIZE_DEFAULT)
+    page_size = arguments.get("page_size", SEARCH_PAGE_SIZE_DEFAULT)
     if isinstance(page_size, bool) or not isinstance(page_size, int):
         raise DishRuleError(
             "INVALID_ARGUMENT",
@@ -336,12 +338,25 @@ def _validate_search_action_request(
             rule="argument_range_invalid",
             details={"field": "page_size", "minimum": 1, "maximum": SEARCH_PAGE_SIZE_MAX},
         )
-    return client, {
+    return {
         "query": clean_query,
         "agent": agent,
         "page_size": page_size,
         **({"cursor": cursor} if cursor is not None else {}),
     }
+
+
+def _validate_search_action_request(
+    request: Mapping[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    raw_arguments = request.get("arguments") if isinstance(request, Mapping) else None
+    adapted = dict(request) if isinstance(request, Mapping) else request
+    if isinstance(adapted, dict):
+        # Reuse the settled Action client-envelope validator without making it
+        # a second authority for Search's argument semantics.
+        adapted["arguments"] = {"agent": "gpt"}
+    client, _ = validate_legacy_action_request(SECTIONS_COMMAND.name, adapted)
+    return client, normalize_postgres_search_arguments(raw_arguments)
 
 
 def validate_postgres_action_request(

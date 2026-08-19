@@ -76,7 +76,7 @@ for its retained product paths:
 - operation/submission/lease targets remain canonical Dish UUIDs and do not require an Asana task
   identity.
 
-The retained PostgreSQL connected inventory is `create`, `sections`, `section-tasks`, `read`,
+The retained PostgreSQL connected inventory is `create`, `sections`, `section-tasks`, `search`, `read`,
 `proposals`, `apply-proposal`, `safe-reclaim`, `inspect`, `start`, `prepare`, `approve`, `reject`,
 `submit`, and `renew-lease`. `proposals` lists exact PostgreSQL-native semantic proposals whose
 governed changes have durable authorization; `apply-proposal` installs only the exact stored,

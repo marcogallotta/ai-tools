@@ -88,7 +88,9 @@ class SectionPageFacts:
 class SearchFact:
     task_id: UUID
     title: str
+    section_id: UUID
     section_label: str
+    workflow_role: str
     project_label: str
 
 
@@ -178,13 +180,14 @@ class FrontendBoardQuery:
         query: str,
         projection_delay: timedelta,
         max_results: int,
+        context: BoardContext | None = None,
     ) -> SearchFacts:
         """Return bounded active-board title matches from the full corpus."""
         if not query:
             raise ValueError("search query must be non-empty")
         if max_results <= 0:
             raise ValueError("max_results must be positive")
-        context = self.context()
+        context = context or self.context()
         normalized = query.lower()
         rows = list(
             self.session.execute(
@@ -210,7 +213,9 @@ class FrontendBoardQuery:
                 SearchFact(
                     task_id=row["task_id"],
                     title=row["title"],
+                    section_id=row["section_id"],
                     section_label=row["section_label"],
+                    workflow_role=row["workflow_role"],
                     project_label=row["project_label"],
                 )
                 for row in rows[:max_results]
@@ -535,6 +540,7 @@ class FrontendBoardQuery:
                     ),
                     else_=models.SectionRegistryEntry.display_name,
                 ).label("section_label"),
+                models.SectionRegistryEntry.workflow_role.label("workflow_role"),
                 models.GovernedProject.logical_name.label("project_label"),
                 sort_title.label("sort_title"),
                 models.DishTask.existence_state.label("existence_state"),

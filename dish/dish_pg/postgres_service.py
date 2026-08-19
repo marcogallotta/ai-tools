@@ -31,6 +31,7 @@ from .command_contract import (
     COMMAND_DEFINITIONS,
     SEARCH_COMMAND,
     SEARCH_PAGE_SIZE_DEFAULT,
+    normalize_postgres_search_arguments,
     validate_postgres_action_request,
 )
 from .command_port import CommandCall, CommandPortError, CommandResult, PostgresCommandPort
@@ -522,7 +523,7 @@ class PostgresRuntimeService:
         arguments: Mapping[str, Any],
     ) -> CommandResult:
         query = str(arguments["query"])
-        page_size = int(arguments.get("page_size", SEARCH_PAGE_SIZE_DEFAULT))
+        page_size = int(arguments["page_size"])
         reads = PostgresReadModel(session, cursor_secret=self._cursor_secret)
         board = FrontendBoardQuery(session)
         context = board.context()
@@ -575,23 +576,20 @@ class PostgresRuntimeService:
                     {"message": "cursor page boundary is invalid", "field": "cursor"},
                 )
 
-        # The settled frontend primitive owns title matching and deterministic ordering.
-        # projection_delay only feeds attention/projection columns that SearchFact discards;
-        # it does not change active-corpus membership, title matching, or ordering.
+        # The settled frontend primitive owns title matching, active-corpus membership,
+        # placement, section-registry metadata, and deterministic ordering. Passing the
+        # captured context makes every returned Search fact belong to the same authority
+        # identity that validates and signs the continuation cursor.
         facts = board.search_titles(
             query=query,
             projection_delay=_SEARCH_PROJECTION_DELAY,
             max_results=offset + page_size + 1,
+            context=context,
         )
         visible = facts.results[offset : offset + page_size]
         has_more = facts.truncated or len(facts.results) > offset + page_size
-        sections = {item["section_id"]: item for item in reads.sections()}
         results: list[dict[str, Any]] = []
         for fact in visible:
-            placement = session.get(
-                models.CurrentTaskSectionPlacement,
-                (context.generation_id, fact.task_id),
-            )
             task_gid = session.scalar(
                 select(models.TaskExternalAlias.external_id).where(
                     models.TaskExternalAlias.task_id == fact.task_id,
@@ -599,26 +597,14 @@ class PostgresRuntimeService:
                     models.TaskExternalAlias.state == "active",
                 )
             )
-            if placement is None or task_gid is None:
+            if task_gid is None:
                 return CommandResult(
                     False,
                     SEARCH_COMMAND,
                     "BACKEND_REJECTED",
                     409,
                     {
-                        "message": "active Search result lacks canonical placement or exact task alias",
-                        "dish_id": str(fact.task_id),
-                    },
-                )
-            section = sections.get(str(placement.section_id))
-            if section is None:
-                return CommandResult(
-                    False,
-                    SEARCH_COMMAND,
-                    "BACKEND_REJECTED",
-                    409,
-                    {
-                        "message": "active Search result is outside the current section registry",
+                        "message": "active Search result lacks its exact persisted task alias",
                         "dish_id": str(fact.task_id),
                     },
                 )
@@ -627,11 +613,37 @@ class PostgresRuntimeService:
                     "dish_id": str(fact.task_id),
                     "task_gid": str(task_gid),
                     "title": fact.title,
-                    "section_id": str(placement.section_id),
+                    "section_id": str(fact.section_id),
                     "section_label": fact.section_label,
-                    "workflow_role": section["workflow_role"],
+                    "workflow_role": fact.workflow_role,
                     "project_label": fact.project_label,
                 }
+            )
+
+        current_context = board.context()
+        current_identity = (
+            current_context.generation_id,
+            current_context.registry_version_id,
+            current_context.registry_revision,
+        )
+        captured_identity = (
+            context.generation_id,
+            context.registry_version_id,
+            context.registry_revision,
+        )
+        if current_identity != captured_identity:
+            return CommandResult(
+                False,
+                SEARCH_COMMAND,
+                "BACKEND_REJECTED",
+                409,
+                {
+                    "message": "Search authority context changed during the read; retry from the first page",
+                    "captured_generation_id": str(context.generation_id),
+                    "captured_registry_version_id": str(context.registry_version_id),
+                    "captured_registry_revision": context.registry_revision,
+                },
+                retryable=True,
             )
 
         next_cursor = None
@@ -700,7 +712,18 @@ class PostgresRuntimeService:
                             {"message": "read-only Search does not accept request_id"},
                         )
                     else:
-                        result = self._execute_search(session, arguments)
+                        try:
+                            search_arguments = normalize_postgres_search_arguments(arguments)
+                        except DishRuleError as exc:
+                            result = CommandResult(
+                                False,
+                                SEARCH_COMMAND,
+                                exc.code,
+                                400,
+                                {"message": str(exc), **dict(exc.details)},
+                            )
+                        else:
+                            result = self._execute_search(session, search_arguments)
                 else:
                     result = PostgresCommandPort(
                         session,
