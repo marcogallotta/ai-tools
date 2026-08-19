@@ -51,6 +51,8 @@ class JsonArgumentParser(argparse.ArgumentParser):
 
 
 TOPIC_COMMANDS = ("planning", "research", "verification")
+SEARCH_COMMAND = "search"
+SEARCH_PAGE_SIZE_DEFAULT = 50
 
 
 def _canonical_enum_choices(command, field: str) -> tuple[str, ...]:
@@ -191,6 +193,19 @@ def build_parser() -> JsonArgumentParser:
     section_tasks.add_argument(
         "--cursor", default=None, help="opaque next_cursor from a prior section-tasks page"
     )
+
+    search = subparsers.add_parser(
+        SEARCH_COMMAND,
+        help="search current active Dish titles through PostgreSQL authority",
+    )
+    search.add_argument("query")
+    search.add_argument(
+        "--agent",
+        required=True,
+        choices=_canonical_enum_choices(SECTIONS_COMMAND, "agent"),
+    )
+    search.add_argument("--cursor", default=None, help="opaque next_cursor from a prior search page")
+    search.add_argument("--page-size", type=int, default=SEARCH_PAGE_SIZE_DEFAULT)
 
     read = subparsers.add_parser(
         READ_COMMAND.name, help="read the exact live task through the tool"
@@ -345,8 +360,8 @@ def build_parser() -> JsonArgumentParser:
         REJECT_COMMAND.name,
         help="stop signoff: a Large correction, Evidence gap, or Human Review",
         description=(
-            "Stop signoff: a Large correction, Evidence gap, or Human Review. --route large "
-            "requires --model as caller-supplied, self-reported display metadata; Dish labels it "
+            "Stop signoff: a Large correction, Evidence gap, or Human Review. --model is caller-supplied, "
+            "self-reported display metadata; Dish labels it "
             "as self-reported in Self-verified."
         ),
     )
