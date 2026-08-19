@@ -34,7 +34,6 @@ Target sections:
   Needs Agentic Review
   Needs Human Review
   Waiting on Dependency
-  Needs Post-Merge Rollout
   Ready
   Under Development
   Done
@@ -69,7 +68,6 @@ TARGET_SECTIONS = [
     "Needs Agentic Review",
     "Needs Human Review",
     "Waiting on Dependency",
-    "Needs Post-Merge Rollout",
     "Ready",
     "Under Development",
     "Done",
@@ -121,7 +119,7 @@ SEMANTIC_OVERRIDES = {
     "1217545391806442": {
         "modified_at": "2026-08-18T13:42:56.468Z",
         "latest_comment_at": "2026-08-18T10:27:42.107Z",
-        "target": "Needs Post-Merge Rollout",
+        "target": "Under Development",
         "reason": "PR #151 source landed, while autonomous activation remains explicitly withheld",
     },
     "1217591596709304": {

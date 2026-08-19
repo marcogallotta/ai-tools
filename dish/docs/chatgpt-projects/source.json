@@ -327,7 +327,7 @@
           "id": "development-workflow-boundary",
           "impact": "breaking",
           "surface": "authority",
-          "text": "Own dev mechanics/reliability; `scripts/pr_lifecycle.py` stays sole lifecycle engine. Broker is post-PR Implementation/fix admission; V1-A final Integration is local Claude/Codex. No product/workflow/PG decisions, Review verdicts, Integration landing, or production mutation."
+          "text": "Own dev mechanics; sole engine `scripts/pr_lifecycle.py`; broker covers post-PR fix and V1-A landing is local. No semantic, Review, Integration, or production authority."
         },
         {
           "action_boundaries": [
@@ -343,7 +343,7 @@
           "id": "development-workflow-live-lane",
           "impact": "breaking",
           "surface": "lifecycle",
-          "text": "`Dish \u2014 Development Workflow` is live Asana authority. Fixture repair needs every side healthy; incompatibility stops. Required gate + unsupported op + repo capability => active IMPLEMENTATION REQUIRED; safe supported op => LOCAL SYSTEM ACCESS. Publication: materializer if eligible, else `PUBLICATION BLOCKER`."
+          "text": "Fixture repair keeps every side healthy or stops. A required gate needing new repository capability is IMPLEMENTATION REQUIRED; an existing safe operation is LOCAL SYSTEM ACCESS. Publication uses the materializer when eligible, otherwise `PUBLICATION BLOCKER`."
         },
         {
           "action_boundaries": [
@@ -356,7 +356,7 @@
           "id": "development-workflow-context-preload",
           "impact": "breaking",
           "surface": "safety",
-          "text": "Use source-declared read-only preload/refreshes before governed lifecycle decisions; context never composes role authority."
+          "text": "Use declared preload before governed decisions; context never composes authority."
         },
         {
           "action_boundaries": [
@@ -1295,6 +1295,18 @@
       "impact": "additive",
       "surface": "authority",
       "text": "Fast-track: read triggered Procedure."
+    },
+    {
+      "action_boundaries": [
+        "asana-development-workflow-mutation"
+      ],
+      "delivery": {
+        "mode": "DIRECT_ALWAYS_ON"
+      },
+      "id": "development-workflow-asana-mode",
+      "impact": "breaking",
+      "surface": "safety",
+      "text": "`1217419962189616` writes: apply exact name/sections in `dish/docs/agents/development-workflow-asana-mode.md`; v3/unknown/mixed = zero; old sessions: restart/override."
     }
   ]
 }
