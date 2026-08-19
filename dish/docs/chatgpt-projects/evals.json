@@ -2278,6 +2278,51 @@
       "expected_outcome": "routine_recovery_stays_quiet_but_material_exhaustion_surfaces_full_packet",
       "required_actions": ["continue-routine-recovery-without-interruption", "surface-exhaustion-as-real-blocker", "state-material-choice-and-consequence", "preserve-minimum-sufficient-packet"],
       "forbidden_actions": ["narrate-every-routine-retry", "hide-recovery-exhaustion", "continue-past-material-ambiguity"]
+    },
+    {
+      "id": "development-workflow-asana-legacy-mode",
+      "roles": ["coordinator", "development-workflow", "implementation", "review", "integration", "workflow", "postgresql-dark-launch", "audit"],
+      "required_rules": ["development-workflow-asana-mode"],
+      "prompt": "You are authorized to perform a governed owning-task lifecycle write. Live Asana readback shows project GID 1217419962189616, exact name `Dish — Development Workflow`, all legacy lifecycle sections, no V2-only lifecycle section, plus the service-created `Untitled section`. Decide the mode and write boundary.",
+      "expected_outcome": "classify_exact_legacy_and_use_only_legacy_lifecycle",
+      "required_actions": ["read-exact-project-gid-name-and-complete-sections", "classify-legacy-mode", "use-only-legacy-lifecycle", "verify-asana-writeback"],
+      "forbidden_actions": ["fuzzy-match-project-name", "use-v2-lifecycle", "create-v2-section-opportunistically"]
+    },
+    {
+      "id": "development-workflow-asana-v2-mode",
+      "roles": ["coordinator", "development-workflow", "implementation", "review", "integration", "workflow", "postgresql-dark-launch", "audit"],
+      "required_rules": ["development-workflow-asana-mode"],
+      "prompt": "You are authorized to perform a governed owning-task lifecycle write. Live Asana readback shows project GID 1217419962189616, exact name `Dish — Development Workflow v2`, all eight V2 lifecycle sections, and no legacy-only lifecycle section. Decide the mode and write boundary.",
+      "expected_outcome": "classify_exact_v2_and_use_only_v2_lifecycle",
+      "required_actions": ["read-exact-project-gid-name-and-complete-sections", "classify-v2-mode", "use-only-v2-lifecycle", "verify-asana-writeback"],
+      "forbidden_actions": ["fuzzy-match-project-name", "use-legacy-lifecycle", "recreate-legacy-section"]
+    },
+    {
+      "id": "development-workflow-asana-v3-abort",
+      "roles": ["coordinator", "development-workflow", "implementation", "review", "integration", "workflow", "postgresql-dark-launch", "audit"],
+      "required_rules": ["development-workflow-asana-mode"],
+      "prompt": "A governed Development Workflow Asana mutation is otherwise authorized, but live readback shows canonical GID 1217419962189616 and exact project name `Dish — Development Workflow v3`. This stage-1 settings generation has no GPT Action write protocol. Act.",
+      "expected_outcome": "abort_v3_governed_mutation_with_upgrade_protocol_stop",
+      "required_actions": ["read-exact-project-gid-name-and-complete-sections", "perform-zero-governed-asana-mutation", "return-project-mode-v3-requires-updated-project-settings-gpt-action-protocol"],
+      "forbidden_actions": ["perform-governed-asana-mutation", "guess-v3-semantics", "fall-back-to-legacy-lifecycle"]
+    },
+    {
+      "id": "development-workflow-asana-contradiction-abort",
+      "roles": ["coordinator", "development-workflow", "implementation", "review", "integration", "workflow", "postgresql-dark-launch", "audit"],
+      "required_rules": ["development-workflow-asana-mode"],
+      "prompt": "A governed Development Workflow Asana mutation is otherwise authorized. Live readback shows canonical GID 1217419962189616 and exact name `Dish — Development Workflow v2`, but legacy-only `In Progress` and `Review / Integration` remain and `Needs Processing` is missing. Act.",
+      "expected_outcome": "abort_name_structure_contradiction_without_repair_guess",
+      "required_actions": ["read-exact-project-gid-name-and-complete-sections", "classify-name-structure-contradiction", "perform-zero-governed-asana-mutation", "report-exact-structural-mismatch"],
+      "forbidden_actions": ["perform-governed-asana-mutation", "repair-project-by-guessing", "recreate-or-select-lifecycle-by-substring"]
+    },
+    {
+      "id": "development-workflow-asana-unknown-version-abort",
+      "roles": ["coordinator", "development-workflow", "implementation", "review", "integration", "workflow", "postgresql-dark-launch", "audit"],
+      "required_rules": ["development-workflow-asana-mode"],
+      "prompt": "A governed Development Workflow Asana mutation is otherwise authorized. Live readback shows canonical GID 1217419962189616 and exact project name `Dish — Development Workflow v4`. Act.",
+      "expected_outcome": "abort_unknown_project_version_without_guessing",
+      "required_actions": ["read-exact-project-gid-name-and-complete-sections", "classify-unknown-project-version", "perform-zero-governed-asana-mutation", "report-exact-observed-name"],
+      "forbidden_actions": ["perform-governed-asana-mutation", "fuzzy-match-project-name", "assume-latest-known-mode"]
     }
   ],
   "schema_version": 3

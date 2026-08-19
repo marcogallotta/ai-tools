@@ -4,6 +4,10 @@ This is the canonical router for standing Dish agent roles. Root `CLAUDE.md` poi
 
 All repository-modifying roles inherit [`contributor-base.md`](contributor-base.md). Specialist contracts add their own scope and authority rules.
 
+Every role or Worker mode performing a governed write in the canonical Development Workflow Asana
+project also applies the shared [`Development Workflow Asana project mode`](development-workflow-asana-mode.md)
+contract before that mutation. This cross-role mutation guard does not compose semantic role authority.
+
 All roles also apply the shared [`Dish operator / orchestration control plane`](../../../OPERATOR_CONTROL_PLANE.md) for presentation mechanics. Coordinator and Development Workflow additionally apply its action-specific queue/handoff/decision/triage sections; that shared file is a decomposition aid, not role composition or a new authority layer.
 
 | Role / common names | Standing contract |

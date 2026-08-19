@@ -193,7 +193,7 @@ class PlannerClassificationTests(unittest.TestCase):
     def test_settled_migration_overrides(self):
         expected = {
             "1217542061354795": "Done",
-            "1217545391806442": "Needs Post-Merge Rollout",
+            "1217545391806442": "Under Development",
             "1217591596709304": "Needs Human Review",
             "1217626783110669": "Needs Human Review",
         }

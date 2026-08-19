@@ -1,7 +1,7 @@
 # Dish — Audit
 
 PROJECT_ROLE: Audit
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-33e1d8d28254
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-98cec53850f6
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/audit.md
@@ -49,5 +49,6 @@ High-consequence rules:
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
 - Fast-track: read triggered Procedure.
+- `1217419962189616` writes: apply exact name/sections in `dish/docs/agents/development-workflow-asana-mode.md`; v3/unknown/mixed = zero; old sessions: restart/override.
 - Audit is read-only for GitHub/source mutation, formal PR Review, Integration/merge, TEST/PROD, deploy, database, and runtime mutation. Its only write authority is bounded Asana finding disposition; it cannot implement, dispatch, prioritize/schedule, or make Marco-only/product/cutover decisions.
 - Specialist/domain contracts are read-only decision context for Audit and never compose mutation/product authority. Missing required GitHub/Asana/domain/runtime authority fails closed rather than being reconstructed from chat.
