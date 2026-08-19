@@ -286,6 +286,7 @@ docs/architecture/operations-leases-and-fencing.md,documentation,1,1,architectur
 docs/architecture/packages-and-dependencies.md,documentation,1,1,architecture; documentation,tests/test_architecture_knowledge_base.py,,none,,,,
 docs/architecture/postgresql-runtime.md,documentation,1,1,architecture; documentation,tests/test_architecture_knowledge_base.py,,none,,,,
 docs/architecture/request-replay-and-idempotency.md,documentation,1,1,architecture; documentation,tests/test_architecture_knowledge_base.py,,none,,,,
+docs/architecture/review-v2-design-lineage.md,documentation,1,1,architecture; documentation,tests/test_architecture_knowledge_base.py,,none,,,,
 docs/architecture/system-context.md,documentation,1,1,architecture; documentation,tests/test_architecture_knowledge_base.py,,none,,,,
 docs/architecture/testing-boundaries.md,documentation,1,1,architecture; documentation,tests/test_architecture_knowledge_base.py,,none,,,,
 docs/architecture/workflow-and-human-review.md,documentation,1,1,architecture; documentation,tests/test_architecture_knowledge_base.py,,none,,,,
