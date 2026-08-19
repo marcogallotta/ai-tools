@@ -37,6 +37,8 @@ Target sections:
   Ready
   Under Development
   Done
+Non-applicable reconciliation outcome:
+  RECONCILIATION_REQUIRED
 
 Important rules:
 - preserve project/task identity;
@@ -45,7 +47,13 @@ Important rules:
 - handoff sent != Under Development;
 - GitHub/lifecycle owns detailed execution state once development starts;
 - source merge alone != Done when residual rollout/operator/runtime work remains;
-- ambiguous raw findings prefer Needs Processing rather than guessed Research/Ready;
+- Needs Processing is reserved for genuinely raw, untriaged intake;
+- low-confidence or conflicting evidence is RECONCILIATION_REQUIRED and cannot
+  be applied as a lifecycle destination;
+- Ready requires durable dispatchability evidence, not merely a blocker,
+  required outcome, suggested acceptance, or detailed audit finding;
+- Priority, Code Area, and Version are populated only from explicit durable
+  evidence; Version must identify this task's own version/generation;
 - deterministic output is a proposal/validation surface, not a replacement for
   semantic reconciliation when evidence conflicts.
 """
@@ -72,6 +80,8 @@ TARGET_SECTIONS = [
     "Under Development",
     "Done",
 ]
+RECONCILIATION_REQUIRED = "RECONCILIATION_REQUIRED"
+CLASSIFICATION_OUTCOMES = TARGET_SECTIONS + [RECONCILIATION_REQUIRED]
 
 # Small, coarse scheduling vocabulary. This is deliberately not a file-conflict oracle.
 CODE_AREAS = [
@@ -169,6 +179,69 @@ SEMANTIC_OVERRIDES = {
         "latest_comment_at": "2026-08-19T10:44:17.422Z",
         "target": "Needs Human Review",
         "reason": "agentic design Review passed and the exact design now awaits Marco's required final stamp",
+    },
+    # Marco-reviewed regression set. These judgments are deliberately
+    # freshness-bound like the corpus audit above: changed task evidence must
+    # be classified again rather than inheriting a stale human judgment.
+    "1217632551553551": {
+        "modified_at": "2026-08-19T10:18:39.436Z",
+        "latest_comment_at": None,
+        "target": "Needs Research",
+        "reason": "the implementation gap is known, but the ordinary-workflow mechanism and activation boundary still require research",
+    },
+    "1217632550435438": {
+        "modified_at": "2026-08-19T10:17:40.783Z",
+        "latest_comment_at": None,
+        "target": "Needs Research",
+        "reason": "the audit finding does not yet settle the enforcement mechanism across composed and test payloads",
+    },
+    "1217632340344322": {
+        "modified_at": "2026-08-19T10:45:43.649Z",
+        "latest_comment_at": "2026-08-19T10:45:43.648Z",
+        "target": RECONCILIATION_REQUIRED,
+        "reason": "substantial canonical-owner progression exists, but the accepted review/dispatch boundary is not durably provable",
+    },
+    "1217632337801506": {
+        "modified_at": "2026-08-19T10:19:10.516Z",
+        "latest_comment_at": None,
+        "target": "Needs Agentic Review",
+        "reason": "the corrective design is concrete and bounded enough for independent agent review",
+    },
+    "1217614656977022": {
+        "modified_at": "2026-08-19T12:46:27.327Z",
+        "latest_comment_at": "2026-08-19T12:46:27.327Z",
+        "target": "Needs Research",
+        "reason": "the task explicitly remains tracking/not-yet-designed work",
+    },
+    "1217624784161458": {
+        "modified_at": "2026-08-18T21:21:40.366Z",
+        "latest_comment_at": None,
+        "target": "Needs Processing",
+        "reason": "the idea-inbox record is genuinely raw intake",
+    },
+    "1217603621508125": {
+        "modified_at": "2026-08-18T17:21:32.156Z",
+        "latest_comment_at": None,
+        "target": RECONCILIATION_REQUIRED,
+        "reason": "recurrence evidence exists, but the planner cannot prove whether this record is an owner, duplicate, or research input",
+    },
+    "1217560696950266": {
+        "modified_at": "2026-08-18T13:42:56.023Z",
+        "latest_comment_at": None,
+        "target": "Ready",
+        "reason": "the observation-only pilot has explicit approval, scope, authority holds, and acceptance boundaries",
+    },
+    "1217518869489828": {
+        "modified_at": "2026-08-16T19:38:27.843Z",
+        "latest_comment_at": None,
+        "target": "Waiting on Dependency",
+        "reason": "the remote Integration host is explicitly gated on local V1 stabilization",
+    },
+    "1217516762073723": {
+        "modified_at": "2026-08-16T13:51:09.612Z",
+        "latest_comment_at": None,
+        "target": "Ready",
+        "reason": "independent review findings and lifecycle provenance define a bounded follow-on implementation",
     },
 }
 
@@ -478,7 +551,8 @@ def human_review_pending(task):
     notes = task.get("notes", "")
     comment = task.get("comment")
     pending = re.compile(
-        r"\bMARCO REVIEW READY\b|\bHUMAN DECISION(?:\s+STILL)?\s+(?:PENDING|REQUIRED)\b|"
+        r"\bMARCO REVIEW READY\b|\bHUMAN REVIEW\s+(?:PENDING|REQUIRED)\b|"
+        r"\bHUMAN DECISION(?:\s+STILL)?\s+(?:PENDING|REQUIRED)\b|"
         r"\bMARCO (?:DESIGN )?DECISION (?:PENDING|REQUIRED|NEEDED)\b|"
         r"\bMARCO APPROVAL STILL REQUIRED\b|\bNEEDS MARCO INPUT\b|\bMARCO (?:DESIGN )?HOLD\b|"
         r"\bREADY FOR MARCO FINAL STAMP\b|\bMARCO FINAL STAMP(?:\s+REQUIRED)?\b",
@@ -619,7 +693,9 @@ def research_pending(task):
         headline = next((line.strip() for line in text.splitlines() if line.strip()), "")
         if re.search(r"\b(?:RE-)?REVIEW\s*[—:-]\s*PASS\b", headline, re.IGNORECASE):
             if changed_after(task.get("modified_at"), item.get("created_at")) and re.search(
-                r"\b(?:AMENDED|CORRECTED|REVISED|REVISION|DESIGN REQUIRED|RESEARCH REQUIRED)\b",
+                r"\b(?:DESIGN|RESEARCH)\s+(?:REVISION\s+)?REQUIRED\b|"
+                r"\b(?:DESIGN|RESEARCH)\s+(?:PENDING|INCOMPLETE)\b|"
+                r"\bREVISION REQUIRED\b",
                 current_state,
                 re.IGNORECASE,
             ):
@@ -656,10 +732,452 @@ def latest_formal_review(comment):
 
 def raw_intake_signal(text):
     return bool(re.search(
-        r"\b(?:AUDIT FINDING|FINDING|IDEA INBOX|DESIGN INBOX|NEEDS PROCESSING|RAW INTAKE)\b",
+        r"\b(?:IDEA INBOX|DESIGN INBOX|NEEDS PROCESSING|RAW INTAKE)\b",
         text or "",
         re.IGNORECASE,
     ))
+
+
+def _event(kind, at, source, text, detail=None, position=0):
+    return {
+        "kind": kind,
+        "at": at,
+        "source": source,
+        "text": text,
+        "detail": detail,
+        "position": position,
+    }
+
+
+def lifecycle_events_from_text(text, at, source):
+    """Extract ordered authority events from one durable evidence item.
+
+    The expressions identify event semantics; they do not decide the final
+    lifecycle section. Contradictory events remain in the stream for the
+    chronological reducer to reconcile by dimension.
+    """
+    events = []
+    lines = (text or "").splitlines()
+    headline = next((line.strip() for line in lines if line.strip()), "")
+
+    def emit(kind, line, position, detail=None):
+        events.append(_event(kind, at, source, line.strip(), detail, position))
+
+    review_match = re.search(
+        r"\b(?:RE-)?(?:REVIEW|RECHECK)\b[^\n]{0,100}?[—:-]\s*(PASS|BLOCK)\b",
+        headline,
+        re.IGNORECASE,
+    )
+    if review_match:
+        emit(
+            "review_pass" if review_match.group(1).upper() == "PASS" else "review_block",
+            headline,
+            -1,
+        )
+
+    for position, raw_line in enumerate(lines):
+        line = raw_line.strip()
+        if not line:
+            continue
+        upper = line.upper()
+
+        if re.search(r"\b(?:IDEA INBOX|DESIGN INBOX|NEEDS PROCESSING|RAW INTAKE)\b", upper):
+            emit("raw_intake", line, position)
+
+        if (
+            re.search(r"\bNOT YET DESIGNED\b|\bNEEDS RESEARCH\b|\bRESEARCH\s+(?:REQUIRED|PENDING|INCOMPLETE)\b", upper)
+            or re.search(r"\bDESIGN REQUIRED\b|\bDESIGN REVISION REQUIRED\b", upper)
+            or re.search(r"\bRESEARCH\s*\+\s*IMPLEMENTATION\s+REQUIRED\b", upper)
+        ):
+            emit("research_incomplete", line, position)
+
+        if re.search(r"\b(?:RESEARCH|DESIGN)\s+(?:COMPLETE|COMPLETED|ACCEPTED)\b", upper):
+            emit("research_complete", line, position)
+
+        if re.search(
+            r"\b(?:AGENT(?:IC)?\s+)?(?:DESIGN\s+)?(?:RE-)?REVIEW\s+(?:READY|REQUIRED|PENDING)\b|"
+            r"^(?:[-*]\s*)?(?:STATE\s*:\s*)?READY FOR (?:INDEPENDENT\s+)?(?:AGENT(?:IC)?\s+)?(?:DESIGN\s+)?(?:RE-)?REVIEW\b|"
+            r"\bNEEDS AGENTIC REVIEW\b",
+            upper,
+        ):
+            emit("review_requested", line, position)
+
+        if re.search(
+            r"^(?:(?:STATE|DISPOSITION)\s*:\s*)?(?:HUMAN REVIEW\s+(?:READY|PENDING|REQUIRED)|"
+            r"HUMAN (?:DESIGN )?DECISION(?:\s+STILL)?\s+(?:PENDING|REQUIRED)|"
+            r"MARCO (?:DESIGN )?DECISION (?:PENDING|REQUIRED|NEEDED)|"
+            r"MARCO APPROVAL STILL REQUIRED|NEEDS MARCO INPUT|"
+            r"READY FOR MARCO FINAL STAMP|MARCO FINAL STAMP(?:\s+REQUIRED)?)\b",
+            upper,
+        ) or (position == 0 and re.search(r"\bMARCO (?:DESIGN )?DECISION (?:PENDING|REQUIRED|NEEDED)\b", upper)):
+            emit("human_review_pending", line, position)
+
+        if re.search(
+            r"\bMARCO (?:DESIGN DECISION\s*[—:-]\s*)?APPROVED\b|"
+            r"\bHUMAN (?:DESIGN )?DECISION\b.{0,80}\b(?:RESOLVED|APPROVED|NOT REQUIRED|NONE)\b|"
+            r"\bGATE WAIVED BY MARCO OVERRIDE\b.{0,120}\b(?:FINAL[- ]STAMP|HUMAN (?:DESIGN )?DECISION|MARCO APPROVAL)\b",
+            upper,
+        ):
+            emit("human_review_resolved", line, position)
+
+        if re.search(
+            r"\bNO\s+(?:SOURCE\s+)?IMPLEMENTATION(?:[^\n]{0,50})?AUTHORIZED\b|"
+            r"\bNO\s+IMPLEMENTATION(?:[^\n]{0,50})?FOLLOWS\b|"
+            r"\bDO NOT IMPLEMENT\b|\bIMPLEMENTATION AUTHORITY\s*:\s*(?:NONE|NOT AUTHORIZED)\b",
+            upper,
+        ):
+            emit("implementation_prohibited", line, position)
+
+        if re.search(
+            r"\bVERDICT\s*:\s*PASS\b.*\bIMPLEMENTATION READY\b|"
+            r"\bCURRENT DISPOSITION\s*:\s*IMPLEMENTATION READY\b|"
+            r"\bIMPLEMENTATION MAY (?:BEGIN|START|PROCEED)\b|"
+            r"\b(?:SETUP|ROLLOUT|QUALIFICATION)\b.{0,100}\bCAN PROCEED\b|"
+            r"^PROCEED NOW\b|\bNO (?:ADDITIONAL|FURTHER) PRE-IMPLEMENTATION .{0,50}REQUIRED\b|"
+            r"\bACCEPTED IMPLEMENTATION ADDENDUM\b",
+            upper,
+        ):
+            emit("implementation_authorized", line, position)
+
+        if re.search(
+            r"\bMARCO (?:DESIGN )?(?:HOLD|BLOCK|DEVELOPMENT LOCKDOWN)\b|\bRECOVERY HOLD\b|"
+            r"\bHOLD THIS TASK\b|\bNOT ELIGIBLE TO PROGRESS\b|\bDO NOT MERGE\b",
+            upper,
+        ):
+            emit("hold_active", line, position)
+
+        if re.search(r"\b(?:HOLD|BLOCK|LOCKDOWN)\s+(?:LIFTED|RELEASED|RESOLVED|CLEARED)\b", upper):
+            emit("hold_released", line, position)
+
+        if re.search(
+            r"^BLOCKED ON\s*:|^UNBLOCK WHEN\s*:|^OWNER OF UNBLOCK\s*:|"
+            r"\bWAIT(?:ING)? ON (?:DEPENDENCY|TASK|PR|SYSTEM|EXTERNAL)\b|"
+            r"\bDEPENDENC(?:Y|IES)\s+(?:PENDING|UNRESOLVED)\b|"
+            r"\bSUBJECT TO\b.*\bDEPENDENC(?:Y|IES)\b|\bHOLD\b.*\bUNTIL\b",
+            upper,
+        ):
+            emit("dependency_active", line, position)
+
+        if re.search(
+            r"\bDEPENDENC(?:Y|IES)\s+(?:SATISFIED|RESOLVED|LANDED|CLEARED)\b|"
+            r"\b(?:PRIOR )?(?:BLOCKERS|PREREQUISITES)\s+(?:LANDED|RESOLVED|CLEARED)\b|"
+            r"\bUNBLOCKED\b",
+            upper,
+        ):
+            emit("dependency_resolved", line, position)
+
+        if re.search(r"\bMARCO DISPATCHED\b|\bHANDOFF SENT\b|\bCOORDINATOR DISPATCH RECORD\b", upper):
+            emit("dispatch_sent", line, position)
+
+        if re.search(
+            r"\bHANDOFF(?:[^\n]{0,40})?(?:CANCELLED|REVOKED|REJECTED)\b|"
+            r"\bEXECUTION-STATE CORRECTION\b.*\bNOT DISPATCHED\b",
+            upper,
+        ):
+            emit("dispatch_cancelled", line, position)
+
+        merged = re.search(r"\bPR\s*#(\d+)\s+(?:IS\s+|NOW\s+)?(?:MERGED|LANDED)\b", upper)
+        if merged:
+            emit("source_merged", line, position, int(merged.group(1)))
+        elif re.search(r"\bSOURCE LANDED\b", upper):
+            emit("source_merged", line, position)
+
+        if re.search(
+            r"\bPOST-MERGE\b.*\b(?:REQUIRED|PENDING|ROLLOUT|ACCEPTANCE|NEXT)\b|"
+            r"\b(?:ROLLOUT|ACTIVATION|OPERATOR OUTCOME)\b.*\b(?:REQUIRED|PENDING|INCOMPLETE|NEXT STEP)\b|"
+            r"\bSOURCE MERGE\b.*\b(?:NOT|!=)\b.*\bCOMPLETE\b|"
+            r"\bDO NOT INFER\b.*\bSOURCE MERGE\b.*\bCOMPLETE\b",
+            upper,
+        ):
+            emit("post_merge_required", line, position)
+
+        if re.search(r"\b(?:POST-MERGE|ROLLOUT|ACTIVATION|OPERATOR OUTCOME)\s+(?:COMPLETE|COMPLETED|ACCEPTED)\b", upper):
+            emit("post_merge_resolved", line, position)
+
+        folded = re.search(r"\bFOLDED INTO PR\s*#(\d+)\b", upper)
+        if folded:
+            emit("ownership_folded", line, position, {"pr": int(folded.group(1))})
+        elif re.search(r"\b(?:SUPERSEDED|SUBSUMED)\b", upper):
+            emit("ownership_folded", line, position)
+
+        if re.search(
+            r"\bNEW\b.{0,60}\bOWNER CREATED\b|\bUSE TASK\s+\d{10,}\b.{0,40}\bOWNER\b|"
+            r"\bCANONICAL (?:ACTIVE )?OWNER\b|\bCOMPOSED INTO\b.{0,60}\bOWNER\b|"
+            r"\bDO NOT DISPATCH\b.{0,60}\bSEPARATELY\b",
+            upper,
+        ):
+            emit("ownership_transferred", line, position)
+
+        if re.search(r"\bIMPLEMENTATION COMPLETE\b.*\bREVIEW READY\b|\bPR IS OPEN AND READY FOR INDEPENDENT REVIEW\b", upper):
+            pr_match = re.search(r"\bPR\s*#(\d+)\b", upper)
+            emit("implementation_complete", line, position, int(pr_match.group(1)) if pr_match else None)
+
+        if re.match(
+            r"^(?:STATE\s*:\s*)?(?:IMPLEMENTATION|EXECUTION)\s+(?:IN PROGRESS|STARTED)\b",
+            upper,
+        ):
+            emit("execution_claim", line, position)
+
+        if re.search(
+            r"^REQUIRED (?:FIX|OUTCOME|REGRESSION|ACCEPTANCE)\b|^ACCEPTANCE\b|"
+            r"\bIMPLEMENTATION REQUIRED\b|\bCORRECTIVE ACTION REQUIRED\b",
+            upper,
+        ):
+            emit("bounded_scope", line, position)
+
+        if re.search(r"\bEXACT IMPLEMENTATION (?:POINT|MECHANISM)\b.*\b(?:RESOLV\w*|UNRESOLVED)\b", upper):
+            emit("research_incomplete", line, position)
+
+    return events
+
+
+def lifecycle_projection_conflicts(current_events, historical_events):
+    """Return true when untimestamped current STATE and older history disagree.
+
+    Asana exposes only task ``modified_at``, which can move for reasons other
+    than a notes edit. It therefore cannot prove that an ordinary STATE line
+    was authored after the comments it contradicts. Explicit amendment labels
+    are handled separately; otherwise opposing lifecycle directions must fail
+    closed instead of inheriting comment precedence.
+    """
+    backward = {
+        "raw_intake",
+        "research_incomplete",
+        "review_requested",
+        "review_block",
+        "human_review_pending",
+        "implementation_prohibited",
+        "hold_active",
+        "dependency_active",
+        "dispatch_cancelled",
+    }
+    forward = {
+        "research_complete",
+        "review_pass",
+        "human_review_resolved",
+        "implementation_authorized",
+        "hold_released",
+        "dependency_resolved",
+        "dispatch_sent",
+        "worker_started",
+        "implementation_complete",
+        "source_merged",
+        "post_merge_resolved",
+        "completed",
+    }
+    current_kinds = {item["kind"] for item in current_events}
+    historical_kinds = {item["kind"] for item in historical_events}
+    return bool(
+        (current_kinds & backward and historical_kinds & forward)
+        or (current_kinds & forward and historical_kinds & backward)
+    )
+
+
+def build_lifecycle_event_stream(task, prs, controller_states):
+    """Return chronological lifecycle authority with explicit provenance."""
+    events = []
+    sequence = 0
+
+    # Asana exposes task modified_at, not a notes-specific edit timestamp.
+    # Treat current notes as the baseline projection rather than pretending a
+    # section/custom-field/comment modification timestamps every notes line.
+    for item in lifecycle_events_from_text(task.get("notes", ""), None, "task_notes_baseline"):
+        item["sequence"] = sequence
+        sequence += 1
+        events.append(item)
+
+    temporal_events = []
+    history = list((task.get("comment") or {}).get("history") or [])
+    history.sort(key=lambda item: item.get("created_at") or "")
+    comment_events = []
+    for comment in history:
+        source = f"asana_comment:{comment.get('created_at') or 'timestamp-unavailable'}"
+        for item in lifecycle_events_from_text(
+            comment.get("text", ""), comment.get("created_at"), source
+        ):
+            temporal_events.append(item)
+            comment_events.append(item)
+
+    latest_comment_at = history[-1].get("created_at") if history else None
+    current_state = task_state(task.get("notes", ""))
+    current_state_events = lifecycle_events_from_text(
+        f"STATE: {current_state}", task.get("modified_at"), "task_state_current_projection"
+    ) if current_state else []
+    if (
+        latest_comment_at
+        and changed_after(task.get("modified_at"), latest_comment_at)
+        and re.search(r"\b(?:AMENDED|CORRECTED|REVISED|REVISION)\b", current_state, re.IGNORECASE)
+    ):
+        for item in lifecycle_events_from_text(
+            task.get("notes", ""), task.get("modified_at"), "task_notes_current_amendment"
+        ):
+            temporal_events.append(item)
+    elif (
+        latest_comment_at
+        and changed_after(task.get("modified_at"), latest_comment_at)
+        and lifecycle_projection_conflicts(current_state_events, comment_events)
+    ):
+        temporal_events.append(_event(
+            "authority_ambiguity",
+            task.get("modified_at"),
+            "task_state_current_projection",
+            f"ordinary current STATE conflicts with older lifecycle history: STATE: {current_state}",
+        ))
+    elif (
+        latest_comment_at
+        and changed_after(task.get("modified_at"), latest_comment_at)
+        and re.search(
+            r"\b(?:FOLDED INTO|SUPERSEDED|SUBSUMED|MARCO (?:DESIGN )?(?:HOLD|BLOCK)|"
+            r"NO IMPLEMENTATION AUTHORIZED|IMPLEMENTATION PROHIBITED)\b",
+            current_state,
+            re.IGNORECASE,
+        )
+    ):
+        # A later structured STATE projection is the only available durable
+        # notes timestamp in Asana. Replay only terminal/control semantics;
+        # ordinary phase labels remain an untimestamped baseline because a
+        # task modified_at can also come from fields or section placement.
+        for item in lifecycle_events_from_text(
+            f"STATE: {current_state}", task.get("modified_at"), "task_state_current_projection"
+        ):
+            temporal_events.append(item)
+
+    referenced_prs = {
+        int(number)
+        for text in [task.get("notes", "")] + [item.get("text", "") for item in history]
+        for number in re.findall(r"\bPR\s*#(\d+)\b", text, re.IGNORECASE)
+    }
+    owning_prs = [pr for pr in prs if task["gid"] in extract_owning_task_gids(pr.get("body", ""))]
+    for pr in prs:
+        number = pr.get("number")
+        if number not in referenced_prs and pr not in owning_prs:
+            continue
+        if pr.get("state") == "open" and pr in owning_prs:
+            temporal_events.append(_event("worker_started", pr.get("created_at"), f"github_pr:{number}", f"open owning PR #{number}", number))
+        if pr.get("merged_at"):
+            temporal_events.append(_event("source_merged", pr.get("merged_at"), f"github_pr:{number}", f"merged PR #{number}", number))
+        elif pr.get("state") == "closed" and number in referenced_prs:
+            temporal_events.append(_event("referenced_pr_closed_unmerged", pr.get("closed_at"), f"github_pr:{number}", f"closed unmerged PR #{number}", number))
+
+    if task.get("completed"):
+        temporal_events.append(_event("completed", task.get("completed_at"), "asana_task", "Asana completed=true"))
+
+    # Notes are an untimestamped baseline. Every timestamped Asana/GitHub
+    # authority event after that is ordered by its real occurrence time rather
+    # than by retrieval source, so an old merge cannot supersede a later hold.
+    temporal_events.sort(
+        key=lambda item: (
+            parse_timestamp(item.get("at")) or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc),
+            item.get("source") or "",
+            item.get("position", 0),
+        )
+    )
+    for item in temporal_events:
+        item["sequence"] = sequence
+        sequence += 1
+        events.append(item)
+
+    return events
+
+
+def reconstruct_lifecycle_authority(task, prs, controller_states):
+    events = build_lifecycle_event_stream(task, prs, controller_states)
+    state = {
+        "research": None,
+        "review": None,
+        "human_review": None,
+        "implementation_authority": None,
+        "hold": None,
+        "dependency": None,
+        "dispatch": None,
+        "ownership": None,
+        "source_merged": None,
+        "post_merge": None,
+        "implementation_complete": None,
+        "execution_claim": None,
+        "worker_started": None,
+        "completed": None,
+        "raw_intake": None,
+        "bounded_scope": None,
+        "authority_ambiguity": None,
+        "closed_unmerged_prs": {},
+    }
+
+    for item in events:
+        kind = item["kind"]
+        if kind == "research_incomplete":
+            state["research"] = ("incomplete", item)
+        elif kind == "research_complete":
+            state["research"] = ("complete", item)
+        elif kind == "review_requested":
+            state["review"] = ("requested", item)
+        elif kind == "review_pass":
+            state["review"] = ("pass", item)
+            state["research"] = ("complete", item)
+        elif kind == "review_block":
+            state["review"] = ("block", item)
+            state["research"] = ("incomplete", item)
+        elif kind == "human_review_pending":
+            state["human_review"] = ("pending", item)
+        elif kind == "human_review_resolved":
+            state["human_review"] = ("resolved", item)
+        elif kind == "implementation_authorized":
+            state["implementation_authority"] = ("authorized", item)
+            state["research"] = ("complete", item)
+            state["review"] = ("satisfied", item)
+        elif kind == "implementation_prohibited":
+            state["implementation_authority"] = ("prohibited", item)
+        elif kind == "hold_active":
+            state["hold"] = ("active", item)
+        elif kind == "hold_released":
+            state["hold"] = ("released", item)
+        elif kind == "dependency_active":
+            state["dependency"] = ("active", item)
+        elif kind == "dependency_resolved":
+            state["dependency"] = ("resolved", item)
+        elif kind == "dispatch_sent":
+            state["dispatch"] = ("sent", item)
+            state["research"] = ("complete", item)
+            state["review"] = ("satisfied", item)
+        elif kind == "dispatch_cancelled":
+            state["dispatch"] = ("cancelled", item)
+        elif kind in {"ownership_folded", "ownership_transferred"}:
+            state["ownership"] = (kind, item)
+        elif kind == "source_merged":
+            state["source_merged"] = ("merged", item)
+        elif kind == "post_merge_required":
+            state["post_merge"] = ("required", item)
+        elif kind == "post_merge_resolved":
+            state["post_merge"] = ("resolved", item)
+        elif kind == "implementation_complete":
+            # A following explanatory line may omit the PR number. Preserve
+            # the more specific event needed for authoritative GitHub readback.
+            previous = state["implementation_complete"]
+            if item.get("detail") is not None or not previous:
+                state["implementation_complete"] = ("complete", item)
+        elif kind == "execution_claim":
+            state["execution_claim"] = ("active", item)
+        elif kind == "worker_started":
+            state["worker_started"] = ("started", item)
+        elif kind == "completed":
+            state["completed"] = ("complete", item)
+        elif kind == "raw_intake":
+            state["raw_intake"] = ("raw", item)
+        elif kind == "bounded_scope":
+            state["bounded_scope"] = ("bounded", item)
+        elif kind == "authority_ambiguity":
+            state["authority_ambiguity"] = ("unresolved", item)
+        elif kind == "referenced_pr_closed_unmerged":
+            state["closed_unmerged_prs"][item.get("detail")] = item
+
+    return events, state
+
+
+def authority_reason(prefix, record):
+    if not record:
+        return prefix
+    item = record[1]
+    return f"{prefix}: {item['source']} — {item['text']}"
 
 
 def stable_title(name):
@@ -706,7 +1224,29 @@ def stable_title(name):
     return value, value != original, "mechanical lifecycle/priority prefix cleanup"
 
 
-def infer_code_areas(name, notes, custom_fields=None):
+def explicit_record(text, label):
+    """Return the last explicit structured record within one evidence item."""
+    matches = re.findall(
+        rf"^\s*{re.escape(label)}\s*:\s*(\S[^\n]*)$",
+        text or "",
+        re.IGNORECASE | re.MULTILINE,
+    )
+    return matches[-1].strip() if matches else None
+
+
+def explicit_durable_record(notes, comment, label):
+    """Prefer the newest explicit comment record, then the current task body."""
+    for item in (comment or {}).get("history") or ([comment] if comment else []):
+        record = explicit_record(item.get("text", ""), label)
+        if record:
+            return record, f"explicit comment {label} record"
+    record = explicit_record(notes, label)
+    if record:
+        return record, f"explicit task-notes {label} record"
+    return None, None
+
+
+def explicit_code_areas(notes, comment=None, custom_fields=None):
     field_value = custom_field_value(custom_fields, "Code Area")
     if field_value:
         values = [value.strip() for value in re.split(r"[,;|]", field_value) if value.strip()]
@@ -714,116 +1254,161 @@ def infer_code_areas(name, notes, custom_fields=None):
         if valid:
             return valid, "Asana Code Area custom field"
 
-    # Titles are useful for the semantic subject, but never for lifecycle or
-    # priority. Bound note text so old chronology does not make every task
-    # appear cross-cutting.
-    text = f"{name}\n{(notes or '')[:2000]}".lower()
-    areas = []
+    record, source = explicit_durable_record(notes, comment, "CODE AREA")
+    if record:
+        values = [value.strip() for value in re.split(r"[,;|]", record) if value.strip()]
+        valid = [value for value in values if value in CODE_AREAS]
+        if valid and len(valid) == len(values):
+            return valid, source
+    return [], "no explicit durable Code Area record"
 
-    def add(area):
-        if area not in areas:
-            areas.append(area)
 
-    if any(k in text for k in ["asana", "coordinator", "dispatch", "handoff", "triage", "project setting"]):
-        add("Asana / Coordination")
-    if any(k in text for k in ["pull request", "pr #", "review", "integration", "worktree", "branch", "merge", "lifecycle"]):
-        add("Development Lifecycle / PR")
-    if any(k in text for k in ["ci", "test", "pytest", "pglite", "browser", "certification"]):
-        add("CI / Tests")
-    if any(k in text for k in ["agent", "worker", "codex", "claude", "chatgpt", "role", "project kernel"]):
-        add("Agent Runtime / Roles")
-    if any(k in text for k in ["runtime", "activation", "deployment", "host", "hook", "infrastructure"]):
-        add("Infrastructure / Runtime")
-    if any(k in text for k in ["postgres", "postgresql", "database", "migration"]):
-        add("Database / PostgreSQL")
-    if any(k in text for k in ["dashboard", "observability", "telemetry", "metrics"]):
-        add("Dashboard / Observability")
-    if any(k in text for k in ["docs", "documentation", "knowledge", "claude.md", "runbook", "architecture"]):
-        add("Docs / Knowledge")
-    if any(k in text for k in ["product workflow", "planning", "research continuation", "dish workflow"]):
-        add("Product Workflow")
+def explicit_version(notes, comment=None, custom_fields=None):
+    field_value = custom_field_value(custom_fields, "Version")
+    if field_value:
+        return field_value, "Asana Version custom field"
 
-    if not areas:
-        return ["Cross-cutting / Unknown"], "no deterministic coarse-area signal"
-    return areas[:2], "bounded keyword suggestion; Coordinator confirmation recommended"
+    record, source = explicit_durable_record(notes, comment, "VERSION")
+    if not record:
+        return "", "no explicit own-task Version record"
+    # Explanatory prose may follow a structured version token. Do not infer a
+    # version from incidental references such as "after Integration V1" or
+    # "Review V2" elsewhere in the task.
+    value = re.split(r"\s+[—–]\s+", record, maxsplit=1)[0].strip()
+    if not value or value.casefold() in {"unset", "none", "n/a", "unknown"}:
+        return "", "explicit Version record is unset"
+    return value, source
 
 
 def classify_target(task, prs, controller_states):
-    notes = task.get("notes", "")
-    comment = task.get("comment")
-    completed = bool(task.get("completed"))
-    state = task_state(notes)
-    sections = task.get("current_sections") or []
-    current = state + "\n" + notes + "\n" + latest_comment_text(comment)
+    events, authority = reconstruct_lifecycle_authority(task, prs, controller_states)
 
-    worker_started, worker_reason = worker_started_from_evidence(task, prs, controller_states)
+    if authority["completed"]:
+        return "Done", "high", authority_reason("current completion authority", authority["completed"])
 
-    # Asana completion is explicit orchestration authority. A merge alone never
-    # reaches this branch and therefore never implies Done.
-    if completed:
-        return "Done", "high", "Asana completed=true"
-
-    if human_review_pending(task):
-        return "Needs Human Review", "high", "durable human/Marco decision or approval is pending"
-
-    if dependency_pending(notes, comment):
-        return "Waiting on Dependency", "high", "named dependency/wait state found"
-
-    if worker_started:
-        return "Under Development", "high", worker_reason
-
-    if agentic_review_pending(task):
-        return "Needs Agentic Review", "high", "durable pre-development agent review/re-review signal found"
-
-    if research_pending(task):
-        return "Needs Research", "high", "durable research/design work remains"
-
-    review_verdict, review_item = latest_formal_review(comment)
-    if review_verdict == "PASS" and re.search(
-        r"(?:VERDICT|CURRENT DISPOSITION):?[^\n]*\bIMPLEMENTATION READY\b",
-        review_item.get("text", ""),
-        re.IGNORECASE,
-    ):
-        return "Ready", "high", "latest durable agent Review passed with Implementation Ready disposition"
-    if review_verdict == "PASS" and (
-        handoff_sent(comment)
-        or "Ready" in sections
-        or re.search(r"\bIMPLEMENTATION READY\b|\bSTATE:\s*READY\b", current, re.IGNORECASE)
-    ):
-        return "Ready", "high", "agent Review passed and a later/current Ready or handoff record establishes the next state"
-    if review_verdict == "PASS":
+    if authority["authority_ambiguity"] and not authority["worker_started"]:
         return (
-            "Needs Processing",
+            RECONCILIATION_REQUIRED,
             "low",
-            "agent Review passed, but no durable record yet proves the next state is Ready, human decision, dependency, or Done",
+            authority_reason(
+                "current task STATE conflicts with older lifecycle evidence and notes-specific chronology is unavailable",
+                authority["authority_ambiguity"],
+            ),
         )
 
-    # Handoff-sent work remains Ready until exact worker-start/PR evidence exists.
-    if handoff_sent(comment):
-        return "Ready", "high", "Implementation handoff recorded, but no worker-start evidence; sent is not running"
+    ownership = authority["ownership"]
+    post_merge_open = authority["post_merge"] and authority["post_merge"][0] == "required"
+    source_merged = bool(authority["source_merged"])
+    if ownership and ownership[0] == "ownership_folded":
+        folded_pr = (ownership[1].get("detail") or {}).get("pr") if isinstance(ownership[1].get("detail"), dict) else None
+        folded_pr_merged = any(
+            item["kind"] == "source_merged" and (folded_pr is None or item.get("detail") == folded_pr)
+            for item in events
+        )
+        if (source_merged or folded_pr_merged) and not post_merge_open:
+            return "Done", "high", authority_reason("folded/superseded work has landed with no current residual", ownership)
+        return (
+            RECONCILIATION_REQUIRED,
+            "low",
+            authority_reason("folded/superseded ownership exists but terminal/residual authority is unresolved", ownership),
+        )
 
-    # The legacy Ready section is orchestration evidence once stronger current
-    # gates and active GitHub lineage have been excluded.
-    if "Ready" in sections or re.search(r"\bIMPLEMENTATION READY\b|\bSTATE:\s*READY\b", current, re.IGNORECASE):
-        return "Ready", "high", "current Ready placement/record and no stronger unresolved gate or active PR"
+    if ownership and ownership[0] == "ownership_transferred" and post_merge_open:
+        return (
+            RECONCILIATION_REQUIRED,
+            "low",
+            authority_reason("ownership transferred while post-merge responsibility remains unclear on this task", ownership),
+        )
 
-    # Raw/untriaged findings go to intake, not guessed into Research.
-    if raw_intake_signal(current):
-        return "Needs Processing", "high", "raw finding/intake record without stronger later-state proof"
+    implementation_complete = authority["implementation_complete"]
+    if implementation_complete:
+        pr_number = implementation_complete[1].get("detail")
+        if pr_number in authority["closed_unmerged_prs"]:
+            return (
+                RECONCILIATION_REQUIRED,
+                "low",
+                f"implementation claimed Review-ready on PR #{pr_number}, but current GitHub authority says it closed unmerged",
+            )
 
-    if any(section in {"Backlog", "Untitled section"} for section in sections):
-        return "Needs Processing", "high", "legacy intake/backlog placement has no direct target state; preserve for triage"
+    if authority["human_review"] and authority["human_review"][0] == "pending":
+        return "Needs Human Review", "high", authority_reason("current human/Marco decision remains pending", authority["human_review"])
 
-    if "Blocked / Decision" in sections:
-        return "Needs Processing", "low", "legacy blocked placement lacks a mechanically provable human decision or dependency wake contract"
+    hold_active = authority["hold"] and authority["hold"][0] == "active"
+    dependency_active = authority["dependency"] and authority["dependency"][0] == "active"
+    if hold_active:
+        hold_text = authority["hold"][1]["text"]
+        if dependency_active or re.search(r"\bUNTIL\b|\bBLOCK CONDITION\b", hold_text, re.IGNORECASE):
+            return "Waiting on Dependency", "high", authority_reason("current hold has a named release dependency", authority["hold"])
+        if re.search(r"\bMARCO\b|\bNOT APPROVED\b|\bAPPROVAL\b", hold_text, re.IGNORECASE):
+            return "Needs Human Review", "high", authority_reason("current Marco/human hold remains active", authority["hold"])
+        return RECONCILIATION_REQUIRED, "low", authority_reason("current hold lacks a provable release route", authority["hold"])
 
-    if "In Progress" in sections:
-        return "Needs Processing", "low", "legacy In Progress placement lacks authoritative worker-start evidence"
+    if authority["implementation_authority"] and authority["implementation_authority"][0] == "prohibited":
+        return (
+            RECONCILIATION_REQUIRED,
+            "low",
+            authority_reason("current evidence explicitly withholds Implementation authority", authority["implementation_authority"]),
+        )
 
-    if "Review / Integration" in sections:
-        return "Needs Processing", "low", "legacy Review / Integration placement lacks a current review, dependency, or active PR proof"
+    if dependency_active:
+        return "Waiting on Dependency", "high", authority_reason("current dependency remains unresolved", authority["dependency"])
 
-    return "Needs Processing", "low", "no stronger target state could be proven; preserve as intake for semantic triage"
+    if authority["worker_started"]:
+        return "Under Development", "high", authority_reason("current GitHub lineage proves worker start", authority["worker_started"])
+
+    if authority["execution_claim"]:
+        return (
+            RECONCILIATION_REQUIRED,
+            "low",
+            authority_reason(
+                "task claims active execution but current authority has no open owning worker/PR proof",
+                authority["execution_claim"],
+            ),
+        )
+
+    research_incomplete = authority["research"] and authority["research"][0] == "incomplete"
+    review_status = authority["review"][0] if authority["review"] else None
+
+    if source_merged and post_merge_open:
+        if research_incomplete or review_status == "block":
+            return "Needs Research", "high", authority_reason("post-merge remainder still needs research/design correction", authority["research"] or authority["review"])
+        if review_status == "requested":
+            return "Needs Agentic Review", "high", authority_reason("post-merge remainder awaits current independent review", authority["review"])
+        if authority["implementation_authority"] and authority["implementation_authority"][0] == "authorized":
+            return "Ready", "high", authority_reason("current post-merge continuation is affirmatively authorized", authority["implementation_authority"])
+        return RECONCILIATION_REQUIRED, "low", authority_reason("source landed but post-merge/rollout authority remains unresolved", authority["post_merge"])
+
+    if research_incomplete or review_status == "block":
+        return "Needs Research", "high", authority_reason("current research/design is incomplete", authority["research"] or authority["review"])
+
+    if review_status == "requested":
+        return "Needs Agentic Review", "high", authority_reason("current accepted/bounded candidate awaits independent review", authority["review"])
+
+    if implementation_complete:
+        return "Needs Agentic Review", "high", authority_reason("Implementation is complete and the current candidate awaits Review", implementation_complete)
+
+    if authority["dispatch"] and authority["dispatch"][0] == "sent":
+        return "Ready", "high", authority_reason("current Implementation handoff is sent but worker start is unproven", authority["dispatch"])
+
+    if review_status == "pass":
+        if authority["bounded_scope"] or "Ready" in (task.get("current_sections") or []):
+            return "Ready", "high", authority_reason("current independent review passed for a bounded/Ready candidate with no later blocker", authority["review"])
+        return (
+            RECONCILIATION_REQUIRED,
+            "low",
+            authority_reason("review passed but no durable record establishes the accepted dispatch boundary", authority["review"]),
+        )
+
+    if authority["implementation_authority"] and authority["implementation_authority"][0] == "authorized":
+        return "Ready", "high", authority_reason("current durable evidence explicitly authorizes Implementation", authority["implementation_authority"])
+
+    if authority["bounded_scope"]:
+        return "Needs Agentic Review", "high", authority_reason("scope is concrete but lacks current independent review proof", authority["bounded_scope"])
+
+    if authority["raw_intake"]:
+        return "Needs Processing", "high", authority_reason("current record is genuinely raw intake", authority["raw_intake"])
+
+    return RECONCILIATION_REQUIRED, "low", "chronological authority does not establish one current lifecycle destination"
 
 
 def load_project_tasks(project_gid):
@@ -912,7 +1497,7 @@ def build_ledger(project_gid=DEFAULT_PROJECT_GID, project_name=None):
         if comment_error:
             comment_errors.append({"task_gid": task["gid"], "error": comment_error})
             classification = (
-                "Needs Processing",
+                RECONCILIATION_REQUIRED,
                 "low",
                 "comment retrieval failed; current human/review/priority/handoff state is unavailable",
             )
@@ -927,8 +1512,11 @@ def build_ledger(project_gid=DEFAULT_PROJECT_GID, project_name=None):
         priority, priority_source = current_priority(
             task["notes"], task["comment"], task["custom_fields"]
         )
-        areas, code_area_source = infer_code_areas(
-            task["name"], task["notes"], task["custom_fields"]
+        areas, code_area_source = explicit_code_areas(
+            task["notes"], task["comment"], task["custom_fields"]
+        )
+        version, version_source = explicit_version(
+            task["notes"], task["comment"], task["custom_fields"]
         )
         started, started_reason = worker_started_from_evidence(task, prs, controller_states)
         sent, sent_at = handoff_evidence(task["comment"])
@@ -977,8 +1565,8 @@ def build_ledger(project_gid=DEFAULT_PROJECT_GID, project_name=None):
                 )
         if priority == "UNSET":
             flags.append("priority UNSET")
-        if areas == ["Cross-cutting / Unknown"]:
-            flags.append("Code Area needs semantic review")
+        if not areas:
+            flags.append("Code Area unset: no explicit durable evidence")
         if title_changed is False and re.search(
             r"\b(?:READY|REQUIRED|PENDING|IN PROGRESS|DONE|SUPERSEDED|BLOCKED|HOLD|SOURCE LANDED)\b",
             task["name"],
@@ -998,6 +1586,7 @@ def build_ledger(project_gid=DEFAULT_PROJECT_GID, project_name=None):
             "current_sections": current_sections,
             "current_state_record": task_state(task["notes"]),
             "target_section": target,
+            "applicable": target != RECONCILIATION_REQUIRED,
             "classification_confidence": confidence,
             "classification_reason": reason,
             "semantic_override_used": semantic_override_used,
@@ -1005,7 +1594,8 @@ def build_ledger(project_gid=DEFAULT_PROJECT_GID, project_name=None):
             "priority_source": priority_source,
             "code_areas": areas,
             "code_area_source": code_area_source,
-            "version": "",
+            "version": version,
+            "version_source": version_source,
             "owning_prs": owning_prs,
             "handoff_sent": sent,
             "latest_handoff_at": sent_at,
@@ -1024,13 +1614,13 @@ def build_ledger(project_gid=DEFAULT_PROJECT_GID, project_name=None):
             "task_gid": item["task_gid"],
             "current_name": item["current_name"],
             "current_sections": item["current_sections"],
-            "proposed_safe_section": item["target_section"],
+            "classification_outcome": item["target_section"],
             "reason": item["classification_reason"],
         }
         for item in ledger
-        if item["classification_confidence"] == "low"
+        if item["target_section"] == RECONCILIATION_REQUIRED
     ]
-    section_counts = {section: 0 for section in TARGET_SECTIONS}
+    section_counts = {section: 0 for section in CLASSIFICATION_OUTCOMES}
     priority_counts = {value: 0 for value in ["P-CRITICAL", "P0", "P1", "P2", "UNSET"]}
     for item in ledger:
         section_counts[item["target_section"]] += 1
@@ -1044,6 +1634,7 @@ def build_ledger(project_gid=DEFAULT_PROJECT_GID, project_name=None):
         "target_project_name_v2": f"{project_name} v2",
         "target_project_name_v3": f"{project_name} v3",
         "target_sections": TARGET_SECTIONS,
+        "classification_outcomes": CLASSIFICATION_OUTCOMES,
         "code_area_vocabulary": CODE_AREAS,
         "controller_source": controller_source,
         "github_error": gh_error,
@@ -1072,11 +1663,23 @@ def validate_plan(plan):
             errors.append(f"duplicate task_gid in plan: {gid}")
         seen.add(gid)
 
-        if item["target_section"] not in TARGET_SECTIONS:
-            errors.append(f"{gid}: invalid target section {item['target_section']!r}")
+        if item["target_section"] not in CLASSIFICATION_OUTCOMES:
+            errors.append(f"{gid}: invalid classification outcome {item['target_section']!r}")
+
+        expected_applicable = item["target_section"] != RECONCILIATION_REQUIRED
+        if item.get("applicable") is not expected_applicable:
+            errors.append(
+                f"{gid}: {item['target_section']} must have applicable={expected_applicable}"
+            )
+        if item["classification_confidence"] == "low" and expected_applicable:
+            errors.append(f"{gid}: low-confidence classification cannot be applicable")
 
         if item["priority"] not in {"P-CRITICAL", "P0", "P1", "P2", "UNSET"}:
             errors.append(f"{gid}: invalid priority {item['priority']!r}")
+
+        invalid_areas = [area for area in item["code_areas"] if area not in CODE_AREAS]
+        if invalid_areas:
+            errors.append(f"{gid}: invalid Code Area values {invalid_areas!r}")
 
         if item["target_section"] == "Under Development" and any(
             "lacks worker-start evidence" in flag for flag in item["flags"]
@@ -1087,6 +1690,46 @@ def validate_plan(plan):
             errors.append(f"{gid}: Done without Asana completion or freshness-bound semantic audit")
 
     return errors
+
+
+def expected_readback_state(item):
+    """Canonical post-apply state, including all governed migration fields."""
+    if item["target_section"] == RECONCILIATION_REQUIRED or not item.get("applicable", True):
+        raise ValueError(f"{item['task_gid']}: reconciliation-required outcome is not applicable")
+    return {
+        "section": item["target_section"],
+        "priority": None if item["priority"] == "UNSET" else item["priority"],
+        "code_areas": list(item["code_areas"]),
+        "version": item["version"] or "",
+    }
+
+
+def build_apply_spec(item):
+    """Build a transport-neutral apply specification without mutating Asana."""
+    expected = expected_readback_state(item)
+    field_updates = {}
+    if expected["priority"] is not None:
+        field_updates["Priority"] = expected["priority"]
+    if expected["code_areas"]:
+        field_updates["Code Area"] = expected["code_areas"]
+    if expected["version"]:
+        field_updates["Version"] = expected["version"]
+    return {
+        "task_gid": item["task_gid"],
+        "section": expected["section"],
+        "field_updates": field_updates,
+    }
+
+
+def readback_mismatches(item, observed):
+    """Compare section and every governed field after an external apply."""
+    expected = expected_readback_state(item)
+    mismatches = []
+    for key in ("section", "priority", "code_areas", "version"):
+        actual = observed.get(key)
+        if actual != expected[key]:
+            mismatches.append(f"{key}: expected {expected[key]!r}, observed {actual!r}")
+    return mismatches
 
 
 def write_outputs(plan, json_path, csv_path):
@@ -1102,6 +1745,7 @@ def write_outputs(plan, json_path, csv_path):
         "current_sections",
         "current_state_record",
         "target_section",
+        "applicable",
         "classification_confidence",
         "classification_reason",
         "semantic_override_used",
@@ -1110,6 +1754,7 @@ def write_outputs(plan, json_path, csv_path):
         "code_areas",
         "code_area_source",
         "version",
+        "version_source",
         "owning_prs",
         "handoff_sent",
         "latest_handoff_at",
@@ -1152,7 +1797,7 @@ def summarize(plan):
     print(f"project: {plan['project_gid']}")
     print(f"tasks: {plan['task_count']}")
     print("target sections:")
-    for section in TARGET_SECTIONS:
+    for section in CLASSIFICATION_OUTCOMES:
         print(f"  {section}: {counts.get(section, 0)}")
     print("priority:")
     for value in ["P-CRITICAL", "P0", "P1", "P2", "UNSET"]:
