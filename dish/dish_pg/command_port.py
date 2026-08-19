@@ -1022,7 +1022,9 @@ class PostgresCommandPort:
         )
         rows: list[dict[str, Any]] = []
         for requirement in requirements:
-            if not requirement.question.startswith(_SEMANTIC_PROPOSAL_PREFIX):
+            if not requirement.question.startswith(
+                _SEMANTIC_PROPOSAL_PREFIX
+            ):
                 continue
             try:
                 payload, _candidate, required = self._validate_semantic_proposal_requirement(
@@ -2264,7 +2266,7 @@ class PostgresCommandPort:
                 operation_id=operation.operation_id,
                 run_id=call.run_id,
                 owner_id=call.owner_id,
-                actor_role=actor_fact.actor_role,
+                actor_role="verification",
                 actor_attempt_sequence=sequence,
                 issued_at=call.now,
                 expires_at=call.now + self.lease_duration,
@@ -3181,7 +3183,7 @@ class PostgresCommandPort:
             "route": "evidence",
             "resume_status": "pending-research",
             "hold_id": str(hold.hold_id),
-            "baseline_content_version_id": str(hold.baseline_content_version_id),
+            "baseline_content_version_id": str(baseline_content_version_id),
             "cycle_id": None,
         }
 
