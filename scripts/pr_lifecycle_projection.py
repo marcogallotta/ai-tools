@@ -268,6 +268,41 @@ def _v3_shadow_decision(
     }
 
 
+def _serialize_prs(values: Iterable[PRLifecycle]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Preserve explicit owner authority and provide V3 an owner-only task view.
+
+    Detailed lifecycle projection may continue to expose every related task reference.
+    V3 source-landing authority is narrower: only the explicit owning task may supply
+    the Asana-side human hold.  Missing or ambiguous owner metadata therefore yields
+    an empty V3 authority set and fails closed in hold evaluation.
+
+    Direct synthetic PRLifecycle fixtures created with a plain list predate
+    TaskReferences owner metadata; those retain their original task list for test
+    compatibility. Production inspector values use TaskReferences and always enter
+    the explicit owner path below.
+    """
+    projected: list[dict[str, Any]] = []
+    v3_values: list[dict[str, Any]] = []
+    for value in values:
+        pr = value.json()
+        task_ids = value.task_ids
+        has_owner_metadata = hasattr(task_ids, "owning_task_id")
+        if has_owner_metadata:
+            owner = getattr(task_ids, "owning_task_id", None)
+            owner_error = getattr(task_ids, "owning_task_error", None)
+            pr["owning_task_id"] = owner
+            pr["owning_task_error"] = owner_error
+        projected.append(pr)
+
+        v3_pr = dict(pr)
+        if has_owner_metadata:
+            owner = str(pr.get("owning_task_id") or "").strip()
+            v3_pr["task_ids"] = [owner] if owner else []
+            v3_pr["related_task_ids"] = list(pr.get("task_ids") or [])
+        v3_values.append(v3_pr)
+    return projected, v3_values
+
+
 def build_projection(
     values: Iterable[PRLifecycle],
     *,
@@ -281,7 +316,7 @@ def build_projection(
     generated_at: datetime | None = None,
 ) -> dict[str, Any]:
     generated_at = generated_at or datetime.now(timezone.utc)
-    prs = [value.json() for value in values]
+    prs, v3_prs = _serialize_prs(values)
     task_values = [dict(task) for task in tasks]
     tasks_by_gid = _task_index(task_values)
     sources = dict((source_observation or {}).get("pull_requests") or {})
@@ -386,7 +421,7 @@ def build_projection(
             coordinator.append({"pr": pr["number"], "action": operator_action, "head": pr["head"]})
 
     v3 = build_v3_projection(
-        prs,
+        v3_prs,
         tasks=task_values,
         source_observation=dict(source_observation or {}),
         repository=repository,
