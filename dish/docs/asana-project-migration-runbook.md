@@ -38,7 +38,8 @@ approval.
 The JSON binds the source project GID and live snapshot to the exact target
 name. `v2` targets `Dish — Development Workflow v2`; an exact completed v2
 structure is reported as already complete, while a v2 name with mixed sections
-fails validation. `v3` may be planned, but its `apply_permitted` field is false.
+fails validation. `v3` may be planned, but its `apply_supported` field is false;
+every generated plan records `apply_authorized` as false.
 The cutover contract records the original name for rollback and requires the
 project rename to be the final completion signal. This repository does not
 provide an apply command; applying either plan remains a separately authorized

@@ -385,10 +385,16 @@ class PlannerProjectTests(unittest.TestCase):
         v2 = {**base, "target_version": "v2"}
         self.assertIn("v2 migration requires source name", planner.validate_plan(v2)[0])
 
-        v3 = {**base, "target_version": "v3", "apply_permitted": False}
+        v3 = {
+            **base,
+            "target_version": "v3",
+            "apply_supported": False,
+            "apply_authorized": False,
+        }
         self.assertEqual(planner.validate_plan(v3), [])
         self.assertEqual(v3["migration_state"], "planned")
-        self.assertFalse(v3["apply_permitted"])
+        self.assertFalse(v3["apply_supported"])
+        self.assertFalse(v3["apply_authorized"])
 
     def test_cli_exits_nonzero_for_invalid_evidence_plan(self):
         invalid = {

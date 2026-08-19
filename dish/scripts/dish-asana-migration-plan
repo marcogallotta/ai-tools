@@ -1068,7 +1068,8 @@ def build_ledger(project_gid=DEFAULT_PROJECT_GID, project_name=None, target_vers
         "project_snapshot": project,
         "target_version": target_version,
         "target_project_name": PROJECT_NAMES[target_version],
-        "apply_permitted": target_version == "v2",
+        "apply_supported": target_version == "v2",
+        "apply_authorized": False,
         "cutover_contract": {
             "preserve_project_gid": project_gid,
             "rollback_project_name": project["name"],
