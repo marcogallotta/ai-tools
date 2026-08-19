@@ -23,6 +23,57 @@ def request_hash(command: str, arguments: Mapping[str, Any]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _assert_request_identity(
+    row: Mapping[str, Any],
+    *,
+    request_id: str,
+    owner_id: str,
+    run_id: str,
+    command: str,
+    digest: str,
+) -> None:
+    if (
+        row["owner_id"] != owner_id
+        or row["run_id"] != run_id
+        or row["command"] != command
+        or row["request_hash"] != digest
+    ):
+        raise DishRuleError(
+            "CONFLICT",
+            "request ID was already used for different work",
+            rule="service_request_identity_conflict",
+            details={"request_id": request_id},
+        )
+
+
+def lookup_request(
+    conn: sqlite3.Connection,
+    *,
+    request_id: str,
+    owner_id: str,
+    run_id: str,
+    command: str,
+    arguments: Mapping[str, Any],
+) -> sqlite3.Row | None:
+    """Read one admitted request without creating a new request identity."""
+
+    digest = request_hash(command, arguments)
+    row = conn.execute(
+        "SELECT * FROM service_requests WHERE request_id=?", (request_id,)
+    ).fetchone()
+    if row is None:
+        return None
+    _assert_request_identity(
+        row,
+        request_id=request_id,
+        owner_id=owner_id,
+        run_id=run_id,
+        command=command,
+        digest=digest,
+    )
+    return row
+
+
 def begin_request(
     conn: sqlite3.Connection,
     *,
@@ -48,18 +99,14 @@ def begin_request(
                 "SELECT * FROM service_requests WHERE request_id=?", (request_id,)
             ).fetchone()
             return row, True
-        if (
-            row["owner_id"] != owner_id
-            or row["run_id"] != run_id
-            or row["command"] != command
-            or row["request_hash"] != digest
-        ):
-            raise DishRuleError(
-                "CONFLICT",
-                "request ID was already used for different work",
-                rule="service_request_identity_conflict",
-                details={"request_id": request_id},
-            )
+        _assert_request_identity(
+            row,
+            request_id=request_id,
+            owner_id=owner_id,
+            run_id=run_id,
+            command=command,
+            digest=digest,
+        )
         return row, False
 
 
@@ -340,6 +387,17 @@ def pending_error(command: str, request_id: str, *, operation_id: str | None = N
 class RequestReplayPort(Protocol):
     """Typed request-identity seam used by lifecycle coordinators."""
 
+    def lookup(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        request_id: str,
+        owner_id: str,
+        run_id: str,
+        command: str,
+        arguments: Mapping[str, Any],
+    ) -> sqlite3.Row | None: ...
+
     def begin(
         self,
         conn: sqlite3.Connection,
@@ -383,6 +441,12 @@ class FunctionalRequestReplay:
     stored_fn: Callable[..., dict[str, Any] | None]
     complete_fn: Callable[..., dict[str, Any]]
     pending_fn: Callable[..., DishRuleError]
+    lookup_fn: Callable[..., sqlite3.Row | None] | None = None
+
+    def lookup(self, conn: sqlite3.Connection, **kwargs: Any) -> sqlite3.Row | None:
+        if self.lookup_fn is None:
+            return None
+        return self.lookup_fn(conn, **kwargs)
 
     def begin(self, conn: sqlite3.Connection, **kwargs: Any) -> tuple[sqlite3.Row, bool]:
         return self.begin_fn(conn, **kwargs)
