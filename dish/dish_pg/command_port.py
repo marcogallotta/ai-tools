@@ -54,6 +54,7 @@ from .repositories import (
     registry_source_import_run,
 )
 from .transition import ProjectionService
+from dish_tool.content_versions import CONTENT_IDENTITY_SCHEME, content_identity
 from dish_tool.dish_urls import dish_uuid_from_url
 from dish_tool.errors import DishRuleError
 from dish_tool.governed_diff import (
@@ -780,9 +781,7 @@ class PostgresCommandPort:
         rendered = after.render().splitlines()
         candidate_title = rendered[0]
         candidate_body = "\n".join(rendered[1:]) + "\n"
-        candidate_identity = hashlib.sha256(
-            (candidate_title + "\0" + candidate_body).encode()
-        ).hexdigest()
+        candidate_identity = content_identity(candidate_title, candidate_body)
         return {
             "version": 1,
             "proposal_id": str(proposal_id),
@@ -860,7 +859,7 @@ class PostgresCommandPort:
                 "SEMANTIC_PROPOSAL_INTEGRITY_FAILED",
                 "proposal candidate bundle is malformed",
             )
-        observed_identity = hashlib.sha256((title + "\0" + body).encode()).hexdigest()
+        observed_identity = content_identity(title, body)
         if observed_identity != identity:
             raise CommandRuleError(
                 "SEMANTIC_PROPOSAL_INTEGRITY_FAILED",
@@ -2021,9 +2020,9 @@ class PostgresCommandPort:
         section = self.session.get(models.GovernedSection, entry.section_id)
         task_id, version_id, activation_id = self.uuid_factory(), self.uuid_factory(), self.uuid_factory()
         body = str(call.arguments.get("body", ""))
-        identity = hashlib.sha256((title + "\0" + body).encode()).hexdigest()
+        identity = content_identity(title, body)
         task = models.DishTask(task_id=task_id, existence_state="ordinary", creation_route="create", import_run_id=None, command_execution_id=execution.execution_id, created_at=call.now, retired_at=None)
-        version = models.ContentVersion(content_version_id=version_id, generation_id=generation.generation_id, task_id=task_id, representation_kind="document", title=title, body=body, identity_scheme="sha256-title-body-v1", content_identity=identity, creator_route="command_execution", import_run_id=None, command_execution_id=execution.execution_id, predecessor_content_version_id=None, contract_binding_id=binding.binding_id, created_at=call.now)
+        version = models.ContentVersion(content_version_id=version_id, generation_id=generation.generation_id, task_id=task_id, representation_kind="document", title=title, body=body, identity_scheme=CONTENT_IDENTITY_SCHEME, content_identity=identity, creator_route="command_execution", import_run_id=None, command_execution_id=execution.execution_id, predecessor_content_version_id=None, contract_binding_id=binding.binding_id, created_at=call.now)
         activation = models.ContentActivation(content_activation_id=activation_id, generation_id=generation.generation_id, task_id=task_id, content_version_id=version_id, activation_route="command_execution", import_run_id=None, command_execution_id=execution.execution_id, task_revision=1, activated_at=call.now)
         head = models.TaskAuthorityHead(generation_id=generation.generation_id, task_id=task_id, current_content_activation_id=activation_id, task_revision=1, membership_revision=1, placement_revision=1, completion_revision=1, updated_at=call.now)
         membership_id, placement_id, completion_id = self.uuid_factory(), self.uuid_factory(), self.uuid_factory()
@@ -2265,7 +2264,7 @@ class PostgresCommandPort:
                 operation_id=operation.operation_id,
                 run_id=call.run_id,
                 owner_id=call.owner_id,
-                actor_role="verification",
+                actor_role=actor_fact.actor_role,
                 actor_attempt_sequence=sequence,
                 issued_at=call.now,
                 expires_at=call.now + self.lease_duration,
@@ -3047,9 +3046,7 @@ class PostgresCommandPort:
             source_parts = parse_canonical_document(
                 file_text=str(file_text), expected_status="pending-verification"
             )
-            candidate_identity = hashlib.sha256(
-                (source_parts.title + "\0" + source_parts.body).encode()
-            ).hexdigest()
+            candidate_identity = content_identity(source_parts.title, source_parts.body)
             if candidate_identity == reviewed.content_identity:
                 raise CommandRuleError(
                     "SMALL_CORRECTION_REQUIRED",
@@ -3184,7 +3181,7 @@ class PostgresCommandPort:
             "route": "evidence",
             "resume_status": "pending-research",
             "hold_id": str(hold.hold_id),
-            "baseline_content_version_id": str(baseline_content_version_id),
+            "baseline_content_version_id": str(hold.baseline_content_version_id),
             "cycle_id": None,
         }
 
@@ -3246,9 +3243,7 @@ class PostgresCommandPort:
             corrected = parse_canonical_document(
                 file_text=str(file_text), expected_status="pending-verification"
             )
-            identity = hashlib.sha256(
-                (corrected.title + "\0" + corrected.body).encode()
-            ).hexdigest()
+            identity = content_identity(corrected.title, corrected.body)
             if identity == reviewed.content_identity:
                 raise CommandRuleError(
                     "LARGE_CORRECTION_REQUIRED",
@@ -5042,12 +5037,12 @@ class PostgresCommandPort:
                 "CONTENT_AUTHORITY_DRIFT",
                 "the predecessor is not the exact current content occurrence",
             )
-        identity = hashlib.sha256((title + "\0" + body).encode()).hexdigest()
+        identity = content_identity(title, body)
         if self.session.scalar(
             select(models.ContentVersion.content_version_id).where(
                 models.ContentVersion.generation_id == generation_id,
                 models.ContentVersion.task_id == task_id,
-                models.ContentVersion.identity_scheme == "sha256-title-body-v1",
+                models.ContentVersion.identity_scheme == CONTENT_IDENTITY_SCHEME,
                 models.ContentVersion.content_identity == identity,
             )
         ) is not None:
@@ -5064,7 +5059,7 @@ class PostgresCommandPort:
                 representation_kind="document",
                 title=title,
                 body=body,
-                identity_scheme="sha256-title-body-v1",
+                identity_scheme=CONTENT_IDENTITY_SCHEME,
                 content_identity=identity,
                 creator_route="command_execution",
                 import_run_id=None,
