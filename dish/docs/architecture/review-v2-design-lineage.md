@@ -4,7 +4,7 @@
 
 Review V2 is the sole exact design-generation and design-snapshot lineage authority for design-bearing Asana tasks. This contract does not create a database, service, scheduler, second lifecycle controller, or alternate design history.
 
-The mechanical implementation is `scripts/review_design_lineage.py`. It models the immutable generation record, append-only generation events, projection contradiction checks, exact recovery, cumulative-drift baseline lookup, successor validation, and the R9 bounded challenge/reviewer-replacement rules.
+The mechanical implementation is `scripts/review_design_lineage.py`. It models the immutable generation record, append-only generation events, human-decision provenance binding, projection contradiction checks, exact recovery, cumulative-drift baseline lookup, successor validation, and the R9 bounded challenge/reviewer-replacement rules.
 
 ## Exact generation identity
 
@@ -29,13 +29,31 @@ Generation bytes never contain mutable approval/dispatch state.
 
 `CREATED | MARCO_APPROVED | DISPATCHED | REOPENED | SUPERSEDED | CANCELLED`.
 
-State is reconstructed from the immutable generation plus the durable ordered event stream. Invalid transitions, duplicate events, and identity mismatches are contradictions; they do not rewrite or replace the design bytes. `SUPERSEDED` and `CANCELLED` are terminal.
+State is reconstructed from the immutable generation plus the durable ordered event stream. Invalid transitions, duplicate events, identity mismatches, invalid approval provenance, and successor-lineage disagreements are contradictions; they do not rewrite or replace the design bytes. `SUPERSEDED` and `CANCELLED` are terminal.
 
-A valid `MARCO_APPROVED` event also carries `material_delta_set_sha256`, binding approval to the complete material-delta set shown for that exact generation. Marco approval therefore binds only that exact generation identity plus that exact delta-set digest. Dispatch similarly freezes only the exact generation that received a valid `DISPATCHED` event.
+A valid `MARCO_APPROVED` event carries `material_delta_set_sha256` plus a reference and digest for the durable human decision. The event actor/account field is attribution only and is never sufficient proof of Marco approval.
+
+## Marco approval provenance
+
+Consequential approval uses independent durable human-decision provenance rather than service actor metadata.
+
+The event binds `human_decision_ref` plus `human_decision_sha256`. Reconstruction accepts the approval only when the caller also supplies an independently recovered `dish-human-decision-provenance:v1` record for that reference and all of these values agree exactly:
+
+- decision kind is `MARCO_APPROVAL`;
+- `decided_by` is Marco;
+- exact Review V2 generation identity;
+- exact `material_delta_set_sha256`;
+- exact durable decision digest.
+
+Missing provenance, actor-only attribution, an unrecovered decision reference, or any identity/digest/delta mismatch surfaces `invalid-marco-approval-provenance` and the approval event does not change state. This preserves the operator-provenance rule that an agent acting through Marco's account cannot manufacture human authorization.
+
+Cumulative-drift baseline selection uses the same provenance-aware reconstruction, so an actor-only or agent-minted `MARCO_APPROVED` event cannot become the approved baseline.
 
 ## Successor and post-dispatch semantics
 
 A material semantic design change creates a successor generation in the same Review V2 lineage. A successor references its predecessor; a competing second successor is surfaced as a lineage fork rather than accepted as an alternate history.
+
+A valid `SUPERSEDED` event must name `successor_generation_id`. Lineage validation reconciles that exact event reference with the actual immutable child record. If G5 records `SUPERSEDED -> G7` while the actual child is G6, the disagreement is a contradiction; event state cannot silently override immutable predecessor/successor lineage.
 
 A dispatched generation cannot silently acquire a successor while remaining dispatched. Reopen or supersede semantics must first be present in its event history. Consumers then move their projection to the Review V2 successor identity; they do not mint their own replacement generation.
 
@@ -51,9 +69,11 @@ Asana V1, Lifecycle V3/resolver, and mutation-control/service infrastructure are
 
 The Review V2 generation remains authoritative when a projection, cache, service copy, or other subsystem disagrees with it.
 
+The human-decision provenance input proves Marco's approval of the exact Review V2 identity; it does not become a second design lineage or alternate snapshot authority.
+
 ## Cumulative drift
 
-Cumulative-drift comparison is anchored to the nearest current/ancestor Review V2 generation with a valid `MARCO_APPROVED` event. It is not anchored to the immediately prior edit merely because that edit is newer.
+Cumulative-drift comparison is anchored to the nearest current/ancestor Review V2 generation with a provenance-valid `MARCO_APPROVED` event. It is not anchored to the immediately prior edit merely because that edit is newer.
 
 Materiality classification remains a Review/Marco authority question. The lineage implementation supplies the exact baseline identity and bytes; it does not downgrade materiality or create human approval by consensus.
 
@@ -61,7 +81,7 @@ Materiality classification remains a Review/Marco authority question. The lineag
 
 Author and reviewer continuity are not required. A blocker/challenge cycle is keyed by the exact candidate generation identity, blocker ID, and durable evidence-set digest. Replacing the author or reviewer does not reset the one-challenge budget for that substantive blocker/evidence set.
 
-A replacement independent reviewer may issue `UPHOLDS`, `NARROWS`, `REFRAMES`, or `WITHDRAWS` against the exact inherited challenge. Any agent included in cumulative material authorship of that candidate is not independent and cannot clear that candidate.
+A replacement independent reviewer may issue `UPHOLDS`, `NARROWS`, `REFRAMES`, or `WITHDRAWS` against the exact inherited challenge. Any agent included in cumulative material authorship of that candidate is not independent and cannot clear that candidate. The challenger is also not the independent reviewer for its own challenge, even when the challenger did not materially edit the candidate.
 
 A materially changed candidate or new material evidence creates a different key and may justify a new bounded cycle. Routine engineering disagreement remains an independent Review matter; a challenge is evidence, not self-clearance.
 
@@ -77,4 +97,4 @@ A materially changed candidate or new material evidence creates a different key 
 6. successor generations stay in the same lineage and projections move to the successor;
 7. author/reviewer replacement preserves challenge history and independence rules.
 
-Additional tests cover invalid/foreign event handling, exact material-delta approval binding, projection contradictions, post-dispatch successor safety, and cumulative-drift baseline selection.
+Additional tests cover invalid/foreign event handling, exact material-delta approval binding, actor-only approval rejection, exact independently recovered Marco-decision provenance, challenger/reviewer separation, projection contradictions, post-dispatch successor safety, SUPERSEDED event/lineage reconciliation, and cumulative-drift baseline selection.
