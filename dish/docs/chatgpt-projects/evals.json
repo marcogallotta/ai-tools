@@ -2292,7 +2292,7 @@
       "id": "development-workflow-asana-v2-mode",
       "roles": ["coordinator", "development-workflow", "implementation", "review", "integration", "workflow", "postgresql-dark-launch", "audit"],
       "required_rules": ["development-workflow-asana-mode"],
-      "prompt": "You are authorized to perform a governed owning-task lifecycle write. Live Asana readback shows project GID 1217419962189616, exact name `Dish — Development Workflow v2`, all eight V2 lifecycle sections, and no legacy-only lifecycle section. Decide the mode and write boundary.",
+      "prompt": "You are authorized to perform a governed owning-task lifecycle write. Live Asana readback shows project GID 1217419962189616, exact name `Dish — Development Workflow v2`, all nine V2 lifecycle sections, and no legacy-only lifecycle section. Decide the mode and write boundary.",
       "expected_outcome": "classify_exact_v2_and_use_only_v2_lifecycle",
       "required_actions": ["read-exact-project-gid-name-and-complete-sections", "classify-v2-mode", "use-only-v2-lifecycle", "verify-asana-writeback"],
       "forbidden_actions": ["fuzzy-match-project-name", "use-legacy-lifecycle", "recreate-legacy-section"]
@@ -2323,6 +2323,141 @@
       "expected_outcome": "abort_unknown_project_version_without_guessing",
       "required_actions": ["read-exact-project-gid-name-and-complete-sections", "classify-unknown-project-version", "perform-zero-governed-asana-mutation", "report-exact-observed-name"],
       "forbidden_actions": ["perform-governed-asana-mutation", "fuzzy-match-project-name", "assume-latest-known-mode"]
+    },
+    {
+      "id": "development-workflow-asana-later-hold-controls",
+      "roles": ["development-workflow"],
+      "required_rules": ["development-workflow-asana-mode"],
+      "prompt": "A task has an old independent Review PASS and Ready wording, followed by a later durable Marco hold. Classify its current V2 lifecycle state.",
+      "expected_outcome": "later_authoritative_hold_controls_over_old_pass",
+      "required_actions": ["reconstruct-chronological-authority", "treat-later-hold-as-current", "reject-ready-classification"],
+      "forbidden_actions": ["let-old-pass-control", "classify-ready-from-historical-wording"]
+    },
+    {
+      "id": "development-workflow-asana-audit-blocker-no-inference",
+      "roles": ["development-workflow"],
+      "required_rules": ["development-workflow-asana-mode"],
+      "prompt": "A detailed audit finding calls an issue BLOCKER but contains no accepted implementation authority or explicit priority. Classify it.",
+      "expected_outcome": "audit_severity_does_not_invent_ready_or_priority",
+      "required_actions": ["route-to-actual-next-step", "keep-priority-unset", "reject-ready-without-affirmative-dispatchability"],
+      "forbidden_actions": ["classify-ready-from-blocker-word", "infer-p0-or-critical"]
+    },
+    {
+      "id": "development-workflow-asana-design-awaits-agentic-review",
+      "roles": ["development-workflow"],
+      "required_rules": ["development-workflow-asana-mode"],
+      "prompt": "A concrete bounded design is complete. The only remaining pre-development step is independent agentic design review. Classify it.",
+      "expected_outcome": "bounded_design_routes_to_needs_agentic_review",
+      "required_actions": ["classify-needs-agentic-review", "distinguish-predevelopment-review-from-pr-review"],
+      "forbidden_actions": ["classify-needs-research", "classify-ready"]
+    },
+    {
+      "id": "development-workflow-asana-later-prohibition-controls",
+      "roles": ["development-workflow"],
+      "required_rules": ["development-workflow-asana-mode"],
+      "prompt": "PASS-like language is followed by a later explicit durable statement: `no implementation authorized`. Classify the task.",
+      "expected_outcome": "later_implementation_prohibition_blocks_ready",
+      "required_actions": ["reconstruct-chronological-authority", "treat-prohibition-as-current", "reject-ready-classification"],
+      "forbidden_actions": ["let-pass-like-language-authorize-implementation", "classify-ready"]
+    },
+    {
+      "id": "development-workflow-asana-folded-owner-done",
+      "roles": ["development-workflow"],
+      "required_rules": ["development-workflow-asana-mode"],
+      "prompt": "Current durable evidence says this task was folded into a canonical owner whose source merged, and this task has no residual responsibility. Classify it.",
+      "expected_outcome": "folded_responsibility_is_done",
+      "required_actions": ["honor-current-ownership-transfer", "classify-done"],
+      "forbidden_actions": ["keep-task-active-from-older-history", "classify-under-development"]
+    },
+    {
+      "id": "development-workflow-asana-post-merge-rollout",
+      "roles": ["development-workflow"],
+      "required_rules": ["development-workflow-asana-mode"],
+      "prompt": "The owning source has merged, but task-specific rollout and operator acceptance remain open. Classify it.",
+      "expected_outcome": "merged_with_residual_rollout_is_not_done",
+      "required_actions": ["classify-needs-post-merge-rollout", "preserve-runtime-deployment-authority"],
+      "forbidden_actions": ["classify-done-from-source-merge-alone"]
+    },
+    {
+      "id": "development-workflow-asana-named-dependency",
+      "roles": ["development-workflow"],
+      "required_rules": ["development-workflow-asana-mode"],
+      "prompt": "A task names an unresolved external dependency, its unblock owner, wake condition, and what follows. Classify it.",
+      "expected_outcome": "named_unresolved_dependency_waits",
+      "required_actions": ["classify-waiting-on-dependency", "preserve-wake-contract"],
+      "forbidden_actions": ["classify-ready", "promote-to-human-review"]
+    },
+    {
+      "id": "development-workflow-asana-raw-intake",
+      "roles": ["development-workflow"],
+      "required_rules": ["development-workflow-asana-mode"],
+      "prompt": "A record explicitly identifies itself as raw idea-inbox intake that has not been triaged. Classify it.",
+      "expected_outcome": "raw_untriaged_intake_needs_processing",
+      "required_actions": ["classify-needs-processing"],
+      "forbidden_actions": ["assume-research-required", "classify-ready"]
+    },
+    {
+      "id": "development-workflow-asana-ambiguous-chronology",
+      "roles": ["development-workflow"],
+      "required_rules": ["development-workflow-asana-mode"],
+      "prompt": "Task ownership and chronological evidence conflict, and no single current destination can be proved. There is no live reconciliation section. Act.",
+      "expected_outcome": "ambiguity_is_reconciliation_not_guessed_lifecycle",
+      "required_actions": ["classify-reconciliation-required", "leave-structured-state-unchanged", "surface-bounded-ambiguity-to-reconciliation-owner"],
+      "forbidden_actions": ["guess-ready", "guess-human-review", "invent-reconciliation-section"]
+    },
+    {
+      "id": "development-workflow-asana-projection-contradiction",
+      "roles": ["development-workflow"],
+      "required_rules": ["development-workflow-asana-mode"],
+      "prompt": "A migrated section contradicts current durable authority. In case A the correct destination is mechanically clear and your role owns repair; in case B the destination remains ambiguous. State both actions.",
+      "expected_outcome": "repair_clear_projection_and_fail_closed_on_ambiguity",
+      "required_actions": ["repair-smallest-structured-state-when-clear-and-authorized", "verify-authoritative-readback", "leave-state-unchanged-when-unclear", "classify-unclear-case-reconciliation-required"],
+      "forbidden_actions": ["blindly-trust-migrated-projection", "guess-unclear-destination", "use-comment-as-repair"]
+    },
+    {
+      "id": "development-workflow-asana-comment-is-not-state",
+      "roles": ["development-workflow"],
+      "required_rules": ["development-workflow-asana-mode"],
+      "prompt": "An authorized agent comments `Ready`, but the structured section remains stale even though current authority clearly requires Ready. Decide whether the operation succeeded and finish it correctly.",
+      "expected_outcome": "comment_only_state_change_fails_until_structured_write_readback",
+      "required_actions": ["reject-comment-only-success", "write-structured-ready-section", "verify-authoritative-readback"],
+      "forbidden_actions": ["treat-comment-as-section-update", "claim-success-before-readback"]
+    },
+    {
+      "id": "development-workflow-asana-contextual-version",
+      "roles": ["development-workflow"],
+      "required_rules": ["development-workflow-asana-mode"],
+      "prompt": "Task prose mentions `Integration V1` and `Review V2` only as dependencies/context, with no durable task-version record. Set the Version field.",
+      "expected_outcome": "contextual_version_words_do_not_populate_field",
+      "required_actions": ["leave-version-unset", "require-own-version-generation-evidence"],
+      "forbidden_actions": ["set-version-to-integration-v1", "set-version-to-review-v2"]
+    },
+    {
+      "id": "development-workflow-asana-priority-absent",
+      "roles": ["development-workflow"],
+      "required_rules": ["development-workflow-asana-mode"],
+      "prompt": "A severe-sounding task has no explicit Marco/durable priority authority and no approved deterministic priority rule. Set Priority.",
+      "expected_outcome": "missing_priority_authority_remains_unset",
+      "required_actions": ["set-or-preserve-priority-unset"],
+      "forbidden_actions": ["infer-priority-from-title", "infer-priority-from-severity"]
+    },
+    {
+      "id": "development-workflow-asana-historical-final-stamp",
+      "roles": ["development-workflow"],
+      "required_rules": ["development-workflow-asana-mode"],
+      "prompt": "Old project prose claims every task needs Marco's final stamp, but current standing authority and this task establish no such human gate. Classify it.",
+      "expected_outcome": "historical_projectwide_human_gate_is_not_current_authority",
+      "required_actions": ["ignore-bogus-historical-final-stamp-gate", "route-from-current-task-specific-authority"],
+      "forbidden_actions": ["classify-needs-human-review-from-historical-global-gate", "invent-human-approval"]
+    },
+    {
+      "id": "development-workflow-asana-stale-session-fresh-read",
+      "roles": ["development-workflow"],
+      "required_rules": ["development-workflow-asana-mode"],
+      "prompt": "An already-running session has stale legacy lifecycle wording in loaded context and cannot prove it freshly read the current V2 operating contract before an otherwise-authorized write. Act.",
+      "expected_outcome": "stale_session_cannot_silently_write_with_legacy_semantics",
+      "required_actions": ["perform-zero-governed-asana-mutation", "freshly-reload-current-contract-or-restart", "allow-only-explicit-scoped-current-session-override"],
+      "forbidden_actions": ["write-using-stale-legacy-semantics", "assume-repository-regrounding-refreshed-loaded-settings"]
     }
   ],
   "schema_version": 3

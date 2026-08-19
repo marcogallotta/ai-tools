@@ -281,13 +281,14 @@ def test_development_workflow_asana_mode_guard_reaches_every_project_and_worker(
  assert rule['delivery']=={'mode':'DIRECT_ALWAYS_ON'}
  assert rule['action_boundaries']==['asana-development-workflow-mutation']
  contract=(DISH_ROOT/'docs'/'agents'/'development-workflow-asana-mode.md').read_text()
- for token in ('1217419962189616','Dish — Development Workflow`','Dish — Development Workflow v2','Dish — Development Workflow v3','PROJECT MODE V3 REQUIRES UPDATED PROJECT SETTINGS / GPT ACTION PROTOCOL'):
+ for token in ('1217419962189616','Dish — Development Workflow`','Dish — Development Workflow v2','Needs Post-Merge Rollout','Dish — Development Workflow v3','PROJECT MODE V3 REQUIRES UPDATED PROJECT SETTINGS / GPT ACTION PROTOCOL','RECONCILIATION_REQUIRED','freshly read this contract','exact accepted-generation'):
   assert token in contract
  for role in s['roles']:
   assert rule['text'] in kernels.render_role(m,s,role), role
  index=(DISH_ROOT/'docs'/'agents'/'index.md').read_text()
  worker=(DISH_ROOT/'docs'/'agents'/'operator-provenance.md').read_text()
  assert 'development-workflow-asana-mode.md' in index and 'development-workflow-asana-mode.md' in worker
+ assert 'freshly read and apply' in worker
  assert 'V3 returns `PROJECT MODE V3 REQUIRES UPDATED PROJECT SETTINGS / GPT ACTION PROTOCOL`' in worker
 
 def test_development_workflow_asana_mode_behavior_matrix_is_registered():
@@ -297,11 +298,27 @@ def test_development_workflow_asana_mode_behavior_matrix_is_registered():
   'development-workflow-asana-v3-abort',
   'development-workflow-asana-contradiction-abort',
   'development-workflow-asana-unknown-version-abort',
+  'development-workflow-asana-later-hold-controls',
+  'development-workflow-asana-audit-blocker-no-inference',
+  'development-workflow-asana-design-awaits-agentic-review',
+  'development-workflow-asana-later-prohibition-controls',
+  'development-workflow-asana-folded-owner-done',
+  'development-workflow-asana-post-merge-rollout',
+  'development-workflow-asana-named-dependency',
+  'development-workflow-asana-raw-intake',
+  'development-workflow-asana-ambiguous-chronology',
+  'development-workflow-asana-projection-contradiction',
+  'development-workflow-asana-comment-is-not-state',
+  'development-workflow-asana-contextual-version',
+  'development-workflow-asana-priority-absent',
+  'development-workflow-asana-historical-final-stamp',
+  'development-workflow-asana-stale-session-fresh-read',
  }
  for scenario_id in expected:
   scenario=_scenario(scenario_id)
   assert scenario['required_rules']==['development-workflow-asana-mode']
   assert 'perform-governed-asana-mutation' not in scenario['forbidden_actions'] or 'abort' in scenario_id
+ assert 'all nine V2 lifecycle sections' in _scenario('development-workflow-asana-v2-mode')['prompt']
 
 def test_repository_context_admission_is_shared_rendered_and_independently_registered():
  m,s=kernels.load_canonical(); registry=kernels._standing_invariant_registry(); entry=registry['repository-context-admission']
@@ -613,8 +630,8 @@ def test_triggered_rule_text_change_does_not_manufacture_project_settings_versio
 def test_required_version_inventory_matches_published_first_parent_history_and_restores_losses():
  m,s=kernels.load_canonical(); versions=kernels.required_versions(m)
  expected={f'dish-chatgpt-projects-v2-{x}' for x in ['d96ab5f0588d','708fb9a9a9bc','39ff3abc502e','857d88788c12','23365034a0f1','9575ccfd79c8','28dcb04decc8','9bb70124ca21','694190185f60','712e3b16aa05','d048682742d6','54041bbbc8d8','86b8011172ee','219f34402511','9bf227f53f0a','5d24af30193a','bfaeef68aed9','d3a070d57fb2','443e13732e7f','7644d9ed0518','0a572f3b0a67']}
- expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254'})
- assert set(versions)==expected and len(versions)==23
+ expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6'})
+ assert set(versions)==expected and len(versions)==24
  assert kernels.validate_required_version_topology(m)==versions
  for old in ('dish-chatgpt-projects-v2-39ff3abc502e','dish-chatgpt-projects-v2-9bb70124ca21'):
   path=kernels._change_path(m,old); assert path and path[-1]['to_version']==m['canonical_version']

@@ -1,7 +1,7 @@
 # Dish — Coordinator
 
 PROJECT_ROLE: Coordinator
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-98cec53850f6
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-e537f97c302f
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/coordinator.md
@@ -53,5 +53,5 @@ High-consequence rules:
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
 - Fast-track: read triggered Procedure.
-- `1217419962189616` writes: apply exact name/sections in `dish/docs/agents/development-workflow-asana-mode.md`; v3/unknown/mixed = zero; old sessions: restart/override.
+- `1217419962189616` writes: freshly read/apply `dish/docs/agents/development-workflow-asana-mode.md`; stale sessions restart/override; v3/unknown/mixed = zero.
 - Coordinator does not become semantic Implementation or Integration through tool access.

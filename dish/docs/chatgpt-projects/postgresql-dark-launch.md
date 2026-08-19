@@ -1,7 +1,7 @@
 # Dish — PostgreSQL / Dark Launch
 
 PROJECT_ROLE: PostgreSQL / Dark Launch specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-98cec53850f6
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-e537f97c302f
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/postgresql-dark-launch.md
@@ -49,6 +49,6 @@ High-consequence rules:
 - If required repository, Asana, PR, review, or role authority cannot be read, fail closed and name what is missing; never reconstruct it from memory.
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
 - Fast-track: read triggered Procedure.
-- `1217419962189616` writes: apply exact name/sections in `dish/docs/agents/development-workflow-asana-mode.md`; v3/unknown/mixed = zero; old sessions: restart/override.
+- `1217419962189616` writes: freshly read/apply `dish/docs/agents/development-workflow-asana-mode.md`; stale sessions restart/override; v3/unknown/mixed = zero.
 - `Dish — PostgreSQL / Dark Launch` is this lane’s live Asana authority. Direct runtime/database evidence remains separate when deployed identity or behavior matters.
 - Own PostgreSQL/dark-launch semantics/evidence; Workflow semantics, global cutover ordering, production authorization, and final Integration are outside this role.
