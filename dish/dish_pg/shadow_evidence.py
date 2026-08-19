@@ -6,6 +6,7 @@ shape, while preserving each raw target result in ``shadow_comparisons``.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass
 from typing import Any, Mapping
@@ -14,6 +15,7 @@ from sqlalchemy import event, select
 
 from . import models
 from . import stage5_models as tx
+from dish_tool.content_versions import content_identity
 
 EVIDENCE_SCHEMA_VERSION = 2
 
@@ -423,6 +425,62 @@ def canonical_transition(before: Mapping[str, Any], after: Mapping[str, Any]) ->
     return {"changes": changes}
 
 
+def _canonical_target_content_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    """Decode only the exact historical PostgreSQL NUL-hash representation.
+
+    The raw target payload is never mutated. A stored identity is translated only
+    when the row's own title/body exactly prove the former ``title + NUL + body``
+    serialization; unknown/corrupt identities remain visible mismatches.
+    """
+    clean = dict(row)
+    title = clean.get("title")
+    body = clean.get("body")
+    stored_identity = clean.get("identity")
+    if not all(isinstance(value, str) for value in (title, body, stored_identity)):
+        return clean
+    legacy_identity = hashlib.sha256(
+        f"{title}\0{body}".encode("utf-8")
+    ).hexdigest()
+    if stored_identity == legacy_identity:
+        clean["identity"] = content_identity(title, body)
+    return clean
+
+
+def _canonical_target_state_for_comparison(state: Mapping[str, Any]) -> dict[str, Any]:
+    clean = dict(state)
+    domains = clean.get("domains")
+    if not isinstance(domains, Mapping):
+        return clean
+    canonical_domains = dict(domains)
+    rows = canonical_domains.get("task_content")
+    if isinstance(rows, list) and all(isinstance(row, Mapping) for row in rows):
+        canonical_domains["task_content"] = _sorted_rows([
+            _canonical_target_content_row(row) for row in rows
+        ])
+    clean["domains"] = canonical_domains
+    return clean
+
+
+def _canonical_target_effects_for_comparison(effects: Mapping[str, Any]) -> dict[str, Any]:
+    clean = dict(effects)
+    changes = clean.get("changes")
+    if not isinstance(changes, Mapping):
+        return clean
+    canonical_changes = dict(changes)
+    task_content = canonical_changes.get("task_content")
+    if isinstance(task_content, Mapping):
+        canonical_task_content = dict(task_content)
+        for side in ("before", "after"):
+            rows = canonical_task_content.get(side)
+            if isinstance(rows, list) and all(isinstance(row, Mapping) for row in rows):
+                canonical_task_content[side] = _sorted_rows([
+                    _canonical_target_content_row(row) for row in rows
+                ])
+        canonical_changes["task_content"] = canonical_task_content
+    clean["changes"] = canonical_changes
+    return clean
+
+
 def _axis_difference(axis: str, source: Any, target: Any) -> dict[str, Any]:
     return {"axis": axis, "source": source, "target": target}
 
@@ -446,6 +504,10 @@ def compare_evidence(
         for value in (target_response, target_pre, target_post, target_effects)
     ):
         return "gap", [{"axis": "evidence", "reason": "target evidence is incomplete"}]
+
+    target_pre = _canonical_target_state_for_comparison(target_pre)
+    target_post = _canonical_target_state_for_comparison(target_post)
+    target_effects = _canonical_target_effects_for_comparison(target_effects)
 
     differences: list[dict[str, Any]] = []
     source_response = canonical_response(source_outcome)

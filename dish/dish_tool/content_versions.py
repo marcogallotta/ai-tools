@@ -4,6 +4,19 @@ from __future__ import annotations
 
 import sqlite3
 
+from .database import content_identity as _source_content_identity
+
+
+# Existing PostgreSQL task-content storage label. Hash semantics remain owned by
+# dish_tool.database.content_identity; this constant does not define an algorithm.
+CONTENT_IDENTITY_SCHEME = "sha256-title-body-v1"
+
+
+def content_identity(title: str, body: str) -> str:
+    """Return the source-authoritative task-content digest for PostgreSQL callers."""
+
+    return _source_content_identity(title, body).digest
+
 
 def confirmed_content_version(
     conn: sqlite3.Connection,
