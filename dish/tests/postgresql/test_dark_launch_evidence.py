@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import hashlib
 import uuid
 from datetime import timedelta
 
 import pytest
 
+from dish_pg import models
 from dish_pg import stage5_models as tx
 from dish_pg.database import session_scope
+from dish_tool.content_versions import content_identity
 from dish_pg.shadow_evidence import (
     EVIDENCE_SCHEMA_VERSION,
     ShadowEvaluation,
@@ -14,6 +17,8 @@ from dish_pg.shadow_evidence import (
     canonical_transition,
     compare_evidence,
 )
+from dish_pg.shadow_worker import _target_authority_state
+from tests.support.postgresql.command import _port
 from tests.support.postgresql.workflow import NOW, workflow_db
 
 
@@ -250,6 +255,201 @@ def test_versioned_comparator_preserves_duplicate_authority_rows():
     )
     assert parity == "mismatch"
     assert "post_state" in {item["axis"] for item in differences}
+
+
+def _content_source_snapshot(*, identity: str, title: str, body: str) -> dict:
+    return {
+        "selected_tables": ["task_content_state"],
+        "tables": {
+            "task_content_state": [{
+                "last_confirmed_identity": identity,
+                "last_confirmed_title": title,
+                "last_confirmed_notes": body,
+            }]
+        },
+    }
+
+
+def _content_target_state(*, identity: str, title: str, body: str) -> dict:
+    return {
+        "captured_domains": ["task_content"],
+        "domains": {
+            "task_content": [{
+                "identity": identity,
+                "title": title,
+                "body": body,
+            }]
+        },
+    }
+
+
+def _content_target_payload(*, identity: str, title: str, body: str) -> dict:
+    state = _content_target_state(identity=identity, title=title, body=body)
+    return {
+        "evidence_schema_version": EVIDENCE_SCHEMA_VERSION,
+        "response": {
+            "ok": False,
+            "command": "prepare",
+            "code": "INVALID_STATE",
+            "retryable": False,
+        },
+        "pre_state": state,
+        "post_state": state,
+        "effects": {"changes": {}},
+    }
+
+
+def test_old_postgresql_nul_hash_compares_as_canonical_without_mutating_raw_evidence() -> None:
+    title = "Warm potato salad"
+    body = "Purpose: preserve the dark-launch identity regression shape.\nServe warm.\n"
+    canonical = content_identity(title, body)
+    legacy = hashlib.sha256(f"{title}\0{body}".encode("utf-8")).hexdigest()
+    source = _content_source_snapshot(identity=canonical, title=title, body=body)
+    target = _content_target_payload(identity=legacy, title=title, body=body)
+
+    parity, differences = compare_evidence(
+        source_outcome={
+            "ok": False,
+            "command": "prepare",
+            "code": "INVALID_STATE",
+            "retryable": False,
+            "allowed_actions": [],
+        },
+        source_pre_state=source,
+        source_post_state=source,
+        target_payload=target,
+    )
+
+    assert parity == "semantic"
+    assert differences == []
+    assert target["pre_state"]["domains"]["task_content"][0]["identity"] == legacy
+    assert target["post_state"]["domains"]["task_content"][0]["identity"] == legacy
+
+
+def test_active_old_postgresql_content_version_projects_raw_then_compares_canonical(workflow_db) -> None:
+    factory, ids, context, task_id = workflow_db
+    title = "Warm potato salad"
+    body = "Purpose: preserve the dark-launch identity regression shape.\nServe warm.\n"
+    canonical = content_identity(title, body)
+    legacy = hashlib.sha256(f"{title}\0{body}".encode("utf-8")).hexdigest()
+    source = _content_source_snapshot(identity=canonical, title=title, body=body)
+
+    with session_scope(factory) as session:
+        head = session.get(
+            models.TaskAuthorityHead, (context["generation_id"], task_id)
+        )
+        assert head is not None
+        activation = session.get(models.ContentActivation, head.current_content_activation_id)
+        assert activation is not None
+        version = session.get(models.ContentVersion, activation.content_version_id)
+        assert version is not None
+        version.title = title
+        version.body = body
+        version.content_identity = legacy
+        session.flush()
+
+        target_state = _target_authority_state(
+            session,
+            port=_port(session, ids),
+            envelope=type(
+                "Envelope",
+                (),
+                {
+                    "source_post_state": source,
+                    "source_pre_state": source,
+                    "canonical_input": {"arguments": {"task_gid": "123456789"}},
+                },
+            )(),
+            arguments={"task_gid": "123456789"},
+            request_id=uuid.uuid4(),
+            result=None,
+        )
+
+    assert target_state["domains"]["task_content"][0]["identity"] == legacy
+    target = {
+        "evidence_schema_version": EVIDENCE_SCHEMA_VERSION,
+        "response": {
+            "ok": False,
+            "command": "prepare",
+            "code": "INVALID_STATE",
+            "retryable": False,
+        },
+        "pre_state": target_state,
+        "post_state": target_state,
+        "effects": {"changes": {}},
+    }
+    parity, differences = compare_evidence(
+        source_outcome={
+            "ok": False,
+            "command": "prepare",
+            "code": "INVALID_STATE",
+            "retryable": False,
+            "allowed_actions": [],
+        },
+        source_pre_state=source,
+        source_post_state=source,
+        target_payload=target,
+    )
+    assert parity == "semantic"
+    assert differences == []
+    assert target_state["domains"]["task_content"][0]["identity"] == legacy
+
+
+def test_unknown_target_content_identity_remains_a_mismatch() -> None:
+    title = "Warm potato salad"
+    body = "Canonical body\n"
+    canonical = content_identity(title, body)
+    source = _content_source_snapshot(identity=canonical, title=title, body=body)
+    target = _content_target_payload(identity="f" * 64, title=title, body=body)
+
+    parity, differences = compare_evidence(
+        source_outcome={
+            "ok": False,
+            "command": "prepare",
+            "code": "INVALID_STATE",
+            "retryable": False,
+            "allowed_actions": [],
+        },
+        source_pre_state=source,
+        source_post_state=source,
+        target_payload=target,
+    )
+
+    assert parity == "mismatch"
+    assert {item["axis"] for item in differences} == {"pre_state", "post_state"}
+    assert target["post_state"]["domains"]["task_content"][0]["identity"] == "f" * 64
+
+
+def test_exact_old_hash_does_not_hide_genuine_changed_content() -> None:
+    source_title = "Warm potato salad"
+    source_body = "Canonical body\n"
+    target_body = "Canonical body\nChanged.\n"
+    source_identity = content_identity(source_title, source_body)
+    target_legacy = hashlib.sha256(
+        f"{source_title}\0{target_body}".encode("utf-8")
+    ).hexdigest()
+    source = _content_source_snapshot(
+        identity=source_identity, title=source_title, body=source_body
+    )
+    target = _content_target_payload(
+        identity=target_legacy, title=source_title, body=target_body
+    )
+
+    parity, differences = compare_evidence(
+        source_outcome={
+            "ok": False,
+            "command": "prepare",
+            "code": "INVALID_STATE",
+            "retryable": False,
+            "allowed_actions": [],
+        },
+        source_pre_state=source,
+        source_post_state=source,
+        target_payload=target,
+    )
+
+    assert parity == "mismatch"
+    assert {item["axis"] for item in differences} == {"pre_state", "post_state"}
 
 
 @pytest.mark.parametrize(
