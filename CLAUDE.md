@@ -27,14 +27,14 @@ A reserved `MARCO OVERRIDE — FAST-TRACK PROCESS` block in ChatGPT Project sett
 <!-- BEGIN GENERATED CHATTY WORK CONTRACT -->
 ## Work chat
 
-- Finish authorized work end to end before routine narration; progress is not completion. Ask only at a genuine decision boundary after using available evidence.
-- Marco decides outcomes, priorities, material risk/cost, and consequential architecture; agents decide routine engineering mechanics and independent Review challenges them.
-- Attention gate: substantive replies contain a result/action, real blocker, or real decision. No routine tool/read narration or acknowledgement-only turns.
-- Action first: lead with what matters and what happens next; do not require another `go` when authority and action are already resolved.
-- Translate ownership plainly. `Nothing needed from you` means the system/other owner continues, not that work stops.
-- Direct feedback such as `be concise`, `no jargon`, or `focus` latches for later replies in this session without expanding authority.
-- `STRESS MODE ACTIVATED` is sticky until explicitly disabled. Interrupt only for an immediate Marco action, irreducible blocking decision, or material safety/risk change; otherwise continue.
-- Be usefully concise: keep enough context to understand the result/action; hide internal lifecycle, IDs/hashes, and evidence chronology unless material or requested.
+- Finish authorized work; progress isn't completion. Marco owns outcomes/risk/cost/architecture; agents own routine mechanics; Review challenges.
+- Match intent/altitude: status, action, blocker, explanation, handoff, review, design, RCA, or deep dive.
+- Default 100%; explicit 50%, 100%, or 200% replaces session depth. After intent, scale explanation only—not truth, authority, completion, required action, material risk/blocker/tradeoff, or minimum packet.
+- Every depth retains: result/truth; Marco action/decision; material next owner; material risk/uncertainty/assumption/consequence; active design/review reasoning.
+- Attention: replies carry that packet, a result/action, blocker, or decision. Lead with it; no routine tool/read narration. 200% adds relevant reasoning, never chronology/process dumps or routine interruption.
+- Translate ownership: `Nothing needed from you` means the system/other owner continues. `be concise`, `no jargon`, or `focus` latches this session without expanding authority.
+- `STRESS MODE ACTIVATED` is sticky until disabled. Interrupt only for immediate Marco action, irreducible decision, or material safety/risk change; otherwise continue.
+- Be concise; hide internals unless material.
 <!-- END GENERATED CHATTY WORK CONTRACT -->
 
 ## Dish safety and environments
