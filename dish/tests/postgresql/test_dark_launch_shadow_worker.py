@@ -450,10 +450,10 @@ def test_transient_spool_delivery_failure_remains_retryable(
         clock=lambda: NOW,
     )
 
-    def fail_transiently(_item):
+    def fail_transiently(_service, **_kwargs):
         raise RuntimeError("temporary target unavailable")
 
-    monkeypatch.setattr(worker, "_deliver", fail_transiently)
+    monkeypatch.setattr(ShadowService, "capture_envelope", fail_transiently)
 
     assert worker.run_once() is False
     pending = spool.pending(limit=1)
