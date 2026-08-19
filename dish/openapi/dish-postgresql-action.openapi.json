@@ -1415,7 +1415,7 @@
     },
     "/v1/action/search": {
       "post": {
-        "description": "Consistent authoritative query; request_id is not accepted.",
+        "description": "Read-only active-title discovery. Use Search when discovering a Dish by title or partial title. If Marco supplies a canonical Dish UUID, call read(dish_id=...) directly instead of searching or browsing sections. request_id is not accepted.",
         "operationId": "dish_postgresql_search",
         "requestBody": {
           "content": {
