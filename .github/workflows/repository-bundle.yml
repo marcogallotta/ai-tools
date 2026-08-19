@@ -9,13 +9,16 @@ permissions:
   contents: read
 
 concurrency:
-  group: repository-bundle-publication
+  group: repository-bundle-publication-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
   build-verify-artifact:
     name: Build and verify exact-main repository bundle
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      statuses: write
     outputs:
       source_sha: ${{ steps.source.outputs.source_sha }}
       artifact_name: ${{ steps.bundle.outputs.artifact_name }}
@@ -27,6 +30,19 @@ jobs:
       SOURCE_REF: refs/heads/main
       REPOSITORY_ID: ${{ github.repository_id }}
     steps:
+      - name: Mark repository bundle publication pending
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api --method POST \
+            "/repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state=pending \
+            -f context='Dish / repository bundle' \
+            -f description='Publishing exact repository bundle' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
@@ -36,16 +52,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git fetch --force origin "$SOURCE_REF"
-          # Push/manual publication stays bound to the workflow event/requested commit.
-          # The build authority check below fails closed if main has since advanced.
           source_sha="$GITHUB_SHA"
+          if [[ "$GITHUB_REF" != "$SOURCE_REF" ]]; then
+            echo "workflow event ref mismatch: expected $SOURCE_REF, got $GITHUB_REF" >&2
+            exit 1
+          fi
+          # The immutable publication is bound to this workflow event's exact main SHA.
+          # A later main push must not invalidate this already-started publication.
+          git fetch --force origin "$SOURCE_REF"
           git cat-file -e "$source_sha^{commit}"
           git update-ref "$SOURCE_REF" "$source_sha"
           printf 'SOURCE_SHA=%s\n' "$source_sha" >> "$GITHUB_ENV"
           printf 'source_sha=%s\n' "$source_sha" >> "$GITHUB_OUTPUT"
 
-      - name: Build authority-validated repository bundle
+      - name: Build event-bound repository bundle
         id: bundle
         shell: bash
         run: |
@@ -59,6 +79,9 @@ jobs:
             --repository-id "$REPOSITORY_ID" \
             --source-sha "$SOURCE_SHA" \
             --source-ref "$SOURCE_REF" \
+            --event-name "$GITHUB_EVENT_NAME" \
+            --event-ref "$GITHUB_REF" \
+            --event-sha "$GITHUB_SHA" \
             --workflow "$GITHUB_WORKFLOW" \
             --workflow-ref "$GITHUB_WORKFLOW_REF" \
             --workflow-sha "$GITHUB_WORKFLOW_SHA" \
@@ -103,6 +126,9 @@ jobs:
     permissions:
       actions: read
       contents: write
+    concurrency:
+      group: repository-bundle-release-publication
+      cancel-in-progress: false
     runs-on: ubuntu-24.04
     env:
       SOURCE_SHA: ${{ needs.build-verify-artifact.outputs.source_sha }}
@@ -189,3 +215,35 @@ jobs:
               --cleanup-tag \
               --yes
           done < .ci/repository-bundle-prune.txt
+
+  publish-final-status:
+    name: Publish exact-run repository bundle status
+    if: always()
+    needs:
+      - build-verify-artifact
+      - publish-release-retention
+    permissions:
+      statuses: write
+    runs-on: ubuntu-24.04
+    env:
+      BUILD_RESULT: ${{ needs.build-verify-artifact.result }}
+      RELEASE_RESULT: ${{ needs.publish-release-retention.result }}
+    steps:
+      - name: Publish final repository bundle status
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          state=failure
+          description='Repository bundle publication failed'
+          if [[ "$BUILD_RESULT" == success && "$RELEASE_RESULT" == success ]]; then
+            state=success
+            description='Exact repository bundle published'
+          fi
+          gh api --method POST \
+            "/repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state="$state" \
+            -f context='Dish / repository bundle' \
+            -f description="$description" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
