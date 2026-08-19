@@ -228,9 +228,16 @@ def _test_target(test: str) -> dict[str, object]:
             "browser", "browser-acceptance", "large", ["python", "node", "chromium", "network-loopback"]
         )
     elif test.startswith("tests/postgresql/pglite/"):
-        runner, boundary, size, requirements = (
-            "dish-pytest", "python-control-plane", "medium", ["python", "node", "subprocess"]
-        )
+        return {
+            "id": "harness:pglite-nested-collection",
+            "runner": "pglite",
+            "selector": "full",
+            "execution_boundary": "python-control-plane",
+            "guarantees": ["pglite-collection"],
+            "size": "large",
+            "requirements": ["python", "node", "subprocess"],
+            "profiles": ["PR_EXACT_HEAD", "POSTMERGE_FULL"],
+        }
     else:
         runner, boundary, size, requirements = (
             "dish-pytest", "python-control-plane", "small", ["python"]
