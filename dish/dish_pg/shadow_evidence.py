@@ -6,117 +6,213 @@ shape, while preserving each raw target result in ``shadow_comparisons``.
 """
 from __future__ import annotations
 
-import hashlib
+import json
 from dataclasses import dataclass
-from typing import Any, Iterable, Mapping
+from typing import Any, Mapping
 
-from dish_tool.content_versions import content_identity
+from sqlalchemy import event, select
+
+from . import models
+from . import stage5_models as tx
 
 EVIDENCE_SCHEMA_VERSION = 2
-_REQUEST_ID_KEYS = {
-    "request_id",
-    "originating_request_id",
-    "source_request_id",
-    "claiming_request_id",
-    "issuing_request_id",
-    "consumed_by_request_id",
-    "reservation_request_id",
+
+_IDENTIFIER_FAMILIES = {
+    "task_id": "task",
+    "operation_id": "operation",
+    "successor_operation_id": "operation",
+    "lease_id": "lease",
+    "cycle_id": "verification_cycle",
+    "challenge_id": "planning_challenge",
+    "abandonment_id": "abandonment",
+    "attempt_id": "abandonment",
+    "requirement_id": "human_review_requirement",
+    "hold_id": "evidence_hold",
+    "grant_id": "authorization_grant",
+    "content_version_id": "content_version",
 }
-_OPERATION_ID_KEYS = {
-    "operation_id",
+_RESPONSE_FACT_KEYS = {
+    "required_action",
+    "required_start_kind",
+    "decision",
+    "outcome",
+}
+
+_DOMAIN_BY_TABLE = {
+    "task_content_state": "task_content",
+    "operations": "operations",
+    "service_leases": "leases",
+    "verification_cycles": "verification_cycles",
+    "write_attempts": "external_intents",
+    "movement_attempts": "external_intents",
+    "abandonment_attempts": "abandonments",
+    "service_requests": "requests",
+}
+
+_OPERATION_ARGUMENT_KEYS = {
     "submission_id",
+    "operation_id",
+    "existing_submission_id",
     "target_operation_id",
     "prepared_operation_id",
     "successor_operation_id",
-    "source_operation_id",
-    "blocking_operation_id",
-    "open_operation_id",
 }
-_CYCLE_ID_KEYS = {
-    "cycle_id",
-    "target_cycle_id",
-    "prepared_cycle_id",
-    "source_cycle_id",
-    "new_cycle_id",
-    "reopened_from",
-}
-_LEASE_ID_KEYS = {"lease_id", "source_lease_id"}
-_CONTENT_VERSION_ID_KEYS = {
-    "content_version_id",
-    "signed_content_version_id",
-    "corrected_content_version_id",
-    "held_content_version_id",
-    "resumed_content_version_id",
-    "reviewed_content_version_id",
-    "baseline_content_version_id",
-}
-_SECTION_ID_KEYS = {
-    "section_id",
-    "destination_section_id",
-}
-_COMPARABLE_RESPONSE_KEYS = {
-    "ok",
-    "command",
-    "code",
-    "http_status",
-    "retryable",
-    "state",
-    "phase",
-    "allowed_actions",
-    "data",
-    "errors",
-}
-_SOURCE_DATA_KEYS = {
-    "task_id",
-    "operation_id",
-    "cycle_id",
-    "lease_id",
-    "content_version_id",
-    "section_id",
-    "destination_section_id",
-    "signed_content_version_id",
-    "corrected_content_version_id",
-    "hold_id",
-    "requirement_id",
-    "decision_id",
-    "signoff_id",
-    "inspection_id",
-    "projection_event_id",
-    "placement_projection_event_id",
-    "completion_state",
-    "completion_reason",
-    "completed",
-    "phase",
-    "state",
-    "allowed_actions",
-}
-_SOURCE_TOP_LEVEL_ALIASES = {
-    "task_gid": "task_id",
-    "submission_id": "operation_id",
-    "destination_section_gid": "destination_section_id",
-}
-_IGNORED_RESPONSE_DATA_KEYS = {
-    "request_id",
-    "dish_id",
-    "task_gid",
-    "registry_version_id",
-    "registry_revision",
-    "identity_binding",
-    "projection_freshness",
-}
-_IGNORED_RESULT_DATA_KEYS = {
-    "request_id",
-    "dish_id",
-    "task_gid",
-    "registry_version_id",
-    "registry_revision",
-    "identity_binding",
-    "projection_freshness",
-}
+_OPERATION_BINDING_ERROR_PREFIX = "no unique target operation binding for captured field "
+_UNBOUND_CREATE_CASCADE = "unbound_create_operation_binding_cascade"
 
 
-class ShadowEvidenceError(RuntimeError):
-    """Evidence could not be compared under the current schema contract."""
+def _legacy_compatible_shadow_response(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Match legacy response semantics only at the dark-launch comparison boundary."""
+    response = dict(value)
+    data = dict(response.get("data") or {}) if isinstance(response.get("data"), Mapping) else {}
+    command = str(response.get("command") or "")
+    code = str(response.get("code") or "")
+    planning_confirmation = command == "start" and (
+        code == "PLANNING_CONFIRMATION_NOT_YET_ISSUED"
+        or (
+            code == "CONFIRMATION_REQUIRED"
+            and (
+                "intent_challenge_id" in data
+                or "required_intent_basis" in data
+            )
+        )
+    )
+    if planning_confirmation:
+        response["code"] = "CONFIRMATION_REQUIRED"
+        response["retryable"] = True
+        data["allowed_actions"] = ["start"]
+        data["required_start_kind"] = "planning"
+    elif command == "create" and response.get("ok") is True:
+        data["allowed_actions"] = ["start"]
+        data["required_start_kind"] = "planning"
+    response["data"] = data
+    return response
+
+
+def _snapshot_rows(snapshot: Mapping[str, Any] | None, table: str) -> list[Mapping[str, Any]]:
+    if not isinstance(snapshot, Mapping):
+        return []
+    tables = snapshot.get("tables")
+    if not isinstance(tables, Mapping):
+        return []
+    rows = tables.get(table)
+    if not isinstance(rows, list):
+        return []
+    return [row for row in rows if isinstance(row, Mapping)]
+
+
+def _source_task_gid_for_operation_binding(envelope: Mapping[str, Any]) -> str | None:
+    canonical_input = envelope.get("canonical_input")
+    source_pre_state = envelope.get("source_pre_state")
+    if not isinstance(canonical_input, Mapping) or not isinstance(source_pre_state, Mapping):
+        return None
+    arguments = canonical_input.get("arguments")
+    if not isinstance(arguments, Mapping):
+        return None
+    operation_ids = {
+        str(arguments[key])
+        for key in _OPERATION_ARGUMENT_KEYS
+        if arguments.get(key) not in {None, ""}
+    }
+    if not operation_ids:
+        return None
+    task_gids = {
+        str(row.get("task_gid") or "").strip()
+        for row in _snapshot_rows(source_pre_state, "operations")
+        if str(row.get("operation_id") or "") in operation_ids
+        and str(row.get("task_gid") or "").strip()
+    }
+    return next(iter(task_gids)) if len(task_gids) == 1 else None
+
+
+def _source_create_task_gid(source_outcome: Any) -> str | None:
+    if not isinstance(source_outcome, Mapping):
+        return None
+    data = source_outcome.get("data")
+    if not isinstance(data, Mapping):
+        return None
+    value = str(data.get("task_gid") or "").strip()
+    return value or None
+
+
+def _unbound_create_cascade_details(connection, gap: tx.ShadowGap) -> dict[str, Any] | None:
+    if gap.gap_kind != "delivery_failure" or gap.envelope_id is None:
+        return None
+    details = dict(gap.details or {})
+    error = str(details.get("error") or "")
+    if _OPERATION_BINDING_ERROR_PREFIX not in error:
+        return None
+
+    envelope = connection.execute(
+        select(
+            tx.ShadowEnvelope.shadow_baseline_id,
+            tx.ShadowEnvelope.canonical_input,
+            tx.ShadowEnvelope.source_pre_state,
+            tx.ShadowEnvelope.captured_at,
+        ).where(tx.ShadowEnvelope.envelope_id == gap.envelope_id)
+    ).mappings().one_or_none()
+    if envelope is None:
+        return None
+    source_task_gid = _source_task_gid_for_operation_binding(envelope)
+    if source_task_gid is None:
+        return None
+
+    active_alias = connection.execute(
+        select(models.TaskExternalAlias.alias_id).where(
+            models.TaskExternalAlias.external_system == "asana",
+            models.TaskExternalAlias.external_id == source_task_gid,
+            models.TaskExternalAlias.state == "active",
+        )
+    ).first()
+    if active_alias is not None:
+        return None
+
+    candidates = []
+    create_rows = connection.execute(
+        select(
+            tx.ShadowEnvelope.envelope_id,
+            tx.ShadowEnvelope.source_request_identity,
+            tx.ShadowEnvelope.source_outcome,
+            tx.ShadowEnvelope.capture_qualification,
+        ).where(
+            tx.ShadowEnvelope.shadow_baseline_id == envelope["shadow_baseline_id"],
+            tx.ShadowEnvelope.command_name == "create",
+            tx.ShadowEnvelope.captured_at <= envelope["captured_at"],
+        )
+    ).mappings().all()
+    for row in create_rows:
+        if _source_create_task_gid(row["source_outcome"]) == source_task_gid:
+            candidates.append(row)
+    if len(candidates) != 1:
+        return None
+    create_envelope = candidates[0]
+    create_delivery_state = connection.execute(
+        select(tx.ShadowDelivery.state).where(
+            tx.ShadowDelivery.envelope_id == create_envelope["envelope_id"]
+        )
+    ).scalar_one_or_none()
+    if (
+        create_envelope["capture_qualification"] != "capture_only"
+        and create_delivery_state not in {"delivered", "failed"}
+    ):
+        return None
+    return {
+        "error_classification": _UNBOUND_CREATE_CASCADE,
+        "source_task_gid": source_task_gid,
+        "create_source_request_identity": create_envelope["source_request_identity"],
+        "create_capture_qualification": create_envelope["capture_qualification"],
+        "create_delivery_state": create_delivery_state,
+    }
+
+
+@event.listens_for(tx.ShadowGap, "before_insert")
+def _classify_unbound_create_cascade(_mapper, connection, gap: tx.ShadowGap) -> None:
+    """Persist a distinct parity signal only for proven unbound-create cascades."""
+    classification = _unbound_create_cascade_details(connection, gap)
+    if classification is None:
+        return
+    gap.gap_kind = "uncomparable"
+    gap.details = {**dict(gap.details or {}), **classification}
 
 
 @dataclass(frozen=True)
@@ -127,397 +223,301 @@ class ShadowEvaluation:
     effects: Mapping[str, Any]
 
     def as_payload(self) -> dict[str, Any]:
-        return {
+        response = _legacy_compatible_shadow_response(self.response)
+        payload = dict(response)
+        payload.update({
             "evidence_schema_version": EVIDENCE_SCHEMA_VERSION,
-            "response": dict(self.response),
-            "pre_state": _canonical_target_state(self.pre_state),
-            "post_state": _canonical_target_state(self.post_state),
-            "effects": _canonical_target_effects(self.effects),
-        }
+            "response": response,
+            "pre_state": dict(self.pre_state),
+            "post_state": dict(self.post_state),
+            "effects": dict(self.effects),
+        })
+        return payload
 
 
-def _canonical_payload(value: Any) -> Any:
+def _stable(value: Any) -> Any:
     if isinstance(value, Mapping):
-        return {
-            str(key): _canonical_payload(item)
-            for key, item in sorted(value.items(), key=lambda item: str(item[0]))
-        }
+        return {str(key): _stable(child) for key, child in sorted(value.items(), key=lambda item: str(item[0]))}
     if isinstance(value, (list, tuple)):
-        return [_canonical_payload(item) for item in value]
+        return [_stable(child) for child in value]
     return value
 
 
-def _sorted_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    normalized = [_canonical_payload(dict(row)) for row in rows]
-    return sorted(normalized, key=lambda row: repr(row))
+def _sorted_rows(rows: list[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Sort deterministically while preserving semantic row multiplicity."""
+    clean = [_stable(dict(row)) for row in rows]
+    return sorted(
+        clean,
+        key=lambda row: json.dumps(
+            row, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ),
+    )
 
 
-def _canonical_target_content_value(value: Mapping[str, Any]) -> dict[str, Any]:
-    """Decode the one historical PostgreSQL task-content identity representation.
+def _normalize_phase(value: Any, lifecycle: Any = None) -> Any:
+    text = None if value is None else str(value)
+    if text in {"completed", "cancelled"} or str(lifecycle or "") in {"completed", "cancelled"}:
+        return "terminal"
+    return text
 
-    This is a read-only storage compatibility decoder, not a comparator ignore:
-    title/body remain in the evidence and only an identity that exactly proves
-    the former ``title + NUL + body`` serialization is translated through the
-    single canonical source ``content_identity`` authority. Unknown/corrupt
-    identities are left untouched so they remain visible as parity gaps.
+
+def _normalize_lifecycle(value: Any) -> Any:
+    text = None if value is None else str(value)
+    if text in {"cancelled", "cancelled_by_marco", "abandoned"}:
+        return "cancelled"
+    if text == "failed":
+        return "uncertain"
+    return text
+
+
+def _identity_marker(value: Any, family: str) -> Any:
+    if value in {None, ""}:
+        return None
+    return {"$identity_family": family}
+
+
+def _response_value(value: Mapping[str, Any], data: Mapping[str, Any], *keys: str) -> Any:
+    for key in keys:
+        if value.get(key) is not None:
+            return value[key]
+        if data.get(key) is not None:
+            return data[key]
+    return None
+
+
+def canonical_response(value: Mapping[str, Any]) -> dict[str, Any]:
+    """Map both transports into the deliberately small shared result contract.
+
+    Backend-specific diagnostics and generated identifiers are retained in raw
+    evidence but are not compared as if the two APIs had identical schemas.
+    Generated identities compare by semantic family; lifecycle and legal
+    actions must be supplied by each authority rather than inferred from phase.
     """
-
-    clean = dict(value)
-    title = clean.get("title")
-    body = clean.get("body")
-    stored_identity = clean.get("identity")
-    if not all(isinstance(item, str) for item in (title, body, stored_identity)):
-        return clean
-    legacy_identity = hashlib.sha256(f"{title}\0{body}".encode("utf-8")).hexdigest()
-    if stored_identity == legacy_identity:
-        clean["identity"] = content_identity(title, body)
-    return clean
-
-
-def _canonical_target_state(state: Mapping[str, Any]) -> dict[str, Any]:
-    clean = dict(state)
-    domains = clean.get("domains")
-    if not isinstance(domains, Mapping):
-        return clean
-    canonical_domains = dict(domains)
-    rows = canonical_domains.get("task_content")
-    if isinstance(rows, (list, tuple)):
-        canonical_domains["task_content"] = [
-            _canonical_target_content_value(row) if isinstance(row, Mapping) else row
-            for row in rows
-        ]
-    clean["domains"] = canonical_domains
-    return clean
-
-
-def _canonical_target_effects(effects: Mapping[str, Any]) -> dict[str, Any]:
-    clean = dict(effects)
-    changes = clean.get("task_content")
-    if not isinstance(changes, (list, tuple)):
-        return clean
-    canonical_changes: list[Any] = []
-    for change in changes:
-        if not isinstance(change, Mapping):
-            canonical_changes.append(change)
-            continue
-        canonical_change = dict(change)
-        for side in ("before", "after"):
-            value = canonical_change.get(side)
-            if isinstance(value, Mapping):
-                canonical_change[side] = _canonical_target_content_value(value)
-        canonical_changes.append(canonical_change)
-    clean["task_content"] = canonical_changes
-    return clean
-
-
-def canonical_response(payload: Mapping[str, Any], *, source: bool) -> dict[str, Any]:
-    """Project backend-specific command responses onto shared semantics."""
-
-    if source:
-        source_data = payload.get("data")
-        data: dict[str, Any] = (
-            dict(source_data) if isinstance(source_data, Mapping) else {}
-        )
-        for key, canonical_key in _SOURCE_TOP_LEVEL_ALIASES.items():
-            value = payload.get(key)
-            if value is not None:
-                data.setdefault(canonical_key, value)
-        for key in _SOURCE_DATA_KEYS:
-            if key in payload and payload[key] is not None:
-                data.setdefault(key, payload[key])
-        raw: dict[str, Any] = {
-            "ok": bool(payload.get("ok")),
-            "command": payload.get("command"),
-            "code": payload.get("code"),
-            "http_status": int(payload.get("http_status", 200 if payload.get("ok") else 409)),
-            "retryable": bool(payload.get("retryable", False)),
-            "state": payload.get("state"),
-            "phase": payload.get("phase"),
-            "allowed_actions": payload.get("allowed_actions"),
-            "data": data,
-            "errors": payload.get("errors") or [],
-        }
-    else:
-        raw = {
-            key: payload[key]
-            for key in _COMPARABLE_RESPONSE_KEYS
-            if key in payload
-        }
-        raw.setdefault("errors", [])
-        raw.setdefault("data", {})
-        raw.setdefault("retryable", False)
-
-    normalized = _normalize_response_value(raw)
-    data = normalized.get("data")
-    if isinstance(data, Mapping):
-        clean_data = dict(data)
-        for key in _IGNORED_RESPONSE_DATA_KEYS:
-            clean_data.pop(key, None)
-        normalized["data"] = clean_data
-    if normalized.get("data") == {}:
-        normalized.pop("data", None)
-    if normalized.get("errors") == []:
-        normalized.pop("errors", None)
-    if normalized.get("allowed_actions") in (None, []):
-        normalized.pop("allowed_actions", None)
-    if normalized.get("state") is None:
-        normalized.pop("state", None)
-    if normalized.get("phase") is None:
-        normalized.pop("phase", None)
-    return normalized
-
-
-def _normalize_response_value(value: Any, key: str | None = None) -> Any:
-    if isinstance(value, Mapping):
-        normalized: dict[str, Any] = {}
-        for raw_key, item in value.items():
-            name = str(raw_key)
-            if name in _REQUEST_ID_KEYS:
-                normalized[name] = "<request>" if item is not None else None
-            elif name in _OPERATION_ID_KEYS:
-                normalized[name] = "<operation>" if item is not None else None
-            elif name in _CYCLE_ID_KEYS:
-                normalized[name] = "<cycle>" if item is not None else None
-            elif name in _LEASE_ID_KEYS:
-                normalized[name] = "<lease>" if item is not None else None
-            elif name in _CONTENT_VERSION_ID_KEYS:
-                normalized[name] = "<content-version>" if item is not None else None
-            elif name in _SECTION_ID_KEYS:
-                normalized[name] = "<section>" if item is not None else None
-            elif name.endswith("_id") and item is not None:
-                normalized[name] = f"<{name[:-3] or 'id'}>"
-            else:
-                normalized[name] = _normalize_response_value(item, name)
-        return normalized
-    if isinstance(value, (list, tuple)):
-        normalized_items = [_normalize_response_value(item, key) for item in value]
-        if key in {"allowed_actions", "authorization_grant_ids", "copied_authorization_grant_ids"}:
-            return sorted(normalized_items, key=repr)
-        return normalized_items
-    return value
-
-
-def _canonical_task_content(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    return _sorted_rows(
-        {
-            "identity": row.get("last_confirmed_identity"),
-            "title": row.get("last_confirmed_title"),
-            "body": row.get("last_confirmed_notes"),
-        }
-        for row in rows
-    )
-
-
-def _canonical_placements(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    return _sorted_rows(
-        {
-            "task_ref": row.get("task_gid") or "<task>",
-            "section_ref": row.get("last_confirmed_section_gid"),
-        }
-        for row in rows
-    )
-
-
-def _canonical_completion(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    return _sorted_rows(
-        {
-            "completed": bool(row.get("completed")),
-            "reason": row.get("completion_reason"),
-        }
-        for row in rows
-    )
-
-
-def _canonical_operations(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    return _sorted_rows(
-        {
-            "kind": row.get("operation_kind") or row.get("kind"),
-            "lifecycle": row.get("status") or row.get("lifecycle"),
-            "phase": _normalize_phase(row.get("phase")),
-            "terminal_outcome": row.get("terminal_outcome"),
-        }
-        for row in rows
-    )
-
-
-def _normalize_phase(value: Any) -> Any:
-    if value == "initial":
-        return "prepare_required"
-    return value
-
-
-def _canonical_cycles(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    return _sorted_rows(
-        {
-            "sequence": row.get("cycle_sequence"),
-            "lifecycle": row.get("lifecycle"),
-            "outcome": row.get("outcome"),
-            "reviewed_content_ref": (
-                "<content-version>"
-                if row.get("reviewed_content_version_id") is not None
-                else None
-            ),
-        }
-        for row in rows
-    )
-
-
-def _canonical_leases(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    return _sorted_rows(
-        {
-            "lease_kind": row.get("lease_kind"),
-            "actor_role": row.get("actor_role"),
-            "state": row.get("state"),
-            "owner_id": row.get("owner_id"),
-        }
-        for row in rows
-    )
-
-
-def _canonical_evidence_holds(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    return _sorted_rows(
-        {
-            "state": row.get("state"),
-            "reason": row.get("reason"),
-            "resolution": _canonical_payload(row.get("resolution")),
-        }
-        for row in rows
-    )
-
-
-def _canonical_human_review(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    return _sorted_rows(
-        {
-            "state": row.get("state"),
-            "route": row.get("route"),
-            "question": row.get("question"),
-        }
-        for row in rows
-    )
-
-
-def _canonical_signoffs(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    return _sorted_rows(
-        {
-            "signoff_kind": row.get("signoff_kind"),
-            "signed_content_ref": (
-                "<content-version>"
-                if row.get("signed_content_version_id") is not None
-                else None
-            ),
-        }
-        for row in rows
-    )
-
-
-def _canonical_abandonment(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    return _sorted_rows(
-        {
-            "state": row.get("state"),
-            "reason": row.get("reason"),
-            "has_successor": row.get("successor_operation_id") is not None,
-        }
-        for row in rows
-    )
-
-
-_SOURCE_DOMAIN_PROJECTORS = {
-    "task_content_state": ("task_content", _canonical_task_content),
-    "current_task_section_placement": ("placements", _canonical_placements),
-    "task_completion_state": ("completion", _canonical_completion),
-    "operations": ("operations", _canonical_operations),
-    "verification_cycles": ("verification_cycles", _canonical_cycles),
-    "leases": ("leases", _canonical_leases),
-    "evidence_holds": ("evidence_holds", _canonical_evidence_holds),
-    "human_review_requirements": ("human_review", _canonical_human_review),
-    "verification_signoffs": ("verification_signoffs", _canonical_signoffs),
-    "abandonment_attempts": ("abandonment", _canonical_abandonment),
-}
-
-
-def canonical_legacy_state(snapshot: Mapping[str, Any]) -> dict[str, Any]:
-    selected = list(snapshot.get("selected_tables") or [])
-    tables = snapshot.get("tables") or {}
-    domains: dict[str, Any] = {}
-    captured_domains: list[str] = []
-    for table_name in selected:
-        projector_entry = _SOURCE_DOMAIN_PROJECTORS.get(str(table_name))
-        if projector_entry is None:
-            continue
-        domain_name, projector = projector_entry
-        rows = tables.get(table_name) or []
-        if not isinstance(rows, list):
-            raise ShadowEvidenceError(f"source table {table_name!r} is not row evidence")
-        domains[domain_name] = projector(rows)
-        captured_domains.append(domain_name)
-    return {
-        "captured_domains": sorted(set(captured_domains)),
-        "domains": domains,
+    data = dict(value.get("data") or {}) if isinstance(value.get("data"), Mapping) else {}
+    task = _response_value(value, data, "task_id", "task_gid")
+    operation = _response_value(value, data, "operation_id", "submission_id")
+    state = _response_value(value, data, "state", "lifecycle")
+    allowed = _response_value(value, data, "allowed_actions")
+    if not isinstance(allowed, (list, tuple)):
+        allowed = []
+    facts = {
+        key: _stable(data[key])
+        for key in sorted(_RESPONSE_FACT_KEYS)
+        if data.get(key) is not None
     }
+    response: dict[str, Any] = {
+        "ok": bool(value.get("ok")),
+        "command": value.get("command"),
+        "code": value.get("code"),
+        "retryable": bool(value.get("retryable", False)),
+    }
+    # Optional axes are compared only when the source transport actually
+    # exposes them.  The target may carry richer diagnostics without turning
+    # a valid semantic match into a mismatch.
+    if task not in {None, ""}:
+        response["task"] = _identity_marker(task, "task")
+    if operation not in {None, ""}:
+        response["operation"] = _identity_marker(operation, "operation")
+    if state is not None:
+        response["state"] = state
+    if allowed or bool(value.get("ok")):
+        response["allowed_actions"] = sorted(str(item) for item in allowed)
+    if facts:
+        response["facts"] = facts
+    return response
 
 
-def canonical_transition(
-    before: Mapping[str, Any], after: Mapping[str, Any]
-) -> dict[str, Any]:
-    before_domains = before.get("domains") or {}
-    after_domains = after.get("domains") or {}
-    captured = sorted(
-        set(before.get("captured_domains") or [])
-        | set(after.get("captured_domains") or [])
-    )
-    effects: dict[str, Any] = {}
-    for domain in captured:
-        left = _canonical_payload(before_domains.get(domain, []))
-        right = _canonical_payload(after_domains.get(domain, []))
-        if left != right:
-            effects[domain] = {"before": left, "after": right}
-    return effects
+def _legacy_selected_tables(snapshot: Mapping[str, Any] | None) -> set[str]:
+    if not isinstance(snapshot, Mapping):
+        return set()
+    explicit = snapshot.get("selected_tables")
+    if isinstance(explicit, list):
+        return {str(value) for value in explicit}
+    tables = snapshot.get("tables")
+    return set(tables) if isinstance(tables, Mapping) else set()
+
+
+def canonical_legacy_state(snapshot: Mapping[str, Any] | None) -> dict[str, Any]:
+    """Project the bounded SQLite snapshot into backend-neutral authority facts."""
+    if not isinstance(snapshot, Mapping):
+        return {"captured_domains": [], "domains": {}}
+    tables = snapshot.get("tables")
+    tables = dict(tables) if isinstance(tables, Mapping) else {}
+    selected = _legacy_selected_tables(snapshot)
+    domains: dict[str, Any] = {}
+
+    if "task_content_state" in selected:
+        domains["task_content"] = _sorted_rows([
+            {
+                "identity": row.get("last_confirmed_identity"),
+                "title": row.get("last_confirmed_title"),
+                "body": row.get("last_confirmed_notes"),
+            }
+            for row in tables.get("task_content_state", [])
+        ])
+    if "operations" in selected:
+        domains["operations"] = _sorted_rows([
+            {
+                "kind": row.get("operation_kind"),
+                "lifecycle": _normalize_lifecycle(row.get("status")),
+                "phase": _normalize_phase(row.get("phase"), row.get("status")),
+                "terminal_outcome": row.get("terminal_outcome"),
+            }
+            for row in tables.get("operations", [])
+        ])
+    if "service_leases" in selected:
+        domains["leases"] = _sorted_rows([
+            {
+                "state": "terminal" if row.get("released_at") else "active",
+                "lease_kind": row.get("lease_kind") or "actor",
+                "actor_attempt_sequence": row.get("actor_attempt_seq"),
+            }
+            for row in tables.get("service_leases", [])
+        ])
+    if "verification_cycles" in selected:
+        domains["verification_cycles"] = _sorted_rows([
+            {
+                "outcome": row.get("outcome"),
+                "open": row.get("completed_at") is None,
+            }
+            for row in tables.get("verification_cycles", [])
+        ])
+    if {"write_attempts", "movement_attempts"} & selected:
+        intents: list[dict[str, Any]] = []
+        intents.extend({"kind": "content_write"} for _ in tables.get("write_attempts", []))
+        intents.extend({"kind": "section_move"} for _ in tables.get("movement_attempts", []))
+        domains["external_intents"] = _sorted_rows(intents)
+    if "abandonment_attempts" in selected:
+        legacy_abandonment_states = {
+            "started": "preparing",
+            "awaiting_hold_resolution": "blocked",
+            "blocked_manual_reconciliation": "blocked",
+            "awaiting_successor_claim": "published",
+            "completed": "completed",
+        }
+        domains["abandonments"] = _sorted_rows([
+            {"state": legacy_abandonment_states.get(row.get("status"), row.get("status"))}
+            for row in tables.get("abandonment_attempts", [])
+        ])
+    if "service_requests" in selected:
+        domains["requests"] = _sorted_rows([
+            {"command": row.get("command"), "status": row.get("status")}
+            for row in tables.get("service_requests", [])
+        ])
+
+    captured_domains = sorted({_DOMAIN_BY_TABLE[table] for table in selected if table in _DOMAIN_BY_TABLE})
+    return {"captured_domains": captured_domains, "domains": domains}
+
+
+def canonical_transition(before: Mapping[str, Any], after: Mapping[str, Any]) -> dict[str, Any]:
+    """Return changed backend-neutral domains only."""
+    before_domains = dict(before.get("domains") or {})
+    after_domains = dict(after.get("domains") or {})
+    changes: dict[str, Any] = {}
+    for domain in sorted(set(before_domains) | set(after_domains)):
+        if before_domains.get(domain) != after_domains.get(domain):
+            changes[domain] = {
+                "before": before_domains.get(domain, []),
+                "after": after_domains.get(domain, []),
+            }
+    return {"changes": changes}
+
+
+def _axis_difference(axis: str, source: Any, target: Any) -> dict[str, Any]:
+    return {"axis": axis, "source": source, "target": target}
 
 
 def compare_evidence(
     *,
     source_outcome: Mapping[str, Any],
-    source_pre_state: Mapping[str, Any],
+    source_pre_state: Mapping[str, Any] | None,
     source_post_state: Mapping[str, Any],
     target_payload: Mapping[str, Any],
 ) -> tuple[str, list[dict[str, Any]]]:
-    schema_version = target_payload.get("evidence_schema_version")
-    if schema_version != EVIDENCE_SCHEMA_VERSION:
-        raise ShadowEvidenceError(
-            f"unsupported target evidence schema version: {schema_version!r}"
-        )
-    source_response = canonical_response(source_outcome, source=True)
-    target_response = canonical_response(target_payload.get("response") or {}, source=False)
-    source_pre = canonical_legacy_state(source_pre_state)
-    source_post = canonical_legacy_state(source_post_state)
-    target_pre = target_payload.get("pre_state") or {}
-    target_post = target_payload.get("post_state") or {}
-    target_effects = target_payload.get("effects") or {}
-    differences: list[dict[str, Any]] = []
-
-    for name, left, right in (
-        ("response", source_response, target_response),
-        ("pre_state", source_pre, target_pre),
-        ("post_state", source_post, target_post),
-        ("effects", canonical_transition(source_pre, source_post), target_effects),
+    """Compare response, pre/post authority state, and effects independently."""
+    if target_payload.get("evidence_schema_version") != EVIDENCE_SCHEMA_VERSION:
+        return "gap", [{"axis": "evidence", "reason": "unsupported target evidence schema"}]
+    target_response = target_payload.get("response")
+    target_pre = target_payload.get("pre_state")
+    target_post = target_payload.get("post_state")
+    target_effects = target_payload.get("effects")
+    if not all(
+        isinstance(value, Mapping)
+        for value in (target_response, target_pre, target_post, target_effects)
     ):
-        canonical_left = _canonical_payload(left)
-        canonical_right = _canonical_payload(right)
-        if canonical_left != canonical_right:
+        return "gap", [{"axis": "evidence", "reason": "target evidence is incomplete"}]
+
+    differences: list[dict[str, Any]] = []
+    source_response = canonical_response(source_outcome)
+    canonical_target_response = canonical_response(target_response)
+    target_response_projection = {
+        key: canonical_target_response.get(key)
+        for key in source_response
+    }
+    if source_response != target_response_projection:
+        differences.append(_axis_difference("response", source_response, target_response_projection))
+
+    source_post = canonical_legacy_state(source_post_state)
+    source_pre = canonical_legacy_state(source_pre_state)
+    captured_domains = list(source_post.get("captured_domains") or [])
+    target_pre_captured = set(target_pre.get("captured_domains") or [])
+    target_post_captured = set(target_post.get("captured_domains") or [])
+    target_pre_domains = dict(target_pre.get("domains") or {})
+    target_domains = dict(target_post.get("domains") or {})
+    source_pre_domains = dict(source_pre.get("domains") or {})
+    source_domains = dict(source_post.get("domains") or {})
+    if not captured_domains:
+        differences.append({"axis": "pre_state", "reason": "source snapshot has no comparable domains"})
+        differences.append({"axis": "post_state", "reason": "source snapshot has no comparable domains"})
+        state_comparable = False
+    else:
+        state_comparable = True
+        required_domains = set(captured_domains)
+        missing_target_pre = sorted(required_domains - target_pre_captured)
+        missing_target_post = sorted(required_domains - target_post_captured)
+        if missing_target_pre:
+            differences.append({
+                "axis": "pre_state",
+                "reason": "target pre-state omitted comparable domains",
+                "missing_domains": missing_target_pre,
+            })
+            state_comparable = False
+        if missing_target_post:
+            differences.append({
+                "axis": "post_state",
+                "reason": "target post-state omitted comparable domains",
+                "missing_domains": missing_target_post,
+            })
+            state_comparable = False
+        source_pre_projection = {
+            domain: source_pre_domains.get(domain, [])
+            for domain in captured_domains
+        }
+        target_pre_projection = {
+            domain: target_pre_domains.get(domain, [])
+            for domain in captured_domains
+        }
+        if source_pre_projection != target_pre_projection:
             differences.append(
-                {
-                    "surface": name,
-                    "source": canonical_left,
-                    "target": canonical_right,
-                }
+                _axis_difference("pre_state", source_pre_projection, target_pre_projection)
             )
-    return ("semantic", []) if not differences else ("mismatch", differences)
+        source_projection = {domain: source_domains.get(domain, []) for domain in captured_domains}
+        target_projection = {domain: target_domains.get(domain, []) for domain in captured_domains}
+        if source_projection != target_projection:
+            differences.append(_axis_difference("post_state", source_projection, target_projection))
 
+    if not source_pre.get("captured_domains"):
+        differences.append({"axis": "effects", "reason": "source pre-state has no comparable domains"})
+        effects_comparable = False
+    else:
+        effects_comparable = True
+        source_effects = canonical_transition(source_pre, source_post)
+        if source_effects != target_effects:
+            differences.append(_axis_difference("effects", source_effects, target_effects))
 
-def comparable_result_data(data: Mapping[str, Any]) -> dict[str, Any]:
-    """Normalize one stored command result payload for shadow metadata only."""
-
-    clean = dict(data)
-    for key in _IGNORED_RESULT_DATA_KEYS:
-        clean.pop(key, None)
-    return _normalize_response_value(clean)
+    hard_difference = any("source" in item and "target" in item for item in differences)
+    if hard_difference:
+        return "mismatch", differences
+    if not state_comparable or not effects_comparable:
+        return "gap", differences
+    return "semantic", []
