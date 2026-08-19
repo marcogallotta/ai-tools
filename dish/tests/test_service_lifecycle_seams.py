@@ -1,6 +1,7 @@
 """Narrow lifecycle collaborators remain directly constructible and typed."""
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import inspect
 import sqlite3
@@ -73,7 +74,7 @@ def test_coordinator_constructor_dependencies_are_typed_ports() -> None:
         (
             "expire",
             "expire-lease",
-            {"lease_id": "lease", "reason": "stop", "request_id": "req"}),
+            {"lease_id": "lease", "reason": "stop", "request_id": "req"},
         ),
     ),
 )
@@ -263,12 +264,12 @@ _ADMISSION_TASK = "123456789"
 
 
 class _AdmissionBackend:
-    def __init__(self) -> None:
+    def __init__(self, *, completed: bool = False, ignore_completion: bool = False) -> None:
         self.task = {
             "gid": _ADMISSION_TASK,
             "name": "Dish",
             "notes": "Notes",
-            "completed": False,
+            "completed": completed,
             "modified_at": "2026-08-19T00:00:00.000Z",
             "projects": [{"gid": _ADMISSION_PROJECT}],
             "memberships": [
@@ -279,6 +280,8 @@ class _AdmissionBackend:
             ],
         }
         self.reads = 0
+        self.completion_writes = 0
+        self.ignore_completion = ignore_completion
 
     def read_task(self, task_gid):
         assert task_gid == _ADMISSION_TASK
@@ -296,13 +299,16 @@ class _AdmissionBackend:
         }
 
     def update_task_content(self, **_kwargs):
-        raise AssertionError("admission must not call Asana writes directly")
+        raise AssertionError("admission must not mutate content")
 
-    def update_task_completed(self, **_kwargs):
-        raise AssertionError("admission must not call Asana writes directly")
+    def update_task_completed(self, *, task_gid: str, completed: bool):
+        assert task_gid == _ADMISSION_TASK
+        self.completion_writes += 1
+        if not self.ignore_completion:
+            self.task["completed"] = bool(completed)
 
     def move_task_to_section(self, **_kwargs):
-        raise AssertionError("admission must not call Asana writes directly")
+        raise AssertionError("admission must not mutate placement")
 
 
 class _AdmissionAuthority:
@@ -313,17 +319,6 @@ class _AdmissionAuthority:
     def read_mutation_decision(self, *, target_task_gid, action_class):
         self.reads += 1
         return self.decision
-
-
-class _AdmissionEffect:
-    def __init__(self, backend, *, mismatch=False) -> None:
-        self.backend = backend
-        self.mismatch = mismatch
-        self.calls = 0
-
-    def apply(self, *, proposal):
-        self.calls += 1
-        self.backend.task["completed"] = not self.mismatch
 
 
 class _ForbiddenReplay:
@@ -344,10 +339,11 @@ def _admission_decision(
     status="PERMITTED",
     decision_revision="lifecycle-r1",
     design=True,
+    action_class="task.complete",
 ):
     return UpstreamMutationDecision(
         target_task_gid=_ADMISSION_TASK,
-        action_class="task.complete",
+        action_class=action_class,
         status=status,
         decision_ref=_authority_ref("lifecycle-v3", decision_revision),
         supporting_refs=(_authority_ref("asana-v1", "model-r1"),),
@@ -362,29 +358,44 @@ def _state(*, completed):
     return TaskStateFingerprint(identity, "section", completed)
 
 
-def _admission_setup(*, status="PERMITTED", design=True, effect=None, writes=False, replay=None):
-    backend = _AdmissionBackend()
+def _admission_setup(
+    *,
+    status="PERMITTED",
+    design=True,
+    completed=False,
+    ignore_completion=False,
+    writes=False,
+    replay=None,
+    action_class="task.complete",
+):
+    backend = _AdmissionBackend(
+        completed=completed,
+        ignore_completion=ignore_completion,
+    )
     authority = _AdmissionAuthority(
-        _admission_decision(status=status, design=design)
+        _admission_decision(
+            status=status,
+            design=design,
+            action_class=action_class,
+        )
     )
     coordinator = AsanaMutationAdmissionCoordinator(
         backend=backend,
         project_gid=_ADMISSION_PROJECT,
         authority=authority,
-        effect=effect,
         writes_enabled=writes,
         replay=replay,
     )
     return backend, authority, coordinator
 
 
-def _proposal(coordinator, *, design_bearing=False, expected_completed=True):
+def _proposal(coordinator, *, design_bearing=False):
     admission = coordinator.propose(
         proposal_id="proposal-1",
         target_task_gid=_ADMISSION_TASK,
         action_class="task.complete",
         mutation={"completed": True},
-        expected_after=_state(completed=expected_completed),
+        expected_after=_state(completed=True),
         design_bearing=design_bearing,
         now=_ADMISSION_NOW,
         ttl_seconds=300,
@@ -432,7 +443,7 @@ def test_asana_mutation_observation_distinguishes_legacy_from_mediated() -> None
         proposal_id="proposal-1",
         target_task_gid=_ADMISSION_TASK,
         action_class="task.complete",
-        mutation={"z": 2, "a": 1},
+        mutation={"completed": True},
         expected_after=_state(completed=True),
         design_bearing=True,
         now=_ADMISSION_NOW,
@@ -442,7 +453,7 @@ def test_asana_mutation_observation_distinguishes_legacy_from_mediated() -> None
     assert mediated.status == "PROPOSED"
     assert mediated.proposal is not None
     assert mediated.proposal.transport_mode == MEDIATED_ACTION
-    assert mediated.proposal.mutation_json == '{"a":1,"z":2}'
+    assert mediated.proposal.mutation_json == '{"completed":true}'
     assert (
         mediated.proposal.upstream.design_generation_ref
         == _authority_ref("review-v2", "generation-r1")
@@ -528,20 +539,12 @@ def test_asana_mutation_transport_is_inactive_and_unwired_by_default() -> None:
         DishService.__init__
     )
     assert backend.task["completed"] is False
-    assert authority.reads == 1  # proposal only; execute performed no admission/read
+    assert backend.completion_writes == 0
+    assert authority.reads == 1
 
 
-def test_asana_mutation_active_seam_reuses_service_request_replay_and_exact_readback() -> None:
-    backend = _AdmissionBackend()
-    authority = _AdmissionAuthority(_admission_decision())
-    effect = _AdmissionEffect(backend)
-    coordinator = AsanaMutationAdmissionCoordinator(
-        backend=backend,
-        project_gid=_ADMISSION_PROJECT,
-        authority=authority,
-        effect=effect,
-        writes_enabled=True,
-    )
+def test_asana_mutation_active_seam_reuses_request_replay_and_exact_readback() -> None:
+    backend, _authority, coordinator = _admission_setup(writes=True)
     proposal = _proposal(coordinator)
     conn = _request_db()
     principal = ServicePrincipal(owner_id="owner", run_id="run")
@@ -568,23 +571,14 @@ def test_asana_mutation_active_seam_reuses_service_request_replay_and_exact_read
 
     assert first["ok"] is True
     assert first["data"]["admission"] == "CONFIRMED"
-    assert first["data"]["transport_mode"] == MEDIATED_ACTION
+    assert first["data"]["observed_after"]["completed"] is True
     assert replayed["data"]["request_replayed"] is True
-    assert effect.calls == 1
+    assert backend.completion_writes == 1
     assert row["status"] == "completed"
 
 
-def test_asana_mutation_active_seam_rejects_stale_precondition_before_effect() -> None:
-    backend = _AdmissionBackend()
-    authority = _AdmissionAuthority(_admission_decision())
-    effect = _AdmissionEffect(backend)
-    coordinator = AsanaMutationAdmissionCoordinator(
-        backend=backend,
-        project_gid=_ADMISSION_PROJECT,
-        authority=authority,
-        effect=effect,
-        writes_enabled=True,
-    )
+def test_asana_mutation_active_seam_rejects_stale_precondition_before_write() -> None:
+    backend, _authority, coordinator = _admission_setup(writes=True)
     proposal = _proposal(coordinator)
     backend.task["notes"] = "external change"
     conn = _request_db()
@@ -601,34 +595,29 @@ def test_asana_mutation_active_seam_rejects_stale_precondition_before_effect() -
 
     assert result["code"] == "CONFLICT"
     assert result["errors"][0]["rule"] == "asana_mutation_proposal_stale"
-    assert effect.calls == 0
+    assert backend.completion_writes == 0
 
 
 def test_asana_mutation_readback_mismatch_is_uncertain_not_retried() -> None:
-    backend = _AdmissionBackend()
-    authority = _AdmissionAuthority(_admission_decision())
-    effect = _AdmissionEffect(backend, mismatch=True)
-    coordinator = AsanaMutationAdmissionCoordinator(
-        backend=backend,
-        project_gid=_ADMISSION_PROJECT,
-        authority=authority,
-        effect=effect,
-        writes_enabled=True,
+    backend, _authority, coordinator = _admission_setup(
+        writes=True,
+        ignore_completion=True,
     )
     proposal = _proposal(coordinator)
     conn = _request_db()
+    principal = ServicePrincipal(owner_id="owner", run_id="run")
     try:
         first = coordinator.execute(
             conn,
             proposal,
-            principal=ServicePrincipal(owner_id="owner", run_id="run"),
+            principal=principal,
             request_id="request-uncertain",
             now=_ADMISSION_NOW + timedelta(seconds=1),
         )
         replayed = coordinator.execute(
             conn,
             proposal,
-            principal=ServicePrincipal(owner_id="owner", run_id="run"),
+            principal=principal,
             request_id="request-uncertain",
             now=_ADMISSION_NOW + timedelta(seconds=2),
         )
@@ -641,5 +630,180 @@ def test_asana_mutation_readback_mismatch_is_uncertain_not_retried() -> None:
     assert first["code"] == "BACKEND_UNCERTAIN"
     assert first["errors"][0]["rule"] == "asana_mutation_readback_mismatch"
     assert replayed["data"]["request_replayed"] is True
-    assert effect.calls == 1
+    assert backend.completion_writes == 1
     assert row["status"] == "uncertain"
+
+
+def test_asana_mutation_success_replays_after_transport_is_disabled() -> None:
+    backend, _authority, coordinator = _admission_setup(writes=True)
+    proposal = _proposal(coordinator)
+    conn = _request_db()
+    principal = ServicePrincipal(owner_id="owner", run_id="run")
+    try:
+        first = coordinator.execute(
+            conn,
+            proposal,
+            principal=principal,
+            request_id="request-disable-success",
+            now=_ADMISSION_NOW + timedelta(seconds=1),
+        )
+        coordinator.writes_enabled = False
+        replayed = coordinator.execute(
+            conn,
+            proposal,
+            principal=principal,
+            request_id="request-disable-success",
+            now=_ADMISSION_NOW + timedelta(seconds=2),
+        )
+        count = conn.execute(
+            "SELECT COUNT(*) FROM service_requests WHERE request_id='request-disable-success'"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+    assert first["ok"] is True
+    assert replayed["ok"] is True
+    assert replayed["data"]["request_replayed"] is True
+    assert backend.completion_writes == 1
+    assert count == 1
+
+
+def test_asana_mutation_uncertain_result_replays_after_transport_is_disabled() -> None:
+    backend, _authority, coordinator = _admission_setup(
+        writes=True,
+        ignore_completion=True,
+    )
+    proposal = _proposal(coordinator)
+    conn = _request_db()
+    principal = ServicePrincipal(owner_id="owner", run_id="run")
+    try:
+        first = coordinator.execute(
+            conn,
+            proposal,
+            principal=principal,
+            request_id="request-disable-uncertain",
+            now=_ADMISSION_NOW + timedelta(seconds=1),
+        )
+        coordinator.writes_enabled = False
+        replayed = coordinator.execute(
+            conn,
+            proposal,
+            principal=principal,
+            request_id="request-disable-uncertain",
+            now=_ADMISSION_NOW + timedelta(seconds=2),
+        )
+    finally:
+        conn.close()
+
+    assert first["code"] == "BACKEND_UNCERTAIN"
+    assert replayed["code"] == "BACKEND_UNCERTAIN"
+    assert replayed["data"]["request_replayed"] is True
+    assert backend.completion_writes == 1
+
+
+def test_asana_mutation_proposal_binds_action_to_exact_payload_and_readback() -> None:
+    _backend, _authority, coordinator = _admission_setup()
+
+    with pytest.raises(DishRuleError) as mismatch:
+        coordinator.propose(
+            proposal_id="proposal-mismatch",
+            target_task_gid=_ADMISSION_TASK,
+            action_class="task.complete",
+            mutation={"completed": False},
+            expected_after=_state(completed=False),
+            now=_ADMISSION_NOW,
+        )
+    assert mismatch.value.rule == "asana_mutation_action_payload_mismatch"
+
+    with pytest.raises(DishRuleError) as readback:
+        coordinator.propose(
+            proposal_id="proposal-readback",
+            target_task_gid=_ADMISSION_TASK,
+            action_class="task.complete",
+            mutation={"completed": True},
+            expected_after=_state(completed=False),
+            now=_ADMISSION_NOW,
+        )
+    assert readback.value.rule == "asana_mutation_expected_after_mismatch"
+
+
+def test_asana_mutation_rejects_unsupported_action_before_proposal() -> None:
+    backend = _AdmissionBackend()
+    authority = _AdmissionAuthority(
+        _admission_decision(action_class="task.custom-field")
+    )
+    coordinator = AsanaMutationAdmissionCoordinator(
+        backend=backend,
+        project_gid=_ADMISSION_PROJECT,
+        authority=authority,
+    )
+
+    with pytest.raises(DishRuleError) as unsupported:
+        coordinator.propose(
+            proposal_id="proposal-custom-field",
+            target_task_gid=_ADMISSION_TASK,
+            action_class="task.custom-field",
+            mutation={"custom_fields": {"field": "value"}},
+            expected_after=_state(completed=False),
+            now=_ADMISSION_NOW,
+        )
+    assert unsupported.value.rule == "asana_mutation_action_unsupported"
+    assert backend.completion_writes == 0
+
+
+def test_asana_mutation_fabricated_payload_cannot_reach_write() -> None:
+    backend, _authority, coordinator = _admission_setup(writes=True)
+    proposal = _proposal(coordinator)
+    fabricated = replace(
+        proposal,
+        mutation_json='{"completed":false}',
+        expected_after=_state(completed=False),
+    )
+    conn = _request_db()
+    try:
+        result = coordinator.execute(
+            conn,
+            fabricated,
+            principal=ServicePrincipal(owner_id="owner", run_id="run"),
+            request_id="request-fabricated",
+            now=_ADMISSION_NOW + timedelta(seconds=1),
+        )
+    finally:
+        conn.close()
+
+    assert result["code"] == "INVALID_ARGUMENT"
+    assert result["errors"][0]["rule"] == "asana_mutation_action_payload_mismatch"
+    assert backend.completion_writes == 0
+
+
+def test_asana_mutation_supported_reopen_is_proven_by_completion_readback() -> None:
+    backend, _authority, coordinator = _admission_setup(
+        completed=True,
+        writes=True,
+        action_class="task.reopen",
+    )
+    admission = coordinator.propose(
+        proposal_id="proposal-reopen",
+        target_task_gid=_ADMISSION_TASK,
+        action_class="task.reopen",
+        mutation={"completed": False},
+        expected_after=_state(completed=False),
+        now=_ADMISSION_NOW,
+    )
+    assert admission.proposal is not None
+    conn = _request_db()
+    try:
+        result = coordinator.execute(
+            conn,
+            admission.proposal,
+            principal=ServicePrincipal(owner_id="owner", run_id="run"),
+            request_id="request-reopen",
+            now=_ADMISSION_NOW + timedelta(seconds=1),
+        )
+    finally:
+        conn.close()
+
+    assert result["ok"] is True
+    assert result["data"]["observed_after"]["completed"] is False
+    assert backend.task["completed"] is False
+    assert backend.completion_writes == 1
