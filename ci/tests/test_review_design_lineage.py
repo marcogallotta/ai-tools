@@ -49,6 +49,11 @@ def gen(gid, text, predecessor=None):
 
 
 def event(record, gid, kind, successor=None):
+    approval = (
+        sha("complete material delta set")
+        if kind is EventType.MARCO_APPROVED
+        else None
+    )
     return Event(
         gid,
         kind,
@@ -56,6 +61,7 @@ def event(record, gid, kind, successor=None):
         "2026-08-19T00:01:00Z",
         "Dish Agent",
         successor,
+        approval,
     )
 
 
@@ -150,6 +156,35 @@ def test_material_author_cannot_self_clear_candidate():
             ReviewDisposition(key, "author-b", Disposition.WITHDRAWS),
             ["author-a", "author-b"],
         )
+
+
+def test_invalid_foreign_event_does_not_hide_later_valid_created_event():
+    g5 = gen("G5", "candidate")
+    other = gen("G6", "other")
+    state = reconstruct(
+        g5,
+        [
+            event(other, "0", EventType.CREATED),
+            event(g5, "1", EventType.CREATED),
+        ],
+    )
+    assert state.state is State.AUTHORING
+    assert state.valid_event_gids == ("1",)
+    assert any(c.code == "identity-mismatch" for c in state.contradictions)
+
+
+def test_marco_approval_binds_complete_material_delta_set_digest():
+    g5 = gen("G5", "candidate")
+    with pytest.raises(ValueError, match="material_delta_set_sha256"):
+        Event(
+            "2",
+            EventType.MARCO_APPROVED,
+            g5.identity,
+            "2026-08-19T00:01:00Z",
+            "Moinudin",
+        )
+    approved = event(g5, "2", EventType.MARCO_APPROVED)
+    assert approved.material_delta_set_sha256 == sha("complete material delta set")
 
 
 def test_invalid_events_and_pointer_disagreement_are_contradictions():
