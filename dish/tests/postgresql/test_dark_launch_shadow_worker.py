@@ -4,6 +4,7 @@ from datetime import timedelta
 from types import SimpleNamespace
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from dish_pg import stage3_models as wf
 from dish_pg import stage5_models as tx
 from dish_pg.database import session_scope
@@ -12,9 +13,10 @@ from dish_pg.shadow_worker import (
     CommandPortShadowEvaluator,
     ShadowIdentityMappingError,
     ShadowWorker,
+    _is_permanent_spool_delivery_error,
     _translate_workflow_identifiers,
 )
-from dish_pg.transition import ShadowService
+from dish_pg.transition import ShadowService, TransitionAuthorityError
 from dish_pg.workflow import sha256_json
 from dish_service.shadow_spool import ShadowSpool
 from tests.support.postgresql.command import (
@@ -307,3 +309,162 @@ def test_shadow_worker_recovers_stale_reservation_before_later_delivery(workflow
         assert gap is not None
         assert gap.gap_identity == "capture:request-first"
     assert first.rollout_sequence < second.rollout_sequence
+
+
+def test_permanent_delivery_error_classifier_distinguishes_retryable_failures():
+    assert _is_permanent_spool_delivery_error(
+        TransitionAuthorityError("shadow envelope source generation does not match baseline")
+    )
+    assert _is_permanent_spool_delivery_error(
+        IntegrityError("INSERT", {}, Exception("constraint rejected"))
+    )
+    assert not _is_permanent_spool_delivery_error(
+        RuntimeError("temporary target unavailable")
+    )
+
+
+def test_stale_source_generation_becomes_gap_and_later_fifo_progresses(
+    workflow_db, tmp_path
+):
+    factory, ids, context, _task = workflow_db
+    with session_scope(factory) as session:
+        baseline = ShadowService(session, uuid_factory=lambda: _next(ids)).create_baseline(
+            generation_id=context["generation_id"],
+            source_generation_identity="legacy-1",
+            source_commit="worktree",
+            created_at=NOW,
+        )
+        baseline_id = baseline.shadow_baseline_id
+
+    spool = ShadowSpool(tmp_path / "spool.sqlite3", min_free_bytes=1)
+    stale = spool.reserve(
+        source_request_identity="request-stale-generation",
+        source_authority_generation="legacy-stale",
+        command_name="prepare",
+        treatment="execute",
+        canonical_input={"command": "prepare", "arguments": {}},
+        principal={},
+        source_pre_state={"phase": "research"},
+        pinned_inputs={"rollout_mode": "execute"},
+        created_at=NOW,
+    )
+    spool.complete(
+        stale.registration_id,
+        source_outcome={"ok": True},
+        source_post_state={"phase": "verification"},
+        source_effects={},
+        completed_at=NOW,
+    )
+    later = spool.reserve(
+        source_request_identity="request-current-generation",
+        source_authority_generation="legacy-1",
+        command_name="prepare",
+        treatment="execute",
+        canonical_input={"command": "prepare", "arguments": {}},
+        principal={},
+        source_pre_state={"phase": "research"},
+        pinned_inputs={"rollout_mode": "execute"},
+        created_at=NOW,
+    )
+    spool.complete(
+        later.registration_id,
+        source_outcome={"ok": True},
+        source_post_state={"phase": "verification"},
+        source_effects={},
+        completed_at=NOW,
+    )
+    assert stale.rollout_sequence < later.rollout_sequence
+
+    worker = ShadowWorker(
+        spool=spool,
+        session_maker=factory,
+        baseline_id=baseline_id,
+        evaluator=Evaluator(),
+        worker_id="shadow-1",
+        comparator_release="test",
+        kill_switch_path=tmp_path / "dark-launch.disabled",
+        clock=lambda: NOW,
+    )
+
+    assert worker.run_once() is True
+    status = spool.status()
+    assert status["counts"]["delivered"] == 1
+    assert status["counts"]["complete"] == 1
+    assert status["oldest_pending_sequence"] == later.rollout_sequence
+    with session_scope(factory) as session:
+        gap = session.scalar(
+            select(tx.ShadowGap).where(
+                tx.ShadowGap.gap_identity == "spool_delivery:request-stale-generation"
+            )
+        )
+        assert gap is not None
+        assert gap.gap_kind == "uncomparable"
+        assert gap.details["classification"] == "permanent"
+        assert gap.details["error_type"] == "TransitionAuthorityError"
+        assert gap.details["error"] == (
+            "shadow envelope source generation does not match baseline"
+        )
+        assert gap.details["source_authority_generation"] == "legacy-stale"
+        assert gap.details["baseline_source_generation"] == "legacy-1"
+        assert session.scalar(select(tx.ShadowEnvelope)) is None
+
+    assert worker.run_once() is True
+    status = spool.status()
+    assert status["counts"]["delivered"] == 2
+    assert status["counts"]["complete"] == 0
+    assert status["oldest_pending_sequence"] is None
+    with session_scope(factory) as session:
+        envelope = session.scalar(
+            select(tx.ShadowEnvelope).where(
+                tx.ShadowEnvelope.source_request_identity
+                == "request-current-generation"
+            )
+        )
+        assert envelope is not None
+        comparison = session.scalar(select(tx.ShadowComparison))
+        assert comparison is not None
+        assert comparison.parity_class == "exact"
+
+
+def test_transient_spool_delivery_failure_remains_retryable(
+    workflow_db, tmp_path, monkeypatch
+):
+    factory, ids, context, _task = workflow_db
+    with session_scope(factory) as session:
+        baseline = ShadowService(session, uuid_factory=lambda: _next(ids)).create_baseline(
+            generation_id=context["generation_id"],
+            source_generation_identity="legacy-1",
+            source_commit="worktree",
+            created_at=NOW,
+        )
+        baseline_id = baseline.shadow_baseline_id
+    spool = _spool(tmp_path)
+    worker = ShadowWorker(
+        spool=spool,
+        session_maker=factory,
+        baseline_id=baseline_id,
+        evaluator=Evaluator(),
+        worker_id="shadow-1",
+        comparator_release="test",
+        kill_switch_path=tmp_path / "dark-launch.disabled",
+        clock=lambda: NOW,
+    )
+
+    def fail_transiently(_service, **_kwargs):
+        raise RuntimeError("temporary target unavailable")
+
+    monkeypatch.setattr(ShadowService, "capture_envelope", fail_transiently)
+
+    assert worker.run_once() is False
+    pending = spool.pending(limit=1)
+    assert len(pending) == 1
+    assert pending[0].delivery_attempts == 1
+    assert pending[0].last_delivery_error == "temporary target unavailable"
+    with session_scope(factory) as session:
+        assert session.scalar(select(tx.ShadowGap)) is None
+
+    assert worker.run_once() is False
+    pending = spool.pending(limit=1)
+    assert len(pending) == 1
+    assert pending[0].delivery_attempts == 2
+    assert pending[0].last_delivery_error == "temporary target unavailable"
