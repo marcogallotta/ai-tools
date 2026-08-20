@@ -259,6 +259,29 @@ def test_status_projection_uses_configured_scope_after_last_pr_lands(tmp_path, m
     assert asana.writes == []
 
 
+def test_mutating_projection_does_not_expand_writes_from_configured_scope(tmp_path, monkeypatch):
+    asana = ReadOnlyAsana(completed=False)
+
+    class NoOpenPREngine(ReadOnlyEngine):
+        def status(self, *, include_closed=False):
+            return []
+
+    engine = NoOpenPREngine(asana)
+    monkeypatch.setattr(pr_lifecycle, "_projection_health", lambda engine: ({}, {}))
+    args = SimpleNamespace(
+        projection_path=tmp_path / "projection.json",
+        repo="marcogallotta/ai-tools",
+        observation_project_gids=[PROJECT],
+    )
+
+    pr_lifecycle._publish_projection(engine, [], args, mutate_tasks=True)
+
+    payload = json.loads(args.projection_path.read_text(encoding="utf-8"))
+    assert payload["task_scope"]["status"] == "UNKNOWN"
+    assert payload["tasks"] == []
+    assert asana.writes == []
+
+
 def test_status_projection_refuses_authority_movement_during_long_scan(tmp_path, monkeypatch):
     asana = ReadOnlyAsana(completed=False)
     initial = lifecycle()

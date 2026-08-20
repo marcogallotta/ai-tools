@@ -11,10 +11,15 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
-from pr_lifecycle_controller import STATE_ROOT
+import pr_lifecycle_controller
 from pr_lifecycle_projection import read_projection
 
-DEFAULT_PROJECTION = STATE_ROOT / "lifecycle.json"
+
+def default_projection() -> Path:
+    return pr_lifecycle_controller._paths()["projection"]
+
+
+DEFAULT_PROJECTION = default_projection()
 STALE_AFTER_SECONDS = 120
 JSON_PATH = "/api/dish-lifecycle.json"
 PAGE_PATH = "/dish-desk.html"
@@ -152,7 +157,7 @@ def handler(projection_path: Path) -> type[BaseHTTPRequestHandler]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--projection-path", type=Path, default=DEFAULT_PROJECTION)
+    parser.add_argument("--projection-path", type=Path, default=default_projection())
     parser.add_argument("--bind", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8787)
     args = parser.parse_args(argv)

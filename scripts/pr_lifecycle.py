@@ -503,7 +503,9 @@ def _publish_projection(engine: LifecycleEngine, values: list[PRLifecycle], args
     tasks, task_scope = _task_observation_cycle(
         engine,
         values,
-        configured_projects=getattr(args, "observation_project_gids", ()),
+        configured_projects=(
+            () if mutate_tasks else getattr(args, "observation_project_gids", ())
+        ),
     )
     if mutate_tasks:
         _write_task_projection_comments(engine, tasks)

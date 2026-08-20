@@ -19,6 +19,7 @@ from pr_lifecycle_dashboard import (
     JSON_PATH,
     PAGE_PATH,
     coordinator_handoff,
+    default_projection,
     dashboard_snapshot,
     handler,
 )
@@ -47,7 +48,13 @@ def projection(now: datetime) -> dict:
 
 
 def test_dashboard_default_reads_the_controller_projection():
-    assert DEFAULT_PROJECTION == pr_lifecycle_controller.STATE_ROOT / "lifecycle.json"
+    assert DEFAULT_PROJECTION == pr_lifecycle_controller._paths()["projection"]
+
+
+def test_dashboard_default_honors_controller_state_directory_override(tmp_path, monkeypatch):
+    monkeypatch.setenv("DISH_PR_LIFECYCLE_STATE_DIR", str(tmp_path))
+
+    assert default_projection() == tmp_path / "lifecycle.json"
 
 
 def test_dashboard_staleness_uses_last_successful_reconciliation_and_controller_health():
