@@ -210,6 +210,53 @@ def test_configured_project_keeps_task_scope_when_no_pr_is_open():
     assert asana.writes == []
 
 
+def test_completed_project_tasks_skip_detail_and_story_reads():
+    class CompletedListedAsana(ReadOnlyAsana):
+        def list_project_tasks(self, project_gid):
+            assert project_gid == PROJECT
+            return [{"gid": TASK, "completed": True}]
+
+        def get_task(self, gid):
+            raise AssertionError("completed task detail must not be fetched")
+
+        def get_stories(self, gid):
+            raise AssertionError("completed task stories must not be fetched")
+
+    asana = CompletedListedAsana(completed=True)
+
+    tasks, scope = pr_lifecycle._task_observation_cycle(
+        ReadOnlyEngine(asana),
+        [],
+        configured_projects=[PROJECT],
+    )
+
+    assert tasks == []
+    assert scope == {"status": "COMPLETE", "projects": [PROJECT]}
+    assert asana.writes == []
+
+
+def test_task_completed_after_listing_skips_story_read_and_projection():
+    class NewlyCompletedAsana(ReadOnlyAsana):
+        def list_project_tasks(self, project_gid):
+            assert project_gid == PROJECT
+            return [{"gid": TASK, "completed": False}]
+
+        def get_stories(self, gid):
+            raise AssertionError("newly completed task stories must not be fetched")
+
+    asana = NewlyCompletedAsana(completed=True)
+
+    tasks, scope = pr_lifecycle._task_observation_cycle(
+        ReadOnlyEngine(asana),
+        [],
+        configured_projects=[PROJECT],
+    )
+
+    assert tasks == []
+    assert scope == {"status": "COMPLETE", "projects": [PROJECT]}
+    assert asana.writes == []
+
+
 def test_configured_project_gid_fails_closed_when_malformed():
     with pytest.raises(pr_lifecycle.LifecycleError, match="invalid configured Asana observation project GID"):
         pr_lifecycle._task_observation_cycle(

@@ -327,11 +327,15 @@ def _task_observation_cycle(
             scope_errors.append({"project": project_gid, "error": str(exc)})
             continue
         for task in listed:
+            if task.get("completed") is True:
+                continue
             gid = str(task.get("gid") or "")
             if not gid or gid in tasks:
                 continue
             try:
                 authoritative = engine.asana.get_task(gid)
+                if authoritative.get("completed") is True:
+                    continue
                 stories = engine.asana.get_stories(gid)
                 truth = execution_truth(authoritative, stories, now=engine.now())
                 projection = {
