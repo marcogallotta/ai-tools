@@ -5,6 +5,7 @@ from __future__ import annotations
 from .audit_repair import attempt_command_audit_repairs, attach_audit_repair_warning
 
 import json
+import logging
 import sqlite3
 import uuid
 from dataclasses import dataclass, field
@@ -46,6 +47,8 @@ from .semantic_proposals import (
 )
 from .step8 import apply_semantic_proposal
 from .constants import MECHANICAL_PROPOSAL_AGENT
+LOG = logging.getLogger("dish.admin")
+
 from .review_queue import (
     human_review_consequence_metadata,
     list_review_items,
@@ -212,11 +215,28 @@ class DishAdminApplication:
                 }
             ):
                 result.setdefault("data", {}).update(exc.details)
-        except Exception:
+        except Exception as unexpected:
+            context = {
+                key: value
+                for key, value in {
+                    "command": command,
+                    "request_id": self.invocation_request_id,
+                    "run_id": self.invocation_run_id,
+                    "task_gid": trace.task_gid,
+                    "operation_id": trace.submission_id,
+                }.items()
+                if value not in {None, ""}
+            }
+            LOG.error(
+                "unexpected_admin_failure context=%s",
+                json.dumps(context, sort_keys=True, separators=(",", ":")),
+                exc_info=(type(unexpected), unexpected, unexpected.__traceback__),
+            )
             error = DishRuleError(
                 "INTERNAL_ERROR",
                 "unexpected internal failure",
                 rule="unexpected_internal_failure",
+                details={"error_type": type(unexpected).__name__},
             )
             result = error_envelope(
                 command,
@@ -2107,7 +2127,13 @@ def _confirmed_resting_status(
         document = parse_task_document(
             f"{row['last_confirmed_title']}\n{row['last_confirmed_notes']}"
         )
-    except Exception:
+    except Exception as unexpected:
+        LOG.error(
+            "confirmed_resting_status_parse_failed task_gid=%s error_type=%s",
+            task_gid,
+            type(unexpected).__name__,
+            exc_info=(type(unexpected), unexpected, unexpected.__traceback__),
+        )
         return None
     return str(document.state.values.get("Status") or "").strip() or None
 

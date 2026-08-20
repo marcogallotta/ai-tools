@@ -3050,6 +3050,10 @@ def process_command_audit_repairs(conn: sqlite3.Connection, *, limit: int = 100)
                             rule="audit_repair_claim_lost",
                         )
                 repaired += 1
+            except DishRuleError as exc:
+                if exc.rule == "audit_repair_claim_lost":
+                    break
+                raise
             except Exception:
-                break
+                raise
         return repaired

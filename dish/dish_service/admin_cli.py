@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 import uuid
@@ -29,6 +30,8 @@ from dish_tool.errors import DishRuleError
 from dish_tool.identifiers import require_asana_gid, require_dish_uuid
 from dish_tool.releases import configured_honest_path, resolve_release
 from dish_tool.results import error_envelope, exit_status
+
+LOG = logging.getLogger("dish.admin_cli")
 from dish_tool.task_urls import task_gid_from_url
 from dish_service.client import DishAdminServiceClient
 from dish_service.database_ownership import ServiceDatabaseOwnership, database_process_lock_path
@@ -1082,6 +1085,12 @@ def main(
         _emit_result(result, arguments=arguments)
         return exit_status(result["code"])
     except Exception as exc:
+        LOG.error(
+            "dish_admin_startup_failure command=%s error_type=%s",
+            context["command"] or "unknown",
+            type(exc).__name__,
+            exc_info=(type(exc), exc, exc.__traceback__),
+        )
         error = DishRuleError(
             "INTERNAL_ERROR",
             "dish-admin failed during startup",
