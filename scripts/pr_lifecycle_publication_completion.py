@@ -376,6 +376,13 @@ def finalize_same_pr_for_review(
                 "before": before,
                 "after": cleared,
             }
+        if cleared["publication_blocker_present"]:
+            return {
+                "complete": False,
+                "reason": "publication blocker metadata did not clear on authoritative readback",
+                "before": before,
+                "after": cleared,
+            }
         blocker = _pre_review_blocker_reason(github, current)
         if blocker is not None:
             return {"complete": False, "reason": blocker, "before": before, "after": cleared}
