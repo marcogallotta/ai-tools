@@ -9,6 +9,8 @@ import tempfile
 from typing import Any, Mapping, Protocol, Sequence
 
 from pr_lifecycle_support import AUTHORING_EVIDENCE_PENDING_RE, FULL_SHA_RE, LifecycleError
+from installed_host_cert import EVIDENCE as INSTALLED_HOST_CERT_EVIDENCE, requirement_for_files, status_from_comments
+from pr_lifecycle_owner import task_ids_from_pr
 
 EXACT_BYTE_HANDOFF = "EXACT-BYTE HANDOFF"
 FRESH_AUTHORING_REQUIRED = "FRESH AUTHORING REQUIRED"
@@ -21,7 +23,11 @@ _PUBLICATION_BLOCKER_RE = re.compile(
 
 
 class PublicationCompletionGitHub(Protocol):
+    repository: str
+
     def get_pr(self, number: int) -> dict[str, Any]: ...
+    def get_pr_files(self, number: int) -> list[dict[str, Any]]: ...
+    def get_comments(self, number: int) -> list[dict[str, Any]]: ...
     def update_pr_body(self, number: int, body: str) -> dict[str, Any]: ...
     def mark_ready_for_review(self, number: int) -> dict[str, Any]: ...
 
@@ -279,6 +285,45 @@ def _finalization_snapshot(pr: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _pre_review_blocker_reason(
+    github: PublicationCompletionGitHub,
+    pr: Mapping[str, Any],
+    *,
+    allow_publication_blocker_clear: bool = False,
+) -> str | None:
+    """Return the current authoritative pre-Review blocker, if any."""
+    snapshot = _finalization_snapshot(pr)
+    if snapshot["state"] != "open":
+        return "PR is not open"
+    if snapshot["authoring_evidence_pending"]:
+        return f"authoring evidence remains pending: {snapshot['authoring_evidence_pending']}"
+    if snapshot["publication_blocker_present"] and not allow_publication_blocker_clear:
+        return "current publication blocker remains on the PR"
+
+    try:
+        requirement = requirement_for_files(github.get_pr_files(snapshot["number"]))
+        if requirement is not None:
+            head = pr.get("head") if isinstance(pr, Mapping) else None
+            branch = str(head.get("ref") or "").strip() if isinstance(head, Mapping) else ""
+            status = status_from_comments(
+                github.get_comments(snapshot["number"]),
+                repository=github.repository,
+                pr_number=snapshot["number"],
+                branch=branch,
+                head=snapshot["head"],
+                task_ids=task_ids_from_pr(pr),
+                requirement=requirement,
+            )
+            if not status.passed:
+                return (
+                    f"{INSTALLED_HOST_CERT_EVIDENCE} remains pending: "
+                    f"{status.error or 'certificate missing'}"
+                )
+    except (LifecycleError, AttributeError) as exc:
+        return f"pre-Review blocker evaluation failed: {exc}"
+    return None
+
+
 def finalize_same_pr_for_review(
     github: PublicationCompletionGitHub,
     *,
@@ -293,8 +338,6 @@ def finalize_same_pr_for_review(
     before = _finalization_snapshot(current)
     if before["number"] != int(number):
         raise LifecycleError("GitHub PR readback returned the wrong PR identity")
-    if before["state"] != "open":
-        return {"complete": False, "reason": "PR is not open", "before": before, "after": before}
     if before["head"] != expected_head:
         return {
             "complete": False,
@@ -304,23 +347,17 @@ def finalize_same_pr_for_review(
         }
     if keep_draft_reason:
         return {"complete": False, "reason": f"explicit keep-draft instruction: {keep_draft_reason}", "before": before, "after": before}
-    if before["authoring_evidence_pending"]:
-        return {
-            "complete": False,
-            "reason": f"authoring evidence remains pending: {before['authoring_evidence_pending']}",
-            "before": before,
-            "after": before,
-        }
+
+    blocker = _pre_review_blocker_reason(
+        github,
+        current,
+        allow_publication_blocker_clear=clear_publication_blocker,
+    )
+    if blocker is not None:
+        return {"complete": False, "reason": blocker, "before": before, "after": before}
 
     body = str(current.get("body") or "")
     if before["publication_blocker_present"]:
-        if not clear_publication_blocker:
-            return {
-                "complete": False,
-                "reason": "current publication blocker remains on the PR",
-                "before": before,
-                "after": before,
-            }
         try:
             github.update_pr_body(number, strip_publication_blocker(body))
             current = github.get_pr(number)
@@ -339,13 +376,9 @@ def finalize_same_pr_for_review(
                 "before": before,
                 "after": cleared,
             }
-        if cleared["publication_blocker_present"]:
-            return {
-                "complete": False,
-                "reason": "publication blocker metadata did not clear on authoritative readback",
-                "before": before,
-                "after": cleared,
-            }
+        blocker = _pre_review_blocker_reason(github, current)
+        if blocker is not None:
+            return {"complete": False, "reason": blocker, "before": before, "after": cleared}
 
     current = github.get_pr(number)
     pre_ready = _finalization_snapshot(current)
@@ -356,13 +389,9 @@ def finalize_same_pr_for_review(
             "before": before,
             "after": pre_ready,
         }
-    if pre_ready["authoring_evidence_pending"] or pre_ready["publication_blocker_present"]:
-        return {
-            "complete": False,
-            "reason": "a concrete pre-Review blocker remains after metadata reconciliation",
-            "before": before,
-            "after": pre_ready,
-        }
+    blocker = _pre_review_blocker_reason(github, current)
+    if blocker is not None:
+        return {"complete": False, "reason": blocker, "before": before, "after": pre_ready}
     if pre_ready["draft"]:
         try:
             github.mark_ready_for_review(number)
@@ -375,7 +404,8 @@ def finalize_same_pr_for_review(
             }
 
     try:
-        final = _finalization_snapshot(github.get_pr(number))
+        final_pr = github.get_pr(number)
+        final = _finalization_snapshot(final_pr)
     except LifecycleError as exc:
         return {
             "complete": False,
@@ -390,17 +420,13 @@ def finalize_same_pr_for_review(
             "before": before,
             "after": final,
         }
+    blocker = _pre_review_blocker_reason(github, final_pr)
+    if blocker is not None:
+        return {"complete": False, "reason": blocker, "before": before, "after": final}
     if final["draft"]:
         return {
             "complete": False,
             "reason": "ready-for-review transition/readback failed: live PR remains draft",
-            "before": before,
-            "after": final,
-        }
-    if final["authoring_evidence_pending"] or final["publication_blocker_present"]:
-        return {
-            "complete": False,
-            "reason": "pre-Review blocker reappeared on final authoritative readback",
             "before": before,
             "after": final,
         }
