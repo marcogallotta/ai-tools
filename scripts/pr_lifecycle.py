@@ -484,6 +484,18 @@ def _publish_projection(engine: LifecycleEngine, values: list[PRLifecycle], args
     tasks, task_scope = _task_observation_cycle(engine, values)
     if mutate_tasks:
         _write_task_projection_comments(engine, tasks)
+    else:
+        # The project-wide Asana scan can take long enough for a PR or one of
+        # its linked tasks to move.  Re-read the complete lifecycle authority
+        # at the publication boundary and retain the previous atomic snapshot
+        # unless both observations describe the same generation.
+        refreshed = engine.status(include_closed=bool(getattr(args, "include_closed", False)))
+        initial_generation = {value.number: value.json() for value in values}
+        refreshed_generation = {value.number: value.json() for value in refreshed}
+        if refreshed_generation != initial_generation:
+            raise LifecycleError(
+                "authority changed during projection generation; trustworthy snapshot publication refused"
+            )
     source_observation = _source_observation_cycle(engine, values)
     controller, full_regression = _projection_health(engine)
     atomic_write(

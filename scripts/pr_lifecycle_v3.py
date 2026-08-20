@@ -450,6 +450,8 @@ def attention_cases(
     for task in tasks:
         if not isinstance(task, Mapping) or task.get("error"):
             continue
+        if bool(task.get("completed")):
+            continue
         execution = task.get("execution") if isinstance(task.get("execution"), Mapping) else {}
         stale_kind = str(execution.get("stale_kind") or "")
         if stale_kind not in {"WORKER_ACCEPTANCE_STALE", "WORKER_EXECUTION_STALE"}:

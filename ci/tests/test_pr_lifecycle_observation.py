@@ -7,6 +7,8 @@ from pathlib import Path
 from types import SimpleNamespace
 import sys
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "scripts"
@@ -89,6 +91,10 @@ class ReadOnlyEngine:
 
     def now(self):
         return NOW
+
+    def status(self, *, include_closed=False):
+        assert include_closed is False
+        return [lifecycle()]
 
     def _workstream_candidates(self, values):
         return {TASK: self.candidate} if self.candidate is not None else {}
@@ -201,6 +207,35 @@ def test_status_projection_consumes_asana_observation_without_write(tmp_path, mo
     assert payload["task_scope"] == {"status": "COMPLETE", "projects": [PROJECT]}
     assert payload["tasks"][0]["gid"] == TASK
     assert payload["resolved_lifecycle"][0]["state"] == "READY_FOR_REVIEW"
+    assert asana.writes == []
+
+
+def test_status_projection_refuses_authority_movement_during_long_scan(tmp_path, monkeypatch):
+    asana = ReadOnlyAsana(completed=False)
+    initial = lifecycle()
+    moved = lifecycle(state=pr_lifecycle.LifecycleState.MERGED)
+
+    class MovingEngine(ReadOnlyEngine):
+        def status(self, *, include_closed=False):
+            assert include_closed is False
+            return [moved]
+
+    engine = MovingEngine(asana)
+    monkeypatch.setattr(pr_lifecycle, "_projection_health", lambda engine: ({}, {}))
+    path = tmp_path / "projection.json"
+    path.write_text('{"generation":"previous-trustworthy"}\n', encoding="utf-8")
+    args = SimpleNamespace(
+        projection_path=path,
+        repo="marcogallotta/ai-tools",
+        include_closed=False,
+    )
+
+    with pytest.raises(pr_lifecycle.LifecycleError, match="authority changed during projection"):
+        pr_lifecycle._publish_projection(engine, [initial], args, mutate_tasks=False)
+
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "generation": "previous-trustworthy"
+    }
     assert asana.writes == []
 
 
