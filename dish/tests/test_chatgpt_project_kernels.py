@@ -320,6 +320,39 @@ def test_development_workflow_asana_mode_behavior_matrix_is_registered():
   assert 'perform-governed-asana-mutation' not in scenario['forbidden_actions'] or 'abort' in scenario_id
  assert 'all nine V2 lifecycle sections' in _scenario('development-workflow-asana-v2-mode')['prompt']
 
+def test_asana_v2_project_registry_rule_excludes_development_workflow_and_reaches_other_governed_roles():
+ m,s=kernels.load_canonical()
+ target_roles={'audit','coordinator','implementation','integration','postgresql-dark-launch','review','workflow'}
+ for role in target_roles:
+  rule=next(x for x in kernels.effective_rules(s,role) if x['id']=='asana-v2-project-registry')
+  assert rule['delivery']=={'mode':'DIRECT_ALWAYS_ON'}
+  assert rule['action_boundaries']==['asana-governed-project-mutation']
+  assert rule['text'] in kernels.render_role(m,s,role), role
+ dw_rule_ids={x['id'] for x in kernels.effective_rules(s,'development-workflow')}
+ assert 'asana-v2-project-registry' not in dw_rule_ids
+ legacy_rule=next(x for x in kernels.shared_rules(s) if x['id']=='development-workflow-asana-mode')
+ assert legacy_rule['action_boundaries']==['asana-development-workflow-mutation']
+ registry=(DISH_ROOT/'docs'/'agents'/'asana-v2-project-mode.md').read_text()
+ for token in ('1217404747383060','structural-repair-pending','1217382473444945','migration-pending','v2-governed','unregistered'):
+  assert token in registry
+ contract=(DISH_ROOT/'docs'/'agents'/'development-workflow-asana-mode.md').read_text()
+ for token in ('1217419962189616','Dish — Development Workflow`','Dish — Development Workflow v2','Needs Post-Merge Rollout'):
+  assert token in contract
+
+def test_asana_v2_project_registry_behavior_matrix_is_registered():
+ expected={
+  'asana-v2-project-registry-postgresql-structural-repair-pending',
+  'asana-v2-project-registry-coordinator-migration-pending',
+  'asana-v2-project-registry-unregistered-project-refusal',
+ }
+ for scenario_id in expected:
+  scenario=_scenario(scenario_id)
+  assert scenario['required_rules']==['asana-v2-project-registry']
+  assert 'development-workflow' not in scenario['roles']
+  assert 'perform-governed-asana-mutation' in scenario['forbidden_actions']
+ assert '1217404747383060' in _scenario('asana-v2-project-registry-postgresql-structural-repair-pending')['prompt']
+ assert '1217382473444945' in _scenario('asana-v2-project-registry-coordinator-migration-pending')['prompt']
+
 def test_repository_context_admission_is_shared_rendered_and_independently_registered():
  m,s=kernels.load_canonical(); registry=kernels._standing_invariant_registry(); entry=registry['repository-context-admission']
  assert entry['status']=='active'
@@ -630,8 +663,8 @@ def test_triggered_rule_text_change_does_not_manufacture_project_settings_versio
 def test_required_version_inventory_matches_published_first_parent_history_and_restores_losses():
  m,s=kernels.load_canonical(); versions=kernels.required_versions(m)
  expected={f'dish-chatgpt-projects-v2-{x}' for x in ['d96ab5f0588d','708fb9a9a9bc','39ff3abc502e','857d88788c12','23365034a0f1','9575ccfd79c8','28dcb04decc8','9bb70124ca21','694190185f60','712e3b16aa05','d048682742d6','54041bbbc8d8','86b8011172ee','219f34402511','9bf227f53f0a','5d24af30193a','bfaeef68aed9','d3a070d57fb2','443e13732e7f','7644d9ed0518','0a572f3b0a67']}
- expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6'})
- assert set(versions)==expected and len(versions)==24
+ expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f'})
+ assert set(versions)==expected and len(versions)==25
  assert kernels.validate_required_version_topology(m)==versions
  for old in ('dish-chatgpt-projects-v2-39ff3abc502e','dish-chatgpt-projects-v2-9bb70124ca21'):
   path=kernels._change_path(m,old); assert path and path[-1]['to_version']==m['canonical_version']

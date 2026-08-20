@@ -133,6 +133,18 @@
           "impact": "breaking",
           "surface": "authority",
           "text": "Specialist/domain contracts are read-only decision context for Audit and never compose mutation/product authority. Missing required GitHub/Asana/domain/runtime authority fails closed rather than being reconstructed from chat."
+        },
+        {
+          "action_boundaries": [
+            "asana-governed-project-mutation"
+          ],
+          "delivery": {
+            "mode": "DIRECT_ALWAYS_ON"
+          },
+          "id": "asana-v2-project-registry",
+          "impact": "additive",
+          "surface": "safety",
+          "text": "Other Dish Asana projects: apply `dish/docs/agents/asana-v2-project-mode.md` registry/lifecycle_state; unregistered Dish projects = zero V2 mutation."
         }
       ]
     },
@@ -263,6 +275,18 @@
           "impact": "additive",
           "surface": "lifecycle",
           "text": "Re-anchor to the one-sentence operator outcome. A scheduler/queue/database/service/new authority/identity/control-plane or broader lifecycle needs Marco approval; missing approval blocks only that expansion. After two design loops, shrink scope or seek a decision; prove capability need first."
+        },
+        {
+          "action_boundaries": [
+            "asana-governed-project-mutation"
+          ],
+          "delivery": {
+            "mode": "DIRECT_ALWAYS_ON"
+          },
+          "id": "asana-v2-project-registry",
+          "impact": "additive",
+          "surface": "safety",
+          "text": "Other Dish Asana projects: apply `dish/docs/agents/asana-v2-project-mode.md` registry/lifecycle_state; unregistered Dish projects = zero V2 mutation."
         }
       ]
     },
@@ -612,6 +636,18 @@
           "impact": "additive",
           "surface": "lifecycle",
           "text": "For an external/current-main defect found while pursuing an existing objective, prove goal-continuity necessity before creating blocking semantic work; only IMPLEMENTATION_REQUIRED proceeds to live owner/lineage admission. A real defect alone is not a prerequisite."
+        },
+        {
+          "action_boundaries": [
+            "asana-governed-project-mutation"
+          ],
+          "delivery": {
+            "mode": "DIRECT_ALWAYS_ON"
+          },
+          "id": "asana-v2-project-registry",
+          "impact": "additive",
+          "surface": "safety",
+          "text": "Other Dish Asana projects: apply `dish/docs/agents/asana-v2-project-mode.md` registry/lifecycle_state; unregistered Dish projects = zero V2 mutation."
         }
       ]
     },
@@ -757,6 +793,18 @@
           "impact": "additive",
           "surface": "routing",
           "text": "Classify residual local work as TESTS ONLY, IMPLEMENTATION / PUBLICATION, or LOCAL SYSTEM ACCESS with runtime separate. Only an explicitly evidenced IMPLEMENTATION / PUBLICATION boundary can route semantic Implementation locally; tests/system access retain their actual owner."
+        },
+        {
+          "action_boundaries": [
+            "asana-governed-project-mutation"
+          ],
+          "delivery": {
+            "mode": "DIRECT_ALWAYS_ON"
+          },
+          "id": "asana-v2-project-registry",
+          "impact": "additive",
+          "surface": "safety",
+          "text": "Other Dish Asana projects: apply `dish/docs/agents/asana-v2-project-mode.md` registry/lifecycle_state; unregistered Dish projects = zero V2 mutation."
         }
       ]
     },
@@ -813,6 +861,18 @@
           "impact": "additive",
           "surface": "lifecycle",
           "text": "Notice friction/code debt, dedupe, then log/update unprioritized evidence and continue. Targets: Friction `1217443500915644`; Debt `1217443501022227`. Active blockers stay on task/PR; no urgency, competing authority, or scope creep."
+        },
+        {
+          "action_boundaries": [
+            "asana-governed-project-mutation"
+          ],
+          "delivery": {
+            "mode": "DIRECT_ALWAYS_ON"
+          },
+          "id": "asana-v2-project-registry",
+          "impact": "additive",
+          "surface": "safety",
+          "text": "Other Dish Asana projects: apply `dish/docs/agents/asana-v2-project-mode.md` registry/lifecycle_state; unregistered Dish projects = zero V2 mutation."
         }
       ]
     },
@@ -981,6 +1041,18 @@
           "impact": "additive",
           "surface": "safety",
           "text": "Re-anchor to the one-sentence operator outcome. A scheduler/queue/database/service/new authority/identity/control-plane or broader lifecycle needs Marco approval; missing approval blocks only that expansion. After two design loops, shrink scope or seek a decision; prove capability need first."
+        },
+        {
+          "action_boundaries": [
+            "asana-governed-project-mutation"
+          ],
+          "delivery": {
+            "mode": "DIRECT_ALWAYS_ON"
+          },
+          "id": "asana-v2-project-registry",
+          "impact": "additive",
+          "surface": "safety",
+          "text": "Other Dish Asana projects: apply `dish/docs/agents/asana-v2-project-mode.md` registry/lifecycle_state; unregistered Dish projects = zero V2 mutation."
         }
       ]
     },
@@ -1037,6 +1109,18 @@
           "impact": "additive",
           "surface": "lifecycle",
           "text": "Notice friction/code debt, dedupe, then log/update unprioritized evidence and continue. Targets: Friction `1217443500915644`; Debt `1217443501022227`. Active blockers stay on task/PR; no urgency, competing authority, or scope creep."
+        },
+        {
+          "action_boundaries": [
+            "asana-governed-project-mutation"
+          ],
+          "delivery": {
+            "mode": "DIRECT_ALWAYS_ON"
+          },
+          "id": "asana-v2-project-registry",
+          "impact": "additive",
+          "surface": "safety",
+          "text": "Other Dish Asana projects: apply `dish/docs/agents/asana-v2-project-mode.md` registry/lifecycle_state; unregistered Dish projects = zero V2 mutation."
         }
       ]
     }
