@@ -11,9 +11,10 @@ from pathlib import Path
 from typing import Any, Mapping
 from urllib.parse import urlsplit
 
+from pr_lifecycle_controller import STATE_ROOT
 from pr_lifecycle_projection import read_projection
 
-DEFAULT_PROJECTION = Path.home() / ".local" / "state" / "dish" / "pr-lifecycle-controller" / "lifecycle.json"
+DEFAULT_PROJECTION = STATE_ROOT / "lifecycle.json"
 STALE_AFTER_SECONDS = 120
 JSON_PATH = "/api/dish-lifecycle.json"
 PAGE_PATH = "/dish-desk.html"

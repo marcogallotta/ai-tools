@@ -14,6 +14,7 @@ SCRIPTS = ROOT / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 from pr_lifecycle_dashboard import (
+    DEFAULT_PROJECTION,
     HTML,
     JSON_PATH,
     PAGE_PATH,
@@ -23,6 +24,7 @@ from pr_lifecycle_dashboard import (
 )
 from pr_lifecycle_projection import SCHEMA
 import pr_lifecycle
+import pr_lifecycle_controller
 
 
 def projection(now: datetime) -> dict:
@@ -42,6 +44,10 @@ def projection(now: datetime) -> dict:
         "current_main_corrective_owners": [],
         "coordinator_actions": [],
     }
+
+
+def test_dashboard_default_reads_the_controller_projection():
+    assert DEFAULT_PROJECTION == pr_lifecycle_controller.STATE_ROOT / "lifecycle.json"
 
 
 def test_dashboard_staleness_uses_last_successful_reconciliation_and_controller_health():

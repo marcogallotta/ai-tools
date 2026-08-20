@@ -195,6 +195,30 @@ def test_pure_read_task_scan_reports_unknown_scope_without_guessing():
     assert asana.writes == []
 
 
+def test_configured_project_keeps_task_scope_when_no_pr_is_open():
+    asana = ReadOnlyAsana(completed=False)
+
+    tasks, scope = pr_lifecycle._task_observation_cycle(
+        ReadOnlyEngine(asana),
+        [],
+        configured_projects=[PROJECT],
+    )
+
+    assert scope == {"status": "COMPLETE", "projects": [PROJECT]}
+    assert [task["gid"] for task in tasks] == [TASK]
+    assert tasks[0]["completed"] is False
+    assert asana.writes == []
+
+
+def test_configured_project_gid_fails_closed_when_malformed():
+    with pytest.raises(pr_lifecycle.LifecycleError, match="invalid configured Asana observation project GID"):
+        pr_lifecycle._task_observation_cycle(
+            ReadOnlyEngine(ReadOnlyAsana()),
+            [],
+            configured_projects=["not-a-gid"],
+        )
+
+
 def test_status_projection_consumes_asana_observation_without_write(tmp_path, monkeypatch):
     asana = ReadOnlyAsana(completed=False)
     engine = ReadOnlyEngine(asana)
@@ -207,6 +231,31 @@ def test_status_projection_consumes_asana_observation_without_write(tmp_path, mo
     assert payload["task_scope"] == {"status": "COMPLETE", "projects": [PROJECT]}
     assert payload["tasks"][0]["gid"] == TASK
     assert payload["resolved_lifecycle"][0]["state"] == "READY_FOR_REVIEW"
+    assert asana.writes == []
+
+
+def test_status_projection_uses_configured_scope_after_last_pr_lands(tmp_path, monkeypatch):
+    asana = ReadOnlyAsana(completed=False)
+
+    class NoOpenPREngine(ReadOnlyEngine):
+        def status(self, *, include_closed=False):
+            assert include_closed is False
+            return []
+
+    engine = NoOpenPREngine(asana)
+    monkeypatch.setattr(pr_lifecycle, "_projection_health", lambda engine: ({}, {}))
+    args = SimpleNamespace(
+        projection_path=tmp_path / "projection.json",
+        repo="marcogallotta/ai-tools",
+        observation_project_gids=[PROJECT],
+    )
+
+    pr_lifecycle._publish_projection(engine, [], args, mutate_tasks=False)
+
+    payload = json.loads(args.projection_path.read_text(encoding="utf-8"))
+    assert payload["pull_requests"] == []
+    assert payload["task_scope"] == {"status": "COMPLETE", "projects": [PROJECT]}
+    assert [task["gid"] for task in payload["tasks"]] == [TASK]
     assert asana.writes == []
 
 
