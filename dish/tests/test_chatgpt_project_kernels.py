@@ -670,8 +670,8 @@ def test_triggered_rule_text_change_does_not_manufacture_project_settings_versio
 def test_required_version_inventory_matches_published_first_parent_history_and_restores_losses():
  m,s=kernels.load_canonical(); versions=kernels.required_versions(m)
  expected={f'dish-chatgpt-projects-v2-{x}' for x in ['d96ab5f0588d','708fb9a9a9bc','39ff3abc502e','857d88788c12','23365034a0f1','9575ccfd79c8','28dcb04decc8','9bb70124ca21','694190185f60','712e3b16aa05','d048682742d6','54041bbbc8d8','86b8011172ee','219f34402511','9bf227f53f0a','5d24af30193a','bfaeef68aed9','d3a070d57fb2','443e13732e7f','7644d9ed0518','0a572f3b0a67']}
- expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d'})
- assert set(versions)==expected and len(versions)==26
+ expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d','dish-chatgpt-projects-v2-7924b7da9fc0'})
+ assert set(versions)==expected and len(versions)==27
  assert kernels.validate_required_version_topology(m)==versions
  for old in ('dish-chatgpt-projects-v2-39ff3abc502e','dish-chatgpt-projects-v2-9bb70124ca21'):
   path=kernels._change_path(m,old); assert path and path[-1]['to_version']==m['canonical_version']
@@ -813,3 +813,53 @@ def test_impact_is_explicit_and_never_inferred_from_rule_criticality():
  for surface in ('authority','safety','presentation'):
   with pytest.raises(kernels.KernelError,match='explicit transition impact'):
    kernels._impact({'surface':surface})
+def _autonomy_source():
+    return json.loads((DISH_ROOT / "docs/chatgpt-projects/source.json").read_text())
+
+
+def test_autonomy_envelope_is_shared_and_triggered_by_authority_provenance():
+    source = _autonomy_source()
+    rule = next(x for x in source["shared_rules"] if x["id"] == "objective-implementation-entry")
+    assert rule["impact"] == "additive"
+    assert set(rule["action_boundaries"]) == {"implementation-admission", "role-critical-write"}
+    assert rule["delivery"] == {
+        "mode": "TRIGGERED_READ",
+        "trigger": "actor attribution / approval / decision provenance",
+    }
+    assert source["context_dependencies"]["triggered_reads"][rule["delivery"]["trigger"]] == [
+        "dish/docs/agents/operator-provenance.md#Decision provenance"
+    ]
+
+
+def test_operator_provenance_encodes_r7_g3_entry_and_creator_guards():
+    text = (DISH_ROOT / "docs/agents/operator-provenance.md").read_text()
+    required = [
+        "objective and conjunctive",
+        "new non-Implementation -> Implementation transition",
+        "ask exactly one bounded confirmation",
+        "second confirmation",
+        "independent exact-candidate pre-development `PASS`",
+        "absence of automated attempt/authorship markers is not itself a blocker",
+        "authorship is materially ambiguous",
+        "route to independent review",
+        "None proves dispatch acceptance, RUNNING execution, PR publication, Review completion, Integration, merge",
+    ]
+    for phrase in required:
+        assert phrase in text
+
+
+def test_autonomy_behavior_matrix_covers_required_decision_rules():
+    evals = json.loads((DISH_ROOT / "docs/chatgpt-projects/evals.json").read_text())
+    by_id = {x["id"]: x for x in evals["scenarios"]}
+    expected = {
+        "autonomy-new-conversational-implementation-needs-one-confirmation",
+        "autonomy-active-implementation-does-not-reconfirm",
+        "autonomy-worker-formal-block-fix-no-second-confirmation",
+        "autonomy-known-creator-needs-independent-pass",
+        "autonomy-manual-worker-missing-automated-provenance-is-not-blocker",
+        "autonomy-ambiguous-authorship-without-pass-routes-review",
+        "autonomy-transition-evidence-does-not-fabricate-lifecycle-state",
+    }
+    assert expected <= set(by_id)
+    for scenario_id in expected:
+        assert "objective-implementation-entry" in by_id[scenario_id]["required_rules"]
