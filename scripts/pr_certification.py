@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shlex
 import subprocess
@@ -342,6 +343,25 @@ def _base_graph_evidence(
         return base_envelope, base_arbiter_union, True
 
 
+def bind_selector_gap_evidence(
+    plan: dict[str, object], *, identity: dict[str, object], candidate: str,
+    run_id: str | None = None, run_attempt: str | None = None,
+) -> None:
+    gaps = plan.get("selector_gaps")
+    if not isinstance(gaps, list):
+        raise PRCertificationError("planner output is missing selector_gaps")
+    for gap in gaps:
+        if not isinstance(gap, dict):
+            raise PRCertificationError("selector gap must be an object")
+        gap["evidence"] = {
+            "pr_number": int(identity["pr_number"]),
+            "head_sha": candidate,
+            "review_id": int(identity["review_id"]),
+            "run_id": str(run_id or os.getenv("GITHUB_RUN_ID") or "local"),
+            "run_attempt": str(run_attempt or os.getenv("GITHUB_RUN_ATTEMPT") or "local"),
+        }
+
+
 def _digest(plan: dict[str, object]) -> str:
     canonical = json.dumps(plan, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(canonical).hexdigest()
@@ -399,6 +419,7 @@ def prepare(
         base_arbiter_union=base_arbiter_union,
         repo_root=repo_root,
     )
+    bind_selector_gap_evidence(plan, identity=identity, candidate=candidate)
     digest = _digest(plan)
     spec = build_execution_spec(plan, plan_digest=digest)
     plan_path.parent.mkdir(parents=True, exist_ok=True)
@@ -413,6 +434,7 @@ def prepare(
         "plan_digest": digest,
         "all_boundary_fallback": "true" if plan["all_boundary_fallback"] else "false",
         "selected_groups": json.dumps(plan["selected_groups"], separators=(",", ":")),
+        "selector_gap_count": str(len(plan["selector_gaps"])),
     }
     _write_output(github_output, outputs)
     return {"eligible": True, "identity": identity, "plan": plan, "execution_spec": spec}
