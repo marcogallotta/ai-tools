@@ -284,9 +284,11 @@ def test_postgresql_command_inventory_matches_independent_stage_a_baseline() -> 
     )
     expected = set(baseline["target_treatments"])
     # The frozen Stage A target inventory predates the connected no-Asana recovery
-    # commands.  Retaining them is an explicit post-baseline product contract, not
-    # a reason to rewrite the independent Stage A evidence artifact.
+    # commands and PostgreSQL-native search. Retaining them is an explicit
+    # post-baseline product contract, not a reason to rewrite the independent
+    # Stage A evidence artifact.
     assert expected | {
+        "search",
         "revise-section-registry",
         "hold-reject",
         "proposals",
