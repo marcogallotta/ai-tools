@@ -255,6 +255,26 @@ def test_slow_ci_emits_one_deduped_integrator_case_without_changing_authority():
     assert payload["v3"]["integrator"]["integration_authority"] is False
 
 
+def test_completed_task_stale_execution_history_is_not_active_attention():
+    completed = task_with_hold(clear_hold(), completed=True)
+    completed["execution"].update({
+        "state": "DISPATCH STALE — ACCEPTANCE NOT PROVEN",
+        "stale": True,
+        "stale_kind": "WORKER_ACCEPTANCE_STALE",
+        "timestamp": (NOW - timedelta(hours=2)).isoformat(),
+    })
+
+    payload = build_projection(
+        [],
+        repository=REPOSITORY,
+        tasks=[completed],
+        source_observation={"status": "COMPLETE", "pull_requests": {}, "workstreams": []},
+        generated_at=NOW,
+    )
+
+    assert payload["v3"]["attention"]["cases"] == []
+
+
 def test_repeated_ci_pattern_emits_one_systemic_coordinator_finding():
     gate = {
         "diagnosis": "PENDING",
