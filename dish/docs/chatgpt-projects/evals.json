@@ -2543,6 +2543,31 @@
       ]
     },
     {
+      "expected_outcome": "review_correction_r3_task_shape_implementation_continues_without_second_confirmation",
+      "forbidden_actions": [
+        "request-second-marco-implementation-confirmation",
+        "require-separate-durable-implementation-assignment-event",
+        "mutate-source-while-still-in-review",
+        "widen-correction-beyond-exact-block-task-candidate-scope"
+      ],
+      "id": "autonomy-review-correction-r3-task-shape-implementation-no-second-confirmation",
+      "prompt": "A formal Review has durably BLOCKed the exact current task/PR/head. Under accepted Review Correction R3, the same execution explicitly exits Review and re-routes by CURRENT TASK SHAPE through the canonical role index and current standing contract; that routing selects Implementation for the bounded correction. There is no separate pre-existing durable Implementation assignment/event. Decide whether Marco must confirm this Implementation transition again.",
+      "required_actions": [
+        "bind-exact-task-pr-head-and-formal-block",
+        "exit-review-before-source-mutation",
+        "reroute-by-current-task-shape-through-current-role-index",
+        "load-current-implementation-contract",
+        "continue-authorized-r3-correction-without-second-confirmation"
+      ],
+      "required_rules": [
+        "objective-implementation-entry"
+      ],
+      "roles": [
+        "review",
+        "implementation"
+      ]
+    },
+    {
       "expected_outcome": "authorized_formal_block_continuation_requires_no_second_conversational_confirmation",
       "forbidden_actions": [
         "request-second-marco-fix-confirmation",

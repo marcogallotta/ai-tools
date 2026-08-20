@@ -838,6 +838,10 @@ def test_operator_provenance_encodes_r7_g3_entry_and_creator_guards():
         "new non-Implementation -> Implementation transition",
         "ask exactly one bounded confirmation",
         "second confirmation",
+        "explicitly exits Review",
+        "CURRENT TASK SHAPE",
+        "canonical role index/current standing contract",
+        "no separate durable Implementation assignment/event is required",
         "independent exact-candidate pre-development `PASS`",
         "absence of automated attempt/authorship markers is not itself a blocker",
         "authorship is materially ambiguous",
@@ -855,6 +859,7 @@ def test_autonomy_behavior_matrix_covers_required_decision_rules():
         "autonomy-new-conversational-implementation-needs-one-confirmation",
         "autonomy-active-implementation-does-not-reconfirm",
         "autonomy-worker-formal-block-fix-no-second-confirmation",
+        "autonomy-review-correction-r3-task-shape-implementation-no-second-confirmation",
         "autonomy-known-creator-needs-independent-pass",
         "autonomy-manual-worker-missing-automated-provenance-is-not-blocker",
         "autonomy-ambiguous-authorship-without-pass-routes-review",
@@ -863,3 +868,18 @@ def test_autonomy_behavior_matrix_covers_required_decision_rules():
     assert expected <= set(by_id)
     for scenario_id in expected:
         assert "objective-implementation-entry" in by_id[scenario_id]["required_rules"]
+
+    r3 = by_id["autonomy-review-correction-r3-task-shape-implementation-no-second-confirmation"]
+    assert {
+        "bind-exact-task-pr-head-and-formal-block",
+        "exit-review-before-source-mutation",
+        "reroute-by-current-task-shape-through-current-role-index",
+        "load-current-implementation-contract",
+        "continue-authorized-r3-correction-without-second-confirmation",
+    } <= set(r3["required_actions"])
+    assert {
+        "request-second-marco-implementation-confirmation",
+        "require-separate-durable-implementation-assignment-event",
+        "mutate-source-while-still-in-review",
+        "widen-correction-beyond-exact-block-task-candidate-scope",
+    } <= set(r3["forbidden_actions"])
