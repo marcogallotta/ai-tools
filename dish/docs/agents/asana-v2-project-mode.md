@@ -23,39 +23,15 @@ semantics to it. A project not listed is **unregistered**: an agent must explici
 V2 mutation and say so, rather than silently ignoring the project or silently applying V2 rules to
 it because the name looks similar.
 
-`lifecycle_state` has exactly three stored values. There is no fourth stored value for
-"unregistered" — that is the absence of a row, not a state.
+A registry row is only a GID-to-base-name mapping. It records no generation, migration progress, or
+mutation-authority state of its own — classification comes only from the live project name, read
+fresh every time (see below). Nothing here is a cached or repository-driven authority.
 
-| Project GID | Project name | `lifecycle_state` | Notes |
-|---|---|---|---|
-| `1217419962189616` | Dish — Development Workflow v2 | `v2-governed` | Governed under `development-workflow-asana-mode.md` directly; this doc's general mechanics describe the same rules but that file remains the binding text for this project. |
-| `1217404747383060` | Dish — PostgreSQL / Dark Launch v2 | `structural-repair-pending` | Current signature: 8 of 9 V2 sections present, missing `Needs Post-Merge Rollout`. Zero ordinary V2 mutation authority until the sequenced structural-repair operation (below) reads back 9-of-9 and flips this row. |
-| `1217382473444945` | Dish — Coordinator | `migration-pending` | Current signature: legacy sections `Backlog`, `Ready`, `In Progress`, `Review / Integration`, `Blocked / Decision`, `Done`, plus `Untitled section`; no V2 custom fields. Zero V2 mutation authority until a full future migration is durably recorded here. |
-
-### `lifecycle_state` meanings
-
-- **`v2-governed`** — full V2 mutation authority under this contract. The project's exact current
-  section-name signature must match the full 9-section V2 lifecycle below; a mismatch is
-  `CONTRADICTORY` and refuses governed mutation rather than repairing, renaming, or guessing.
-- **`structural-repair-pending`** / **`migration-pending`** — registry membership only, zero
-  ordinary V2 task-mutation authority. This contract records the project's exact current section
-  signature and requires that signature still match before any read/report action. Moving out of
-  either state happens only through an explicit, separately-authorized one-shot project-structure
-  migration operation (never ordinary task mutation): it verifies the project's exact starting
-  signature as a precondition, performs the structural change, authoritatively reads back the
-  resulting 9-section V2 signature, and only then durably flips that row to `v2-governed` in this
-  file. Until that flip is recorded here, the project stays zero-authority regardless of how close
-  its live structure looks to complete.
-- **Unregistered** (no row) — out of scope by default. Refuse governed V2 mutation explicitly.
-
-### Sequenced follow-up: PostgreSQL / Dark Launch structural repair
-
-Not part of the change that introduces this doc. Once this doc and its kernel/test wiring are
-merged and authoritative on `main`, an explicitly authorized follow-up verifies project
-`1217404747383060`'s exact 8-section precondition, adds the missing `Needs Post-Merge Rollout`
-section, authoritatively reads back the full 9-section structure, and durably flips its row above to
-`v2-governed`. Until that follow-up lands and this file is updated, treat the project as
-`structural-repair-pending`.
+| Project GID | Base name |
+|---|---|
+| `1217419962189616` | Dish — Development Workflow |
+| `1217404747383060` | Dish — PostgreSQL / Dark Launch |
+| `1217382473444945` | Dish — Coordinator |
 
 ### Reference only: other real Dish project shapes (not registered, not migrated)
 
@@ -72,20 +48,24 @@ Nothing here migrates them or applies V2 semantics to them.
 ## Exact mode classification
 
 Require the project GID from the registry row; a matching name on another project is not
-authority. Match names and section names exactly, without case folding, prefix matching, or version
-guessing.
+authority. Classification comes only from the live project name, read fresh on every governed
+action — never from a prior session's memory, a doc note, or any other stored/repository-driven
+setting. Match names and section names exactly, without case folding, prefix matching, or guessing.
 
-For a `v2-governed` row, the project is **V2** only when all V2 lifecycle sections exist (see
-below) and no legacy-only lifecycle section remains. Missing sections, mixed-generation lifecycle
-sections, an unreadable complete section list, or a name/structure mismatch against the registry
-signature is **CONTRADICTORY**: perform zero governed mutation and report the exact mismatch
-without repairing, renaming, or selecting a generation by guesswork.
+For a registered row's base name, the live project name is one of exactly three shapes:
 
-For a `structural-repair-pending` or `migration-pending` row, the project performs zero governed V2
-mutation by definition. Confirm the recorded signature still matches on any read/report action; a
-signature that no longer matches is itself worth surfacing, since it means live state has drifted
-from what this file records, but it does not by itself grant mutation authority — only the
-authorized structural-migration operation and a recorded registry flip do that.
+- **Live name equals the base name, with no version suffix** — **LEGACY**. Zero governed V2
+  mutation.
+- **Live name equals `<base name> v2`** — **V2**, subject to the section-signature check below: all
+  nine V2 lifecycle sections must exist and no legacy-only section may remain. A match is full V2
+  mutation authority; a mismatch is **CONTRADICTORY** — zero mutation, report the exact mismatch
+  without repairing, renaming, or guessing.
+- **Live name equals `<base name> v` followed by anything other than `2`** (`v3`, `v4`, or any
+  other value) — **STOP**. Zero governed mutation. Explicitly flag it to Marco and ask what to do.
+  Do not guess the new generation's rules and do not fall back to applying V2 rules to it.
+
+Any other live name (malformed suffix, or not matching the base name at all) is **UNKNOWN**: zero
+governed mutation, report the exact mismatch without repairing, renaming, or guessing.
 
 ## V2 lifecycle meanings
 

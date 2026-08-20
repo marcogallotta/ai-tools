@@ -144,7 +144,7 @@
           "id": "asana-v2-project-registry",
           "impact": "additive",
           "surface": "safety",
-          "text": "Other Dish Asana projects: apply `dish/docs/agents/asana-v2-project-mode.md` registry/lifecycle_state; unregistered Dish projects = zero V2 mutation."
+          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation."
         }
       ]
     },
@@ -286,7 +286,7 @@
           "id": "asana-v2-project-registry",
           "impact": "additive",
           "surface": "safety",
-          "text": "Other Dish Asana projects: apply `dish/docs/agents/asana-v2-project-mode.md` registry/lifecycle_state; unregistered Dish projects = zero V2 mutation."
+          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation."
         }
       ]
     },
@@ -647,7 +647,7 @@
           "id": "asana-v2-project-registry",
           "impact": "additive",
           "surface": "safety",
-          "text": "Other Dish Asana projects: apply `dish/docs/agents/asana-v2-project-mode.md` registry/lifecycle_state; unregistered Dish projects = zero V2 mutation."
+          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation."
         }
       ]
     },
@@ -804,7 +804,7 @@
           "id": "asana-v2-project-registry",
           "impact": "additive",
           "surface": "safety",
-          "text": "Other Dish Asana projects: apply `dish/docs/agents/asana-v2-project-mode.md` registry/lifecycle_state; unregistered Dish projects = zero V2 mutation."
+          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation."
         }
       ]
     },
@@ -872,7 +872,7 @@
           "id": "asana-v2-project-registry",
           "impact": "additive",
           "surface": "safety",
-          "text": "Other Dish Asana projects: apply `dish/docs/agents/asana-v2-project-mode.md` registry/lifecycle_state; unregistered Dish projects = zero V2 mutation."
+          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation."
         }
       ]
     },
@@ -1052,7 +1052,7 @@
           "id": "asana-v2-project-registry",
           "impact": "additive",
           "surface": "safety",
-          "text": "Other Dish Asana projects: apply `dish/docs/agents/asana-v2-project-mode.md` registry/lifecycle_state; unregistered Dish projects = zero V2 mutation."
+          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation."
         }
       ]
     },
@@ -1120,7 +1120,7 @@
           "id": "asana-v2-project-registry",
           "impact": "additive",
           "surface": "safety",
-          "text": "Other Dish Asana projects: apply `dish/docs/agents/asana-v2-project-mode.md` registry/lifecycle_state; unregistered Dish projects = zero V2 mutation."
+          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation."
         }
       ]
     }
