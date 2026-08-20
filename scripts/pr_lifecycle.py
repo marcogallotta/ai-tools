@@ -26,6 +26,17 @@ from pr_lifecycle_task_state import execution_truth, ensure_projection_comment
 from pr_lifecycle_rollout import reconstruct as reconstruct_rollout, rollout_projection
 import pr_lifecycle_controller
 
+OBSERVATION_PROJECTS_ENV = "DISH_PR_LIFECYCLE_PROJECT_GIDS"
+
+
+def _configured_observation_projects() -> list[str]:
+    return [
+        value.strip()
+        for value in str(os.getenv(OBSERVATION_PROJECTS_ENV) or "").split(",")
+        if value.strip()
+    ]
+
+
 class LifecycleEngine(
     LocalIntegrationCertificationMixin,
     WorkstreamLifecycleMixin,
@@ -276,7 +287,10 @@ def _notification_printer(message: str) -> None:
 
 
 def _task_observation_cycle(
-    engine: LifecycleEngine, values: list[PRLifecycle]
+    engine: LifecycleEngine,
+    values: list[PRLifecycle],
+    *,
+    configured_projects: Iterable[str] = (),
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if engine.asana is None:
         return [], {
@@ -285,6 +299,11 @@ def _task_observation_cycle(
             "reason": "Asana is not configured",
         }
     project_ids: set[str] = set()
+    for configured in configured_projects:
+        gid = str(configured).strip()
+        if not TASK_GID_RE.fullmatch(gid):
+            raise LifecycleError(f"invalid configured Asana observation project GID: {gid!r}")
+        project_ids.add(gid)
     for value in values:
         for task in value.asana:
             for membership in task.get("memberships") or []:
@@ -481,7 +500,13 @@ def _projection_health(engine: LifecycleEngine) -> tuple[dict[str, Any], dict[st
 def _publish_projection(engine: LifecycleEngine, values: list[PRLifecycle], args: argparse.Namespace, *, mutate_tasks: bool) -> None:
     if args.projection_path is None:
         return
-    tasks, task_scope = _task_observation_cycle(engine, values)
+    tasks, task_scope = _task_observation_cycle(
+        engine,
+        values,
+        configured_projects=(
+            () if mutate_tasks else getattr(args, "observation_project_gids", ())
+        ),
+    )
     if mutate_tasks:
         _write_task_projection_comments(engine, tasks)
     else:
@@ -553,6 +578,16 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--merge-method", choices=["merge", "squash", "rebase"], default="squash")
     parser.add_argument("--projection-path", type=Path, help="atomic lifecycle JSON projection path")
+    parser.add_argument(
+        "--project-gid",
+        dest="observation_project_gids",
+        action="append",
+        default=_configured_observation_projects(),
+        help=(
+            "Asana project included in the read-only task projection even when no current PR "
+            f"establishes scope; repeatable or comma-separate {OBSERVATION_PROJECTS_ENV}"
+        ),
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     status = sub.add_parser("status", help="one-shot lifecycle status")
