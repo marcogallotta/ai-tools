@@ -48,6 +48,16 @@ The PR, not the final chat message, carries exact head/base identity, review rea
 
 ## Review claims and dispatcher routing
 
+Review is a material correctness challenge, not a perfection gate. Reconstruct the operator intent baseline from durable signed authority (task notes/design generations, Marco decisions, accepted invariants, and exact implementation handoff); `Has Headline` is discovery/projection only and never substitutes for that baseline. Review must challenge material intent/spec drift, false readiness, authority/process defects, recurring failure patterns, and unjustified complexity, while leaving style, speculative refactors, and unrelated debt non-blocking.
+
+For each exact candidate, carry the accepted generation/head plus any protected-invariant IDs, candidate-specific `REVIEW FOCUS`, and the expected solution envelope. Review tests the strongest relevant claims and quantifiers literally, considers second-order fallout on adjacent governed surfaces, and blocks scope amplification when a new scheduler, queue, database, service, identity/control plane, or broader lifecycle is not part of durable approved intent. Learned-risk guidance belongs in repository docs/evals; do not create a risk service or second review state engine.
+
+Design Review and Code Review are distinct. Code Review is formal exact-head GitHub Review. Design Review is an independent read-only review of an exact frozen design generation using the candidate identity and independence procedure in `operator-provenance.md`. Coordinator may perform Design Review when standing authority explicitly allows it. Development Workflow may also perform independent Design Review when the current exact task shape/orchestration explicitly assigns that mode and the execution is not a material author of the candidate; this does not grant Code Review, Implementation, Integration, merge, or production authority. Audit has no Design Review verdict authority absent an explicit standing grant. Ambiguous review type fails closed before verdict.
+
+Immediately before a Design Review verdict, reread the canonical task/generation and recompute exact candidate identity. A verdict on a stale generation never moves or approves a successor. Where a governed lifecycle projection is updated after a valid verdict, reread authoritative state after the write and require convergence; do not invent a CAS/version registry. Repairable metadata may be corrected/routed without preventing useful inspection, but formal PASS fails closed on genuine candidate identity, intent baseline, or independence ambiguity.
+
+The Development Workflow Design-Review role/kernel prohibition that prompted Review V3 remains a disabled safety gate until Marco separately re-enables it after the corrected source is exercised, independently tested, and durably evidenced. This repository change repairs the source contract only; it does not itself assert operational re-enablement.
+
 Forked review claims are advisory soft leases only. Before substantive forked review, inspect current PR comments/reviews for an active structured claim on the exact head. A new claim uses:
 
 > `<!-- dish-agent-lease:v1 phase=review head=<exact-sha> lease=<uuid> -->`

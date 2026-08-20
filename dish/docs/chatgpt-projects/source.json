@@ -82,7 +82,7 @@
       },
       "contract": "dish/docs/agents/audit.md",
       "default_role": "Audit",
-      "project_name": "Dish \u2014 Audit",
+      "project_name": "Dish — Audit",
       "rules": [
         {
           "action_boundaries": [
@@ -175,7 +175,7 @@
       },
       "contract": "dish/docs/agents/coordinator.md",
       "default_role": "Coordinator",
-      "project_name": "Dish \u2014 Coordinator",
+      "project_name": "Dish — Coordinator",
       "rules": [
         {
           "action_boundaries": [
@@ -339,7 +339,7 @@
       },
       "contract": "dish/docs/agents/development-workflow.md",
       "default_role": "Development Workflow specialist",
-      "project_name": "Dish \u2014 Development Workflow",
+      "project_name": "Dish — Development Workflow",
       "rules": [
         {
           "action_boundaries": [
@@ -435,7 +435,7 @@
           "id": "development-workflow-concurrency-preflight",
           "impact": "breaking",
           "surface": "safety",
-          "text": "Before changing shared infrastructure capacity/availability, identify concurrent producer classes and non-interference invariants. Quiet is not isolation; fence/admit the full operational window or require Marco\u2019s explicit stop-the-world override."
+          "text": "Before changing shared infrastructure capacity/availability, identify concurrent producer classes and non-interference invariants. Quiet is not isolation; fence/admit the full operational window or require Marco’s explicit stop-the-world override."
         },
         {
           "action_boundaries": [
@@ -466,6 +466,19 @@
           "impact": "additive",
           "surface": "lifecycle",
           "text": "Re-anchor to the one-sentence operator outcome. A scheduler/queue/database/service/new authority/identity/control-plane or broader lifecycle needs Marco approval; missing approval blocks only that expansion. After two design loops, shrink scope or seek a decision; prove capability need first."
+        },
+        {
+          "id": "development-workflow-design-review",
+          "impact": "additive",
+          "surface": "authority",
+          "action_boundaries": [
+            "review-write"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "durable review-state classification"
+          },
+          "text": "The boundary rule uses `Review` for semantic Code Review. Exact independent Design Review is allowed only on explicit assignment with valid authorship independence, using Review/operator-provenance procedure; it is read-only and grants no Implementation/Integration."
         }
       ]
     },
@@ -497,7 +510,7 @@
       },
       "contract": "dish/docs/agents/implementation.md",
       "default_role": "Implementation",
-      "project_name": "Dish \u2014 Implementation",
+      "project_name": "Dish — Implementation",
       "rules": [
         {
           "action_boundaries": [
@@ -565,7 +578,7 @@
           "id": "action-first-human-output",
           "impact": "compatible",
           "surface": "presentation",
-          "text": "Keep lifecycle truth and real operator obligations, but render Marco-facing status through Work chat; durable/technical detail stays on the PR unless it changes Marco\u2019s action."
+          "text": "Keep lifecycle truth and real operator obligations, but render Marco-facing status through Work chat; durable/technical detail stays on the PR unless it changes Marco’s action."
         },
         {
           "action_boundaries": [
@@ -672,7 +685,7 @@
       },
       "contract": "dish/docs/agents/integration.md",
       "default_role": "Integration",
-      "project_name": "Dish \u2014 Integration",
+      "project_name": "Dish — Integration",
       "rules": [
         {
           "action_boundaries": [
@@ -751,7 +764,7 @@
           "id": "integration-standing-policy-readback",
           "impact": "additive",
           "surface": "lifecycle",
-          "text": "Standing-policy work is not DONE from merge alone. After authoritative GitHub `MERGED` readback, read authoritative `main` and prove every active independent standing invariant\u2019s required source rule, eval inventory, and rendered-role coverage before completion; missing coverage keeps the owning task open. Git ancestry or merge status alone is insufficient."
+          "text": "Standing-policy work is not DONE from merge alone. After authoritative GitHub `MERGED` readback, read authoritative `main` and prove every active independent standing invariant’s required source rule, eval inventory, and rendered-role coverage before completion; missing coverage keeps the owning task open. Git ancestry or merge status alone is insufficient."
         },
         {
           "action_boundaries": [
@@ -764,7 +777,7 @@
           "id": "action-first-human-output",
           "impact": "compatible",
           "surface": "presentation",
-          "text": "Keep lifecycle truth and real operator obligations, but render Marco-facing status through Work chat; durable/technical detail stays on the PR unless it changes Marco\u2019s action."
+          "text": "Keep lifecycle truth and real operator obligations, but render Marco-facing status through Work chat; durable/technical detail stays on the PR unless it changes Marco’s action."
         },
         {
           "action_boundaries": [
@@ -822,7 +835,7 @@
       },
       "contract": "dish/docs/agents/postgresql-dark-launch.md",
       "default_role": "PostgreSQL / Dark Launch specialist",
-      "project_name": "Dish \u2014 PostgreSQL / Dark Launch",
+      "project_name": "Dish — PostgreSQL / Dark Launch",
       "rules": [
         {
           "action_boundaries": [
@@ -834,7 +847,7 @@
           "id": "postgresql-live-lane",
           "impact": "breaking",
           "surface": "authority",
-          "text": "`Dish \u2014 PostgreSQL / Dark Launch` is this lane\u2019s live Asana authority. Direct runtime/database evidence remains separate when deployed identity or behavior matters."
+          "text": "`Dish — PostgreSQL / Dark Launch` is this lane’s live Asana authority. Direct runtime/database evidence remains separate when deployed identity or behavior matters."
         },
         {
           "action_boundaries": [
@@ -898,7 +911,7 @@
       },
       "contract": "dish/docs/agents/review.md",
       "default_role": "Review",
-      "project_name": "Dish \u2014 Review",
+      "project_name": "Dish — Review",
       "rules": [
         {
           "action_boundaries": [
@@ -1053,6 +1066,19 @@
           "impact": "additive",
           "surface": "safety",
           "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation."
+        },
+        {
+          "id": "review-design-generation",
+          "impact": "additive",
+          "surface": "safety",
+          "action_boundaries": [
+            "review-write"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "review routing / independence / BLOCK recheck"
+          },
+          "text": "Design Review binds exact frozen generation/digest, durable intent baseline, protected invariants, expected solution envelope, candidate Review Focus, and independence. Candidate movement invalidates verdict; stale verdict never advances a successor."
         }
       ]
     },
@@ -1070,7 +1096,7 @@
       },
       "contract": "dish/docs/agents/workflow.md",
       "default_role": "Workflow specialist",
-      "project_name": "Dish \u2014 Workflow Specialist",
+      "project_name": "Dish — Workflow Specialist",
       "rules": [
         {
           "action_boundaries": [
@@ -1082,7 +1108,7 @@
           "id": "workflow-live-lane",
           "impact": "breaking",
           "surface": "authority",
-          "text": "`Dish \u2014 Workflow` is this lane\u2019s live Asana authority. Keep iteration state current there; do not infer deployed identity from GitHub HEAD or Asana."
+          "text": "`Dish — Workflow` is this lane’s live Asana authority. Keep iteration state current there; do not infer deployed identity from GitHub HEAD or Asana."
         },
         {
           "action_boundaries": [
