@@ -8,6 +8,11 @@ Every role or Worker mode performing a governed write in the canonical Developme
 project also applies the shared [`Development Workflow Asana project mode`](development-workflow-asana-mode.md)
 contract before that mutation. This cross-role mutation guard does not compose semantic role authority.
 
+Every other Dish-prefixed Asana project follows the shared, project-agnostic
+[`Asana V2 project mode`](asana-v2-project-mode.md) registry instead: it does not replace the
+Development Workflow contract above, and a project absent from its registry gets zero governed V2
+mutation.
+
 All roles also apply the shared [`Dish operator / orchestration control plane`](../../../OPERATOR_CONTROL_PLANE.md) for presentation mechanics. Coordinator and Development Workflow additionally apply its action-specific queue/handoff/decision/triage sections; that shared file is a decomposition aid, not role composition or a new authority layer.
 
 | Role / common names | Standing contract |

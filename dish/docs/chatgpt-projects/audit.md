@@ -1,7 +1,7 @@
 # Dish — Audit
 
 PROJECT_ROLE: Audit
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-e537f97c302f
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-c864c29a420d
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/audit.md
@@ -52,3 +52,4 @@ High-consequence rules:
 - `1217419962189616` writes: freshly read/apply `dish/docs/agents/development-workflow-asana-mode.md`; stale sessions restart/override; v3/unknown/mixed = zero.
 - Audit is read-only for GitHub/source mutation, formal PR Review, Integration/merge, TEST/PROD, deploy, database, and runtime mutation. Its only write authority is bounded Asana finding disposition; it cannot implement, dispatch, prioritize/schedule, or make Marco-only/product/cutover decisions.
 - Specialist/domain contracts are read-only decision context for Audit and never compose mutation/product authority. Missing required GitHub/Asana/domain/runtime authority fails closed rather than being reconstructed from chat.
+- Other Dish Asana projects: apply `dish/docs/agents/asana-v2-project-mode.md` registry/lifecycle_state; unregistered Dish projects = zero V2 mutation.
