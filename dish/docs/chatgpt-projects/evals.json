@@ -2005,35 +2005,22 @@
       ]
     },
     {
-      "id": "design-principles-harmless-overlap",
-      "roles": [
-        "audit",
-        "coordinator",
-        "development-workflow",
-        "implementation",
-        "integration",
-        "postgresql-dark-launch",
-        "review",
-        "workflow"
-      ],
-      "prompt": "Two agents may independently do overlapping research, Review, tests, or isolated implementation. The overlap can only waste compute or create stale/versioned candidates; no shared authoritative write or irreversible effect is involved. Decide whether correctness requires an exclusive global lock or blocking ownership transfer.",
       "expected_outcome": "allow_harmless_overlap_without_correctness_gate",
-      "required_rules": [
-        "design-principles-bootstrap"
+      "forbidden_actions": [
+        "invent_global_exclusion_gate",
+        "block_only_to_prevent_duplicate_work"
       ],
+      "id": "design-principles-harmless-overlap",
+      "prompt": "Two agents may independently do overlapping research, Review, tests, or isolated implementation. The overlap can only waste compute or create stale/versioned candidates; no shared authoritative write or irreversible effect is involved. Decide whether correctness requires an exclusive global lock or blocking ownership transfer.",
       "required_actions": [
         "identify_actual_invariant",
         "allow_harmless_parallel_work",
         "use_best_effort_visibility_or_dedupe_only_if_useful",
         "reserve_serialization_for_authoritative_or_irreversible_boundary"
       ],
-      "forbidden_actions": [
-        "invent_global_exclusion_gate",
-        "block_only_to_prevent_duplicate_work"
-      ]
-    },
-    {
-      "id": "design-principles-no-invented-manual-gate",
+      "required_rules": [
+        "design-principles-bootstrap"
+      ],
       "roles": [
         "audit",
         "coordinator",
@@ -2043,58 +2030,70 @@
         "postgresql-dark-launch",
         "review",
         "workflow"
-      ],
-      "prompt": "A useful automated evidence path is missing, and an agent proposes making a new manual canary/rehearsal/code-review step mandatory for all future work even though no standing principle or explicit Marco decision authorizes that exact gate. Decide the standing policy.",
+      ]
+    },
+    {
       "expected_outcome": "do_not_invent_mandatory_gate",
-      "required_rules": [
-        "design-principles-bootstrap"
+      "forbidden_actions": [
+        "make_unapproved_gate_mandatory",
+        "turn_missing_automation_into_indefinite_manual_prerequisite"
       ],
+      "id": "design-principles-no-invented-manual-gate",
+      "prompt": "A useful automated evidence path is missing, and an agent proposes making a new manual canary/rehearsal/code-review step mandatory for all future work even though no standing principle or explicit Marco decision authorizes that exact gate. Decide the standing policy.",
       "required_actions": [
         "preserve_existing_authorized_gates",
         "treat_missing_supported_automation_as_infrastructure_defect",
         "require_existing_principle_or_explicit_marco_approval_for_new_mandatory_gate"
       ],
-      "forbidden_actions": [
-        "make_unapproved_gate_mandatory",
-        "turn_missing_automation_into_indefinite_manual_prerequisite"
+      "required_rules": [
+        "design-principles-bootstrap"
+      ],
+      "roles": [
+        "audit",
+        "coordinator",
+        "development-workflow",
+        "implementation",
+        "integration",
+        "postgresql-dark-launch",
+        "review",
+        "workflow"
       ]
     },
     {
+      "expected_outcome": "continue_original_without_new_prerequisite",
+      "forbidden_actions": [
+        "create_blocking_defect_pr",
+        "treat_real_defect_as_automatic_prerequisite",
+        "ask_marco_for_routine_lineage_choice"
+      ],
       "id": "external-defect-continue-original",
-      "roles": [
-        "coordinator",
-        "development-workflow",
-        "implementation"
-      ],
       "prompt": "A real current-main CI defect is observed while advancing an existing reviewed candidate, but a fresh authorized recovery/certification path can still reach the requested next state without changing CI code. Decide whether the defect becomes a prerequisite PR.",
-      "required_rules": [
-        "external-defect-admission",
-        "scope-amplification-checkpoint"
-      ],
       "required_actions": [
         "classify_goal_continuity",
         "choose_continue_original",
         "continue_original_objective",
         "keep_defect_non_prerequisite"
       ],
-      "forbidden_actions": [
-        "create_blocking_defect_pr",
-        "treat_real_defect_as_automatic_prerequisite",
-        "ask_marco_for_routine_lineage_choice"
-      ],
-      "expected_outcome": "continue_original_without_new_prerequisite"
-    },
-    {
-      "id": "external-defect-required-owner-lineage",
-      "roles": [
-        "development-workflow",
-        "implementation"
-      ],
-      "prompt": "An existing candidate cannot advance because a repository certification guarantee is genuinely missing. The defect is external to the candidate. Route the required semantic work without contaminating the candidate or creating a duplicate lineage.",
       "required_rules": [
         "external-defect-admission",
         "scope-amplification-checkpoint"
       ],
+      "roles": [
+        "coordinator",
+        "development-workflow",
+        "implementation"
+      ]
+    },
+    {
+      "expected_outcome": "required_fix_is_admitted_to_reconciled_owner_lineage",
+      "forbidden_actions": [
+        "broaden_blocked_candidate",
+        "create_new_lineage_without_reconciliation",
+        "invent_workstream_mapping",
+        "ask_marco_for_routine_lineage_choice"
+      ],
+      "id": "external-defect-required-owner-lineage",
+      "prompt": "An existing candidate cannot advance because a repository certification guarantee is genuinely missing. The defect is external to the candidate. Route the required semantic work without contaminating the candidate or creating a duplicate lineage.",
       "required_actions": [
         "classify_implementation_required",
         "record_missing_guarantee",
@@ -2102,54 +2101,39 @@
         "reconcile_live_github_lineage",
         "choose_owner_lineage_disposition_before_authoring"
       ],
-      "forbidden_actions": [
-        "broaden_blocked_candidate",
-        "create_new_lineage_without_reconciliation",
-        "invent_workstream_mapping",
-        "ask_marco_for_routine_lineage_choice"
+      "required_rules": [
+        "external-defect-admission",
+        "scope-amplification-checkpoint"
       ],
-      "expected_outcome": "required_fix_is_admitted_to_reconciled_owner_lineage"
+      "roles": [
+        "development-workflow",
+        "implementation"
+      ]
     },
     {
-      "id": "truthful-liveness-attempt-isolation",
-      "roles": [
-        "coordinator",
-        "implementation"
-      ],
-      "prompt": "A handoff was recorded and an earlier attempt had execution evidence. A later attempt has no fresh acceptance/liveness receipt. Asana is In Progress and a branch exists. State the current execution status.",
-      "required_rules": [
-        "truthful-dispatch-liveness-language"
-      ],
-      "required_actions": [
-        "distinguish_handoff_launch_acceptance_running",
-        "reject_prior_attempt_as_current_liveness",
-        "report_strongest_proved_state_or_unknown"
-      ],
+      "expected_outcome": "current_attempt_liveness_is_unknown_without_current_evidence",
       "forbidden_actions": [
         "claim_running_from_asana",
         "claim_running_from_branch_or_pr",
         "reuse_attempt_n_evidence_for_attempt_n_plus_1"
       ],
-      "expected_outcome": "current_attempt_liveness_is_unknown_without_current_evidence"
+      "id": "truthful-liveness-attempt-isolation",
+      "prompt": "A handoff was recorded and an earlier attempt had execution evidence. A later attempt has no fresh acceptance/liveness receipt. Asana is In Progress and a branch exists. State the current execution status.",
+      "required_actions": [
+        "distinguish_handoff_launch_acceptance_running",
+        "reject_prior_attempt_as_current_liveness",
+        "report_strongest_proved_state_or_unknown"
+      ],
+      "required_rules": [
+        "truthful-dispatch-liveness-language"
+      ],
+      "roles": [
+        "coordinator",
+        "implementation"
+      ]
     },
     {
-      "id": "worker-role-phase-activation-boundary",
-      "roles": [
-        "development-workflow",
-        "implementation",
-        "review"
-      ],
-      "prompt": "A Worker Workspace Agent trigger returned HTTP 202 with an empty body for an exact role/phase/context. Decide whether the phase is active and whether this Worker may continue as Integration.",
-      "required_rules": [
-        "worker-host-role-boundary"
-      ],
-      "required_actions": [
-        "treat_202_as_admission_only",
-        "require_exact_durable_activation_witness",
-        "keep_legacy_phase_fallback_until_witness_and_first_result",
-        "preserve_exact_single_role_phase",
-        "keep_integration_outside_worker_authority"
-      ],
+      "expected_outcome": "worker_admitted_but_not_active_or_integration_authorized",
       "forbidden_actions": [
         "treat_202_as_completion",
         "fabricate_provider_run_id",
@@ -2157,343 +2141,808 @@
         "perform_integration_landing",
         "create_global_worker_lock"
       ],
-      "expected_outcome": "worker_admitted_but_not_active_or_integration_authorized"
+      "id": "worker-role-phase-activation-boundary",
+      "prompt": "A Worker Workspace Agent trigger returned HTTP 202 with an empty body for an exact role/phase/context. Decide whether the phase is active and whether this Worker may continue as Integration.",
+      "required_actions": [
+        "treat_202_as_admission_only",
+        "require_exact_durable_activation_witness",
+        "keep_legacy_phase_fallback_until_witness_and_first_result",
+        "preserve_exact_single_role_phase",
+        "keep_integration_outside_worker_authority"
+      ],
+      "required_rules": [
+        "worker-host-role-boundary"
+      ],
+      "roles": [
+        "development-workflow",
+        "implementation",
+        "review"
+      ]
     },
     {
+      "expected_outcome": "proceed_with_connector_native_review",
+      "forbidden_actions": [
+        "block-for-bundle-transport-only",
+        "route-local-for-bundle-transport-only",
+        "ask-marco-for-bundle-waiver-or-relay"
+      ],
       "id": "review-bundle-unavailable-proceeds",
-      "roles": [
-        "review"
+      "prompt": "Review a Dish PR. The exact current repository bundle cannot be discovered or retrieved, but connected GitHub/Asana provide live repository and current-main identity, exact PR base/head, the complete diff and changed files, relevant current-main authority/files, the linked task and durable decisions, prior formal Review/comments, and available CI/evidence. What do you do?",
+      "required_actions": [
+        "resolve-exact-pr-and-live-authority",
+        "use-connector-native-review-evidence",
+        "proceed-substantive-review"
       ],
       "required_rules": [
         "repository-context-admission",
         "review-repository-context",
         "review-bundle-fallback"
       ],
-      "prompt": "Review a Dish PR. The exact current repository bundle cannot be discovered or retrieved, but connected GitHub/Asana provide live repository and current-main identity, exact PR base/head, the complete diff and changed files, relevant current-main authority/files, the linked task and durable decisions, prior formal Review/comments, and available CI/evidence. What do you do?",
-      "expected_outcome": "proceed_with_connector_native_review",
-      "required_actions": [
-        "resolve-exact-pr-and-live-authority",
-        "use-connector-native-review-evidence",
-        "proceed-substantive-review"
-      ],
-      "forbidden_actions": [
-        "block-for-bundle-transport-only",
-        "route-local-for-bundle-transport-only",
-        "ask-marco-for-bundle-waiver-or-relay"
+      "roles": [
+        "review"
       ]
     },
     {
-      "id": "review-real-evidence-boundary-routes-local",
-      "roles": [
-        "review"
-      ],
-      "required_rules": [
-        "repository-context-admission",
-        "review-bundle-fallback"
-      ],
-      "prompt": "Review a Dish PR with no retrievable repository bundle. Connector-native repository, PR, task, diff, and current-main evidence are sufficient for the source review, but one merge-critical guarantee specifically requires a native local environment check unavailable to this Review host. What do you do?",
       "expected_outcome": "route_only_named_missing_evidence_boundary",
+      "forbidden_actions": [
+        "block-for-bundle-transport-only",
+        "ask-marco-for-bundle-waiver-or-relay"
+      ],
+      "id": "review-real-evidence-boundary-routes-local",
+      "prompt": "Review a Dish PR with no retrievable repository bundle. Connector-native repository, PR, task, diff, and current-main evidence are sufficient for the source review, but one merge-critical guarantee specifically requires a native local environment check unavailable to this Review host. What do you do?",
       "required_actions": [
         "name-unresolved-semantic-guarantee",
         "route-exact-local-evidence-boundary"
       ],
-      "forbidden_actions": [
-        "block-for-bundle-transport-only",
-        "ask-marco-for-bundle-waiver-or-relay"
-      ]
-    },
-    {
-      "id": "review-stale-bundle-rejected",
-      "roles": [
-        "review"
-      ],
       "required_rules": [
         "repository-context-admission",
         "review-bundle-fallback"
       ],
-      "prompt": "Review a Dish PR. A repository bundle is available but verification shows it is stale, corrupt, mismatched, or advertises the wrong SHA. Live connector-native exact PR/current-main/task evidence is otherwise sufficient for the merge question. What do you do?",
+      "roles": [
+        "review"
+      ]
+    },
+    {
       "expected_outcome": "reject_invalid_bundle_and_use_safe_exact_evidence",
+      "forbidden_actions": [
+        "treat-invalid-bundle-as-current",
+        "substitute-different-bundle-sha"
+      ],
+      "id": "review-stale-bundle-rejected",
+      "prompt": "Review a Dish PR. A repository bundle is available but verification shows it is stale, corrupt, mismatched, or advertises the wrong SHA. Live connector-native exact PR/current-main/task evidence is otherwise sufficient for the merge question. What do you do?",
       "required_actions": [
         "reject-invalid-bundle",
         "refuse-different-sha-substitution",
         "use-connector-native-review-evidence"
       ],
-      "forbidden_actions": [
-        "treat-invalid-bundle-as-current",
-        "substitute-different-bundle-sha"
+      "required_rules": [
+        "repository-context-admission",
+        "review-bundle-fallback"
+      ],
+      "roles": [
+        "review"
       ]
     },
     {
-      "id": "review-bundle-outage-regression-fixtures",
-      "roles": [
-        "review"
-      ],
-      "required_rules": [
-        "review-bundle-fallback"
-      ],
-      "prompt": "Regression fixture for the PR #147/#151/#158 failure class: exact repository-bundle discovery is unavailable, while exact connector-native PR/base/head/diff/current-main/task/Review/CI evidence is sufficient. Continue the Review workflow without asking Marco to waive the bundle gate.",
       "expected_outcome": "review_fixture_proceeds_without_human_bundle_action",
-      "required_actions": [
-        "use-connector-native-review-evidence",
-        "proceed-substantive-review"
-      ],
       "forbidden_actions": [
         "block-for-bundle-transport-only",
         "route-local-for-bundle-transport-only",
         "ask-marco-for-bundle-waiver-or-relay"
+      ],
+      "id": "review-bundle-outage-regression-fixtures",
+      "prompt": "Regression fixture for the PR #147/#151/#158 failure class: exact repository-bundle discovery is unavailable, while exact connector-native PR/base/head/diff/current-main/task/Review/CI evidence is sufficient. Continue the Review workflow without asking Marco to waive the bundle gate.",
+      "required_actions": [
+        "use-connector-native-review-evidence",
+        "proceed-substantive-review"
+      ],
+      "required_rules": [
+        "review-bundle-fallback"
+      ],
+      "roles": [
+        "review"
       ]
     },
     {
-      "id": "attention-depth-is-session-persistent",
-      "roles": ["implementation"],
-      "required_rules": [],
-      "prompt": "Earlier in this session Marco requested 50% depth. Now he asks for a routine status; later he explicitly changes to 200% and asks for the design rationale. Apply the current session setting at the matching abstraction.",
       "expected_outcome": "depth_follows_latest_explicit_session_setting_after_intent_selection",
-      "required_actions": ["persist-latest-explicit-depth", "select-intent-before-depth", "scale-useful-explanation-only", "match-status-and-design-altitude"],
-      "forbidden_actions": ["treat-depth-as-authority-change", "ignore-later-explicit-depth", "apply-depth-before-intent"]
+      "forbidden_actions": [
+        "treat-depth-as-authority-change",
+        "ignore-later-explicit-depth",
+        "apply-depth-before-intent"
+      ],
+      "id": "attention-depth-is-session-persistent",
+      "prompt": "Earlier in this session Marco requested 50% depth. Now he asks for a routine status; later he explicitly changes to 200% and asks for the design rationale. Apply the current session setting at the matching abstraction.",
+      "required_actions": [
+        "persist-latest-explicit-depth",
+        "select-intent-before-depth",
+        "scale-useful-explanation-only",
+        "match-status-and-design-altitude"
+      ],
+      "required_rules": [],
+      "roles": [
+        "implementation"
+      ]
     },
     {
-      "id": "attention-minimum-packet-survives-50-percent",
-      "roles": ["implementation", "review"],
-      "required_rules": [],
-      "prompt": "Marco has set 50% depth. The current candidate has a real blocker that needs his decision and exposes a material risk. Report it.",
       "expected_outcome": "concise_blocker_preserves_minimum_sufficient_operator_packet",
-      "required_actions": ["state-current-truth", "state-marco-decision", "state-material-risk", "state-next-owner-or-continuation", "keep-decision-reasoning"],
-      "forbidden_actions": ["suppress-required-blocker-packet-for-depth", "hide-material-risk", "ask-redundant-permission"]
+      "forbidden_actions": [
+        "suppress-required-blocker-packet-for-depth",
+        "hide-material-risk",
+        "ask-redundant-permission"
+      ],
+      "id": "attention-minimum-packet-survives-50-percent",
+      "prompt": "Marco has set 50% depth. The current candidate has a real blocker that needs his decision and exposes a material risk. Report it.",
+      "required_actions": [
+        "state-current-truth",
+        "state-marco-decision",
+        "state-material-risk",
+        "state-next-owner-or-continuation",
+        "keep-decision-reasoning"
+      ],
+      "required_rules": [],
+      "roles": [
+        "implementation",
+        "review"
+      ]
     },
     {
-      "id": "attention-progressive-disclosure-at-200-percent",
-      "roles": ["development-workflow", "review"],
-      "required_rules": [],
-      "prompt": "Marco explicitly asks for a 200% deep dive on the architecture decision. Explain it without turning the response into a process chronology or unrelated lifecycle dump.",
       "expected_outcome": "deep_dive_adds_decision_relevant_reasoning_without_attention_dump",
-      "required_actions": ["honor-200-percent-depth", "lead-with-decision-or-direction", "provide-deeper-decision-reasoning", "keep-progressive-disclosure"],
-      "forbidden_actions": ["dump-irrelevant-chronology", "dump-unrelated-process-taxonomy", "treat-depth-as-unbounded-detail"]
-    },
-    {
-      "id": "attention-recovery-interaction",
-      "roles": ["implementation"],
+      "forbidden_actions": [
+        "dump-irrelevant-chronology",
+        "dump-unrelated-process-taxonomy",
+        "treat-depth-as-unbounded-detail"
+      ],
+      "id": "attention-progressive-disclosure-at-200-percent",
+      "prompt": "Marco explicitly asks for a 200% deep dive on the architecture decision. Explain it without turning the response into a process chronology or unrelated lifecycle dump.",
+      "required_actions": [
+        "honor-200-percent-depth",
+        "lead-with-decision-or-direction",
+        "provide-deeper-decision-reasoning",
+        "keep-progressive-disclosure"
+      ],
       "required_rules": [],
-      "prompt": "A bounded autonomous recovery is making routine authorized retries without ambiguity. Later it exhausts its bounded recovery and needs Marco to choose between two materially different paths. Communicate both moments.",
+      "roles": [
+        "development-workflow",
+        "review"
+      ]
+    },
+    {
       "expected_outcome": "routine_recovery_stays_quiet_but_material_exhaustion_surfaces_full_packet",
-      "required_actions": ["continue-routine-recovery-without-interruption", "surface-exhaustion-as-real-blocker", "state-material-choice-and-consequence", "preserve-minimum-sufficient-packet"],
-      "forbidden_actions": ["narrate-every-routine-retry", "hide-recovery-exhaustion", "continue-past-material-ambiguity"]
+      "forbidden_actions": [
+        "narrate-every-routine-retry",
+        "hide-recovery-exhaustion",
+        "continue-past-material-ambiguity"
+      ],
+      "id": "attention-recovery-interaction",
+      "prompt": "A bounded autonomous recovery is making routine authorized retries without ambiguity. Later it exhausts its bounded recovery and needs Marco to choose between two materially different paths. Communicate both moments.",
+      "required_actions": [
+        "continue-routine-recovery-without-interruption",
+        "surface-exhaustion-as-real-blocker",
+        "state-material-choice-and-consequence",
+        "preserve-minimum-sufficient-packet"
+      ],
+      "required_rules": [],
+      "roles": [
+        "implementation"
+      ]
     },
     {
-      "id": "development-workflow-asana-legacy-mode",
-      "roles": ["coordinator", "development-workflow", "implementation", "review", "integration", "workflow", "postgresql-dark-launch", "audit"],
-      "required_rules": ["development-workflow-asana-mode"],
-      "prompt": "You are authorized to perform a governed owning-task lifecycle write. Live Asana readback shows project GID 1217419962189616, exact name `Dish — Development Workflow`, all legacy lifecycle sections, no V2-only lifecycle section, plus the service-created `Untitled section`. Decide the mode and write boundary.",
       "expected_outcome": "classify_exact_legacy_and_use_only_legacy_lifecycle",
-      "required_actions": ["read-exact-project-gid-name-and-complete-sections", "classify-legacy-mode", "use-only-legacy-lifecycle", "verify-asana-writeback"],
-      "forbidden_actions": ["fuzzy-match-project-name", "use-v2-lifecycle", "create-v2-section-opportunistically"]
+      "forbidden_actions": [
+        "fuzzy-match-project-name",
+        "use-v2-lifecycle",
+        "create-v2-section-opportunistically"
+      ],
+      "id": "development-workflow-asana-legacy-mode",
+      "prompt": "You are authorized to perform a governed owning-task lifecycle write. Live Asana readback shows project GID 1217419962189616, exact name `Dish \u2014 Development Workflow`, all legacy lifecycle sections, no V2-only lifecycle section, plus the service-created `Untitled section`. Decide the mode and write boundary.",
+      "required_actions": [
+        "read-exact-project-gid-name-and-complete-sections",
+        "classify-legacy-mode",
+        "use-only-legacy-lifecycle",
+        "verify-asana-writeback"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "roles": [
+        "coordinator",
+        "development-workflow",
+        "implementation",
+        "review",
+        "integration",
+        "workflow",
+        "postgresql-dark-launch",
+        "audit"
+      ]
     },
     {
-      "id": "development-workflow-asana-v2-mode",
-      "roles": ["coordinator", "development-workflow", "implementation", "review", "integration", "workflow", "postgresql-dark-launch", "audit"],
-      "required_rules": ["development-workflow-asana-mode"],
-      "prompt": "You are authorized to perform a governed owning-task lifecycle write. Live Asana readback shows project GID 1217419962189616, exact name `Dish — Development Workflow v2`, all nine V2 lifecycle sections, and no legacy-only lifecycle section. Decide the mode and write boundary.",
       "expected_outcome": "classify_exact_v2_and_use_only_v2_lifecycle",
-      "required_actions": ["read-exact-project-gid-name-and-complete-sections", "classify-v2-mode", "use-only-v2-lifecycle", "verify-asana-writeback"],
-      "forbidden_actions": ["fuzzy-match-project-name", "use-legacy-lifecycle", "recreate-legacy-section"]
+      "forbidden_actions": [
+        "fuzzy-match-project-name",
+        "use-legacy-lifecycle",
+        "recreate-legacy-section"
+      ],
+      "id": "development-workflow-asana-v2-mode",
+      "prompt": "You are authorized to perform a governed owning-task lifecycle write. Live Asana readback shows project GID 1217419962189616, exact name `Dish \u2014 Development Workflow v2`, all nine V2 lifecycle sections, and no legacy-only lifecycle section. Decide the mode and write boundary.",
+      "required_actions": [
+        "read-exact-project-gid-name-and-complete-sections",
+        "classify-v2-mode",
+        "use-only-v2-lifecycle",
+        "verify-asana-writeback"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "roles": [
+        "coordinator",
+        "development-workflow",
+        "implementation",
+        "review",
+        "integration",
+        "workflow",
+        "postgresql-dark-launch",
+        "audit"
+      ]
     },
     {
-      "id": "development-workflow-asana-v3-abort",
-      "roles": ["coordinator", "development-workflow", "implementation", "review", "integration", "workflow", "postgresql-dark-launch", "audit"],
-      "required_rules": ["development-workflow-asana-mode"],
-      "prompt": "A governed Development Workflow Asana mutation is otherwise authorized, but live readback shows canonical GID 1217419962189616 and exact project name `Dish — Development Workflow v3`. This stage-1 settings generation has no GPT Action write protocol. Act.",
       "expected_outcome": "abort_v3_governed_mutation_with_upgrade_protocol_stop",
-      "required_actions": ["read-exact-project-gid-name-and-complete-sections", "perform-zero-governed-asana-mutation", "return-project-mode-v3-requires-updated-project-settings-gpt-action-protocol"],
-      "forbidden_actions": ["perform-governed-asana-mutation", "guess-v3-semantics", "fall-back-to-legacy-lifecycle"]
+      "forbidden_actions": [
+        "perform-governed-asana-mutation",
+        "guess-v3-semantics",
+        "fall-back-to-legacy-lifecycle"
+      ],
+      "id": "development-workflow-asana-v3-abort",
+      "prompt": "A governed Development Workflow Asana mutation is otherwise authorized, but live readback shows canonical GID 1217419962189616 and exact project name `Dish \u2014 Development Workflow v3`. This stage-1 settings generation has no GPT Action write protocol. Act.",
+      "required_actions": [
+        "read-exact-project-gid-name-and-complete-sections",
+        "perform-zero-governed-asana-mutation",
+        "return-project-mode-v3-requires-updated-project-settings-gpt-action-protocol"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "roles": [
+        "coordinator",
+        "development-workflow",
+        "implementation",
+        "review",
+        "integration",
+        "workflow",
+        "postgresql-dark-launch",
+        "audit"
+      ]
     },
     {
-      "id": "development-workflow-asana-contradiction-abort",
-      "roles": ["coordinator", "development-workflow", "implementation", "review", "integration", "workflow", "postgresql-dark-launch", "audit"],
-      "required_rules": ["development-workflow-asana-mode"],
-      "prompt": "A governed Development Workflow Asana mutation is otherwise authorized. Live readback shows canonical GID 1217419962189616 and exact name `Dish — Development Workflow v2`, but legacy-only `In Progress` and `Review / Integration` remain and `Needs Processing` is missing. Act.",
       "expected_outcome": "abort_name_structure_contradiction_without_repair_guess",
-      "required_actions": ["read-exact-project-gid-name-and-complete-sections", "classify-name-structure-contradiction", "perform-zero-governed-asana-mutation", "report-exact-structural-mismatch"],
-      "forbidden_actions": ["perform-governed-asana-mutation", "repair-project-by-guessing", "recreate-or-select-lifecycle-by-substring"]
+      "forbidden_actions": [
+        "perform-governed-asana-mutation",
+        "repair-project-by-guessing",
+        "recreate-or-select-lifecycle-by-substring"
+      ],
+      "id": "development-workflow-asana-contradiction-abort",
+      "prompt": "A governed Development Workflow Asana mutation is otherwise authorized. Live readback shows canonical GID 1217419962189616 and exact name `Dish \u2014 Development Workflow v2`, but legacy-only `In Progress` and `Review / Integration` remain and `Needs Processing` is missing. Act.",
+      "required_actions": [
+        "read-exact-project-gid-name-and-complete-sections",
+        "classify-name-structure-contradiction",
+        "perform-zero-governed-asana-mutation",
+        "report-exact-structural-mismatch"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "roles": [
+        "coordinator",
+        "development-workflow",
+        "implementation",
+        "review",
+        "integration",
+        "workflow",
+        "postgresql-dark-launch",
+        "audit"
+      ]
     },
     {
-      "id": "development-workflow-asana-unknown-version-abort",
-      "roles": ["coordinator", "development-workflow", "implementation", "review", "integration", "workflow", "postgresql-dark-launch", "audit"],
-      "required_rules": ["development-workflow-asana-mode"],
-      "prompt": "A governed Development Workflow Asana mutation is otherwise authorized. Live readback shows canonical GID 1217419962189616 and exact project name `Dish — Development Workflow v4`. Act.",
       "expected_outcome": "abort_unknown_project_version_without_guessing",
-      "required_actions": ["read-exact-project-gid-name-and-complete-sections", "classify-unknown-project-version", "perform-zero-governed-asana-mutation", "report-exact-observed-name"],
-      "forbidden_actions": ["perform-governed-asana-mutation", "fuzzy-match-project-name", "assume-latest-known-mode"]
+      "forbidden_actions": [
+        "perform-governed-asana-mutation",
+        "fuzzy-match-project-name",
+        "assume-latest-known-mode"
+      ],
+      "id": "development-workflow-asana-unknown-version-abort",
+      "prompt": "A governed Development Workflow Asana mutation is otherwise authorized. Live readback shows canonical GID 1217419962189616 and exact project name `Dish \u2014 Development Workflow v4`. Act.",
+      "required_actions": [
+        "read-exact-project-gid-name-and-complete-sections",
+        "classify-unknown-project-version",
+        "perform-zero-governed-asana-mutation",
+        "report-exact-observed-name"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "roles": [
+        "coordinator",
+        "development-workflow",
+        "implementation",
+        "review",
+        "integration",
+        "workflow",
+        "postgresql-dark-launch",
+        "audit"
+      ]
     },
     {
-      "id": "development-workflow-asana-later-hold-controls",
-      "roles": ["development-workflow"],
-      "required_rules": ["development-workflow-asana-mode"],
-      "prompt": "A task has an old independent Review PASS and Ready wording, followed by a later durable Marco hold. Classify its current V2 lifecycle state.",
       "expected_outcome": "later_authoritative_hold_controls_over_old_pass",
-      "required_actions": ["reconstruct-chronological-authority", "treat-later-hold-as-current", "reject-ready-classification"],
-      "forbidden_actions": ["let-old-pass-control", "classify-ready-from-historical-wording"]
+      "forbidden_actions": [
+        "let-old-pass-control",
+        "classify-ready-from-historical-wording"
+      ],
+      "id": "development-workflow-asana-later-hold-controls",
+      "prompt": "A task has an old independent Review PASS and Ready wording, followed by a later durable Marco hold. Classify its current V2 lifecycle state.",
+      "required_actions": [
+        "reconstruct-chronological-authority",
+        "treat-later-hold-as-current",
+        "reject-ready-classification"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "roles": [
+        "development-workflow"
+      ]
     },
     {
-      "id": "development-workflow-asana-audit-blocker-no-inference",
-      "roles": ["development-workflow"],
-      "required_rules": ["development-workflow-asana-mode"],
-      "prompt": "A detailed audit finding calls an issue BLOCKER but contains no accepted implementation authority or explicit priority. Classify it.",
       "expected_outcome": "audit_severity_does_not_invent_ready_or_priority",
-      "required_actions": ["route-to-actual-next-step", "keep-priority-unset", "reject-ready-without-affirmative-dispatchability"],
-      "forbidden_actions": ["classify-ready-from-blocker-word", "infer-p0-or-critical"]
+      "forbidden_actions": [
+        "classify-ready-from-blocker-word",
+        "infer-p0-or-critical"
+      ],
+      "id": "development-workflow-asana-audit-blocker-no-inference",
+      "prompt": "A detailed audit finding calls an issue BLOCKER but contains no accepted implementation authority or explicit priority. Classify it.",
+      "required_actions": [
+        "route-to-actual-next-step",
+        "keep-priority-unset",
+        "reject-ready-without-affirmative-dispatchability"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "roles": [
+        "development-workflow"
+      ]
     },
     {
-      "id": "development-workflow-asana-design-awaits-agentic-review",
-      "roles": ["development-workflow"],
-      "required_rules": ["development-workflow-asana-mode"],
-      "prompt": "A concrete bounded design is complete. The only remaining pre-development step is independent agentic design review. Classify it.",
       "expected_outcome": "bounded_design_routes_to_needs_agentic_review",
-      "required_actions": ["classify-needs-agentic-review", "distinguish-predevelopment-review-from-pr-review"],
-      "forbidden_actions": ["classify-needs-research", "classify-ready"]
+      "forbidden_actions": [
+        "classify-needs-research",
+        "classify-ready"
+      ],
+      "id": "development-workflow-asana-design-awaits-agentic-review",
+      "prompt": "A concrete bounded design is complete. The only remaining pre-development step is independent agentic design review. Classify it.",
+      "required_actions": [
+        "classify-needs-agentic-review",
+        "distinguish-predevelopment-review-from-pr-review"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "roles": [
+        "development-workflow"
+      ]
     },
     {
-      "id": "development-workflow-asana-later-prohibition-controls",
-      "roles": ["development-workflow"],
-      "required_rules": ["development-workflow-asana-mode"],
-      "prompt": "PASS-like language is followed by a later explicit durable statement: `no implementation authorized`. Classify the task.",
       "expected_outcome": "later_implementation_prohibition_blocks_ready",
-      "required_actions": ["reconstruct-chronological-authority", "treat-prohibition-as-current", "reject-ready-classification"],
-      "forbidden_actions": ["let-pass-like-language-authorize-implementation", "classify-ready"]
+      "forbidden_actions": [
+        "let-pass-like-language-authorize-implementation",
+        "classify-ready"
+      ],
+      "id": "development-workflow-asana-later-prohibition-controls",
+      "prompt": "PASS-like language is followed by a later explicit durable statement: `no implementation authorized`. Classify the task.",
+      "required_actions": [
+        "reconstruct-chronological-authority",
+        "treat-prohibition-as-current",
+        "reject-ready-classification"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "roles": [
+        "development-workflow"
+      ]
     },
     {
-      "id": "development-workflow-asana-folded-owner-done",
-      "roles": ["development-workflow"],
-      "required_rules": ["development-workflow-asana-mode"],
-      "prompt": "Current durable evidence says this task was folded into a canonical owner whose source merged, and this task has no residual responsibility. Classify it.",
       "expected_outcome": "folded_responsibility_is_done",
-      "required_actions": ["honor-current-ownership-transfer", "classify-done"],
-      "forbidden_actions": ["keep-task-active-from-older-history", "classify-under-development"]
+      "forbidden_actions": [
+        "keep-task-active-from-older-history",
+        "classify-under-development"
+      ],
+      "id": "development-workflow-asana-folded-owner-done",
+      "prompt": "Current durable evidence says this task was folded into a canonical owner whose source merged, and this task has no residual responsibility. Classify it.",
+      "required_actions": [
+        "honor-current-ownership-transfer",
+        "classify-done"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "roles": [
+        "development-workflow"
+      ]
     },
     {
-      "id": "development-workflow-asana-post-merge-rollout",
-      "roles": ["development-workflow"],
-      "required_rules": ["development-workflow-asana-mode"],
-      "prompt": "The owning source has merged, but task-specific rollout and operator acceptance remain open. Classify it.",
       "expected_outcome": "merged_with_residual_rollout_is_not_done",
-      "required_actions": ["classify-needs-post-merge-rollout", "preserve-runtime-deployment-authority"],
-      "forbidden_actions": ["classify-done-from-source-merge-alone"]
+      "forbidden_actions": [
+        "classify-done-from-source-merge-alone"
+      ],
+      "id": "development-workflow-asana-post-merge-rollout",
+      "prompt": "The owning source has merged, but task-specific rollout and operator acceptance remain open. Classify it.",
+      "required_actions": [
+        "classify-needs-post-merge-rollout",
+        "preserve-runtime-deployment-authority"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "roles": [
+        "development-workflow"
+      ]
     },
     {
-      "id": "development-workflow-asana-named-dependency",
-      "roles": ["development-workflow"],
-      "required_rules": ["development-workflow-asana-mode"],
-      "prompt": "A task names an unresolved external dependency, its unblock owner, wake condition, and what follows. Classify it.",
       "expected_outcome": "named_unresolved_dependency_waits",
-      "required_actions": ["classify-waiting-on-dependency", "preserve-wake-contract"],
-      "forbidden_actions": ["classify-ready", "promote-to-human-review"]
+      "forbidden_actions": [
+        "classify-ready",
+        "promote-to-human-review"
+      ],
+      "id": "development-workflow-asana-named-dependency",
+      "prompt": "A task names an unresolved external dependency, its unblock owner, wake condition, and what follows. Classify it.",
+      "required_actions": [
+        "classify-waiting-on-dependency",
+        "preserve-wake-contract"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "roles": [
+        "development-workflow"
+      ]
     },
     {
-      "id": "development-workflow-asana-raw-intake",
-      "roles": ["development-workflow"],
-      "required_rules": ["development-workflow-asana-mode"],
-      "prompt": "A record explicitly identifies itself as raw idea-inbox intake that has not been triaged. Classify it.",
       "expected_outcome": "raw_untriaged_intake_needs_processing",
-      "required_actions": ["classify-needs-processing"],
-      "forbidden_actions": ["assume-research-required", "classify-ready"]
+      "forbidden_actions": [
+        "assume-research-required",
+        "classify-ready"
+      ],
+      "id": "development-workflow-asana-raw-intake",
+      "prompt": "A record explicitly identifies itself as raw idea-inbox intake that has not been triaged. Classify it.",
+      "required_actions": [
+        "classify-needs-processing"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "roles": [
+        "development-workflow"
+      ]
     },
     {
-      "id": "development-workflow-asana-ambiguous-chronology",
-      "roles": ["development-workflow"],
-      "required_rules": ["development-workflow-asana-mode"],
-      "prompt": "Task ownership and chronological evidence conflict, and no single current destination can be proved. There is no live reconciliation section. Act.",
       "expected_outcome": "ambiguity_is_reconciliation_not_guessed_lifecycle",
-      "required_actions": ["classify-reconciliation-required", "leave-structured-state-unchanged", "surface-bounded-ambiguity-to-reconciliation-owner"],
-      "forbidden_actions": ["guess-ready", "guess-human-review", "invent-reconciliation-section"]
+      "forbidden_actions": [
+        "guess-ready",
+        "guess-human-review",
+        "invent-reconciliation-section"
+      ],
+      "id": "development-workflow-asana-ambiguous-chronology",
+      "prompt": "Task ownership and chronological evidence conflict, and no single current destination can be proved. There is no live reconciliation section. Act.",
+      "required_actions": [
+        "classify-reconciliation-required",
+        "leave-structured-state-unchanged",
+        "surface-bounded-ambiguity-to-reconciliation-owner"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "roles": [
+        "development-workflow"
+      ]
     },
     {
-      "id": "development-workflow-asana-projection-contradiction",
-      "roles": ["development-workflow"],
-      "required_rules": ["development-workflow-asana-mode"],
-      "prompt": "A migrated section contradicts current durable authority. In case A the correct destination is mechanically clear and your role owns repair; in case B the destination remains ambiguous. State both actions.",
       "expected_outcome": "repair_clear_projection_and_fail_closed_on_ambiguity",
-      "required_actions": ["repair-smallest-structured-state-when-clear-and-authorized", "verify-authoritative-readback", "leave-state-unchanged-when-unclear", "classify-unclear-case-reconciliation-required"],
-      "forbidden_actions": ["blindly-trust-migrated-projection", "guess-unclear-destination", "use-comment-as-repair"]
+      "forbidden_actions": [
+        "blindly-trust-migrated-projection",
+        "guess-unclear-destination",
+        "use-comment-as-repair"
+      ],
+      "id": "development-workflow-asana-projection-contradiction",
+      "prompt": "A migrated section contradicts current durable authority. In case A the correct destination is mechanically clear and your role owns repair; in case B the destination remains ambiguous. State both actions.",
+      "required_actions": [
+        "repair-smallest-structured-state-when-clear-and-authorized",
+        "verify-authoritative-readback",
+        "leave-state-unchanged-when-unclear",
+        "classify-unclear-case-reconciliation-required"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "roles": [
+        "development-workflow"
+      ]
     },
     {
-      "id": "development-workflow-asana-comment-is-not-state",
-      "roles": ["development-workflow"],
-      "required_rules": ["development-workflow-asana-mode"],
-      "prompt": "An authorized agent comments `Ready`, but the structured section remains stale even though current authority clearly requires Ready. Decide whether the operation succeeded and finish it correctly.",
       "expected_outcome": "comment_only_state_change_fails_until_structured_write_readback",
-      "required_actions": ["reject-comment-only-success", "write-structured-ready-section", "verify-authoritative-readback"],
-      "forbidden_actions": ["treat-comment-as-section-update", "claim-success-before-readback"]
+      "forbidden_actions": [
+        "treat-comment-as-section-update",
+        "claim-success-before-readback"
+      ],
+      "id": "development-workflow-asana-comment-is-not-state",
+      "prompt": "An authorized agent comments `Ready`, but the structured section remains stale even though current authority clearly requires Ready. Decide whether the operation succeeded and finish it correctly.",
+      "required_actions": [
+        "reject-comment-only-success",
+        "write-structured-ready-section",
+        "verify-authoritative-readback"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "roles": [
+        "development-workflow"
+      ]
     },
     {
-      "id": "development-workflow-asana-contextual-version",
-      "roles": ["development-workflow"],
-      "required_rules": ["development-workflow-asana-mode"],
-      "prompt": "Task prose mentions `Integration V1` and `Review V2` only as dependencies/context, with no durable task-version record. Set the Version field.",
       "expected_outcome": "contextual_version_words_do_not_populate_field",
-      "required_actions": ["leave-version-unset", "require-own-version-generation-evidence"],
-      "forbidden_actions": ["set-version-to-integration-v1", "set-version-to-review-v2"]
+      "forbidden_actions": [
+        "set-version-to-integration-v1",
+        "set-version-to-review-v2"
+      ],
+      "id": "development-workflow-asana-contextual-version",
+      "prompt": "Task prose mentions `Integration V1` and `Review V2` only as dependencies/context, with no durable task-version record. Set the Version field.",
+      "required_actions": [
+        "leave-version-unset",
+        "require-own-version-generation-evidence"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "roles": [
+        "development-workflow"
+      ]
     },
     {
-      "id": "development-workflow-asana-priority-absent",
-      "roles": ["development-workflow"],
-      "required_rules": ["development-workflow-asana-mode"],
-      "prompt": "A severe-sounding task has no explicit Marco/durable priority authority and no approved deterministic priority rule. Set Priority.",
       "expected_outcome": "missing_priority_authority_remains_unset",
-      "required_actions": ["set-or-preserve-priority-unset"],
-      "forbidden_actions": ["infer-priority-from-title", "infer-priority-from-severity"]
+      "forbidden_actions": [
+        "infer-priority-from-title",
+        "infer-priority-from-severity"
+      ],
+      "id": "development-workflow-asana-priority-absent",
+      "prompt": "A severe-sounding task has no explicit Marco/durable priority authority and no approved deterministic priority rule. Set Priority.",
+      "required_actions": [
+        "set-or-preserve-priority-unset"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "roles": [
+        "development-workflow"
+      ]
     },
     {
-      "id": "development-workflow-asana-historical-final-stamp",
-      "roles": ["development-workflow"],
-      "required_rules": ["development-workflow-asana-mode"],
-      "prompt": "Old project prose claims every task needs Marco's final stamp, but current standing authority and this task establish no such human gate. Classify it.",
       "expected_outcome": "historical_projectwide_human_gate_is_not_current_authority",
-      "required_actions": ["ignore-bogus-historical-final-stamp-gate", "route-from-current-task-specific-authority"],
-      "forbidden_actions": ["classify-needs-human-review-from-historical-global-gate", "invent-human-approval"]
+      "forbidden_actions": [
+        "classify-needs-human-review-from-historical-global-gate",
+        "invent-human-approval"
+      ],
+      "id": "development-workflow-asana-historical-final-stamp",
+      "prompt": "Old project prose claims every task needs Marco's final stamp, but current standing authority and this task establish no such human gate. Classify it.",
+      "required_actions": [
+        "ignore-bogus-historical-final-stamp-gate",
+        "route-from-current-task-specific-authority"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "roles": [
+        "development-workflow"
+      ]
     },
     {
-      "id": "development-workflow-asana-stale-session-fresh-read",
-      "roles": ["development-workflow"],
-      "required_rules": ["development-workflow-asana-mode"],
-      "prompt": "An already-running session has stale legacy lifecycle wording in loaded context and cannot prove it freshly read the current V2 operating contract before an otherwise-authorized write. Act.",
       "expected_outcome": "stale_session_cannot_silently_write_with_legacy_semantics",
-      "required_actions": ["perform-zero-governed-asana-mutation", "freshly-reload-current-contract-or-restart", "allow-only-explicit-scoped-current-session-override"],
-      "forbidden_actions": ["write-using-stale-legacy-semantics", "assume-repository-regrounding-refreshed-loaded-settings"]
+      "forbidden_actions": [
+        "write-using-stale-legacy-semantics",
+        "assume-repository-regrounding-refreshed-loaded-settings"
+      ],
+      "id": "development-workflow-asana-stale-session-fresh-read",
+      "prompt": "An already-running session has stale legacy lifecycle wording in loaded context and cannot prove it freshly read the current V2 operating contract before an otherwise-authorized write. Act.",
+      "required_actions": [
+        "perform-zero-governed-asana-mutation",
+        "freshly-reload-current-contract-or-restart",
+        "allow-only-explicit-scoped-current-session-override"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "roles": [
+        "development-workflow"
+      ]
     },
     {
-      "id": "asana-v2-project-registry-postgresql-contradictory-sections",
-      "roles": ["audit", "coordinator", "implementation", "integration", "postgresql-dark-launch", "review", "workflow"],
-      "required_rules": ["asana-v2-project-registry"],
-      "prompt": "You are considering a governed Asana lifecycle write. Live Asana readback shows project GID 1217404747383060, exact name `Dish — PostgreSQL / Dark Launch v2`, with 8 of 9 V2 lifecycle sections present (missing `Needs Post-Merge Rollout`). Classification comes only from the live project name and section signature, never from any stored or repository-driven state. Decide whether to perform the write.",
       "expected_outcome": "refuse_governed_mutation_contradictory_v2_name_incomplete_sections",
-      "required_actions": ["read-exact-project-gid-name-and-complete-sections", "apply-asana-v2-project-mode-registry", "classify-contradictory", "perform-zero-governed-asana-mutation", "report-exact-section-mismatch"],
-      "forbidden_actions": ["perform-governed-asana-mutation", "treat-8-of-9-as-v2-governed", "silently-add-missing-section", "repair-or-rename-project"]
+      "forbidden_actions": [
+        "perform-governed-asana-mutation",
+        "treat-8-of-9-as-v2-governed",
+        "silently-add-missing-section",
+        "repair-or-rename-project"
+      ],
+      "id": "asana-v2-project-registry-postgresql-contradictory-sections",
+      "prompt": "You are considering a governed Asana lifecycle write. Live Asana readback shows project GID 1217404747383060, exact name `Dish \u2014 PostgreSQL / Dark Launch v2`, with 8 of 9 V2 lifecycle sections present (missing `Needs Post-Merge Rollout`). Classification comes only from the live project name and section signature, never from any stored or repository-driven state. Decide whether to perform the write.",
+      "required_actions": [
+        "read-exact-project-gid-name-and-complete-sections",
+        "apply-asana-v2-project-mode-registry",
+        "classify-contradictory",
+        "perform-zero-governed-asana-mutation",
+        "report-exact-section-mismatch"
+      ],
+      "required_rules": [
+        "asana-v2-project-registry"
+      ],
+      "roles": [
+        "audit",
+        "coordinator",
+        "implementation",
+        "integration",
+        "postgresql-dark-launch",
+        "review",
+        "workflow"
+      ]
     },
     {
-      "id": "asana-v2-project-registry-coordinator-legacy-bare-name",
-      "roles": ["audit", "coordinator", "implementation", "integration", "postgresql-dark-launch", "review", "workflow"],
-      "required_rules": ["asana-v2-project-registry"],
-      "prompt": "You are considering a governed V2 Asana lifecycle write. Live Asana readback shows project GID 1217382473444945, exact name `Dish — Coordinator` with no version suffix, legacy sections `Backlog`, `Ready`, `In Progress`, `Review / Integration`, `Blocked / Decision`, `Done`, plus `Untitled section`, and no V2 custom fields. Classification comes only from the live project name, never from any stored or repository-driven state. Decide whether to perform the write.",
       "expected_outcome": "refuse_governed_v2_mutation_legacy_bare_name",
-      "required_actions": ["read-exact-project-gid-name-and-complete-sections", "apply-asana-v2-project-mode-registry", "classify-legacy", "perform-zero-governed-v2-asana-mutation"],
-      "forbidden_actions": ["perform-governed-asana-mutation", "apply-v2-lifecycle-to-legacy-structure", "infer-migration-from-name-similarity"]
+      "forbidden_actions": [
+        "perform-governed-asana-mutation",
+        "apply-v2-lifecycle-to-legacy-structure",
+        "infer-migration-from-name-similarity"
+      ],
+      "id": "asana-v2-project-registry-coordinator-legacy-bare-name",
+      "prompt": "You are considering a governed V2 Asana lifecycle write. Live Asana readback shows project GID 1217382473444945, exact name `Dish \u2014 Coordinator` with no version suffix, legacy sections `Backlog`, `Ready`, `In Progress`, `Review / Integration`, `Blocked / Decision`, `Done`, plus `Untitled section`, and no V2 custom fields. Classification comes only from the live project name, never from any stored or repository-driven state. Decide whether to perform the write.",
+      "required_actions": [
+        "read-exact-project-gid-name-and-complete-sections",
+        "apply-asana-v2-project-mode-registry",
+        "classify-legacy",
+        "perform-zero-governed-v2-asana-mutation"
+      ],
+      "required_rules": [
+        "asana-v2-project-registry"
+      ],
+      "roles": [
+        "audit",
+        "coordinator",
+        "implementation",
+        "integration",
+        "postgresql-dark-launch",
+        "review",
+        "workflow"
+      ]
     },
     {
-      "id": "asana-v2-project-registry-unknown-version-stop-and-flag",
-      "roles": ["audit", "coordinator", "implementation", "integration", "postgresql-dark-launch", "review", "workflow"],
-      "required_rules": ["asana-v2-project-registry"],
-      "prompt": "You are considering a governed Asana lifecycle write. Live Asana readback shows project GID 1217404747383060, exact name `Dish — PostgreSQL / Dark Launch v3`. This is a registered project, but the live name carries a version suffix other than `v2` that this contract has no rules for. Decide whether to perform the write.",
       "expected_outcome": "stop_and_flag_unrecognized_version_to_marco",
-      "required_actions": ["read-exact-project-gid-and-name", "apply-asana-v2-project-mode-registry", "classify-unrecognized-version", "perform-zero-governed-asana-mutation", "explicitly-flag-to-marco-and-ask"],
-      "forbidden_actions": ["perform-governed-asana-mutation", "guess-new-generation-rules", "fall-back-to-v2-rules-for-unrecognized-version", "silently-ignore-unrecognized-version"]
+      "forbidden_actions": [
+        "perform-governed-asana-mutation",
+        "guess-new-generation-rules",
+        "fall-back-to-v2-rules-for-unrecognized-version",
+        "silently-ignore-unrecognized-version"
+      ],
+      "id": "asana-v2-project-registry-unknown-version-stop-and-flag",
+      "prompt": "You are considering a governed Asana lifecycle write. Live Asana readback shows project GID 1217404747383060, exact name `Dish \u2014 PostgreSQL / Dark Launch v3`. This is a registered project, but the live name carries a version suffix other than `v2` that this contract has no rules for. Decide whether to perform the write.",
+      "required_actions": [
+        "read-exact-project-gid-and-name",
+        "apply-asana-v2-project-mode-registry",
+        "classify-unrecognized-version",
+        "perform-zero-governed-asana-mutation",
+        "explicitly-flag-to-marco-and-ask"
+      ],
+      "required_rules": [
+        "asana-v2-project-registry"
+      ],
+      "roles": [
+        "audit",
+        "coordinator",
+        "implementation",
+        "integration",
+        "postgresql-dark-launch",
+        "review",
+        "workflow"
+      ]
     },
     {
-      "id": "asana-v2-project-registry-unregistered-project-refusal",
-      "roles": ["audit", "coordinator", "implementation", "integration", "postgresql-dark-launch", "review", "workflow"],
-      "required_rules": ["asana-v2-project-registry"],
-      "prompt": "You are considering a governed V2 Asana lifecycle write on a Dish-prefixed project that has no row in the `asana-v2-project-mode.md` registry (for example, `Dish — Development Workflow Friction`). Decide whether to perform the write.",
       "expected_outcome": "refuse_governed_mutation_unregistered_project",
-      "required_actions": ["check-asana-v2-project-mode-registry", "classify-unregistered", "perform-zero-governed-asana-mutation"],
-      "forbidden_actions": ["perform-governed-asana-mutation", "apply-v2-semantics-by-name-similarity", "silently-ignore-project"]
+      "forbidden_actions": [
+        "perform-governed-asana-mutation",
+        "apply-v2-semantics-by-name-similarity",
+        "silently-ignore-project"
+      ],
+      "id": "asana-v2-project-registry-unregistered-project-refusal",
+      "prompt": "You are considering a governed V2 Asana lifecycle write on a Dish-prefixed project that has no row in the `asana-v2-project-mode.md` registry (for example, `Dish \u2014 Development Workflow Friction`). Decide whether to perform the write.",
+      "required_actions": [
+        "check-asana-v2-project-mode-registry",
+        "classify-unregistered",
+        "perform-zero-governed-asana-mutation"
+      ],
+      "required_rules": [
+        "asana-v2-project-registry"
+      ],
+      "roles": [
+        "audit",
+        "coordinator",
+        "implementation",
+        "integration",
+        "postgresql-dark-launch",
+        "review",
+        "workflow"
+      ]
+    },
+    {
+      "expected_outcome": "same_worker_exits_review_and_switches_to_implementation_without_second_marco_prompt",
+      "forbidden_actions": [
+        "ask-marco-for-routine-fix-it",
+        "mutate-source-while-review-active",
+        "require-worker-api-attempt-record",
+        "self-review-successor"
+      ],
+      "id": "manual-worker-block-switches-without-second-marco-prompt",
+      "prompt": "You are the normal manual Worker in Code Review for exact PR head H1. You have just durably submitted and verified a formal exact-head VERDICT: BLOCK. No automated Worker attempt/authorship record exists. What happens next?",
+      "required_actions": [
+        "finish-review-before-source-mutation",
+        "switch-semantic-role-to-implementation",
+        "bind-exact-task-pr-branch-head-and-block-review",
+        "do-not-require-automated-worker-provenance"
+      ],
+      "required_rules": [
+        "review-manual-worker-block-transition"
+      ],
+      "roles": [
+        "review"
+      ]
+    },
+    {
+      "expected_outcome": "fix_same_pr_blockers_publish_readback_then_stop_for_fresh_review",
+      "forbidden_actions": [
+        "expand-task-scope",
+        "review-own-successor",
+        "merge-or-integrate",
+        "require-second-marco-prompt"
+      ],
+      "id": "manual-worker-fix-publishes-and-stops-before-self-review",
+      "prompt": "The normal manual Worker has left Review after formal BLOCK on H1 and entered Implementation. Live task/PR/branch/H1/formal BLOCK identity still matches. Complete the bounded Worker fix behavior.",
+      "required_actions": [
+        "fix-only-formal-block-scope",
+        "publish-and-readback-successor",
+        "stop-before-independent-review",
+        "leave-integration-separate"
+      ],
+      "required_rules": [
+        "implementation-manual-worker-block-fix"
+      ],
+      "roles": [
+        "implementation"
+      ]
+    },
+    {
+      "expected_outcome": "manual_review_proceeds_without_automated_provenance_ceremony",
+      "forbidden_actions": [
+        "block-because-attempt-record-missing",
+        "launch-workspace-agent-to-create-provenance",
+        "invent-permanent-manual-taint"
+      ],
+      "id": "manual-worker-missing-automated-bookkeeping-is-not-a-review-gate",
+      "prompt": "A fresh normal Project-chat Worker receives Review PR #31. There is no dish-worker-attempt:v1 or dish-worker-authorship:v1 record, and the Worker does not remember/recover having authored the exact current head. Decide whether ordinary manual Review is allowed.",
+      "required_actions": [
+        "resolve-live-exact-pr-identity",
+        "apply-memory-based-independence",
+        "proceed-with-manual-review-without-automated-markers"
+      ],
+      "required_rules": [
+        "review-manual-worker-block-transition"
+      ],
+      "roles": [
+        "review"
+      ]
     }
   ],
   "schema_version": 3

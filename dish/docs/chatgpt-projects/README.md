@@ -17,7 +17,7 @@ The current standing role index maps to eight persistent Project boundaries:
 
 `source.json` is the canonical data source for shared kernel rules, permitted role composition, role-specific high-consequence gates, and each rule's default drift impact/surface/action boundaries. `manifest.json` records the source digest, rendered-kernel identity, and a machine-readable `change_history` between canonical versions. The `canonical_version` binds both rendered instructions and rule-impact metadata, so behaviorally meaningful bootstrap or drift-classification changes move the version. The manifest also maps each role to its generated Markdown kernel. `chatgpt_project_kernels.py` fails if the source topology differs from the current standing role index, so role-map changes cannot silently leave obsolete Project kernels behind.
 
-The generated role Markdown files are copyable Project-instruction text. Do not hand-edit them; change `source.json`, update the manifest version identity, and regenerate.
+The generated role Markdown files are copyable Project-instruction text. `worker.md` is also generated from `source.json` as a first-class execution profile without becoming a standing semantic role. Do not hand-edit generated Project files; change `source.json`, update the manifest version identity, and regenerate.
 
 `dish/docs/agents/design-principles.md` is the canonical detailed Design Principles document. Its stable DP-01…DP-10 bootstrap sentences are digest-bound by `source.json` and compiled into the shared `design-principles-bootstrap` rule. The generator writes that same concise projection into every current Project kernel and the current role index; those generated surfaces are projections, not second policy authorities.
 

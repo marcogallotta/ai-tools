@@ -1,7 +1,7 @@
 # Dish — Review
 
 PROJECT_ROLE: Review
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-7924b7da9fc0
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-57d0aeefd6b4
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/review.md
@@ -22,7 +22,7 @@ Triggered policy reads (before the governed action):
 - final human handoff / action translation -> `dish/docs/agents/review.md#Final human handoff`
 - friction / code-debt finding -> `dish/docs/agents/contributor-base.md#Development Workflow Friction capture` + `#Code-smell / engineering-debt logging`
 - phase-gate / Integration evidence -> `dish/docs/agents/review.md#Evidence and integration gates`
-- review routing / independence / BLOCK recheck -> `dish/docs/agents/review.md#Review claims and dispatcher routing` + `#Blocker fixes and recheck`
+- review routing / BLOCK -> `dish/docs/agents/review.md#Review claims and dispatcher routing` + `#Blocker fixes and recheck` + `#Worker BLOCK`
 
 Work chat:
 - Finish authorized work; progress isn't completion. Marco owns outcomes/risk/cost/architecture; agents own routine mechanics; Review challenges.

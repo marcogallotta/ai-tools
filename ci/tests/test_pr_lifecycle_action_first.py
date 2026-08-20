@@ -387,3 +387,62 @@ def test_worker_omitted_packet_override_sensitive_action_uses_live_fast_track_ga
             raw_evidence="FAILED: bundle unavailable",
             now=datetime(2026, 8, 18, tzinfo=timezone.utc),
         )
+
+
+def test_manual_worker_review_needs_no_automated_attempt_or_authorship_record():
+    gh = base.FakeGitHub()
+    assert gh.comments == []
+    assert p.assert_manual_worker_review_independent(remembers_material_authorship=False)
+
+
+def test_manual_worker_formal_block_binds_same_pr_fix_without_second_prompt_or_attempt_record():
+    gh = base.FakeGitHub()
+    gh.reviews = [base.review(head=base.HEAD, verdict="BLOCK", review_id=44)]
+    fix = p.bind_manual_worker_block_fix(
+        gh,
+        31,
+        task="1217657236042386",
+        blocked_head=base.HEAD,
+        block_review_id="44",
+    )
+    assert (fix.pr, fix.branch, fix.blocked_head, fix.block_review_id) == (31, "agent/test", base.HEAD, "44")
+    assert not any("dish-worker-attempt:v1" in item["body"] for item in gh.comments)
+
+
+def test_manual_worker_block_fix_fails_closed_when_exact_head_moves():
+    gh = base.FakeGitHub()
+    gh.reviews = [base.review(head=base.HEAD, verdict="BLOCK", review_id=44)]
+    gh.pr["head"]["sha"] = base.NEW_HEAD
+    with pytest.raises(p.LifecycleError, match="candidate moved"):
+        p.bind_manual_worker_block_fix(
+            gh,
+            31,
+            task="1217657236042386",
+            blocked_head=base.HEAD,
+            block_review_id="44",
+        )
+
+
+def test_manual_worker_remembered_self_authorship_blocks_review_without_durable_taint():
+    with pytest.raises(p.LifecycleError, match="remembers material authorship"):
+        p.assert_manual_worker_review_independent(remembers_material_authorship=True)
+    assert p.assert_manual_worker_review_independent(remembers_material_authorship=False)
+
+
+def test_invalid_automated_worker_bookkeeping_does_not_gate_manual_review_or_fix():
+    gh = base.FakeGitHub()
+    gh.comments = [{
+        "id": 1,
+        "body": '<!-- dish-worker-attempt:v1 {"assignment_digest":"deadbeef","candidate_digest":"' + ("a" * 64) + '","attempt_id":"bad","mode":"Code Review","state":"accepted"} -->',
+    }]
+    gh.reviews = [base.review(head=base.HEAD, verdict="BLOCK", review_id=44)]
+    assert p.assert_manual_worker_review_independent(remembers_material_authorship=False)
+    assert p.bind_manual_worker_block_fix(
+        gh,
+        31,
+        task="1217657236042386",
+        blocked_head=base.HEAD,
+        block_review_id="44",
+    ).block_review_id == "44"
+    with pytest.raises(p.LifecycleError, match="attempt generation"):
+        p.recover_worker_attempt(gh.comments, "deadbeef")
