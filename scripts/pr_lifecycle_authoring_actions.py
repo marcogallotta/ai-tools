@@ -6,6 +6,7 @@ from pr_lifecycle_helpers import _continuation_handoff_present, _continuation_ke
 from pr_lifecycle_post_merge_actions import PostMergeReviewActionsMixin
 from pr_lifecycle_engine_actions import _dispatch_fixer, _fixer_command
 from pr_lifecycle_host_routing import CHATGPT_IMPLEMENTATION, LOCAL_IMPLEMENTATION
+from pr_lifecycle_publication_completion import finalize_same_pr_for_review
 from installed_host_cert import (
     EVIDENCE as INSTALLED_HOST_CERT_EVIDENCE,
     MARKER as INSTALLED_HOST_CERT_MARKER,
@@ -14,6 +15,22 @@ from installed_host_cert import (
 
 
 class LifecycleAuthoringActionsMixin(PostMergeReviewActionsMixin):
+    def finalize_implementation_pr(
+        self,
+        number: int,
+        *,
+        expected_head: str,
+        clear_publication_blocker: bool = False,
+        keep_draft_reason: str | None = None,
+    ) -> dict[str, Any]:
+        return finalize_same_pr_for_review(
+            self.github,
+            number=number,
+            expected_head=expected_head,
+            clear_publication_blocker=clear_publication_blocker,
+            keep_draft_reason=keep_draft_reason,
+        )
+
     def _ensure_implementation_continuation_handoff(
         self, pr: PRLifecycle, evidence: str, *, implementation_host: str, host_requirement=None
     ) -> bool:
