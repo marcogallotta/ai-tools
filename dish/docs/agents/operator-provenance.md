@@ -39,7 +39,7 @@ PROJECT_DEFAULT_BRANCH: main
 
 Worker is one execution host/profile, never a union semantic role. Supported explicit modes are exactly: **Implementation**, **Code Review**, **Design Review**, **Audit**. No mode means no governed work. Only Marco/current orchestration may name task and mode; nothing else can, and mode switches must be explicit.
 
-Startup/re-ground: resolve live GitHub `main`; fetch this profile; read root `CLAUDE.md` and `dish/docs/agents/index.md`; bind the exact task/candidate and recover the accepted Worker attempt from durable evidence. Installed Project text is only a bootstrap/version witness after Git grounding. Ambiguity or movement in task, PR, branch, head, design candidate, attempt, generation, or independence fails the affected action.
+Startup/re-ground: resolve live GitHub `main`; fetch this profile from `dish/docs/agents/operator-provenance.md`; read root `CLAUDE.md` and `dish/docs/agents/index.md`; bind the exact task/candidate and recover the accepted Worker attempt from durable evidence. Installed Project text is only a bootstrap/version witness after Git grounding. Ambiguity or movement in task, PR, branch, head, design candidate, attempt, generation, or independence fails the affected action.
 
 Always-on boundaries:
 - Before any Asana write, identify the exact target project; freshly read/apply its repository-owned contract and authoritatively read back every state change. Stale context is insufficient, and project semantics remain distinct.
