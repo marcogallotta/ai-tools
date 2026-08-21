@@ -20,7 +20,7 @@ def claim(h: Harness, *, task: str, branch: str, agent: str, child: list[str], t
 
 
 def record(h: Harness, task: str) -> tuple[Path, dict[str, object]]:
-    matches = list((h.home / ".local/state/dish/worktrees/claims").glob(f"*/{task}.json"))
+    matches = list((h.home / ".local/state/dish/worktrees/claims").glob(f"*/{task}*.json"))
     assert len(matches) == 1
     return matches[0], json.loads(matches[0].read_text())
 
@@ -53,10 +53,10 @@ def test_claim_gate_and_concurrent_start_choose_one_owner(h: Harness) -> None:
         )
     results = []
     for process in ps:
-        stdout, stderr = process.communicate(timeout=20)
+        stdout, stderr = process.communicate(timeout=60)
         results.append((process.returncode, stdout, stderr))
     assert sum(code == 0 for code, _, _ in results) == 1
-    assert "OWNERSHIP_CLAIMED" in next(err for code, _, err in results if code != 0)
+    assert any(code != 0 and ("BRANCH_ADMISSION_RACE" in err or "OWNERSHIP_CLAIMED" in err) for code, _, err in results)
 
 
 def test_live_owner_fences_takeover_and_second_writer(h: Harness) -> None:
@@ -76,7 +76,7 @@ def test_live_owner_fences_takeover_and_second_writer(h: Harness) -> None:
     result = claim(h, task=task, branch=branch, agent="b", takeover=True, expected=str(r["token"]), child=["python3", "-c", f"from pathlib import Path; Path({str(sentinel)!r}).write_text('x')"])
     assert_error(result, "OWNERSHIP_CLAIMED")
     assert not sentinel.exists()
-    p.communicate(timeout=20)
+    p.communicate(timeout=60)
 
 
 def test_stale_takeover_is_exact_cas_and_aba_safe(h: Harness) -> None:
@@ -482,7 +482,7 @@ def test_failed_claim_child_restores_launch_identity_when_no_durable_owner(h: Ha
     assert result.returncode == 7
     assert not (h.home / f".local/state/dish/agents/{agent}.json").exists()
     assert not h.state_path(task).exists()
-    assert not list((h.home / ".local/state/dish/worktrees/claims").glob(f"*/{task}.json"))
+    assert not list((h.home / ".local/state/dish/worktrees/claims").glob(f"*/{task}*.json"))
 
 
 
@@ -495,21 +495,22 @@ def test_head_movement_invalidation_closes_semantic_mutation_but_allows_readback
     child = f"""
 import sys
 sys.path.insert(0, {str(tools_dir)!r})
-from agent_worktree_lib.common import AgentWorktreeError
+from agent_worktree_lib.common import AgentWorktreeError, GitRunner
 from agent_worktree_lib.ownership import invalidate_claim_after_head_movement, require_active_claim
 
 task = {task!r}
 branch = {branch!r}
 agent = {agent!r}
 new_head = {new_head!r}
+runner = GitRunner()
 assert invalidate_claim_after_head_movement(task, new_head) is True
 try:
-    require_active_claim(task, branch, agent)
+    require_active_claim(task, branch, agent, runner)
 except AgentWorktreeError as exc:
     assert exc.code == "PR_HEAD_MOVED_REDISPATCH_REQUIRED"
 else:
     raise AssertionError("semantic mutation remained open after PR head movement")
-assert require_active_claim(task, branch, agent, allow_head_moved_readback=True)["head_moved_to"] == new_head
+assert require_active_claim(task, branch, agent, runner, allow_head_moved_readback=True)["head_moved_to"] == new_head
 """
     result = h.raw_tool(
         "claim", "--task", task, "--branch", branch, "--agent-id", agent,

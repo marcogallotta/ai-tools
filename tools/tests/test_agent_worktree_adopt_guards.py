@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent_worktree_support import Harness, assert_error, git, h
+from agent_worktree_support import Harness, assert_error, git, h, payload
 
 
 def adopt(h: Harness, task: str, branch: str, expected_head: str, *, base: str | None = None, check: bool = True, env: dict[str, str] | None = None):
@@ -13,9 +13,19 @@ def adopt(h: Harness, task: str, branch: str, expected_head: str, *, base: str |
     )
 
 
-def test_adopt_refuses_existing_state_and_checked_out_branch(h: Harness) -> None:
+def test_adopt_admits_second_branch_as_parallel_lineage_and_refuses_checked_out_branch(h: Harness) -> None:
+    # Adopting a second, distinct branch for a task that already has an active
+    # lineage is no longer ambiguous: same-task/different-branch is exactly the
+    # supported parallel-lineage case (see
+    # test_same_task_different_branches_are_distinct_concurrent_lineages).
     h.start(task="2002", branch="agent/already-owned")
-    assert_error(adopt(h, "2002", "agent/anything", h.base, check=False), "OWNERSHIP_AMBIGUOUS")
+    base = h.current_remote_main()
+    head = h.remote_branch_commit("agent/second-lineage", "handoff", start=base)
+    data = payload(adopt(h, "2002", "agent/second-lineage", head, base=base))
+    assert data["branch"] == "agent/second-lineage"
+    first = h.state("2002", "agent/already-owned")
+    second = h.state("2002", "agent/second-lineage")
+    assert first["lineage_id"] != second["lineage_id"]
 
     base = h.current_remote_main()
     head = h.remote_branch_commit("agent/checked-out", "handoff", start=base)

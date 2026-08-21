@@ -117,7 +117,7 @@ class Harness:
         return run(["python3", str(SCRIPT), *args], cwd=self.primary, env=actual_env, check=check)
 
     def tool(self, *args: str, check: bool = True, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
-        if not args or args[0] not in {"start", "adopt", "resume", "commit", "publish", "verify-handoff", "cleanup", "exec"}:
+        if not args or args[0] not in {"start", "adopt", "resume", "commit", "publish", "verify-handoff", "exec"}:
             return self.raw_tool(*args, check=check, env=env)
 
         child = list(args)
@@ -146,7 +146,7 @@ class Harness:
             child.extend(["--agent-id", agent])
 
         claim = ["claim", "--task", task, "--branch", branch, "--agent-id", agent]
-        claim_files = list((self.home / ".local/state/dish/worktrees/claims").glob(f"*/{task}.json"))
+        claim_files = list((self.home / ".local/state/dish/worktrees/claims").glob(f"*/{task}*.json"))
         prior: dict[str, object] | None = None
         if len(claim_files) == 1:
             prior = json.loads(claim_files[0].read_text(encoding="utf-8"))
@@ -157,7 +157,10 @@ class Harness:
         if child[0] == "adopt":
             expected = self._option(child, "--expected-head")
             assert expected is not None
-            claim.extend(["--pr-number", "42", "--pr-head", expected, "--pr-lease-state", "none"])
+            # Default PR number is derived from the task gid (rather than a fixed
+            # constant) so two independent real adopts for different tasks in the
+            # same test don't collide on one hard-coded PR identity.
+            claim.extend(["--pr-number", str(int(task) % 1_000_000_000 or 42), "--pr-head", expected, "--pr-lease-state", "none"])
         elif prior is not None:
             pr = prior.get("pr")
             if isinstance(pr, dict):
@@ -177,13 +180,37 @@ class Harness:
             args.extend(["--agent-id", agent])
         return self.tool(*args, check=check)
 
-    def state_path(self, task: str = "1001") -> Path:
-        return self.home / ".local/state/dish/worktrees" / f"{task}.json"
+    def state_paths(self, task: str = "1001") -> list[Path]:
+        root = self.home / ".local/state/dish/worktrees"
+        paths = []
+        legacy = root / f"{task}.json"
+        if legacy.exists():
+            paths.append(legacy)
+        directory = root / task
+        if directory.is_dir():
+            paths.extend(sorted(directory.glob("*.json")))
+        return paths
 
-    def state(self, task: str = "1001") -> dict[str, object]:
-        return json.loads(self.state_path(task).read_text(encoding="utf-8"))
+    def state_path(self, task: str = "1001", branch: str | None = None) -> Path:
+        paths = self.state_paths(task)
+        if branch is not None:
+            matches = [p for p in paths if json.loads(p.read_text(encoding="utf-8")).get("branch") == branch]
+            if len(matches) != 1:
+                raise AssertionError(f"expected one state for task={task} branch={branch}, found {matches}")
+            return matches[0]
+        if len(paths) == 1:
+            return paths[0]
+        if not paths:
+            return self.home / ".local/state/dish/worktrees" / f"{task}.json"
+        raise AssertionError(f"task {task} has multiple lineage states: {paths}")
 
-    def wt(self, task: str = "1001") -> Path:
+    def state(self, task: str = "1001", branch: str | None = None) -> dict[str, object]:
+        return json.loads(self.state_path(task, branch).read_text(encoding="utf-8"))
+
+    def wt(self, task: str = "1001", branch: str | None = None) -> Path:
+        paths = self.state_paths(task)
+        if paths:
+            return Path(str(self.state(task, branch)["worktree_path"]))
         return self.worktree_root / task
 
     def commit_local(self, task: str = "1001", text: str = "local") -> str:
