@@ -1104,7 +1104,7 @@
           "delivery": {
             "mode": "DIRECT_ALWAYS_ON"
           },
-          "text": "Semantic Review reads live task, exact governing generation and exact handoff; judge spec conformance, handoff fidelity, implementation conformance/correctness. Signed intent/quantifiers/invariants outrank summaries; unrelated successors never redefine the PR."
+          "text": "Semantic Review reads live task, generation, handoff and architecture; resolve material understanding gaps before verdict. Judge spec, handoff and implementation conformance/correctness separately; signed intent/quantifiers/invariants outrank summaries/successors."
         },
         {
           "id": "review-v3-adversarial-quality",
@@ -1117,7 +1117,7 @@
             "mode": "TRIGGERED_READ",
             "trigger": "review routing / independence / BLOCK recheck"
           },
-          "text": "Challenge proportionality, false readiness, process-vs-substantive defects, compatibility/second-order fallout, applicable learned risks and Review Focus, then do an open-ended pass. No LOC/perfection/global-checklist/new-control-plane gate."
+          "text": "Challenge BEFORE/AFTER operator workflow, proportionality, false readiness, process defects, compatibility/fallout, applicable learned risks/focus, then an open-ended pass; no perfection/global-checklist/control-plane gate."
         },
         {
           "id": "review-v3-headline-intent",

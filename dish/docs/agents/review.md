@@ -36,6 +36,8 @@ Do not treat PR URL + branch name as sufficient identity: the exact head SHA mus
 
 For semantic Code Review, the exact GitHub PR head remains the candidate, but the PR summary is never the requirement authority. Before a semantic verdict, Review must read the live owning Asana task, establish the exact accepted design/specification generation that authorized this implementation, and identify the exact durable Implementation handoff that dispatched this candidate. If any of those authoritative identities cannot be established, do not reconstruct them from branch names, PR prose, chat, memory, or the newest task text.
 
+Route through [`../architecture/index.md`](../architecture/index.md) and read the relevant architecture, ADR, testing, and role-authority material for every materially affected boundary. Treat candidate-caused architecture staleness, or a silent new authority/control plane, as a defect. Before issuing a semantic verdict, Review must also understand the candidate behavior, governing intent/invariants, evidence, and material weak points well enough to explain what could change the verdict. Resolve repository/task/architecture/evidence gaps first. Insufficient understanding is not itself a BLOCK; ask Marco only for an irreducible material human-only intent or risk decision, and issue no semantic verdict while such a gap remains.
+
 Keep the following authorities distinct:
 
 - **Marco Intent Baseline** — exact durable Marco-signed outcome, constraints, non-goals, material quantifiers/scope, and signed Review challenges, including explicit amendments/supersessions that state their applicability;
@@ -62,6 +64,8 @@ Material task-specific protected invariants are part of the exact design-generat
 
 ### Proportionality, operational readiness, process defects, and compatibility
 
+When a proposal materially changes Marco's recurring setup, maintenance, deployment, configuration, copy/paste, command, or operational workflow, Design Review states the concrete **BEFORE** and **AFTER** workflow, including discoverability, manual extraction/inspection, steps, and command ergonomics. A material operator-loop change requires Marco's approval of the exact accepted generation before Implementation.
+
 Compare the actual candidate to the accepted solution envelope when one exists. Unexpected mechanisms, abstractions, state, dependencies, changed subsystems, or order-of-magnitude growth require necessity evidence; `tests pass`, sunk effort, or aesthetic preference is not enough. Smaller correct solutions are welcome, and large generated/mechanical diffs do not fail solely on size. When trajectory lock-in is material, re-anchor independently on the governing outcome and current repository primitives and ask for the smallest plausible correct solution.
 
 For migration/operational tooling, planning/classification/ledger completeness is not execution readiness. Challenge whether every required effect is actually supported through the authorized safety/permission path, whether partial execution is resumable where material, whether completion has authoritative readback/reconciliation, and whether any material writer/mutation mechanism would still need to be invented during the live operation. Production mutation is not mechanism-discovery for an unproved writer.
@@ -74,7 +78,7 @@ When role authority, permissions, hooks, routing, lifecycle, mutation controls, 
 
 A candidate-specific Review Focus packet may steer attention to applicable known failure modes, challenge questions, expected solution shape, regression anchors, and narrow high-risk invariants. It never steers the verdict. Review checks the relevant supplied risks and then performs an independent open-ended adversarial pass for material defects the packet did not anticipate.
 
-Learned-risk evidence may come from internal escapes/BLOCKs/audits/incidents/friction/operator feedback and current external primary evidence. Keep reusable risks applicability- and freshness-aware with a concrete reviewer challenge and false-positive/counterexample guard. Route only the relevant subset. External company practice is comparator evidence, not Dish authority; do not create a global checklist, semantic risk service, scheduler, queue, database, or second Review authority.
+Learned-risk evidence may come from internal escapes/BLOCKs/audits/incidents/friction/operator feedback and current external primary evidence. The lightweight repository routing source is the [learned-risk routing corpus](#learned-risk-routing-corpus) below: select entries whose applicability evidence matches the exact candidate, honor their freshness trigger and false-positive guard, and record the applied risk IDs in Review Focus when they materially affect the review. Route only the relevant subset. External company practice is comparator evidence, not Dish authority; do not create a global checklist, semantic risk service, scheduler, queue, database, or second Review authority.
 
 Canonical failure-derived challenges include universal-scope-to-enumeration drift, event-driven steady-state intent silently degrading into recurring polling, hidden loss of explicit local-agent/role-switch workflows, cross-host compaction/re-ground loops, same-branch/reuse races, stable-base merge-conflict cost without recovery visibility, rollback narrower than the governing problem, competing downstream intent summaries, unsupported external-source inference, and CI ownership classification that can incorrectly label a candidate-owned regression as baseline debt.
 
@@ -88,7 +92,26 @@ For material Design Review that will require Marco approval, produce a concise h
 
 The goal is materially stronger Review without a perfection gate: challenge intent/spec drift, unnecessary complexity, false readiness, process-vs-substantive defects, compatibility, and recurring failure patterns proportionately, then stop when the actual Review question is adequately answered.
 
+## Learned-risk routing corpus
+
+This corpus steers attention only. Select a risk only when the candidate matches its applicability evidence, apply its false-positive guard, and still perform an open-ended review. Refresh an entry when its named trigger occurs; otherwise preserve its evidence date rather than pretending freshness.
+
+| ID | Failure class / provenance | Apply when | Reviewer challenge | False-positive guard | Regression / freshness trigger |
+|---|---|---|---|---|---|
+| `RV3-R01` | Universal/dynamic scope narrowed to a current enumeration; PR #197 | Candidate translates ALL/EVERY/ANY/NONE/ONLY/dynamic/future scope | Does the mechanism preserve governing set semantics? | A finite set is valid when the governing specification explicitly defines it | `review-v3-universal-quantifier-not-enumeration`; refresh on another quantifier escape |
+| `RV3-R02` | Event-driven steady state becomes recurring polling; story 1217687307801779 | Intent requires events/webhooks or no idle model burn | Is polling bounded recovery or the practical primary mechanism? | Necessary observable secondary recovery polling is allowed | `review-v3-event-driven-polling-intent-drift`; refresh when event/recovery architecture changes |
+| `RV3-R03` | Correct code implements the wrong specification; G1 #5 | Semantic implementation PR has an owning task/generation | Compare specification conformance separately from correctness | Unrelated successors do not redefine a dispatched candidate | `review-v3-wrong-spec-green-tests-block`; refresh on lineage-policy change |
+| `RV3-R04` | Supported workflow removed because the designer omitted it; G2 #17 | Authority, routing, hooks, host behavior, or operator controls change | Which representative supported workflows become blocked or costlier? | Do not inventory speculative/unsupported workflows | `review-v3-compatibility-unknown-not-safe-remove`; refresh when supported routes change |
+| `RV3-R05` | Cross-host re-ground/compaction self-loop; G2 #19 | Bootstrap, hooks, context recovery, or cross-host handoff changes | Can recovery recursively trigger itself or rely on unproved hook evidence? | Bounded one-shot refresh with authoritative completion is not a loop | `review-v3-cross-host-reground-loop`; refresh on bootstrap change |
+| `RV3-R06` | Same-branch/reuse/recreation ownership race; task 1217632643548483 | Branch/worktree/claim/takeover lifecycle changes | Challenge simultaneous admission, deletion/recreation, and stale resurrection | Distinct branch lineages with proven isolation are not collisions | `review-v3-parallel-lineage-reuse-race`; refresh on branch-incarnation change |
+| `RV3-R07` | CI regression mislabeled baseline debt; G2 #19 | Candidate CI fails and fix ownership is classified | Is failure proved on current main or otherwise unrelated before mutation/waiver? | Exact baseline evidence may establish an external failure | `review-v3-dangerous-ci-ownership`; refresh on CI ownership change |
+| `RV3-R08` | Rollout machinery misses the governing failure | Candidate proposes rollout, flags, or recovery controls | Does it prevent/detect/recover the named failure class? | It need not solve unrelated failures | `review-v3-rollout-misses-failure`; refresh after a rollout escape |
+| `RV3-R09` | Stable-base policy hides merge-conflict cost | Long-lived stable-base/deferred reconciliation is proposed | Is conflict cost observable, bounded, and recoverable? | Target movement without material overlap is not a defect | `review-v3-stable-base-conflict-cost`; refresh on integration-strategy change |
+| `RV3-R10` | External evidence overclaims its source | Review/design relies on external practice | Does the primary source support the exact inference, translated rather than imported? | Clearly labeled comparator evidence stays non-authoritative | `review-v3-unsupported-external-inference`; refresh when source/inference changes |
+
 ## Design Review exact generation and current-task projection
+
+A mutation request against a DISPATCHED, SUPERSEDED, CANCELLED, or otherwise immutable Review V2 generation performs zero mutation and returns an actionable `DESIGN_GENERATION_FROZEN` rejection bound to exact task, generation, digest, and reconstructed Review state. Recovery follows the existing Review V2 reopen/supersede path before successor authoring; implementation/merge evidence remains separate lifecycle authority, and Asana `Version` is never generation identity.
 
 A Design Review verdict belongs permanently to the exact frozen generation/digest reviewed. The shared Asana task section, however, represents the **current** authoritative generation and current next action. A late reviewer never gains current-section authority merely by finishing last.
 

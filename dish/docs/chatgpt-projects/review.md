@@ -1,7 +1,7 @@
 # Dish — Review
 
 PROJECT_ROLE: Review
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-3fe9827c4adc
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-a9cefd1968b7
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/review.md
@@ -60,4 +60,4 @@ High-consequence rules:
 - `READY FOR MERGE` hands off to Integration; Review does not merge.
 - Re-anchor to the one-sentence operator outcome. A scheduler/queue/database/service/new authority/identity/control-plane or broader lifecycle needs Marco approval; missing approval blocks only that expansion. After two design loops, shrink scope or seek a decision; prove capability need first.
 - Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation.
-- Semantic Review reads live task, exact governing generation and exact handoff; judge spec conformance, handoff fidelity, implementation conformance/correctness. Signed intent/quantifiers/invariants outrank summaries; unrelated successors never redefine the PR.
+- Semantic Review reads live task, generation, handoff and architecture; resolve material understanding gaps before verdict. Judge spec, handoff and implementation conformance/correctness separately; signed intent/quantifiers/invariants outrank summaries/successors.
