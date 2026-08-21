@@ -147,7 +147,8 @@ class Runtime:
             active_owners=frozenset({"Integrator"}) if wake_enabled else frozenset(),
         )
         self.pending = threading.Event()
-        self.force_pending = threading.Event()
+        self.pending_lock = threading.Lock()
+        self.force_pending = False
         self.stop = threading.Event()
         self.reconcile_lock = threading.Lock()
         self.metrics_lock = threading.Lock()
@@ -205,6 +206,18 @@ class Runtime:
             for key, value in increments.items():
                 self.metrics[key] = int(self.metrics.get(key, 0)) + value
 
+    def request_reconcile(self, *, force: bool = False) -> None:
+        with self.pending_lock:
+            self.force_pending = self.force_pending or force
+            self.pending.set()
+
+    def take_reconcile_request(self) -> bool:
+        with self.pending_lock:
+            self.pending.clear()
+            force = self.force_pending
+            self.force_pending = False
+            return force
+
     def reconcile(self, *, force: bool = False) -> dict[str, Any]:
         with self.reconcile_lock:
             result = self.reconciler.reconcile(force=force)
@@ -217,16 +230,12 @@ class Runtime:
             self.pending.wait(1.0)
             if not self.pending.is_set():
                 continue
-            self.pending.clear()
-            force = self.force_pending.is_set()
-            self.force_pending.clear()
+            force = self.take_reconcile_request()
             try:
                 self.reconcile(force=force)
             except Exception as exc:
                 log("reconcile_failed", error_type=type(exc).__name__, error=str(exc))
-                if force:
-                    self.force_pending.set()
-                self.pending.set()
+                self.request_reconcile(force=force)
                 self.stop.wait(30)
 
     def health(self) -> dict[str, Any]:
@@ -324,7 +333,7 @@ class Handler(BaseHTTPRequestHandler):
         count = ingest_event(self.runtime.store, provider=provider, payload=payload, delivery_id=delivery_id)
         if count:
             self.runtime.record(accepted_events=1)
-            self.runtime.pending.set()
+            self.runtime.request_reconcile()
         elif provider == "asana":
             self.runtime.record(heartbeats=1)
         self.send_json(202 if count else 200, {"accepted": True, "dirty_resources": count})
@@ -356,8 +365,7 @@ def main() -> int:
             runtime.reconcile(force=True)
         except Exception as exc:
             log("startup_reconcile_failed", error_type=type(exc).__name__, error=str(exc))
-            runtime.force_pending.set()
-            runtime.pending.set()
+            runtime.request_reconcile(force=True)
 
     threading.Thread(
         target=startup_reconcile,
