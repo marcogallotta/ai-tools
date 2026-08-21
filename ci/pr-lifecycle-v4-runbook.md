@@ -11,3 +11,32 @@ New actionable versions for one owner coalesce into one bounded wake packet. Del
 The durable receipt journal is `PREPARED -> SUBMITTED -> ACCEPTED -> COMPLETED`, with `AMBIGUOUS` for lost acceptance readback. An ambiguous or submitted-but-unconfirmed receipt is never blindly replayed: recovery performs `thread/read(includeTurns=true)` and searches persisted `userMessage.clientId`. A found marker moves the receipt to `ACCEPTED`. An absent marker permits a retry back to `PREPARED` only when the thread is also mechanically proven `idle`; while the thread is active/unknown/not-loaded, absence of a marker is not proof of non-acceptance and the receipt stays `AMBIGUOUS` with zero replay. Terminal completion is reconstructed the same way rather than by consuming live `turn/completed` notifications: an `ACCEPTED` receipt is reconciled on every dispatch pass by reading the matching turn's own status from persisted thread history, and only a mechanically observed `completed` status writes the durable `COMPLETED` receipt — this is crash-safe because it never depends on the originating process still being alive, and it distinguishes still-in-flight `ACCEPTED` from terminal `COMPLETED` using only durable state.
 
 Webhook ingress must validate provider authentication before `V4StateStore.mark_dirty`: GitHub `X-Hub-Signature-256` HMAC-SHA256 and Asana `X-Hook-Signature` HMAC-SHA256 are supported helpers. Deployment must provide an authenticated public ingress or equivalent trusted webhook relay; if it cannot, commissioning remains **BLOCKED** rather than substituting polling/model heartbeats. The repository source can be exercised without commissioning by feeding verified payloads to `ingest_event()` and wiring `V4Reconciler.authoritative_cases` to the existing lifecycle projection.
+
+## Repository-owned service entrypoint
+
+`scripts/pr_lifecycle_v4_service.py` is the maintained HTTP/runtime adapter. Host installation may
+provide systemd, reverse-proxy, credential, and state-path configuration, but must invoke this
+repository file directly; do not copy or modify a second Python service under `~/.local/lib`.
+The entrypoint owns only transport composition: authenticated webhook handling, the existing
+authoritative projection reread, the V4 state/receipt store, the Integrator-only bridge, health
+reporting, and startup reconciliation. It does not add lifecycle or writer authority.
+
+The host runner supplies credentials without printing them and sets these bounded values:
+
+```sh
+export DISH_LIFECYCLE_V4_REPO=/home/marco/ai-tools
+export DISH_LIFECYCLE_V4_STATE_DIR=/home/marco/.local/state/dish/pr-lifecycle-v4
+export DISH_LIFECYCLE_V4_STATE_PATH="$DISH_LIFECYCLE_V4_STATE_DIR/state-commissioned.json"
+export DISH_LIFECYCLE_V4_PROJECTION=/home/marco/.local/state/dish/pr-lifecycle/lifecycle.json
+export DISH_LIFECYCLE_V4_PYTHON=/home/marco/ai-tools/dish/.venv/bin/python
+export DISH_LIFECYCLE_V4_CODEX=/home/marco/.codex/packages/standalone/current/codex
+export DISH_LIFECYCLE_V4_BASELINE_ON_START=1
+export DISH_LIFECYCLE_V4_WAKE_ENABLED=1
+exec "$DISH_LIFECYCLE_V4_PYTHON" \
+  /home/marco/ai-tools/scripts/pr_lifecycle_v4_service.py \
+  --bind 127.0.0.1 --port 8797
+```
+
+Keep GitHub and Asana credentials and webhook secrets outside Git. The service creates webhook
+secret files mode `0600` beneath the configured state directory. `GET /healthz` reports the exact
+repository source root, state path, thread id/status, dirty count, and process-lifetime counters.
