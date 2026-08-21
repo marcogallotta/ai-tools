@@ -385,6 +385,50 @@ def test_handoff_repair_capability_blocker_is_owned_attention_not_marco_relay():
     assert cases[0] not in payload["v3"]["integrator"]["active_cases"]
 
 
+def test_unfinished_implementation_readback_text_does_not_route_to_integrator():
+    value = lifecycle(state=LifecycleState.IMPLEMENTATION_CONTINUATION_REQUIRED)
+    value.draft = True
+    value.review_verdict = None
+    value.reviewed_head = None
+    value.residual_reason = (
+        "draft PR has unfinished task-scoped authoring evidence: exact-tree materialization/branch attach "
+        "and authoritative final readback; no active implementation lease"
+    )
+    payload = build_projection(
+        [value],
+        repository=REPOSITORY,
+        tasks=[task_with_hold(clear_hold())],
+        source_observation=source(),
+        generated_at=NOW,
+    )
+    assert all(
+        case["reason_class"] != "INTEGRATION_READBACK_UNCERTAIN"
+        for case in payload["v3"]["attention"]["cases"]
+    )
+
+
+@pytest.mark.parametrize(
+    "state",
+    [LifecycleState.INTEGRATION_READY, LifecycleState.MERGING, LifecycleState.WAITING_INFRASTRUCTURE],
+)
+def test_exact_reviewed_integration_readback_uncertainty_routes_to_integrator(state):
+    value = lifecycle(state=state)
+    value.residual_reason = "local Integration returned without authoritative GitHub readback"
+    payload = build_projection(
+        [value],
+        repository=REPOSITORY,
+        tasks=[task_with_hold(clear_hold())],
+        source_observation=source(),
+        generated_at=NOW,
+    )
+    cases = [
+        case for case in payload["v3"]["attention"]["cases"]
+        if case["reason_class"] == "INTEGRATION_READBACK_UNCERTAIN"
+    ]
+    assert len(cases) == 1
+    assert cases[0]["next_owner"] == "Integrator"
+
+
 def test_provider_switch_reconstructs_same_case_identity_from_live_evidence():
     gate = {
         "diagnosis": "INFRASTRUCTURE_ERROR",

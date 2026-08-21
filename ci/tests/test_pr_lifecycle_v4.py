@@ -5,6 +5,8 @@ import hmac
 from pathlib import Path
 import sys
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPTS = ROOT / "scripts"
 if str(SCRIPTS) not in sys.path:
@@ -97,6 +99,65 @@ def test_idle_heartbeat_starts_zero_model_turns(tmp_path):
     }
     assert calls == []
     assert app.started == []
+
+
+def test_cold_start_baselines_existing_case_without_model_turn(tmp_path):
+    state = store(tmp_path)
+    app = FakeAppServer()
+    current = [dict(CASE)]
+    reconciler = V4Reconciler(
+        store=state,
+        authoritative_cases=lambda: current,
+        bridge=bridge(tmp_path, state, app),
+    )
+    state.mark_dirty(
+        provider="github",
+        resource_kind="repository",
+        resource_id="marcogallotta/ai-tools",
+        delivery_id="arrived-during-commissioning",
+    )
+    assert reconciler.baseline_current() == {
+        "actionable_cases": 1,
+        "baselined": 1,
+        "prepared": 0,
+        "wake_results": [],
+        "model_turns_started": 0,
+    }
+    assert app.started == []
+    assert len(state.snapshot_dirty().resources) == 1
+
+    assert reconciler.reconcile()["model_turns_started"] == 0
+    assert app.started == []
+
+    changed = dict(CASE)
+    changed["evidence"] = {"check": "Dish / exact-head certification", "failure": "new actionable evidence"}
+    current[:] = [changed]
+    state.mark_dirty(
+        provider="github",
+        resource_kind="repository",
+        resource_id="marcogallotta/ai-tools",
+        delivery_id="changed",
+    )
+    result = reconciler.reconcile()
+    assert result["model_turns_started"] == 1
+    assert len(app.started) == 1
+
+
+def test_cold_start_baseline_is_one_shot_and_refuses_existing_wake_history(tmp_path):
+    state = store(tmp_path)
+    reconciler = V4Reconciler(store=state, authoritative_cases=lambda: [CASE], bridge=None)
+    assert reconciler.baseline_current()["baselined"] == 1
+
+    changed = dict(CASE)
+    changed["next_action"] = "new action must not be silently baselined"
+    reconciler = V4Reconciler(store=state, authoritative_cases=lambda: [changed], bridge=None)
+    assert reconciler.baseline_current()["baselined"] == 0
+    assert state.prepare_wakes([changed])[0]["status"] == "PREPARED"
+
+    fresh = store(tmp_path / "other")
+    fresh.prepare_wakes([CASE])
+    with pytest.raises(ValueError, match="after wake history"):
+        fresh.baseline_current([CASE])
 
 
 def test_duplicate_and_out_of_order_webhooks_coalesce_to_one_authoritative_wake(tmp_path):

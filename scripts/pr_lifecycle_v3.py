@@ -19,6 +19,15 @@ LEGACY_WRITER = "integration-v1a-local-fenced"
 CANDIDATE_WRITER = "v3-deterministic"
 DEFAULT_CI_SLOW_SECONDS = 30 * 60
 
+_INTEGRATION_READBACK_STATES = {
+    "review_passed_evaluating_gates",
+    "local_certification_required",
+    "waiting_ci_certification",
+    "waiting_infrastructure",
+    "integration_ready",
+    "merging_integration_in_progress",
+}
+
 _INTEGRATOR_REASON_CLASSES = {
     "CI_SLOW",
     "CI_RED_CURRENT_MAIN_OR_EXTERNAL",
@@ -414,7 +423,16 @@ def attention_cases(
                 ),
                 observed_at=generated_at,
             ))
-        if "readback" in lowered and lifecycle_state != "merged":
+        exact_head_review = (
+            bool(pr.get("head"))
+            and str(pr.get("review_verdict") or "") == "MERGE"
+            and str(pr.get("reviewed_head") or "") == str(pr.get("head") or "")
+        )
+        if (
+            "readback" in lowered
+            and exact_head_review
+            and lifecycle_state in _INTEGRATION_READBACK_STATES
+        ):
             cases.append(_case(
                 repository=repository,
                 reason_class="INTEGRATION_READBACK_UNCERTAIN",
