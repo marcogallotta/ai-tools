@@ -14,6 +14,12 @@
         "native-postgresql",
         "browser-acceptance"
       ],
+      "must_not_obligations": [
+        "legacy-boundary:python-control-plane:ordinary full suite",
+        "legacy-boundary:frontend-static:frontend static",
+        "legacy-boundary:native-postgresql:native PostgreSQL certification",
+        "legacy-boundary:browser-acceptance:browser acceptance"
+      ],
       "note": "lifecycle/broker control-plane false all-product fan-out"
     },
     {
@@ -28,6 +34,12 @@
         "frontend-static",
         "native-postgresql",
         "browser-acceptance"
+      ],
+      "must_not_obligations": [
+        "legacy-boundary:python-control-plane:ordinary full suite",
+        "legacy-boundary:frontend-static:frontend static",
+        "legacy-boundary:native-postgresql:native PostgreSQL certification",
+        "legacy-boundary:browser-acceptance:browser acceptance"
       ],
       "note": "documentation plus lifecycle runbook false all-product fan-out"
     },
@@ -44,6 +56,12 @@
       "must_not_boundaries": [
         "frontend-static",
         "browser-acceptance"
+      ],
+      "must_not_obligations": [
+        "scripts/pr_certification.py::legacy-boundary:python-control-plane:ordinary full suite",
+        "scripts/pr_certification.py::legacy-boundary:frontend-static:frontend static",
+        "scripts/pr_certification.py::legacy-boundary:native-postgresql:native PostgreSQL certification",
+        "scripts/pr_certification.py::legacy-boundary:browser-acceptance:browser acceptance"
       ],
       "note": "PostgreSQL preparation plus certification helper"
     },
@@ -96,6 +114,52 @@
       ],
       "must_not_boundaries": [],
       "note": "execution guard must select real mutation-runner workspace consumer"
+    },
+    {
+      "id": "f54e098a-pr77-pr79-cross-boundary",
+      "changed_paths": [
+        "scripts/integration_certification.py"
+      ],
+      "must_boundaries": [
+        "python-control-plane",
+        "frontend-static",
+        "native-postgresql",
+        "browser-acceptance"
+      ],
+      "must_not_boundaries": [],
+      "note": "historical PR #77/#79: Python certification orchestrator requires non-Python runtime boundaries"
+    },
+    {
+      "id": "32225216250-pr182-lifecycle-control-plane",
+      "changed_paths": [
+        "ci/tests/test_pr_lifecycle_forward_fix.py",
+        "ci/tests/test_pr_lifecycle_v3.py",
+        "ci/tests/test_pr_lifecycle_v3_attempt_binding.py",
+        "ci/tests/test_pr_lifecycle_v3_review_block_fix.py",
+        "scripts/pr_lifecycle_controller.py",
+        "scripts/pr_lifecycle_dashboard.py",
+        "scripts/pr_lifecycle_projection.py",
+        "scripts/pr_lifecycle_task_state.py",
+        "scripts/pr_lifecycle_v3.py"
+      ],
+      "must_boundaries": [
+        "python-control-plane"
+      ],
+      "must_not_boundaries": [
+        "frontend-static",
+        "native-postgresql",
+        "browser-acceptance"
+      ],
+      "must_targets": [
+        "repo-pytest:ci/tests:lifecycle-control-plane"
+      ],
+      "must_not_obligations": [
+        "legacy-boundary:python-control-plane:ordinary full suite",
+        "legacy-boundary:frontend-static:frontend static",
+        "legacy-boundary:native-postgresql:native PostgreSQL certification",
+        "legacy-boundary:browser-acceptance:browser acceptance"
+      ],
+      "note": "PR #182 lifecycle V3 exact changed-path replay; recorded failure 32225216250 was in ci/tests lifecycle fixtures"
     }
   ]
 }

@@ -32,7 +32,7 @@ Before changing Dish code, follow root `CLAUDE.md` and start at `dish/docs/archi
 
 Do not silently substitute another base or assume unmerged parallel work has landed.
 
-Every repository-changing implementation/fix assignment uses the single canonical handoff contract at [`templates/implementation-handoff.md`](templates/implementation-handoff.md). Treat repository + Asana task GID + authorized branch + existing PR/expected head as one assignment identity. Matching task identity on a different branch or PR never authorizes adopting or modifying that lineage. Local Claude Code/Codex work acquires the matching `tools/agent-worktree claim` before touching task-owned worktree or branch state; replacement/fix/publication handoffs reconcile the same claim before takeover.
+Every repository-changing implementation/fix assignment uses the single canonical handoff contract at [`templates/implementation-handoff.md`](templates/implementation-handoff.md). Treat repository + Asana task GID + authorized branch + existing PR/expected head as one assignment identity. When that handoff projects an exact accepted design/spec generation, Marco Intent Baseline, protected invariants, solution envelope, or Review Focus, treat those as bounded projections back to the named authority rather than new authority; a material handoff/governing-source mismatch stops the affected semantic work for projection repair instead of being silently resolved in code. Matching task identity on a different branch or PR never authorizes adopting or modifying that lineage. Local Claude Code/Codex work acquires the matching `tools/agent-worktree claim` before touching task-owned worktree or branch state; replacement/fix/publication handoffs reconcile the same claim before takeover.
 
 Before returning an assigned implementation as no-op/already-fixed/not-reproducible, apply the inherited assigned-task dismissal gate to the owning task's notes and material history; current source/runtime health alone is not enough to erase a recorded historical defect. Before declaring a routine authorized implementation/publication action blocked, apply the inherited authorized-fallback gate and verify any state-changing fallback before reporting success.
 
@@ -145,6 +145,22 @@ Under that heading record at least:
 
 The PR must contain the complete agent-to-agent instructions; Marco must not be required to carry an undocumented second handoff in chat. After the durable PR update, the human-facing message is only the concise control-plane status/action, for example `PR #N — local finish required (SMALL). Draft. Action: give PR #N to a local Implementation agent; full handoff is on the PR.`
 
+### Temporary exact-byte bundle containment
+
+For the current publication-friction containment path, the GitHub connector remains the normal publication path. Do **not** pre-route local merely because a candidate is large, multi-file, or looks inconvenient to publish. First attempt normal connector publication. Only when that actual attempt is failing/unavailable or starts degrading into slow manual blob/chunk/base64 work, and the remote Implementation agent still has the complete exact candidate bytes, may this local fallback activate. The human relay is then deliberately minimal:
+
+- before stopping the GitHub connector path, tell Marco **why it stopped and exactly what was tried**. Name the concrete connector mutation(s)/fallback(s) attempted and the observed failure/degradation; `large`, `multi-file`, or `looks slow` is not a stop reason by itself;
+- produce **one downloadable exact candidate Git bundle**; that bundle is the only file Marco is expected to download or pass to the local agent;
+- deliver that bundle through a **working directly downloadable file/attachment surface**. Do **not** use the ChatGPT generated-file/artifact-card or sandbox-link/card form Marco has reported as non-working. If the current host cannot produce a working download, do not claim the local handoff is ready: keep the PR draft and tell Marco which delivery surface(s) were tried and why delivery stopped;
+- give Marco **one short copy/paste fenced handoff block** naming the task/PR/branch, the bundle basename, and expected candidate tree; do not add a second checklist, sidecar-download list, or long transcript;
+- the handoff tells the local Implementation agent that the bundle will be at `~/Downloads/<bundle>` and to **start immediately without pausing for confirmation** when the assignment identity is complete;
+- `.sha256`, manifest, checksum, metadata, or other sidecar files are **not required human downloads** for this containment path. The local agent must not stop because those files are absent and must ignore unrelated extra files in `~/Downloads`;
+- verify exactness from the bundle itself against the expected head/tree with `scripts/pr_lifecycle.py verify-local-bundle`; hashes/prose/sidecars without the bundle never count as transport;
+- if the named bundle itself is missing, unreadable, invalid, or does not contain the expected candidate tree, classify `FRESH AUTHORING REQUIRED`; prior exact-tree/test evidence does not transfer to newly authored bytes;
+- after exact publication, run `scripts/pr_lifecycle.py implementation-finalize --pr <N> --expected-head <published-head> --clear-publication-blocker` when the blocker section is stale. Completion is successful only when authoritative GitHub readback proves the same exact head with `draft=false`; a failed transition/readback remains unfinished.
+
+This is temporary containment, not a second publication architecture. Existing materializer recovery and remote-first routing remain authoritative dependencies and are not duplicated here.
+
 A local Implementation-completion agent accepting this ownership handoff must:
 
 - continue on the same existing PR branch;
@@ -216,6 +232,12 @@ An unmerged parallel PR is not part of your base.
 If parallel branches independently claim the same migration number, do not invent prospective ordering unless the handoff explicitly establishes a semantic dependency. Keep your PR reviewable on its actual base. Migration renumbering can be resolved mechanically after one PR lands.
 
 If integration later requires only mechanical renumber/rebase work, preserve semantics exactly and say so. If conflict resolution requires a real schema/code/product decision, it is semantic work and must return to the implementation/review path rather than being improvised by the integrator.
+
+## Manual Worker formal-BLOCK fix continuation
+
+A formal exact-head BLOCK produced by the approved manual Worker operation is a task-specific fix assignment on the existing PR lineage; it does not require a second conversational `fix it` or a manual Worker API attempt. Before source mutation, the Worker must have ended Review, explicitly entered current Implementation authority, and freshly bind exact `(owning task, PR, branch, blocked head, formal BLOCK review id)` from live GitHub/Asana state. Matching task identity on another PR/branch is not authority, and moved/stale identity means zero semantic mutation until current state is reclassified.
+
+Fix only the accepted blocker scope, run the governed Implementation evidence, publish and authoritatively read back the corrected head/evidence, then stop. The authoring Worker may not independently Review that successor while its authorship is remembered/recoverable; a fresh Worker performs the next Review. Automated Worker attempt/authorship records may govern an automated transport but their absence never blocks this ordinary manual continuation. Integration/merge authority is never added.
 
 ## Review-head changes
 

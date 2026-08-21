@@ -17,6 +17,7 @@ from pr_lifecycle_engine_inspect import LifecycleInspectMixin
 from pr_lifecycle_engine_actions import LifecycleActionsMixin
 from pr_lifecycle_workstream import WorkstreamLifecycleMixin, current_review_state
 from pr_lifecycle_authoring_actions import LifecycleAuthoringActionsMixin
+from pr_lifecycle_publication_completion import FRESH_AUTHORING_REQUIRED, classify_publication_route, classify_receiver_bundle, render_publication_fallback_notice
 from pr_lifecycle_integration_certification import LocalIntegrationCertificationMixin
 from pr_lifecycle_local_integration import LocalIntegrationLauncher, checkpoint_claim
 from pr_lifecycle_terminal import TerminalCleanupDispatcher
@@ -25,8 +26,33 @@ from pr_lifecycle_projection import atomic_write, build_projection
 from pr_lifecycle_task_state import execution_truth, ensure_projection_comment
 from pr_lifecycle_rollout import reconstruct as reconstruct_rollout, rollout_projection
 import pr_lifecycle_controller
+from pr_certification import SELECTOR_GAP_OWNER_TASKS, selector_gap_owner_operations
 
 OBSERVATION_PROJECTS_ENV = "DISH_PR_LIFECYCLE_PROJECT_GIDS"
+
+
+def _sync_selector_gap_owner_surfaces(engine: "LifecycleEngine") -> list[dict[str, object]]:
+    if engine.asana is None:
+        return []
+    comment_reader = getattr(engine.github, "get_repository_comments", None)
+    if not callable(comment_reader):
+        return []
+    comments = comment_reader()
+    stories = {
+        task_gid: engine.asana.get_stories(task_gid)
+        for _, task_gid in SELECTOR_GAP_OWNER_TASKS
+    }
+    operations = selector_gap_owner_operations(comments, stories)
+    for operation in operations:
+        task_gid = str(operation["task_gid"])
+        marker = str(operation["marker"])
+        engine.asana.add_comment(task_gid, str(operation["body"]))
+        if not any(marker in str(story.get("text") or story.get("body") or "")
+                   for story in engine.asana.get_stories(task_gid)):
+            raise LifecycleError(
+                f"selector-gap owner update was not observed on Asana task {task_gid}"
+            )
+    return operations
 
 
 def _configured_observation_projects() -> list[str]:
@@ -63,6 +89,10 @@ class LifecycleEngine(
             terminal_cleaner=terminal_cleaner,
             notify=notify,
         )
+        try:
+            _sync_selector_gap_owner_surfaces(self)
+        except LifecycleError as exc:
+            (notify or (lambda _: None))(f"Selector-gap owner sync unavailable: {exc}")
         candidates = self._workstream_candidates(values)
         releasable: set[int] = set()
         for candidate in candidates.values():
@@ -602,6 +632,49 @@ def _parser() -> argparse.ArgumentParser:
     watch.add_argument("--dispatch", action="store_true", help="perform idempotent routing actions on each poll")
     watch.add_argument("--format", choices=["json", "table"], default="table")
 
+    verify_bundle = sub.add_parser(
+        "verify-local-bundle",
+        help="verify the one receiver-readable exact candidate bundle for local publication completion",
+    )
+    verify_bundle.add_argument("--bundle", required=True, help="bundle basename expected in the downloads directory")
+    verify_bundle.add_argument("--downloads-dir", type=Path, default=Path("~/Downloads"))
+    verify_bundle.add_argument("--expected-head", required=True)
+    verify_bundle.add_argument("--expected-tree", required=True)
+
+    publication_route = sub.add_parser(
+        "classify-publication-route",
+        help="keep GitHub connector publication primary and select local bundle fallback only after an observed failed/degraded attempt",
+    )
+    publication_route.add_argument(
+        "--connector-attempt-state",
+        required=True,
+        choices=("not-attempted", "working", "failing", "slow-or-manual", "unavailable"),
+    )
+    publication_route.add_argument(
+        "--exact-candidate-bytes-available",
+        action=argparse.BooleanOptionalAction,
+        required=True,
+    )
+    publication_route.add_argument(
+        "--attempt",
+        action="append",
+        default=[],
+        help="concrete GitHub connector publication action attempted; repeat for multiple attempts",
+    )
+    publication_route.add_argument(
+        "--stop-reason",
+        help="exact observed failure/degradation reason when stopping remote publication",
+    )
+
+    finalize = sub.add_parser(
+        "implementation-finalize",
+        help="finalize one exact Implementation PR to authoritative review-ready state",
+    )
+    finalize.add_argument("--pr", type=int, required=True)
+    finalize.add_argument("--expected-head", required=True)
+    finalize.add_argument("--clear-publication-blocker", action="store_true")
+    finalize.add_argument("--keep-draft-reason")
+
     checkpoint = sub.add_parser(
         "integration-checkpoint",
         help="update the current local Integration recovery claim from the fenced local consumer",
@@ -626,6 +699,27 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
+        if args.command == "classify-publication-route":
+            result = classify_publication_route(
+                connector_attempt_state=args.connector_attempt_state,
+                exact_candidate_bytes_available=args.exact_candidate_bytes_available,
+                attempted_actions=args.attempt,
+                stop_reason=args.stop_reason,
+            )
+            payload = asdict(result)
+            if result.route != "DIRECT CONNECTOR":
+                payload["operator_notice"] = render_publication_fallback_notice(result)
+            print(json.dumps(payload, indent=2, sort_keys=True))
+            return 0 if result.route != FRESH_AUTHORING_REQUIRED else 2
+        if args.command == "verify-local-bundle":
+            result = classify_receiver_bundle(
+                downloads_dir=args.downloads_dir,
+                bundle_filename=args.bundle,
+                expected_head=args.expected_head,
+                expected_tree=args.expected_tree,
+            )
+            print(json.dumps(asdict(result), indent=2, sort_keys=True))
+            return 0 if result.allowed else 2
         if args.command == "integration-checkpoint":
             value = checkpoint_claim(
                 claim_path=args.claim_path,
@@ -640,6 +734,15 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(value, indent=2, sort_keys=True))
             return 0
         engine, workspace, local, fixer, terminal_cleaner = _build_engine(args)
+        if args.command == "implementation-finalize":
+            result = engine.finalize_implementation_pr(
+                args.pr,
+                expected_head=args.expected_head,
+                clear_publication_blocker=args.clear_publication_blocker,
+                keep_draft_reason=args.keep_draft_reason,
+            )
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0 if result.get("complete") is True else 2
         if args.command == "status":
             values = engine.status(include_closed=args.include_closed)
             _publish_projection(engine, values, args, mutate_tasks=False)

@@ -96,11 +96,19 @@ def test_classified_stable_rule_removal_is_representable_and_unknown_ids_still_f
   kernels.validate_change_history(unknown,removed)
 
 def test_generated_kernels_current_bound_and_within_budget():
- m,s=kernels.load_canonical(); results=kernels.render_all(check=True); assert len(results)==8
+ m,s=kernels.load_canonical(); results=kernels.render_all(check=True); assert len(results)==9
  for role,p in kernels.generated_paths(m,s).items():
   text=p.read_text(); assert len(text)<=m['max_kernel_chars']; assert f"PROJECT_CANONICAL_VERSION: {m['canonical_version']}" in text; assert 'PROJECT_CHANNEL: production' in text
   assert text.index('PROJECT_REPOSITORY: marcogallotta/ai-tools')<text.index('Startup:')
   assert 'Mismatch alone never blocks' in text and '?/3 integrity error' in text
+ profile_paths=kernels.generated_profile_paths(m,s)
+ assert profile_paths=={'worker': DISH_ROOT/'docs'/'chatgpt-projects'/'worker.md'}
+ worker=profile_paths['worker'].read_text()
+ assert len(worker)<=8000
+ assert f"PROJECT_CANONICAL_VERSION: {m['canonical_version']}" in worker
+ assert 'PROFILE: manual-worker-r5-g2' in worker
+ assert 'same Worker MUST explicitly switch to Implementation' in worker
+ assert 'does **not** require Workspace-Agent launch' in worker
 
 
 def test_git_first_startup_and_test_candidate_binding_are_explicit():
@@ -200,8 +208,8 @@ def test_development_workflow_context_preload_is_role_index_driven_and_read_only
  assert 'role-index standing contracts' in text
  assert '`dish/docs/agents/contributor-base.md`' in text
  assert 'Read-only; grants no role/mutation/Review/Integration/merge/production authority' in text
- comps=s['roles']['development-workflow']['allowed_compositions']; assert len(comps)==1 and 'implementation.md' in comps[0]
- assert 'review.md' not in comps[0] and 'integration.md' not in comps[0]
+ comps=s['roles']['development-workflow']['allowed_compositions']; assert len(comps)==2 and any('implementation.md' in c for c in comps) and any('Design Review: read-only' in c for c in comps)
+ assert all('integration.md' not in c for c in comps)
 
 
 def test_development_workflow_re_grounding_and_action_context_match_standing_contract():
@@ -515,6 +523,7 @@ def test_integration_rendered_kernel_preserves_v1a_local_only_landing_boundary()
 def test_c1_governance_contracts_and_evals_are_mechanical():
  m,s=kernels.load_canonical()
  assert 'audit' in s['roles'] and m['generated_role_files']['audit']=='audit.md'
+ assert m['generated_profile_files']=={'worker':'worker.md'} and 'worker' not in s['roles']
  audit={r['id'] for r in kernels.effective_rules(s,'audit')}
  assert {'audit-authority-boundary','audit-exact-baseline','audit-asana-disposition','audit-specialist-context'}<=audit
  for role in ('coordinator','development-workflow','implementation','integration','review','workflow','postgresql-dark-launch'):
@@ -670,8 +679,8 @@ def test_triggered_rule_text_change_does_not_manufacture_project_settings_versio
 def test_required_version_inventory_matches_published_first_parent_history_and_restores_losses():
  m,s=kernels.load_canonical(); versions=kernels.required_versions(m)
  expected={f'dish-chatgpt-projects-v2-{x}' for x in ['d96ab5f0588d','708fb9a9a9bc','39ff3abc502e','857d88788c12','23365034a0f1','9575ccfd79c8','28dcb04decc8','9bb70124ca21','694190185f60','712e3b16aa05','d048682742d6','54041bbbc8d8','86b8011172ee','219f34402511','9bf227f53f0a','5d24af30193a','bfaeef68aed9','d3a070d57fb2','443e13732e7f','7644d9ed0518','0a572f3b0a67']}
- expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d','dish-chatgpt-projects-v2-7924b7da9fc0'})
- assert set(versions)==expected and len(versions)==27
+ expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d','dish-chatgpt-projects-v2-7924b7da9fc0','dish-chatgpt-projects-v2-3fe9827c4adc','dish-chatgpt-projects-v2-a9cefd1968b7','dish-chatgpt-projects-v2-05211aedbf1c'})
+ assert set(versions)==expected and len(versions)==30
  assert kernels.validate_required_version_topology(m)==versions
  for old in ('dish-chatgpt-projects-v2-39ff3abc502e','dish-chatgpt-projects-v2-9bb70124ca21'):
   path=kernels._change_path(m,old); assert path and path[-1]['to_version']==m['canonical_version']
@@ -813,3 +822,83 @@ def test_impact_is_explicit_and_never_inferred_from_rule_criticality():
  for surface in ('authority','safety','presentation'):
   with pytest.raises(kernels.KernelError,match='explicit transition impact'):
    kernels._impact({'surface':surface})
+
+
+def test_development_workflow_boundary_distinguishes_design_review_from_code_review():
+    _, source = kernels.load_canonical()
+    role = source['roles']['development-workflow']
+    boundary = next(r for r in role['rules'] if r['id'] == 'development-workflow-boundary')
+    assert 'No Code Review/Integration/production' in boundary['text']
+    assert 'authorship-independent Design Review read-only' in boundary['text']
+    assert 'No semantic, Review, Integration, or production authority' not in boundary['text']
+    rendered = kernels.render_role(kernels.load_canonical()[0], source, 'development-workflow')
+    assert 'Design Review: read-only' in rendered
+    assert 'No Code Review/Integration/production' in rendered
+    assert 'No semantic, Review, Integration, or production authority' not in rendered
+
+
+def test_review_v3_rules_and_failure_regressions_are_canonical():
+    _, source = kernels.load_canonical()
+    ids = {r['id'] for r in source['roles']['review']['rules']}
+    assert {'review-v3-semantic-grounding','review-v3-adversarial-quality','review-v3-headline-intent','review-v3-design-projection'} <= ids
+    scenarios = {x['id']: x for x in kernels._evals()}
+    required = {
+        'review-v3-wrong-spec-green-tests-block',
+        'review-v3-task-changed-after-dispatch',
+        'review-v3-handoff-drift-block',
+        'review-v3-event-driven-polling-intent-drift',
+        'review-v3-universal-quantifier-not-enumeration',
+        'review-v3-complexity-overshoot-challenge',
+        'review-v3-false-operational-readiness',
+        'review-v3-process-defect-preserves-semantic-finding',
+        'review-v3-compatibility-unknown-not-safe-remove',
+        'review-v3-review-focus-open-ended',
+        'review-v3-protected-invariant-missing-detected',
+        'review-v3-stale-design-verdict-does-not-project-current',
+        'review-v3-headline-agent-inference-rejected',
+        'review-v3-handoff-pre-dispatch-fidelity',
+        'review-v3-operator-workflow-before-after',
+        'review-v3-stale-architecture-block',
+        'review-v3-frozen-generation-zero-mutation',
+        'review-v3-epistemic-stop-prevents-false-pass',
+        'review-v3-epistemic-stop-prevents-false-block',
+        'review-v3-rollout-misses-failure',
+        'review-v3-wrong-asana-context',
+        'review-v3-cross-host-reground-loop',
+        'review-v3-parallel-lineage-reuse-race',
+        'review-v3-stable-base-conflict-cost',
+        'review-v3-rollback-scope-mismatch',
+        'review-v3-competing-intent-summary',
+        'review-v3-unsupported-external-inference',
+        'review-v3-dangerous-ci-ownership',
+        'review-v3-protected-invariant-violation',
+        'review-v3-stale-section-write-converges',
+        'review-v3-headline-paraphrase-requires-reapproval',
+        'review-v3-headline-evidence-unrecoverable',
+    }
+    assert required <= set(scenarios)
+    assert 'block-faithful-implementation-of-drifted-handoff' in scenarios['review-v3-handoff-drift-block']['required_actions']
+    assert 'move-task-ready-from-stale-g1' in scenarios['review-v3-stale-design-verdict-does-not-project-current']['forbidden_actions']
+
+
+def test_review_v3_learned_risk_corpus_is_routable_and_guarded():
+    review = (DISH_ROOT/'docs'/'agents'/'review.md').read_text()
+    corpus = review
+    assert '## Learned-risk routing corpus' in corpus
+    for risk_id in (f'RV3-R{i:02d}' for i in range(1, 11)):
+        assert f'`{risk_id}`' in corpus
+    assert 'False-positive guard' in corpus
+    assert 'freshness trigger' in corpus
+
+
+def test_review_v3_standing_contract_has_four_independent_semantic_questions_and_chain_of_custody():
+    review = (DISH_ROOT/'docs'/'agents'/'review.md').read_text()
+    for token in ('SPECIFICATION CONFORMANCE','HANDOFF FIDELITY','IMPLEMENTATION CONFORMANCE','IMPLEMENTATION CORRECTNESS'):
+        assert token in review
+    assert 'MARCO-SIGNED INTENT DEVIATION' in review
+    assert 'Unknown to the designer` is not `safe to remove' in review
+    assert 'recurring polling becoming the practical primary mechanism' in review
+    handoff = (DISH_ROOT/'docs'/'agents'/'templates'/'implementation-handoff.md').read_text()
+    for token in ('Governing design/spec generation','Marco Intent Baseline refs','Protected invariants','Review Focus / signed challenges'):
+        assert token in handoff
+    assert 'Zero semantic dispatch occurs' in handoff

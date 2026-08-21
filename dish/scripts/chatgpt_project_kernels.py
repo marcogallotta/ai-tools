@@ -170,6 +170,25 @@ def validate_topology(s):
  chatty_contract(s); a,b=role_index_contracts(),source_contracts(s)
  if a!=b: raise KernelError(f'Project topology differs from role index: index={sorted(a)} source={sorted(b)}')
  for role in s['roles']: context_dependencies(s,role)
+ profile_specs(s)
+def profile_specs(s):
+ raw=s.get('profiles',{})
+ if not isinstance(raw,dict): raise KernelError('canonical source profiles must be an object')
+ out={}
+ for key,value in raw.items():
+  if not re.fullmatch(r'[a-z0-9][a-z0-9-]*',str(key)) or not isinstance(value,dict): raise KernelError(f'invalid Project profile {key!r}')
+  project_name=str(value.get('project_name','')).strip(); profile_id=str(value.get('profile_id','')).strip(); body=str(value.get('body','')).strip(); limit=value.get('max_chars',8000)
+  if not project_name or not profile_id or not body or not isinstance(limit,int) or limit<=0: raise KernelError(f'Project profile {key!r} requires project_name/profile_id/body/max_chars')
+  out[str(key)]={'project_name':project_name,'profile_id':profile_id,'body':body,'max_chars':limit}
+ return out
+
+def render_profile_with_version(s,key,version):
+ profiles=profile_specs(s)
+ if key not in profiles: raise KernelError(f'unknown Project profile {key!r}')
+ spec=profiles[key]; repo,branch,_=repository_config(s)
+ lines=[f"# {spec['project_name']}",'',f"PROFILE: {spec['profile_id']}",f'PROJECT_CANONICAL_VERSION: {version}','PROJECT_CHANNEL: production','CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json',f'PROJECT_REPOSITORY: {repo}',f'PROJECT_DEFAULT_BRANCH: {branch}','',spec['body'],'']
+ return '\n'.join(lines)
+
 def _rules(v,label):
  if not isinstance(v,list): raise KernelError(f'{label} must be a list')
  out=[]; seen=set()
@@ -333,11 +352,13 @@ def kernel_identity(s):
   b+=role.encode()+b'\0'+render_role_with_version(s,role,VERSION_PLACEHOLDER).encode()+b'\0'
   md=[{k:x[k] for k in ('id','impact','surface','action_boundaries','delivery')} for x in effective_rules(s,role)]
   b+=json.dumps(md,sort_keys=True,separators=(',',':')).encode()+b'\0'
+ for key in sorted(profile_specs(s)):
+  b+=b'profile\0'+key.encode()+b'\0'+render_profile_with_version(s,key,VERSION_PLACEHOLDER).encode()+b'\0'
  return _h(bytes(b))
 def _rule_fingerprint(x):return _h(json.dumps({k:x.get(k) for k in ('id','text','impact','surface','action_boundaries')},sort_keys=True,separators=(',',':')).encode())
 def rule_fingerprints(s):return {r:{x['id']:_rule_fingerprint(x) for x in effective_rules(s,r)} for r in s['roles']}
 def renderer_fingerprint():
- return _h('\0'.join((STARTUP_TEMPLATE,HANDOFF_BOUNDARY,CHATTY_BLOCK_START,CHATTY_BLOCK_END,DESIGN_BLOCK_START,DESIGN_BLOCK_END,inspect.getsource(chatty_contract),inspect.getsource(design_principles_rule),inspect.getsource(shared_rules),inspect.getsource(_design_principles_block),inspect.getsource(_render_role_index_design_principles),inspect.getsource(_render_chatty_lines),inspect.getsource(_root_chatty_block),inspect.getsource(_render_root_instructions),inspect.getsource(repository_config),inspect.getsource(context_dependencies),inspect.getsource(_render_trigger_destinations),inspect.getsource(_render_context_dependencies),inspect.getsource(render_role_with_version),inspect.getsource(render_test_candidate),inspect.getsource(kernel_identity))).encode())
+ return _h('\0'.join((STARTUP_TEMPLATE,HANDOFF_BOUNDARY,CHATTY_BLOCK_START,CHATTY_BLOCK_END,DESIGN_BLOCK_START,DESIGN_BLOCK_END,inspect.getsource(chatty_contract),inspect.getsource(design_principles_rule),inspect.getsource(shared_rules),inspect.getsource(_design_principles_block),inspect.getsource(_render_role_index_design_principles),inspect.getsource(_render_chatty_lines),inspect.getsource(_root_chatty_block),inspect.getsource(_render_root_instructions),inspect.getsource(repository_config),inspect.getsource(context_dependencies),inspect.getsource(_render_trigger_destinations),inspect.getsource(_render_context_dependencies),inspect.getsource(render_role_with_version),inspect.getsource(profile_specs),inspect.getsource(render_profile_with_version),inspect.getsource(render_test_candidate),inspect.getsource(kernel_identity))).encode())
 def _impact(c):
  x=str(c.get('impact','')).strip()
  if x not in {'compatible','additive','breaking'}: raise KernelError(f"explicit transition impact required for {c.get('rule_id','<unknown>')!r}")
@@ -658,6 +679,7 @@ def validate_standing_invariants(s,*,registry=None,eval_ids=None,required_eval_i
 def generated_sha256(m,s):
  parts=[]
  for role in sorted(s['roles']): parts.append(role+'\0'+render_role_with_version(s,role,str(m['canonical_version'])))
+ for key in sorted(profile_specs(s)): parts.append('profile:'+key+'\0'+render_profile_with_version(s,key,str(m['canonical_version'])))
  return _h('\0'.join(parts).encode())
 def load_canonical(*,validate_history=True):
  m=_read_json(MANIFEST_PATH); p=PROJECT_DIR/str(m.get('source_file','')); s=_read_json(p)
@@ -676,6 +698,10 @@ def generated_paths(m,s):
  files=m.get('generated_role_files')
  if not isinstance(files,dict) or set(files)!=set(s['roles']): raise KernelError('generated role file map mismatch')
  return {r:PROJECT_DIR/str(files[r]) for r in s['roles']}
+def generated_profile_paths(m,s):
+ profiles=profile_specs(s); files=m.get('generated_profile_files',{})
+ if not isinstance(files,dict) or set(files)!=set(profiles): raise KernelError('generated profile file map mismatch')
+ return {k:PROJECT_DIR/str(files[k]) for k in profiles}
 def render_all(*,check):
  m,s=load_canonical(); limit=int(m.get('max_kernel_chars',3500)); out=[]; _render_root_instructions(s,check=check); _render_claude_operator_style(s,check=check); _render_role_index_design_principles(s,check=check)
  for r,p in generated_paths(m,s).items():
@@ -685,6 +711,13 @@ def render_all(*,check):
    if not p.is_file() or p.read_text()!=text: raise KernelError(f'generated kernel differs: {p}')
   else:p.write_text(text)
   out.append((r,n))
+ for key,p in generated_profile_paths(m,s).items():
+  text=render_profile_with_version(s,key,str(m['canonical_version'])); n=len(text); profile_limit=profile_specs(s)[key]['max_chars']
+  if n>profile_limit: raise KernelError(f'profile {key} exceeds {profile_limit} chars: {n}')
+  if check:
+   if not p.is_file() or p.read_text()!=text: raise KernelError(f'generated profile differs: {p}')
+  else:p.write_text(text)
+  out.append((f'profile:{key}',n))
  return out
 def _change_path(m,v):
  if v==m['canonical_version']: return []
@@ -729,9 +762,13 @@ def classify_project_drift(project_version,role_key,action_boundary,*,manifest=N
  return {'project_version':project_version,'canonical_version':canonical,'role':role_key,'action_boundary':boundary,'state':'hard_break' if blocking else 'outdated','impact':impact,'drift_level':level,'indicator':indicator,'block':bool(blocking),'resync_required':bool(blocking),'settings_refresh_recommended':not blocking,'changes':effective}
 
 REQUIRED_EVAL_IDS={'action-first-lifecycle-output', 'active-gate-blocker-cannot-be-deferred', 'additive-evidence-drift', 'allowed-specialist-implementation-composition', 'audit-dedupe-existing-finding', 'audit-exact-baseline', 'audit-missing-authority-fails-closed', 'audit-moved-baseline-current-blocker', 'audit-new-finding-backlog-only', 'audit-refuses-mutation-authority', 'audit-specialist-context-no-authority', 'authenticated-account-not-human-decision', 'chat-only-review-verdict-not-complete', 'chatty-authorized-action-before-narration', 'chatty-high-level-review-summary', 'chatty-progress-is-not-completion', 'chatty-session-correction-latches', 'chatty-status-reconciles-before-reroute', 'code-smell-dedupe-log-and-continue', 'code-smell-true-blocker-stays-active', 'comparison-incompatible-target-escalates-implementation', 'compatible-concise-output-drift', 'compatible-wording-drift', 'configured-repository-pr-routing', 'coordinator-check-everything-mixed-state', 'coordinator-pr-intake-automatic-review', 'cross-role-context-bleed', 'current-template-lookup', 'development-workflow-context-preload-no-authority', 'development-workflow-pr40-fallback-context', 'development-workflow-pr60-test-scope-context', 'disposable-fixture-still-needs-health', 'durable-review-classification', 'failed-ci-ownership-before-fix', 'five-whys-evidence-discipline', 'five-whys-reground-reload', 'forbidden-implicit-role-expansion', 'friction-active-blocker-routes-to-active-work', 'friction-dedupe-no-urgency', 'handoff-conflicts-with-role-authority', 'implementation-escalation-is-action-first', 'implementation-rejects-patch-only-completion', 'integration-bounded-reconciliation', 'integration-breaking-merge-drift', 'integration-rejects-head-mismatch', 'live-authority-over-stale-memory', 'no-valid-fallback', 'post-merge-asana-residual-gate', 'project-drift-current-silent', 'project-drift-integrity-error', 'project-drift-pre-d96-legacy', 'project-drift-self-compatible', 'project-drift-v708-review-compatible', 'publication-blocker-forbids-unsafe-shortcuts', 'publication-completion-invalidates-prior-review', 'publication-fully-published-local-certification', 'publication-handoff-before-human-notification', 'publication-materializer-eligible-blocker', 'publication-unsafe-governed-path-blocker', 'repository-context-admission-consequential-reasoning', 'repository-context-admission-missing-bundle', 'repository-context-admission-reentry', 'repository-context-admission-stale-main', 'repository-context-admission-tiny-lookup', 'repository-friction-discovery', 'review-breaking-completion-drift', 'review-exact-head-completion', 'reviewed-head-movement-classification', 'scope-amplification-checkpoint', 'separate-pr-does-not-clear-independent-blocker', 'shared-resource-concurrency-preflight', 'skipped-version-breaking-drift', 'skipped-version-nonbreaking-drift', 'stale-project-version', 'standing-policy-post-integration-main-readback', 'supported-operation-stays-local-system-access', 'task-history-before-no-op', 'unrelated-role-drift', 'valid-action-fallback', 'design-principles-harmless-overlap', 'design-principles-no-invented-manual-gate', 'external-defect-continue-original', 'external-defect-required-owner-lineage', 'truthful-liveness-attempt-isolation', 'worker-role-phase-activation-boundary', 'review-bundle-unavailable-proceeds', 'review-real-evidence-boundary-routes-local', 'review-stale-bundle-rejected', 'review-bundle-outage-regression-fixtures'}
+REQUIRED_EVAL_IDS|={'manual-worker-block-switches-without-second-marco-prompt','manual-worker-fix-publishes-and-stops-before-self-review','manual-worker-missing-automated-bookkeeping-is-not-a-review-gate'}
 REQUIRED_EVAL_IDS|={'development-workflow-asana-legacy-mode','development-workflow-asana-v2-mode','development-workflow-asana-v3-abort','development-workflow-asana-contradiction-abort','development-workflow-asana-unknown-version-abort'}
 REQUIRED_EVAL_IDS|={'development-workflow-asana-later-hold-controls','development-workflow-asana-audit-blocker-no-inference','development-workflow-asana-design-awaits-agentic-review','development-workflow-asana-later-prohibition-controls','development-workflow-asana-folded-owner-done','development-workflow-asana-post-merge-rollout','development-workflow-asana-named-dependency','development-workflow-asana-raw-intake','development-workflow-asana-ambiguous-chronology','development-workflow-asana-projection-contradiction','development-workflow-asana-comment-is-not-state','development-workflow-asana-contextual-version','development-workflow-asana-priority-absent','development-workflow-asana-historical-final-stamp','development-workflow-asana-stale-session-fresh-read'}
 REQUIRED_EVAL_IDS|={'asana-v2-project-registry-postgresql-contradictory-sections','asana-v2-project-registry-coordinator-legacy-bare-name','asana-v2-project-registry-unknown-version-stop-and-flag','asana-v2-project-registry-unregistered-project-refusal'}
+REQUIRED_EVAL_IDS|={'review-v3-stale-design-verdict-does-not-project-current', 'review-v3-bounded-recovery-polling-allowed', 'review-v3-event-driven-polling-intent-drift', 'review-v3-headline-exact-approval-sticky', 'review-v3-task-changed-after-dispatch', 'review-v3-development-workflow-design-review-capability', 'review-v3-review-focus-open-ended', 'review-v3-implementation-consumes-handoff-as-projection', 'review-v3-signed-intent-deviation', 'review-v3-complexity-overshoot-challenge', 'review-v3-universal-quantifier-not-enumeration', 'review-v3-wrong-spec-green-tests-block', 'review-v3-handoff-pre-dispatch-fidelity', 'review-v3-learned-risk-applicability', 'review-v3-process-defect-preserves-semantic-finding', 'review-v3-protected-invariant-missing-detected', 'review-v3-handoff-drift-block', 'review-v3-compatibility-unknown-not-safe-remove', 'review-v3-headline-agent-inference-rejected', 'review-v3-false-operational-readiness'}
+REQUIRED_EVAL_IDS|={'review-v3-audit-excluded', 'review-v3-stale-generation-does-not-transfer', 'review-v3-coordinator-design-review', 'review-v3-self-authored-design-fails-closed', 'review-v3-ambiguous-review-type', 'review-v3-development-workflow-design-review', 'review-v3-development-workflow-code-review-route', 'review-v3-intent-invariants-and-focus'}
+REQUIRED_EVAL_IDS|={'review-v3-operator-workflow-before-after','review-v3-stale-architecture-block','review-v3-frozen-generation-zero-mutation','review-v3-epistemic-stop-prevents-false-pass','review-v3-epistemic-stop-prevents-false-block','review-v3-rollout-misses-failure','review-v3-wrong-asana-context','review-v3-cross-host-reground-loop','review-v3-parallel-lineage-reuse-race','review-v3-stable-base-conflict-cost','review-v3-rollback-scope-mismatch','review-v3-competing-intent-summary','review-v3-unsupported-external-inference','review-v3-dangerous-ci-ownership','review-v3-protected-invariant-violation','review-v3-stale-section-write-converges','review-v3-headline-paraphrase-requires-reapproval','review-v3-headline-evidence-unrecoverable'}
 REQUIRED_EVAL_IDS|={'review-correction-r3-block-code-fix','review-correction-r3-merge-no-fix','review-correction-r3-design-task-shape-route','review-correction-r3-batch-isolation'}
 ATTENTION_EVAL_IDS={'attention-depth-is-session-persistent','attention-minimum-packet-survives-50-percent','attention-progressive-disclosure-at-200-percent','attention-recovery-interaction'}
 ORACLE_FIELDS={'expected','failure','expected_outcome','required_actions','forbidden_actions','required_observations','required_observations_by_role','require_ordered_observations','observation_link_field'}

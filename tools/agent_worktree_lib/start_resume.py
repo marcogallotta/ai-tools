@@ -13,7 +13,7 @@ from .operations import (
 from .repository import discover_repository
 from .state import (
     TaskLock, atomic_write_json, clear_agent_reference, load_task_state, new_active_task_state,
-    set_agent_reference, state_path, task_worktree_path, validate_agent_state,
+    read_json_object, set_agent_reference, state_path, task_state_paths, task_worktree_path, validate_agent_state,
 )
 
 def _checked_out_path(runner: GitRunner, cwd: Path, branch: str) -> str | None:
@@ -411,7 +411,7 @@ def resume_locked(
     if agent_id is not None:
         set_agent_reference(agent_id, state)
     if takeover and previous_owner is not None and previous_owner != agent_id:
-        clear_agent_reference(previous_owner, task_gid)
+        clear_agent_reference(previous_owner, task_gid, state.get("lineage_id"))
     if relation == "remote-ahead":
         fail(
             "REMOTE_AHEAD",
@@ -434,49 +434,51 @@ def command_resume(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any
         return resume_locked(task_gid, agent_id, args.takeover, runner)
 
 
-def command_status(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]:
-    task_gid = require_task_gid(args.task)
-    state = load_task_state(task_gid)
+def _status_one(task_gid: str, state: dict[str, Any], runner: GitRunner, path: Path) -> dict[str, Any]:
     if state.get("lifecycle") != "active":
+        if state.get("lifecycle") == "supersession-incomplete":
+            diagnostic = "supersession incomplete; the old lineage was already terminalized and requires an exact retry to complete"
+        else:
+            diagnostic = "task lineage is no longer active; live worktree verification was not attempted"
         return {
-            "command": "status",
-            "ok": True,
-            "task_gid": task_gid,
-            "lifecycle": state.get("lifecycle"),
-            "disposition": state.get("disposition"),
-            "branch": state.get("branch"),
-            "worktree": state.get("worktree_path"),
-            "base_ref": state.get("base_ref"),
-            "base_sha": state.get("base_sha"),
-            "local_head": state.get("local_head"),
-            "published_head": state.get("published_head"),
-            "owner_agent_id": owner_agent_id(state),
-            "state_path": str(state_path(task_gid)),
-            "supersession": state.get("supersession"),
-            "diagnostics": [
-                "supersession incomplete; exact retry of `tools/agent-worktree supersede` is required"
-                if state.get("lifecycle") == "supersession-incomplete"
-                else "task is no longer active; live worktree verification was not attempted"
-            ],
+            "command": "status", "ok": True, "task_gid": task_gid,
+            "lineage_id": state.get("lineage_id"), "lifecycle": state.get("lifecycle"),
+            "disposition": state.get("disposition"), "branch": state.get("branch"),
+            "worktree": state.get("worktree_path"), "base_ref": state.get("base_ref"),
+            "base_sha": state.get("base_sha"), "local_head": state.get("local_head"),
+            "published_head": state.get("published_head"), "owner_agent_id": owner_agent_id(state),
+            "state_path": str(path), "supersession": state.get("supersession"),
+            "diagnostics": [diagnostic],
         }
     try:
         repo = resolve_repository_from_state(runner, state)
         identity = verify_owned_worktree(runner, repo, state)
     except AgentWorktreeError as exc:
         return {
-            "command": "status",
-            "ok": False,
-            "task_gid": task_gid,
-            "branch": state.get("branch"),
-            "worktree": state.get("worktree_path"),
-            "base_ref": state.get("base_ref"),
-            "base_sha": state.get("base_sha"),
-            "local_head": state.get("local_head"),
-            "published_head": state.get("published_head"),
-            "owner_agent_id": owner_agent_id(state),
-            "state_path": str(state_path(task_gid)),
+            "command": "status", "ok": False, "task_gid": task_gid, "lineage_id": state.get("lineage_id"),
+            "branch": state.get("branch"), "worktree": state.get("worktree_path"),
+            "base_ref": state.get("base_ref"), "base_sha": state.get("base_sha"),
+            "local_head": state.get("local_head"), "published_head": state.get("published_head"),
+            "owner_agent_id": owner_agent_id(state), "state_path": str(path),
             "diagnostics": [f"{exc.code}: {exc.message}"],
         }
     payload = payload_from_state("status", state, identity)
+    payload["lineage_id"] = state.get("lineage_id")
+    payload["state_path"] = str(path)
     payload["diagnostics"] = []
     return payload
+
+
+def command_status(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]:
+    task_gid = require_task_gid(args.task)
+    paths = task_state_paths(task_gid)
+    if not paths:
+        fail("STATE_MISSING", f"task worktree state does not exist for {task_gid}")
+    entries = [_status_one(task_gid, read_json_object(path, "task worktree state"), runner, path) for path in paths]
+    if len(entries) == 1:
+        return entries[0]
+    return {
+        "command": "status", "ok": all(bool(item.get("ok")) for item in entries),
+        "task_gid": task_gid, "lineage_count": len(entries), "lineages": entries,
+        "diagnostics": [],
+    }

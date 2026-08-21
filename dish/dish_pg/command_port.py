@@ -65,6 +65,15 @@ from dish_tool.governed_diff import (
     validate_semantic_proposal,
 )
 from dish_tool.task_urls import task_gid_from_url
+from dish_tool.task_document import (
+    DESTINATION_RE,
+    DocumentParseError,
+    finding_payload,
+    parse_canonical_planning_notes,
+    parse_planning_brief,
+    render_planning_brief_notes,
+    validate_planning_brief,
+)
 from .workflow import (
     ContentionLost,
     ExecutionSpec,
@@ -505,6 +514,13 @@ class PostgresCommandPort:
                         non_material_checkin=(
                             call.command_name == "prepare"
                             and data.get("handoff") == "checked-in"
+                        ),
+                        planning_handoff=(
+                            call.command_name == "prepare"
+                            and data.get("handoff") == "planning-to-research"
+                        ),
+                        placement_changed=bool(
+                            data.pop("_placement_changed", False)
                         ),
                     ),
                     result_data=data,
@@ -2620,6 +2636,155 @@ class PostgresCommandPort:
         )
         file_text = call.arguments.get("file_text")
         body_value = call.arguments.get("body")
+        if operation.kind == "planning":
+            if file_text is None:
+                raise CommandRuleError(
+                    "VALIDATION_FAILED",
+                    "Planning prepare requires a Planning brief",
+                    http_status=400,
+                    data={"rule": "planning_candidate_required"},
+                )
+            try:
+                brief = parse_planning_brief(str(file_text))
+            except DocumentParseError as exc:
+                raise CommandRuleError(
+                    "VALIDATION_FAILED",
+                    "Planning candidate is malformed",
+                    http_status=400,
+                    data={"rule": exc.rule, **dict(exc.details)},
+                ) from exc
+            findings = validate_planning_brief(brief).findings
+            if findings:
+                raise CommandRuleError(
+                    "VALIDATION_FAILED",
+                    "Planning candidate failed validation",
+                    http_status=400,
+                    data={"errors": [finding_payload(item) for item in findings]},
+                )
+            destination_value = brief.values["Destination section"]
+            destination_match = DESTINATION_RE.fullmatch(destination_value)
+            if destination_match is None:
+                raise CommandRuleError(
+                    "VALIDATION_FAILED",
+                    "Planning destination is malformed",
+                    http_status=400,
+                    data={"rule": "planning_destination_invalid"},
+                )
+            try:
+                self.reads.resolve_section(destination_match.group("gid"))
+            except ReadModelError as exc:
+                raise CommandRuleError(
+                    "VALIDATION_FAILED",
+                    "Planning destination is not governed by the active registry",
+                    http_status=400,
+                    data={"rule": "planning_destination_unresolved"},
+                ) from exc
+            notes = render_planning_brief_notes(brief)
+            try:
+                exact_brief = parse_canonical_planning_notes(notes)
+            except DocumentParseError as exc:
+                raise CommandRuleError(
+                    "VALIDATION_FAILED",
+                    "Planning candidate could not be rendered canonically",
+                    data={"rule": exc.rule, **dict(exc.details)},
+                ) from exc
+            exact_findings = validate_planning_brief(exact_brief).findings
+            if exact_findings:
+                raise CommandRuleError(
+                    "VALIDATION_FAILED",
+                    "rendered Planning candidate failed validation",
+                    data={"errors": [finding_payload(item) for item in exact_findings]},
+                )
+            version_id = self._activate_document(
+                generation_id=generation.generation_id,
+                task_id=task.task_id,
+                binding_id=binding.binding_id,
+                execution_id=execution.execution_id,
+                title=prior.title,
+                body=notes,
+                predecessor_content_version_id=prior.content_version_id,
+                at=call.now,
+            )
+            research_section_id = self._section_for_role(
+                generation.generation_id,
+                "research_queue",
+                missing_code="RESEARCH_QUEUE_MISSING",
+                missing_message="active registry has no Research Queue",
+            )
+            placement = self.session.get(
+                models.CurrentTaskSectionPlacement,
+                (generation.generation_id, task.task_id),
+            )
+            placement_changed = placement is None or placement.section_id != research_section_id
+            if placement_changed:
+                self._set_placement(
+                    generation.generation_id,
+                    task.task_id,
+                    research_section_id,
+                    execution.execution_id,
+                    call.now,
+                )
+            author_lease = self.session.scalar(
+                select(wf.ServiceLease).where(
+                    wf.ServiceLease.operation_id == operation.operation_id,
+                    wf.ServiceLease.state == "active",
+                    wf.ServiceLease.actor_role == "author",
+                )
+            )
+            if author_lease is not None:
+                self._terminalize_lease(
+                    author_lease, "released", execution, call.now, "Planning handed off to Research"
+                )
+            operation.lifecycle = "completed"
+            operation.phase = "completed"
+            operation.persisted_actions = []
+            operation.terminal_outcome = "planning_handoff_confirmed"
+            operation.terminal_at = call.now
+            operation.operation_revision += 1
+            self.session.add(
+                wf.OperationStep(
+                    step_id=self.uuid_factory(),
+                    operation_id=operation.operation_id,
+                    step_name=f"prepare-{operation.operation_revision}",
+                    step_sequence=self._next_step(operation.operation_id),
+                    outcome="complete",
+                    command_execution_id=execution.execution_id,
+                    evidence={
+                        "content_version_id": str(version_id),
+                        "handoff": "planning-to-research",
+                        "section_id": str(research_section_id),
+                    },
+                    occurred_at=call.now,
+                )
+            )
+            self.session.flush()
+            projection_id = self._project(
+                generation.generation_id,
+                execution.execution_id,
+                task.task_id,
+                "update_task_document",
+                {"content_version_id": str(version_id)},
+                call.now,
+            )
+            placement_projection_id = None
+            if placement_changed:
+                placement_projection_id = self._project(
+                    generation.generation_id,
+                    execution.execution_id,
+                    task.task_id,
+                    "move_task",
+                    {"section_id": str(research_section_id)},
+                    call.now,
+                )
+            return {
+                "content_version_id": str(version_id),
+                "cycle_id": None,
+                "projection_event_id": projection_id,
+                "placement_projection_event_id": placement_projection_id,
+                "_placement_changed": placement_changed,
+                "handoff": "planning-to-research",
+            }
+
         change_preparation = None
         inherited_signoff = None
         agent_attested_decisions: tuple[str, ...] = ()

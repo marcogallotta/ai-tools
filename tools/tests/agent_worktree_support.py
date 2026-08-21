@@ -63,6 +63,23 @@ class Harness:
         self.ssh.chmod(0o755)
         self.home.mkdir()
         self.worktree_root.mkdir()
+        asana = self.home / ".local/bin/asana"
+        asana.parent.mkdir(parents=True)
+        self.asana_sections = self.home / "asana-task-sections.json"
+        self.asana_sections.write_text("{}\n", encoding="utf-8")
+        asana.write_text(
+            "#!/usr/bin/env python3\n"
+            "import json, pathlib, sys\n"
+            "task = sys.argv[-1].split('/tasks/', 1)[1].split('?', 1)[0]\n"
+            "sections = json.loads((pathlib.Path.home() / 'asana-task-sections.json').read_text())\n"
+            "section = sections.get(task, 'Under Development')\n"
+            "print(json.dumps({'gid': task, 'completed': False, 'memberships': [{\n"
+            "  'project': {'gid': '1217419962189616', 'name': 'Dish — Development Workflow v2'},\n"
+            "  'section': {'gid': 'fixture-section', 'name': section},\n"
+            "}]}))\n",
+            encoding="utf-8",
+        )
+        asana.chmod(0o755)
         self.env = os.environ.copy()
         for key in list(self.env):
             if key in {
@@ -100,6 +117,11 @@ class Harness:
         path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
         return path
 
+    def set_task_section(self, task: str, section: str) -> None:
+        sections = json.loads(self.asana_sections.read_text(encoding="utf-8"))
+        sections[task] = section
+        self.asana_sections.write_text(json.dumps(sections) + "\n", encoding="utf-8")
+
     @staticmethod
     def _option(args: tuple[str, ...] | list[str], name: str) -> str | None:
         try:
@@ -117,7 +139,7 @@ class Harness:
         return run(["python3", str(SCRIPT), *args], cwd=self.primary, env=actual_env, check=check)
 
     def tool(self, *args: str, check: bool = True, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
-        if not args or args[0] not in {"start", "adopt", "resume", "commit", "publish", "verify-handoff", "cleanup", "exec"}:
+        if not args or args[0] not in {"start", "adopt", "resume", "commit", "publish", "verify-handoff", "exec"}:
             return self.raw_tool(*args, check=check, env=env)
 
         child = list(args)
@@ -141,12 +163,16 @@ class Harness:
             agent = "fixture-agent"
         agent_path = self.home / ".local/state/dish/agents" / f"{agent}.json"
         if not agent_path.exists():
-            self.agent_file(agent)
+            self.agent_file(agent, owning_task_gid=task)
+        else:
+            identity = json.loads(agent_path.read_text(encoding="utf-8"))
+            identity["owning_task_gid"] = task
+            agent_path.write_text(json.dumps(identity) + "\n", encoding="utf-8")
         if child[0] in {"start", "adopt", "resume"} and "--agent-id" not in child:
             child.extend(["--agent-id", agent])
 
         claim = ["claim", "--task", task, "--branch", branch, "--agent-id", agent]
-        claim_files = list((self.home / ".local/state/dish/worktrees/claims").glob(f"*/{task}.json"))
+        claim_files = list((self.home / ".local/state/dish/worktrees/claims").glob(f"*/{task}*.json"))
         prior: dict[str, object] | None = None
         if len(claim_files) == 1:
             prior = json.loads(claim_files[0].read_text(encoding="utf-8"))
@@ -157,7 +183,10 @@ class Harness:
         if child[0] == "adopt":
             expected = self._option(child, "--expected-head")
             assert expected is not None
-            claim.extend(["--pr-number", "42", "--pr-head", expected, "--pr-lease-state", "none"])
+            # Default PR number is derived from the task gid (rather than a fixed
+            # constant) so two independent real adopts for different tasks in the
+            # same test don't collide on one hard-coded PR identity.
+            claim.extend(["--pr-number", str(int(task) % 1_000_000_000 or 42), "--pr-head", expected, "--pr-lease-state", "none"])
         elif prior is not None:
             pr = prior.get("pr")
             if isinstance(pr, dict):
@@ -177,13 +206,37 @@ class Harness:
             args.extend(["--agent-id", agent])
         return self.tool(*args, check=check)
 
-    def state_path(self, task: str = "1001") -> Path:
-        return self.home / ".local/state/dish/worktrees" / f"{task}.json"
+    def state_paths(self, task: str = "1001") -> list[Path]:
+        root = self.home / ".local/state/dish/worktrees"
+        paths = []
+        legacy = root / f"{task}.json"
+        if legacy.exists():
+            paths.append(legacy)
+        directory = root / task
+        if directory.is_dir():
+            paths.extend(sorted(directory.glob("*.json")))
+        return paths
 
-    def state(self, task: str = "1001") -> dict[str, object]:
-        return json.loads(self.state_path(task).read_text(encoding="utf-8"))
+    def state_path(self, task: str = "1001", branch: str | None = None) -> Path:
+        paths = self.state_paths(task)
+        if branch is not None:
+            matches = [p for p in paths if json.loads(p.read_text(encoding="utf-8")).get("branch") == branch]
+            if len(matches) != 1:
+                raise AssertionError(f"expected one state for task={task} branch={branch}, found {matches}")
+            return matches[0]
+        if len(paths) == 1:
+            return paths[0]
+        if not paths:
+            return self.home / ".local/state/dish/worktrees" / f"{task}.json"
+        raise AssertionError(f"task {task} has multiple lineage states: {paths}")
 
-    def wt(self, task: str = "1001") -> Path:
+    def state(self, task: str = "1001", branch: str | None = None) -> dict[str, object]:
+        return json.loads(self.state_path(task, branch).read_text(encoding="utf-8"))
+
+    def wt(self, task: str = "1001", branch: str | None = None) -> Path:
+        paths = self.state_paths(task)
+        if paths:
+            return Path(str(self.state(task, branch)["worktree_path"]))
         return self.worktree_root / task
 
     def commit_local(self, task: str = "1001", text: str = "local") -> str:
@@ -235,4 +288,3 @@ def payload(result: subprocess.CompletedProcess[str]) -> dict[str, object]:
 def assert_error(result: subprocess.CompletedProcess[str], code: str) -> None:
     assert result.returncode != 0
     assert f"ERROR {code}:" in result.stderr
-

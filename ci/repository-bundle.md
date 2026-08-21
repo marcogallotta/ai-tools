@@ -26,12 +26,12 @@ Every run writes a commit status on its exact event SHA with context `Dish / rep
 
 The status target URL is the exact GitHub Actions run URL. This makes a commit deterministically map to its publication run without a manually supplied run ID. Producer/discovery status is available immediately; activation of mandatory ChatGPT status -> run -> artifact consumption is a separate staged change and does not alter the current consumer requirement by itself.
 
-A successful main/manual run publishes an immutable GitHub Release named `repository-bundle-<SHA>` and uploads the same files as a ChatGPT-accessible GitHub Actions artifact mirror. Re-running an already-published SHA compares all three Release assets byte-for-byte and fails rather than replacing divergent content.
+A successful main/manual run publishes an immutable GitHub Release named `repository-bundle-<SHA>` and uploads the same files as a ChatGPT-accessible GitHub Actions artifact mirror. The immutable Release is the durable exact-byte authority for that SHA; the Actions artifact is a renewable transport mirror. Re-running a source publication for an already-published SHA still compares all three Release assets byte-for-byte and fails rather than replacing divergent content. Mirror refresh never rebuilds the bundle or rewrites run-specific manifest provenance: it downloads the existing three Release assets, verifies them with `scripts/repository_bundle.py verify`, and uploads those unchanged bytes as a fresh Actions artifact.
 
 Retention is bounded:
 
-- Actions artifact mirrors expire after **30 days**;
-- repository-bundle Releases retain the **12 newest** publications; older repository-bundle Releases and their tags are deleted by the publication workflow;
+- Actions artifact mirrors use **90-day** retention as resilience headroom, but expiry does not destroy durable authority because the immutable exact-SHA Release remains the source of refresh bytes;
+- repository-bundle Releases retain the **12 newest** publications; pruning is a separate maintenance job and never deletes the live current-main Release; a pruning failure is visible maintenance debt but does not change the exact current publication status;
 - dependency-bundle Releases/artifacts use their existing independent namespace and retention policy.
 
 Repository-bundle publication has no pull-request trigger. PR exact-head readiness is owned by the Review-triggered certification workflow; rebuilding the main-only ChatGPT bootstrap cache for each PR would spend hosted minutes without certifying the candidate.
@@ -48,7 +48,14 @@ Before substantial consequential repository/system reasoning, ChatGPT agents mus
 
 `verify` checks manifest schema and filenames, repository identity, exact source SHA/ref, the external checksum, bundle SHA-256, `git bundle list-heads`, `git bundle verify`, advertised `main`, cloned `HEAD`, cloned `main`, and cloned `origin/main`. Only after those checks does it stamp the clone's `origin` URL back to the canonical GitHub repository URL.
 
-For substantial repository/system reasoning outside ordinary ChatGPT PR Review, if the exact artifact is missing, expired, stale, mismatched, corrupt, or cannot be materialized, stop and report that capability gap. Do not reconstruct a substantial change file-by-file from a different bundle or silently treat the cache as authority.
+For substantial repository/system reasoning outside ordinary ChatGPT PR Review, first follow the healthy artifact path above. If the exact current-main artifact is missing or expired **and** the immutable `repository-bundle-<SHA>` Release is expected to exist, use the bounded mirror self-heal before reporting a transport blocker:
+
+1. re-read current `main` and the exact `Dish / repository bundle` status and establish that no usable current mirror is available;
+2. create exactly one GitHub issue titled `repository-bundle mirror refresh` whose body is only `<!-- dish-repository-bundle-mirror-refresh:v1 sha=<CURRENT_MAIN_SHA> -->`;
+3. the repository-owned issue workflow accepts only an exact current-main request from an actor with repository write/maintain/admin permission, downloads and verifies the immutable Release bytes, republishes those exact bytes as a 90-day Actions mirror, writes the exact-SHA bundle status, and closes the issue on success;
+4. boundedly re-read current `main` and its bundle status/artifact, then resume the normal download/verify path only for the newly re-read current SHA.
+
+The monthly schedule uses the same reusable refresh workflow proactively. Schedule auto-disable on a quiet public repository cannot disable the independent issue-event recovery wrapper. A malformed/untrusted request, missing/corrupt/wrong-SHA Release, stale requested SHA, or failed verifier never creates a successful mirror. Do not retry by rebuilding the same SHA, reconstruct a substantial change file-by-file from a different bundle, or silently treat the cache as authority. If the bounded self-heal fails, report that exact transport/security failure.
 
 ### Ordinary ChatGPT PR Review fallback
 

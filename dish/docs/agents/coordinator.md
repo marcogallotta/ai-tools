@@ -182,7 +182,7 @@ A lifecycle dispatcher must be able to classify `LOCAL IMPLEMENTATION COMPLETION
 
 ## Branch/worktree and direct-commit policy
 
-Every repository-changing Implementation/fix dispatch uses the single canonical handoff contract at [`templates/implementation-handoff.md`](templates/implementation-handoff.md). Coordinator must supply its full assignment identity and must not dispatch from a same-task branch/PR match alone.
+Every repository-changing Implementation/fix dispatch uses the single canonical handoff contract at [`templates/implementation-handoff.md`](templates/implementation-handoff.md). Coordinator must supply its full assignment identity and must not dispatch from a same-task branch/PR match alone. When an accepted design/spec generation carries Review V3 intent, invariants, solution-envelope, or Review-Focus content, Coordinator also performs the template's pre-dispatch fidelity comparison against the exact governing generation and durable Marco intent; a materially weakened/omitted projection gets zero semantic dispatch until repaired through existing authority.
 
 Day-one rules for new work:
 

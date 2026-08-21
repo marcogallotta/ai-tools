@@ -1,0 +1,39 @@
+name: Repository bundle mirror schedule
+
+on:
+  schedule:
+    - cron: '17 3 1 * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  resolve-current-main:
+    name: Resolve current main SHA
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      source_sha: ${{ steps.main.outputs.source_sha }}
+    steps:
+      - name: Resolve current main from GitHub authority
+        id: main
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          source_sha="$(gh api "/repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')"
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+
+  refresh-current-main:
+    name: Refresh current-main Actions mirror
+    needs: resolve-current-main
+    uses: ./.github/workflows/repository-bundle-mirror-refresh.yml
+    with:
+      source_sha: ${{ needs.resolve-current-main.outputs.source_sha }}
+    permissions:
+      contents: read
+      statuses: write

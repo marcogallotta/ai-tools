@@ -207,3 +207,24 @@ def test_base_graph_evidence_returns_the_base_arbiter_union(monkeypatch, tmp_pat
     assert compatible is True
     assert observed_base == base_envelope
     assert observed_union == base_union
+
+
+def test_selector_gap_evidence_binds_exact_pr_head_review_and_run():
+    payload = {
+        "selector_gaps": [{
+            "gap_id": "f" * 64,
+            "path": "scripts/example.py",
+        }],
+    }
+    identity = {"pr_number": 31, "review_id": 88}
+    module.bind_selector_gap_evidence(
+        payload, identity=identity, candidate=CANDIDATE,
+        run_id="12345", run_attempt="2",
+    )
+    assert payload["selector_gaps"][0]["evidence"] == {
+        "pr_number": 31,
+        "head_sha": CANDIDATE,
+        "review_id": 88,
+        "run_id": "12345",
+        "run_attempt": "2",
+    }

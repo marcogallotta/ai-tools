@@ -38,8 +38,9 @@ handles agent identity separately (see root `CLAUDE.md`). Do not extend this mec
   "owning_project_gid": "1217419962189616",
   "active_worktree": {
     "task_gid": "1234567890",
-    "state_path": "/home/user/.local/state/dish/worktrees/1234567890.json",
-    "worktree": "/home/user/.local/share/dish/worktrees/ai-tools/1234567890",
+    "lineage_id": "<immutable branch-incarnation id>",
+    "state_path": "/home/user/.local/state/dish/worktrees/1234567890/<branch-digest>-<lineage-id>.json",
+    "worktree": "/home/user/.local/share/dish/worktrees/ai-tools/1234567890/<branch-digest>-<lineage-id>",
     "branch": "agent/example-task"
   }
 }
@@ -47,13 +48,13 @@ handles agent identity separately (see root `CLAUDE.md`). Do not extend this mec
 
 `owning_task_gid` and `owning_project_gid` are optional durable recovery pointers for the current assignment. They do not create assignment authority. When a mapped standing role names Asana as its live coordination authority, `owning_task_gid` is required for post-compaction re-grounding so the hook can re-read the live owning task rather than reconstructing it from chat. `owning_project_gid` is checked against both the role contract and the task's current project membership when present.
 
-`active_worktree` is optional compatibility/recovery metadata written by `tools/agent-worktree`; older records without it remain valid. Its `task_gid` is also accepted as the owning-task recovery pointer for implementation work. The task-keyed worktree record is the local lifecycle record. The exclusive local claim is stored separately under the task-scoped claim state. Neither record creates task-assignment authority: the explicit implementation handoff and live orchestration/GitHub authority decide which task/branch/PR lineage may be worked. `active_worktree` is not a heartbeat or proof that its recorded agent is still running.
+`active_worktree` is optional compatibility/recovery metadata written by `tools/agent-worktree`; older records without it remain valid. Its `task_gid` is also accepted as the owning-task recovery pointer for implementation work. New lifecycle records are lineage-scoped by task + exact branch + immutable `lineage_id`; different admitted branches under one task may therefore have separate local state/worktrees. Legacy task-keyed records remain a conservative one-lineage compatibility form. The exclusive local claim is stored separately for that exact lineage. Neither record creates task-assignment authority: the explicit implementation handoff and live orchestration/GitHub authority decide which task/branch/PR lineage may be worked. `active_worktree` is not a heartbeat or proof that its recorded agent is still running.
 
 ## Staleness and owner recovery
 
 There is deliberately no `last_alive`/check-in field. Filesystem mtime, silence, and advisory PR lease age are not reliable liveness signals and must not automatically revoke an owner.
 
-`tools/agent-worktree claim` gives each acquired local task assignment an opaque claim generation. `tools/agent-worktree status --task <gid> --json` exposes that generation as `claim.claim_id`. After explicit orchestration handoff or stale-owner determination, replacement uses `claim --takeover --expected-claim <claim.claim_id>` and wraps `resume --takeover`. The task/branch/PR locks serialize the compare-and-set; if the durable generation changed, takeover fails without replacing ownership. A still-live owner cannot be bypassed because its locks prevent takeover acquisition. Legacy active task state without a claim record is recoverable only through the explicit `legacy-unclaimed` sentinel.
+`tools/agent-worktree claim` gives each exact branch lineage an opaque claim generation and binds it to a repository-wide branch registry entry containing the immutable `lineage_id`. `tools/agent-worktree status --task <gid> --json` aggregates sibling lineages; mutation is exact-lineage only and a task-only mutation fails `LINEAGE_AMBIGUOUS` when more than one lineage exists. After explicit orchestration handoff or stale-owner determination, replacement uses `claim --takeover --expected-claim <claim.claim_id>` and wraps `resume --takeover`. Repository-wide branch/PR registry CAS is the cross-host collision boundary; local locks are defense in depth. If the durable generation changed, takeover fails without replacing ownership. Agent-worktree-managed branch names are single-use: terminal cleanup tombstones the lineage before branch deletion, and later admission of the same branch name fails `BRANCH_NAME_RETIRED`, so an old claim cannot resurrect after delete/recreate even at the same SHA. Legacy active task state without a claim record is recoverable only through the explicit `legacy-unclaimed` sentinel.
 
 ## Where `agent_id` comes from, per host
 

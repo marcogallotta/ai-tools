@@ -189,3 +189,144 @@ def test_admin_rejection_preserves_rule_and_exposes_failed_lease_cleanup(
     assert result["data"]["service_cleanup_warning"]["error_type"] == "RuntimeError"
     assert result["data"]["service_recovery_required"] is True
     conn.close()
+
+
+def test_admin_unexpected_handler_failure_keeps_safe_diagnostic(monkeypatch, caplog, tmp_path):
+    import dish_tool.admin as admin_module
+
+    conn = initialize_database(tmp_path / "admin-unexpected.db")
+    admin = DishAdminApplication(conn)
+
+    def crash(_app, *, trace):
+        raise RuntimeError("secret payload must not escape")
+
+    monkeypatch.setattr(admin, "validate_arguments", lambda _command, _arguments: crash)
+    with caplog.at_level(logging.ERROR, logger="dish.admin"):
+        result = admin.execute("attention")
+
+    assert result["code"] == "INTERNAL_ERROR"
+    assert result["errors"][0] == {
+        "rule": "unexpected_internal_failure",
+        "error_type": "RuntimeError",
+    }
+    assert "secret payload must not escape" not in str(result)
+    assert "unexpected_admin_failure" in caplog.text
+    assert "RuntimeError" in caplog.text
+    conn.close()
+
+
+def test_audit_repair_sink_failure_is_reported_not_silent(monkeypatch, caplog, tmp_path):
+    import dish_tool.database as database
+    from dish_tool.audit_repair import attempt_command_audit_repairs
+
+    conn = initialize_database(tmp_path / "audit-repair.db")
+    repair_id = database.record_command_audit_repair(
+        conn,
+        command="inspect",
+        result={"ok": True, "code": "OK", "state": None, "retryable": False, "errors": []},
+        audit_error="original audit failure",
+    )
+    conn.commit()
+    monkeypatch.setattr(
+        database,
+        "record_audit",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("sink unavailable")),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="dish_tool.audit_repair"):
+        attempt = attempt_command_audit_repairs(conn, surface="test")
+
+    assert attempt.repaired == 0
+    assert attempt.error_type == "RuntimeError"
+    assert "pending invocation-audit repair processing failed" in caplog.text
+    row = conn.execute(
+        "SELECT repaired_at FROM command_audit_repairs WHERE repair_id=?", (repair_id,)
+    ).fetchone()
+    assert row["repaired_at"] is None
+    conn.close()
+
+
+def test_cli_startup_runtime_error_keeps_safe_type_not_message(monkeypatch, caplog, capsys):
+    from dish_service import cli
+
+    monkeypatch.setattr(
+        cli,
+        "build_application",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("credential=do-not-print")),
+    )
+    with caplog.at_level(logging.ERROR, logger="dish.cli"):
+        status = cli.main(["read", "123", "--agent", "gpt"])
+
+    payload = __import__("json").loads(capsys.readouterr().out)
+    assert status != 0
+    assert payload["code"] == "INTERNAL_ERROR"
+    assert payload["errors"][0] == {"rule": "startup_failure", "error_type": "RuntimeError"}
+    assert "credential=do-not-print" not in str(payload)
+    assert "dish_startup_failure" in caplog.text
+
+
+def test_confirmed_resting_status_parse_failure_is_logged(monkeypatch, caplog, tmp_path):
+    import dish_tool.admin as admin_module
+    import dish_tool.task_document as task_document
+
+    conn = initialize_database(tmp_path / "resting-status.db")
+    confirm_task_content(
+        conn,
+        task_gid="123",
+        title="Dish",
+        notes="STATE: READY",
+        schema_version="2",
+        boundary="test",
+    )
+    monkeypatch.setattr(
+        task_document,
+        "parse_task_document",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ValueError("bad internal parse detail")),
+    )
+
+    with caplog.at_level(logging.ERROR, logger="dish.admin"):
+        assert admin_module._confirmed_resting_status(conn, "123") is None
+
+    assert "confirmed_resting_status_parse_failed" in caplog.text
+    assert "ValueError" in caplog.text
+    conn.close()
+
+
+def test_consequential_broad_catches_preserve_observability_or_reraise():
+    import ast
+    import inspect
+    import textwrap
+    from dish_service import admin_cli, cli
+    import dish_tool.admin as admin_module
+    import dish_tool.database as database
+
+    targets = (
+        admin_module.DishAdminApplication.execute,
+        admin_module._confirmed_resting_status,
+        database.process_command_audit_repairs,
+        cli.main,
+        admin_cli.main,
+    )
+
+    silent = []
+    for target in targets:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(target)))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ExceptHandler):
+                continue
+            if not (isinstance(node.type, ast.Name) and node.type.id == "Exception"):
+                continue
+            has_reraise = any(isinstance(child, ast.Raise) for child in ast.walk(node))
+            has_log = any(
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Attribute)
+                and child.func.attr in {"error", "exception", "critical"}
+                for child in ast.walk(node)
+            )
+            has_safe_type = any(
+                isinstance(child, ast.Constant) and child.value == "error_type"
+                for child in ast.walk(node)
+            )
+            if not (has_reraise or has_log or has_safe_type):
+                silent.append(target.__qualname__)
+    assert not silent, f"silent consequential broad catches: {silent}"

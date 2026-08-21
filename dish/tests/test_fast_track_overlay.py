@@ -126,29 +126,33 @@ def test_generated_kernels_carry_direct_overlay_rule_and_triggered_procedure():
         assert 'dish/docs/agents/fast-track-process.md#Procedure' in rendered
 
 
-WORKER_START='<!-- BEGIN MANUAL WORKER PROJECT PROFILE -->\n'
-WORKER_END='\n<!-- END MANUAL WORKER PROJECT PROFILE -->'
-
-
 def _worker_profile():
-    doc=(DISH_ROOT/'docs'/'agents'/'operator-provenance.md').read_text()
-    assert doc.count(WORKER_START)==1 and doc.count(WORKER_END)==1
-    return doc.split(WORKER_START,1)[1].split(WORKER_END,1)[0]
+    manifest,source=kernels.load_canonical()
+    return kernels.generated_profile_paths(manifest,source)['worker'].read_text()
 
 
 def test_manual_worker_profile_size_and_exact_modes():
     profile=_worker_profile()
     assert len(profile) <= 8000
-    assert 'Supported explicit modes are exactly: **Implementation**, **Code Review**, **Design Review**, **Audit**.' in profile
-    assert 'No mode means no governed work.' in profile
+    assert 'Exactly one semantic mode is active at a time: **Implementation**, **Code Review**, **Design Review**, or **Audit**.' in profile
     assert 'Integration/merge/deploy/cutover are outside Worker.' in profile
+    assert 'not a ninth semantic role' in profile
 
 
-def test_manual_worker_profile_preserves_same_attempt_authorship_boundary():
+def test_manual_worker_profile_requires_same_worker_block_fix_without_automated_provenance():
     profile=_worker_profile()
-    assert 'keep the same `attempt_id + generation`' in profile
-    assert 'Switching modes never mints independence or a new attempt.' in profile
-    assert 'This attempt is now an author and cannot independently Review that candidate.' in profile
+    assert 'same Worker MUST explicitly switch to Implementation' in profile
+    assert 'Without another Marco prompt' in profile
+    assert 'does **not** require Workspace-Agent launch' in profile
+    assert 'their absence never gates the ordinary manual Project-chat path' in profile
+    assert 'fresh Worker performs the next Review' in profile
+
+
+def test_manual_worker_profile_preserves_memory_based_no_self_review():
+    profile=_worker_profile()
+    assert 'may not independently Review that head while it remembers or can recover that authorship' in profile
+    assert 'Genuine later compaction/forgetting follows Marco' in profile
+    assert 'no durable chat-taint/provenance machinery' in profile
 
 
 def test_manual_worker_design_review_stays_exact_snapshot_bound():
