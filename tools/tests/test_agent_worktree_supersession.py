@@ -25,7 +25,7 @@ def prepare_lineages(
 ) -> tuple[str, str, str]:
     base = h.current_remote_main()
     h.agent_file("old-agent")
-    h.agent_file("new-agent")
+    h.agent_file("new-agent", owning_task_gid=task)
     h.start(task=task, branch=old_branch, base=base, agent="old-agent")
     old_head = h.commit_local(task, "old published implementation")
     h.tool("publish", "--task", task)

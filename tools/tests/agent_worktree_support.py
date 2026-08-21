@@ -63,6 +63,23 @@ class Harness:
         self.ssh.chmod(0o755)
         self.home.mkdir()
         self.worktree_root.mkdir()
+        asana = self.home / ".local/bin/asana"
+        asana.parent.mkdir(parents=True)
+        self.asana_sections = self.home / "asana-task-sections.json"
+        self.asana_sections.write_text("{}\n", encoding="utf-8")
+        asana.write_text(
+            "#!/usr/bin/env python3\n"
+            "import json, pathlib, sys\n"
+            "task = sys.argv[-1].split('/tasks/', 1)[1].split('?', 1)[0]\n"
+            "sections = json.loads((pathlib.Path.home() / 'asana-task-sections.json').read_text())\n"
+            "section = sections.get(task, 'Under Development')\n"
+            "print(json.dumps({'gid': task, 'completed': False, 'memberships': [{\n"
+            "  'project': {'gid': '1217419962189616', 'name': 'Dish — Development Workflow v2'},\n"
+            "  'section': {'gid': 'fixture-section', 'name': section},\n"
+            "}]}))\n",
+            encoding="utf-8",
+        )
+        asana.chmod(0o755)
         self.env = os.environ.copy()
         for key in list(self.env):
             if key in {
@@ -99,6 +116,11 @@ class Harness:
         payload.update(extra)
         path.write_text(json.dumps(payload) + "\n", encoding="utf-8")
         return path
+
+    def set_task_section(self, task: str, section: str) -> None:
+        sections = json.loads(self.asana_sections.read_text(encoding="utf-8"))
+        sections[task] = section
+        self.asana_sections.write_text(json.dumps(sections) + "\n", encoding="utf-8")
 
     @staticmethod
     def _option(args: tuple[str, ...] | list[str], name: str) -> str | None:
@@ -141,7 +163,11 @@ class Harness:
             agent = "fixture-agent"
         agent_path = self.home / ".local/state/dish/agents" / f"{agent}.json"
         if not agent_path.exists():
-            self.agent_file(agent)
+            self.agent_file(agent, owning_task_gid=task)
+        else:
+            identity = json.loads(agent_path.read_text(encoding="utf-8"))
+            identity["owning_task_gid"] = task
+            agent_path.write_text(json.dumps(identity) + "\n", encoding="utf-8")
         if child[0] in {"start", "adopt", "resume"} and "--agent-id" not in child:
             child.extend(["--agent-id", agent])
 
@@ -262,4 +288,3 @@ def payload(result: subprocess.CompletedProcess[str]) -> dict[str, object]:
 def assert_error(result: subprocess.CompletedProcess[str], code: str) -> None:
     assert result.returncode != 0
     assert f"ERROR {code}:" in result.stderr
-

@@ -36,6 +36,7 @@ from .state import (
     state_root,
     task_state_paths,
     validate_agent_state,
+    require_repository_mutation_identity,
 )
 
 CLAIM_SCHEMA_VERSION = 2
@@ -496,7 +497,7 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
     if args.require_launch_provenance and not args.launch_provenance:
         fail("LAUNCH_PROVENANCE_REQUIRED", "--require-launch-provenance requires --launch-provenance from the actual local host launcher")
     if not args.launch_provenance:
-        validate_agent_state(agent_id)
+        require_repository_mutation_identity(agent_id, task_gid)
     repo = discover_repository(runner, Path(args.repo))
     branch = validate_branch(runner, repo.source_top, args.branch)
     pr = _normalize_pr(args)
@@ -557,8 +558,9 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
                 Path(args.launch_provenance), agent_id=agent_id, task_gid=task_gid, branch=branch, repo_path=repo.source_top, pr=pr,
             )
             launch_identity_bound = True
+            require_repository_mutation_identity(agent_id, task_gid)
         else:
-            validate_agent_state(agent_id)
+            require_repository_mutation_identity(agent_id, task_gid)
         record: dict[str, Any] = {
             "schema_version": CLAIM_SCHEMA_VERSION, "repository": EXPECTED_REPOSITORY, "origin_id": repo.origin_id,
             "task_gid": task_gid, "branch": branch, "lineage_id": lineage_id, "agent_id": agent_id,
@@ -657,6 +659,7 @@ def require_active_claim(
     agent_id = require_agent_id(agent_id)
     if agent_id is None:
         fail("OWNERSHIP_AGENT_REQUIRED", "local-agent writer operations require --agent-id inside an active ownership claim")
+    require_repository_mutation_identity(agent_id, task_gid)
     token = os.environ.get(CLAIM_TOKEN_ENV)
     lineage_id = os.environ.get(LINEAGE_ENV)
     if not token or not lineage_id or os.environ.get(CLAIM_TASK_ENV) != task_gid or os.environ.get(CLAIM_BRANCH_ENV) != branch:

@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import socket
+import subprocess
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -271,6 +272,110 @@ def validate_agent_state(agent_id: str | None) -> dict[str, Any] | None:
         if exc.code == "STATE_MISSING":
             fail("AGENT_STATE_MISSING", f"--agent-id {agent_id!r} has no existing identity file at {path}")
         raise
+    return payload
+
+
+
+
+DEVELOPMENT_WORKFLOW_PROJECT_GID = "1217419962189616"
+DEVELOPMENT_WORKFLOW_PROJECT_NAME = "Dish — Development Workflow v2"
+IMPLEMENTATION_TASK_SECTIONS = {"Under Development"}
+
+
+def _live_repository_mutation_task(task_gid: str) -> dict[str, Any]:
+    """Read the existing Asana lifecycle authority for one exact task.
+
+    The worktree tool does not interpret notes or create a second workflow state.
+    It consumes only the current structured membership maintained by the canonical
+    Development Workflow project.  Claim and writer action boundaries are the
+    material action-class transitions at which this live witness is refreshed.
+    """
+    task_gid = require_task_gid(task_gid)
+    asana = Path.home().resolve() / ".local" / "bin" / "asana"
+    query = (
+        f"/tasks/{task_gid}?opt_fields=gid,completed,"
+        "memberships.project.gid,memberships.project.name,"
+        "memberships.section.gid,memberships.section.name"
+    )
+    try:
+        result = subprocess.run(
+            [str(asana), "raw", "GET", query],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        fail("MUTATION_TASK_AUTHORITY_UNAVAILABLE", f"cannot read live task authority: {exc}")
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        fail(
+            "MUTATION_TASK_AUTHORITY_UNAVAILABLE",
+            f"live task authority read failed: {detail or f'exit {result.returncode}'}",
+        )
+    try:
+        task = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        fail("MUTATION_TASK_AUTHORITY_INVALID", "live task authority read returned malformed JSON")
+    if not isinstance(task, dict) or str(task.get("gid") or "") != task_gid:
+        fail("MUTATION_TASK_AUTHORITY_INVALID", "live task authority does not match the requested task")
+    if bool(task.get("completed")):
+        fail("MUTATION_TASK_MODE_BLOCKED", "completed task does not permit repository Implementation")
+    matches = []
+    for membership in task.get("memberships") or []:
+        if not isinstance(membership, dict):
+            continue
+        project = membership.get("project")
+        section = membership.get("section")
+        if (
+            isinstance(project, dict)
+            and str(project.get("gid") or "") == DEVELOPMENT_WORKFLOW_PROJECT_GID
+        ):
+            matches.append((project, section))
+    if len(matches) != 1:
+        fail(
+            "MUTATION_TASK_AUTHORITY_INVALID",
+            "task must have exactly one current Development Workflow membership",
+        )
+    project, section = matches[0]
+    if str(project.get("name") or "") != DEVELOPMENT_WORKFLOW_PROJECT_NAME:
+        fail("MUTATION_TASK_AUTHORITY_INVALID", "Development Workflow project identity is contradictory")
+    section_name = str(section.get("name") or "").strip() if isinstance(section, dict) else ""
+    if section_name not in IMPLEMENTATION_TASK_SECTIONS:
+        fail(
+            "MUTATION_TASK_MODE_BLOCKED",
+            f"current task mode {section_name or 'unknown'!r} does not permit repository Implementation",
+        )
+    return task
+
+
+def require_repository_mutation_identity(agent_id: str, task_gid: str) -> dict[str, Any]:
+    """Fail closed when local identity does not authorize repository Implementation.
+
+    The identity file is a recovery projection, not authority creation.  This check
+    combines the exact local Implementation assignment projection with the existing
+    live Asana task/lifecycle authority.  Neither projection can authorize mutation
+    alone, and missing exact task binding is never upgraded into authority.
+    """
+    payload = validate_agent_state(agent_id)
+    assert payload is not None
+    role = str(payload.get("role") or "").strip().lower().replace("_", "-")
+    if role != "implementation":
+        fail(
+            "MUTATION_AUTHORITY_REQUIRED",
+            f"active agent role {role or 'unknown'!r} is not Implementation; repository mutation refused",
+        )
+    owning = payload.get("owning_task_gid")
+    if owning is None:
+        fail(
+            "MUTATION_AUTHORITY_TASK_REQUIRED",
+            "active Implementation identity has no exact owning task binding",
+        )
+    if require_task_gid(str(owning)) != require_task_gid(task_gid):
+        fail(
+            "MUTATION_AUTHORITY_TASK_MISMATCH",
+            f"active Implementation identity is bound to task {owning}, not requested task {task_gid}",
+        )
+    _live_repository_mutation_task(task_gid)
     return payload
 
 
