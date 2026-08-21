@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Open the same persistent Lifecycle V4 Integrator thread used by the wake bridge.
+set -euo pipefail
+
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+REPO_ROOT="$(cd "$(dirname "${SELF}")/.." && pwd)"
+STATE_DIR="${DISH_LIFECYCLE_V4_STATE_DIR:-${HOME}/.local/state/dish/pr-lifecycle-v4}"
+THREAD_FILE="${STATE_DIR}/thread.json"
+FENCE_FILE="${STATE_DIR}/integrator.fence"
+CODEX="${DISH_LIFECYCLE_V4_CODEX:-${HOME}/.codex/packages/standalone/current/codex}"
+DAEMON_SERVICE="${DISH_LIFECYCLE_V4_DAEMON_SERVICE:-dish-codex-integrator.service}"
+BRIDGE_SERVICE="${DISH_LIFECYCLE_V4_BRIDGE_SERVICE:-dish-lifecycle-v4-integrator.service}"
+
+thread_id() {
+  if [[ ! -r "${THREAD_FILE}" ]]; then
+    echo "Lifecycle V4 thread file is missing: ${THREAD_FILE}" >&2
+    exit 1
+  fi
+  python3 -c 'import json,sys; value=json.load(open(sys.argv[1])).get("thread_id"); assert value; print(value)' "${THREAD_FILE}"
+}
+
+case "${1:-open}" in
+  open|resume)
+    systemctl --user start "${DAEMON_SERVICE}" "${BRIDGE_SERVICE}"
+    mkdir -p "${STATE_DIR}"
+    exec flock --exclusive "${FENCE_FILE}" "${SELF}" __open-locked
+    ;;
+  __open-locked)
+    exec "${CODEX}" resume --remote unix:// -C "${REPO_ROOT}" \
+      --sandbox read-only --ask-for-approval never "$(thread_id)"
+    ;;
+  status)
+    systemctl --user status "${DAEMON_SERVICE}" "${BRIDGE_SERVICE}" --no-pager
+    ;;
+  start|stop|restart)
+    systemctl --user "${1}" "${DAEMON_SERVICE}" "${BRIDGE_SERVICE}"
+    ;;
+  logs)
+    exec journalctl --user-unit "${BRIDGE_SERVICE}" --follow
+    ;;
+  thread)
+    thread_id
+    ;;
+  *)
+    echo "usage: dish-lifecycle-v4-integrator [open|resume|status|start|stop|restart|logs|thread]" >&2
+    exit 2
+    ;;
+esac

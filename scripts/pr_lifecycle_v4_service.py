@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import secrets
+import shlex
 import subprocess
 import sys
 import threading
@@ -57,6 +58,17 @@ def ensure_secret(path: Path) -> str:
     return value
 
 
+def app_server_command() -> list[str]:
+    """Connect to the shared daemon; never create a private app-server owner."""
+    configured = os.getenv("DISH_LIFECYCLE_V4_APP_SERVER_COMMAND")
+    if configured:
+        command = shlex.split(configured)
+        if not command:
+            raise ValueError("DISH_LIFECYCLE_V4_APP_SERVER_COMMAND is empty")
+        return command
+    return [CODEX, "app-server", "proxy"]
+
+
 def thread_params() -> dict[str, Any]:
     return {
         "cwd": str(REPO),
@@ -91,7 +103,7 @@ def create_thread() -> str:
     STATE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(STATE_DIR, 0o700)
     ensure_secret(GITHUB_SECRET_FILE)
-    client = CodexAppServer([CODEX, "app-server"])
+    client = CodexAppServer(app_server_command())
     try:
         return start_thread(client)
     finally:
@@ -103,7 +115,7 @@ class Runtime:
         state_path = Path(os.getenv("DISH_LIFECYCLE_V4_STATE_PATH") or STATE_DIR / "state.json")
         self.store = V4StateStore(state_path)
         self.github_secret = ensure_secret(GITHUB_SECRET_FILE)
-        self.app_server = CodexAppServer([CODEX, "app-server"])
+        self.app_server = CodexAppServer(app_server_command())
         stored_thread = ""
         if THREAD_FILE.exists():
             stored_thread = str(json.loads(THREAD_FILE.read_text(encoding="utf-8")).get("thread_id") or "")
