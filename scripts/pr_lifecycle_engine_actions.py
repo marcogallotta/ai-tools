@@ -2,7 +2,19 @@
 from __future__ import annotations
 
 from pr_lifecycle_support import *
-from pr_lifecycle_handoff_repair import (AUTO_REPAIR, ROUTE_TO_OWNER, classify_handoff_repair, repaired_body, repair_comment, repair_comment_present)
+from pr_lifecycle_handoff_repair import (
+    AUTO_REPAIR,
+    OWNER_CONSUMER_ROUTE,
+    ROUTE_TO_OWNER,
+    capability_blocker,
+    classify_handoff_repair,
+    repaired_body,
+    repair_blocker_present,
+    repair_comment,
+    repair_comment_present,
+    repair_delivery_present,
+    repair_packet,
+)
 from pr_lifecycle_helpers import *
 from pr_lifecycle_helpers import _handoff_key, _notice_key, _notice_present, _pr_number
 from pr_lifecycle_operator import action_first_status
@@ -283,17 +295,44 @@ class LifecycleActionsMixin:
         current.human_action = None
         return current
 
-    def _repair_malformed_handoff(self, pr: PRLifecycle) -> PRLifecycle | None:
+    def _repair_malformed_handoff(
+        self, pr: PRLifecycle, *, workspace: WorkspaceAgentDispatcher | None
+    ) -> PRLifecycle | None:
         raw = self.github.get_pr(pr.number)
         if pr_gate.pr_head_sha(raw) != pr.head:
             return self.inspect(raw)
         repair = classify_handoff_repair(raw)
         if repair is None:
             return None
+        packet = repair_packet(repository=self.github.repository, pr=raw, repair=repair)
         if repair.repair_disposition == AUTO_REPAIR and repair.task_gid is not None:
             updater = getattr(self.github, "update_pr_body", None)
             if not callable(updater):
-                pr.residual_reason = "handoff repair transport unavailable; owner: producer/finalizer"
+                comments = self.github.get_comments(pr.number)
+                blocker = capability_blocker(
+                    packet=packet,
+                    missing_route="GitHub update_pr_body",
+                    detail="producer/finalizer cannot persist the canonical owning-task marker",
+                )
+                if not repair_blocker_present(comments, head=pr.head, repair=repair):
+                    self.github.add_comment(
+                        pr.number,
+                        repair_comment(
+                            pr.head,
+                            repair,
+                            readback_status="CAPABILITY_BLOCKED",
+                            packet=packet,
+                            blocker=blocker,
+                        ),
+                    )
+                    comments = self.github.get_comments(pr.number)
+                    if not repair_blocker_present(comments, head=pr.head, repair=repair):
+                        raise LifecycleError("handoff repair capability blocker did not survive durable readback")
+                pr.residual_reason = (
+                    "handoff repair capability blocker: GitHub update_pr_body is unavailable; "
+                    "owner: Development Workflow / orchestration; recovery proof: exact packet accepted "
+                    "and repaired metadata read back on the unchanged head"
+                )
                 pr.human_action = None
                 return pr
             updater(pr.number, repaired_body(raw, repair.task_gid))
@@ -307,8 +346,64 @@ class LifecycleActionsMixin:
                 self.github.add_comment(pr.number, repair_comment(pr.head, repair, readback_status="VERIFIED"))
             return self.inspect(reread_raw)
         comments = self.github.get_comments(pr.number)
-        if not repair_comment_present(comments, head=pr.head, repair=repair):
-            self.github.add_comment(pr.number, repair_comment(pr.head, repair, readback_status="PENDING_OWNER_REPAIR"))
+        if repair_delivery_present(comments, head=pr.head, repair=repair):
+            pr.residual_reason = f"handoff repair routed to {repair.repair_owner}: {repair.defect}"
+            pr.human_action = None
+            return pr
+        dispatch_worker = getattr(workspace, "dispatch_worker", None)
+        blocker_detail: str | None = None
+        if not callable(dispatch_worker):
+            blocker_detail = "published Development Workflow Worker consumer is not configured"
+        else:
+            try:
+                result = dispatch_worker(
+                    role="Development Workflow",
+                    phase="handoff-repair",
+                    exact_context=packet,
+                )
+                if not bool(getattr(result, "accepted", False)):
+                    blocker_detail = "Development Workflow Worker consumer did not confirm admission"
+            except LifecycleError as exc:
+                blocker_detail = str(exc)
+        if blocker_detail is not None:
+            blocker = capability_blocker(
+                packet=packet,
+                missing_route=OWNER_CONSUMER_ROUTE,
+                detail=blocker_detail,
+            )
+            if not repair_blocker_present(comments, head=pr.head, repair=repair):
+                self.github.add_comment(
+                    pr.number,
+                    repair_comment(
+                        pr.head,
+                        repair,
+                        readback_status="CAPABILITY_BLOCKED",
+                        packet=packet,
+                        blocker=blocker,
+                    ),
+                )
+                comments = self.github.get_comments(pr.number)
+                if not repair_blocker_present(comments, head=pr.head, repair=repair):
+                    raise LifecycleError("handoff repair capability blocker did not survive durable readback")
+            pr.residual_reason = (
+                f"handoff repair capability blocker: {OWNER_CONSUMER_ROUTE} unavailable; "
+                "owner: Development Workflow / orchestration; recovery proof: exact packet accepted "
+                "and durable OWNER_CONSUMER_ACCEPTED marker read back on the unchanged head"
+            )
+            pr.human_action = None
+            return pr
+        self.github.add_comment(
+            pr.number,
+            repair_comment(
+                pr.head,
+                repair,
+                readback_status="OWNER_CONSUMER_ACCEPTED",
+                packet=packet,
+            ),
+        )
+        comments = self.github.get_comments(pr.number)
+        if not repair_delivery_present(comments, head=pr.head, repair=repair):
+            raise LifecycleError("handoff repair consumer accepted the packet but durable readback failed")
         pr.residual_reason = f"handoff repair routed to {repair.repair_owner}: {repair.defect}"
         pr.human_action = None
         return pr
@@ -325,7 +420,7 @@ class LifecycleActionsMixin:
     ) -> PRLifecycle:
         notify = notify or (lambda _: None)
         current = self.inspect(self.github.get_pr(pr.number))
-        repaired = self._repair_malformed_handoff(current)
+        repaired = self._repair_malformed_handoff(current, workspace=workspace)
         if repaired is not None:
             return repaired
         # Replay missed post-merge Asana writeback before terminal cleanup.  Merge is
