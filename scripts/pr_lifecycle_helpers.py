@@ -162,25 +162,38 @@ def bind_manual_worker_block_fix(surface,surface_id,*,task,blocked_head,block_re
     """Bind the deterministic manual Review BLOCK -> Implementation fix round.
 
     This intentionally does not read Worker attempt/authorship markers. Those belong
-    to automated transport; the manual path binds live PR identity plus the formal
+    to automated transport; the manual path binds one live PR snapshot plus the formal
     exact-head BLOCK review.
     """
     task=str(task or '').strip(); blocked_head=str(blocked_head or '').strip().lower(); review_id=str(block_review_id or '').strip()
     if not task or FULL_SHA_RE.fullmatch(blocked_head) is None or not review_id:
         raise LifecycleError("Manual Worker BLOCK fix requires exact task, blocked head, and formal BLOCK review id")
-    number,branch,current_head=_code_surface_identity(surface,surface_id)
+    if not hasattr(surface,'get_pr'):
+        raise LifecycleError("Manual Worker BLOCK fix requires authoritative PR readback")
+    raw=surface.get_pr(int(surface_id))
+    try:
+        number=int(raw["number"]); branch=str(raw["head"]["ref"] or "").strip(); current_head=str(raw["head"]["sha"] or "").strip().lower()
+    except (KeyError,TypeError,ValueError) as e:
+        raise LifecycleError("Manual Worker BLOCK fix authoritative PR readback is malformed") from e
+    if number!=int(surface_id) or not branch or FULL_SHA_RE.fullmatch(current_head) is None:
+        raise LifecycleError("Manual Worker BLOCK fix authoritative PR readback lacks exact identity")
+    owner,owner_error=owning_task_identity_from_pr(raw)
+    if owner is None or owner_error:
+        raise LifecycleError(f"Manual Worker BLOCK fix requires one explicit owning task: {owner_error or 'unresolved owner'}")
+    if owner!=task:
+        raise LifecycleError("Manual Worker BLOCK fix supplied task does not match authoritative PR owning task")
     if current_head!=blocked_head:
         raise LifecycleError("Manual Worker BLOCK fix candidate moved before source mutation")
     if not hasattr(surface,'get_reviews'):
         raise LifecycleError("Manual Worker BLOCK fix requires formal GitHub Review readback")
     matches=[]
-    for raw in surface.get_reviews(number):
-        rid=str(raw.get('id') or '').strip(); head=str(raw.get('commit_id') or '').strip().lower(); body=str(raw.get('body') or '')
+    for raw_review in surface.get_reviews(number):
+        rid=str(raw_review.get('id') or '').strip(); head=str(raw_review.get('commit_id') or '').strip().lower(); body=str(raw_review.get('body') or '')
         if rid==review_id and head==blocked_head and re.search(r'(?m)^VERDICT:\s*BLOCK\s*$',body):
-            matches.append(raw)
+            matches.append(raw_review)
     if len(matches)!=1:
         raise LifecycleError("Manual Worker BLOCK fix requires one exact formal BLOCK review on the current head")
-    return ManualWorkerFixRound(task,number,branch,blocked_head,review_id)
+    return ManualWorkerFixRound(owner,number,branch,blocked_head,review_id)
 
 class WorkspaceAgentDispatcher(_BaseWorkspaceAgentDispatcher):
     """Existing Workspace Worker transport with durable R6 attempt recovery."""
