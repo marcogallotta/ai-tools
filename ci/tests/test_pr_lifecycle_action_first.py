@@ -405,7 +405,7 @@ def test_manual_worker_formal_block_binds_same_pr_fix_without_second_prompt_or_a
         blocked_head=base.HEAD,
         block_review_id="44",
     )
-    assert (fix.pr, fix.branch, fix.blocked_head, fix.block_review_id) == (31, "agent/test", base.HEAD, "44")
+    assert (fix.task, fix.pr, fix.branch, fix.blocked_head, fix.block_review_id) == ("1217443403986570", 31, "agent/test", base.HEAD, "44")
     assert not any("dish-worker-attempt:v1" in item["body"] for item in gh.comments)
 
 
@@ -446,3 +446,37 @@ def test_invalid_automated_worker_bookkeeping_does_not_gate_manual_review_or_fix
     ).block_review_id == "44"
     with pytest.raises(p.LifecycleError, match="attempt generation"):
         p.recover_worker_attempt(gh.comments, "deadbeef")
+
+
+def test_manual_worker_block_fix_rejects_wrong_supplied_task():
+    gh = base.FakeGitHub()
+    gh.reviews = [base.review(head=base.HEAD, verdict="BLOCK", review_id=44)]
+    with pytest.raises(p.LifecycleError, match="does not match authoritative PR owning task"):
+        p.bind_manual_worker_block_fix(
+            gh,
+            31,
+            task="1217657236042386",
+            blocked_head=base.HEAD,
+            block_review_id="44",
+        )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "no owning task declaration",
+        "Owning task: 1217443403986570 1217657236042386",
+        "<!-- dish-owning-task:v1 task=1217443403986570 -->\nOwning task: 1217657236042386",
+    ],
+)
+def test_manual_worker_block_fix_rejects_missing_ambiguous_or_conflicting_owner(body):
+    gh = base.FakeGitHub(base.pr(body=body))
+    gh.reviews = [base.review(head=base.HEAD, verdict="BLOCK", review_id=44)]
+    with pytest.raises(p.LifecycleError, match="explicit owning task"):
+        p.bind_manual_worker_block_fix(
+            gh,
+            31,
+            task="1217443403986570",
+            blocked_head=base.HEAD,
+            block_review_id="44",
+        )
