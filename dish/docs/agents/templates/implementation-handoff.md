@@ -169,6 +169,30 @@ For `local implementation completion`, the existing draft PR must already contai
 publication-blocker handoff required by `implementation.md`. Continue the same authorized branch and
 PR only; do not create a replacement lineage.
 
+## Review V3 chain of custody
+
+When the governing accepted design/specification defines a Marco Intent Baseline, protected invariants, solution envelope, signed Review challenges, or candidate Review Focus, the durable Implementation handoff is a **derived projection** of that exact authority. It must carry the material subset required by the implementation slice without weakening or silently narrowing the governing generation.
+
+Add these fields when applicable:
+
+```text
+Governing design/spec generation: <exact generation id>
+Governing generation digest: <exact sha256>
+Marco Intent Baseline refs: <exact durable human-decision refs>
+Approved headline: <exact approved words, or none/not applicable>
+Headline approval evidence: <exact durable Marco approval ref, or none/not applicable>
+Implementation slice / accepted clauses: <exact bounded scope>
+Protected invariants: <stable IDs + material statements/evidence refs>
+Expected solution envelope: <material shape/surface/non-complexity constraints>
+Review Focus / signed challenges: <material applicable challenges; no verdict steering>
+```
+
+The approved headline field is never inferred from `Has Headline`; exact-word durable human evidence is required whenever an approved headline is claimed. A later implementation summary, PR body, or handoff cannot become a competing intent/specification authority.
+
+Immediately before dispatch, the dispatch owner compares the complete handoff with the current exact governing generation and current durable Marco intent. Zero semantic dispatch occurs if the handoff materially omits, weakens, contradicts, or silently narrows a governing requirement, quantifier, invariant, outcome, or signed challenge. Repair the projection or return through the existing design lineage; do not redesign silently in the handoff.
+
+Semantic Code Review later identifies and reads this exact durable handoff in addition to the live owning task and governing accepted generation. Review independently checks **HANDOFF FIDELITY** and **IMPLEMENTATION CONFORMANCE**; faithful implementation of a drifted handoff is still a Review defect.
+
 ## External/current-main defect admission
 
 Use this section only when a defect is discovered while pursuing an already-authorized operator objective. A real defect does not automatically become a prerequisite task, branch, or PR.

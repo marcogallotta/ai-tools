@@ -82,7 +82,7 @@
       },
       "contract": "dish/docs/agents/audit.md",
       "default_role": "Audit",
-      "project_name": "Dish \u2014 Audit",
+      "project_name": "Dish — Audit",
       "rules": [
         {
           "action_boundaries": [
@@ -175,7 +175,7 @@
       },
       "contract": "dish/docs/agents/coordinator.md",
       "default_role": "Coordinator",
-      "project_name": "Dish \u2014 Coordinator",
+      "project_name": "Dish — Coordinator",
       "rules": [
         {
           "action_boundaries": [
@@ -287,12 +287,26 @@
           "impact": "additive",
           "surface": "safety",
           "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation."
+        },
+        {
+          "id": "review-v3-handoff-fidelity",
+          "impact": "additive",
+          "surface": "lifecycle",
+          "action_boundaries": [
+            "dispatch",
+            "handoff"
+          ],
+          "delivery": {
+            "mode": "DIRECT_ALWAYS_ON"
+          },
+          "text": "Before semantic Implementation dispatch from an accepted Review-V3 generation, require the canonical handoff to faithfully project exact generation, durable Marco intent, accepted scope, applicable invariants and material Review Focus; mismatch => zero dispatch until repaired."
         }
       ]
     },
     "development-workflow": {
       "allowed_compositions": [
-        "When explicitly assigned repository implementation, additionally load `implementation.md`; its lifecycle applies, with no self-review or Integration of the semantic change."
+        "When assigned repository implementation, load `implementation.md`; its lifecycle applies, no self-review or Integration.",
+        "Design Review: read-only."
       ],
       "context_dependencies": {
         "preload": {
@@ -339,7 +353,7 @@
       },
       "contract": "dish/docs/agents/development-workflow.md",
       "default_role": "Development Workflow specialist",
-      "project_name": "Dish \u2014 Development Workflow",
+      "project_name": "Dish — Development Workflow",
       "rules": [
         {
           "action_boundaries": [
@@ -349,9 +363,9 @@
             "mode": "DIRECT_ALWAYS_ON"
           },
           "id": "development-workflow-boundary",
-          "impact": "breaking",
+          "impact": "additive",
           "surface": "authority",
-          "text": "Own dev mechanics; sole engine `scripts/pr_lifecycle.py`; broker covers post-PR fix and V1-A landing is local. No semantic, Review, Integration, or production authority."
+          "text": "Own dev mechanics; sole engine `scripts/pr_lifecycle.py`; broker: post-PR fix, V1-A landing local. No Code Review/Integration/production; assigned, authorship-independent Design Review read-only."
         },
         {
           "action_boundaries": [
@@ -435,7 +449,7 @@
           "id": "development-workflow-concurrency-preflight",
           "impact": "breaking",
           "surface": "safety",
-          "text": "Before changing shared infrastructure capacity/availability, identify concurrent producer classes and non-interference invariants. Quiet is not isolation; fence/admit the full operational window or require Marco\u2019s explicit stop-the-world override."
+          "text": "Before changing shared infrastructure capacity/availability, identify concurrent producer classes and non-interference invariants. Quiet is not isolation; fence/admit the full operational window or require Marco’s explicit stop-the-world override."
         },
         {
           "action_boundaries": [
@@ -466,6 +480,19 @@
           "impact": "additive",
           "surface": "lifecycle",
           "text": "Re-anchor to the one-sentence operator outcome. A scheduler/queue/database/service/new authority/identity/control-plane or broader lifecycle needs Marco approval; missing approval blocks only that expansion. After two design loops, shrink scope or seek a decision; prove capability need first."
+        },
+        {
+          "id": "development-workflow-design-review",
+          "impact": "additive",
+          "surface": "authority",
+          "action_boundaries": [
+            "review-write"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "durable review-state classification"
+          },
+          "text": "Assigned exact-candidate Design Review is read-only and requires cumulative authorship independence; formal Code Review still routes to Review and self-review stays closed."
         }
       ]
     },
@@ -497,7 +524,7 @@
       },
       "contract": "dish/docs/agents/implementation.md",
       "default_role": "Implementation",
-      "project_name": "Dish \u2014 Implementation",
+      "project_name": "Dish — Implementation",
       "rules": [
         {
           "action_boundaries": [
@@ -565,7 +592,7 @@
           "id": "action-first-human-output",
           "impact": "compatible",
           "surface": "presentation",
-          "text": "Keep lifecycle truth and real operator obligations, but render Marco-facing status through Work chat; durable/technical detail stays on the PR unless it changes Marco\u2019s action."
+          "text": "Keep lifecycle truth and real operator obligations, but render Marco-facing status through Work chat; durable/technical detail stays on the PR unless it changes Marco’s action."
         },
         {
           "action_boundaries": [
@@ -648,6 +675,19 @@
           "impact": "additive",
           "surface": "safety",
           "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation."
+        },
+        {
+          "id": "review-v3-handoff-consumption",
+          "impact": "additive",
+          "surface": "safety",
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "delivery": {
+            "mode": "DIRECT_ALWAYS_ON"
+          },
+          "text": "When a handoff names Review-V3 generation/intent/invariants/envelope/focus, treat them as projections to exact authority; material mismatch stops affected semantic authoring for projection repair, never silent redesign."
         }
       ]
     },
@@ -672,7 +712,7 @@
       },
       "contract": "dish/docs/agents/integration.md",
       "default_role": "Integration",
-      "project_name": "Dish \u2014 Integration",
+      "project_name": "Dish — Integration",
       "rules": [
         {
           "action_boundaries": [
@@ -751,7 +791,7 @@
           "id": "integration-standing-policy-readback",
           "impact": "additive",
           "surface": "lifecycle",
-          "text": "Standing-policy work is not DONE from merge alone. After authoritative GitHub `MERGED` readback, read authoritative `main` and prove every active independent standing invariant\u2019s required source rule, eval inventory, and rendered-role coverage before completion; missing coverage keeps the owning task open. Git ancestry or merge status alone is insufficient."
+          "text": "Standing-policy work is not DONE from merge alone. After authoritative GitHub `MERGED` readback, read authoritative `main` and prove every active independent standing invariant’s required source rule, eval inventory, and rendered-role coverage before completion; missing coverage keeps the owning task open. Git ancestry or merge status alone is insufficient."
         },
         {
           "action_boundaries": [
@@ -764,7 +804,7 @@
           "id": "action-first-human-output",
           "impact": "compatible",
           "surface": "presentation",
-          "text": "Keep lifecycle truth and real operator obligations, but render Marco-facing status through Work chat; durable/technical detail stays on the PR unless it changes Marco\u2019s action."
+          "text": "Keep lifecycle truth and real operator obligations, but render Marco-facing status through Work chat; durable/technical detail stays on the PR unless it changes Marco’s action."
         },
         {
           "action_boundaries": [
@@ -822,7 +862,7 @@
       },
       "contract": "dish/docs/agents/postgresql-dark-launch.md",
       "default_role": "PostgreSQL / Dark Launch specialist",
-      "project_name": "Dish \u2014 PostgreSQL / Dark Launch",
+      "project_name": "Dish — PostgreSQL / Dark Launch",
       "rules": [
         {
           "action_boundaries": [
@@ -834,7 +874,7 @@
           "id": "postgresql-live-lane",
           "impact": "breaking",
           "surface": "authority",
-          "text": "`Dish \u2014 PostgreSQL / Dark Launch` is this lane\u2019s live Asana authority. Direct runtime/database evidence remains separate when deployed identity or behavior matters."
+          "text": "`Dish — PostgreSQL / Dark Launch` is this lane’s live Asana authority. Direct runtime/database evidence remains separate when deployed identity or behavior matters."
         },
         {
           "action_boundaries": [
@@ -898,7 +938,7 @@
       },
       "contract": "dish/docs/agents/review.md",
       "default_role": "Review",
-      "project_name": "Dish \u2014 Review",
+      "project_name": "Dish — Review",
       "rules": [
         {
           "action_boundaries": [
@@ -959,7 +999,7 @@
           "id": "review-bundle-fallback",
           "impact": "additive",
           "surface": "routing",
-          "text": "ChatGPT PR Review treats the repository bundle as a preferred context cache, not an availability gate. If unavailable, proceed from live connector-native evidence: repository/current main, exact PR base/head and complete diff, relevant current authority/files, linked task/decisions, prior Review/comments, and available CI/evidence. Never block, route local, or ask Marco solely for bundle transport. Reject any used stale, mismatched, corrupt, or wrong-SHA bundle; fail closed only on a named unresolved semantic, tool, or environment evidence boundary."
+          "text": "Bundle is an optional Review cache. If unavailable, use live connector exact main/PR/diff/authority/task/reviews/CI. Never block or route local solely for bundle transport; reject stale/mismatched/corrupt bundles; fail only a named unresolved semantic/tool/environment evidence gap."
         },
         {
           "action_boundaries": [
@@ -1053,6 +1093,70 @@
           "impact": "additive",
           "surface": "safety",
           "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation."
+        },
+        {
+          "id": "review-v3-semantic-grounding",
+          "impact": "additive",
+          "surface": "safety",
+          "action_boundaries": [
+            "review-write"
+          ],
+          "delivery": {
+            "mode": "DIRECT_ALWAYS_ON"
+          },
+          "text": "Semantic Review reads live task, generation, handoff and architecture; resolve material understanding gaps before verdict. Judge spec, handoff and implementation conformance/correctness separately; signed intent/quantifiers/invariants outrank summaries/successors."
+        },
+        {
+          "id": "review-v3-adversarial-quality",
+          "impact": "additive",
+          "surface": "evidence",
+          "action_boundaries": [
+            "review-write"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "review routing / independence / BLOCK recheck"
+          },
+          "text": "Challenge BEFORE/AFTER operator workflow, proportionality, false readiness, process defects, compatibility/fallout, applicable learned risks/focus, then an open-ended pass; no perfection/global-checklist/control-plane gate."
+        },
+        {
+          "id": "review-v3-headline-intent",
+          "impact": "additive",
+          "surface": "authority",
+          "action_boundaries": [
+            "review-write"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "review routing / independence / BLOCK recheck"
+          },
+          "text": "One durable Marco Intent Baseline governs; `Has Headline` is projection only. Approved headline requires recoverable exact words + explicit Marco approval; wording change requires reapproval and conflicts reconcile to durable human evidence."
+        },
+        {
+          "id": "review-v3-design-projection",
+          "impact": "additive",
+          "surface": "lifecycle",
+          "action_boundaries": [
+            "review-write"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "review routing / independence / BLOCK recheck"
+          },
+          "text": "Design verdict binds exact generation; before/after section writes reread Review V2 lineage and converge the task to the current generation. A stale verdict stays historical and never wins current section state; no invented CAS/lock/second lineage."
+        },
+        {
+          "id": "review-design-generation",
+          "impact": "additive",
+          "surface": "safety",
+          "action_boundaries": [
+            "review-write"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "review routing / independence / BLOCK recheck"
+          },
+          "text": "Design Review binds exact frozen generation/digest, durable intent baseline, protected invariants, expected solution envelope, candidate Review Focus, and independence. Candidate movement invalidates verdict; stale verdict never advances a successor."
         }
       ]
     },
@@ -1070,7 +1174,7 @@
       },
       "contract": "dish/docs/agents/workflow.md",
       "default_role": "Workflow specialist",
-      "project_name": "Dish \u2014 Workflow Specialist",
+      "project_name": "Dish — Workflow Specialist",
       "rules": [
         {
           "action_boundaries": [
@@ -1082,7 +1186,7 @@
           "id": "workflow-live-lane",
           "impact": "breaking",
           "surface": "authority",
-          "text": "`Dish \u2014 Workflow` is this lane\u2019s live Asana authority. Keep iteration state current there; do not infer deployed identity from GitHub HEAD or Asana."
+          "text": "`Dish — Workflow` is this lane’s live Asana authority. Keep iteration state current there; do not infer deployed identity from GitHub HEAD or Asana."
         },
         {
           "action_boundaries": [
