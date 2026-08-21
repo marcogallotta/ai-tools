@@ -25,8 +25,33 @@ from pr_lifecycle_projection import atomic_write, build_projection
 from pr_lifecycle_task_state import execution_truth, ensure_projection_comment
 from pr_lifecycle_rollout import reconstruct as reconstruct_rollout, rollout_projection
 import pr_lifecycle_controller
+from pr_certification import SELECTOR_GAP_OWNER_TASKS, selector_gap_owner_operations
 
 OBSERVATION_PROJECTS_ENV = "DISH_PR_LIFECYCLE_PROJECT_GIDS"
+
+
+def _sync_selector_gap_owner_surfaces(engine: "LifecycleEngine") -> list[dict[str, object]]:
+    if engine.asana is None:
+        return []
+    comment_reader = getattr(engine.github, "get_repository_comments", None)
+    if not callable(comment_reader):
+        return []
+    comments = comment_reader()
+    stories = {
+        task_gid: engine.asana.get_stories(task_gid)
+        for _, task_gid in SELECTOR_GAP_OWNER_TASKS
+    }
+    operations = selector_gap_owner_operations(comments, stories)
+    for operation in operations:
+        task_gid = str(operation["task_gid"])
+        marker = str(operation["marker"])
+        engine.asana.add_comment(task_gid, str(operation["body"]))
+        if not any(marker in str(story.get("text") or story.get("body") or "")
+                   for story in engine.asana.get_stories(task_gid)):
+            raise LifecycleError(
+                f"selector-gap owner update was not observed on Asana task {task_gid}"
+            )
+    return operations
 
 
 def _configured_observation_projects() -> list[str]:
@@ -63,6 +88,10 @@ class LifecycleEngine(
             terminal_cleaner=terminal_cleaner,
             notify=notify,
         )
+        try:
+            _sync_selector_gap_owner_surfaces(self)
+        except LifecycleError as exc:
+            (notify or (lambda _: None))(f"Selector-gap owner sync unavailable: {exc}")
         candidates = self._workstream_candidates(values)
         releasable: set[int] = set()
         for candidate in candidates.values():

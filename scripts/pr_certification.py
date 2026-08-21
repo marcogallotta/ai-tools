@@ -350,6 +350,9 @@ SELECTOR_GAP_OWNER_TASKS = (
 _SELECTOR_GAP_MARKER_RE = re.compile(
     r"<!--\s*dish-selector-gap:v1\s+gap=([0-9a-f]{64})\s+recurrence=([1-9][0-9]*)\s*-->"
 )
+_SELECTOR_GAP_OWNER_MARKER_RE = re.compile(
+    r"<!--\s*dish-selector-gap-owner:v1\s+task=(\d{16})\s+gap=([0-9a-f]{64})\s+recurrence=([1-9][0-9]*)\s*-->"
+)
 
 
 def _selector_gap_history(raw: object) -> list[dict[str, object]]:
@@ -360,8 +363,8 @@ def _selector_gap_history(raw: object) -> list[dict[str, object]]:
     return [dict(item) for item in raw]
 
 
-def _selector_gap_prior(comments: list[dict[str, object]]) -> dict[str, tuple[int, int]]:
-    observed: dict[str, tuple[int, int]] = {}
+def _selector_gap_records(comments: list[dict[str, object]]) -> dict[str, dict[str, object]]:
+    observed: dict[str, dict[str, object]] = {}
     for comment in comments:
         body = str(comment.get("body") or "")
         comment_id = comment.get("id")
@@ -370,12 +373,64 @@ def _selector_gap_prior(comments: list[dict[str, object]]) -> dict[str, tuple[in
         for match in _SELECTOR_GAP_MARKER_RE.finditer(body):
             gap_id, recurrence_raw = match.groups()
             recurrence = int(recurrence_raw)
-            if gap_id in observed and observed[gap_id][0] != comment_id:
+            if gap_id in observed and observed[gap_id]["comment_id"] != comment_id:
                 raise PRCertificationError(f"selector gap {gap_id} has duplicate durable comments")
             prior = observed.get(gap_id)
-            if prior is None or recurrence > prior[1]:
-                observed[gap_id] = (comment_id, recurrence)
+            if prior is None or recurrence > int(prior["recurrence"]):
+                observed[gap_id] = {
+                    "comment_id": comment_id,
+                    "recurrence": recurrence,
+                    "body": body,
+                    "url": str(comment.get("html_url") or comment.get("url") or ""),
+                }
     return observed
+
+
+def _selector_gap_prior(comments: list[dict[str, object]]) -> dict[str, tuple[int, int]]:
+    return {
+        gap_id: (int(record["comment_id"]), int(record["recurrence"]))
+        for gap_id, record in _selector_gap_records(comments).items()
+    }
+
+
+def selector_gap_owner_operations(
+    comments: list[dict[str, object]],
+    owner_stories: dict[str, list[dict[str, object]]],
+) -> list[dict[str, object]]:
+    records = _selector_gap_records(comments)
+    operations: list[dict[str, object]] = []
+    for owner_name, task_gid in SELECTOR_GAP_OWNER_TASKS:
+        prior: dict[str, int] = {}
+        for story in owner_stories.get(task_gid, []):
+            text = str(story.get("text") or story.get("body") or "")
+            for match in _SELECTOR_GAP_OWNER_MARKER_RE.finditer(text):
+                marker_task, gap_id, recurrence_raw = match.groups()
+                if marker_task == task_gid:
+                    prior[gap_id] = max(prior.get(gap_id, 0), int(recurrence_raw))
+        for gap_id, record in sorted(records.items()):
+            recurrence = int(record["recurrence"])
+            if recurrence <= prior.get(gap_id, 0):
+                continue
+            marker = (
+                f"<!-- dish-selector-gap-owner:v1 task={task_gid} "
+                f"gap={gap_id} recurrence={recurrence} -->"
+            )
+            source = str(record["url"] or f"GitHub comment {record['comment_id']}")
+            operations.append({
+                "task_gid": task_gid,
+                "gap_id": gap_id,
+                "recurrence": recurrence,
+                "marker": marker,
+                "body": "\n".join([
+                    marker,
+                    f"SELECTOR GAP OWNER UPDATE — {owner_name} — recurrence {recurrence}",
+                    f"Stable gap: `{gap_id}`",
+                    f"Repository-wide durable record: {source}",
+                    "Continuous test health must retain this recurrence until exact mapping/retirement proof and replay close the gap.",
+                    "— Dish Agent: CI selector | lifecycle owner sync",
+                ]),
+            })
+    return operations
 
 
 def bind_selector_gap_evidence(

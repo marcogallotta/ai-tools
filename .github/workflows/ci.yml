@@ -42,11 +42,10 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           mkdir -p .test-artifacts/pr-certification
-          gh api --paginate --slurp "/repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" \
+          gh api --paginate --slurp "/repos/$GITHUB_REPOSITORY/issues/comments?per_page=100" \
             | jq 'add // []' > .test-artifacts/pr-certification/selector-gap-history.json
 
       - name: Build exact-head repository certification plan
