@@ -558,6 +558,7 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
                 Path(args.launch_provenance), agent_id=agent_id, task_gid=task_gid, branch=branch, repo_path=repo.source_top, pr=pr,
             )
             launch_identity_bound = True
+            require_repository_mutation_identity(agent_id, task_gid)
         else:
             require_repository_mutation_identity(agent_id, task_gid)
         record: dict[str, Any] = {

@@ -41,7 +41,7 @@ def test_concurrent_adopt_race_never_deletes_unrelated_branch(h: Harness) -> Non
     head = h.remote_branch_commit("agent/adopt-race", "handoff", start=base)
 
     def args(task: str, agent: str) -> list[str]:
-        h.agent_file(agent)
+        h.agent_file(agent, owning_task_gid=task)
         adopt_argv = [
             "python3", str(SCRIPT), "adopt", "--task", task, "--branch", "agent/adopt-race",
             "--base-ref", "refs/heads/main", "--base", base, "--expected-head", head,

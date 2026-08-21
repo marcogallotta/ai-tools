@@ -9,6 +9,12 @@ from agent_worktree_support import SCRIPT, Harness, assert_error, git_out, h
 
 
 def claim(h: Harness, *, task: str, branch: str, agent: str, child: list[str], takeover=False, expected=None, pr=None, head=None):
+    identity_path = h.home / ".local/state/dish/agents" / f"{agent}.json"
+    if identity_path.exists():
+        identity = json.loads(identity_path.read_text(encoding="utf-8"))
+        if identity.get("owning_task_gid") is None:
+            identity["owning_task_gid"] = task
+            identity_path.write_text(json.dumps(identity) + "\n", encoding="utf-8")
     args = ["python3", str(SCRIPT), "claim", "--task", task, "--branch", branch, "--agent-id", agent]
     if takeover:
         args.append("--takeover")
@@ -26,11 +32,11 @@ def record(h: Harness, task: str) -> tuple[Path, dict[str, object]]:
 
 
 def test_claim_gate_and_concurrent_start_choose_one_owner(h: Harness) -> None:
-    h.agent_file("direct")
+    h.agent_file("direct", owning_task_gid="3000")
     direct = h.raw_tool("start", "--task", "3000", "--branch", "agent/direct", "--base-ref", "refs/heads/main", "--base", h.current_remote_main(), "--agent-id", "direct", check=False)
     assert_error(direct, "OWNERSHIP_CLAIM_REQUIRED")
     for agent in ("a", "b"):
-        h.agent_file(agent)
+        h.agent_file(agent, owning_task_gid="3001")
     base = h.current_remote_main()
     ps = []
     for agent in ("a", "b"):
@@ -489,7 +495,7 @@ def test_failed_claim_child_restores_launch_identity_when_no_durable_owner(h: Ha
 def test_head_movement_invalidation_closes_semantic_mutation_but_allows_readback(h: Harness) -> None:
     task, branch, agent, pr = "3095", "agent/head-move-fence", "head-move-agent", 96
     head = h.remote_branch_commit(branch, "head move candidate", start=h.current_remote_main())
-    h.agent_file(agent)
+    h.agent_file(agent, owning_task_gid=task)
     new_head = "f" * 40
     tools_dir = Path(__file__).resolve().parents[1]
     child = f"""
@@ -542,15 +548,21 @@ def test_repository_claim_rejects_mismatched_task_identity(h: Harness) -> None:
     assert_error(result, "MUTATION_AUTHORITY_TASK_MISMATCH")
 
 
-def test_repository_claim_rejects_non_implementation_task_mode(h: Harness) -> None:
-    h.agent_file(
-        "impl",
-        role="implementation",
-        owning_task_gid="3012",
-        task_section="Needs Research",
+def test_repository_claim_rejects_missing_task_identity(h: Harness) -> None:
+    h.agent_file("impl", role="implementation")
+    result = h.raw_tool(
+        "claim", "--task", "3012", "--branch", "agent/missing-task", "--agent-id", "impl",
+        "--", "python3", "-c", "raise SystemExit('must not run')",
+        check=False,
     )
+    assert_error(result, "MUTATION_AUTHORITY_TASK_REQUIRED")
+
+
+def test_repository_claim_rejects_non_implementation_task_mode(h: Harness) -> None:
+    h.agent_file("impl", role="implementation", owning_task_gid="3014")
+    h.set_task_section("3014", "Needs Research")
     result = claim(
-        h, task="3012", branch="agent/needs-research", agent="impl",
+        h, task="3014", branch="agent/needs-research", agent="impl",
         child=["python3", "-c", "raise SystemExit('must not run')"],
     )
     assert_error(result, "MUTATION_TASK_MODE_BLOCKED")
@@ -566,3 +578,12 @@ def test_repository_writer_rechecks_role_after_claim(h: Harness) -> None:
     path.write_text(json.dumps(payload) + "\n")
     result = h.tool("commit", "--task", task, "--agent-id", agent, "--message", "x", "tracked.txt", check=False)
     assert_error(result, "MUTATION_AUTHORITY_REQUIRED")
+
+
+def test_repository_writer_rechecks_current_task_mode_after_claim(h: Harness) -> None:
+    task, branch, agent = "3015", "agent/mode-change", "impl"
+    h.agent_file(agent, role="implementation", owning_task_gid=task)
+    h.start(task=task, branch=branch, agent=agent)
+    h.set_task_section(task, "Needs Research")
+    result = h.tool("commit", "--task", task, "--agent-id", agent, "--message", "x", "tracked.txt", check=False)
+    assert_error(result, "MUTATION_TASK_MODE_BLOCKED")

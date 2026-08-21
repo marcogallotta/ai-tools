@@ -11,6 +11,11 @@ from agent_worktree_support import SCRIPT, TOOLS_DIR, Harness, assert_error, git
 
 
 def _claim(h: Harness, task: str, branch: str, agent: str, *, pr: int | None = None, head: str | None = None, child: list[str] | None = None):
+    path = h.home / ".local/state/dish/agents" / f"{agent}.json"
+    if path.exists():
+        identity = json.loads(path.read_text(encoding="utf-8"))
+        identity["owning_task_gid"] = task
+        path.write_text(json.dumps(identity) + "\n", encoding="utf-8")
     args = ["python3", str(SCRIPT), "claim", "--task", task, "--branch", branch, "--agent-id", agent]
     if pr is not None:
         args += ["--pr-number", str(pr), "--pr-head", str(head), "--pr-lease-state", "none"]
@@ -171,7 +176,7 @@ def test_branch_advance_during_admission_window_fences_the_new_lineage_and_fails
 
     # The partially admitted lineage is fenced, not merely refused: the branch
     # name is now permanently retired, exactly like any other terminal lineage.
-    h.agent_file("race-agent")
+    h.agent_file("race-agent", owning_task_gid="4200")
     again = _claim(h, "4200", branch, "race-agent")
     assert_error(again, "BRANCH_NAME_RETIRED")
 
@@ -211,7 +216,7 @@ def test_different_tasks_same_branch_simultaneous_admission_has_one_winner(h: Ha
     base = h.base
     processes = []
     for task, agent in (("4110", "a"), ("4111", "b")):
-        h.agent_file(agent)
+        h.agent_file(agent, owning_task_gid=task)
         start = [
             "python3", str(SCRIPT), "start", "--task", task, "--branch", branch,
             "--base-ref", "refs/heads/main", "--base", base, "--agent-id", agent, "--json",

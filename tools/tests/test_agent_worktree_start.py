@@ -25,7 +25,11 @@ def _real_candidate(h: Harness, task: str, branch: str) -> Path:
     agent = "fixture-agent"
     agent_path = h.home / ".local/state/dish/agents" / f"{agent}.json"
     if not agent_path.exists():
-        h.agent_file(agent)
+        h.agent_file(agent, owning_task_gid=task)
+    else:
+        identity = json.loads(agent_path.read_text(encoding="utf-8"))
+        identity["owning_task_gid"] = task
+        agent_path.write_text(json.dumps(identity) + "\n", encoding="utf-8")
     h.raw_tool("claim", "--task", task, "--branch", branch, "--agent-id", agent, "--", "python3", "-c", "pass")
     claim_files = list((h.home / ".local/state/dish/worktrees/claims").glob(f"*/{task}*.json"))
     assert len(claim_files) == 1, f"expected exactly one claim record for task {task}, found {claim_files}"
@@ -153,7 +157,7 @@ def test_concurrent_first_start_serializes_to_one_task_worktree(h: Harness) -> N
     base = h.base
     processes = []
     for agent in ("race-a", "race-b"):
-        h.agent_file(agent)
+        h.agent_file(agent, owning_task_gid=task)
         start_argv = [
             "python3", str(SCRIPT), "start",
             "--task", task, "--branch", branch,
