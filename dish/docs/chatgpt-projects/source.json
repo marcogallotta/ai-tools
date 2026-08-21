@@ -19,7 +19,6 @@
         "ci/pr-lifecycle-dispatcher-runbook.md#Worker execution profile"
       ],
       "actor attribution / approval / decision provenance": [
-        "dish/docs/agents/operator-provenance.md#Actor attribution",
         "dish/docs/agents/operator-provenance.md#Decision provenance"
       ],
       "authorized fallback / blocked operation": [
@@ -1457,6 +1456,20 @@
       "impact": "breaking",
       "surface": "authority",
       "text": "Keep human decisions, standing policy, agent inference, and runtime observations distinct. Consequential decisions need durable provenance; policy/runtime conflicts are reconciled without inventing a decision."
+    },
+    {
+      "action_boundaries": [
+        "implementation-admission",
+        "role-critical-write"
+      ],
+      "delivery": {
+        "mode": "TRIGGERED_READ",
+        "trigger": "actor attribution / approval / decision provenance"
+      },
+      "id": "objective-implementation-entry",
+      "impact": "additive",
+      "surface": "authority",
+      "text": "Authorization is the intersection of current human authority, standing role, and live exact candidate state; tools/vague speech never widen it. A conversational request that creates a new non-Implementation -> Implementation transition requires exactly one bounded confirmation before first source mutation, then no repeated confirmation for that active exact task. Already-authorized Review Correction and manual Worker formal BLOCK -> same-Worker Implementation continuations do not require a second confirmation. Known creator/material authorship requires independent exact-candidate pre-development PASS; missing automated Worker provenance alone does not block the ordinary manual path, but material authorship ambiguity without exact PASS routes to independent review. Confirmation/PASS/BLOCK/role switches never fabricate later execution, PR, Review, Integration, or merge state."
     },
     {
       "action_boundaries": [

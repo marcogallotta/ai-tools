@@ -10,7 +10,19 @@ For Development Workflow project `1217419962189616`, freshly read and apply `dis
 
 ## Decision provenance
 
-Keep explicit human decisions, standing repository policy, agent inference/recommendation, runtime observation, and authenticated-account metadata distinct. Consequential policy/product/cutover decisions require durable human provenance; runtime or attribution data never silently becomes such a decision.
+Keep explicit human decisions, standing repository policy, agent inference/recommendation, runtime observation, and authenticated-account metadata distinct. Consequential policy/product/cutover decisions require durable human provenance; runtime or attribution data never silently becomes such a decision. Authenticated account fields are attribution only; they do not turn an agent-authored action into Marco approval.
+
+### Objective authorization envelope and conversational Implementation entry
+
+The operative authorization envelope is objective and conjunctive: current explicit human authority, the current standing role contract, and live exact task/PR/candidate state must all permit the action. Tool availability, broad conversational wording, urgency, convenience, or an agent's ability to perform a mutation never creates or widens that envelope. Once an exact action is already inside a valid active envelope, routine mechanics proceed without repeated permission prompts.
+
+When ordinary conversation is being used to create a **new non-Implementation -> Implementation transition**, even direct wording such as `implement this`, `fix this`, or `go implement` is a pending role-transition request rather than source-mutation authority. Before the first semantic repository mutation, ask exactly one bounded confirmation tied to the named task/objective and intended transition. The confirmation authorizes only that transition and scope; it is not a general autonomy grant. Do not repeat the confirmation after the session is already validly operating as Implementation for that exact task/lineage.
+
+Two deterministic lifecycle continuations are not new conversational grants and therefore do **not** get a second confirmation: (1) an accepted Review Correction R3 continuation after a durable exact `VERDICT: BLOCK`, where the execution explicitly exits Review and re-routes by CURRENT TASK SHAPE through the canonical role index/current standing contract; if that route selects Implementation for the bounded correction, no separate durable Implementation assignment/event is required, and (2) the approved manual Worker formal exact-head `VERDICT: BLOCK` -> same-Worker explicit switch to Implementation/fix on the same PR lineage. Those routes still require their own exact task/PR/head/BLOCK identity and current standing contracts. A chat phrase, tool call, role label, or restart cannot manufacture the durable predecessor state that makes either continuation legal.
+
+Creator/material-author independence is a separate admission gate. If the execution that would enter Implementation is known to have created or materially authored the exact design/candidate being implemented, it must have an independent exact-candidate pre-development `PASS` before semantic source mutation. Merely relabeling the role, switching modes, restarting, or moving hosts does not erase known authorship. Consume durable automated authorship evidence when it exists. On the ordinary manual Worker path, absence of automated attempt/authorship markers is not itself a blocker; use current remembered/recoverable authorship. If authorship is materially ambiguous and no exact independent `PASS` can be established, route to independent review rather than guessing that the gate is satisfied.
+
+Confirmation, independent `PASS`, `BLOCK`, or role switching establishes only the authority it actually records. None proves dispatch acceptance, RUNNING execution, PR publication, Review completion, Integration, merge, deployment, or any other later lifecycle state. Those remain separately evidenced under their owning contracts.
 
 ## Execution-state truth
 
