@@ -231,6 +231,12 @@ If parallel branches independently claim the same migration number, do not inven
 
 If integration later requires only mechanical renumber/rebase work, preserve semantics exactly and say so. If conflict resolution requires a real schema/code/product decision, it is semantic work and must return to the implementation/review path rather than being improvised by the integrator.
 
+## Manual Worker formal-BLOCK fix continuation
+
+A formal exact-head BLOCK produced by the approved manual Worker operation is a task-specific fix assignment on the existing PR lineage; it does not require a second conversational `fix it` or a manual Worker API attempt. Before source mutation, the Worker must have ended Review, explicitly entered current Implementation authority, and freshly bind exact `(owning task, PR, branch, blocked head, formal BLOCK review id)` from live GitHub/Asana state. Matching task identity on another PR/branch is not authority, and moved/stale identity means zero semantic mutation until current state is reclassified.
+
+Fix only the accepted blocker scope, run the governed Implementation evidence, publish and authoritatively read back the corrected head/evidence, then stop. The authoring Worker may not independently Review that successor while its authorship is remembered/recoverable; a fresh Worker performs the next Review. Automated Worker attempt/authorship records may govern an automated transport but their absence never blocks this ordinary manual continuation. Integration/merge authority is never added.
+
 ## Review-head changes
 
 The PR head SHA is the review identity.

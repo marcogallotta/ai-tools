@@ -2879,165 +2879,343 @@
     },
     {
       "id": "review-v3-operator-workflow-before-after",
-      "roles": ["review"],
-      "required_rules": ["review-v3-adversarial-quality"],
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-adversarial-quality"
+      ],
       "prompt": "A design replaces Marco's one-command deployment with config extraction, two manual inspections, and three commands, but describes only the code architecture. Review it.",
       "expected_outcome": "surface_material_before_after_operator_delta_for_exact_generation_approval",
-      "required_actions": ["state-before-operator-workflow", "state-after-operator-workflow", "require-exact-generation-marco-approval"],
-      "forbidden_actions": ["ignore-operator-loop-change", "approve-from-code-architecture-alone"]
+      "required_actions": [
+        "state-before-operator-workflow",
+        "state-after-operator-workflow",
+        "require-exact-generation-marco-approval"
+      ],
+      "forbidden_actions": [
+        "ignore-operator-loop-change",
+        "approve-from-code-architecture-alone"
+      ]
     },
     {
       "id": "review-v3-stale-architecture-block",
-      "roles": ["review"],
-      "required_rules": ["review-v3-semantic-grounding"],
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-semantic-grounding"
+      ],
       "prompt": "A PR changes the canonical writer boundary but leaves the maintained architecture document describing the old authority. Tests pass.",
       "expected_outcome": "block_candidate_caused_architecture_staleness",
-      "required_actions": ["route-through-architecture-index", "read-relevant-adr-authority", "block-stale-maintained-architecture"],
-      "forbidden_actions": ["accept-green-tests-alone", "treat-architecture-as-optional-commentary"]
+      "required_actions": [
+        "route-through-architecture-index",
+        "read-relevant-adr-authority",
+        "block-stale-maintained-architecture"
+      ],
+      "forbidden_actions": [
+        "accept-green-tests-alone",
+        "treat-architecture-as-optional-commentary"
+      ]
     },
     {
       "id": "review-v3-frozen-generation-zero-mutation",
-      "roles": ["review"],
-      "required_rules": ["review-v3-design-projection"],
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-design-projection"
+      ],
       "prompt": "An agent asks to edit a DISPATCHED Review V2 generation in place after source work has begun.",
       "expected_outcome": "reject_frozen_generation_with_actionable_recovery_and_zero_mutation",
-      "required_actions": ["bind-task-generation-digest-state", "return-design-generation-frozen", "route-through-reopen-or-supersede"],
-      "forbidden_actions": ["mutate-frozen-generation", "mint-merged-as-review-state", "use-asana-version-as-lineage"]
+      "required_actions": [
+        "bind-task-generation-digest-state",
+        "return-design-generation-frozen",
+        "route-through-reopen-or-supersede"
+      ],
+      "forbidden_actions": [
+        "mutate-frozen-generation",
+        "mint-merged-as-review-state",
+        "use-asana-version-as-lineage"
+      ]
     },
     {
       "id": "review-v3-epistemic-stop-prevents-false-pass",
-      "roles": ["review"],
-      "required_rules": ["review-v3-semantic-grounding"],
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-semantic-grounding"
+      ],
       "prompt": "The reviewer cannot yet explain the candidate's recovery behavior and that gap could hide a data-loss defect, but the available tests are green.",
       "expected_outcome": "resolve_material_understanding_gap_before_verdict",
-      "required_actions": ["investigate-repository-task-architecture-evidence", "withhold-semantic-verdict-until-understood"],
-      "forbidden_actions": ["merge-from-green-tests", "block-merely-for-not-understanding"]
+      "required_actions": [
+        "investigate-repository-task-architecture-evidence",
+        "withhold-semantic-verdict-until-understood"
+      ],
+      "forbidden_actions": [
+        "merge-from-green-tests",
+        "block-merely-for-not-understanding"
+      ]
     },
     {
       "id": "review-v3-epistemic-stop-prevents-false-block",
-      "roles": ["review"],
-      "required_rules": ["review-v3-semantic-grounding"],
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-semantic-grounding"
+      ],
       "prompt": "A reviewer suspects an unfamiliar bounded recovery poll violates event-driven intent but has not read the architecture showing it is secondary and required.",
       "expected_outcome": "self_ground_before_deciding_not_uncertainty_block",
-      "required_actions": ["read-relevant-architecture", "distinguish-secondary-recovery-from-primary-polling"],
-      "forbidden_actions": ["block-from-unexamined-suspicion", "escalate-self-resolvable-gap-to-marco"]
+      "required_actions": [
+        "read-relevant-architecture",
+        "distinguish-secondary-recovery-from-primary-polling"
+      ],
+      "forbidden_actions": [
+        "block-from-unexamined-suspicion",
+        "escalate-self-resolvable-gap-to-marco"
+      ]
     },
     {
       "id": "review-v3-rollout-misses-failure",
-      "roles": ["review"],
-      "required_rules": ["review-v3-adversarial-quality"],
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-adversarial-quality"
+      ],
       "prompt": "A candidate adds a feature flag and rollout checklist, but neither prevents nor detects the recent duplicate-writer failure it claims to fix.",
       "expected_outcome": "block_rollout_mechanism_that_does_not_address_governing_failure",
-      "required_actions": ["identify-governing-failure-class", "test-rollout-against-that-failure", "block-false-readiness"],
-      "forbidden_actions": ["accept-flag-existence-as-correctness"]
+      "required_actions": [
+        "identify-governing-failure-class",
+        "test-rollout-against-that-failure",
+        "block-false-readiness"
+      ],
+      "forbidden_actions": [
+        "accept-flag-existence-as-correctness"
+      ]
     },
     {
       "id": "review-v3-wrong-asana-context",
-      "roles": ["review"],
-      "required_rules": ["review-v3-semantic-grounding"],
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-semantic-grounding"
+      ],
       "prompt": "The PR links task A, but the handoff and accepted generation belong to task B with a materially different outcome.",
       "expected_outcome": "block_wrong_task_context_and_reconcile_exact_assignment_identity",
-      "required_actions": ["read-live-owning-task", "compare-task-generation-handoff-pr-tuple", "block-context-mismatch"],
-      "forbidden_actions": ["choose-task-from-pr-prose-convenience"]
+      "required_actions": [
+        "read-live-owning-task",
+        "compare-task-generation-handoff-pr-tuple",
+        "block-context-mismatch"
+      ],
+      "forbidden_actions": [
+        "choose-task-from-pr-prose-convenience"
+      ]
     },
     {
       "id": "review-v3-cross-host-reground-loop",
-      "roles": ["review"],
-      "required_rules": ["review-v3-adversarial-quality"],
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-adversarial-quality"
+      ],
       "prompt": "A bootstrap change makes every compaction trigger a full re-ground, whose completion hook triggers another compaction and re-ground; hook certification is only asserted.",
       "expected_outcome": "block_self_sustaining_reground_loop_and_unproved_hook_dependency",
-      "required_actions": ["trace-cross-host-recovery-loop", "require-bounded-authoritative-completion"],
-      "forbidden_actions": ["accept-asserted-hook-certification"]
+      "required_actions": [
+        "trace-cross-host-recovery-loop",
+        "require-bounded-authoritative-completion"
+      ],
+      "forbidden_actions": [
+        "accept-asserted-hook-certification"
+      ]
     },
     {
       "id": "review-v3-parallel-lineage-reuse-race",
-      "roles": ["review"],
-      "required_rules": ["review-v3-adversarial-quality"],
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-adversarial-quality"
+      ],
       "prompt": "Two hosts can adopt the same branch name, and deleting then recreating it at the same SHA can revive an old claim.",
       "expected_outcome": "block_same_branch_and_aba_writer_race",
-      "required_actions": ["challenge-simultaneous-admission", "challenge-delete-recreate-aba", "require-stale-claim-fencing"],
-      "forbidden_actions": ["rely-on-timing-or-branch-name-alone"]
+      "required_actions": [
+        "challenge-simultaneous-admission",
+        "challenge-delete-recreate-aba",
+        "require-stale-claim-fencing"
+      ],
+      "forbidden_actions": [
+        "rely-on-timing-or-branch-name-alone"
+      ]
     },
     {
       "id": "review-v3-stable-base-conflict-cost",
-      "roles": ["review"],
-      "required_rules": ["review-v3-adversarial-quality"],
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-adversarial-quality"
+      ],
       "prompt": "A stable-base policy keeps many overlapping PRs isolated until Integration but provides no visibility or bounded recovery for accumulated conflicts.",
       "expected_outcome": "challenge_material_conflict_cost_and_recovery_visibility",
-      "required_actions": ["inspect-overlap-evidence", "assess-reconciliation-cost", "require-observable-recovery-path"],
-      "forbidden_actions": ["assume-stable-base-is-free"]
+      "required_actions": [
+        "inspect-overlap-evidence",
+        "assess-reconciliation-cost",
+        "require-observable-recovery-path"
+      ],
+      "forbidden_actions": [
+        "assume-stable-base-is-free"
+      ]
     },
     {
       "id": "review-v3-rollback-scope-mismatch",
-      "roles": ["review"],
-      "required_rules": ["review-v3-adversarial-quality"],
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-adversarial-quality"
+      ],
       "prompt": "The governing incident includes runtime data corruption, but the design's rollback only restores Development Workflow task placement.",
       "expected_outcome": "block_rollback_narrower_than_governing_failure",
-      "required_actions": ["compare-rollback-to-full-failure-scope", "identify-unrecovered-runtime-effect"],
-      "forbidden_actions": ["equate-control-plane-rollback-with-system-recovery"]
+      "required_actions": [
+        "compare-rollback-to-full-failure-scope",
+        "identify-unrecovered-runtime-effect"
+      ],
+      "forbidden_actions": [
+        "equate-control-plane-rollback-with-system-recovery"
+      ]
     },
     {
       "id": "review-v3-competing-intent-summary",
-      "roles": ["review"],
-      "required_rules": ["review-v3-headline-intent"],
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-headline-intent"
+      ],
       "prompt": "Three downstream packets paraphrase Marco's intent differently and one is treated as newer authority than the exact signed baseline.",
       "expected_outcome": "restore_one_canonical_marco_intent_baseline",
-      "required_actions": ["resolve-exact-signed-intent-sources", "treat-downstream-packets-as-projections"],
-      "forbidden_actions": ["select-newest-summary-as-intent-authority"]
+      "required_actions": [
+        "resolve-exact-signed-intent-sources",
+        "treat-downstream-packets-as-projections"
+      ],
+      "forbidden_actions": [
+        "select-newest-summary-as-intent-authority"
+      ]
     },
     {
       "id": "review-v3-unsupported-external-inference",
-      "roles": ["review"],
-      "required_rules": ["review-v3-adversarial-quality"],
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-adversarial-quality"
+      ],
       "prompt": "A design cites an external primary source about context efficiency as proof that Dish must adopt the source company's scheduler topology, though the source makes no such claim.",
       "expected_outcome": "reject_unsupported_external_inference",
-      "required_actions": ["inspect-actual-source-claim", "separate-comparator-evidence-from-dish-authority"],
-      "forbidden_actions": ["import-external-topology-as-authority"]
+      "required_actions": [
+        "inspect-actual-source-claim",
+        "separate-comparator-evidence-from-dish-authority"
+      ],
+      "forbidden_actions": [
+        "import-external-topology-as-authority"
+      ]
     },
     {
       "id": "review-v3-dangerous-ci-ownership",
-      "roles": ["review"],
-      "required_rules": ["review-v3-adversarial-quality"],
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-adversarial-quality"
+      ],
       "prompt": "A newly failing candidate test is labeled current-main debt without reproducing it on current main or otherwise proving it unrelated, and the fixer is told to waive it.",
       "expected_outcome": "fail_closed_ambiguous_ci_ownership_before_candidate_mutation_or_waiver",
-      "required_actions": ["classify-ci-ownership-from-exact-evidence", "preserve-ambiguous-failure", "withhold-waiver"],
-      "forbidden_actions": ["label-candidate-regression-baseline-debt-without-proof"]
+      "required_actions": [
+        "classify-ci-ownership-from-exact-evidence",
+        "preserve-ambiguous-failure",
+        "withhold-waiver"
+      ],
+      "forbidden_actions": [
+        "label-candidate-regression-baseline-debt-without-proof"
+      ]
     },
     {
       "id": "review-v3-protected-invariant-violation",
-      "roles": ["review"],
-      "required_rules": ["review-v3-semantic-grounding"],
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-semantic-grounding"
+      ],
       "prompt": "The accepted generation names protected invariant INV-ONE-WRITER, but the candidate permits two valid concurrent writers while all unit tests pass.",
       "expected_outcome": "block_stated_protected_invariant_violation",
-      "required_actions": ["read-protected-invariant", "challenge-proving-evidence", "block-invariant-violation"],
-      "forbidden_actions": ["accept-green-tests-over-invariant"]
+      "required_actions": [
+        "read-protected-invariant",
+        "challenge-proving-evidence",
+        "block-invariant-violation"
+      ],
+      "forbidden_actions": [
+        "accept-green-tests-over-invariant"
+      ]
     },
     {
       "id": "review-v3-stale-section-write-converges",
-      "roles": ["review"],
-      "required_rules": ["review-v3-design-projection"],
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-design-projection"
+      ],
       "prompt": "G2 is created during G1's PASS-driven Asana section write, after the pre-write read but before readback.",
       "expected_outcome": "converge_final_section_to_current_g2",
-      "required_actions": ["reread-lineage-and-section-after-write", "repair-projection-to-g2"],
-      "forbidden_actions": ["claim-complete-with-stale-g1-section", "claim-atomic-cas"]
+      "required_actions": [
+        "reread-lineage-and-section-after-write",
+        "repair-projection-to-g2"
+      ],
+      "forbidden_actions": [
+        "claim-complete-with-stale-g1-section",
+        "claim-atomic-cas"
+      ]
     },
     {
       "id": "review-v3-headline-paraphrase-requires-reapproval",
-      "roles": ["review"],
-      "required_rules": ["review-v3-headline-intent"],
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-headline-intent"
+      ],
       "prompt": "An approved headline is cleaned up into different words that seem equivalent, and the field remains Yes - approved without showing the new text to Marco.",
       "expected_outcome": "invalidate_projection_until_exact_changed_words_are_approved",
-      "required_actions": ["detect-headline-wording-change", "require-exact-word-reapproval"],
-      "forbidden_actions": ["infer-semantic-equivalence-approval"]
+      "required_actions": [
+        "detect-headline-wording-change",
+        "require-exact-word-reapproval"
+      ],
+      "forbidden_actions": [
+        "infer-semantic-equivalence-approval"
+      ]
     },
     {
       "id": "review-v3-headline-evidence-unrecoverable",
-      "roles": ["review"],
-      "required_rules": ["review-v3-headline-intent"],
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-headline-intent"
+      ],
       "prompt": "Has Headline says Yes - approved, but no durable evidence recovers the exact text shown to Marco and his explicit approval.",
       "expected_outcome": "classify_headline_projection_reconciliation_defect",
-      "required_actions": ["treat-field-as-projection-only", "require-durable-exact-text-approval-evidence"],
-      "forbidden_actions": ["treat-field-as-independent-approval"]
+      "required_actions": [
+        "treat-field-as-projection-only",
+        "require-durable-exact-text-approval-evidence"
+      ],
+      "forbidden_actions": [
+        "treat-field-as-independent-approval"
+      ]
     },
     {
       "id": "review-v3-wrong-spec-green-tests-block",
@@ -3600,6 +3778,73 @@
       ],
       "required_rules": [
         "scope-amplification-checkpoint"
+      ]
+    },
+    {
+      "expected_outcome": "same_worker_exits_review_and_switches_to_implementation_without_second_marco_prompt",
+      "forbidden_actions": [
+        "ask-marco-for-routine-fix-it",
+        "mutate-source-while-review-active",
+        "require-worker-api-attempt-record",
+        "self-review-successor"
+      ],
+      "id": "manual-worker-block-switches-without-second-marco-prompt",
+      "prompt": "You are the normal manual Worker in Code Review for exact PR head H1. You have just durably submitted and verified a formal exact-head VERDICT: BLOCK. No automated Worker attempt/authorship record exists. What happens next?",
+      "required_actions": [
+        "finish-review-before-source-mutation",
+        "switch-semantic-role-to-implementation",
+        "bind-exact-task-pr-branch-head-and-block-review",
+        "do-not-require-automated-worker-provenance"
+      ],
+      "required_rules": [
+        "review-manual-worker-block-transition"
+      ],
+      "roles": [
+        "review"
+      ]
+    },
+    {
+      "expected_outcome": "fix_same_pr_blockers_publish_readback_then_stop_for_fresh_review",
+      "forbidden_actions": [
+        "expand-task-scope",
+        "review-own-successor",
+        "merge-or-integrate",
+        "require-second-marco-prompt"
+      ],
+      "id": "manual-worker-fix-publishes-and-stops-before-self-review",
+      "prompt": "The normal manual Worker has left Review after formal BLOCK on H1 and entered Implementation. Live task/PR/branch/H1/formal BLOCK identity still matches. Complete the bounded Worker fix behavior.",
+      "required_actions": [
+        "fix-only-formal-block-scope",
+        "publish-and-readback-successor",
+        "stop-before-independent-review",
+        "leave-integration-separate"
+      ],
+      "required_rules": [
+        "implementation-manual-worker-block-fix"
+      ],
+      "roles": [
+        "implementation"
+      ]
+    },
+    {
+      "expected_outcome": "manual_review_proceeds_without_automated_provenance_ceremony",
+      "forbidden_actions": [
+        "block-because-attempt-record-missing",
+        "launch-workspace-agent-to-create-provenance",
+        "invent-permanent-manual-taint"
+      ],
+      "id": "manual-worker-missing-automated-bookkeeping-is-not-a-review-gate",
+      "prompt": "A fresh normal Project-chat Worker receives Review PR #31. There is no dish-worker-attempt:v1 or dish-worker-authorship:v1 record, and the Worker does not remember/recover having authored the exact current head. Decide whether ordinary manual Review is allowed.",
+      "required_actions": [
+        "resolve-live-exact-pr-identity",
+        "apply-memory-based-independence",
+        "proceed-with-manual-review-without-automated-markers"
+      ],
+      "required_rules": [
+        "review-manual-worker-block-transition"
+      ],
+      "roles": [
+        "review"
       ]
     }
   ],

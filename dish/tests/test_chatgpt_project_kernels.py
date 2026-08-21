@@ -96,11 +96,19 @@ def test_classified_stable_rule_removal_is_representable_and_unknown_ids_still_f
   kernels.validate_change_history(unknown,removed)
 
 def test_generated_kernels_current_bound_and_within_budget():
- m,s=kernels.load_canonical(); results=kernels.render_all(check=True); assert len(results)==8
+ m,s=kernels.load_canonical(); results=kernels.render_all(check=True); assert len(results)==9
  for role,p in kernels.generated_paths(m,s).items():
   text=p.read_text(); assert len(text)<=m['max_kernel_chars']; assert f"PROJECT_CANONICAL_VERSION: {m['canonical_version']}" in text; assert 'PROJECT_CHANNEL: production' in text
   assert text.index('PROJECT_REPOSITORY: marcogallotta/ai-tools')<text.index('Startup:')
   assert 'Mismatch alone never blocks' in text and '?/3 integrity error' in text
+ profile_paths=kernels.generated_profile_paths(m,s)
+ assert profile_paths=={'worker': DISH_ROOT/'docs'/'chatgpt-projects'/'worker.md'}
+ worker=profile_paths['worker'].read_text()
+ assert len(worker)<=8000
+ assert f"PROJECT_CANONICAL_VERSION: {m['canonical_version']}" in worker
+ assert 'PROFILE: manual-worker-r5-g2' in worker
+ assert 'same Worker MUST explicitly switch to Implementation' in worker
+ assert 'does **not** require Workspace-Agent launch' in worker
 
 
 def test_git_first_startup_and_test_candidate_binding_are_explicit():
@@ -515,6 +523,7 @@ def test_integration_rendered_kernel_preserves_v1a_local_only_landing_boundary()
 def test_c1_governance_contracts_and_evals_are_mechanical():
  m,s=kernels.load_canonical()
  assert 'audit' in s['roles'] and m['generated_role_files']['audit']=='audit.md'
+ assert m['generated_profile_files']=={'worker':'worker.md'} and 'worker' not in s['roles']
  audit={r['id'] for r in kernels.effective_rules(s,'audit')}
  assert {'audit-authority-boundary','audit-exact-baseline','audit-asana-disposition','audit-specialist-context'}<=audit
  for role in ('coordinator','development-workflow','implementation','integration','review','workflow','postgresql-dark-launch'):
@@ -670,8 +679,8 @@ def test_triggered_rule_text_change_does_not_manufacture_project_settings_versio
 def test_required_version_inventory_matches_published_first_parent_history_and_restores_losses():
  m,s=kernels.load_canonical(); versions=kernels.required_versions(m)
  expected={f'dish-chatgpt-projects-v2-{x}' for x in ['d96ab5f0588d','708fb9a9a9bc','39ff3abc502e','857d88788c12','23365034a0f1','9575ccfd79c8','28dcb04decc8','9bb70124ca21','694190185f60','712e3b16aa05','d048682742d6','54041bbbc8d8','86b8011172ee','219f34402511','9bf227f53f0a','5d24af30193a','bfaeef68aed9','d3a070d57fb2','443e13732e7f','7644d9ed0518','0a572f3b0a67']}
- expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d','dish-chatgpt-projects-v2-7924b7da9fc0','dish-chatgpt-projects-v2-3fe9827c4adc'})
- assert set(versions)==expected and len(versions)==28
+ expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d','dish-chatgpt-projects-v2-7924b7da9fc0','dish-chatgpt-projects-v2-3fe9827c4adc','dish-chatgpt-projects-v2-a9cefd1968b7'})
+ assert set(versions)==expected and len(versions)==29
  assert kernels.validate_required_version_topology(m)==versions
  for old in ('dish-chatgpt-projects-v2-39ff3abc502e','dish-chatgpt-projects-v2-9bb70124ca21'):
   path=kernels._change_path(m,old); assert path and path[-1]['to_version']==m['canonical_version']

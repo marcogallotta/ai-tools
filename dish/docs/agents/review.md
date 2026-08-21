@@ -135,6 +135,14 @@ Dish agents currently share the GitHub account that owns agent-authored PRs, so 
 
 The PR, not the final chat message, carries exact head/base identity, review reasoning, test/check output or missing-certification details, findings, implementation notes affecting disposition, dependencies, and after-fix review disposition.
 
+## Worker BLOCK
+
+The ordinary manual Worker path may enter with `Review PR #N` and does not require `dispatch_worker_durable`, `dish-worker-attempt:v1`, `dish-worker-authorship:v1`, or API-launch provenance merely to perform Review. Automated-route provenance governs only an actually automated route.
+
+A manual Worker never mutates source while Review authority is active. After it durably submits and verifies a formal exact-head `VERDICT: BLOCK`, Review is complete. Under the approved Worker profile, the **same Worker must then explicitly switch to current Implementation authority without another Marco prompt**, bind the live exact task/PR/branch/blocked head plus that formal BLOCK review ID, and fix only the accepted blocker scope on the same PR lineage. If any of that identity moved, perform zero semantic mutation and reclassify current state.
+
+After the Worker publishes and verifies the corrected successor, it stops while it remembers/recoverably knows it authored that head and cannot independently Review it. A fresh Worker performs the next Review. Genuine later forgetting follows the manual memory-based independence rule in `operator-provenance.md`; do not invent durable manual taint/provenance solely to reconstruct forgotten authorship. Integration remains separate.
+
 ## Review claims and dispatcher routing
 
 Forked review claims are advisory soft leases only. Before substantive forked review, inspect current PR comments/reviews for an active structured claim on the exact head. A new claim uses:
