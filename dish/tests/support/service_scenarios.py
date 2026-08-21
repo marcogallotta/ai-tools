@@ -19,7 +19,7 @@ OTHER_REQUEST_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
 OPERATION_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
 
 
-def service(tmp_path):
+def service(tmp_path, *, action_client_id: str = "gpt-action"):
     backend = ServiceBackend()
     honest = tmp_path / "honest"
     honest.mkdir(exist_ok=True)
@@ -32,6 +32,7 @@ def service(tmp_path):
             agent_token="agent-secret",
             admin_token="admin-secret",
             action_token="action-secret",
+            action_client_id=action_client_id,
         ),
         backend_factory=lambda: backend,
         release_loader=release_loader(honest),
@@ -39,8 +40,8 @@ def service(tmp_path):
     return instance, backend
 
 
-def running(tmp_path):
-    instance, backend = service(tmp_path)
+def running(tmp_path, *, action_client_id: str = "gpt-action"):
+    instance, backend = service(tmp_path, action_client_id=action_client_id)
     server = build_server(instance)
     thread = start_server_thread(server, daemon=True, name="thread")
     host, port = server.server_address

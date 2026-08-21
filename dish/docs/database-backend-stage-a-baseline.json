@@ -20,7 +20,8 @@
     "approve",
     "reject",
     "submit",
-    "renew-lease"
+    "renew-lease",
+    "qualify-file-transport"
   ],
   "admin_commands": [
     "abandon-operation",
@@ -74,23 +75,23 @@
   "governing_source_sha256": {
     "dish_pg/release.py": "4c302344a0a0db07ac7cde1b3bf1339123f165ff8a84706d6aa50434fb4dd7bc",
     "dish_service/admin_cli.py": "7b970a0805788284cf86b489e078d7b77ce610443695c0d07b295d9426b1e7fe",
-    "dish_service/application.py": "c3c71dd0b7277741fe64f13e8dfdcaa9187c9219070ef5de9637d8eade0859f8",
+    "dish_service/application.py": "657b531e77ccd4a11464608426e37cb297dba24d0607a5cd85688e2543ae8cb2",
     "dish_service/backup_creation.py": "6dbd2519aeb8a306ad5d78a61b318addba5ba47b051698c8f031dbf7b906a4bd",
-    "dish_service/command_spec.py": "2b72bcf7afecd1b07c785f6cf243ff75589054b32155cb82dbad987a937d5824",
+    "dish_service/command_spec.py": "ec0b0de93bde7f0d357411d4832b14f7532db576c0a2a7bf8580e8d07ab28d39",
     "dish_service/planning_reopen.py": "28321ba068fb2b271a8cc5ec54a1d2584f44d6425231e33c77490b721bd0a872",
     "dish_tool/admin_command_spec.py": "20f4b33cd7096fc6314df543aeea9f33364eb4b34c7f769523ef708801a98221",
-    "dish_tool/command_identity.py": "07c9abcdca525a31e71d0fb29e7f35e7b5188ec23119609db13f8d4aefb45be7",
+    "dish_tool/command_identity.py": "c12a3afe0225583862a35f37b4b602350403616ab1d0f8edfb97fe93090ba381",
     "dish_tool/database_initialization.py": "13b49cf8f722a0b6a56ca30cce5f8e2a9a037acaa50d1bb74776929fedb7343d",
     "dish_tool/database_migrations.py": "31bdbf9966f399ce7a21966e35ff9183f75958911456d9a80a68c1e54a8af6b9",
     "dish_tool/database_schema.py": "f4b170d2443e3e3ede2b918bb3ff52275f1f394fa0beb0e9bbc9d0889ce8d2f8",
     "dish_tool/database_schema_validation.py": "2c04862bf1f3bcd35aa7b14aa2cad3edbe5e7312f4e3d0afd42007cb17af3f4b",
     "dish_tool/workflow_policy.py": "213219dfc857a65b9720043426f9ddb6c7ea68706086322648051da3f7775fe9",
     "docs/runtime-contract.md": "a1236a7eef7141e709692e971e515090621f48bd49e4a1d92c2fe409fa5bf6be",
-    "openapi/dish-action.openapi.json": "d9732410a77715aaa1b3534f49b0ae29707a5e1c513a181a805cecdbf943d7b0",
+    "openapi/dish-action.openapi.json": "f3ed666bf4b905ffb7c668ae199cd9cf51e429ca034f8c94629ed561d03e1e40",
     "scripts/dish-pg-acceptance": "d7b30b7f45a9ff38b1106aa868065449bea879f71ce30f2428b1333aa0ec43d4",
     "scripts/dish-pg-stage-a-baseline": "ef030edc5685c16082a537db5c53425f3572fc6cf8b2a79f9182bd07a77c530e"
   },
-  "last_rebaseline_reason": "Rebaseline Stage A governing source hashes for PR #85 operator command presentation and runtime documentation changes",
+  "last_rebaseline_reason": "Gate A: add qualify-file-transport as a source-only Action command (no PostgreSQL execution wiring yet); rebaseline governing source hashes for command_identity.py, command_spec.py, application.py, and the regenerated openapi/dish-action.openapi.json",
   "notes": [
     "The baseline records current source authority only; PostgreSQL is not production authority.",
     "Changes to governed source hashes or acceptance rules require explicit baseline review; ordinary test-file changes do not.",
@@ -111,6 +112,7 @@
     "kill-all",
     "kill-all-expired",
     "proposals",
+    "qualify-file-transport",
     "queue",
     "review-approve",
     "review-inspect",

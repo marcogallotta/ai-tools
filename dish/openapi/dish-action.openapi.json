@@ -1806,6 +1806,161 @@
           }
         }
       }
+    },
+    "/v1/action/qualify-file-transport": {
+      "post": {
+        "operationId": "dish_qualify_file_transport",
+        "x-openai-isConsequential": true,
+        "summary": "Run dish qualify-file-transport",
+        "description": "Replay-bound: request_id binds command, arguments, owner, and client.run_id. Exact replays return the stored success or failure across restarts. Changed reuse conflicts. Pending or uncertain work stays fail-closed and is not rerun.",
+        "security": [
+          {
+            "actionBearer": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "client",
+                  "arguments",
+                  "openaiFileIdRefs"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "client": {
+                    "type": "object",
+                    "required": [
+                      "run_id",
+                      "request_id"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "run_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "minLength": 36,
+                        "maxLength": 36,
+                        "description": "Canonical lowercase UUID identifying this agent run. Reuse it for every call made by the same run; a new run must generate a new UUID."
+                      },
+                      "request_id": {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                        "minLength": 36,
+                        "maxLength": 36,
+                        "description": "Canonical lowercase UUID for one logical mutation. Dish durably binds it to the exact command, canonical arguments, authenticated owner, and client.run_id, stores the first authoritative success or expected failure, and preserves that result across service restart. Reuse it only for an exact replay after a lost response: the same identity returns the stored result with data.request_replayed=true and data.request_id. Changed arguments or reuse from a different command, owner, or run returns service_request_identity_conflict. A matching pending or uncertain request is not executed again and remains fail-closed until exact durable evidence supports reconstruction or safe resolution."
+                      }
+                    }
+                  },
+                  "arguments": {
+                    "required": [
+                      "expected_sha256",
+                      "expected_bytes"
+                    ],
+                    "properties": {
+                      "expected_sha256": {
+                        "type": "string",
+                        "description": "Lowercase hex SHA-256 the fetched file must match exactly."
+                      },
+                      "expected_bytes": {
+                        "type": "number",
+                        "description": "Exact byte count the fetched file must match exactly. Dish enforces a 10000000-byte Gate A ceiling regardless of this value."
+                      }
+                    },
+                    "type": "object",
+                    "additionalProperties": false
+                  },
+                  "openaiFileIdRefs": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 1,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "id",
+                        "name",
+                        "mime_type",
+                        "download_link"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "Stable OpenAI file identifier."
+                        },
+                        "name": {
+                          "type": "string",
+                          "description": "Stable file name."
+                        },
+                        "mime_type": {
+                          "type": "string",
+                          "description": "Stable file MIME type."
+                        },
+                        "download_link": {
+                          "type": "string",
+                          "description": "Transient signed transport URL. Dish fetches it once and never persists it in durable replay identity, logs, receipts, or errors."
+                        }
+                      }
+                    },
+                    "description": "Exactly one Code-Interpreter-produced file to fetch and qualify."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Canonical dish workflow result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/ResultEnvelope"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "openaiFileResponse": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "name",
+                              "mime_type",
+                              "content"
+                            ],
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "mime_type": {
+                                "type": "string"
+                              },
+                              "content": {
+                                "type": "string",
+                                "contentEncoding": "base64",
+                                "description": "Base64-encoded receipt bytes returned inline to Code Interpreter."
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {

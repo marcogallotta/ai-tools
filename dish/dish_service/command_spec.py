@@ -1,6 +1,7 @@
 """Shared GPT Action command contract used by HTTP validation and OpenAPI."""
 from __future__ import annotations
 
+import re
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal, Mapping
@@ -15,6 +16,8 @@ from dish_tool.identifiers import (
     require_dish_uuid,
 )
 from dish_tool.models import validate_actor_model, validate_independence_attestation
+
+from .file_transport import MAX_FETCH_BYTES as QUALIFY_FILE_TRANSPORT_MAX_BYTES
 
 ActionPrincipal = Literal["reader", "agent", "verification"]
 ActionRoute = Literal["agent", "lease"]
@@ -73,6 +76,9 @@ SUBMIT_COMMAND = _action(
 RENEW_LEASE_COMMAND = _action(
     command_ids.RENEW_LEASE, "agent", request_id=True, private_route="lease"
 )
+QUALIFY_FILE_TRANSPORT_COMMAND = _action(
+    command_ids.QUALIFY_FILE_TRANSPORT, "agent", request_id=True
+)
 
 ACTION_COMMAND_SPECS = (
     CREATE_COMMAND,
@@ -89,6 +95,7 @@ ACTION_COMMAND_SPECS = (
     REJECT_COMMAND,
     SUBMIT_COMMAND,
     RENEW_LEASE_COMMAND,
+    QUALIFY_FILE_TRANSPORT_COMMAND,
 )
 ACTION_COMMAND_DEFINITIONS = {spec.name: spec for spec in ACTION_COMMAND_SPECS}
 if len(ACTION_COMMAND_DEFINITIONS) != len(ACTION_COMMAND_SPECS):
@@ -98,6 +105,9 @@ ACTION_COMMANDS = command_ids.CONNECTED_AGENT_COMMANDS
 if ACTION_COMMANDS != tuple(spec.name for spec in ACTION_COMMAND_SPECS):
     raise ValueError("GPT Action command metadata does not cover connected-agent identities")
 ACTION_LEASE_COMMAND = RENEW_LEASE_COMMAND.name
+ACTION_QUALIFY_FILE_TRANSPORT_COMMAND = QUALIFY_FILE_TRANSPORT_COMMAND.name
+QUALIFY_FILE_TRANSPORT_FILE_FIELDS = ("id", "name", "mime_type", "download_link")
+_SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 REPLAY_SAFE_COMMANDS = frozenset(
     spec.name for spec in ACTION_COMMAND_SPECS if spec.request_id_required
 )
@@ -396,6 +406,67 @@ ARGUMENT_SCHEMAS: dict[str, dict[str, Any]] = {
         "required": ["operation_id"],
         "properties": {"operation_id": dict(DISH_UUID_SCHEMA)},
     },
+    QUALIFY_FILE_TRANSPORT_COMMAND.name: {
+        "required": ["expected_sha256", "expected_bytes"],
+        "properties": {
+            "expected_sha256": {
+                "type": "string",
+                "description": (
+                    "Lowercase hex SHA-256 the fetched file must match exactly."
+                ),
+            },
+            "expected_bytes": {
+                "type": "number",
+                "description": (
+                    "Exact byte count the fetched file must match exactly. Dish enforces "
+                    f"a {QUALIFY_FILE_TRANSPORT_MAX_BYTES}-byte Gate A ceiling regardless "
+                    "of this value."
+                ),
+            },
+        },
+    },
+}
+
+OPENAI_FILE_ID_REFS_SCHEMA = {
+    "type": "array",
+    "minItems": 1,
+    "maxItems": 1,
+    "items": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": list(QUALIFY_FILE_TRANSPORT_FILE_FIELDS),
+        "properties": {
+            "id": {"type": "string", "description": "Stable OpenAI file identifier."},
+            "name": {"type": "string", "description": "Stable file name."},
+            "mime_type": {"type": "string", "description": "Stable file MIME type."},
+            "download_link": {
+                "type": "string",
+                "description": (
+                    "Transient signed transport URL. Dish fetches it once and never "
+                    "persists it in durable replay identity, logs, receipts, or errors."
+                ),
+            },
+        },
+    },
+    "description": "Exactly one Code-Interpreter-produced file to fetch and qualify.",
+}
+
+OPENAI_FILE_RESPONSE_SCHEMA = {
+    "type": "array",
+    "items": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["name", "mime_type", "content"],
+        "properties": {
+            "name": {"type": "string"},
+            "mime_type": {"type": "string"},
+            "content": {
+                "type": "string",
+                "contentEncoding": "base64",
+                "description": "Base64-encoded receipt bytes returned inline to Code Interpreter.",
+            },
+        },
+    },
 }
 
 
@@ -661,6 +732,8 @@ def _validate_scalar(field: str, value: Any, schema: Mapping[str, Any]) -> None:
 
 def validate_action_request(command: str, request: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     allowed_top = {"client", "arguments"}
+    if command == QUALIFY_FILE_TRANSPORT_COMMAND.name:
+        allowed_top = allowed_top | {"openaiFileIdRefs"}
     extras = sorted(set(request) - allowed_top)
     if extras:
         raise _argument_error(
@@ -800,4 +873,67 @@ def validate_action_request(command: str, request: Mapping[str, Any]) -> tuple[d
                 "argument_required",
                 field=missing,
             )
-    return dict(client), dict(arguments)
+    arguments = dict(arguments)
+    if command == QUALIFY_FILE_TRANSPORT_COMMAND.name:
+        expected_sha256 = arguments.get("expected_sha256")
+        if not isinstance(expected_sha256, str) or not _SHA256_HEX_RE.fullmatch(
+            expected_sha256
+        ):
+            raise _argument_error(
+                "expected_sha256 must be a lowercase 64-character hex SHA-256",
+                "argument_value_invalid",
+                field="expected_sha256",
+            )
+        expected_bytes = arguments.get("expected_bytes")
+        if (
+            not isinstance(expected_bytes, int)
+            or isinstance(expected_bytes, bool)
+            or expected_bytes <= 0
+            or expected_bytes > QUALIFY_FILE_TRANSPORT_MAX_BYTES
+        ):
+            raise _argument_error(
+                "expected_bytes must be a positive integer up to "
+                f"{QUALIFY_FILE_TRANSPORT_MAX_BYTES}",
+                "argument_value_invalid",
+                field="expected_bytes",
+            )
+        file_refs = request.get("openaiFileIdRefs")
+        if not isinstance(file_refs, list) or len(file_refs) != 1:
+            raise _argument_error(
+                "openaiFileIdRefs must contain exactly one file",
+                "openai_file_refs_invalid",
+                field="openaiFileIdRefs",
+            )
+        file_ref = file_refs[0]
+        if not isinstance(file_ref, dict):
+            raise _argument_error(
+                "openaiFileIdRefs[0] must be an object",
+                "openai_file_refs_invalid",
+                field="openaiFileIdRefs",
+            )
+        missing_file_fields = [
+            name for name in QUALIFY_FILE_TRANSPORT_FILE_FIELDS if name not in file_ref
+        ]
+        if missing_file_fields:
+            raise _argument_error(
+                f"openaiFileIdRefs[0].{missing_file_fields[0]} is required",
+                "openai_file_refs_invalid",
+                field=f"openaiFileIdRefs.{missing_file_fields[0]}",
+            )
+        extra_file_fields = sorted(set(file_ref) - set(QUALIFY_FILE_TRANSPORT_FILE_FIELDS))
+        if extra_file_fields:
+            raise _argument_error(
+                f"openaiFileIdRefs[0].{extra_file_fields[0]} is not accepted",
+                "openai_file_refs_invalid",
+                field=f"openaiFileIdRefs.{extra_file_fields[0]}",
+            )
+        for name in QUALIFY_FILE_TRANSPORT_FILE_FIELDS:
+            value = file_ref[name]
+            if not isinstance(value, str) or not value.strip():
+                raise _argument_error(
+                    f"openaiFileIdRefs[0].{name} is required",
+                    "openai_file_refs_invalid",
+                    field=f"openaiFileIdRefs.{name}",
+                )
+        arguments["file"] = dict(file_ref)
+    return dict(client), arguments

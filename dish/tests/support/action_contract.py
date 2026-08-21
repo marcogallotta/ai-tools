@@ -16,6 +16,7 @@ EXPECTED_ACTION_COMMANDS = (
     "inspect",
     "prepare",
     "proposals",
+    "qualify-file-transport",
     "read",
     "reject",
     "renew-lease",

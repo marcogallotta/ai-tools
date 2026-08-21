@@ -1,6 +1,7 @@
 """Transport-neutral shared-service boundary around the existing applications."""
 from __future__ import annotations
 
+import base64
 import contextlib
 import inspect
 import json
@@ -21,6 +22,7 @@ from dish_tool.admin_command_spec import (
     RUN_ID_ADMIN_COMMANDS as _RUN_ID_ADMIN_COMMANDS,
 )
 from dish_tool.backend import AsanaBackend
+from dish_tool.command_identity import QUALIFY_FILE_TRANSPORT_CLIENT_ID
 from dish_tool.commands import DishApplication, expose_authoritative_view
 from dish_tool.constants import COOKING_PROJECT_GID, SCHEMA_VERSION
 from dish_tool.operation_execution import recover_command_guidance
@@ -59,7 +61,13 @@ from dish_tool.validation_scope import scope_for_command
 from dish_tool.transactions import immediate_transaction
 
 from .backup import BackupManager
-from .command_spec import ACTION_COMMANDS, ACTION_LEASE_COMMAND, REPLAY_SAFE_COMMANDS
+from .command_spec import (
+    ACTION_COMMANDS,
+    ACTION_LEASE_COMMAND,
+    ACTION_QUALIFY_FILE_TRANSPORT_COMMAND,
+    REPLAY_SAFE_COMMANDS,
+)
+from .file_transport import fetch_expected_file
 from .backup_creation import BackupCreationCoordinator
 from .config import ServiceConfig
 from .shadow_capture import LegacyShadowCapture, ShadowCaptureSettings
@@ -2780,6 +2788,139 @@ class DishService:
         return self._lease_requests.renew(
             operation_id, principal, request_id=request_id
         )
+
+    def qualify_file_transport(
+        self,
+        arguments: Mapping[str, Any],
+        *,
+        principal: ServicePrincipal,
+        request_id: str,
+    ) -> dict[str, Any]:
+        """Fetch, verify, and durably qualify exactly one connected-agent file transport.
+
+        This is a self-contained action command: no task, lease, or Asana backend
+        is involved. download_link is transient transport only and is
+        deliberately excluded from the durable replay-bound arguments below, so
+        a rotated signed URL never changes request identity.
+        """
+        command = ACTION_QUALIFY_FILE_TRANSPORT_COMMAND
+        if principal.owner_id != QUALIFY_FILE_TRANSPORT_CLIENT_ID:
+            raise DishRuleError(
+                "AGENT_MISMATCH",
+                "this Action deployment is not authorized for qualify-file-transport",
+                rule="action_client_not_authorized",
+                details={"required_client_id": QUALIFY_FILE_TRANSPORT_CLIENT_ID},
+            )
+        file_ref = arguments.get("file")
+        file_ref = file_ref if isinstance(file_ref, Mapping) else {}
+        replay_arguments = {
+            "expected_sha256": arguments.get("expected_sha256"),
+            "expected_bytes": arguments.get("expected_bytes"),
+            "file": {
+                "id": file_ref.get("id"),
+                "name": file_ref.get("name"),
+                "mime_type": file_ref.get("mime_type"),
+            },
+        }
+        download_link = str(file_ref.get("download_link") or "")
+        with self._maintenance_gate.request():
+            conn = self._initialize_database(
+                surface="action",
+                command=command,
+                request_id=request_id,
+                principal=principal,
+            )
+            try:
+                row, started = begin_request(
+                    conn,
+                    request_id=request_id,
+                    owner_id=principal.owner_id,
+                    run_id=principal.run_id,
+                    command=command,
+                    arguments=replay_arguments,
+                )
+                prior = stored_result(row)
+                if prior is not None:
+                    return prior
+                if not started:
+                    raise pending_error(command, request_id)
+                try:
+                    result = self._execute_file_transport_qualification(
+                        command,
+                        replay_arguments,
+                        download_link=download_link,
+                    )
+                except DishRuleError as exc:
+                    result = error_envelope(command, exc)
+                result.setdefault("data", {})["request_id"] = request_id
+                return complete_request(conn, request_id=request_id, result=result)
+            finally:
+                conn.close()
+
+    def _execute_file_transport_qualification(
+        self,
+        command: str,
+        replay_arguments: Mapping[str, Any],
+        *,
+        download_link: str,
+    ) -> dict[str, Any]:
+        expected_sha256 = str(replay_arguments.get("expected_sha256") or "").lower()
+        expected_bytes = replay_arguments.get("expected_bytes")
+        file_ref = replay_arguments["file"]
+        fetched = fetch_expected_file(download_link, expected_bytes=expected_bytes)
+        if (
+            not isinstance(expected_bytes, (int, float))
+            or isinstance(expected_bytes, bool)
+            or fetched.byte_count != int(expected_bytes)
+        ):
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "fetched file byte count did not match expected_bytes",
+                rule="file_transport_bytes_mismatch",
+                details={
+                    "expected_bytes": expected_bytes,
+                    "actual_bytes": fetched.byte_count,
+                },
+            )
+        if fetched.sha256 != expected_sha256:
+            raise DishRuleError(
+                "VALIDATION_FAILED",
+                "fetched file digest did not match expected_sha256",
+                rule="file_transport_digest_mismatch",
+                details={
+                    "expected_sha256": expected_sha256,
+                    "actual_sha256": fetched.sha256,
+                },
+            )
+        receipt = {
+            "command": command,
+            "file_id": file_ref["id"],
+            "file_name": file_ref["name"],
+            "mime_type": file_ref["mime_type"],
+            "sha256": fetched.sha256,
+            "byte_count": fetched.byte_count,
+        }
+        receipt_bytes = json.dumps(
+            receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+        result = result_envelope(
+            command=command,
+            data={
+                "file_id": file_ref["id"],
+                "file_name": file_ref["name"],
+                "mime_type": file_ref["mime_type"],
+                "sha256": fetched.sha256,
+                "byte_count": fetched.byte_count,
+            },
+        )
+        result["openaiFileResponse"] = [
+            {
+                "name": "dish-action-gate-a-receipt.json",
+                "mime_type": "application/json",
+                "content": base64.b64encode(receipt_bytes).decode("ascii"),
+            }
+        ]
+        return result
 
     def recover_lease(
         self,

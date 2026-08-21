@@ -34,6 +34,7 @@ class ServiceConfig:
     agent_token: str | None = None
     admin_token: str | None = None
     action_token: str | None = None
+    action_client_id: str = "gpt-action"
     backup_dir: Path | None = None
     legacy_writer_fence_path: Path | None = None
     dark_launch_mode: str = "off"
@@ -243,6 +244,7 @@ class ServiceConfig:
             agent_token=env.get("DISH_SERVICE_AGENT_TOKEN") or None,
             admin_token=env.get("DISH_SERVICE_ADMIN_TOKEN") or None,
             action_token=env.get("DISH_SERVICE_ACTION_TOKEN") or None,
+            action_client_id=env.get("DISH_ACTION_CLIENT_ID") or "gpt-action",
             backup_dir=(
                 Path(env["DISH_SERVICE_BACKUP_DIR"]).expanduser()
                 if env.get("DISH_SERVICE_BACKUP_DIR")

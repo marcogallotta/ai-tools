@@ -16,6 +16,7 @@ from dish_service.command_spec import (
     PREPARE_COMMAND,
     PROPOSALS_COMMAND,
     APPLY_PROPOSAL_COMMAND,
+    QUALIFY_FILE_TRANSPORT_COMMAND,
     SAFE_RECLAIM_COMMAND,
     READ_COMMAND,
     REJECT_COMMAND,
@@ -163,10 +164,23 @@ CONNECTED_COMMAND_DISPOSITIONS: dict[str, str] = {
 }
 POSTGRESQL_ACTION_ADDED_COMMANDS: tuple[str, ...] = (SEARCH_COMMAND,)
 POSTGRESQL_ACTION_RETIRED_COMMANDS: tuple[str, ...] = ()
+# Connected on the legacy SQLite/Asana Action surface but not yet ported to the
+# PostgreSQL command-execution stack: no PG workflow/transaction handler exists
+# for these. Each entry here must also be a "source_only_commands" entry in
+# docs/database-backend-stage-a-baseline.json, never a claimed "retain"/"add"
+# treatment, so cutover-readiness evidence stays honest.
+CONNECTED_ACTION_COMMANDS_NOT_YET_PORTED: tuple[str, ...] = (
+    QUALIFY_FILE_TRANSPORT_COMMAND.name,
+)
+_PARITY_EXPECTED_CONNECTED_COMMANDS = tuple(
+    command
+    for command in CONNECTED_ACTION_COMMANDS
+    if command not in CONNECTED_ACTION_COMMANDS_NOT_YET_PORTED
+)
 if tuple(ACTION_COMMANDS) != (
-    *tuple(CONNECTED_ACTION_COMMANDS[:3]),
+    *tuple(_PARITY_EXPECTED_CONNECTED_COMMANDS[:3]),
     SEARCH_COMMAND,
-    *tuple(CONNECTED_ACTION_COMMANDS[3:]),
+    *tuple(_PARITY_EXPECTED_CONNECTED_COMMANDS[3:]),
 ):
     raise ValueError("PostgreSQL connected-command inventory drifted")
 
