@@ -351,6 +351,7 @@ def main() -> int:
             runtime.reconcile(force=True)
         except Exception as exc:
             log("startup_reconcile_failed", error_type=type(exc).__name__, error=str(exc))
+            runtime.pending.set()
 
     threading.Thread(
         target=startup_reconcile,
