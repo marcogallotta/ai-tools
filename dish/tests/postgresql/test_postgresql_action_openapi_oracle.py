@@ -8,6 +8,7 @@ import pytest
 from dish_pg.command_contract import (
     ACTION_COMMANDS,
     COMMAND_DEFINITIONS,
+    CONNECTED_ACTION_COMMANDS_NOT_YET_PORTED,
     CONNECTED_COMMAND_DISPOSITIONS,
     POSTGRES_CLIENT_REQUEST_ID_SCHEMA,
     POSTGRES_CLIENT_RUN_ID_SCHEMA,
@@ -84,6 +85,8 @@ def _assert_postgresql_action_contract(document: dict[str, object]) -> None:
 
 def test_postgresql_action_metadata_reuses_current_principal_and_replay_policy() -> None:
     for command, current in ACTION_COMMAND_DEFINITIONS.items():
+        if command in CONNECTED_ACTION_COMMANDS_NOT_YET_PORTED:
+            continue
         target = COMMAND_DEFINITIONS[command]
         assert target.principal == current.principal
         assert target.request_replay is current.request_id_required

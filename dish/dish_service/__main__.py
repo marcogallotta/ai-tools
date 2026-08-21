@@ -300,6 +300,7 @@ def _postgresql_runtime_config(args) -> ServiceConfig:
         agent_token=os.environ.get("DISH_SERVICE_AGENT_TOKEN"),
         admin_token=os.environ.get("DISH_SERVICE_ADMIN_TOKEN"),
         action_token=os.environ.get("DISH_SERVICE_ACTION_TOKEN"),
+        action_client_id=os.environ.get("DISH_ACTION_CLIENT_ID") or "gpt-action",
         legacy_writer_fence_path=None,
     )
     config.validate_runtime(require_action=True)

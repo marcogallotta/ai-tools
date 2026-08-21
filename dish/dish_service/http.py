@@ -305,6 +305,8 @@ class DishRequestHandler(BaseHTTPRequestHandler):
     ) -> None:
         if surface in {"agent", "action", "admin"}:
             allowed = {"client", "arguments"}
+            if surface == "action" and command == "qualify-file-transport":
+                allowed = allowed | {"openaiFileIdRefs"}
         elif surface == "lease":
             allowed = {"client"}
         elif surface == "admin-lease":
@@ -338,7 +340,7 @@ class DishRequestHandler(BaseHTTPRequestHandler):
         if config.admin_token:
             result[config.admin_token] = ("marco-admin", "admin")
         if config.action_token:
-            result[config.action_token] = ("gpt-action", "action")
+            result[config.action_token] = (config.action_client_id, "action")
         return result
 
     def _credential(self, *scopes: str):
@@ -524,6 +526,10 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 payload = self.server.service.renew_lease(
                     arguments["operation_id"], principal, request_id=request_id
                 )
+            elif surface == "action" and command == "qualify-file-transport":
+                payload = self.server.service.qualify_file_transport(
+                    request["arguments"], principal=principal, request_id=request_id
+                )
             elif surface == "admin-backup":
                 if command == "backup-create":
                     payload = self.server.service.create_backup(
@@ -594,6 +600,7 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 and principal is not None
                 and isinstance(request, dict)
                 and exc.rule != "independence_attestation_invalid_characters"
+                and command != "qualify-file-transport"
             ):
                 client_payload = request.get("client")
                 replay_arguments = _replay_arguments(surface, command, request, parts)

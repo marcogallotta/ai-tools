@@ -19,6 +19,7 @@ APPROVE = "approve"
 REJECT = "reject"
 SUBMIT = "submit"
 RENEW_LEASE = "renew-lease"
+QUALIFY_FILE_TRANSPORT = "qualify-file-transport"
 
 CONNECTED_AGENT_COMMANDS = (
     CREATE,
@@ -35,6 +36,7 @@ CONNECTED_AGENT_COMMANDS = (
     REJECT,
     SUBMIT,
     RENEW_LEASE,
+    QUALIFY_FILE_TRANSPORT,
 )
 
 if len(set(CONNECTED_AGENT_COMMANDS)) != len(CONNECTED_AGENT_COMMANDS):

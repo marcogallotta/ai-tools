@@ -8,9 +8,12 @@ from dish_tool.validation_scope import VALIDATION_SCOPE_VALUES
 
 from .command_spec import (
     ACTION_COMMAND_DEFINITIONS,
+    ACTION_QUALIFY_FILE_TRANSPORT_COMMAND,
     CLIENT_REQUEST_ID_SCHEMA,
     CLIENT_RUN_ID_SCHEMA,
     DISH_UUID_SCHEMA,
+    OPENAI_FILE_ID_REFS_SCHEMA,
+    OPENAI_FILE_RESPONSE_SCHEMA,
     ActionCommandSpec,
     action_openapi_argument_schema,
 )
@@ -218,6 +221,47 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
         request_id_required = spec.request_id_required
         is_lease_command = spec.private_route == "lease"
         argument_schema = action_openapi_argument_schema(command)
+        is_file_transport_command = command == ACTION_QUALIFY_FILE_TRANSPORT_COMMAND
+        request_schema: dict[str, Any] = {
+            "type": "object",
+            "required": ["client", "arguments"]
+            + (["openaiFileIdRefs"] if is_file_transport_command else []),
+            "additionalProperties": False,
+            "properties": {
+                "client": {
+                    "type": "object",
+                    "required": (["run_id", "request_id"] if request_id_required else ["run_id"]),
+                    "additionalProperties": False,
+                    "properties": {
+                        "run_id": dict(CLIENT_RUN_ID_SCHEMA),
+                        **(
+                            {"request_id": dict(CLIENT_REQUEST_ID_SCHEMA)}
+                            if request_id_required
+                            else {}
+                        ),
+                    },
+                },
+                "arguments": argument_schema,
+                **(
+                    {"openaiFileIdRefs": OPENAI_FILE_ID_REFS_SCHEMA}
+                    if is_file_transport_command
+                    else {}
+                ),
+            },
+        }
+        response_schema: dict[str, Any] = (
+            {
+                "allOf": [
+                    {"$ref": "#/components/schemas/ResultEnvelope"},
+                    {
+                        "type": "object",
+                        "properties": {"openaiFileResponse": OPENAI_FILE_RESPONSE_SCHEMA},
+                    },
+                ]
+            }
+            if is_file_transport_command
+            else {"$ref": "#/components/schemas/ResultEnvelope"}
+        )
         paths[f"/v1/action/{command}"] = {
             "post": {
                 "operationId": f"dish_{command.replace('-', '_')}",
@@ -231,31 +275,7 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
                 "security": [{"actionBearer": []}],
                 "requestBody": {
                     "required": True,
-                    "content": {
-                        "application/json": {
-                            "schema": {
-                                "type": "object",
-                                "required": ["client", "arguments"],
-                                "additionalProperties": False,
-                                "properties": {
-                                    "client": {
-                                        "type": "object",
-                                        "required": (["run_id", "request_id"] if request_id_required else ["run_id"]),
-                                        "additionalProperties": False,
-                                        "properties": {
-                                            "run_id": dict(CLIENT_RUN_ID_SCHEMA),
-                                            **(
-                                                {"request_id": dict(CLIENT_REQUEST_ID_SCHEMA)}
-                                                if request_id_required
-                                                else {}
-                                            ),
-                                        },
-                                    },
-                                    "arguments": argument_schema,
-                                },
-                            }
-                        }
-                    },
+                    "content": {"application/json": {"schema": request_schema}},
                 },
                 "responses": {
                     "200": {
@@ -264,7 +284,7 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
                             if is_lease_command
                             else "Canonical dish workflow result"
                         ),
-                        "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ResultEnvelope"}}},
+                        "content": {"application/json": {"schema": response_schema}},
                     }
                 },
             }
