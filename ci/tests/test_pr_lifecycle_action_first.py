@@ -401,7 +401,7 @@ def test_manual_worker_formal_block_binds_same_pr_fix_without_second_prompt_or_a
     fix = p.bind_manual_worker_block_fix(
         gh,
         31,
-        task="1217657236042386",
+        task="1217443403986570",
         blocked_head=base.HEAD,
         block_review_id="44",
     )
@@ -417,7 +417,7 @@ def test_manual_worker_block_fix_fails_closed_when_exact_head_moves():
         p.bind_manual_worker_block_fix(
             gh,
             31,
-            task="1217657236042386",
+            task="1217443403986570",
             blocked_head=base.HEAD,
             block_review_id="44",
         )
@@ -440,7 +440,7 @@ def test_invalid_automated_worker_bookkeeping_does_not_gate_manual_review_or_fix
     assert p.bind_manual_worker_block_fix(
         gh,
         31,
-        task="1217657236042386",
+        task="1217443403986570",
         blocked_head=base.HEAD,
         block_review_id="44",
     ).block_review_id == "44"
