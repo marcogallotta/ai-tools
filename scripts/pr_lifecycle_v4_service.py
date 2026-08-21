@@ -174,7 +174,11 @@ class Runtime:
             timeout=1200,
         )
         if result.returncode != 0:
-            raise RuntimeError(f"authoritative lifecycle reread failed rc={result.returncode}")
+            detail = (result.stderr or result.stdout).strip()
+            suffix = f": {detail[-1000:]}" if detail else ""
+            raise RuntimeError(
+                f"authoritative lifecycle reread failed rc={result.returncode}{suffix}"
+            )
         projection = read_projection(PROJECTION)
         integrator = projection.get("v3", {}).get("integrator", {})
         cases = integrator.get("active_cases", []) if isinstance(integrator, Mapping) else []
