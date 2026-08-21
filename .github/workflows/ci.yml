@@ -75,9 +75,13 @@ jobs:
             comment_id=$(jq -r '.existing_comment_id // empty' <<<"$operation")
             body=$(jq -r '.body' <<<"$operation")
             if [[ -n "$comment_id" ]]; then
-              gh api --method PATCH "/repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" -f body="$body" >/dev/null
+              if ! gh api --method PATCH "/repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" -f body="$body" >/dev/null; then
+                echo "::warning::durable selector-gap comment update failed (advisory, non-blocking) for comment $comment_id"
+              fi
             else
-              gh api --method POST "/repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -f body="$body" >/dev/null
+              if ! gh api --method POST "/repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -f body="$body" >/dev/null; then
+                echo "::warning::durable selector-gap comment creation failed (advisory, non-blocking) for PR $PR_NUMBER"
+              fi
             fi
           done
 
