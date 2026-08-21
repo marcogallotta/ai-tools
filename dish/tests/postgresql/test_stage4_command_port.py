@@ -1630,8 +1630,12 @@ def test_protocol_authenticates_before_loading_body(workflow_db) -> None:
 
 
 @pytest.mark.parametrize("start_away_from_research", [False, True])
+@pytest.mark.parametrize("external_projection_enabled", [True, False])
 def test_planning_prepare_matches_production_handoff_without_verification(
-    workflow_db, start_away_from_research: bool
+    workflow_db,
+    monkeypatch,
+    start_away_from_research: bool,
+    external_projection_enabled: bool,
 ) -> None:
     factory, ids, context, task_id = workflow_db
     run_id = _next(ids)
@@ -1646,6 +1650,15 @@ Research emphasis: Compare two hydration levels
 Destination section: Sichuan — 12345
 """
     with session_scope(factory) as session:
+        if not external_projection_enabled:
+            monkeypatch.setattr(
+                "dish_pg.command_port.external_projection_required",
+                lambda *_args, **_kwargs: False,
+            )
+            monkeypatch.setattr(
+                "dish_pg.command_effect_runtime.external_projection_required",
+                lambda *_args, **_kwargs: False,
+            )
         destination_section_id = _add_destination_section(
             session, ids, context, external_id="12345"
         )
@@ -1699,7 +1712,10 @@ Destination section: Sichuan — 12345
         assert prepared.ok, (prepared.code, prepared.http_status, prepared.data)
         assert prepared.data["handoff"] == "planning-to-research"
         assert prepared.data["cycle_id"] is None
-        assert (prepared.data["placement_projection_event_id"] is not None) is start_away_from_research
+        assert (prepared.data["placement_projection_event_id"] is not None) is (
+            start_away_from_research and external_projection_enabled
+        )
+        assert "_placement_changed" not in prepared.data
 
         operation = session.get(wf.WorkflowOperation, uuid.UUID(started.data["operation_id"]))
         assert operation.lifecycle == "completed"

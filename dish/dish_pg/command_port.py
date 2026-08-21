@@ -520,7 +520,7 @@ class PostgresCommandPort:
                             and data.get("handoff") == "planning-to-research"
                         ),
                         placement_changed=bool(
-                            data.get("placement_projection_event_id")
+                            data.pop("_placement_changed", False)
                         ),
                     ),
                     result_data=data,
@@ -2781,6 +2781,7 @@ class PostgresCommandPort:
                 "cycle_id": None,
                 "projection_event_id": projection_id,
                 "placement_projection_event_id": placement_projection_id,
+                "_placement_changed": placement_changed,
                 "handoff": "planning-to-research",
             }
 
