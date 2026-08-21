@@ -145,3 +145,42 @@ def test_replay_corpus_is_a_selector_miss_backstop():
     replay = planner.impact_graph.replay()
     assert replay["passed"] is True
     assert {case["id"] for case in replay["cases"]} >= {"31912433743", "31955770608"}
+
+
+def test_known_single_boundary_fallback_emits_visible_selector_gap():
+    plan = build(["tools/asana"])
+    assert plan["selector_classifications"] == [{
+        "path": "tools/asana",
+        "classification": "KNOWN_BOUNDARY_FALLBACK",
+        "retained_boundaries": ["python-control-plane"],
+    }]
+    assert len(plan["selector_gaps"]) == 1
+    assert plan["selector_gaps"][0]["missing_reason"] == "missing-exact-authoritative-mapping"
+
+
+def test_unclassified_repository_path_is_true_unknown_not_base_union():
+    plan = build(["unexpected-surface.bin"])
+    assert plan["selector_classifications"] == [{
+        "path": "unexpected-surface.bin",
+        "classification": "TRUE_UNKNOWN_ALL_BOUNDARY",
+        "retained_boundaries": list(planner.impact_graph.BOUNDARIES),
+    }]
+    assert plan["selector_gaps"] == []
+    assert plan["all_boundary_fallback"] is True
+
+
+def test_pr182_lifecycle_path_narrows_by_exact_mapping_only():
+    plan = build(["scripts/pr_lifecycle_controller.py"])
+    assert plan["selector_classifications"][0]["classification"] == "EXACT_PROVEN_TARGET"
+    assert plan["selected_groups"] == ["python-control-plane"]
+    assert [item["id"] for item in plan["selected_targets"]] == [
+        "repo-pytest:ci/tests:lifecycle-control-plane"
+    ]
+    assert plan["selector_gaps"] == []
+
+
+def test_cross_boundary_certification_orchestrator_does_not_narrow_from_python_path_class():
+    plan = build(["scripts/integration_certification.py"])
+    assert plan["selector_classifications"][0]["classification"] == "BASE_OBLIGATION_UNION"
+    assert plan["selected_groups"] == list(planner.impact_graph.BOUNDARIES)
+    assert len(plan["selector_gaps"]) == 1

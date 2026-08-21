@@ -23,6 +23,7 @@ jobs:
     permissions:
       contents: read
       statuses: write
+      issues: write
     outputs:
       eligible: ${{ steps.prepare.outputs.eligible }}
       candidate_sha: ${{ steps.prepare.outputs.candidate_sha }}
@@ -37,6 +38,16 @@ jobs:
           ref: ${{ github.event.review.commit_id }}
           fetch-depth: 0
 
+      - name: Load durable selector-gap history
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p .test-artifacts/pr-certification
+          gh api --paginate --slurp "/repos/$GITHUB_REPOSITORY/issues/comments?per_page=100" \
+            | jq 'add // []' > .test-artifacts/pr-certification/selector-gap-history.json
+
       - name: Build exact-head repository certification plan
         id: prepare
         shell: bash
@@ -48,7 +59,31 @@ jobs:
             --repo-root "$GITHUB_WORKSPACE" \
             --plan .test-artifacts/pr-certification/plan.json \
             --execution-spec .test-artifacts/pr-certification/execution-spec.json \
+            --selector-gap-history .test-artifacts/pr-certification/selector-gap-history.json \
+            --selector-gap-comments .test-artifacts/pr-certification/selector-gap-comments.json \
             --github-output "$GITHUB_OUTPUT"
+
+      - name: Persist durable selector-gap debt
+        if: steps.prepare.outputs.eligible == 'true' && steps.prepare.outputs.selector_gap_count != '0'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          jq -c '.[]' .test-artifacts/pr-certification/selector-gap-comments.json | while read -r operation; do
+            comment_id=$(jq -r '.existing_comment_id // empty' <<<"$operation")
+            body=$(jq -r '.body' <<<"$operation")
+            if [[ -n "$comment_id" ]]; then
+              if ! gh api --method PATCH "/repos/$GITHUB_REPOSITORY/issues/comments/$comment_id" -f body="$body" >/dev/null; then
+                echo "::warning::durable selector-gap comment update failed (advisory, non-blocking) for comment $comment_id"
+              fi
+            else
+              if ! gh api --method POST "/repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -f body="$body" >/dev/null; then
+                echo "::warning::durable selector-gap comment creation failed (advisory, non-blocking) for PR $PR_NUMBER"
+              fi
+            fi
+          done
 
       - name: Invalidate older certification status for this reviewed head
         if: steps.prepare.outputs.eligible == 'true'

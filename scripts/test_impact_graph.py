@@ -6,6 +6,7 @@ import argparse
 import ast
 import csv
 import fnmatch
+import functools
 import hashlib
 import json
 import re
@@ -56,6 +57,7 @@ GRAPH_SELF_PATHS = {
     "scripts/test_impact_arbiter.py",
     "ci/test-impact/targets.json",
     "ci/test-impact/edges.json",
+    "ci/test-impact/replay.json",
     "ci/integration-certification-plan.schema.json",
     "scripts/integration_certification_plan.py",
     "scripts/pr_certification.py",
@@ -207,6 +209,7 @@ def graph_identity() -> str:
         ROOT / "scripts" / "test_impact_arbiter.py",
         TARGETS_PATH,
         EDGES_PATH,
+        REPLAY_PATH,
         ROOT / "ci" / "integration-certification-plan.schema.json",
         ROOT / "scripts" / "integration_certification_plan.py",
         ROOT / "scripts" / "integration_certification.py",
@@ -266,6 +269,7 @@ def _module_for_path(path: str) -> str | None:
     return value.replace("/", ".")
 
 
+@functools.lru_cache(maxsize=None)
 def _imports(path: Path) -> set[str]:
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -387,12 +391,45 @@ def load_target_retirements(path: Path = TARGETS_PATH) -> dict[str, dict[str, ob
     return result
 
 
+def load_replay_cases(path: Path = REPLAY_PATH) -> dict[str, dict[str, object]]:
+    raw = _json(path)
+    if raw.get("format") != "dish-test-impact-replay-v1" or not isinstance(raw.get("cases"), list):
+        raise GraphError("unknown replay corpus format")
+    result: dict[str, dict[str, object]] = {}
+    for item in raw["cases"]:  # type: ignore[index]
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+            raise GraphError("malformed replay case")
+        case_id = str(item["id"])
+        if case_id in result:
+            raise GraphError(f"duplicate replay case {case_id}")
+        changed_paths = item.get("changed_paths")
+        if not isinstance(changed_paths, list) or not changed_paths:
+            raise GraphError(f"replay case {case_id} needs changed_paths")
+        result[case_id] = dict(item)
+    return result
+
+
+def _retirement_replay_proves(
+    *, case: Mapping[str, object], path: str, obligation_key: str, boundary: str
+) -> bool:
+    changed_paths = {str(value) for value in case.get("changed_paths", [])}
+    if path not in changed_paths:
+        return False
+    forbidden_boundaries = {str(value) for value in case.get("must_not_boundaries", [])}
+    if boundary in forbidden_boundaries:
+        return True
+    forbidden_obligations = {str(value) for value in case.get("must_not_obligations", [])}
+    return obligation_key in forbidden_obligations or f"{path}::{obligation_key}" in forbidden_obligations
+
+
 def load_edges(
-    targets: Mapping[str, Mapping[str, object]], path: Path = EDGES_PATH
+    targets: Mapping[str, Mapping[str, object]], path: Path = EDGES_PATH,
+    replay_path: Path = REPLAY_PATH,
 ) -> tuple[dict[str, object], ...]:
     raw = _json(path)
     if raw.get("format") != "dish-test-impact-edges-v1" or not isinstance(raw.get("mappings"), list):
         raise GraphError("unknown impact-edge format")
+    replay_cases = load_replay_cases(replay_path)
     result: list[dict[str, object]] = []
     exact_seen: set[str] = set()
     for index, item in enumerate(raw["mappings"]):  # type: ignore[index]
@@ -414,8 +451,44 @@ def load_edges(
         mapping_targets = item.get("targets")
         if not isinstance(mapping_targets, list) or any(target not in targets for target in mapping_targets):
             raise GraphError(f"mapping {index} references an unknown target")
-        if mode == "authoritative" and not isinstance(item.get("legacy_dispositions"), list):
-            raise GraphError(f"authoritative mapping {path_value} needs legacy_dispositions")
+        if mode == "authoritative":
+            dispositions = item.get("legacy_dispositions")
+            if not isinstance(dispositions, list):
+                raise GraphError(f"authoritative mapping {path_value} needs legacy_dispositions")
+            mapping_target_set = {str(value) for value in mapping_targets}
+            for disposition in dispositions:
+                if not isinstance(disposition, dict) or not isinstance(disposition.get("key"), str):
+                    raise GraphError(f"authoritative mapping {path_value} has malformed disposition")
+                key = str(disposition["key"])
+                kind = disposition.get("kind")
+                if kind == "mapped":
+                    replacements = disposition.get("targets")
+                    if not isinstance(replacements, list) or not replacements:
+                        raise GraphError(f"mapped disposition {key} must name replacement targets")
+                    if not {str(value) for value in replacements} <= mapping_target_set:
+                        raise GraphError(f"mapped disposition {key} must use the mapping proving targets")
+                elif kind == "retired":
+                    replay_ids = disposition.get("replay_ids")
+                    if (
+                        disposition.get("reason") not in RETIREMENT_REASONS
+                        or not isinstance(replay_ids, list)
+                        or not replay_ids
+                        or any(not isinstance(value, str) or not value.strip() for value in replay_ids)
+                    ):
+                        raise GraphError(f"retired disposition {key} lacks allowed reason/replay_ids")
+                    boundary = key.split(":", 2)[1] if key.startswith("legacy-boundary:") else ""
+                    for replay_id in replay_ids:
+                        case = replay_cases.get(str(replay_id))
+                        if case is None:
+                            raise GraphError(f"retired disposition {key} references unknown replay {replay_id}")
+                        if not _retirement_replay_proves(
+                            case=case, path=str(path_value), obligation_key=key, boundary=boundary
+                        ):
+                            raise GraphError(
+                                f"retired disposition {key} replay {replay_id} does not prove retirement"
+                            )
+                else:
+                    raise GraphError(f"disposition {key} has invalid kind")
         result.append(dict(item))
     return tuple(result)
 
@@ -463,7 +536,10 @@ def build_legacy_envelope(
         raise GraphError("provenance must be base or candidate")
     paths = normalize_paths(changed_paths)
     targets = load_targets(repo_root / "ci" / "test-impact" / "targets.json")
-    mappings = load_edges(targets, repo_root / "ci" / "test-impact" / "edges.json")
+    mappings = load_edges(
+        targets, repo_root / "ci" / "test-impact" / "edges.json",
+        repo_root / "ci" / "test-impact" / "replay.json",
+    )
     policy = _json(repo_root / "ci" / "integration-certification-policy.json")
     lane_map = policy.get("lane_group_map")
     if not isinstance(lane_map, dict):
@@ -568,6 +644,11 @@ def _all_boundary_plan(
         legacy_paths=set(paths), fallback_reasons={boundary: {reason} for boundary in BOUNDARIES},
         retired=[], graph_id=candidate_engine_identity, obligation_union=None,
         all_boundary_reasons=[reason],
+        selector_classifications=[
+            {"path": path, "classification": "TRUE_UNKNOWN_ALL_BOUNDARY",
+             "retained_boundaries": list(BOUNDARIES)} for path in paths
+        ],
+        selector_gaps=[],
     )
 
 
@@ -576,7 +657,8 @@ def _assemble_plan(
     selected_ids: set[str], selection_reasons: Mapping[str, set[str]], *, profile: str,
     legacy_paths: set[str], fallback_reasons: Mapping[str, set[str]],
     retired: list[dict[str, object]], graph_id: str, obligation_union: object,
-    all_boundary_reasons: list[str],
+    all_boundary_reasons: list[str], selector_classifications: list[dict[str, object]],
+    selector_gaps: list[dict[str, object]],
 ) -> dict[str, object]:
     pending = list(selected_ids)
     while pending:
@@ -629,6 +711,8 @@ def _assemble_plan(
         ],
         "legacy_adapter_paths": sorted(legacy_paths),
         "retired_legacy_obligations": retired,
+        "selector_classifications": selector_classifications,
+        "selector_gaps": selector_gaps,
         "all_boundary_fallback": bool(all_boundary_reasons),
         "all_boundary_fallback_reasons": sorted(all_boundary_reasons),
         "obligation_union": obligation_union,
@@ -648,7 +732,10 @@ def build_graph_plan(
         raise GraphError(f"unknown execution profile {profile}")
     targets = load_targets(repo_root / "ci" / "test-impact" / "targets.json")
     retirements = load_target_retirements(repo_root / "ci" / "test-impact" / "targets.json")
-    mappings = load_edges(targets, repo_root / "ci" / "test-impact" / "edges.json")
+    mappings = load_edges(
+        targets, repo_root / "ci" / "test-impact" / "edges.json",
+        repo_root / "ci" / "test-impact" / "replay.json",
+    )
     self_change = bool(set(paths) & GRAPH_SELF_PATHS)
     if self_change:
         if not isinstance(candidate_envelope, dict):
@@ -701,6 +788,9 @@ def build_graph_plan(
     legacy_paths: set[str] = set()
     fallback_reasons: dict[str, set[str]] = defaultdict(set)
     retired: list[dict[str, object]] = []
+    selector_classifications: list[dict[str, object]] = []
+    selector_gaps: list[dict[str, object]] = []
+    base_engine_identity = str(union.get("base_engine_identity") or "")
     for path in paths:
         matched = _matching_edges(path, mappings)
         authoritative = [item for item in matched if item.get("mode") == "authoritative"]
@@ -713,6 +803,10 @@ def build_graph_plan(
         obligations = obligations_by_path[path]
         graph_obligations = [item for item in obligations if str(item["key"]).startswith("graph-target:")]
         legacy_obligations = [item for item in obligations if str(item["key"]).startswith("legacy-")]
+        retained_boundaries = sorted(
+            {str(item["execution_boundary"]) for item in legacy_obligations}, key=BOUNDARIES.index
+        )
+        path_fallback_boundaries: set[str] = set()
         for obligation in graph_obligations:
             preferred = [str(value) for value in obligation["preferred_targets"]]
             compatible = [
@@ -743,6 +837,7 @@ def build_graph_plan(
                 selected.add(fallback)
                 reasons[fallback].add(f"removed-target-fallback:{path}:{removed_id}")
                 fallback_reasons[str(obligation["execution_boundary"])].add(f"{path}:{obligation['key']}")
+                path_fallback_boundaries.add(str(obligation["execution_boundary"]))
         if authoritative:
             mapping = authoritative[0]
             if path not in base_present or path not in candidate_present:
@@ -780,13 +875,16 @@ def build_graph_plan(
                         selected.add(str(target_id))
                         reasons[str(target_id)].add(f"legacy-disposition:{path}:{key}")
                 elif kind == "retired":
+                    replay_ids = disposition.get("replay_ids")
                     if (
                         disposition.get("reason") not in RETIREMENT_REASONS
-                        or not isinstance(disposition.get("provenance"), str)
-                        or not str(disposition.get("provenance")).strip()
+                        or not isinstance(replay_ids, list) or not replay_ids
                     ):
-                        raise GraphError(f"retired disposition {key} lacks allowed reason/provenance")
-                    retired.append({"path": path, **dict(disposition)})
+                        raise GraphError(f"retired disposition {key} lacks allowed reason/replay_ids")
+                    retired.append({
+                        "path": path, "execution_boundary": str(obligation["execution_boundary"]),
+                        **dict(disposition),
+                    })
                 else:
                     raise GraphError(f"disposition {key} has invalid kind")
         else:
@@ -815,24 +913,90 @@ def build_graph_plan(
                     fallback_reasons[str(obligation["execution_boundary"])].add(
                         f"{path}:{obligation['key']}"
                     )
+                    path_fallback_boundaries.add(str(obligation["execution_boundary"]))
+        if authoritative:
+            classification = "EXACT_PROVEN_TARGET"
+        elif len(retained_boundaries) > 1:
+            classification = "BASE_OBLIGATION_UNION"
+        elif path_fallback_boundaries:
+            classification = "KNOWN_BOUNDARY_FALLBACK"
+        else:
+            classification = "EXACT_PROVEN_TARGET"
+        selector_classifications.append({
+            "path": path, "classification": classification,
+            "retained_boundaries": retained_boundaries,
+        })
+        if classification in {"KNOWN_BOUNDARY_FALLBACK", "BASE_OBLIGATION_UNION"}:
+            missing_reason = (
+                "unretired-base-obligation-union"
+                if classification == "BASE_OBLIGATION_UNION"
+                else "missing-exact-authoritative-mapping"
+            )
+            gap_key = {
+                "path": path, "classification": classification,
+                "retained_boundaries": retained_boundaries, "missing_reason": missing_reason,
+            }
+            selector_gaps.append({
+                "gap_id": hashlib.sha256(
+                    json.dumps(gap_key, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                ).hexdigest(),
+                **gap_key,
+                "fallback_boundaries": sorted(path_fallback_boundaries, key=BOUNDARIES.index),
+                "base_graph_identity": base_engine_identity,
+                "candidate_graph_identity": candidate_engine_identity,
+                "responsible_graph_surface": "ci/test-impact/edges.json",
+                "recurrence_count": 1,
+            })
     return _assemble_plan(
         paths, targets, selected, reasons, profile=profile, legacy_paths=legacy_paths,
         fallback_reasons=fallback_reasons, retired=retired, graph_id=candidate_engine_identity,
         obligation_union=union, all_boundary_reasons=[],
+        selector_classifications=selector_classifications, selector_gaps=selector_gaps,
     )
 
 
+def _legacy_baseline_target_ids(
+    envelope: Mapping[str, object], targets: Mapping[str, Mapping[str, object]]
+) -> set[str]:
+    selected: set[str] = set()
+    for obligation in envelope.get("obligations", []):
+        if not isinstance(obligation, dict):
+            continue
+        preferred = [str(value) for value in obligation.get("preferred_targets", [])]
+        compatible = [
+            target_id for target_id in preferred
+            if target_id in targets
+            and targets[target_id]["execution_boundary"] == obligation.get("execution_boundary")
+        ]
+        if compatible:
+            selected.update(compatible)
+        else:
+            fallback = str(obligation.get("fallback_target") or "")
+            if fallback in targets:
+                selected.add(fallback)
+    pending = list(selected)
+    while pending:
+        target_id = pending.pop()
+        for child_id in targets[target_id].get("child_targets", []):
+            child = str(child_id)
+            if child not in selected:
+                selected.add(child)
+                pending.append(child)
+    return selected
+
+
 def replay(repo_root: Path = ROOT) -> dict[str, object]:
-    raw = _json(repo_root / "ci" / "test-impact" / "replay.json")
-    if raw.get("format") != "dish-test-impact-replay-v1" or not isinstance(raw.get("cases"), list):
-        raise GraphError("unknown replay corpus format")
+    cases = load_replay_cases(repo_root / "ci" / "test-impact" / "replay.json")
+    targets = load_targets(repo_root / "ci" / "test-impact" / "targets.json")
     results: list[dict[str, object]] = []
-    for case in raw["cases"]:  # type: ignore[index]
+    for case in cases.values():
         if not isinstance(case, dict) or not isinstance(case.get("changed_paths"), list):
             raise GraphError("malformed replay case")
         paths = [str(value) for value in case["changed_paths"]]
         base = build_legacy_envelope(paths, provenance="base", repo_root=repo_root)
         candidate = build_legacy_envelope(paths, provenance="candidate", repo_root=repo_root)
+        baseline_target_ids = _legacy_baseline_target_ids(base, targets)
+        baseline_boundaries = {str(targets[target_id]["execution_boundary"]) for target_id in baseline_target_ids}
         normalized_paths = normalize_paths(paths)
         replay_union = (
             _replay_base_arbiter_union(base, candidate, paths=normalized_paths)
@@ -849,13 +1013,32 @@ def replay(repo_root: Path = ROOT) -> dict[str, object]:
         missing_boundaries = sorted(set(case.get("must_boundaries", [])) - boundaries)
         forbidden_boundaries = sorted(set(case.get("must_not_boundaries", [])) & boundaries)
         missing_targets = sorted(set(case.get("must_targets", [])) - target_ids)
-        passed = not (missing_boundaries or forbidden_boundaries or missing_targets)
+        lost_boundaries = sorted(baseline_boundaries - boundaries, key=BOUNDARIES.index)
+        lost_targets = sorted(baseline_target_ids - target_ids)
+        retired = plan["retired_legacy_obligations"]
+        assert isinstance(retired, list)
+        proved_lost_boundaries = {
+            str(item.get("execution_boundary"))
+            for item in retired if isinstance(item, dict)
+            and str(case.get("id")) in {str(value) for value in item.get("replay_ids", [])}
+        }
+        unproved_lost_boundaries = sorted(
+            set(lost_boundaries) - proved_lost_boundaries, key=BOUNDARIES.index
+        )
+        passed = not (
+            missing_boundaries or forbidden_boundaries or missing_targets or unproved_lost_boundaries
+        )
         results.append({
             "id": case.get("id"), "passed": passed,
             "missing_boundaries": missing_boundaries,
             "forbidden_boundaries": forbidden_boundaries,
             "missing_targets": missing_targets,
-            "selected_boundaries": sorted(boundaries),
+            "baseline_boundaries": sorted(baseline_boundaries, key=BOUNDARIES.index),
+            "baseline_targets": sorted(baseline_target_ids),
+            "lost_boundaries": lost_boundaries,
+            "lost_targets": lost_targets,
+            "unproved_lost_boundaries": unproved_lost_boundaries,
+            "selected_boundaries": sorted(boundaries, key=BOUNDARIES.index),
             "selected_targets": sorted(target_ids),
         })
     return {
