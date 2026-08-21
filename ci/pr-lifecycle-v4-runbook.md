@@ -50,10 +50,10 @@ daemon owner and is also directly resumable in the Codex TUI. The socket default
 `~/.codex/app-server-control/app-server-control.sock` and may be set explicitly with
 `DISH_LIFECYCLE_V4_APP_SERVER_SOCKET`.
 
-Install `tools/dish-lifecycle-v4-integrator` on the operator path or invoke it from the checkout:
+Install `tools/dish-lifecycle-v4-integrator` on the operator path as `dish-integrator`:
 
 ```sh
-tools/dish-lifecycle-v4-integrator open
+dish-integrator open
 ```
 
 That command starts the daemon and bridge services if needed, acquires the same

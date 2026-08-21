@@ -3,6 +3,7 @@
 set -euo pipefail
 
 SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+COMMAND_NAME="$(basename "$0")"
 SCRIPT_ROOT="$(cd "$(dirname "${SELF}")/.." && pwd)"
 GIT_COMMON_DIR="$(git -C "${SCRIPT_ROOT}" rev-parse --path-format=absolute --git-common-dir)"
 REPO_ROOT="${DISH_LIFECYCLE_V4_OPERATOR_REPO:-$(dirname "${GIT_COMMON_DIR}")}"
@@ -44,7 +45,7 @@ case "${1:-open}" in
     thread_id
     ;;
   *)
-    echo "usage: dish-lifecycle-v4-integrator [open|resume|status|start|stop|restart|logs|thread]" >&2
+    echo "usage: ${COMMAND_NAME} [open|resume|status|start|stop|restart|logs|thread]" >&2
     exit 2
     ;;
 esac
