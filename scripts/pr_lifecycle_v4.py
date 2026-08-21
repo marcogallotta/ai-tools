@@ -124,6 +124,10 @@ def wake_packet(
                 "pr": case.get("pr"),
                 "task": case.get("task"),
                 "head": case.get("head"),
+                "reviewed_head": case.get("reviewed_head"),
+                "review_verdict": case.get("review_verdict"),
+                "evidence_fingerprint": case.get("evidence_fingerprint"),
+                "evidence": _safe_semantics(case.get("evidence") or {}),
                 "next_owner": case.get("next_owner"),
                 "next_action": case.get("next_action"),
             }
@@ -299,6 +303,14 @@ class V4StateStore:
                 if value.get("status") in {"PREPARED", "SUBMITTED", "AMBIGUOUS"}
             ]
 
+    def accepted_receipts(self) -> list[dict[str, Any]]:
+        with self.locked() as state:
+            return [
+                dict(value)
+                for _, value in sorted((state.get("receipts") or {}).items())
+                if value.get("status") == "ACCEPTED"
+            ]
+
     def mark_submitted(self, wake_id: str) -> dict[str, Any]:
         with self.locked() as state:
             receipt = state.setdefault("receipts", {}).get(wake_id)
@@ -370,13 +382,14 @@ class V4StateStore:
 
 class AppServerProtocol(Protocol):
     def thread_read(self, thread_id: str, *, include_turns: bool) -> Mapping[str, Any]: ...
+    def thread_resume(self, thread_id: str) -> Mapping[str, Any]: ...
     def turn_start(self, thread_id: str, packet: Mapping[str, Any], *, client_user_message_id: str) -> Mapping[str, Any]: ...
 
 
 class CodexAppServer:
     """Minimal persistent Codex app-server v2 JSONL client."""
 
-    def __init__(self, command: Sequence[str] | str):
+    def __init__(self, command: Sequence[str] | str, *, thread_id: str | None = None):
         argv = shlex.split(command) if isinstance(command, str) else list(command)
         if not argv:
             raise ValueError("Codex app-server command is empty")
@@ -411,6 +424,11 @@ class CodexAppServer:
             },
         )
         self._notify("initialized", {})
+        # A stored-but-unloaded lifecycle thread reports `thread/read` status
+        # `notLoaded`; explicitly resume it in this same process before any
+        # wake admission so the persistent thread identity is preserved.
+        if thread_id:
+            self.thread_resume(thread_id)
 
     def close(self) -> None:
         if self.process.poll() is None:
@@ -451,6 +469,9 @@ class CodexAppServer:
     def thread_read(self, thread_id: str, *, include_turns: bool) -> Mapping[str, Any]:
         return self._request("thread/read", {"threadId": thread_id, "includeTurns": include_turns})
 
+    def thread_resume(self, thread_id: str) -> Mapping[str, Any]:
+        return self._request("thread/resume", {"threadId": thread_id})
+
     def turn_start(
         self,
         thread_id: str,
@@ -472,12 +493,16 @@ class CodexAppServer:
         )
 
 
+def _status_type(value: Any) -> str:
+    if isinstance(value, Mapping):
+        return str(value.get("type") or "")
+    return str(value or "")
+
+
 def _thread_status(read: Mapping[str, Any]) -> str:
     thread = read.get("thread") if isinstance(read.get("thread"), Mapping) else {}
     status = thread.get("status") if isinstance(thread, Mapping) else None
-    if isinstance(status, Mapping):
-        return str(status.get("type") or "")
-    return str(status or "")
+    return _status_type(status)
 
 
 def _history_contains_wake(read: Mapping[str, Any], wake_id: str) -> bool:
@@ -491,6 +516,20 @@ def _history_contains_wake(read: Mapping[str, Any], wake_id: str) -> bool:
             if str(item.get("type") or "") in {"userMessage", "user_message"} and str(item.get("clientId") or "") == wake_id:
                 return True
     return False
+
+
+def _turn_status_for_wake(read: Mapping[str, Any], wake_id: str) -> str | None:
+    """Mechanically reconstruct terminal turn state from persisted thread history."""
+    thread = read.get("thread") if isinstance(read.get("thread"), Mapping) else {}
+    for turn in thread.get("turns") or []:
+        if not isinstance(turn, Mapping):
+            continue
+        for item in turn.get("items") or []:
+            if not isinstance(item, Mapping):
+                continue
+            if str(item.get("type") or "") in {"userMessage", "user_message"} and str(item.get("clientId") or "") == wake_id:
+                return _status_type(turn.get("status"))
+    return None
 
 
 class WakeBridge:
@@ -516,28 +555,54 @@ class WakeBridge:
         if _history_contains_wake(read, wake_id):
             self.store.mark_accepted(wake_id)
             return "accepted-from-history"
-        # A complete thread/read with no matching client id is the mechanical proof
-        # required before a retry of an uncertain turn/start.
-        self.store.prove_not_accepted(wake_id, proof="thread/read includeTurns=true contains no matching clientId")
+        status = _thread_status(read)
+        if status != "idle":
+            # Active/unknown/not-loaded thread state cannot mechanically prove the
+            # original start was not accepted. The receipt must stay AMBIGUOUS with
+            # zero replay until a later idle read can be checked.
+            return "still-ambiguous"
+        # A complete thread/read with no matching client id, while the thread is
+        # provably idle, is the mechanical proof required before a retry.
+        self.store.prove_not_accepted(wake_id, proof="thread/read includeTurns=true status=idle contains no matching clientId")
         return "not-accepted-proved"
+
+    def reconcile_accepted(self, receipt: Mapping[str, Any]) -> str:
+        wake_id = str(receipt["wake_id"])
+        read = self.app_server.thread_read(self.thread_id, include_turns=True)
+        status = _turn_status_for_wake(read, wake_id)
+        if status == "completed":
+            self.store.mark_completed(wake_id)
+            return "completed"
+        return "in-flight"
 
     def dispatch_pending(self) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
         with self._fence():
+            for receipt in self.store.accepted_receipts():
+                outcome = self.reconcile_accepted(receipt)
+                if outcome == "completed":
+                    results.append({"wake_id": str(receipt["wake_id"]), "result": "completed"})
             for receipt in self.store.pending_receipts():
                 wake_id = str(receipt["wake_id"])
                 status = str(receipt.get("status") or "")
                 if status in {"SUBMITTED", "AMBIGUOUS"}:
                     recovery = self.reconcile_uncertain(receipt)
                     results.append({"wake_id": wake_id, "result": recovery})
-                    if recovery == "accepted-from-history":
+                    if recovery != "not-accepted-proved":
                         continue
                     receipt = next(value for value in self.store.pending_receipts() if value["wake_id"] == wake_id)
                     status = str(receipt.get("status") or "")
                 if status != "PREPARED":
                     continue
                 read = self.app_server.thread_read(self.thread_id, include_turns=False)
-                if _thread_status(read) != "idle":
+                status_type = _thread_status(read)
+                if status_type == "notLoaded":
+                    # A stored-but-unloaded dedicated thread must be explicitly
+                    # resumed in this process before it can prove idle.
+                    self.app_server.thread_resume(self.thread_id)
+                    read = self.app_server.thread_read(self.thread_id, include_turns=False)
+                    status_type = _thread_status(read)
+                if status_type != "idle":
                     results.append({"wake_id": wake_id, "result": "thread-not-idle"})
                     continue
                 packet = receipt["packet"]
