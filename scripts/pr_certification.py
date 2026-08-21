@@ -343,16 +343,57 @@ def _base_graph_evidence(
         return base_envelope, base_arbiter_union, True
 
 
+SELECTOR_GAP_OWNER_TASKS = (
+    ("Tests health", "1217519337411939"),
+    ("Development Workflow selector", "1217627893179712"),
+)
+_SELECTOR_GAP_MARKER_RE = re.compile(
+    r"<!--\s*dish-selector-gap:v1\s+gap=([0-9a-f]{64})\s+recurrence=([1-9][0-9]*)\s*-->"
+)
+
+
+def _selector_gap_history(raw: object) -> list[dict[str, object]]:
+    if raw is None:
+        return []
+    if not isinstance(raw, list) or any(not isinstance(item, dict) for item in raw):
+        raise PRCertificationError("selector-gap history must be a JSON array of GitHub comments")
+    return [dict(item) for item in raw]
+
+
+def _selector_gap_prior(comments: list[dict[str, object]]) -> dict[str, tuple[int, int]]:
+    observed: dict[str, tuple[int, int]] = {}
+    for comment in comments:
+        body = str(comment.get("body") or "")
+        comment_id = comment.get("id")
+        if not isinstance(comment_id, int):
+            continue
+        for match in _SELECTOR_GAP_MARKER_RE.finditer(body):
+            gap_id, recurrence_raw = match.groups()
+            recurrence = int(recurrence_raw)
+            if gap_id in observed and observed[gap_id][0] != comment_id:
+                raise PRCertificationError(f"selector gap {gap_id} has duplicate durable comments")
+            prior = observed.get(gap_id)
+            if prior is None or recurrence > prior[1]:
+                observed[gap_id] = (comment_id, recurrence)
+    return observed
+
+
 def bind_selector_gap_evidence(
     plan: dict[str, object], *, identity: dict[str, object], candidate: str,
     run_id: str | None = None, run_attempt: str | None = None,
+    comments: list[dict[str, object]] | None = None,
 ) -> None:
     gaps = plan.get("selector_gaps")
     if not isinstance(gaps, list):
         raise PRCertificationError("planner output is missing selector_gaps")
+    prior = _selector_gap_prior(comments or [])
     for gap in gaps:
         if not isinstance(gap, dict):
             raise PRCertificationError("selector gap must be an object")
+        gap_id = str(gap.get("gap_id") or "")
+        if not re.fullmatch(r"[0-9a-f]{64}", gap_id):
+            raise PRCertificationError("selector gap has invalid stable identity")
+        gap["recurrence_count"] = prior.get(gap_id, (0, 0))[1] + 1
         gap["evidence"] = {
             "pr_number": int(identity["pr_number"]),
             "head_sha": candidate,
@@ -360,6 +401,46 @@ def bind_selector_gap_evidence(
             "run_id": str(run_id or os.getenv("GITHUB_RUN_ID") or "local"),
             "run_attempt": str(run_attempt or os.getenv("GITHUB_RUN_ATTEMPT") or "local"),
         }
+
+
+def selector_gap_comment_operations(
+    plan: dict[str, object], comments: list[dict[str, object]]
+) -> list[dict[str, object]]:
+    gaps = plan.get("selector_gaps")
+    if not isinstance(gaps, list):
+        raise PRCertificationError("planner output is missing selector_gaps")
+    prior = _selector_gap_prior(comments)
+    operations: list[dict[str, object]] = []
+    owners = ", ".join(f"{name} task {gid}" for name, gid in SELECTOR_GAP_OWNER_TASKS)
+    for gap in gaps:
+        if not isinstance(gap, dict):
+            raise PRCertificationError("selector gap must be an object")
+        gap_id = str(gap["gap_id"])
+        recurrence = int(gap["recurrence_count"])
+        evidence = gap.get("evidence")
+        if not isinstance(evidence, dict):
+            raise PRCertificationError("selector gap durable comment requires bound evidence")
+        marker = f"<!-- dish-selector-gap:v1 gap={gap_id} recurrence={recurrence} -->"
+        body = "\n".join([
+            marker,
+            f"SELECTOR GAP — recurrence {recurrence}",
+            f"Path: `{gap['path']}`",
+            f"Classification: `{gap['classification']}`",
+            f"Missing precision: `{gap['missing_reason']}`",
+            f"Retained boundaries: `{','.join(str(v) for v in gap['retained_boundaries'])}`",
+            f"Fallback boundaries: `{','.join(str(v) for v in gap['fallback_boundaries'])}`",
+            f"Graph identity: base `{gap['base_graph_identity']}` / candidate `{gap['candidate_graph_identity']}`",
+            f"Evidence: PR #{evidence['pr_number']} head `{evidence['head_sha']}` review `{evidence['review_id']}` run `{evidence['run_id']}` attempt `{evidence['run_attempt']}`",
+            f"Owners: {owners}.",
+            "Passing fallback evidence does not close this debt. Closure requires exact mapping/retirement proof plus replay showing the gap no longer occurs.",
+            "— Dish Agent: CI selector | exact-head certification",
+        ])
+        operations.append({
+            "gap_id": gap_id,
+            "existing_comment_id": prior.get(gap_id, (None, 0))[0],
+            "body": body,
+        })
+    return operations
 
 
 def _digest(plan: dict[str, object]) -> str:
@@ -377,7 +458,8 @@ def _write_output(path: Path | None, values: dict[str, str]) -> None:
 
 def prepare(
     *, event_path: Path, repo_root: Path, plan_path: Path, spec_path: Path,
-    github_output: Path | None = None,
+    github_output: Path | None = None, selector_gap_history_path: Path | None = None,
+    selector_gap_comments_path: Path | None = None,
 ) -> dict[str, object]:
     event = json.loads(event_path.read_text(encoding="utf-8"))
     if not isinstance(event, dict):
@@ -419,13 +501,17 @@ def prepare(
         base_arbiter_union=base_arbiter_union,
         repo_root=repo_root,
     )
-    bind_selector_gap_evidence(plan, identity=identity, candidate=candidate)
+    history = _selector_gap_history(json.loads(selector_gap_history_path.read_text(encoding="utf-8"))) if selector_gap_history_path else []
+    bind_selector_gap_evidence(plan, identity=identity, candidate=candidate, comments=history)
     digest = _digest(plan)
     spec = build_execution_spec(plan, plan_digest=digest)
     plan_path.parent.mkdir(parents=True, exist_ok=True)
     spec_path.parent.mkdir(parents=True, exist_ok=True)
     plan_path.write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     spec_path.write_text(json.dumps(spec, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if selector_gap_comments_path is not None:
+        selector_gap_comments_path.parent.mkdir(parents=True, exist_ok=True)
+        selector_gap_comments_path.write_text(json.dumps(selector_gap_comment_operations(plan, history), indent=2, sort_keys=True) + "\n", encoding="utf-8")
     outputs = {
         "eligible": "true",
         "candidate_sha": candidate,
@@ -449,6 +535,8 @@ def _parser() -> argparse.ArgumentParser:
     prep.add_argument("--plan", type=Path, required=True)
     prep.add_argument("--execution-spec", type=Path, required=True)
     prep.add_argument("--github-output", type=Path)
+    prep.add_argument("--selector-gap-history", type=Path)
+    prep.add_argument("--selector-gap-comments", type=Path)
     return parser
 
 
@@ -461,6 +549,8 @@ def main(argv: list[str] | None = None) -> int:
             plan_path=args.plan,
             spec_path=args.execution_spec,
             github_output=args.github_output,
+            selector_gap_history_path=args.selector_gap_history,
+            selector_gap_comments_path=args.selector_gap_comments,
         )
     except (OSError, json.JSONDecodeError, PRCertificationError, certification_plan.CertificationPlanError) as exc:
         print(f"pr_certification: {exc}", file=sys.stderr)
