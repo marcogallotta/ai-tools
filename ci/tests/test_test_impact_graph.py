@@ -259,5 +259,79 @@ def test_predicted_path_fingerprint_is_explicit_not_inferred_from_prose():
 def test_historical_replay_including_selector_miss_passes():
     result = graph.replay()
     assert result["passed"] is True
-    selector_miss = next(item for item in result["cases"] if item["id"] == "31955770608")
-    assert "harness:mutation-real-workspace" in selector_miss["selected_targets"]
+    cases = {item["id"]: item for item in result["cases"]}
+    assert "harness:mutation-real-workspace" in cases["31955770608"]["selected_targets"]
+    orchestrator = cases["f54e098a-pr77-pr79-cross-boundary"]
+    assert orchestrator["selected_boundaries"] == list(graph.BOUNDARIES)
+    assert orchestrator["lost_boundaries"] == []
+    pr182 = cases["32225216250-pr182-lifecycle-control-plane"]
+    assert pr182["selected_boundaries"] == ["python-control-plane"]
+    assert pr182["lost_boundaries"] == [
+        "frontend-static", "native-postgresql", "browser-acceptance"
+    ]
+    assert pr182["unproved_lost_boundaries"] == []
+
+
+def test_cross_boundary_python_orchestrator_preserves_base_obligation_union_and_gap():
+    path = "scripts/integration_certification.py"
+    base = graph.build_legacy_envelope([path], provenance="base")
+    candidate = graph.build_legacy_envelope([path], provenance="candidate")
+    plan = graph.build_graph_plan(
+        [path], base_envelope=base, candidate_envelope=candidate,
+        base_paths=[path], candidate_paths=[path],
+    )
+    assert plan["selector_classifications"] == [{
+        "path": path,
+        "classification": "BASE_OBLIGATION_UNION",
+        "retained_boundaries": list(graph.BOUNDARIES),
+    }]
+    assert plan["selected_groups"] == list(graph.BOUNDARIES)
+    assert len(plan["selector_gaps"]) == 1
+    gap = plan["selector_gaps"][0]
+    assert gap["classification"] == "BASE_OBLIGATION_UNION"
+    assert gap["retained_boundaries"] == list(graph.BOUNDARIES)
+    assert gap["responsible_graph_surface"] == "ci/test-impact/edges.json"
+    assert gap["recurrence_count"] == 1
+
+
+def test_pr182_lifecycle_path_uses_exact_proof_backed_bounded_target():
+    path = "scripts/pr_lifecycle_controller.py"
+    base = graph.build_legacy_envelope([path], provenance="base")
+    candidate = graph.build_legacy_envelope([path], provenance="candidate")
+    plan = graph.build_graph_plan(
+        [path], base_envelope=base, candidate_envelope=candidate,
+        base_paths=[path], candidate_paths=[path],
+    )
+    assert plan["selector_classifications"] == [{
+        "path": path,
+        "classification": "EXACT_PROVEN_TARGET",
+        "retained_boundaries": list(graph.BOUNDARIES),
+    }]
+    assert plan["selected_groups"] == ["python-control-plane"]
+    assert [item["id"] for item in plan["selected_targets"]] == [
+        "repo-pytest:ci/tests:lifecycle-control-plane"
+    ]
+    assert plan["selector_gaps"] == []
+    assert all(item["replay_ids"] == ["32225216250-pr182-lifecycle-control-plane"]
+               for item in plan["retired_legacy_obligations"])
+
+
+def test_retirement_requires_machine_readable_replay_proof(tmp_path: Path):
+    targets = graph.load_targets()
+    edge_path = tmp_path / "edges.json"
+    edge_path.write_text(json.dumps({
+        "format": "dish-test-impact-edges-v1",
+        "mappings": [{
+            "path": "scripts/example.py",
+            "mode": "authoritative",
+            "targets": ["fallback:python-control-plane"],
+            "legacy_dispositions": [{
+                "key": "legacy-boundary:frontend-static:frontend static",
+                "kind": "retired",
+                "reason": "incidental_broad_coverage",
+                "replay_ids": ["missing-replay"],
+            }],
+        }],
+    }), encoding="utf-8")
+    with pytest.raises(graph.GraphError, match="unknown replay"):
+        graph.load_edges(targets, edge_path, graph.REPLAY_PATH)

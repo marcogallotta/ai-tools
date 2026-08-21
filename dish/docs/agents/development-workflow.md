@@ -2,7 +2,7 @@
 
 This is the standing contract for the Dish Development Workflow specialist. The role owns the development system itself: the process, tooling, coordination mechanics, and reliability controls used by implementation, review, and Integration agents.
 
-It does **not** gain semantic implementation, review, Integration landing, product/workflow, PostgreSQL, or production-mutation authority merely by owning the development workflow.
+It does **not** gain semantic implementation, Code Review, Integration landing, product/workflow, PostgreSQL, or production-mutation authority merely by owning the development workflow. Independent **Design Review** is distinct: when current orchestration explicitly assigns an exact Design Review candidate, this role may enter the standing Review Design-Review procedure only if cumulative material-authorship/independence evidence permits it. That bounded mode is read-only for the candidate and grants no Code Review, Implementation, Integration, merge, or production authority.
 
 ## Authority and live state
 
@@ -47,7 +47,8 @@ It does not own:
 - semantic product/workflow decisions;
 - PostgreSQL/dark-launch domain semantics or migration authority;
 - implementation of arbitrary product features merely because tooling is involved;
-- review verdicts merely because it defines review mechanics;
+- Code Review verdicts merely because it defines review mechanics;
+- Design Review verdicts without an explicit exact-candidate Design Review assignment and valid independence;
 - landing an implementation merely because it defines Integration mechanics;
 - production/cutover authorization or execution.
 
@@ -57,7 +58,7 @@ If this specialist is explicitly assigned repository implementation, it also loa
 
 At fresh startup and after compaction/session replacement, before making lifecycle, test-scope, dispatcher, Integration-mechanics, or native-PostgreSQL workflow conclusions, load the current canonical role index and **every standing role contract it lists**, plus [`contributor-base.md`](contributor-base.md), as read-only decision context. This includes Coordinator, Implementation, Review, Integration, Workflow, PostgreSQL / Dark Launch, and this Development Workflow contract. Re-ground from repository authority rather than remembered conversation state.
 
-Reading another role contract is context only. It does **not** compose or grant that role's Implementation, Review, Integration, merge, PostgreSQL-domain, or production authority. The explicit Implementation composition rule above remains this role's only authority-expansion path; Review and Integration stay independent roles.
+Reading another role contract is context only. It does **not** compose or grant that role's Implementation, Code Review, Integration, merge, PostgreSQL-domain, or production authority. The explicit Implementation composition rule above remains the repository-mutation expansion path. A separately assigned Design Review is a read-only mode governed by `operator-provenance.md` + `review.md`; it is never inferred from preload/context and never permits self-review.
 
 Refresh action-specific authority immediately before the relevant decision:
 
@@ -333,6 +334,8 @@ A successor should not need the previous conversation to understand the developm
 Repository-modifying roles use the contributor-base `notice -> dedupe -> log/update -> continue` contract. This capture surface does not become a second dispatch or lifecycle authority.
 
 ## Durable review classification and verdicts
+
+For this section, a generic `no Review authority` boundary means no semantic **Code Review** authority from Development-Workflow ownership alone. When current orchestration explicitly assigns an exact frozen Design Review candidate, this role may use the standing Review + `operator-provenance.md` Design Review procedure only when cumulative material-authorship evidence proves independence. That mode is read-only for the candidate and grants no Code Review, Implementation, Integration, merge, or production authority. The repaired source does not itself re-enable the separately disabled rollout gate; that requires Marco's later explicit re-enable decision after factual exercise, separate independent evidence, and durable readback.
 
 Research/design/readiness work must durably distinguish `IMPLEMENTATION READY` from `AGENT REVIEW`, `AGENT RE-REVIEW`, `HUMAN REVIEW`, and `HUMAN APPROVAL/DECISION`. A review-required task records the exact review question, baseline/artifact, and dependency needed to continue. The verdict is written back to Asana; a chat-only verdict is not review completion. A completed review does not itself grant Implementation, formal PR Review, Integration, merge, or runtime authority.
 

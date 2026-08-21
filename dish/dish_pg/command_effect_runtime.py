@@ -179,7 +179,11 @@ def assert_committed_command_effects(
             models.TaskSectionPlacementEvent.command_execution_id == execution_id
         )
     ) is not None:
-        observed.add("place_verification_queue")
+        observed.add(
+            "place_research_queue"
+            if "place_research_queue" in expected.mutation_kinds
+            else "place_verification_queue"
+        )
     if session.scalar(
         select(wf.OperationStep.step_id).where(
             wf.OperationStep.command_execution_id == execution_id
@@ -241,7 +245,7 @@ def assert_committed_command_effects(
     expected_phase = {
         "prepare": (
             "completed"
-            if result_data.get("handoff") == "checked-in"
+            if result_data.get("handoff") in {"checked-in", "planning-to-research"}
             else "await_verification"
         ),
         "approve": "await_submission",

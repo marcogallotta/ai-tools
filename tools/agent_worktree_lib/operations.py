@@ -158,8 +158,12 @@ def verify_owned_worktree(runner: GitRunner, repo: Repository, state: dict[str, 
 def candidate_path_is_safe(repo: Repository, runner: GitRunner, candidate: Path) -> None:
     candidate = candidate.resolve()
     root = worktree_root().resolve()
-    if candidate.parent != root:
-        fail("WORKTREE_PATH", f"task worktree path must be directly under DISH_WORKTREE_ROOT: {root}")
+    try:
+        relative = candidate.relative_to(root)
+    except ValueError:
+        fail("WORKTREE_PATH", f"task worktree path must be under DISH_WORKTREE_ROOT: {root}")
+    if len(relative.parts) not in {1, 2}:
+        fail("WORKTREE_PATH", f"task worktree path must be a legacy task path or task/lineage path under DISH_WORKTREE_ROOT: {root}")
     if path_is_within(candidate, repo.primary_top) or path_is_within(candidate, repo.common_dir):
         fail("WORKTREE_PATH", "owned worktree must live outside the shared primary checkout/common-dir")
     for record in worktree_records(runner, repo.source_top):
@@ -264,7 +268,7 @@ def payload_from_state(
         "task_gid": state["task_gid"],
         "branch": state["branch"],
         "worktree": state["worktree_path"],
-        "state_path": str(state_path(state["task_gid"])),
+        "state_path": str(state_path(state["task_gid"], state["branch"], state.get("lineage_id"))) if state.get("lineage_id") else str(state_path(state["task_gid"])),
         "base_ref": state["base_ref"],
         "base_sha": state["base_sha"],
         "local_head": identity.head,

@@ -434,6 +434,15 @@ def build_repository_plan(
             f"unclassified-impact:{path}" for path in sorted(failed_closed_paths)
         ]
         graph_plan["impact_fingerprint"]["all_boundary_fallback"] = True  # type: ignore[index]
+        failed = set(failed_closed_paths)
+        for item in graph_plan["selector_classifications"]:  # type: ignore[index]
+            if item["path"] in failed:
+                item["classification"] = "TRUE_UNKNOWN_ALL_BOUNDARY"
+                item["retained_boundaries"] = list(impact_graph.BOUNDARIES)
+        graph_plan["selector_gaps"] = [
+            item for item in graph_plan["selector_gaps"]  # type: ignore[index]
+            if item["path"] not in failed
+        ]
     graph_plan["impact_fingerprint"]["input_mode"] = input_mode  # type: ignore[index]
     _add_semantic_targets(graph_plan, additions, repo_root=repo_root)
     return {

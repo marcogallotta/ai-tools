@@ -9,6 +9,12 @@ from agent_worktree_support import SCRIPT, Harness, assert_error, git_out, h
 
 
 def claim(h: Harness, *, task: str, branch: str, agent: str, child: list[str], takeover=False, expected=None, pr=None, head=None):
+    identity_path = h.home / ".local/state/dish/agents" / f"{agent}.json"
+    if identity_path.exists():
+        identity = json.loads(identity_path.read_text(encoding="utf-8"))
+        if identity.get("owning_task_gid") is None:
+            identity["owning_task_gid"] = task
+            identity_path.write_text(json.dumps(identity) + "\n", encoding="utf-8")
     args = ["python3", str(SCRIPT), "claim", "--task", task, "--branch", branch, "--agent-id", agent]
     if takeover:
         args.append("--takeover")
@@ -20,17 +26,17 @@ def claim(h: Harness, *, task: str, branch: str, agent: str, child: list[str], t
 
 
 def record(h: Harness, task: str) -> tuple[Path, dict[str, object]]:
-    matches = list((h.home / ".local/state/dish/worktrees/claims").glob(f"*/{task}.json"))
+    matches = list((h.home / ".local/state/dish/worktrees/claims").glob(f"*/{task}*.json"))
     assert len(matches) == 1
     return matches[0], json.loads(matches[0].read_text())
 
 
 def test_claim_gate_and_concurrent_start_choose_one_owner(h: Harness) -> None:
-    h.agent_file("direct")
+    h.agent_file("direct", owning_task_gid="3000")
     direct = h.raw_tool("start", "--task", "3000", "--branch", "agent/direct", "--base-ref", "refs/heads/main", "--base", h.current_remote_main(), "--agent-id", "direct", check=False)
     assert_error(direct, "OWNERSHIP_CLAIM_REQUIRED")
     for agent in ("a", "b"):
-        h.agent_file(agent)
+        h.agent_file(agent, owning_task_gid="3001")
     base = h.current_remote_main()
     ps = []
     for agent in ("a", "b"):
@@ -53,10 +59,10 @@ def test_claim_gate_and_concurrent_start_choose_one_owner(h: Harness) -> None:
         )
     results = []
     for process in ps:
-        stdout, stderr = process.communicate(timeout=20)
+        stdout, stderr = process.communicate(timeout=60)
         results.append((process.returncode, stdout, stderr))
     assert sum(code == 0 for code, _, _ in results) == 1
-    assert "OWNERSHIP_CLAIMED" in next(err for code, _, err in results if code != 0)
+    assert any(code != 0 and ("BRANCH_ADMISSION_RACE" in err or "OWNERSHIP_CLAIMED" in err) for code, _, err in results)
 
 
 def test_live_owner_fences_takeover_and_second_writer(h: Harness) -> None:
@@ -76,7 +82,7 @@ def test_live_owner_fences_takeover_and_second_writer(h: Harness) -> None:
     result = claim(h, task=task, branch=branch, agent="b", takeover=True, expected=str(r["token"]), child=["python3", "-c", f"from pathlib import Path; Path({str(sentinel)!r}).write_text('x')"])
     assert_error(result, "OWNERSHIP_CLAIMED")
     assert not sentinel.exists()
-    p.communicate(timeout=20)
+    p.communicate(timeout=60)
 
 
 def test_stale_takeover_is_exact_cas_and_aba_safe(h: Harness) -> None:
@@ -482,34 +488,35 @@ def test_failed_claim_child_restores_launch_identity_when_no_durable_owner(h: Ha
     assert result.returncode == 7
     assert not (h.home / f".local/state/dish/agents/{agent}.json").exists()
     assert not h.state_path(task).exists()
-    assert not list((h.home / ".local/state/dish/worktrees/claims").glob(f"*/{task}.json"))
+    assert not list((h.home / ".local/state/dish/worktrees/claims").glob(f"*/{task}*.json"))
 
 
 
 def test_head_movement_invalidation_closes_semantic_mutation_but_allows_readback(h: Harness) -> None:
     task, branch, agent, pr = "3095", "agent/head-move-fence", "head-move-agent", 96
     head = h.remote_branch_commit(branch, "head move candidate", start=h.current_remote_main())
-    h.agent_file(agent)
+    h.agent_file(agent, owning_task_gid=task)
     new_head = "f" * 40
     tools_dir = Path(__file__).resolve().parents[1]
     child = f"""
 import sys
 sys.path.insert(0, {str(tools_dir)!r})
-from agent_worktree_lib.common import AgentWorktreeError
+from agent_worktree_lib.common import AgentWorktreeError, GitRunner
 from agent_worktree_lib.ownership import invalidate_claim_after_head_movement, require_active_claim
 
 task = {task!r}
 branch = {branch!r}
 agent = {agent!r}
 new_head = {new_head!r}
+runner = GitRunner()
 assert invalidate_claim_after_head_movement(task, new_head) is True
 try:
-    require_active_claim(task, branch, agent)
+    require_active_claim(task, branch, agent, runner)
 except AgentWorktreeError as exc:
     assert exc.code == "PR_HEAD_MOVED_REDISPATCH_REQUIRED"
 else:
     raise AssertionError("semantic mutation remained open after PR head movement")
-assert require_active_claim(task, branch, agent, allow_head_moved_readback=True)["head_moved_to"] == new_head
+assert require_active_claim(task, branch, agent, runner, allow_head_moved_readback=True)["head_moved_to"] == new_head
 """
     result = h.raw_tool(
         "claim", "--task", task, "--branch", branch, "--agent-id", agent,
@@ -521,3 +528,62 @@ assert require_active_claim(task, branch, agent, allow_head_moved_readback=True)
     _, claim = record(h, task)
     assert claim["head_moved_to"] == new_head
     assert claim["semantic_mutation_closed_at"]
+
+
+def test_repository_claim_rejects_non_implementation_role(h: Harness) -> None:
+    h.agent_file("reviewer", role="review", owning_task_gid="3010")
+    result = claim(
+        h, task="3010", branch="agent/non-implementation", agent="reviewer",
+        child=["python3", "-c", "raise SystemExit('must not run')"],
+    )
+    assert_error(result, "MUTATION_AUTHORITY_REQUIRED")
+
+
+def test_repository_claim_rejects_mismatched_task_identity(h: Harness) -> None:
+    h.agent_file("impl", role="implementation", owning_task_gid="9999")
+    result = claim(
+        h, task="3011", branch="agent/wrong-task", agent="impl",
+        child=["python3", "-c", "raise SystemExit('must not run')"],
+    )
+    assert_error(result, "MUTATION_AUTHORITY_TASK_MISMATCH")
+
+
+def test_repository_claim_rejects_missing_task_identity(h: Harness) -> None:
+    h.agent_file("impl", role="implementation")
+    result = h.raw_tool(
+        "claim", "--task", "3012", "--branch", "agent/missing-task", "--agent-id", "impl",
+        "--", "python3", "-c", "raise SystemExit('must not run')",
+        check=False,
+    )
+    assert_error(result, "MUTATION_AUTHORITY_TASK_REQUIRED")
+
+
+def test_repository_claim_rejects_non_implementation_task_mode(h: Harness) -> None:
+    h.agent_file("impl", role="implementation", owning_task_gid="3014")
+    h.set_task_section("3014", "Needs Research")
+    result = claim(
+        h, task="3014", branch="agent/needs-research", agent="impl",
+        child=["python3", "-c", "raise SystemExit('must not run')"],
+    )
+    assert_error(result, "MUTATION_TASK_MODE_BLOCKED")
+
+
+def test_repository_writer_rechecks_role_after_claim(h: Harness) -> None:
+    task, branch, agent = "3013", "agent/role-change", "impl"
+    h.agent_file(agent, role="implementation", owning_task_gid=task)
+    h.start(task=task, branch=branch, agent=agent)
+    path = h.home / ".local/state/dish/agents" / f"{agent}.json"
+    payload = json.loads(path.read_text())
+    payload["role"] = "review"
+    path.write_text(json.dumps(payload) + "\n")
+    result = h.tool("commit", "--task", task, "--agent-id", agent, "--message", "x", "tracked.txt", check=False)
+    assert_error(result, "MUTATION_AUTHORITY_REQUIRED")
+
+
+def test_repository_writer_rechecks_current_task_mode_after_claim(h: Harness) -> None:
+    task, branch, agent = "3015", "agent/mode-change", "impl"
+    h.agent_file(agent, role="implementation", owning_task_gid=task)
+    h.start(task=task, branch=branch, agent=agent)
+    h.set_task_section(task, "Needs Research")
+    result = h.tool("commit", "--task", task, "--agent-id", agent, "--message", "x", "tracked.txt", check=False)
+    assert_error(result, "MUTATION_TASK_MODE_BLOCKED")

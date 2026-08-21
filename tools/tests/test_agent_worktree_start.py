@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -8,6 +9,33 @@ from pathlib import Path
 import pytest
 
 from agent_worktree_support import GIT, SCRIPT, Harness, assert_error, git, git_out, h, payload, run
+
+
+def _real_candidate(h: Harness, task: str, branch: str) -> Path:
+    """Resolve the exact lineage-scoped worktree path `start` will target.
+
+    Every writer command is routed through `claim`, which admits/recovers the
+    branch's durable lineage and binds the worktree path to it before `start`
+    ever runs, so a plain `worktrees/<task>` path no longer collides with the
+    real target. This runs a fully sandboxed no-op `claim` (via the harness's
+    own env) to durably admit the same lineage the later real `claim --
+    start` call will idempotently recover, then reads the lineage_id back
+    from the claim record it wrote.
+    """
+    agent = "fixture-agent"
+    agent_path = h.home / ".local/state/dish/agents" / f"{agent}.json"
+    if not agent_path.exists():
+        h.agent_file(agent, owning_task_gid=task)
+    else:
+        identity = json.loads(agent_path.read_text(encoding="utf-8"))
+        identity["owning_task_gid"] = task
+        agent_path.write_text(json.dumps(identity) + "\n", encoding="utf-8")
+    h.raw_tool("claim", "--task", task, "--branch", branch, "--agent-id", agent, "--", "python3", "-c", "pass")
+    claim_files = list((h.home / ".local/state/dish/worktrees/claims").glob(f"*/{task}*.json"))
+    assert len(claim_files) == 1, f"expected exactly one claim record for task {task}, found {claim_files}"
+    record = json.loads(claim_files[0].read_text(encoding="utf-8"))
+    lineage_id = str(record["lineage_id"])
+    return h.worktree_root / task / f"{hashlib.sha256(branch.encode('utf-8')).hexdigest()[:24]}-{lineage_id}"
 
 def test_fresh_start_creates_locked_owned_worktree_and_compatible_agent_reference(h: Harness) -> None:
     agent_path = h.agent_file("claude-1", custom="preserve")
@@ -94,7 +122,7 @@ def test_exact_state_start_is_resume_but_collisions_without_state_fail(h: Harnes
     assert_error(result, "BRANCH_COLLISION")
 
     task = "1003"
-    path = h.wt(task)
+    path = _real_candidate(h, task, "agent/path-collision")
     path.mkdir(parents=True)
     (path / "foreign").write_text("x", encoding="utf-8")
     result = h.start(task=task, branch="agent/path-collision", check=False)
@@ -108,7 +136,7 @@ def test_branch_checked_out_elsewhere_and_interrupted_registered_creation_fail_c
     assert_error(result, "BRANCH_CHECKED_OUT")
 
     task = "1011"
-    expected = h.wt(task)
+    expected = _real_candidate(h, task, "agent/interrupted")
     expected.parent.mkdir(parents=True, exist_ok=True)
     git(h.primary, "worktree", "add", "--lock", "-b", "agent/interrupted", str(expected), h.base)
     result = h.start(task=task, branch="agent/interrupted", check=False)
@@ -129,7 +157,7 @@ def test_concurrent_first_start_serializes_to_one_task_worktree(h: Harness) -> N
     base = h.base
     processes = []
     for agent in ("race-a", "race-b"):
-        h.agent_file(agent)
+        h.agent_file(agent, owning_task_gid=task)
         start_argv = [
             "python3", str(SCRIPT), "start",
             "--task", task, "--branch", branch,
@@ -159,6 +187,6 @@ def test_concurrent_first_start_serializes_to_one_task_worktree(h: Harness) -> N
 
     assert sum(code == 0 for code, _, _ in results) == 1, results
     loser = next(item for item in results if item[0] != 0)
-    assert "ERROR OWNERSHIP_CLAIMED:" in loser[2]
+    assert "ERROR BRANCH_ADMISSION_RACE:" in loser[2] or "ERROR OWNERSHIP_CLAIMED:" in loser[2]
     records = git_out(h.primary, "worktree", "list", "--porcelain").split("\n\n")
     assert sum(str(h.wt(task)) in record for record in records) == 1

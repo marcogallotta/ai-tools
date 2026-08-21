@@ -1627,3 +1627,112 @@ def test_protocol_authenticates_before_loading_body(workflow_db) -> None:
                 now=NOW,
             )
         assert loaded is False
+
+
+@pytest.mark.parametrize("start_away_from_research", [False, True])
+@pytest.mark.parametrize("external_projection_enabled", [True, False])
+def test_planning_prepare_matches_production_handoff_without_verification(
+    workflow_db,
+    monkeypatch,
+    start_away_from_research: bool,
+    external_projection_enabled: bool,
+) -> None:
+    factory, ids, context, task_id = workflow_db
+    run_id = _next(ids)
+    planning = """### Planning brief
+Dish candidate: Test dish
+Purpose: Compare texture
+Role: main
+Priors: None
+Locks: Keep crisp
+Exemptions: None
+Research emphasis: Compare two hydration levels
+Destination section: Sichuan — 12345
+"""
+    with session_scope(factory) as session:
+        if not external_projection_enabled:
+            monkeypatch.setattr(
+                "dish_pg.command_port.external_projection_required",
+                lambda *_args, **_kwargs: False,
+            )
+            monkeypatch.setattr(
+                "dish_pg.command_effect_runtime.external_projection_required",
+                lambda *_args, **_kwargs: False,
+            )
+        destination_section_id = _add_destination_section(
+            session, ids, context, external_id="12345"
+        )
+        if start_away_from_research:
+            placement = session.get(
+                models.CurrentTaskSectionPlacement,
+                (context["generation_id"], task_id),
+            )
+            placement.section_id = destination_section_id
+            session.flush()
+        _register_run(session, generation_id=context["generation_id"], run_id=run_id)
+        port = _port(session, ids)
+        challenge = port.execute(
+            _call(
+                "start",
+                run_id=run_id,
+                request_id=_next(ids),
+                arguments={"task_id": str(task_id), "kind": "planning", "agent": "claude"},
+            )
+        )
+        assert challenge.code == "CONFIRMATION_REQUIRED"
+        started = port.execute(
+            _call(
+                "start",
+                run_id=run_id,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "kind": "planning",
+                    "agent": "claude",
+                    "intent_challenge_id": challenge.data["intent_challenge_id"],
+                    "intent_basis": "user_requested",
+                },
+            )
+        )
+        assert started.ok
+        prepared = port.execute(
+            _call(
+                "prepare",
+                run_id=run_id,
+                request_id=_next(ids),
+                arguments={
+                    "task_id": str(task_id),
+                    "operation_id": started.data["operation_id"],
+                    "file_text": planning,
+                    "agent": "claude",
+                    "model": "test-model",
+                },
+            )
+        )
+        assert prepared.ok, (prepared.code, prepared.http_status, prepared.data)
+        assert prepared.data["handoff"] == "planning-to-research"
+        assert prepared.data["cycle_id"] is None
+        assert (prepared.data["placement_projection_event_id"] is not None) is (
+            start_away_from_research and external_projection_enabled
+        )
+        assert "_placement_changed" not in prepared.data
+
+        operation = session.get(wf.WorkflowOperation, uuid.UUID(started.data["operation_id"]))
+        assert operation.lifecycle == "completed"
+        assert operation.phase == "completed"
+        assert operation.terminal_outcome == "planning_handoff_confirmed"
+        assert session.scalar(
+            select(func.count()).select_from(wf.VerificationCycle).where(
+                wf.VerificationCycle.operation_id == operation.operation_id
+            )
+        ) == 0
+
+        head = session.get(models.TaskAuthorityHead, (context["generation_id"], task_id))
+        activation = session.get(models.ContentActivation, head.current_content_activation_id)
+        current = session.get(models.ContentVersion, activation.content_version_id)
+        assert current.body.startswith("### Planning brief\n")
+        assert "Destination section: Sichuan — 12345" in current.body
+        placement = session.get(
+            models.CurrentTaskSectionPlacement, (context["generation_id"], task_id)
+        )
+        assert placement.section_id == context["section_id"]

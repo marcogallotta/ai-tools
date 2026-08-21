@@ -8,7 +8,8 @@
     "format", "identity", "changed_paths", "profile", "classifications",
     "dish_selector", "semantic_additions", "graph_identity", "selected_targets",
     "hosted_required_targets", "selected_groups", "boundary_fallbacks",
-    "legacy_adapter_paths", "retired_legacy_obligations", "all_boundary_fallback",
+    "legacy_adapter_paths", "retired_legacy_obligations", "selector_classifications",
+    "selector_gaps", "all_boundary_fallback",
     "all_boundary_fallback_reasons", "obligation_union", "impact_fingerprint",
     "policy_identity"
   ],
@@ -74,6 +75,49 @@
     },
     "legacy_adapter_paths": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
     "retired_legacy_obligations": {"type": "array", "items": {"type": "object"}},
+    "selector_classifications": {
+      "type": "array", "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["path", "classification", "retained_boundaries"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "classification": {"enum": ["EXACT_PROVEN_TARGET", "KNOWN_BOUNDARY_FALLBACK", "BASE_OBLIGATION_UNION", "TRUE_UNKNOWN_ALL_BOUNDARY"]},
+          "retained_boundaries": {
+            "type": "array", "uniqueItems": true,
+            "items": {"enum": ["python-control-plane", "frontend-static", "native-postgresql", "browser-acceptance"]}
+          }
+        }
+      }
+    },
+    "selector_gaps": {
+      "type": "array", "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["gap_id", "path", "classification", "retained_boundaries", "missing_reason", "fallback_boundaries", "base_graph_identity", "candidate_graph_identity", "responsible_graph_surface", "recurrence_count"],
+        "properties": {
+          "gap_id": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "path": {"type": "string", "minLength": 1},
+          "classification": {"enum": ["KNOWN_BOUNDARY_FALLBACK", "BASE_OBLIGATION_UNION"]},
+          "retained_boundaries": {"type": "array", "uniqueItems": true, "items": {"enum": ["python-control-plane", "frontend-static", "native-postgresql", "browser-acceptance"]}},
+          "missing_reason": {"enum": ["missing-exact-authoritative-mapping", "unretired-base-obligation-union"]},
+          "fallback_boundaries": {"type": "array", "uniqueItems": true, "items": {"enum": ["python-control-plane", "frontend-static", "native-postgresql", "browser-acceptance"]}},
+          "base_graph_identity": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "candidate_graph_identity": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "responsible_graph_surface": {"const": "ci/test-impact/edges.json"},
+          "recurrence_count": {"type": "integer", "minimum": 1},
+          "evidence": {
+            "type": "object", "additionalProperties": false,
+            "required": ["pr_number", "head_sha", "review_id", "run_id", "run_attempt"],
+            "properties": {
+              "pr_number": {"type": "integer", "minimum": 1},
+              "head_sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+              "review_id": {"type": "integer", "minimum": 1},
+              "run_id": {"type": "string", "minLength": 1},
+              "run_attempt": {"type": "string", "minLength": 1}
+            }
+          }
+        }
+      }
+    },
     "all_boundary_fallback": {"type": "boolean"},
     "all_boundary_fallback_reasons": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
     "obligation_union": {"type": ["object", "null"]},
