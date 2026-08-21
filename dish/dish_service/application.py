@@ -22,6 +22,7 @@ from dish_tool.admin_command_spec import (
     RUN_ID_ADMIN_COMMANDS as _RUN_ID_ADMIN_COMMANDS,
 )
 from dish_tool.backend import AsanaBackend
+from dish_tool.command_identity import QUALIFY_FILE_TRANSPORT_CLIENT_ID
 from dish_tool.commands import DishApplication, expose_authoritative_view
 from dish_tool.constants import COOKING_PROJECT_GID, SCHEMA_VERSION
 from dish_tool.operation_execution import recover_command_guidance
@@ -2803,6 +2804,13 @@ class DishService:
         a rotated signed URL never changes request identity.
         """
         command = ACTION_QUALIFY_FILE_TRANSPORT_COMMAND
+        if principal.owner_id != QUALIFY_FILE_TRANSPORT_CLIENT_ID:
+            raise DishRuleError(
+                "AGENT_MISMATCH",
+                "this Action deployment is not authorized for qualify-file-transport",
+                rule="action_client_not_authorized",
+                details={"required_client_id": QUALIFY_FILE_TRANSPORT_CLIENT_ID},
+            )
         file_ref = arguments.get("file")
         file_ref = file_ref if isinstance(file_ref, Mapping) else {}
         replay_arguments = {

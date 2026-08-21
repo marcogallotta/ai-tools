@@ -113,7 +113,9 @@ def test_reject_unsafe_address_allows_public_range():
 
 @pytest.fixture
 def running_service(tmp_path):
-    instance, backend, server, thread, url = _running(tmp_path)
+    instance, backend, server, thread, url = _running(
+        tmp_path, action_client_id="implementation-action"
+    )
     yield instance, url
     stop_server(server, thread)
 

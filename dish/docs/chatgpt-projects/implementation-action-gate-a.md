@@ -4,8 +4,8 @@ Gate A qualifies the actual Dish GPT Action file seam before any Asana/GitHub pr
 
 ## Preconditions
 
-- Use the generated `Dish — Implementation Action` Project identity from `implementation-action.md`.
-- Configure the Dish Action service with `DISH_ACTION_CLIENT_ID=implementation-action` and its dedicated Action bearer. Do not configure Asana or GitHub provider credentials for this gate.
+- No separate ChatGPT Project/role identity exists or is needed for this gate. Use the existing generated `Dish — Implementation` Project kernel (`implementation.md`); the standing eight-role Project topology is unchanged.
+- Configure the Dish Action deployment used for this gate with `DISH_ACTION_CLIENT_ID=implementation-action` and its own dedicated Action bearer, separate from any deployment serving the default connected GPT. The service enforces this at the command boundary: `qualify-file-transport` rejects any other `action_client_id` with `AGENT_MISMATCH`/`action_client_not_authorized`. Do not configure Asana or GitHub provider credentials for this gate.
 - Import the generated Dish Action schema containing `qualify-file-transport`.
 - The Project must have Code Interpreter and the Action available together. Native GitHub/Asana Apps are not part of this gate.
 
