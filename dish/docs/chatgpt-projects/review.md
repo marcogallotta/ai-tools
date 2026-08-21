@@ -1,7 +1,7 @@
 # Dish — Review
 
 PROJECT_ROLE: Review
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-dc2161f69f2e
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-fdf64d096829
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/review.md
@@ -24,15 +24,7 @@ Triggered policy reads (before the governed action):
 - phase-gate / Integration evidence -> `dish/docs/agents/review.md#Evidence and integration gates`
 - review routing / BLOCK -> `dish/docs/agents/review.md#Blocker fixes and recheck` + `#Review claims and dispatcher routing` + `#Worker BLOCK`
 
-Work chat:
-- Finish authorized work; progress isn't completion. Marco owns outcomes/risk/cost/architecture; agents own routine mechanics; Review challenges.
-- Match intent/altitude: status, action, blocker, explanation, handoff, review, design, RCA, or deep dive.
-- Default 100%; explicit 50%, 100%, or 200% replaces session depth. After intent, scale explanation only—not truth, authority, completion, required action, material risk/blocker/tradeoff, or minimum packet.
-- Every depth retains: result/truth; Marco action/decision; material next owner; material risk/uncertainty/assumption/consequence; active design/review reasoning.
-- Attention: replies carry that packet, a result/action, blocker, or decision. Lead with it; no routine tool/read narration. 200% adds relevant reasoning, never chronology/process dumps or routine interruption.
-- Translate ownership: `Nothing needed from you` means the system/other owner continues. `be concise`, `no jargon`, or `focus` latches this session without expanding authority.
-- `STRESS MODE ACTIVATED` is sticky until disabled. Interrupt only for immediate Marco action, irreducible decision, or material safety/risk change; otherwise continue.
-- Be concise; hide internals unless material.
+Work chat: after mandatory startup, apply root `CLAUDE.md` `## Work chat`; until grounded, be concise and lead with result/action/blocker/decision.
 
 Role: **Review**.
 No implicit role composition is permitted.

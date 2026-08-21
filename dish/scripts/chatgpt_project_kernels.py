@@ -12,6 +12,8 @@ FAST_TRACK_GATE_REGISTRY_PATH=PROJECT_DIR/'fast-track-gates.json'
 CLAUDE_OPERATOR_STYLE_PATH=REPO_ROOT/'.claude'/'output-styles'/'dish-operator.md'
 FAST_TRACK_OVERLAY_VERSION='fasttrack-r3'
 FAST_TRACK_OVERLAY_HEADER='MARCO OVERRIDE — FAST-TRACK PROCESS'
+PROJECT_SETTINGS_INITIAL_COMPATIBILITY_CHARS=8000
+PROJECT_SETTINGS_CHANGE_EVIDENCE=('empirical-project-save-load-readback','official-project-limit')
 REPOSITORY_CONTEXT_ROLES=('audit','coordinator','development-workflow','implementation','integration','postgresql-dark-launch','review','workflow')
 REPOSITORY_CONTEXT_EVAL_IDS=('repository-context-admission-consequential-reasoning','repository-context-admission-missing-bundle','repository-context-admission-reentry','repository-context-admission-stale-main','repository-context-admission-tiny-lookup','standing-policy-post-integration-main-readback')
 REPOSITORY_CONTEXT_ADMISSION_ORDER=('resolve-live-main-and-repository-identity','retrieve-exact-bundle-through-github-connector','materialize-bundle','verify-bundle-against-repository-name-id-ref-sha','bind-verified-clone','substantial-cross-file-reasoning')
@@ -34,6 +36,15 @@ IMPACT_ORDER={'unrelated':0,'compatible':1,'additive':2,'breaking':3}; FAIL_CLOS
 REQUIRED_PRESERVATION_IDS={'five-whys-shared-method','design-principles-bootstrap'}
 REQUIRED_VERSION_INVENTORY_SCHEMA=1
 class KernelError(RuntimeError): pass
+class ProjectSettingsOverflow(KernelError):
+ def __init__(self,report):
+  self.report=report
+  super().__init__(
+   f"Project settings overflow role={report['role']} channel={report['channel']} "
+   f"base_kernel_chars={report['base_kernel_chars']} test_metadata_delta_chars={report['test_metadata_delta_chars']} "
+   f"overlay_chars={report['overlay_chars']} total_chars={report['total_chars']} "
+   f"ceiling_chars={report['max_project_settings_chars']} excess_chars={report['excess_chars']}"
+  )
 
 def _read_json(p:Path)->dict[str,Any]:
  try:v=json.loads(p.read_text())
@@ -81,6 +92,34 @@ def parse_fast_track_overlay_block(text):
  return canonical_fast_track_overlay(value)
 
 def fast_track_overlay_digest(value): return 'sha256:'+_semantic_json_hash(canonical_fast_track_overlay(value))
+
+def render_fast_track_overlay_block(value):
+ overlay=canonical_fast_track_overlay(value)
+ payload={k:overlay[k] for k in ('version','state','generation','scope','gate_semantics')}
+ if overlay['expiry'] is not None: payload['expiry']=overlay['expiry']
+ if overlay['reason']: payload['reason']=overlay['reason']
+ return FAST_TRACK_OVERLAY_HEADER+'\n'+json.dumps(payload,ensure_ascii=False,separators=(',',':'))
+
+def project_settings_compatibility_overlay():
+ registry=fast_track_gate_registry()
+ if not registry: raise KernelError('fast-track compatibility fixture requires a current gate')
+ gid=sorted(registry)[0]; gate=registry[gid]; scope=f"{gid}@{gate['current_version']}"
+ return {'version':FAST_TRACK_OVERLAY_VERSION,'state':'ACTIVE','generation':'g1','scope':[scope],'gate_semantics':{scope:gate['semantic_digest']},'expiry':None,'reason':''}
+
+def project_settings_policy(manifest):
+ if 'max_kernel_chars' in manifest: raise KernelError('manifest.max_kernel_chars is retired; use max_project_settings_chars')
+ limit=manifest.get('max_project_settings_chars'); provenance=manifest.get('project_settings_compatibility')
+ if not isinstance(limit,int) or limit<=0: raise KernelError('manifest.max_project_settings_chars must be a positive integer')
+ if not isinstance(provenance,dict) or provenance.get('schema_version')!=1: raise KernelError('manifest.project_settings_compatibility schema_version must be 1')
+ if provenance.get('qualified_chars')!=limit: raise KernelError('Project settings compatibility provenance must bind max_project_settings_chars exactly')
+ basis=str(provenance.get('basis','')).strip(); evidence=str(provenance.get('evidence_ref','')).strip()
+ if not evidence: raise KernelError('Project settings compatibility provenance requires evidence_ref')
+ if provenance.get('change_evidence_required')!=list(PROJECT_SETTINGS_CHANGE_EVIDENCE): raise KernelError('Project settings compatibility change evidence policy mismatch')
+ if limit==PROJECT_SETTINGS_INITIAL_COMPATIBILITY_CHARS:
+  if basis!='existing-repository-budget' or provenance.get('vendor_contract') is not False: raise KernelError('initial Project settings compatibility budget must remain an explicit non-vendor repository budget')
+ elif basis not in PROJECT_SETTINGS_CHANGE_EVIDENCE:
+  raise KernelError('changing max_project_settings_chars requires empirical Project save/load/readback or official Project-limit evidence')
+ return limit
 
 def _fast_track_datetime(value,label):
  try: parsed=datetime.fromisoformat(str(value).replace('Z','+00:00'))
@@ -253,6 +292,9 @@ def _render_role_index_design_principles(s,*,check):
  return len(block)
 def _render_chatty_lines(s,heading='Work chat:'):
  return [heading]+[f'- {x}' for x in chatty_contract(s)]
+def _render_project_chatty_lines(s):
+ chatty_contract(s)
+ return ['Work chat: after mandatory startup, apply root `CLAUDE.md` `## Work chat`; until grounded, be concise and lead with result/action/blocker/decision.']
 def _root_chatty_block(s):
  return '\n'.join([CHATTY_BLOCK_START,'## Work chat','']+[f'- {x}' for x in chatty_contract(s)]+[CHATTY_BLOCK_END])
 def _render_root_instructions(s,*,check):
@@ -328,13 +370,13 @@ def render_role_with_version(s,role,version):
  r=s['roles'][role]; comps=r.get('allowed_compositions',[]); repo,branch,_=repository_config(s)
  if not isinstance(comps,list): raise KernelError(f'roles.{role}.allowed_compositions must be a list')
  lines=[f"# {r['project_name']}",'',f"PROJECT_ROLE: {r['default_role']}",f'PROJECT_CANONICAL_VERSION: {version}','PROJECT_CHANNEL: production','CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json',f"ROLE_CONTRACT: {r['contract']}",f'PROJECT_REPOSITORY: {repo}',f'PROJECT_DEFAULT_BRANCH: {branch}','',STARTUP_TEMPLATE.format(repository=repo,branch=branch,contract=r['contract'])]
- lines += _render_context_dependencies(s,role)+['']+_render_chatty_lines(s)+['',f"Role: **{r['default_role']}**."]
+ lines += _render_context_dependencies(s,role)+['']+_render_project_chatty_lines(s)+['',f"Role: **{r['default_role']}**."]
  if comps: lines+=['Allowed composition only when explicitly triggered by current authority:']+[f'- {x}' for x in comps]
  else: lines+=['No implicit role composition is permitted.']
  direct=[x for x in effective_rules(s,role) if x['delivery']['mode']=='DIRECT_ALWAYS_ON']
  lines += [HANDOFF_BOUNDARY,'','High-consequence rules:']+[f"- {x['text']}" for x in direct]+['']
  return '\n'.join(lines)
-def render_test_candidate(s,role,*,candidate_version,pr_number,candidate_ref,candidate_head,candidate_manifest_sha256,production_version):
+def _render_test_candidate_kernel(s,role,*,candidate_version,pr_number,candidate_ref,candidate_head,candidate_manifest_sha256,production_version):
  if role not in s.get('roles',{}): raise KernelError(f'unknown role {role!r}')
  version=str(candidate_version).strip(); ref=str(candidate_ref).strip(); head=str(candidate_head).strip(); manifest_sha=str(candidate_manifest_sha256).strip(); prod=str(production_version).strip()
  if not version or not prod or not str(pr_number).isdigit() or not ref or not re.fullmatch(r'[0-9a-f]{40}',head) or not re.fullmatch(r'[0-9a-f]{64}',manifest_sha): raise KernelError('TEST candidate requires exact version/PR/ref/40-hex head/64-hex manifest identity')
@@ -345,6 +387,31 @@ def render_test_candidate(s,role,*,candidate_version,pr_number,candidate_ref,can
   f'Current production role/source authority remains the ceiling for genuine work; never chase a moved TEST head or treat TEST acceptance as production promotion.')
  if startup not in text: raise KernelError('TEST candidate startup replacement failed')
  return text.replace(startup,test_startup,1)
+
+def render_project_settings_payload(m,s,role,*,channel='production',overlay=None,candidate_version=None,pr_number=None,candidate_ref=None,candidate_head=None,candidate_manifest_sha256=None,production_version=None):
+ limit=project_settings_policy(m)
+ if role not in s.get('roles',{}): raise KernelError(f'unknown role {role!r}')
+ if channel=='production':
+  base=render_role_with_version(s,role,str(m['canonical_version'])); base_kernel_chars=len(base); test_delta=0
+ elif channel=='test':
+  identity={'candidate_version':candidate_version,'pr_number':pr_number,'candidate_ref':candidate_ref,'candidate_head':candidate_head,'candidate_manifest_sha256':candidate_manifest_sha256,'production_version':production_version}
+  base_kernel=render_role_with_version(s,role,str(candidate_version).strip())
+  base=_render_test_candidate_kernel(s,role,**identity); base_kernel_chars=len(base_kernel); test_delta=len(base)-base_kernel_chars
+ else: raise KernelError(f'unsupported Project settings channel {channel!r}')
+ text=base; overlay_chars=0
+ if overlay is not None:
+  block=render_fast_track_overlay_block(overlay); suffix='\n'+block; text+=suffix; overlay_chars=len(suffix)
+ total=len(text); remaining=limit-total; report={
+  'text':text,'role':role,'channel':channel,'base_kernel_chars':base_kernel_chars,'test_metadata_delta_chars':test_delta,
+  'overlay_chars':overlay_chars,'total_chars':total,'max_project_settings_chars':limit,
+  'remaining_chars':max(remaining,0),'excess_chars':max(-remaining,0),
+ }
+ if total>limit: raise ProjectSettingsOverflow(report)
+ return report
+
+def render_test_candidate(s,role,*,candidate_version,pr_number,candidate_ref,candidate_head,candidate_manifest_sha256,production_version,manifest=None,overlay=None):
+ m=_read_json(MANIFEST_PATH) if manifest is None else manifest
+ return render_project_settings_payload(m,s,role,channel='test',overlay=overlay,candidate_version=candidate_version,pr_number=pr_number,candidate_ref=candidate_ref,candidate_head=candidate_head,candidate_manifest_sha256=candidate_manifest_sha256,production_version=production_version)['text']
 
 def kernel_identity(s):
  repository_config(s); b=bytearray()
@@ -358,7 +425,7 @@ def kernel_identity(s):
 def _rule_fingerprint(x):return _h(json.dumps({k:x.get(k) for k in ('id','text','impact','surface','action_boundaries')},sort_keys=True,separators=(',',':')).encode())
 def rule_fingerprints(s):return {r:{x['id']:_rule_fingerprint(x) for x in effective_rules(s,r)} for r in s['roles']}
 def renderer_fingerprint():
- return _h('\0'.join((STARTUP_TEMPLATE,HANDOFF_BOUNDARY,CHATTY_BLOCK_START,CHATTY_BLOCK_END,DESIGN_BLOCK_START,DESIGN_BLOCK_END,inspect.getsource(chatty_contract),inspect.getsource(design_principles_rule),inspect.getsource(shared_rules),inspect.getsource(_design_principles_block),inspect.getsource(_render_role_index_design_principles),inspect.getsource(_render_chatty_lines),inspect.getsource(_root_chatty_block),inspect.getsource(_render_root_instructions),inspect.getsource(repository_config),inspect.getsource(context_dependencies),inspect.getsource(_render_trigger_destinations),inspect.getsource(_render_context_dependencies),inspect.getsource(render_role_with_version),inspect.getsource(profile_specs),inspect.getsource(render_profile_with_version),inspect.getsource(render_test_candidate),inspect.getsource(kernel_identity))).encode())
+ return _h('\0'.join((STARTUP_TEMPLATE,HANDOFF_BOUNDARY,CHATTY_BLOCK_START,CHATTY_BLOCK_END,DESIGN_BLOCK_START,DESIGN_BLOCK_END,inspect.getsource(chatty_contract),inspect.getsource(design_principles_rule),inspect.getsource(shared_rules),inspect.getsource(_design_principles_block),inspect.getsource(_render_role_index_design_principles),inspect.getsource(_render_chatty_lines),inspect.getsource(_render_project_chatty_lines),inspect.getsource(_root_chatty_block),inspect.getsource(_render_root_instructions),inspect.getsource(repository_config),inspect.getsource(context_dependencies),inspect.getsource(_render_trigger_destinations),inspect.getsource(_render_context_dependencies),inspect.getsource(render_role_with_version),inspect.getsource(profile_specs),inspect.getsource(render_profile_with_version),inspect.getsource(_render_test_candidate_kernel),inspect.getsource(render_fast_track_overlay_block),inspect.getsource(project_settings_policy),inspect.getsource(render_project_settings_payload),inspect.getsource(render_test_candidate),inspect.getsource(kernel_identity))).encode())
 def _impact(c):
  x=str(c.get('impact','')).strip()
  if x not in {'compatible','additive','breaking'}: raise KernelError(f"explicit transition impact required for {c.get('rule_id','<unknown>')!r}")
@@ -683,6 +750,7 @@ def generated_sha256(m,s):
  return _h('\0'.join(parts).encode())
 def load_canonical(*,validate_history=True):
  m=_read_json(MANIFEST_PATH); p=PROJECT_DIR/str(m.get('source_file','')); s=_read_json(p)
+ project_settings_policy(m)
  if m.get('source_sha256')!=_semantic_json_hash(s): raise KernelError('canonical source semantic hash mismatch')
  if s.get('schema_version')!=m.get('schema_version'): raise KernelError('manifest/source schema mismatch')
  kid=kernel_identity(s)
@@ -703,10 +771,13 @@ def generated_profile_paths(m,s):
  if not isinstance(files,dict) or set(files)!=set(profiles): raise KernelError('generated profile file map mismatch')
  return {k:PROJECT_DIR/str(files[k]) for k in profiles}
 def render_all(*,check):
- m,s=load_canonical(); limit=int(m.get('max_kernel_chars',3500)); out=[]; _render_root_instructions(s,check=check); _render_claude_operator_style(s,check=check); _render_role_index_design_principles(s,check=check)
+ m,s=load_canonical(); out=[]; _render_root_instructions(s,check=check); _render_claude_operator_style(s,check=check); _render_role_index_design_principles(s,check=check)
+ overlay=project_settings_compatibility_overlay(); fixture={'candidate_version':'dish-chatgpt-projects-test-g1','pr_number':1,'candidate_ref':'refs/pull/1/head','candidate_head':'a'*40,'candidate_manifest_sha256':'b'*64,'production_version':m['canonical_version']}
  for r,p in generated_paths(m,s).items():
-  text=render_role(m,s,r); n=len(text)
-  if n>limit: raise KernelError(f'kernel {r} exceeds {limit} chars: {n}')
+  production=render_project_settings_payload(m,s,r); text=production['text']; n=production['total_chars']
+  render_project_settings_payload(m,s,r,overlay=overlay)
+  render_project_settings_payload(m,s,r,channel='test',**fixture)
+  render_project_settings_payload(m,s,r,channel='test',overlay=overlay,**fixture)
   if check:
    if not p.is_file() or p.read_text()!=text: raise KernelError(f'generated kernel differs: {p}')
   else:p.write_text(text)
