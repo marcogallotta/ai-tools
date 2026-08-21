@@ -143,6 +143,22 @@ Under that heading record at least:
 
 The PR must contain the complete agent-to-agent instructions; Marco must not be required to carry an undocumented second handoff in chat. After the durable PR update, the human-facing message is only the concise control-plane status/action, for example `PR #N — local finish required (SMALL). Draft. Action: give PR #N to a local Implementation agent; full handoff is on the PR.`
 
+### Temporary exact-byte bundle containment
+
+For the current publication-friction containment path, the GitHub connector remains the normal publication path. Do **not** pre-route local merely because a candidate is large, multi-file, or looks inconvenient to publish. First attempt normal connector publication. Only when that actual attempt is failing/unavailable or starts degrading into slow manual blob/chunk/base64 work, and the remote Implementation agent still has the complete exact candidate bytes, may this local fallback activate. The human relay is then deliberately minimal:
+
+- before stopping the GitHub connector path, tell Marco **why it stopped and exactly what was tried**. Name the concrete connector mutation(s)/fallback(s) attempted and the observed failure/degradation; `large`, `multi-file`, or `looks slow` is not a stop reason by itself;
+- produce **one downloadable exact candidate Git bundle**; that bundle is the only file Marco is expected to download or pass to the local agent;
+- deliver that bundle through a **working directly downloadable file/attachment surface**. Do **not** use the ChatGPT generated-file/artifact-card or sandbox-link/card form Marco has reported as non-working. If the current host cannot produce a working download, do not claim the local handoff is ready: keep the PR draft and tell Marco which delivery surface(s) were tried and why delivery stopped;
+- give Marco **one short copy/paste fenced handoff block** naming the task/PR/branch, the bundle basename, and expected candidate tree; do not add a second checklist, sidecar-download list, or long transcript;
+- the handoff tells the local Implementation agent that the bundle will be at `~/Downloads/<bundle>` and to **start immediately without pausing for confirmation** when the assignment identity is complete;
+- `.sha256`, manifest, checksum, metadata, or other sidecar files are **not required human downloads** for this containment path. The local agent must not stop because those files are absent and must ignore unrelated extra files in `~/Downloads`;
+- verify exactness from the bundle itself against the expected head/tree with `scripts/pr_lifecycle.py verify-local-bundle`; hashes/prose/sidecars without the bundle never count as transport;
+- if the named bundle itself is missing, unreadable, invalid, or does not contain the expected candidate tree, classify `FRESH AUTHORING REQUIRED`; prior exact-tree/test evidence does not transfer to newly authored bytes;
+- after exact publication, run `scripts/pr_lifecycle.py implementation-finalize --pr <N> --expected-head <published-head> --clear-publication-blocker` when the blocker section is stale. Completion is successful only when authoritative GitHub readback proves the same exact head with `draft=false`; a failed transition/readback remains unfinished.
+
+This is temporary containment, not a second publication architecture. Existing materializer recovery and remote-first routing remain authoritative dependencies and are not duplicated here.
+
 A local Implementation-completion agent accepting this ownership handoff must:
 
 - continue on the same existing PR branch;
