@@ -122,6 +122,22 @@ Rules:
 - record exact GitHub branch, commit, PR URL, current head SHA, and review/integration state when they matter. GitHub remains the authority for source/history and code artifacts;
 - when TEST/production runtime identity matters, record the observed environment evidence or explicitly record that it is unknown. Never substitute repository HEAD for deployed-state evidence.
 
+## Dispatch concurrency and stack shape
+
+Choose dispatch shape from evidence about authoring and landing relationships, not from a target number of stacks or agents.
+
+Start with the full currently eligible high-priority set. Classify each material relationship before deciding what to dispatch:
+
+1. **Independent through landing** — work has separate mutation surfaces and no expected landing dependency or convergence step that would invalidate another candidate's exact-head approval. Dispatch these concurrently when useful.
+2. **Parallel authoring / coordinated convergence** — workers can author safely on separate branches/worktrees, but the results are expected to meet at a shared interface, generated artifact, landing order, or reconciliation point. Before dispatch, account for likely rebase, regeneration, reconciliation, new-head invalidation, and re-review churn. Parallelize only when the useful authoring progress is expected to outweigh that convergence cost, and record the coordination point or landing order.
+3. **True predecessor** — downstream authoring cannot be correct until an upstream decision, interface, artifact, or semantic result exists. Serialize before downstream authoring rather than creating speculative parallel work.
+
+Optimize for useful completed progress through landing, not for the number of agents started. If Review or Integration fan-in is the active bottleneck, drain that fan-in before creating more overlapping authoring returns that would only increase convergence or re-review work.
+
+After a material return changes the evidence — including a semantic head change, review-driven fix, landed prerequisite, regeneration, reconciliation, or newly discovered collision — recompute the collision and landing relationships before the next dispatch or landing decision. Do not keep an earlier parallelism classification merely because workers are already grouped that way.
+
+A coherent manual stack remains valid when its dependency and landing shape make the stack useful; do not flatten it merely to increase concurrency. This guidance does not create a scheduler, queue, universal dependency graph, merge authority, or global WIP cap.
+
 ## Comparison compatibility and blocker ownership
 
 Before classifying a comparison mismatch as fixture/data repair, prove the proposed target state satisfies the health/validity requirements of **every** compared system. A fixture being disposable never waives its own minimum health requirements. If the proposed target cannot keep every side valid, stop fixture repair rather than iterating on data that cannot satisfy the gate.
