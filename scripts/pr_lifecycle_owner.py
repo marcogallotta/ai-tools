@@ -18,6 +18,19 @@ _TASK_ASANA_LINE_RE = re.compile(
 )
 
 
+
+
+def canonical_owning_task_markers(pr: Mapping[str, Any]) -> list[str]:
+    """Return canonical owner markers exactly as declared, preserving duplicates."""
+    body = str(pr.get("body") or "")
+    return [match.group("gid") for match in _OWNING_TASK_MARKER_RE.finditer(body)]
+
+
+def canonical_owning_task_marker(task_gid: str) -> str:
+    if re.fullmatch(r"\d{16}", str(task_gid or "")) is None:
+        raise ValueError("owning task must be a 16-digit Asana GID")
+    return f"<!-- dish-owning-task:v1 task={task_gid} -->"
+
 class TaskReferences(list[str]):
     """All referenced task IDs plus separately resolved owner authority."""
 

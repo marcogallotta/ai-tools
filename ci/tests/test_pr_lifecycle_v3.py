@@ -362,6 +362,29 @@ def test_ci_ownership_routes_without_giving_integrator_scheduler_or_implementati
     assert integrator["review_authority"] is False
 
 
+def test_handoff_repair_capability_blocker_is_owned_attention_not_marco_relay():
+    value = lifecycle(state=LifecycleState.CHANGES_REQUESTED)
+    value.residual_reason = (
+        "handoff repair capability blocker: WorkspaceAgentDispatcher.dispatch_worker unavailable; "
+        "owner: Development Workflow / orchestration; recovery proof: exact packet accepted"
+    )
+    payload = build_projection(
+        [value],
+        repository=REPOSITORY,
+        tasks=[task_with_hold(clear_hold())],
+        source_observation=source(),
+        generated_at=NOW,
+    )
+    cases = [
+        case for case in payload["v3"]["attention"]["cases"]
+        if case["reason_class"] == "HANDOFF_REPAIR_CAPABILITY_BLOCKED"
+    ]
+    assert len(cases) == 1
+    assert cases[0]["next_owner"] == "Development Workflow"
+    assert "do not ask Marco" in cases[0]["next_action"]
+    assert cases[0] not in payload["v3"]["integrator"]["active_cases"]
+
+
 def test_provider_switch_reconstructs_same_case_identity_from_live_evidence():
     gate = {
         "diagnosis": "INFRASTRUCTURE_ERROR",

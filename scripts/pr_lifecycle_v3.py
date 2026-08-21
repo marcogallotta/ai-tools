@@ -384,6 +384,20 @@ def attention_cases(
             ))
 
         lowered = residual.lower()
+        if lowered.startswith("handoff repair capability blocker:"):
+            cases.append(_case(
+                repository=repository,
+                reason_class="HANDOFF_REPAIR_CAPABILITY_BLOCKED",
+                pr=pr,
+                task=None,
+                evidence={"residual_reason": residual},
+                next_owner="Development Workflow",
+                next_action=(
+                    "restore the named existing repair route and prove acceptance/readback of the exact packet; "
+                    "do not ask Marco to relay it"
+                ),
+                observed_at=generated_at,
+            ))
         if (
             lifecycle_state == "review_passed_evaluating_gates"
             and any(token in lowered for token in ("merge conflict", "mergeability", "base reconciliation"))
