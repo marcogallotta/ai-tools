@@ -3,7 +3,9 @@
 set -euo pipefail
 
 SELF="$(readlink -f "${BASH_SOURCE[0]}")"
-REPO_ROOT="$(cd "$(dirname "${SELF}")/.." && pwd)"
+SCRIPT_ROOT="$(cd "$(dirname "${SELF}")/.." && pwd)"
+GIT_COMMON_DIR="$(git -C "${SCRIPT_ROOT}" rev-parse --path-format=absolute --git-common-dir)"
+REPO_ROOT="${DISH_LIFECYCLE_V4_OPERATOR_REPO:-$(dirname "${GIT_COMMON_DIR}")}"
 STATE_DIR="${DISH_LIFECYCLE_V4_STATE_DIR:-${HOME}/.local/state/dish/pr-lifecycle-v4}"
 THREAD_FILE="${STATE_DIR}/thread.json"
 FENCE_FILE="${STATE_DIR}/integrator.fence"
