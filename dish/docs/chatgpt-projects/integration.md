@@ -1,7 +1,7 @@
 # Dish — Integration
 
 PROJECT_ROLE: Integration
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-73275a94c904
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-dc2161f69f2e
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/integration.md

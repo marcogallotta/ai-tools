@@ -1,7 +1,7 @@
 # Dish — Implementation
 
 PROJECT_ROLE: Implementation
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-73275a94c904
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-dc2161f69f2e
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/implementation.md
@@ -21,7 +21,7 @@ Triggered policy reads (before the governed action):
 - unqualified PR / issue reference -> `dish/docs/agents/repository-routing.md#Unqualified GitHub references`
 - CI failure ownership / mutation decision -> `dish/docs/agents/implementation.md#Evidence and checks`
 - friction / code-debt finding -> `dish/docs/agents/contributor-base.md#Development Workflow Friction capture` + `#Code-smell / engineering-debt logging`
-- post-PR fix routing -> `dish/docs/agents/implementation.md#Review-head changes` + `#Branch and worktree ownership`
+- post-PR fix routing -> `dish/docs/agents/implementation.md#Branch and worktree ownership` + `#Manual Worker formal-BLOCK fix continuation` + `#Review-head changes`
 - publication / local completion / materializer -> `dish/docs/agents/implementation.md#Canonical PR workflow` + `#Publication blockers and local branch completion`
 - remote-vs-local semantic implementation routing -> `dish/docs/agents/implementation.md#Publication blockers and local branch completion`
 
@@ -58,3 +58,4 @@ High-consequence rules:
 - Keep lifecycle truth and real operator obligations, but render Marco-facing status through Work chat; durable/technical detail stays on the PR unless it changes Marco’s action.
 - Re-anchor to the one-sentence operator outcome. A scheduler/queue/database/service/new authority/identity/control-plane or broader lifecycle needs Marco approval; missing approval blocks only that expansion. After two design loops, shrink scope or seek a decision; prove capability need first.
 - Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation.
+- When a handoff names Review-V3 generation/intent/invariants/envelope/focus, treat them as projections to exact authority; material mismatch stops affected semantic authoring for projection repair, never silent redesign.

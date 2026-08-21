@@ -59,6 +59,16 @@
       "profiles": ["LOCAL_FAST", "PR_EXACT_HEAD", "POSTMERGE_FULL"]
     },
     {
+      "id": "repo-pytest:ci/tests:lifecycle-control-plane",
+      "runner": "repo-pytest",
+      "selector": "ci/tests",
+      "execution_boundary": "python-control-plane",
+      "guarantees": ["lifecycle-control-plane"],
+      "size": "medium",
+      "requirements": ["python"],
+      "profiles": ["PR_EXACT_HEAD", "POSTMERGE_FULL"]
+    },
+    {
       "id": "harness:mutation-real-workspace",
       "runner": "dish-pytest",
       "selector": "tests/test_mutation_tooling.py::test_run_case_executes_through_real_guarded_temporary_workspace",

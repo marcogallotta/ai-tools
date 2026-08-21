@@ -9,10 +9,10 @@
       "reason": "R9 lifecycle control-plane migration",
       "legacy_dispositions": [
         {"key": "legacy-boundary:python-control-plane:repository control-plane", "kind": "mapped", "targets": ["repo-pytest:ci/tests/test_pr_lifecycle.py"]},
-        {"key": "legacy-boundary:python-control-plane:ordinary full suite", "kind": "retired", "reason": "incidental_broad_coverage", "provenance": "R9 replay 31912433743"},
-        {"key": "legacy-boundary:frontend-static:frontend static", "kind": "retired", "reason": "incidental_broad_coverage", "provenance": "R9 replay 31912433743"},
-        {"key": "legacy-boundary:native-postgresql:native PostgreSQL certification", "kind": "retired", "reason": "incidental_broad_coverage", "provenance": "R9 replay 31912433743"},
-        {"key": "legacy-boundary:browser-acceptance:browser acceptance", "kind": "retired", "reason": "incidental_broad_coverage", "provenance": "R9 replay 31912433743"}
+        {"key": "legacy-boundary:python-control-plane:ordinary full suite", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["31912433743"]},
+        {"key": "legacy-boundary:frontend-static:frontend static", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["31912433743"]},
+        {"key": "legacy-boundary:native-postgresql:native PostgreSQL certification", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["31912433743"]},
+        {"key": "legacy-boundary:browser-acceptance:browser acceptance", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["31912433743"]}
       ]
     },
     {
@@ -23,10 +23,10 @@
       "reason": "R9 lifecycle runbook migration",
       "legacy_dispositions": [
         {"key": "legacy-boundary:python-control-plane:repository control-plane", "kind": "mapped", "targets": ["repo-pytest:ci/tests/test_pr_lifecycle.py"]},
-        {"key": "legacy-boundary:python-control-plane:ordinary full suite", "kind": "retired", "reason": "incidental_broad_coverage", "provenance": "R9 replay 31913089113"},
-        {"key": "legacy-boundary:frontend-static:frontend static", "kind": "retired", "reason": "incidental_broad_coverage", "provenance": "R9 replay 31913089113"},
-        {"key": "legacy-boundary:native-postgresql:native PostgreSQL certification", "kind": "retired", "reason": "incidental_broad_coverage", "provenance": "R9 replay 31913089113"},
-        {"key": "legacy-boundary:browser-acceptance:browser acceptance", "kind": "retired", "reason": "incidental_broad_coverage", "provenance": "R9 replay 31913089113"}
+        {"key": "legacy-boundary:python-control-plane:ordinary full suite", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["31913089113"]},
+        {"key": "legacy-boundary:frontend-static:frontend static", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["31913089113"]},
+        {"key": "legacy-boundary:native-postgresql:native PostgreSQL certification", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["31913089113"]},
+        {"key": "legacy-boundary:browser-acceptance:browser acceptance", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["31913089113"]}
       ]
     },
     {
@@ -37,10 +37,136 @@
       "reason": "R9 exact-head preparation migration",
       "legacy_dispositions": [
         {"key": "legacy-boundary:python-control-plane:repository control-plane", "kind": "mapped", "targets": ["repo-pytest:ci/tests/test_pr_certification.py"]},
-        {"key": "legacy-boundary:python-control-plane:ordinary full suite", "kind": "retired", "reason": "incidental_broad_coverage", "provenance": "R9 replay 31912346932"},
-        {"key": "legacy-boundary:frontend-static:frontend static", "kind": "retired", "reason": "incidental_broad_coverage", "provenance": "R9 replay 31912346932"},
-        {"key": "legacy-boundary:native-postgresql:native PostgreSQL certification", "kind": "retired", "reason": "incidental_broad_coverage", "provenance": "R9 replay 31912346932"},
-        {"key": "legacy-boundary:browser-acceptance:browser acceptance", "kind": "retired", "reason": "incidental_broad_coverage", "provenance": "R9 replay 31912346932"}
+        {"key": "legacy-boundary:python-control-plane:ordinary full suite", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["31912346932"]},
+        {"key": "legacy-boundary:frontend-static:frontend static", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["31912346932"]},
+        {"key": "legacy-boundary:native-postgresql:native PostgreSQL certification", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["31912346932"]},
+        {"key": "legacy-boundary:browser-acceptance:browser acceptance", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["31912346932"]}
+      ]
+    },
+    {
+      "path": "ci/tests/test_pr_lifecycle_forward_fix.py",
+      "mode": "authoritative",
+      "targets": ["repo-pytest:ci/tests:lifecycle-control-plane"],
+      "guarantees": ["lifecycle-control-plane"],
+      "reason": "V1 R3 PR #182 exact proof-backed lifecycle migration",
+      "legacy_dispositions": [
+        {"key": "legacy-boundary:python-control-plane:repository control-plane", "kind": "mapped", "targets": ["repo-pytest:ci/tests:lifecycle-control-plane"]},
+        {"key": "legacy-boundary:python-control-plane:ordinary full suite", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:frontend-static:frontend static", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:native-postgresql:native PostgreSQL certification", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:browser-acceptance:browser acceptance", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]}
+      ]
+    },
+    {
+      "path": "ci/tests/test_pr_lifecycle_v3.py",
+      "mode": "authoritative",
+      "targets": ["repo-pytest:ci/tests:lifecycle-control-plane"],
+      "guarantees": ["lifecycle-control-plane"],
+      "reason": "V1 R3 PR #182 exact proof-backed lifecycle migration",
+      "legacy_dispositions": [
+        {"key": "legacy-boundary:python-control-plane:repository control-plane", "kind": "mapped", "targets": ["repo-pytest:ci/tests:lifecycle-control-plane"]},
+        {"key": "legacy-boundary:python-control-plane:ordinary full suite", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:frontend-static:frontend static", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:native-postgresql:native PostgreSQL certification", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:browser-acceptance:browser acceptance", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]}
+      ]
+    },
+    {
+      "path": "ci/tests/test_pr_lifecycle_v3_attempt_binding.py",
+      "mode": "authoritative",
+      "targets": ["repo-pytest:ci/tests:lifecycle-control-plane"],
+      "guarantees": ["lifecycle-control-plane"],
+      "reason": "V1 R3 PR #182 exact proof-backed lifecycle migration",
+      "legacy_dispositions": [
+        {"key": "legacy-boundary:python-control-plane:repository control-plane", "kind": "mapped", "targets": ["repo-pytest:ci/tests:lifecycle-control-plane"]},
+        {"key": "legacy-boundary:python-control-plane:ordinary full suite", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:frontend-static:frontend static", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:native-postgresql:native PostgreSQL certification", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:browser-acceptance:browser acceptance", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]}
+      ]
+    },
+    {
+      "path": "ci/tests/test_pr_lifecycle_v3_review_block_fix.py",
+      "mode": "authoritative",
+      "targets": ["repo-pytest:ci/tests:lifecycle-control-plane"],
+      "guarantees": ["lifecycle-control-plane"],
+      "reason": "V1 R3 PR #182 exact proof-backed lifecycle migration",
+      "legacy_dispositions": [
+        {"key": "legacy-boundary:python-control-plane:repository control-plane", "kind": "mapped", "targets": ["repo-pytest:ci/tests:lifecycle-control-plane"]},
+        {"key": "legacy-boundary:python-control-plane:ordinary full suite", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:frontend-static:frontend static", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:native-postgresql:native PostgreSQL certification", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:browser-acceptance:browser acceptance", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]}
+      ]
+    },
+    {
+      "path": "scripts/pr_lifecycle_controller.py",
+      "mode": "authoritative",
+      "targets": ["repo-pytest:ci/tests:lifecycle-control-plane"],
+      "guarantees": ["lifecycle-control-plane"],
+      "reason": "V1 R3 PR #182 exact proof-backed lifecycle migration",
+      "legacy_dispositions": [
+        {"key": "legacy-boundary:python-control-plane:repository control-plane", "kind": "mapped", "targets": ["repo-pytest:ci/tests:lifecycle-control-plane"]},
+        {"key": "legacy-boundary:python-control-plane:ordinary full suite", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:frontend-static:frontend static", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:native-postgresql:native PostgreSQL certification", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:browser-acceptance:browser acceptance", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]}
+      ]
+    },
+    {
+      "path": "scripts/pr_lifecycle_dashboard.py",
+      "mode": "authoritative",
+      "targets": ["repo-pytest:ci/tests:lifecycle-control-plane"],
+      "guarantees": ["lifecycle-control-plane"],
+      "reason": "V1 R3 PR #182 exact proof-backed lifecycle migration",
+      "legacy_dispositions": [
+        {"key": "legacy-boundary:python-control-plane:repository control-plane", "kind": "mapped", "targets": ["repo-pytest:ci/tests:lifecycle-control-plane"]},
+        {"key": "legacy-boundary:python-control-plane:ordinary full suite", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:frontend-static:frontend static", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:native-postgresql:native PostgreSQL certification", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:browser-acceptance:browser acceptance", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]}
+      ]
+    },
+    {
+      "path": "scripts/pr_lifecycle_projection.py",
+      "mode": "authoritative",
+      "targets": ["repo-pytest:ci/tests:lifecycle-control-plane"],
+      "guarantees": ["lifecycle-control-plane"],
+      "reason": "V1 R3 PR #182 exact proof-backed lifecycle migration",
+      "legacy_dispositions": [
+        {"key": "legacy-boundary:python-control-plane:repository control-plane", "kind": "mapped", "targets": ["repo-pytest:ci/tests:lifecycle-control-plane"]},
+        {"key": "legacy-boundary:python-control-plane:ordinary full suite", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:frontend-static:frontend static", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:native-postgresql:native PostgreSQL certification", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:browser-acceptance:browser acceptance", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]}
+      ]
+    },
+    {
+      "path": "scripts/pr_lifecycle_task_state.py",
+      "mode": "authoritative",
+      "targets": ["repo-pytest:ci/tests:lifecycle-control-plane"],
+      "guarantees": ["lifecycle-control-plane"],
+      "reason": "V1 R3 PR #182 exact proof-backed lifecycle migration",
+      "legacy_dispositions": [
+        {"key": "legacy-boundary:python-control-plane:repository control-plane", "kind": "mapped", "targets": ["repo-pytest:ci/tests:lifecycle-control-plane"]},
+        {"key": "legacy-boundary:python-control-plane:ordinary full suite", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:frontend-static:frontend static", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:native-postgresql:native PostgreSQL certification", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:browser-acceptance:browser acceptance", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]}
+      ]
+    },
+    {
+      "path": "scripts/pr_lifecycle_v3.py",
+      "mode": "authoritative",
+      "targets": ["repo-pytest:ci/tests:lifecycle-control-plane"],
+      "guarantees": ["lifecycle-control-plane"],
+      "reason": "V1 R3 PR #182 exact proof-backed lifecycle migration",
+      "legacy_dispositions": [
+        {"key": "legacy-boundary:python-control-plane:repository control-plane", "kind": "mapped", "targets": ["repo-pytest:ci/tests:lifecycle-control-plane"]},
+        {"key": "legacy-boundary:python-control-plane:ordinary full suite", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:frontend-static:frontend static", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:native-postgresql:native PostgreSQL certification", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]},
+        {"key": "legacy-boundary:browser-acceptance:browser acceptance", "kind": "retired", "reason": "incidental_broad_coverage", "replay_ids": ["32225216250-pr182-lifecycle-control-plane"]}
       ]
     },
     {

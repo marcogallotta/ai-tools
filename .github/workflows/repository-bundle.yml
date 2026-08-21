@@ -117,10 +117,10 @@ jobs:
           name: ${{ steps.bundle.outputs.artifact_name }}
           path: .ci/repository-bundle-publication
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
 
-  publish-release-retention:
-    name: Publish immutable Release and bound retention
+  publish-release:
+    name: Publish immutable Release authority
     if: github.ref == 'refs/heads/main'
     needs: build-verify-artifact
     permissions:
@@ -182,13 +182,24 @@ jobs:
               "$publication/$CHECKSUM_NAME"
           fi
 
-      - name: Bound repository-bundle Release retention
+  prune-old-releases:
+    name: Prune old repository-bundle Releases (maintenance)
+    if: github.ref == 'refs/heads/main'
+    needs: publish-release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Prune old Releases without touching current main
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          current_main_sha="$(gh api "/repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')"
+          protected_tag="repository-bundle-$current_main_sha"
           releases=.ci/repository-bundle-releases.tsv
+          mkdir -p .ci
           : > "$releases"
           page=1
           while :; do
@@ -204,16 +215,14 @@ jobs:
             fi
             page=$((page + 1))
           done
-          sort -r "$releases" \
-            | tail -n +13 \
-            | cut -f2- \
-            > .ci/repository-bundle-prune.txt
+          sort -r "$releases" | tail -n +13 | cut -f2- > .ci/repository-bundle-prune.txt
           while IFS= read -r tag; do
             test -n "$tag" || continue
-            gh release delete "$tag" \
-              --repo "$GITHUB_REPOSITORY" \
-              --cleanup-tag \
-              --yes
+            if [[ "$tag" == "$protected_tag" ]]; then
+              echo "Refusing to prune current-main Release: $tag" >&2
+              continue
+            fi
+            gh release delete "$tag" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes
           done < .ci/repository-bundle-prune.txt
 
   publish-final-status:
@@ -221,13 +230,13 @@ jobs:
     if: always()
     needs:
       - build-verify-artifact
-      - publish-release-retention
+      - publish-release
     permissions:
       statuses: write
     runs-on: ubuntu-24.04
     env:
       BUILD_RESULT: ${{ needs.build-verify-artifact.result }}
-      RELEASE_RESULT: ${{ needs.publish-release-retention.result }}
+      RELEASE_RESULT: ${{ needs.publish-release.result }}
     steps:
       - name: Publish final repository bundle status
         shell: bash

@@ -196,12 +196,15 @@ class GitHubBackend(Protocol):
     def get_pr(self, number: int) -> dict[str, Any]: ...
     def get_pr_files(self, number: int) -> list[dict[str, Any]]: ...
     def get_comments(self, number: int) -> list[dict[str, Any]]: ...
+    def get_repository_comments(self) -> list[dict[str, Any]]: ...
     def get_reviews(self, number: int) -> list[dict[str, Any]]: ...
     def get_combined_status(self, sha: str) -> dict[str, Any]: ...
     def get_workflow_runs(self) -> dict[str, Any]: ...
     def rerun_failed_workflow(self, run_id: int) -> None: ...
     def full_regression_runs(self) -> dict[str, Any]: ...
     def add_comment(self, number: int, body: str) -> dict[str, Any]: ...
+    def update_pr_body(self, number: int, body: str) -> dict[str, Any]: ...
+    def mark_ready_for_review(self, number: int) -> dict[str, Any]: ...
     def close_pr(self, number: int) -> dict[str, Any]: ...
     def get_branch(self, branch: str) -> dict[str, Any] | None: ...
     def is_ancestor(self, ancestor: str, descendant: str) -> bool: ...
@@ -405,6 +408,9 @@ class GitHubREST:
     def get_comments(self, number: int) -> list[dict[str, Any]]:
         return [dict(item) for item in self._get_paginated(f"issues/{number}/comments")]
 
+    def get_repository_comments(self) -> list[dict[str, Any]]:
+        return [dict(item) for item in self._get_paginated("issues/comments")]
+
     def get_reviews(self, number: int) -> list[dict[str, Any]]:
         return [dict(item) for item in self._get_paginated(f"pulls/{number}/reviews")]
 
@@ -447,6 +453,51 @@ class GitHubREST:
         if not isinstance(value, dict):
             raise LifecycleError("GitHub comment response was not an object")
         return value
+
+    def update_pr_body(self, number: int, body: str) -> dict[str, Any]:
+        _, _, value = self.http.request(
+            "PATCH", self._url(f"pulls/{number}"), headers=self.headers, body={"body": body}
+        )
+        if not isinstance(value, dict):
+            raise LifecycleError("GitHub pull request update response was not an object")
+        return value
+
+    def _graphql_url(self) -> str:
+        parsed = urlparse.urlparse(self.api_root)
+        if parsed.netloc == "api.github.com":
+            path = "/graphql"
+        elif parsed.path.rstrip("/").endswith("/api/v3"):
+            path = parsed.path.rstrip("/")[:-len("/api/v3")] + "/api/graphql"
+        else:
+            path = parsed.path.rstrip("/") + "/graphql"
+        return urlparse.urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
+
+    def mark_ready_for_review(self, number: int) -> dict[str, Any]:
+        current = self.get_pr(number)
+        if not bool(current.get("draft")):
+            return current
+        node_id = str(current.get("node_id") or "").strip()
+        if not node_id:
+            raise LifecycleError("GitHub PR readback lacks node_id required for ready-for-review mutation")
+        query = (
+            "mutation($pullRequestId:ID!){"
+            "markPullRequestReadyForReview(input:{pullRequestId:$pullRequestId})"
+            "{pullRequest{number isDraft headRefOid}}}"
+        )
+        _, _, value = self.http.request(
+            "POST",
+            self._graphql_url(),
+            headers=self.headers,
+            body={"query": query, "variables": {"pullRequestId": node_id}},
+        )
+        if not isinstance(value, dict) or value.get("errors"):
+            raise LifecycleError(f"GitHub ready-for-review mutation failed: {value!r}")
+        data = value.get("data")
+        marked = data.get("markPullRequestReadyForReview") if isinstance(data, dict) else None
+        pull = marked.get("pullRequest") if isinstance(marked, dict) else None
+        if not isinstance(pull, dict) or int(pull.get("number") or 0) != int(number):
+            raise LifecycleError("GitHub ready-for-review mutation returned the wrong PR identity")
+        return self.get_pr(number)
 
     def get_comment(self, comment_id: int) -> dict[str, Any]:
         _, _, value = self.http.request(

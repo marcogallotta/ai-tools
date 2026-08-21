@@ -286,12 +286,26 @@
           "impact": "additive",
           "surface": "safety",
           "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation."
+        },
+        {
+          "id": "review-v3-handoff-fidelity",
+          "impact": "additive",
+          "surface": "lifecycle",
+          "action_boundaries": [
+            "dispatch",
+            "handoff"
+          ],
+          "delivery": {
+            "mode": "DIRECT_ALWAYS_ON"
+          },
+          "text": "Before semantic Implementation dispatch from an accepted Review-V3 generation, require the canonical handoff to faithfully project exact generation, durable Marco intent, accepted scope, applicable invariants and material Review Focus; mismatch => zero dispatch until repaired."
         }
       ]
     },
     "development-workflow": {
       "allowed_compositions": [
-        "When explicitly assigned repository implementation, additionally load `implementation.md`; its lifecycle applies, with no self-review or Integration of the semantic change."
+        "When assigned repository implementation, load `implementation.md`; its lifecycle applies, no self-review or Integration.",
+        "Design Review: read-only."
       ],
       "context_dependencies": {
         "preload": {
@@ -348,9 +362,9 @@
             "mode": "DIRECT_ALWAYS_ON"
           },
           "id": "development-workflow-boundary",
-          "impact": "breaking",
+          "impact": "additive",
           "surface": "authority",
-          "text": "Own dev mechanics; sole engine `scripts/pr_lifecycle.py`; broker covers post-PR fix and V1-A landing is local. No semantic, Review, Integration, or production authority."
+          "text": "Own dev mechanics; sole engine `scripts/pr_lifecycle.py`; broker: post-PR fix, V1-A landing local. No Code Review/Integration/production; assigned, authorship-independent Design Review read-only."
         },
         {
           "action_boundaries": [
@@ -465,6 +479,19 @@
           "impact": "additive",
           "surface": "lifecycle",
           "text": "Re-anchor to the one-sentence operator outcome. A scheduler/queue/database/service/new authority/identity/control-plane or broader lifecycle needs Marco approval; missing approval blocks only that expansion. After two design loops, shrink scope or seek a decision; prove capability need first."
+        },
+        {
+          "id": "development-workflow-design-review",
+          "impact": "additive",
+          "surface": "authority",
+          "action_boundaries": [
+            "review-write"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "durable review-state classification"
+          },
+          "text": "Assigned exact-candidate Design Review is read-only and requires cumulative authorship independence; formal Code Review still routes to Review and self-review stays closed."
         }
       ]
     },
@@ -482,8 +509,9 @@
             "dish/docs/agents/contributor-base.md#Code-smell / engineering-debt logging"
           ],
           "post-PR fix routing": [
-            "dish/docs/agents/implementation.md#Review-head changes",
-            "dish/docs/agents/implementation.md#Branch and worktree ownership"
+            "dish/docs/agents/implementation.md#Branch and worktree ownership",
+            "dish/docs/agents/implementation.md#Manual Worker formal-BLOCK fix continuation",
+            "dish/docs/agents/implementation.md#Review-head changes"
           ],
           "publication / local completion / materializer": [
             "dish/docs/agents/implementation.md#Canonical PR workflow",
@@ -647,6 +675,33 @@
           "impact": "additive",
           "surface": "safety",
           "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation."
+        },
+        {
+          "id": "review-v3-handoff-consumption",
+          "impact": "additive",
+          "surface": "safety",
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "delivery": {
+            "mode": "DIRECT_ALWAYS_ON"
+          },
+          "text": "When a handoff names Review-V3 generation/intent/invariants/envelope/focus, treat them as projections to exact authority; material mismatch stops affected semantic authoring for projection repair, never silent redesign."
+        },
+        {
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "post-PR fix routing"
+          },
+          "id": "implementation-manual-worker-block-fix",
+          "impact": "additive",
+          "surface": "lifecycle",
+          "text": "Manual Worker BLOCK-fix: require live exact task/PR/branch/blocked-head/formal-BLOCK identity, fix only that scope on the same PR, publish/read back, then stop before self-review. No second Marco prompt or automated Worker bookkeeping is required; Integration stays separate."
         }
       ]
     },
@@ -889,9 +944,10 @@
           "phase-gate / Integration evidence": [
             "dish/docs/agents/review.md#Evidence and integration gates"
           ],
-          "review routing / independence / BLOCK recheck": [
+          "review routing / BLOCK": [
+            "dish/docs/agents/review.md#Blocker fixes and recheck",
             "dish/docs/agents/review.md#Review claims and dispatcher routing",
-            "dish/docs/agents/review.md#Blocker fixes and recheck"
+            "dish/docs/agents/review.md#Worker BLOCK"
           ]
         }
       },
@@ -937,6 +993,20 @@
         },
         {
           "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "review routing / BLOCK"
+          },
+          "id": "review-post-block-correction",
+          "impact": "additive",
+          "surface": "authority",
+          "text": "After verified BLOCK, manual Review/correction exits Review, reroutes by current task shape to its authorized role, safely corrects, then stops for fresh Review; no Marco relay/automation."
+        },
+        {
+          "action_boundaries": [
             "review-write"
           ],
           "delivery": {
@@ -958,7 +1028,7 @@
           "id": "review-bundle-fallback",
           "impact": "additive",
           "surface": "routing",
-          "text": "ChatGPT PR Review treats the repository bundle as a preferred context cache, not an availability gate. If unavailable, proceed from live connector-native evidence: repository/current main, exact PR base/head and complete diff, relevant current authority/files, linked task/decisions, prior Review/comments, and available CI/evidence. Never block, route local, or ask Marco solely for bundle transport. Reject any used stale, mismatched, corrupt, or wrong-SHA bundle; fail closed only on a named unresolved semantic, tool, or environment evidence boundary."
+          "text": "Without a bundle use live exact connector evidence. Review never blocks on bundle transport alone, routes local, or asks Marco solely for it. Reject stale/mismatched/corrupt bundles; fail only a named semantic/tool/environment gap."
         },
         {
           "action_boundaries": [
@@ -1020,7 +1090,7 @@
           ],
           "delivery": {
             "mode": "TRIGGERED_READ",
-            "trigger": "review routing / independence / BLOCK recheck"
+            "trigger": "review routing / BLOCK"
           },
           "id": "review-host-aware-independence-routing",
           "impact": "additive",
@@ -1052,6 +1122,84 @@
           "impact": "additive",
           "surface": "safety",
           "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation."
+        },
+        {
+          "id": "review-v3-semantic-grounding",
+          "impact": "additive",
+          "surface": "safety",
+          "action_boundaries": [
+            "review-write"
+          ],
+          "delivery": {
+            "mode": "DIRECT_ALWAYS_ON"
+          },
+          "text": "Semantic Review reads live task, generation, handoff and architecture; resolve material understanding gaps before verdict. Judge spec, handoff and implementation conformance/correctness separately; signed intent/quantifiers/invariants outrank summaries/successors."
+        },
+        {
+          "id": "review-v3-adversarial-quality",
+          "impact": "additive",
+          "surface": "evidence",
+          "action_boundaries": [
+            "review-write"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "review routing / BLOCK"
+          },
+          "text": "Challenge BEFORE/AFTER operator workflow, proportionality, false readiness, process defects, compatibility/fallout, applicable learned risks/focus, then an open-ended pass; no perfection/global-checklist/control-plane gate."
+        },
+        {
+          "id": "review-v3-headline-intent",
+          "impact": "additive",
+          "surface": "authority",
+          "action_boundaries": [
+            "review-write"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "review routing / BLOCK"
+          },
+          "text": "One durable Marco Intent Baseline governs; `Has Headline` is projection only. Approved headline requires recoverable exact words + explicit Marco approval; wording change requires reapproval and conflicts reconcile to durable human evidence."
+        },
+        {
+          "id": "review-v3-design-projection",
+          "impact": "additive",
+          "surface": "lifecycle",
+          "action_boundaries": [
+            "review-write"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "review routing / BLOCK"
+          },
+          "text": "Design verdict binds exact generation; before/after section writes reread Review V2 lineage and converge the task to the current generation. A stale verdict stays historical and never wins current section state; no invented CAS/lock/second lineage."
+        },
+        {
+          "id": "review-design-generation",
+          "impact": "additive",
+          "surface": "safety",
+          "action_boundaries": [
+            "review-write"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "review routing / BLOCK"
+          },
+          "text": "Design Review binds exact frozen generation/digest, durable intent baseline, protected invariants, expected solution envelope, candidate Review Focus, and independence. Candidate movement invalidates verdict; stale verdict never advances a successor."
+        },
+        {
+          "action_boundaries": [
+            "review-write",
+            "handoff"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "review routing / BLOCK"
+          },
+          "id": "review-manual-worker-block-transition",
+          "impact": "additive",
+          "surface": "lifecycle",
+          "text": "Code BLOCK follows this via Implementation: bind exact task/PR/branch/head/BLOCK, fix only that PR, publish/read back, stop before self-review. Missing automated provenance is no gate."
         }
       ]
     },
@@ -1405,5 +1553,13 @@
       "surface": "safety",
       "text": "`1217419962189616` writes: freshly read/apply `dish/docs/agents/development-workflow-asana-mode.md`; stale sessions restart/override; v3/unknown/mixed = zero."
     }
-  ]
+  ],
+  "profiles": {
+    "worker": {
+      "body": "Worker is one manual ChatGPT Project/profile, not a ninth semantic role. Exactly one semantic mode is active at a time: **Implementation**, **Code Review**, **Design Review**, or **Audit**. The selected mode loads and obeys the current standing contract for that role; Worker never composes simultaneous role authority.\n\nManual entry is self-sufficient. For code work, `Review PR #N` is enough to begin discovery: resolve current GitHub `main`, the owning task, PR, branch, exact head, prior formal Reviews, and current standing authority. The ordinary manual route does **not** require Workspace-Agent launch, `dispatch_worker_durable`, `dish-worker-attempt:v1`, `dish-worker-authorship:v1`, attempt IDs, generations, provider-session proof, or provenance archaeology merely to Review or perform the deterministic BLOCK→fix continuation.\n\nAlways-on boundaries:\n- Exact candidate identity is mandatory. Code candidate = repository + owning task + PR + branch + exact head. Design candidate = exact task/revision/snapshot identity. Any material movement invalidates prior Review identity.\n- Integration/merge/deploy/cutover are outside Worker. Worker never lands its own result and never chooses the next task.\n- Source mutation never occurs while Code Review is active. Review publishes its formal exact-head verdict first.\n- If Code Review returns `VERDICT: MERGE`, publish/verify that exact-head Review and stop.\n- If Code Review returns `VERDICT: BLOCK`, the Review phase ends. Without another Marco prompt, the **same Worker MUST explicitly switch to Implementation**, freshly load `implementation.md`, re-read the live owning task/PR/branch/current head and the exact formal BLOCK review, and require the fix round to still match that blocked head + review ID. Stale/moved identity means zero semantic mutation and current-state reclassification.\n- Under that Implementation mode, fix only the accepted blockers/task scope on the **same PR lineage**, run the required Implementation evidence, publish and authoritatively read back the corrected head, then stop. Do not broaden into unrelated cleanup.\n- The Worker that materially authored the corrected head may not independently Review that head while it remembers or can recover that authorship. A fresh Worker performs the next Review. Genuine later compaction/forgetting follows Marco's pragmatic manual rule: missing forgotten manual provenance is not itself a blocker, and no durable chat-taint/provenance machinery is invented solely to reconstruct it.\n- Positive remembered/recoverable self-authorship blocks Review. Automated attempt/authorship records, when present for an actually automated route, remain useful evidence for that automated route only; their absence never gates the ordinary manual Project-chat path.\n- Formal Review, role switch, publication, Review of the successor, and Integration remain separate facts. No queue pickup, automatic reviewer spawning, automatic next-task progression, scheduler, database, identity service, or new control plane is created.\n\nMode map:\n- **Implementation** → `dish/docs/agents/implementation.md`; mutate only the explicitly authorized task/branch/PR lineage; publish/read back; never self-Review or Integrate.\n- **Code Review** → `dish/docs/agents/review.md`; read-only until a formal verdict is durably submitted. Formal BLOCK triggers the deterministic same-Worker switch above; MERGE stops.\n- **Design Review** → current Review authority and the canonical exact-candidate Design Review procedure. Bind task + revision/generation + SHA-256 of exact canonical task notes/design snapshot; immediately before publishing `VERDICT: PASS` or `VERDICT: BLOCK`, reread the canonical task. On movement/supersession publish no verdict for the new candidate. Chat-only verdict does not count. Do not author the candidate being independently reviewed.\n- **Audit** → `dish/docs/agents/audit.md`; read-only except its explicitly permitted bounded disposition.\n\nFor governed Asana writes, freshly apply the exact project-mode contract and verify readback. Tools never create authority. Current Git/Asana authority outranks stale chat state. Keep Marco attention for real design/risk/approval boundaries, not routine mechanics already inside the accepted Worker operation.",
+      "max_chars": 8000,
+      "profile_id": "manual-worker-r5-g2",
+      "project_name": "Dish — Worker"
+    }
+  }
 }

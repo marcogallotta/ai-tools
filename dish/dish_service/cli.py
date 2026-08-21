@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import shlex
 import sys
@@ -41,6 +42,9 @@ from dish_service.command_spec import (
 from dish_service.database_ownership import ServiceDatabaseOwnership, database_process_lock_path
 from dish_service.process_lock import DatabaseProcessLock
 from dish_tool.results import error_envelope, exit_status
+
+
+LOG = logging.getLogger("dish.cli")
 
 
 class JsonArgumentParser(argparse.ArgumentParser):
@@ -556,11 +560,18 @@ def main(
         result = error_envelope(context["command"] or "unknown", exc)
         print(json.dumps(result, sort_keys=True, separators=(",", ":")))
         return exit_status(result["code"])
-    except Exception:
+    except Exception as unexpected:
+        LOG.error(
+            "dish_startup_failure command=%s error_type=%s",
+            context["command"] or "unknown",
+            type(unexpected).__name__,
+            exc_info=(type(unexpected), unexpected, unexpected.__traceback__),
+        )
         error = DishRuleError(
             "INTERNAL_ERROR",
             "dish failed during startup",
             rule="startup_failure",
+            details={"error_type": type(unexpected).__name__},
         )
         result = error_envelope(context["command"] or "unknown", error)
         print(json.dumps(result, sort_keys=True, separators=(",", ":")))

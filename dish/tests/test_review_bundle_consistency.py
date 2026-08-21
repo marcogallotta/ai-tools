@@ -14,7 +14,7 @@ def test_rendered_review_bundle_instructions_are_noncontradictory():
     assert 'Review blocks only on a named semantic/tool/environment evidence gap' in admission['text']
     assert 'Missing/unverifiable/stale context blocks only the affected substantial conclusion.' not in admission['text']
     assert admission['text'] in rendered and fallback['text'] in rendered
-    assert 'Never block, route local, or ask Marco solely for bundle transport.' in fallback['text']
+    assert 'never blocks on bundle transport alone' in fallback['text']
 def test_root_bootstrap_has_the_same_review_carveout_and_invalid_bundle_fence():
     root=(REPO_ROOT/'CLAUDE.md').read_text()
     assert '**outside ordinary ChatGPT PR Review**' in root

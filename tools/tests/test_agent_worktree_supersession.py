@@ -25,7 +25,7 @@ def prepare_lineages(
 ) -> tuple[str, str, str]:
     base = h.current_remote_main()
     h.agent_file("old-agent")
-    h.agent_file("new-agent")
+    h.agent_file("new-agent", owning_task_gid=task)
     h.start(task=task, branch=old_branch, base=base, agent="old-agent")
     old_head = h.commit_local(task, "old published implementation")
     h.tool("publish", "--task", task)
@@ -136,7 +136,7 @@ def test_ordinary_cross_lineage_claim_still_fails_without_explicit_supersession(
         h, task=task, old_branch=old_branch, replacement_branch="agent/new-lineage"
     )
     del base, old_head, replacement_head
-    claim_files = list((h.home / ".local/state/dish/worktrees/claims").glob(f"*/{task}.json"))
+    claim_files = list((h.home / ".local/state/dish/worktrees/claims").glob(f"*/{task}*.json"))
     prior = json.loads(claim_files[0].read_text(encoding="utf-8"))
     result = h.raw_tool(
         "claim",
@@ -215,7 +215,7 @@ def test_live_claim_conflict_refuses_supersession(h: Harness) -> None:
     deadline = time.monotonic() + 5
     claim_file = None
     while time.monotonic() < deadline:
-        matches = list((h.home / ".local/state/dish/worktrees/claims").glob(f"*/{task}.json"))
+        matches = list((h.home / ".local/state/dish/worktrees/claims").glob(f"*/{task}*.json"))
         if matches:
             current = json.loads(matches[0].read_text(encoding="utf-8"))
             if current.get("released_at") is None:

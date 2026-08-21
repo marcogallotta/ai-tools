@@ -28,6 +28,8 @@ def effect_spec_for(
     preconstruction_hold: bool = False,
     semantic_proposal_queued: bool = False,
     non_material_checkin: bool = False,
+    planning_handoff: bool = False,
+    placement_changed: bool = True,
 ) -> CommandEffectSpec:
     args = dict(arguments)
     if command_name == "create":
@@ -51,6 +53,21 @@ def effect_spec_for(
     if command_name == "inspect":
         return CommandEffectSpec(("record_inspection_occurrence", "advance_operation"))
     if command_name in {"prepare", "migrate"}:
+        if command_name == "prepare" and planning_handoff:
+            mutations = [
+                "activate_content_version",
+            ]
+            if placement_changed:
+                mutations.append("place_research_queue")
+            mutations.extend(("append_operation_step", "advance_operation"))
+            projections = ["update_task_document"]
+            if placement_changed:
+                projections.append("move_task")
+            return CommandEffectSpec(
+                tuple(mutations),
+                tuple(projections),
+                verify_mutation_effects=True,
+            )
         if command_name == "prepare" and non_material_checkin:
             return CommandEffectSpec(
                 (

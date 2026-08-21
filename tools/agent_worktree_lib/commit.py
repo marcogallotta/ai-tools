@@ -20,9 +20,9 @@ from .state import TaskLock, atomic_write_json, load_task_state, state_path
 CARPET_PATHS = {".", "-A", "-u", "--all"}
 
 
-def _claimed_state(task_gid: str) -> dict[str, Any]:
+def _claimed_state(task_gid: str, runner: GitRunner) -> dict[str, Any]:
     state = load_task_state(task_gid)
-    claimed_agent = require_active_claim(task_gid, str(state["branch"]), owner_agent_id(state))["agent_id"]
+    claimed_agent = require_active_claim(task_gid, str(state["branch"]), owner_agent_id(state), runner)["agent_id"]
     if owner_agent_id(state) is None:
         fail(
             "OWNER_MISMATCH",
@@ -213,9 +213,9 @@ def _check_dish_version_guard(runner: GitRunner, worktree: Path) -> None:
 
 def command_commit(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]:
     task_gid = require_task_gid(args.task)
-    _claimed_state(task_gid)
+    _claimed_state(task_gid, runner)
     with TaskLock(task_gid):
-        state = _claimed_state(task_gid)
+        state = _claimed_state(task_gid, runner)
         repo = resolve_repository_from_state(runner, state)
         identity = verify_owned_worktree(runner, repo, state)
         if identity.path == repo.primary_top or identity.git_dir == identity.common_dir:
