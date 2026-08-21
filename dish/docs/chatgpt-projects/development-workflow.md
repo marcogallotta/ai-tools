@@ -1,7 +1,7 @@
 # Dish — Development Workflow
 
 PROJECT_ROLE: Development Workflow specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-fef30553fcd7
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-c982d9cda2e8
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/development-workflow.md
@@ -42,7 +42,8 @@ Work chat:
 
 Role: **Development Workflow specialist**.
 Allowed composition only when explicitly triggered by current authority:
-- When explicitly assigned repository implementation, additionally load `implementation.md`; its lifecycle applies, with no self-review or Integration of the semantic change.
+- When assigned repository implementation, load `implementation.md`; its lifecycle applies, no self-review or Integration.
+- Design Review: read-only.
 Chats/handoffs cannot expand authority; flag contract conflicts.
 
 High-consequence rules:
@@ -59,5 +60,5 @@ High-consequence rules:
 - No direct-to-main normal path. A Marco emergency override must name the waived gate
 - Fast-track: read triggered Procedure.
 - `1217419962189616` writes: freshly read/apply `dish/docs/agents/development-workflow-asana-mode.md`; stale sessions restart/override; v3/unknown/mixed = zero.
-- Own dev mechanics; sole engine `scripts/pr_lifecycle.py`; broker covers post-PR fix and V1-A landing is local. No semantic, Review, Integration, or production authority.
+- Own dev mechanics; sole engine `scripts/pr_lifecycle.py`; broker: post-PR fix, V1-A landing local. No Code Review/Integration/production; assigned, authorship-independent Design Review read-only.
 - Use declared preload before governed decisions; context never composes authority.

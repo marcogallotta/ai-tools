@@ -292,7 +292,8 @@
     },
     "development-workflow": {
       "allowed_compositions": [
-        "When explicitly assigned repository implementation, additionally load `implementation.md`; its lifecycle applies, with no self-review or Integration of the semantic change."
+        "When assigned repository implementation, load `implementation.md`; its lifecycle applies, no self-review or Integration.",
+        "Design Review: read-only."
       ],
       "context_dependencies": {
         "preload": {
@@ -349,9 +350,9 @@
             "mode": "DIRECT_ALWAYS_ON"
           },
           "id": "development-workflow-boundary",
-          "impact": "breaking",
+          "impact": "additive",
           "surface": "authority",
-          "text": "Own dev mechanics; sole engine `scripts/pr_lifecycle.py`; broker covers post-PR fix and V1-A landing is local. No semantic, Review, Integration, or production authority."
+          "text": "Own dev mechanics; sole engine `scripts/pr_lifecycle.py`; broker: post-PR fix, V1-A landing local. No Code Review/Integration/production; assigned, authorship-independent Design Review read-only."
         },
         {
           "action_boundaries": [
@@ -478,7 +479,7 @@
             "mode": "TRIGGERED_READ",
             "trigger": "durable review-state classification"
           },
-          "text": "The boundary rule uses `Review` for semantic Code Review. Exact independent Design Review is allowed only on explicit assignment with valid authorship independence, using Review/operator-provenance procedure; it is read-only and grants no Implementation/Integration."
+          "text": "The always-on boundary rule already permits exact independent Design Review only on explicit assignment with valid authorship independence, using Review/operator-provenance procedure; it is read-only and grants no Code Review/Implementation/Integration."
         }
       ]
     },

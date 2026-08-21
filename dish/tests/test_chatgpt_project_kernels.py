@@ -200,8 +200,22 @@ def test_development_workflow_context_preload_is_role_index_driven_and_read_only
  assert 'role-index standing contracts' in text
  assert '`dish/docs/agents/contributor-base.md`' in text
  assert 'Read-only; grants no role/mutation/Review/Integration/merge/production authority' in text
- comps=s['roles']['development-workflow']['allowed_compositions']; assert len(comps)==1 and 'implementation.md' in comps[0]
+ comps=s['roles']['development-workflow']['allowed_compositions']; assert len(comps)==2 and 'implementation.md' in comps[0]
  assert 'review.md' not in comps[0] and 'integration.md' not in comps[0]
+ assert 'Design Review' in comps[1]
+
+
+def test_development_workflow_boundary_distinguishes_design_review_from_code_review():
+ m,s=kernels.load_canonical()
+ boundary={r['id']:r for r in s['roles']['development-workflow']['rules']}['development-workflow-boundary']
+ assert boundary['delivery']['mode']=='DIRECT_ALWAYS_ON'
+ old_blanket='No semantic, Review, Integration, or production authority.'
+ assert old_blanket not in boundary['text']
+ assert 'No Code Review' in boundary['text'] and 'Design Review' in boundary['text']
+ text=kernels.render_role(m,s,'development-workflow')
+ assert old_blanket not in text
+ assert boundary['text'] in text
+ assert 'Design Review' in ' '.join(s['roles']['development-workflow']['allowed_compositions'])
 
 
 def test_development_workflow_re_grounding_and_action_context_match_standing_contract():
