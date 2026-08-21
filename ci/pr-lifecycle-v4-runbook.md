@@ -26,7 +26,7 @@ The host runner supplies credentials without printing them and sets these bounde
 ```sh
 export DISH_LIFECYCLE_V4_REPO=/home/marco/ai-tools
 export DISH_LIFECYCLE_V4_STATE_DIR=/home/marco/.local/state/dish/pr-lifecycle-v4
-export DISH_LIFECYCLE_V4_STATE_PATH="$DISH_LIFECYCLE_V4_STATE_DIR/state-commissioned.json"
+export DISH_LIFECYCLE_V4_STATE_PATH="$DISH_LIFECYCLE_V4_STATE_DIR/state.json"
 export DISH_LIFECYCLE_V4_PROJECTION=/home/marco/.local/state/dish/pr-lifecycle/lifecycle.json
 export DISH_LIFECYCLE_V4_PYTHON=/home/marco/ai-tools/dish/.venv/bin/python
 export DISH_LIFECYCLE_V4_CODEX=/home/marco/.codex/packages/standalone/current/codex
