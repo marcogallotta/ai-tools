@@ -147,6 +147,7 @@ class Runtime:
             active_owners=frozenset({"Integrator"}) if wake_enabled else frozenset(),
         )
         self.pending = threading.Event()
+        self.force_pending = threading.Event()
         self.stop = threading.Event()
         self.reconcile_lock = threading.Lock()
         self.metrics_lock = threading.Lock()
@@ -217,10 +218,14 @@ class Runtime:
             if not self.pending.is_set():
                 continue
             self.pending.clear()
+            force = self.force_pending.is_set()
+            self.force_pending.clear()
             try:
-                self.reconcile()
+                self.reconcile(force=force)
             except Exception as exc:
                 log("reconcile_failed", error_type=type(exc).__name__, error=str(exc))
+                if force:
+                    self.force_pending.set()
                 self.pending.set()
                 self.stop.wait(30)
 
@@ -351,6 +356,7 @@ def main() -> int:
             runtime.reconcile(force=True)
         except Exception as exc:
             log("startup_reconcile_failed", error_type=type(exc).__name__, error=str(exc))
+            runtime.force_pending.set()
             runtime.pending.set()
 
     threading.Thread(
