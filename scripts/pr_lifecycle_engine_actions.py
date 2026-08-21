@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pr_lifecycle_support import *
+from pr_lifecycle_handoff_repair import (AUTO_REPAIR, ROUTE_TO_OWNER, classify_handoff_repair, repaired_body, repair_comment, repair_comment_present)
 from pr_lifecycle_helpers import *
 from pr_lifecycle_helpers import _handoff_key, _notice_key, _notice_present, _pr_number
 from pr_lifecycle_operator import action_first_status
@@ -282,6 +283,36 @@ class LifecycleActionsMixin:
         current.human_action = None
         return current
 
+    def _repair_malformed_handoff(self, pr: PRLifecycle) -> PRLifecycle | None:
+        raw = self.github.get_pr(pr.number)
+        if pr_gate.pr_head_sha(raw) != pr.head:
+            return self.inspect(raw)
+        repair = classify_handoff_repair(raw)
+        if repair is None:
+            return None
+        if repair.repair_disposition == AUTO_REPAIR and repair.task_gid is not None:
+            updater = getattr(self.github, "update_pr_body", None)
+            if not callable(updater):
+                pr.residual_reason = "handoff repair transport unavailable; owner: producer/finalizer"
+                pr.human_action = None
+                return pr
+            updater(pr.number, repaired_body(raw, repair.task_gid))
+            reread_raw = self.github.get_pr(pr.number)
+            if pr_gate.pr_head_sha(reread_raw) != pr.head:
+                return self.inspect(reread_raw)
+            if classify_handoff_repair(reread_raw) is not None:
+                raise LifecycleError("mechanical handoff repair did not survive authoritative readback")
+            comments = self.github.get_comments(pr.number)
+            if not repair_comment_present(comments, head=pr.head, repair=repair):
+                self.github.add_comment(pr.number, repair_comment(pr.head, repair, readback_status="VERIFIED"))
+            return self.inspect(reread_raw)
+        comments = self.github.get_comments(pr.number)
+        if not repair_comment_present(comments, head=pr.head, repair=repair):
+            self.github.add_comment(pr.number, repair_comment(pr.head, repair, readback_status="PENDING_OWNER_REPAIR"))
+        pr.residual_reason = f"handoff repair routed to {repair.repair_owner}: {repair.defect}"
+        pr.human_action = None
+        return pr
+
     def dispatch_one(
         self,
         pr: PRLifecycle,
@@ -294,6 +325,9 @@ class LifecycleActionsMixin:
     ) -> PRLifecycle:
         notify = notify or (lambda _: None)
         current = self.inspect(self.github.get_pr(pr.number))
+        repaired = self._repair_malformed_handoff(current)
+        if repaired is not None:
+            return repaired
         # Replay missed post-merge Asana writeback before terminal cleanup.  Merge is
         # durable GitHub truth; controller restarts must converge even if the original
         # local Integration process died before writeback.
