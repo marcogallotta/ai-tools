@@ -1,5 +1,5 @@
 {
-  "canonical_version": "dish-chatgpt-projects-v2-c982d9cda2e8",
+  "canonical_version": "dish-chatgpt-projects-v2-3fe9827c4adc",
   "change_history": [
     {
       "changes": [
@@ -4836,6 +4836,18 @@
         },
         {
           "action_boundaries": [
+            "review-write",
+            "handoff"
+          ],
+          "impact": "additive",
+          "roles": [
+            "review"
+          ],
+          "rule_id": "review-bundle-fallback",
+          "surface": "routing"
+        },
+        {
+          "action_boundaries": [
             "review-write"
           ],
           "impact": "additive",
@@ -4843,6 +4855,74 @@
             "review"
           ],
           "rule_id": "review-design-generation",
+          "surface": "safety"
+        },
+        {
+          "action_boundaries": [
+            "review-write"
+          ],
+          "impact": "additive",
+          "roles": [
+            "review"
+          ],
+          "rule_id": "review-v3-adversarial-quality",
+          "surface": "evidence"
+        },
+        {
+          "action_boundaries": [
+            "review-write"
+          ],
+          "impact": "additive",
+          "roles": [
+            "review"
+          ],
+          "rule_id": "review-v3-design-projection",
+          "surface": "lifecycle"
+        },
+        {
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "impact": "additive",
+          "roles": [
+            "implementation"
+          ],
+          "rule_id": "review-v3-handoff-consumption",
+          "surface": "safety"
+        },
+        {
+          "action_boundaries": [
+            "dispatch",
+            "handoff"
+          ],
+          "impact": "additive",
+          "roles": [
+            "coordinator"
+          ],
+          "rule_id": "review-v3-handoff-fidelity",
+          "surface": "lifecycle"
+        },
+        {
+          "action_boundaries": [
+            "review-write"
+          ],
+          "impact": "additive",
+          "roles": [
+            "review"
+          ],
+          "rule_id": "review-v3-headline-intent",
+          "surface": "authority"
+        },
+        {
+          "action_boundaries": [
+            "review-write"
+          ],
+          "impact": "additive",
+          "roles": [
+            "review"
+          ],
+          "rule_id": "review-v3-semantic-grounding",
           "surface": "safety"
         }
       ],
@@ -4954,7 +5034,7 @@
         }
       },
       "from_version": "dish-chatgpt-projects-v2-7924b7da9fc0",
-      "to_version": "dish-chatgpt-projects-v2-c982d9cda2e8"
+      "to_version": "dish-chatgpt-projects-v2-3fe9827c4adc"
     }
   ],
   "current_transition_from": "dish-chatgpt-projects-v2-7924b7da9fc0",
@@ -4968,8 +5048,8 @@
     "review": "review.md",
     "workflow": "workflow.md"
   },
-  "generated_sha256": "86a0ee261ed1fe83a291b43c74f1123425f5644709ba4f31d041926fbf4efb6a",
-  "kernel_identity_sha256": "c982d9cda2e8f3d8d69867b119c4cbbc72d6e263faa296779e2068412b51e0a6",
+  "generated_sha256": "f01426d203102fb5cbdbd3bcb1cc96a592275bb5b063fa4e173877083135b779",
+  "kernel_identity_sha256": "3fe9827c4adc26f92fb6d3a7c06e3aa3c5956d970ba7697953e2fa334b7b1093",
   "legacy_bootstrap_floor": {
     "action_boundaries": [
       "*"
@@ -5039,6 +5119,7 @@
       "dish-chatgpt-projects-v2-28dcb04decc8",
       "dish-chatgpt-projects-v2-33e1d8d28254",
       "dish-chatgpt-projects-v2-39ff3abc502e",
+      "dish-chatgpt-projects-v2-3fe9827c4adc",
       "dish-chatgpt-projects-v2-443e13732e7f",
       "dish-chatgpt-projects-v2-54041bbbc8d8",
       "dish-chatgpt-projects-v2-5d24af30193a",
@@ -5055,7 +5136,6 @@
       "dish-chatgpt-projects-v2-9bf227f53f0a",
       "dish-chatgpt-projects-v2-bfaeef68aed9",
       "dish-chatgpt-projects-v2-c864c29a420d",
-      "dish-chatgpt-projects-v2-c982d9cda2e8",
       "dish-chatgpt-projects-v2-d048682742d6",
       "dish-chatgpt-projects-v2-d3a070d57fb2",
       "dish-chatgpt-projects-v2-d96ab5f0588d",
@@ -5064,6 +5144,6 @@
   },
   "schema_version": 2,
   "source_file": "source.json",
-  "source_sha256": "93b351fb5548852baeeaf5454c2cf1a0ddc09984e97cf45d8303302b444cdd11",
+  "source_sha256": "ad0f47393039ad46026bf49aa999996a19091c7f42d2e96469e77f951263cfd8",
   "version_namespace": "dish-chatgpt-projects-v2"
 }

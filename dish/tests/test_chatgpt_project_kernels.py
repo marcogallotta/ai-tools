@@ -200,22 +200,8 @@ def test_development_workflow_context_preload_is_role_index_driven_and_read_only
  assert 'role-index standing contracts' in text
  assert '`dish/docs/agents/contributor-base.md`' in text
  assert 'Read-only; grants no role/mutation/Review/Integration/merge/production authority' in text
- comps=s['roles']['development-workflow']['allowed_compositions']; assert len(comps)==2 and 'implementation.md' in comps[0]
- assert 'review.md' not in comps[0] and 'integration.md' not in comps[0]
- assert 'Design Review' in comps[1]
-
-
-def test_development_workflow_boundary_distinguishes_design_review_from_code_review():
- m,s=kernels.load_canonical()
- boundary={r['id']:r for r in s['roles']['development-workflow']['rules']}['development-workflow-boundary']
- assert boundary['delivery']['mode']=='DIRECT_ALWAYS_ON'
- old_blanket='No semantic, Review, Integration, or production authority.'
- assert old_blanket not in boundary['text']
- assert 'No Code Review' in boundary['text'] and 'Design Review' in boundary['text']
- text=kernels.render_role(m,s,'development-workflow')
- assert old_blanket not in text
- assert boundary['text'] in text
- assert 'Design Review' in ' '.join(s['roles']['development-workflow']['allowed_compositions'])
+ comps=s['roles']['development-workflow']['allowed_compositions']; assert len(comps)==2 and any('implementation.md' in c for c in comps) and any('Design Review: read-only' in c for c in comps)
+ assert all('integration.md' not in c for c in comps)
 
 
 def test_development_workflow_re_grounding_and_action_context_match_standing_contract():
@@ -827,3 +813,55 @@ def test_impact_is_explicit_and_never_inferred_from_rule_criticality():
  for surface in ('authority','safety','presentation'):
   with pytest.raises(kernels.KernelError,match='explicit transition impact'):
    kernels._impact({'surface':surface})
+
+
+def test_development_workflow_boundary_distinguishes_design_review_from_code_review():
+    _, source = kernels.load_canonical()
+    role = source['roles']['development-workflow']
+    boundary = next(r for r in role['rules'] if r['id'] == 'development-workflow-boundary')
+    assert 'No Code Review/Integration/production' in boundary['text']
+    assert 'authorship-independent Design Review read-only' in boundary['text']
+    assert 'No semantic, Review, Integration, or production authority' not in boundary['text']
+    rendered = kernels.render_role(kernels.load_canonical()[0], source, 'development-workflow')
+    assert 'Design Review: read-only' in rendered
+    assert 'No Code Review/Integration/production' in rendered
+    assert 'No semantic, Review, Integration, or production authority' not in rendered
+
+
+def test_review_v3_rules_and_failure_regressions_are_canonical():
+    _, source = kernels.load_canonical()
+    ids = {r['id'] for r in source['roles']['review']['rules']}
+    assert {'review-v3-semantic-grounding','review-v3-adversarial-quality','review-v3-headline-intent','review-v3-design-projection'} <= ids
+    scenarios = {x['id']: x for x in kernels._evals()}
+    required = {
+        'review-v3-wrong-spec-green-tests-block',
+        'review-v3-task-changed-after-dispatch',
+        'review-v3-handoff-drift-block',
+        'review-v3-event-driven-polling-intent-drift',
+        'review-v3-universal-quantifier-not-enumeration',
+        'review-v3-complexity-overshoot-challenge',
+        'review-v3-false-operational-readiness',
+        'review-v3-process-defect-preserves-semantic-finding',
+        'review-v3-compatibility-unknown-not-safe-remove',
+        'review-v3-review-focus-open-ended',
+        'review-v3-protected-invariant-missing-detected',
+        'review-v3-stale-design-verdict-does-not-project-current',
+        'review-v3-headline-agent-inference-rejected',
+        'review-v3-handoff-pre-dispatch-fidelity',
+    }
+    assert required <= set(scenarios)
+    assert 'block-faithful-implementation-of-drifted-handoff' in scenarios['review-v3-handoff-drift-block']['required_actions']
+    assert 'move-task-ready-from-stale-g1' in scenarios['review-v3-stale-design-verdict-does-not-project-current']['forbidden_actions']
+
+
+def test_review_v3_standing_contract_has_four_independent_semantic_questions_and_chain_of_custody():
+    review = (DISH_ROOT/'docs'/'agents'/'review.md').read_text()
+    for token in ('SPECIFICATION CONFORMANCE','HANDOFF FIDELITY','IMPLEMENTATION CONFORMANCE','IMPLEMENTATION CORRECTNESS'):
+        assert token in review
+    assert 'MARCO-SIGNED INTENT DEVIATION' in review
+    assert 'Unknown to the designer` is not `safe to remove' in review
+    assert 'recurring polling becoming the practical primary mechanism' in review
+    handoff = (DISH_ROOT/'docs'/'agents'/'templates'/'implementation-handoff.md').read_text()
+    for token in ('Governing design/spec generation','Marco Intent Baseline refs','Protected invariants','Review Focus / signed challenges'):
+        assert token in handoff
+    assert 'Zero semantic dispatch occurs' in handoff

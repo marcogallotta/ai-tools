@@ -287,6 +287,19 @@
           "impact": "additive",
           "surface": "safety",
           "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation."
+        },
+        {
+          "id": "review-v3-handoff-fidelity",
+          "impact": "additive",
+          "surface": "lifecycle",
+          "action_boundaries": [
+            "dispatch",
+            "handoff"
+          ],
+          "delivery": {
+            "mode": "DIRECT_ALWAYS_ON"
+          },
+          "text": "Before semantic Implementation dispatch from an accepted Review-V3 generation, require the canonical handoff to faithfully project exact generation, durable Marco intent, accepted scope, applicable invariants and material Review Focus; mismatch => zero dispatch until repaired."
         }
       ]
     },
@@ -479,7 +492,7 @@
             "mode": "TRIGGERED_READ",
             "trigger": "durable review-state classification"
           },
-          "text": "The always-on boundary rule already permits exact independent Design Review only on explicit assignment with valid authorship independence, using Review/operator-provenance procedure; it is read-only and grants no Code Review/Implementation/Integration."
+          "text": "Assigned exact-candidate Design Review is read-only and requires cumulative authorship independence; formal Code Review still routes to Review and self-review stays closed."
         }
       ]
     },
@@ -662,6 +675,19 @@
           "impact": "additive",
           "surface": "safety",
           "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation."
+        },
+        {
+          "id": "review-v3-handoff-consumption",
+          "impact": "additive",
+          "surface": "safety",
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "delivery": {
+            "mode": "DIRECT_ALWAYS_ON"
+          },
+          "text": "When a handoff names Review-V3 generation/intent/invariants/envelope/focus, treat them as projections to exact authority; material mismatch stops affected semantic authoring for projection repair, never silent redesign."
         }
       ]
     },
@@ -973,7 +999,7 @@
           "id": "review-bundle-fallback",
           "impact": "additive",
           "surface": "routing",
-          "text": "ChatGPT PR Review treats the repository bundle as a preferred context cache, not an availability gate. If unavailable, proceed from live connector-native evidence: repository/current main, exact PR base/head and complete diff, relevant current authority/files, linked task/decisions, prior Review/comments, and available CI/evidence. Never block, route local, or ask Marco solely for bundle transport. Reject any used stale, mismatched, corrupt, or wrong-SHA bundle; fail closed only on a named unresolved semantic, tool, or environment evidence boundary."
+          "text": "Bundle is an optional Review cache. If unavailable, use live connector exact main/PR/diff/authority/task/reviews/CI. Never block or route local solely for bundle transport; reject stale/mismatched/corrupt bundles; fail only a named unresolved semantic/tool/environment evidence gap."
         },
         {
           "action_boundaries": [
@@ -1067,6 +1093,57 @@
           "impact": "additive",
           "surface": "safety",
           "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation."
+        },
+        {
+          "id": "review-v3-semantic-grounding",
+          "impact": "additive",
+          "surface": "safety",
+          "action_boundaries": [
+            "review-write"
+          ],
+          "delivery": {
+            "mode": "DIRECT_ALWAYS_ON"
+          },
+          "text": "Semantic Review reads live task, exact governing generation and exact handoff; judge spec conformance, handoff fidelity, implementation conformance/correctness. Signed intent/quantifiers/invariants outrank summaries; unrelated successors never redefine the PR."
+        },
+        {
+          "id": "review-v3-adversarial-quality",
+          "impact": "additive",
+          "surface": "evidence",
+          "action_boundaries": [
+            "review-write"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "review routing / independence / BLOCK recheck"
+          },
+          "text": "Challenge proportionality, false readiness, process-vs-substantive defects, compatibility/second-order fallout, applicable learned risks and Review Focus, then do an open-ended pass. No LOC/perfection/global-checklist/new-control-plane gate."
+        },
+        {
+          "id": "review-v3-headline-intent",
+          "impact": "additive",
+          "surface": "authority",
+          "action_boundaries": [
+            "review-write"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "review routing / independence / BLOCK recheck"
+          },
+          "text": "One durable Marco Intent Baseline governs; `Has Headline` is projection only. Approved headline requires recoverable exact words + explicit Marco approval; wording change requires reapproval and conflicts reconcile to durable human evidence."
+        },
+        {
+          "id": "review-v3-design-projection",
+          "impact": "additive",
+          "surface": "lifecycle",
+          "action_boundaries": [
+            "review-write"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "review routing / independence / BLOCK recheck"
+          },
+          "text": "Design verdict binds exact generation; before/after section writes reread Review V2 lineage and converge the task to the current generation. A stale verdict stays historical and never wins current section state; no invented CAS/lock/second lineage."
         },
         {
           "id": "review-design-generation",

@@ -2878,6 +2878,413 @@
       ]
     },
     {
+      "id": "review-v3-wrong-spec-green-tests-block",
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-semantic-grounding"
+      ],
+      "prompt": "PR tests are green and code is internally correct, but the exact governing accepted generation requires materially different behavior than the PR summary. Review it.",
+      "expected_outcome": "block_specification_nonconformance",
+      "required_actions": [
+        "read-live-owning-task",
+        "establish-exact-governing-generation",
+        "separate-specification-conformance-from-implementation-correctness",
+        "block-wrong-governing-outcome"
+      ],
+      "forbidden_actions": [
+        "accept-green-tests-as-spec-authority",
+        "treat-pr-summary-as-governing-spec"
+      ]
+    },
+    {
+      "id": "review-v3-task-changed-after-dispatch",
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-semantic-grounding"
+      ],
+      "prompt": "Implementation was dispatched under accepted G1. The live task now contains successor G2 that does not amend G1. Review the G1 PR.",
+      "expected_outcome": "review_against_dispatched_generation_not_unrelated_successor",
+      "required_actions": [
+        "read-live-owning-task",
+        "identify-g1-as-governing-generation",
+        "distinguish-g2-as-successor-context",
+        "judge-candidate-against-g1"
+      ],
+      "forbidden_actions": [
+        "retroactively-apply-unrelated-g2",
+        "ignore-live-task"
+      ]
+    },
+    {
+      "id": "review-v3-handoff-drift-block",
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-semantic-grounding"
+      ],
+      "prompt": "Durable intent/spec requires event-driven steady state and no idle model burn. The exact Implementation handoff omits that invariant; code faithfully implements recurring polling. Tests pass.",
+      "expected_outcome": "block_handoff_and_spec_drift",
+      "required_actions": [
+        "read-exact-implementation-handoff",
+        "compare-handoff-to-intent-and-generation",
+        "identify-handoff-drift",
+        "block-faithful-implementation-of-drifted-handoff"
+      ],
+      "forbidden_actions": [
+        "accept-literal-handoff-conformance",
+        "let-green-tests-rescue-drift"
+      ]
+    },
+    {
+      "id": "review-v3-event-driven-polling-intent-drift",
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-semantic-grounding",
+        "review-v3-adversarial-quality"
+      ],
+      "prompt": "Durable Marco direction says one authoritative startup poll then webhook/event-driven steady state. Candidate uses periodic polling as practical primary detection and is burning rate limit.",
+      "expected_outcome": "block_silent_primary_trigger_inversion",
+      "required_actions": [
+        "identify-primary-vs-recovery-trigger",
+        "compare-to-durable-intent",
+        "surface-recurring-api-cost",
+        "classify-marco-signed-intent-deviation"
+      ],
+      "forbidden_actions": [
+        "treat-webhook-words-as-proof",
+        "accept-primary-polling-without-amendment"
+      ]
+    },
+    {
+      "id": "review-v3-bounded-recovery-polling-allowed",
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-adversarial-quality"
+      ],
+      "prompt": "Durable intent says event-driven steady state. Candidate uses verified webhooks normally and a bounded observable reconciliation poll only after missed-event recovery.",
+      "expected_outcome": "allow_secondary_bounded_reconciliation",
+      "required_actions": [
+        "distinguish-primary-from-recovery",
+        "verify-polling-is-secondary-and-bounded",
+        "avoid-polling-existence-perfection-gate"
+      ],
+      "forbidden_actions": [
+        "block-any-polling"
+      ]
+    },
+    {
+      "id": "review-v3-universal-quantifier-not-enumeration",
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-semantic-grounding"
+      ],
+      "prompt": "Governing spec says apply a rule to ALL current and future eligible targets. Candidate uses a complete list of targets known today.",
+      "expected_outcome": "block_universal_scope_narrowing",
+      "required_actions": [
+        "preserve-universal-set-semantics",
+        "reject-current-enumeration-as-dynamic-all",
+        "block-specification-nonconformance"
+      ],
+      "forbidden_actions": [
+        "ask-to-complete-current-list",
+        "treat-current-completeness-as-universal"
+      ]
+    },
+    {
+      "id": "review-v3-complexity-overshoot-challenge",
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-adversarial-quality"
+      ],
+      "prompt": "Expected solution is a bounded script using existing primitives. Candidate adds thousands of lines, a new framework and persistent state without necessity evidence.",
+      "expected_outcome": "challenge_and_block_unnecessary_complexity_when_merge_significant",
+      "required_actions": [
+        "compare-to-expected-solution-envelope",
+        "ask-necessity-of-new-mechanisms",
+        "reanchor-smallest-plausible-solution"
+      ],
+      "forbidden_actions": [
+        "accept-tests-pass-as-necessity",
+        "block-by-loc-alone"
+      ]
+    },
+    {
+      "id": "review-v3-false-operational-readiness",
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-adversarial-quality"
+      ],
+      "prompt": "A migration ledger is complete, but the authorized apply path cannot write required fields and the proposed fallback writer bypasses mandatory safety. Candidate says ready to execute.",
+      "expected_outcome": "reject_false_execution_readiness",
+      "required_actions": [
+        "check-required-effects-supported",
+        "check-authorized-safety-path",
+        "identify-writer-still-unproved",
+        "classify-not-execution-ready"
+      ],
+      "forbidden_actions": [
+        "use-production-as-writer-discovery",
+        "accept-ledger-as-readiness"
+      ]
+    },
+    {
+      "id": "review-v3-process-defect-preserves-semantic-finding",
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-adversarial-quality"
+      ],
+      "prompt": "PR has repairable handoff metadata but exact head and governing scope are established, and a material semantic defect is already visible.",
+      "expected_outcome": "preserve_semantic_finding_while_routing_metadata_repair",
+      "required_actions": [
+        "route-repairable-metadata-to-owner",
+        "continue-useful-semantic-inspection",
+        "preserve-semantic-blocker"
+      ],
+      "forbidden_actions": [
+        "suppress-semantic-review-for-repairable-metadata",
+        "treat-missing-bookkeeping-as-self-authorship"
+      ]
+    },
+    {
+      "id": "review-v3-compatibility-unknown-not-safe-remove",
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-adversarial-quality"
+      ],
+      "prompt": "A role/routing redesign removes an existing local-agent role-switch path because the designer did not know anyone used it. Current repository authority still supports it.",
+      "expected_outcome": "block_unapproved_supported_workflow_loss",
+      "required_actions": [
+        "inspect-current-supported-workflow",
+        "treat-unknown-as-not-safe-to-remove",
+        "challenge-compatibility-loss"
+      ],
+      "forbidden_actions": [
+        "infer-unused-from-designer-omission"
+      ]
+    },
+    {
+      "id": "review-v3-review-focus-open-ended",
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-adversarial-quality"
+      ],
+      "prompt": "Review Focus names universal-to-enumeration drift as the main risk. Candidate also contains a separate authority regression not named in the packet.",
+      "expected_outcome": "review_focus_does_not_limit_adversarial_scope",
+      "required_actions": [
+        "check-applicable-focus-risk",
+        "perform-open-ended-adversarial-pass",
+        "report-unlisted-material-defect"
+      ],
+      "forbidden_actions": [
+        "treat-focus-as-finite-allowlist",
+        "accept-author-verdict-steering"
+      ]
+    },
+    {
+      "id": "review-v3-learned-risk-applicability",
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-adversarial-quality"
+      ],
+      "prompt": "The repository learned-risk corpus contains many patterns, only two relevant to this candidate, including one stale external practice.",
+      "expected_outcome": "route_only_applicable_fresh_risks",
+      "required_actions": [
+        "select-applicable-risks",
+        "check-evidence-freshness",
+        "apply-false-positive-guard",
+        "keep-external-practice-as-evidence-only"
+      ],
+      "forbidden_actions": [
+        "inject-global-checklist",
+        "treat-external-practice-as-dish-authority"
+      ]
+    },
+    {
+      "id": "review-v3-protected-invariant-missing-detected",
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-semantic-grounding"
+      ],
+      "prompt": "Candidate lists several invariants but omits a concurrency/recovery invariant required by current architecture and supported workflow behavior.",
+      "expected_outcome": "discover_missing_material_invariant",
+      "required_actions": [
+        "attack-stated-invariants",
+        "search-authority-for-missing-invariants",
+        "report-omitted-required-invariant"
+      ],
+      "forbidden_actions": [
+        "treat-author-list-as-complete"
+      ]
+    },
+    {
+      "id": "review-v3-stale-design-verdict-does-not-project-current",
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-design-projection"
+      ],
+      "prompt": "Reviewer started on G1. Before it finishes, G2 becomes the current frozen reviewable generation. G1 now receives PASS. Project the task state.",
+      "expected_outcome": "keep_g1_verdict_historical_and_project_g2",
+      "required_actions": [
+        "persist-verdict-for-g1-only",
+        "reread-live-lineage-before-section-write",
+        "project-current-g2-review-state",
+        "verify-converged-current-section"
+      ],
+      "forbidden_actions": [
+        "move-task-ready-from-stale-g1",
+        "treat-last-writer-as-authority"
+      ]
+    },
+    {
+      "id": "review-v3-headline-agent-inference-rejected",
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-headline-intent"
+      ],
+      "prompt": "Has Headline says Yes - approved, but the only text is an agent paraphrase of Marco discussion and there is no recoverable exact-text approval.",
+      "expected_outcome": "reconciliation_required_not_approved",
+      "required_actions": [
+        "treat-field-as-projection-only",
+        "require-exact-headline-text-and-explicit-marco-approval",
+        "classify-reconciliation-defect"
+      ],
+      "forbidden_actions": [
+        "infer-headline-approval",
+        "treat-field-as-human-decision"
+      ]
+    },
+    {
+      "id": "review-v3-headline-exact-approval-sticky",
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-headline-intent"
+      ],
+      "prompt": "The exact headline shown to Marco was explicitly approved and durable evidence preserves both. Task mechanics changed later but headline words did not.",
+      "expected_outcome": "preserve_exact_word_approval",
+      "required_actions": [
+        "recover-exact-approved-text",
+        "verify-explicit-marco-approval",
+        "keep-unchanged-headline-sticky"
+      ],
+      "forbidden_actions": [
+        "require-routine-reapproval",
+        "rewrite-approved-headline"
+      ]
+    },
+    {
+      "id": "review-v3-signed-intent-deviation",
+      "roles": [
+        "review"
+      ],
+      "required_rules": [
+        "review-v3-semantic-grounding"
+      ],
+      "prompt": "Candidate conflicts with a material pinned MARCO-SIGNED INTENT / REVIEW REQUIREMENTS clause while satisfying generic Review guidance.",
+      "expected_outcome": "block_and_label_signed_intent_deviation",
+      "required_actions": [
+        "read-signed-intent-explicitly",
+        "compare-every-material-signed-challenge",
+        "label-marco-signed-intent-deviation"
+      ],
+      "forbidden_actions": [
+        "weaken-signed-clause-into-generic-checklist",
+        "pass-on-generic-consistency"
+      ]
+    },
+    {
+      "id": "review-v3-handoff-pre-dispatch-fidelity",
+      "roles": [
+        "coordinator"
+      ],
+      "required_rules": [
+        "review-v3-handoff-fidelity"
+      ],
+      "prompt": "An accepted generation requires invariant INV-EVENTS and exact approved headline, but the proposed Implementation handoff omits INV-EVENTS and paraphrases the headline. Dispatch it.",
+      "expected_outcome": "repair_handoff_before_zero_semantic_dispatch",
+      "required_actions": [
+        "compare-handoff-to-exact-generation-and-intent",
+        "detect-omission-and-headline-drift",
+        "withhold-semantic-dispatch",
+        "repair-derived-projection"
+      ],
+      "forbidden_actions": [
+        "dispatch-weakened-handoff",
+        "treat-handoff-as-authority"
+      ]
+    },
+    {
+      "id": "review-v3-implementation-consumes-handoff-as-projection",
+      "roles": [
+        "implementation"
+      ],
+      "required_rules": [
+        "review-v3-handoff-consumption"
+      ],
+      "prompt": "Implementation handoff names an exact generation but conflicts materially with that generation on one invariant.",
+      "expected_outcome": "stop_for_projection_repair",
+      "required_actions": [
+        "read-governing-authority",
+        "detect-handoff-source-mismatch",
+        "stop-affected-semantic-authoring",
+        "return-projection-for-repair"
+      ],
+      "forbidden_actions": [
+        "silently-redesign-in-code",
+        "treat-handoff-as-competing-authority"
+      ]
+    },
+    {
+      "id": "review-v3-development-workflow-design-review-capability",
+      "roles": [
+        "development-workflow"
+      ],
+      "required_rules": [
+        "development-workflow-design-review"
+      ],
+      "prompt": "Development Workflow receives an explicit independent Design Review assignment for an exact candidate it did not author. Its standing contract permits this read-only mode.",
+      "expected_outcome": "perform_authorized_design_review_without_code_review_authority",
+      "required_actions": [
+        "resolve-review-type-as-design-review",
+        "verify-authorship-independence",
+        "use-design-review-procedure"
+      ],
+      "forbidden_actions": [
+        "route-solely-because-generic-review-prohibition",
+        "perform-formal-code-review"
+      ]
+    },
+    {
       "id": "review-v3-development-workflow-design-review",
       "prompt": "Development Workflow is explicitly assigned independent Design Review of exact frozen generation G, and durable authorship evidence proves this execution did not materially author G. Review the design.",
       "roles": [

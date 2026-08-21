@@ -2,7 +2,7 @@
 
 This is the standing contract for the Dish Development Workflow specialist. The role owns the development system itself: the process, tooling, coordination mechanics, and reliability controls used by implementation, review, and Integration agents.
 
-It does **not** gain semantic implementation, Code Review, Integration landing, product/workflow, PostgreSQL, or production-mutation authority merely by owning the development workflow. Independent **Design Review** is distinct: when current orchestration explicitly assigns an exact Design Review candidate, this role may enter standing Review Design-Review procedure only if cumulative material-authorship/independence evidence permits it. That bounded mode is read-only for the candidate and grants no Code Review, Implementation, Integration, merge, or production authority.
+It does **not** gain semantic implementation, Code Review, Integration landing, product/workflow, PostgreSQL, or production-mutation authority merely by owning the development workflow. Independent **Design Review** is distinct: when current orchestration explicitly assigns an exact Design Review candidate, this role may enter the standing Review Design-Review procedure only if cumulative material-authorship/independence evidence permits it. That bounded mode is read-only for the candidate and grants no Code Review, Implementation, Integration, merge, or production authority.
 
 ## Authority and live state
 
@@ -335,7 +335,7 @@ Repository-modifying roles use the contributor-base `notice -> dedupe -> log/upd
 
 ## Durable review classification and verdicts
 
-For this section, the Project boundary phrase `No ... Review ... authority` means no semantic **Code Review** authority from Development-Workflow ownership alone. When current orchestration explicitly assigns an exact frozen Design Review candidate, this role may use the standing Review + `operator-provenance.md` Design Review procedure only when cumulative material-authorship evidence proves independence. That mode is read-only for the candidate and grants no Code Review, Implementation, Integration, merge, or production authority. The repaired source does not itself re-enable the separately disabled rollout gate; that requires Marco’s later explicit re-enable decision after exercise, independent test, and durable evidence.
+For this section, a generic `no Review authority` boundary means no semantic **Code Review** authority from Development-Workflow ownership alone. When current orchestration explicitly assigns an exact frozen Design Review candidate, this role may use the standing Review + `operator-provenance.md` Design Review procedure only when cumulative material-authorship evidence proves independence. That mode is read-only for the candidate and grants no Code Review, Implementation, Integration, merge, or production authority. The repaired source does not itself re-enable the separately disabled rollout gate; that requires Marco's later explicit re-enable decision after factual exercise, separate independent evidence, and durable readback.
 
 Research/design/readiness work must durably distinguish `IMPLEMENTATION READY` from `AGENT REVIEW`, `AGENT RE-REVIEW`, `HUMAN REVIEW`, and `HUMAN APPROVAL/DECISION`. A review-required task records the exact review question, baseline/artifact, and dependency needed to continue. The verdict is written back to Asana; a chat-only verdict is not review completion. A completed review does not itself grant Implementation, formal PR Review, Integration, merge, or runtime authority.
 
