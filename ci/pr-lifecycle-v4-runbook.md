@@ -30,7 +30,7 @@ export DISH_LIFECYCLE_V4_STATE_PATH="$DISH_LIFECYCLE_V4_STATE_DIR/state-commissi
 export DISH_LIFECYCLE_V4_PROJECTION=/home/marco/.local/state/dish/pr-lifecycle/lifecycle.json
 export DISH_LIFECYCLE_V4_PYTHON=/home/marco/ai-tools/dish/.venv/bin/python
 export DISH_LIFECYCLE_V4_CODEX=/home/marco/.codex/packages/standalone/current/codex
-export DISH_LIFECYCLE_V4_APP_SERVER_COMMAND='/home/marco/.codex/packages/standalone/current/codex app-server proxy'
+export DISH_LIFECYCLE_V4_APP_SERVER_SOCKET=/home/marco/.codex/app-server-control/app-server-control.sock
 export DISH_LIFECYCLE_V4_BASELINE_ON_START=1
 export DISH_LIFECYCLE_V4_WAKE_ENABLED=1
 exec "$DISH_LIFECYCLE_V4_PYTHON" \
@@ -44,9 +44,11 @@ repository source root, state path, thread id/status, dirty count, and process-l
 
 ## Persistent interactive Integrator
 
-The service connects through `codex app-server proxy` to the already-managed shared Codex daemon.
+The service connects by WebSocket to the Unix socket of the already-managed shared Codex daemon.
 It does not spawn a second private app-server. The persistent thread therefore has one resident
-daemon owner and is also directly resumable in the Codex TUI.
+daemon owner and is also directly resumable in the Codex TUI. The socket defaults to
+`~/.codex/app-server-control/app-server-control.sock` and may be set explicitly with
+`DISH_LIFECYCLE_V4_APP_SERVER_SOCKET`.
 
 Install `tools/dish-lifecycle-v4-integrator` on the operator path or invoke it from the checkout:
 

@@ -8,7 +8,6 @@ import json
 import os
 from pathlib import Path
 import secrets
-import shlex
 import subprocess
 import sys
 import threading
@@ -32,8 +31,8 @@ ASANA_SECRET_FILE = STATE_DIR / "asana-webhook-secret"
 
 sys.path.insert(0, str(REPO / "scripts"))
 from pr_lifecycle_projection import read_projection  # noqa: E402
+from codex_app_server_daemon import CodexDaemonAppServer  # noqa: E402
 from pr_lifecycle_v4 import (  # noqa: E402
-    CodexAppServer,
     V4Reconciler,
     V4StateStore,
     WakeBridge,
@@ -58,15 +57,11 @@ def ensure_secret(path: Path) -> str:
     return value
 
 
-def app_server_command() -> list[str]:
-    """Connect to the shared daemon; never create a private app-server owner."""
-    configured = os.getenv("DISH_LIFECYCLE_V4_APP_SERVER_COMMAND")
-    if configured:
-        command = shlex.split(configured)
-        if not command:
-            raise ValueError("DISH_LIFECYCLE_V4_APP_SERVER_COMMAND is empty")
-        return command
-    return [CODEX, "app-server", "proxy"]
+def app_server_socket() -> Path:
+    return Path(
+        os.getenv("DISH_LIFECYCLE_V4_APP_SERVER_SOCKET")
+        or Path.home() / ".codex/app-server-control/app-server-control.sock"
+    )
 
 
 def thread_params() -> dict[str, Any]:
@@ -86,7 +81,7 @@ def thread_params() -> dict[str, Any]:
     }
 
 
-def start_thread(client: CodexAppServer) -> str:
+def start_thread(client: CodexDaemonAppServer) -> str:
     response = client._request("thread/start", thread_params())
     thread = response.get("thread") if isinstance(response.get("thread"), Mapping) else {}
     thread_id = str(thread.get("id") or "")
@@ -103,7 +98,7 @@ def create_thread() -> str:
     STATE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(STATE_DIR, 0o700)
     ensure_secret(GITHUB_SECRET_FILE)
-    client = CodexAppServer(app_server_command())
+    client = CodexDaemonAppServer(app_server_socket())
     try:
         return start_thread(client)
     finally:
@@ -115,7 +110,7 @@ class Runtime:
         state_path = Path(os.getenv("DISH_LIFECYCLE_V4_STATE_PATH") or STATE_DIR / "state.json")
         self.store = V4StateStore(state_path)
         self.github_secret = ensure_secret(GITHUB_SECRET_FILE)
-        self.app_server = CodexAppServer(app_server_command())
+        self.app_server = CodexDaemonAppServer(app_server_socket())
         stored_thread = ""
         if THREAD_FILE.exists():
             stored_thread = str(json.loads(THREAD_FILE.read_text(encoding="utf-8")).get("thread_id") or "")
