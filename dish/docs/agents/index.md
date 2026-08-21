@@ -58,6 +58,21 @@ Ratified cross-Project standing invariants that must survive Project regeneratio
 
 The single repository-owned Implementation/fix handoff contract is [`templates/implementation-handoff.md`](templates/implementation-handoff.md). Coordinator, Development Workflow, and Implementation all use that same source; do not create a role-local or transport-local competing template.
 
+### Governing objective and sliced-workstream continuation
+
+A PR is a review/landing unit, not permission to redefine the governing assignment. The exact durable Implementation handoff and its governing accepted task/design authority remain controlling across publication, local completion, Review, and Integration.
+
+- Implementation, fix, replacement, and local-completion agents MUST NOT narrow a full assignment into a smaller PR/slice because the existing diff happens to implement only that subset, because a smaller slice is easier to finish, or because PR prose is rewritten to describe the subset. A scope reduction is a semantic assignment change and requires durable authority from the owner that can change the governing task/design/dispatch scope.
+- When the governing design explicitly authorizes ordered slices, each slice remains a member of ONE governing workstream unless that authority explicitly says otherwise. Finishing, publishing, reviewing, or merging one member proves only that member's disposition. It does not satisfy the owning task/workstream and it does not authorize an agent to stop the remaining ordered work.
+- Every sliced PR/handoff must durably name the governing workstream/generation, the exact current member/slice, and the known remaining required members or the authoritative source that enumerates them. If that mapping cannot be recovered, do not claim the slice or workstream complete.
+- A local publication/completion agent owns only exact publication/completion of the handed-off candidate. It cannot reinterpret the semantic assignment, convert a full-workstream handoff into one-slice completion, or declare remaining members future work without new durable scope authority.
+- Formal Review judges both candidate mergeability and handoff/scope fidelity. If PR scope is materially narrower than the exact durable Implementation handoff or governing accepted assignment, Review MUST BLOCK the scope drift rather than accepting rewritten PR prose as new authority. If the smaller slice is durably authorized, `VERDICT: MERGE` applies only to that slice/head.
+- Review and Integration must keep **slice disposition** distinct from **workstream completion**. A mergeable or merged slice cannot make the owning task/workstream complete while required members remain unimplemented, unlinked, unreviewed, or while a governing bundle/composition review remains outstanding.
+- When the governing contract requires bundle/composition review, the workstream is incomplete until every required member has exact PR/head lineage and the required composition verdict exists. Individual member reviews never substitute for that bundle verdict.
+- Human-facing status must surface the remaining owner/action when a slice finishes. `Nothing needed from you` is valid only when another owner/system is actually continuing the remaining work; it must not hide an abandoned workstream.
+
+Canonical regression: a durable assignment says to implement one approved multi-slice semantic contract; the first PR contains only one authorized slice. The implementer/local completion agent may finish that slice, and Review may find that slice mergeable, but neither may rewrite the assignment to make the remaining slices optional/future or stop the workstream. The next required slice remains active until the governing objective is actually complete.
+
 For new repository work, all roles use the same Git-native lifecycle:
 
 > implementation branch + commit -> GitHub pull request -> review of the exact PR head SHA -> integration of that reviewed head
