@@ -160,6 +160,7 @@ class V4StateStore:
             "dirty": {},
             "receipts": {},
             "delivered": {},
+            "baseline": None,
             "last_reconcile": None,
         }
 
@@ -262,13 +263,21 @@ class V4StateStore:
         with self.locked() as state:
             pending = self._pending_versions(state)
             delivered = state.setdefault("delivered", {})
+            baseline = state.get("baseline") or {}
+            baselined = {
+                str(version)
+                for versions in (baseline.get("actionable_versions") or {}).values()
+                for version in versions
+            }
             receipts = state.setdefault("receipts", {})
             for owner, members in sorted(grouped.items()):
                 owner_delivered = set((delivered.get(owner) or {}).keys())
                 new_members = [
                     (version, case)
                     for version, case in members
-                    if version not in owner_delivered and version not in pending
+                    if version not in owner_delivered
+                    and version not in pending
+                    and version not in baselined
                 ]
                 if not new_members:
                     continue
@@ -294,6 +303,42 @@ class V4StateStore:
                 prepared.append(dict(receipt))
                 pending.update(packet["actionable_versions"])
         return prepared
+
+    def baseline_current(
+        self,
+        cases: Iterable[Mapping[str, Any]],
+        *,
+        active_owners: frozenset[str] = DEFAULT_ACTIVE_OWNERS,
+        policy_generation: str = POLICY_GENERATION,
+    ) -> int:
+        """Record the commissioning-time active set without preparing a wake.
+
+        This is a one-shot cold-start operation. Repeating it is an idempotent
+        no-op, and invoking it after any wake receipt or delivery fails closed so
+        an operator cannot accidentally suppress newly actionable work.
+        """
+        grouped: dict[str, list[str]] = {}
+        for case in cases:
+            owner = str(case.get("next_owner") or "")
+            if owner in active_owners:
+                grouped.setdefault(owner, []).append(
+                    actionable_version(case, policy_generation=policy_generation)
+                )
+        normalized = {
+            owner: sorted(set(versions))
+            for owner, versions in sorted(grouped.items())
+        }
+        with self.locked() as state:
+            if state.get("baseline") is not None:
+                return 0
+            if state.get("receipts") or state.get("delivered"):
+                raise ValueError("cold-start baseline is unavailable after wake history exists")
+            state["baseline"] = {
+                "completed_at": _utcnow(),
+                "wake_policy_generation": policy_generation,
+                "actionable_versions": normalized,
+            }
+        return sum(len(versions) for versions in normalized.values())
 
     def pending_receipts(self) -> list[dict[str, Any]]:
         with self.locked() as state:
@@ -706,6 +751,18 @@ class V4Reconciler:
         self.authoritative_cases = authoritative_cases
         self.bridge = bridge
         self.active_owners = active_owners
+
+    def baseline_current(self) -> dict[str, Any]:
+        """Baseline current authoritative cases with a hard zero-turn result."""
+        cases = [dict(value) for value in self.authoritative_cases()]
+        baselined = self.store.baseline_current(cases, active_owners=self.active_owners)
+        return {
+            "actionable_cases": len(cases),
+            "baselined": baselined,
+            "prepared": 0,
+            "wake_results": [],
+            "model_turns_started": 0,
+        }
 
     def reconcile(self, *, force: bool = False) -> dict[str, Any]:
         snapshot = self.store.snapshot_dirty()
