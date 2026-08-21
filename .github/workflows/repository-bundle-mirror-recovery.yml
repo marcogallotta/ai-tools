@@ -1,0 +1,96 @@
+name: Repository bundle mirror recovery
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+
+jobs:
+  admit:
+    name: Admit exact trusted refresh request
+    if: >-
+      github.event.issue.title == 'repository-bundle mirror refresh' &&
+      contains(github.event.issue.body || '', 'dish-repository-bundle-mirror-refresh:v1')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      source_sha: ${{ steps.request.outputs.source_sha }}
+      issue_number: ${{ steps.request.outputs.issue_number }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Resolve actor permission and current main
+        id: authority
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACTOR: ${{ github.event.issue.user.login }}
+        run: |
+          set -euo pipefail
+          permission="$(gh api "/repos/$GITHUB_REPOSITORY/collaborators/$ACTOR/permission" --jq '.permission')"
+          current_main_sha="$(gh api "/repos/$GITHUB_REPOSITORY/commits/main" --jq '.sha')"
+          echo "permission=$permission" >> "$GITHUB_OUTPUT"
+          echo "current_main_sha=$current_main_sha" >> "$GITHUB_OUTPUT"
+      - name: Validate exact issue request
+        id: request
+        shell: bash
+        run: >-
+          python3 scripts/repository_bundle_refresh_request.py
+          --event-path "$GITHUB_EVENT_PATH"
+          --permission "${{ steps.authority.outputs.permission }}"
+          --current-main-sha "${{ steps.authority.outputs.current_main_sha }}"
+          --github-output "$GITHUB_OUTPUT"
+
+  refresh:
+    name: Refresh requested current-main mirror
+    needs: admit
+    uses: ./.github/workflows/repository-bundle-mirror-refresh.yml
+    with:
+      source_sha: ${{ needs.admit.outputs.source_sha }}
+    permissions:
+      contents: read
+      statuses: write
+
+  close-request:
+    name: Close successful refresh request
+    if: needs.refresh.result == 'success'
+    needs: [admit, refresh]
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: write
+    steps:
+      - name: Record refresh run and close issue
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ needs.admit.outputs.issue_number }}
+          SOURCE_SHA: ${{ needs.admit.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --body "Repository-bundle mirror refresh succeeded for \`$SOURCE_SHA\`: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          gh issue close "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY"
+
+  report-failure:
+    name: Keep failed refresh request visible
+    if: always() && needs.admit.result == 'success' && needs.refresh.result != 'success'
+    needs: [admit, refresh]
+    runs-on: ubuntu-24.04
+    permissions:
+      issues: write
+    steps:
+      - name: Record typed refresh failure
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ needs.admit.outputs.issue_number }}
+          SOURCE_SHA: ${{ needs.admit.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          gh issue comment "$ISSUE_NUMBER" --repo "$GITHUB_REPOSITORY" \
+            --body "Repository-bundle mirror refresh failed for \`$SOURCE_SHA\`. Request remains open. Run: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"

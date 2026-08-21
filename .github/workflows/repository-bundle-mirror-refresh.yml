@@ -1,0 +1,123 @@
+name: Repository bundle mirror refresh
+
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        description: Exact current-main SHA whose immutable Release should be mirrored
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    name: Verify immutable Release and publish exact-byte mirror
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      artifact_name: ${{ steps.names.outputs.artifact_name }}
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      SOURCE_REF: refs/heads/main
+      REPOSITORY_ID: ${{ github.repository_id }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Resolve exact immutable Release asset names
+        id: names
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          artifact_name="repository-bundle-$SOURCE_SHA"
+          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
+          echo "bundle_name=$artifact_name.bundle" >> "$GITHUB_OUTPUT"
+          echo "manifest_name=$artifact_name.manifest.json" >> "$GITHUB_OUTPUT"
+          echo "checksum_name=$artifact_name.bundle.sha256" >> "$GITHUB_OUTPUT"
+
+      - name: Download exact immutable Release authority
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_NAME: ${{ steps.names.outputs.artifact_name }}
+          BUNDLE_NAME: ${{ steps.names.outputs.bundle_name }}
+          MANIFEST_NAME: ${{ steps.names.outputs.manifest_name }}
+          CHECKSUM_NAME: ${{ steps.names.outputs.checksum_name }}
+        run: |
+          set -euo pipefail
+          rm -rf .ci/repository-bundle-refresh
+          mkdir -p .ci/repository-bundle-refresh
+          gh release view "$ARTIFACT_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null
+          gh release download "$ARTIFACT_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --dir .ci/repository-bundle-refresh \
+            --pattern "$BUNDLE_NAME" \
+            --pattern "$MANIFEST_NAME" \
+            --pattern "$CHECKSUM_NAME"
+          test "$(find .ci/repository-bundle-refresh -maxdepth 1 -type f | wc -l)" -eq 3
+
+      - name: Verify Release bytes against exact repository and SHA
+        shell: bash
+        env:
+          BUNDLE_NAME: ${{ steps.names.outputs.bundle_name }}
+          MANIFEST_NAME: ${{ steps.names.outputs.manifest_name }}
+          CHECKSUM_NAME: ${{ steps.names.outputs.checksum_name }}
+        run: |
+          set -euo pipefail
+          rm -rf .ci/repository-bundle-refresh-clone
+          python3 scripts/repository_bundle.py verify \
+            --bundle ".ci/repository-bundle-refresh/$BUNDLE_NAME" \
+            --manifest ".ci/repository-bundle-refresh/$MANIFEST_NAME" \
+            --checksum ".ci/repository-bundle-refresh/$CHECKSUM_NAME" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --expected-repository-id "$REPOSITORY_ID" \
+            --expected-sha "$SOURCE_SHA" \
+            --expected-ref "$SOURCE_REF" \
+            --clone-dir .ci/repository-bundle-refresh-clone
+
+      - name: Upload unchanged Actions artifact mirror
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.names.outputs.artifact_name }}
+          path: .ci/repository-bundle-refresh
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+
+  publish-status:
+    name: Publish exact mirror refresh status
+    if: always()
+    needs: refresh
+    runs-on: ubuntu-24.04
+    permissions:
+      statuses: write
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      REFRESH_RESULT: ${{ needs.refresh.result }}
+    steps:
+      - name: Publish exact refresh result
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          state=failure
+          description='Repository bundle mirror refresh failed'
+          if [[ "$REFRESH_RESULT" == success ]]; then
+            state=success
+            description='Exact repository bundle mirror refreshed'
+          fi
+          gh api --method POST \
+            "/repos/$GITHUB_REPOSITORY/statuses/$SOURCE_SHA" \
+            -f state="$state" \
+            -f context='Dish / repository bundle' \
+            -f description="$description" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          [[ "$state" == success ]]
