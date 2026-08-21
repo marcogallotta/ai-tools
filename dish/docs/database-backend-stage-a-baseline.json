@@ -74,7 +74,7 @@
   ],
   "governing_source_sha256": {
     "dish_pg/release.py": "4c302344a0a0db07ac7cde1b3bf1339123f165ff8a84706d6aa50434fb4dd7bc",
-    "dish_service/admin_cli.py": "7b970a0805788284cf86b489e078d7b77ce610443695c0d07b295d9426b1e7fe",
+    "dish_service/admin_cli.py": "ccba76a6a796639a75f24d6e5baed8c380fc5bc4af5080d0722fe322519f5c38",
     "dish_service/application.py": "657b531e77ccd4a11464608426e37cb297dba24d0607a5cd85688e2543ae8cb2",
     "dish_service/backup_creation.py": "6dbd2519aeb8a306ad5d78a61b318addba5ba47b051698c8f031dbf7b906a4bd",
     "dish_service/command_spec.py": "ec0b0de93bde7f0d357411d4832b14f7532db576c0a2a7bf8580e8d07ab28d39",
@@ -91,7 +91,7 @@
     "scripts/dish-pg-acceptance": "d7b30b7f45a9ff38b1106aa868065449bea879f71ce30f2428b1333aa0ec43d4",
     "scripts/dish-pg-stage-a-baseline": "ef030edc5685c16082a537db5c53425f3572fc6cf8b2a79f9182bd07a77c530e"
   },
-  "last_rebaseline_reason": "Gate A: add qualify-file-transport as a source-only Action command (no PostgreSQL execution wiring yet); rebaseline governing source hashes for command_identity.py, command_spec.py, application.py, and the regenerated openapi/dish-action.openapi.json",
+  "last_rebaseline_reason": "Refresh the governed admin CLI source hash after the reviewed unexpected-failure observability change in PR #212.",
   "notes": [
     "The baseline records current source authority only; PostgreSQL is not production authority.",
     "Changes to governed source hashes or acceptance rules require explicit baseline review; ordinary test-file changes do not.",

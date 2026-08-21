@@ -74,7 +74,10 @@ def _build_treatments() -> dict[str, DarkLaunchTreatment]:
     # Keep the legacy service import boundary light. These metadata modules are
     # loaded only when dark launch actually needs the policy, after ordinary
     # service composition has completed.
-    from dish_pg.command_contract import COMMAND_DEFINITIONS
+    from dish_pg.command_contract import (
+        COMMAND_DEFINITIONS,
+        CONNECTED_ACTION_COMMANDS_NOT_YET_PORTED,
+    )
     from dish_service.command_spec import ACTION_COMMAND_DEFINITIONS
     from dish_tool.admin_command_spec import ADMIN_COMMAND_SPECS
 
@@ -93,6 +96,15 @@ def _build_treatments() -> dict[str, DarkLaunchTreatment]:
     for name, (treatment, reason) in _SHADOW_ONLY_OVERRIDES.items():
         if name not in rows:
             rows[name] = DarkLaunchTreatment(name, treatment, reason)
+
+    for name in CONNECTED_ACTION_COMMANDS_NOT_YET_PORTED:
+        if name in rows:
+            raise ValueError(f"source-only command unexpectedly has target metadata: {name}")
+        rows[name] = DarkLaunchTreatment(
+            name,
+            "excluded",
+            "source-only connected command has no target execution path",
+        )
 
     missing_treatment = current_surface_commands - set(rows)
     if missing_treatment:

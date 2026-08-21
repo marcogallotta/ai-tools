@@ -53,6 +53,15 @@ def test_operator_queue_commands_are_explicitly_shadow_excluded() -> None:
     )
 
 
+def test_source_only_connected_commands_derive_excluded() -> None:
+    from dish_pg.command_contract import CONNECTED_ACTION_COMMANDS_NOT_YET_PORTED
+
+    assert CONNECTED_ACTION_COMMANDS_NOT_YET_PORTED == ("qualify-file-transport",)
+    treatment = treatment_for("qualify-file-transport")
+    assert treatment.treatment == "excluded"
+    assert treatment.reason == "source-only connected command has no target execution path"
+
+
 def test_retained_target_mutations_derive_execute() -> None:
     import dish_shadow.policy as shadow_policy
     from dish_pg.command_contract import COMMAND_DEFINITIONS
