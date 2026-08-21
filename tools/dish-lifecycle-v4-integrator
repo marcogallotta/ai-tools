@@ -24,11 +24,12 @@ thread_id() {
 
 case "${1:-open}" in
   open|resume)
-    systemctl --user start "${DAEMON_SERVICE}" "${BRIDGE_SERVICE}"
+    systemctl --user start "${DAEMON_SERVICE}"
     mkdir -p "${STATE_DIR}"
     exec flock --exclusive "${FENCE_FILE}" "${SELF}" __open-locked
     ;;
   __open-locked)
+    systemctl --user start "${BRIDGE_SERVICE}"
     exec "${CODEX}" resume --remote unix:// -C "${REPO_ROOT}" \
       --sandbox read-only --ask-for-approval never "$(thread_id)"
     ;;

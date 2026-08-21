@@ -31,7 +31,10 @@ ASANA_SECRET_FILE = STATE_DIR / "asana-webhook-secret"
 
 sys.path.insert(0, str(REPO / "scripts"))
 from pr_lifecycle_projection import read_projection  # noqa: E402
-from codex_app_server_daemon import CodexDaemonAppServer  # noqa: E402
+from codex_app_server_daemon import (  # noqa: E402
+    CodexDaemonAppServer,
+    RecoveringCodexDaemonAppServer,
+)
 from pr_lifecycle_v4 import (  # noqa: E402
     V4Reconciler,
     V4StateStore,
@@ -110,21 +113,26 @@ class Runtime:
         state_path = Path(os.getenv("DISH_LIFECYCLE_V4_STATE_PATH") or STATE_DIR / "state.json")
         self.store = V4StateStore(state_path)
         self.github_secret = ensure_secret(GITHUB_SECRET_FILE)
-        self.app_server = CodexDaemonAppServer(app_server_socket())
+        initial_app_server = CodexDaemonAppServer(app_server_socket())
         stored_thread = ""
         if THREAD_FILE.exists():
             stored_thread = str(json.loads(THREAD_FILE.read_text(encoding="utf-8")).get("thread_id") or "")
         if stored_thread:
             try:
-                self.app_server.thread_resume(stored_thread)
+                initial_app_server.thread_resume(stored_thread)
                 self.thread_id = stored_thread
             except RuntimeError as exc:
                 if "no rollout found for thread id" not in str(exc):
                     raise
-                self.thread_id = start_thread(self.app_server)
+                self.thread_id = start_thread(initial_app_server)
                 log("replaced_unpersisted_thread")
         else:
-            self.thread_id = start_thread(self.app_server)
+            self.thread_id = start_thread(initial_app_server)
+        self.app_server = RecoveringCodexDaemonAppServer(
+            app_server_socket(),
+            thread_id=self.thread_id,
+            client=initial_app_server,
+        )
         self.bridge = WakeBridge(
             store=self.store,
             app_server=self.app_server,

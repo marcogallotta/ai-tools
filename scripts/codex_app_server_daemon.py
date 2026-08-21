@@ -199,3 +199,64 @@ class CodexDaemonAppServer:
                 "input": [{"type": "text", "text": text}],
             },
         )
+
+
+class RecoveringCodexDaemonAppServer:
+    """Reconnect safe reads while preserving ambiguous turn-start semantics."""
+
+    def __init__(
+        self,
+        socket_path: Path | str,
+        *,
+        thread_id: str,
+        client: CodexDaemonAppServer,
+    ) -> None:
+        self.socket_path = Path(socket_path)
+        self.thread_id = thread_id
+        self.client = client
+        self._lock = threading.Lock()
+
+    def _replace(self) -> None:
+        replacement = CodexDaemonAppServer(self.socket_path)
+        try:
+            replacement.thread_resume(self.thread_id)
+        except Exception:
+            replacement.close()
+            raise
+        previous = self.client
+        self.client = replacement
+        previous.close()
+
+    def _retry_read(self, method: str, *args: Any, **kwargs: Any) -> Mapping[str, Any]:
+        with self._lock:
+            try:
+                return getattr(self.client, method)(*args, **kwargs)
+            except Exception:
+                self._replace()
+                return getattr(self.client, method)(*args, **kwargs)
+
+    def close(self) -> None:
+        with self._lock:
+            self.client.close()
+
+    def thread_read(self, thread_id: str, *, include_turns: bool) -> Mapping[str, Any]:
+        return self._retry_read("thread_read", thread_id, include_turns=include_turns)
+
+    def thread_resume(self, thread_id: str) -> Mapping[str, Any]:
+        return self._retry_read("thread_resume", thread_id)
+
+    def turn_start(
+        self,
+        thread_id: str,
+        packet: Mapping[str, Any],
+        *,
+        client_user_message_id: str,
+    ) -> Mapping[str, Any]:
+        # Never retry a start after losing its response. WakeBridge records it as
+        # ambiguous and proves acceptance or non-acceptance from thread history.
+        with self._lock:
+            return self.client.turn_start(
+                thread_id,
+                packet,
+                client_user_message_id=client_user_message_id,
+            )
