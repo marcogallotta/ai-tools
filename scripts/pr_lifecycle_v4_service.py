@@ -31,8 +31,11 @@ ASANA_SECRET_FILE = STATE_DIR / "asana-webhook-secret"
 
 sys.path.insert(0, str(REPO / "scripts"))
 from pr_lifecycle_projection import read_projection  # noqa: E402
+from codex_app_server_daemon import (  # noqa: E402
+    CodexDaemonAppServer,
+    RecoveringCodexDaemonAppServer,
+)
 from pr_lifecycle_v4 import (  # noqa: E402
-    CodexAppServer,
     V4Reconciler,
     V4StateStore,
     WakeBridge,
@@ -57,6 +60,13 @@ def ensure_secret(path: Path) -> str:
     return value
 
 
+def app_server_socket() -> Path:
+    return Path(
+        os.getenv("DISH_LIFECYCLE_V4_APP_SERVER_SOCKET")
+        or Path.home() / ".codex/app-server-control/app-server-control.sock"
+    )
+
+
 def thread_params() -> dict[str, Any]:
     return {
         "cwd": str(REPO),
@@ -74,7 +84,7 @@ def thread_params() -> dict[str, Any]:
     }
 
 
-def start_thread(client: CodexAppServer) -> str:
+def start_thread(client: CodexDaemonAppServer) -> str:
     response = client._request("thread/start", thread_params())
     thread = response.get("thread") if isinstance(response.get("thread"), Mapping) else {}
     thread_id = str(thread.get("id") or "")
@@ -91,7 +101,7 @@ def create_thread() -> str:
     STATE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
     os.chmod(STATE_DIR, 0o700)
     ensure_secret(GITHUB_SECRET_FILE)
-    client = CodexAppServer([CODEX, "app-server"])
+    client = CodexDaemonAppServer(app_server_socket())
     try:
         return start_thread(client)
     finally:
@@ -103,21 +113,26 @@ class Runtime:
         state_path = Path(os.getenv("DISH_LIFECYCLE_V4_STATE_PATH") or STATE_DIR / "state.json")
         self.store = V4StateStore(state_path)
         self.github_secret = ensure_secret(GITHUB_SECRET_FILE)
-        self.app_server = CodexAppServer([CODEX, "app-server"])
+        initial_app_server = CodexDaemonAppServer(app_server_socket())
         stored_thread = ""
         if THREAD_FILE.exists():
             stored_thread = str(json.loads(THREAD_FILE.read_text(encoding="utf-8")).get("thread_id") or "")
         if stored_thread:
             try:
-                self.app_server.thread_resume(stored_thread)
+                initial_app_server.thread_resume(stored_thread)
                 self.thread_id = stored_thread
             except RuntimeError as exc:
                 if "no rollout found for thread id" not in str(exc):
                     raise
-                self.thread_id = start_thread(self.app_server)
+                self.thread_id = start_thread(initial_app_server)
                 log("replaced_unpersisted_thread")
         else:
-            self.thread_id = start_thread(self.app_server)
+            self.thread_id = start_thread(initial_app_server)
+        self.app_server = RecoveringCodexDaemonAppServer(
+            app_server_socket(),
+            thread_id=self.thread_id,
+            client=initial_app_server,
+        )
         self.bridge = WakeBridge(
             store=self.store,
             app_server=self.app_server,
@@ -132,6 +147,8 @@ class Runtime:
             active_owners=frozenset({"Integrator"}) if wake_enabled else frozenset(),
         )
         self.pending = threading.Event()
+        self.pending_lock = threading.Lock()
+        self.force_pending = False
         self.stop = threading.Event()
         self.reconcile_lock = threading.Lock()
         self.metrics_lock = threading.Lock()
@@ -189,6 +206,18 @@ class Runtime:
             for key, value in increments.items():
                 self.metrics[key] = int(self.metrics.get(key, 0)) + value
 
+    def request_reconcile(self, *, force: bool = False) -> None:
+        with self.pending_lock:
+            self.force_pending = self.force_pending or force
+            self.pending.set()
+
+    def take_reconcile_request(self) -> bool:
+        with self.pending_lock:
+            self.pending.clear()
+            force = self.force_pending
+            self.force_pending = False
+            return force
+
     def reconcile(self, *, force: bool = False) -> dict[str, Any]:
         with self.reconcile_lock:
             result = self.reconciler.reconcile(force=force)
@@ -201,12 +230,12 @@ class Runtime:
             self.pending.wait(1.0)
             if not self.pending.is_set():
                 continue
-            self.pending.clear()
+            force = self.take_reconcile_request()
             try:
-                self.reconcile()
+                self.reconcile(force=force)
             except Exception as exc:
                 log("reconcile_failed", error_type=type(exc).__name__, error=str(exc))
-                self.pending.set()
+                self.request_reconcile(force=force)
                 self.stop.wait(30)
 
     def health(self) -> dict[str, Any]:
@@ -304,7 +333,7 @@ class Handler(BaseHTTPRequestHandler):
         count = ingest_event(self.runtime.store, provider=provider, payload=payload, delivery_id=delivery_id)
         if count:
             self.runtime.record(accepted_events=1)
-            self.runtime.pending.set()
+            self.runtime.request_reconcile()
         elif provider == "asana":
             self.runtime.record(heartbeats=1)
         self.send_json(202 if count else 200, {"accepted": True, "dirty_resources": count})
@@ -336,6 +365,7 @@ def main() -> int:
             runtime.reconcile(force=True)
         except Exception as exc:
             log("startup_reconcile_failed", error_type=type(exc).__name__, error=str(exc))
+            runtime.request_reconcile(force=True)
 
     threading.Thread(
         target=startup_reconcile,

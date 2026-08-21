@@ -30,6 +30,7 @@ export DISH_LIFECYCLE_V4_STATE_PATH="$DISH_LIFECYCLE_V4_STATE_DIR/state.json"
 export DISH_LIFECYCLE_V4_PROJECTION=/home/marco/.local/state/dish/pr-lifecycle/lifecycle.json
 export DISH_LIFECYCLE_V4_PYTHON=/home/marco/ai-tools/dish/.venv/bin/python
 export DISH_LIFECYCLE_V4_CODEX=/home/marco/.codex/packages/standalone/current/codex
+export DISH_LIFECYCLE_V4_APP_SERVER_SOCKET=/home/marco/.codex/app-server-control/app-server-control.sock
 export DISH_LIFECYCLE_V4_BASELINE_ON_START=1
 export DISH_LIFECYCLE_V4_WAKE_ENABLED=1
 exec "$DISH_LIFECYCLE_V4_PYTHON" \
@@ -40,3 +41,28 @@ exec "$DISH_LIFECYCLE_V4_PYTHON" \
 Keep GitHub and Asana credentials and webhook secrets outside Git. The service creates webhook
 secret files mode `0600` beneath the configured state directory. `GET /healthz` reports the exact
 repository source root, state path, thread id/status, dirty count, and process-lifetime counters.
+
+## Persistent interactive Integrator
+
+The service connects by WebSocket to the Unix socket of the already-managed shared Codex daemon.
+It does not spawn a second private app-server. The persistent thread therefore has one resident
+daemon owner and is also directly resumable in the Codex TUI. The socket defaults to
+`~/.codex/app-server-control/app-server-control.sock` and may be set explicitly with
+`DISH_LIFECYCLE_V4_APP_SERVER_SOCKET`.
+
+Install `tools/dish-lifecycle-v4-integrator` on the operator path as `dish-integrator`:
+
+```sh
+dish-integrator open
+```
+
+That command starts the daemon and bridge services if needed, acquires the same
+`integrator.fence` used by `WakeBridge`, and opens the exact thread from `thread.json` through
+`codex resume --remote unix://`. While the TUI owns the fence, webhooks continue to coalesce and
+reconcile without a model turn; pending actionable versions wait for the fence. Exiting the TUI
+releases the fence and permits the bridge to deliver pending work. Direct `codex resume` without
+this wrapper is unsupported because it bypasses the shared admission fence.
+
+The wrapper also provides `status`, `start`, `stop`, `restart`, `logs`, and `thread`. Its default
+service names match the current user services and may be overridden with
+`DISH_LIFECYCLE_V4_DAEMON_SERVICE` and `DISH_LIFECYCLE_V4_BRIDGE_SERVICE`.
