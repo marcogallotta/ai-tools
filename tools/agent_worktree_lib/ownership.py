@@ -21,6 +21,10 @@ from .common import (
     require_task_gid,
 )
 from .operations import owner_agent_id, remote_ref_sha, resolve_repository_from_state, validate_branch, verify_owned_worktree
+from .lineage import (
+    LINEAGE_ENV, acquire_pr_registry_claim, assert_active_registry_claim, branch_digest, claim_registry_ownership, fence_lineage,
+    read_registry, release_pr_registry_claim, release_registry_claim, reserve_or_recover_lineage, resolve_lineage_for_branch,
+)
 from .launch_identity import bind_identity_from_launch_provenance, restore_identity
 from .repository import discover_repository
 from .state import (
@@ -28,11 +32,13 @@ from .state import (
     load_task_state,
     read_json_object,
     state_path,
+    state_path_for_branch,
     state_root,
+    task_state_paths,
     validate_agent_state,
 )
 
-CLAIM_SCHEMA_VERSION = 1
+CLAIM_SCHEMA_VERSION = 2
 CLAIM_TOKEN_ENV = "DISH_AGENT_CLAIM_TOKEN"
 CLAIM_TASK_ENV = "DISH_AGENT_CLAIM_TASK"
 CLAIM_BRANCH_ENV = "DISH_AGENT_CLAIM_BRANCH"
@@ -53,8 +59,31 @@ def claim_root() -> Path:
     return root
 
 
-def claim_path(task_gid: str) -> Path:
-    return claim_root() / f"{require_task_gid(task_gid)}.json"
+def claim_path(task_gid: str, branch: str | None = None, lineage_id: str | None = None) -> Path:
+    task_gid = require_task_gid(task_gid)
+    if branch is None and os.environ.get(CLAIM_TASK_ENV) == task_gid:
+        branch = os.environ.get(CLAIM_BRANCH_ENV)
+        lineage_id = os.environ.get(LINEAGE_ENV)
+    if branch is not None or lineage_id is not None:
+        if branch is None or lineage_id is None:
+            fail("LINEAGE_ID_INVALID", "claim path requires branch and lineage_id together")
+        return claim_root() / f"{task_gid}-{branch_digest(branch)}-{lineage_id}.json"
+    matches = sorted(claim_root().glob(f"{task_gid}-*.json"))
+    legacy = claim_root() / f"{task_gid}.json"
+    if legacy.exists():
+        matches.insert(0, legacy)
+    if len(matches) > 1:
+        fail("LINEAGE_AMBIGUOUS", f"task {task_gid} has multiple durable ownership claims; exact lineage is required")
+    return matches[0] if matches else legacy
+
+
+def claim_paths(task_gid: str) -> list[Path]:
+    task_gid = require_task_gid(task_gid)
+    matches = sorted(claim_root().glob(f"{task_gid}-*.json"))
+    legacy = claim_root() / f"{task_gid}.json"
+    if legacy.exists():
+        matches.insert(0, legacy)
+    return matches
 
 
 def task_claim_lock_path(task_gid: str) -> Path:
@@ -118,8 +147,12 @@ def _validate_claim_record(record: dict[str, Any], task_gid: str) -> dict[str, A
     missing = sorted(required - record.keys())
     if missing:
         fail("OWNERSHIP_AMBIGUOUS", "claim record is missing required field(s): " + ", ".join(missing))
-    if record.get("schema_version") != CLAIM_SCHEMA_VERSION:
+    if record.get("schema_version") not in {1, CLAIM_SCHEMA_VERSION}:
         fail("OWNERSHIP_AMBIGUOUS", f"unsupported claim schema {record.get('schema_version')!r}")
+    if record.get("schema_version") == CLAIM_SCHEMA_VERSION:
+        lineage_id = record.get("lineage_id")
+        if not isinstance(lineage_id, str) or len(lineage_id) < 16:
+            fail("OWNERSHIP_AMBIGUOUS", "claim record has invalid lineage_id")
     if record.get("repository") != EXPECTED_REPOSITORY or record.get("origin_id") != EXPECTED_ORIGIN_ID:
         fail("OWNERSHIP_AMBIGUOUS", "claim record repository identity is not marcogallotta/ai-tools")
     if record.get("task_gid") != task_gid:
@@ -147,52 +180,64 @@ def _validate_claim_record(record: dict[str, Any], task_gid: str) -> dict[str, A
     return record
 
 
-def read_claim(task_gid: str) -> dict[str, Any] | None:
-    path = claim_path(task_gid)
+def read_claim(task_gid: str, branch: str | None = None, lineage_id: str | None = None) -> dict[str, Any] | None:
+    path = claim_path(task_gid, branch, lineage_id)
     if not path.exists():
         return None
     return _validate_claim_record(read_json_object(path, "local-agent ownership claim"), task_gid)
 
 
-def claim_status(task_gid: str) -> dict[str, Any]:
-    task_gid = require_task_gid(task_gid)
-    try:
-        record = read_claim(task_gid)
-    except Exception as exc:
-        if hasattr(exc, "code"):
-            return {"state": "ambiguous", "diagnostic": f"{exc.code}: {exc.message}"}
-        raise
-    if record is None:
-        return {"state": "missing", "task_gid": task_gid}
-    lock_paths = [task_claim_lock_path(task_gid), branch_claim_lock_path(str(record["branch"]))]
+def _claim_status_record(task_gid: str, record: dict[str, Any], path: Path) -> dict[str, Any]:
+    lock_paths = [branch_claim_lock_path(str(record["branch"]))]
     pr = record.get("pr")
     if isinstance(pr, dict):
         lock_paths.append(pr_claim_lock_path(int(pr["number"])))
-    held = [_lock_is_held(path) for path in lock_paths]
-    if any(value != held[0] for value in held[1:]):
+    held = [_lock_is_held(item) for item in lock_paths]
+    local_held = bool(held) and all(held)
+    if held and any(value != held[0] for value in held[1:]):
         state = "ambiguous"
-    elif held[0] and record.get("released_at") is not None:
+    elif local_held and record.get("released_at") is not None:
         state = "ambiguous"
-    elif held[0]:
+    elif local_held:
         state = "live"
     elif record.get("released_at") is None:
         state = "stale"
     else:
         state = "released"
     return {
-        "state": state,
-        "task_gid": task_gid,
-        "branch": record["branch"],
-        "agent_id": record["agent_id"],
-        "host": record["host"],
-        "acquired_at": record["acquired_at"],
-        "released_at": record.get("released_at"),
-        "takeover": bool(record.get("takeover")),
-        "claim_id": record["token"],
-        "pr": record.get("pr"),
+        "state": state, "task_gid": task_gid, "branch": record["branch"],
+        "lineage_id": record.get("lineage_id"), "agent_id": record["agent_id"],
+        "host": record["host"], "acquired_at": record["acquired_at"],
+        "released_at": record.get("released_at"), "takeover": bool(record.get("takeover")),
+        "claim_id": record["token"], "pr": record.get("pr"),
         "head_moved_to": record.get("head_moved_to"),
         "semantic_mutation_closed_at": record.get("semantic_mutation_closed_at"),
+        "claim_path": str(path),
     }
+
+
+def claim_status(task_gid: str) -> dict[str, Any]:
+    task_gid = require_task_gid(task_gid)
+    if os.environ.get(CLAIM_TASK_ENV) == task_gid and os.environ.get(LINEAGE_ENV):
+        try:
+            record = read_claim(task_gid)
+        except Exception as exc:
+            if hasattr(exc, "code"):
+                return {"state": "ambiguous", "diagnostic": f"{exc.code}: {exc.message}"}
+            raise
+        if record is None:
+            return {"state": "missing", "task_gid": task_gid}
+        return _claim_status_record(task_gid, record, claim_path(task_gid))
+    paths = claim_paths(task_gid)
+    if not paths:
+        return {"state": "missing", "task_gid": task_gid}
+    statuses=[]
+    for path in paths:
+        record=_validate_claim_record(read_json_object(path, "local-agent ownership claim"), task_gid)
+        statuses.append(_claim_status_record(task_gid, record, path))
+    if len(statuses)==1:
+        return statuses[0]
+    return {"state":"multiple", "task_gid":task_gid, "lineages":statuses}
 
 
 def normalize_pr_identity(
@@ -237,8 +282,7 @@ def lineage_claim_locks(
     branches: list[str],
     pr_numbers: list[int] | None = None,
 ) -> "_HeldClaimLocks":
-    paths = [task_claim_lock_path(task_gid)]
-    paths.extend(branch_claim_lock_path(branch) for branch in branches)
+    paths = [branch_claim_lock_path(branch) for branch in branches]
     paths.extend(pr_claim_lock_path(number) for number in (pr_numbers or []))
     return _HeldClaimLocks(paths)
 
@@ -302,48 +346,55 @@ def _reconcile_existing(
     runner: GitRunner,
     task_gid: str,
     branch: str,
+    lineage_id: str,
     agent_id: str,
     takeover: bool,
     expected_claim: str | None,
     pr: dict[str, Any] | None,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    previous = read_claim(task_gid)
-    state = load_task_state(task_gid) if state_path(task_gid).exists() else None
+    exact_claim = claim_path(task_gid, branch, lineage_id)
+    previous = read_claim(task_gid, branch, lineage_id) if exact_claim.exists() else None
+    legacy_claim = claim_root() / f"{task_gid}.json"
+    if previous is None and legacy_claim.exists():
+        candidate = _validate_claim_record(read_json_object(legacy_claim, "legacy local-agent ownership claim"), task_gid)
+        if candidate.get("branch") != branch:
+            fail("OWNERSHIP_AMBIGUOUS", f"legacy claim names branch {candidate.get('branch')!r}, not requested {branch!r}")
+        candidate = dict(candidate)
+        candidate["schema_version"] = CLAIM_SCHEMA_VERSION
+        candidate["lineage_id"] = lineage_id
+        atomic_write_json(exact_claim, candidate)
+        _remove_claim_file(legacy_claim)
+        previous = candidate
 
-    if state is not None:
+    state_file = state_path_for_branch(task_gid, branch)
+    state = None
+    if state_file is not None:
+        state = read_json_object(state_file, "task worktree state")
         if state.get("lifecycle") != "active":
-            fail("TASK_NOT_ACTIVE", f"task lifecycle is {state.get('lifecycle')!r}; a new live ownership claim is refused")
+            fail("TASK_NOT_ACTIVE", f"lineage lifecycle is {state.get('lifecycle')!r}; a new live ownership claim is refused")
+        existing_lineage = state.get("lineage_id")
+        if existing_lineage is None:
+            state = dict(state)
+            state["lineage_id"] = lineage_id
+            exact_state = state_path(task_gid, branch, lineage_id)
+            atomic_write_json(exact_state, state)
+            if state_file != exact_state:
+                state_file.unlink()
+            state_file = exact_state
+        elif existing_lineage != lineage_id:
+            fail("LINEAGE_REGISTRY_CHANGED", f"local state lineage {existing_lineage} != repository lineage {lineage_id}")
         state_repo = resolve_repository_from_state(runner, state)
         verify_owned_worktree(runner, state_repo, state)
-        if state.get("branch") != branch:
-            fail(
-                "OWNERSHIP_AMBIGUOUS",
-                f"task worktree state owns branch {state.get('branch')!r}, but dispatch requested {branch!r}",
-            )
         stored_pr = state.get("pr_url") or state.get("pr_head")
         if stored_pr and pr is None:
-            fail(
-                "PR_LEASE_VISIBILITY_REQUIRED",
-                "task state already carries PR identity; dispatch must provide current PR head/lease visibility",
-            )
+            fail("PR_LEASE_VISIBILITY_REQUIRED", "lineage state already carries PR identity; dispatch must provide current PR head/lease visibility")
 
     if previous is not None:
-        if previous.get("branch") != branch:
-            fail(
-                "OWNERSHIP_AMBIGUOUS",
-                f"stale/released claim names branch {previous.get('branch')!r}, but dispatch requested {branch!r}",
-            )
         previous_pr = previous.get("pr")
         if previous_pr is not None and pr is None:
-            fail(
-                "PR_LEASE_VISIBILITY_REQUIRED",
-                "prior ownership claim carries PR identity; dispatch must reconcile current PR head/lease visibility",
-            )
+            fail("PR_LEASE_VISIBILITY_REQUIRED", "prior ownership claim carries PR identity; dispatch must reconcile current PR head/lease visibility")
         if isinstance(previous_pr, dict) and isinstance(pr, dict) and previous_pr.get("number") != pr.get("number"):
-            fail(
-                "OWNERSHIP_AMBIGUOUS",
-                f"prior claim names PR #{previous_pr.get('number')}, but dispatch requested PR #{pr.get('number')}",
-            )
+            fail("OWNERSHIP_AMBIGUOUS", f"prior claim names PR #{previous_pr.get('number')}, but dispatch requested PR #{pr.get('number')}")
 
     state_owner = owner_agent_id(state) if state is not None else None
     prior_owner = previous.get("agent_id") if previous is not None else None
@@ -354,61 +405,53 @@ def _reconcile_existing(
             token = str(previous.get("token"))
             fail(
                 "OWNERSHIP_AMBIGUOUS",
-                f"task worktree owner {state_owner!r} disagrees with prior claim owner {prior_owner!r}. "
-                f"Safe recovery: durable owner {state_owner!r} may reacquire this same task/branch with ordinary `claim`; "
-                "after an explicit handoff, a replacement owner must retry the same lineage with "
-                f"`claim --takeover --expected-claim {token}`. A live claim remains fenced by the task/branch/PR locks.",
+                f"lineage owner {state_owner!r} disagrees with prior claim owner {prior_owner!r}. "
+                f"Durable owner may reacquire ordinarily; replacement requires `claim --takeover --expected-claim {token}`.",
             )
-        assert previous is not None
         previous = _coherent_prior_claim(previous, state, state_owner)
         prior_owner = state_owner
     durable_owner = state_owner or prior_owner
     if durable_owner is None and state is not None and not takeover:
-        fail(
-            "OWNER_HANDOFF_REQUIRED",
-            "existing active task state has no concrete owner; explicit --takeover is required before assigning a local writer",
-        )
+        fail("OWNER_HANDOFF_REQUIRED", "existing active lineage has no concrete owner; explicit --takeover is required")
     if durable_owner is not None and durable_owner != agent_id and not takeover:
-        fail(
-            "OWNER_HANDOFF_REQUIRED",
-            f"task/branch belongs to prior local owner {durable_owner!r}; explicit handoff requires claim --takeover",
-        )
+        fail("OWNER_HANDOFF_REQUIRED", f"lineage belongs to prior local owner {durable_owner!r}; explicit handoff requires claim --takeover")
     return previous, state_owner
 
 
 def _settle_failed_claim(
     *,
     task_gid: str,
+    branch: str,
+    lineage_id: str,
     path: Path,
     token: str,
     agent_id: str,
     previous: dict[str, Any] | None,
     baseline_state_owner: str | None,
-) -> None:
-    """Leave claim bookkeeping coherent with whichever owner the child durably persisted."""
-    current = read_claim(task_gid)
+) -> str | None:
+    """Leave claim bookkeeping coherent with whichever owner the child durably persisted.
+
+    Returns the resolved durable owner agent id (or ``None`` if there was never a
+    prior owner), so the caller can roll the repository-wide registry marker's
+    ``owner_agent_id`` back into agreement with this local settlement.
+    """
+    current = read_claim(task_gid, branch, lineage_id)
     if current is None or current.get("token") != token:
         fail("OWNERSHIP_AMBIGUOUS", "claim metadata changed while this agent still held the live ownership locks")
-
-    state = load_task_state(task_gid) if state_path(task_gid).exists() else None
+    state_file = state_path_for_branch(task_gid, branch)
+    state = read_json_object(state_file, "task worktree state") if state_file is not None else None
     post_owner = owner_agent_id(state) if state is not None else None
     rollback_owner = previous.get("agent_id") if previous is not None else baseline_state_owner
-
     if post_owner == agent_id:
         current["released_at"] = now_utc()
         atomic_write_json(path, current)
-        return
-
+        return agent_id
     if state is None or post_owner == rollback_owner:
         if previous is None:
             _remove_claim_file(path)
         else:
             atomic_write_json(path, previous)
-        return
-
-    # The child durably wrote an unexpected owner. Do not invent a rollback of
-    # child state; instead make the stale claim record agree with that durable
-    # owner so a subsequent explicit claim/takeover can recover safely.
+        return rollback_owner
     assert state is not None and post_owner is not None
     current["agent_id"] = post_owner
     owner = state.get("owner")
@@ -417,6 +460,7 @@ def _settle_failed_claim(
     current["released_at"] = now_utc()
     current["takeover"] = False
     atomic_write_json(path, current)
+    return post_owner
 
 
 class _HeldClaimLocks:
@@ -450,155 +494,131 @@ def command_claim(args: argparse.Namespace, runner: GitRunner) -> int:
     if agent_id is None:
         fail("OWNERSHIP_AGENT_REQUIRED", "exclusive local-agent ownership requires --agent-id")
     if args.require_launch_provenance and not args.launch_provenance:
-        fail(
-            "LAUNCH_PROVENANCE_REQUIRED",
-            "--require-launch-provenance requires --launch-provenance from the actual local host launcher",
-        )
+        fail("LAUNCH_PROVENANCE_REQUIRED", "--require-launch-provenance requires --launch-provenance from the actual local host launcher")
     if not args.launch_provenance:
         validate_agent_state(agent_id)
-
     repo = discover_repository(runner, Path(args.repo))
     branch = validate_branch(runner, repo.source_top, args.branch)
     pr = _normalize_pr(args)
     expected_claim = args.expected_claim
     if args.takeover and not expected_claim:
-        fail(
-            "EXPECTED_CLAIM_REQUIRED",
-            "claim --takeover requires --expected-claim with the exact current claim id",
-        )
+        fail("EXPECTED_CLAIM_REQUIRED", "claim --takeover requires --expected-claim with the exact current claim id")
     if expected_claim and not args.takeover:
-        fail(
-            "EXPECTED_CLAIM_REQUIRES_TAKEOVER",
-            "--expected-claim is valid only with claim --takeover",
-        )
+        fail("EXPECTED_CLAIM_REQUIRES_TAKEOVER", "--expected-claim is valid only with claim --takeover")
     argv = list(args.argv)
     if argv and argv[0] == "--":
         argv = argv[1:]
     if not argv:
         fail("CLAIM_COMMAND_REQUIRED", "claim must wrap the dispatched local-agent command after --")
 
-    lock_paths = [task_claim_lock_path(task_gid), branch_claim_lock_path(branch)]
+    token = uuid.uuid4().hex
+    resolved_sha, lineage_id, resolved_marker = resolve_lineage_for_branch(
+        runner, repo, task_gid=task_gid, branch=branch,
+    )
+    lock_paths = [branch_claim_lock_path(branch)]
     if pr is not None:
         lock_paths.append(pr_claim_lock_path(int(pr["number"])))
     locks = _HeldClaimLocks(lock_paths)
     locks.acquire()
-    token = uuid.uuid4().hex
-    path = claim_path(task_gid)
+    path = claim_path(task_gid, branch, lineage_id)
     prior_identity: dict[str, Any] | None = None
     launch_identity_bound = False
+    registry_claimed = False
+    pr_registry_acquired = False
+    prior_registry_owner: str | None = None
     try:
+        # Run the local claim-vs-state consistency check before the repository-wide
+        # registry ownership gate, so a locally detectable OWNERSHIP_AMBIGUOUS
+        # surfaces ahead of a registry-level OWNER_HANDOFF_REQUIRED.
         previous, baseline_state_owner = _reconcile_existing(
-            runner=runner,
-            task_gid=task_gid,
-            branch=branch,
-            agent_id=agent_id,
-            takeover=bool(args.takeover),
-            expected_claim=expected_claim,
-            pr=pr,
+            runner=runner, task_gid=task_gid, branch=branch, lineage_id=lineage_id,
+            agent_id=agent_id, takeover=bool(args.takeover), expected_claim=expected_claim, pr=pr,
         )
-        if args.takeover:
-            if previous is None:
-                if expected_claim != "legacy-unclaimed" or not state_path(task_gid).exists():
-                    fail(
-                        "OWNER_CLAIM_CHANGED",
-                        "takeover expected claim does not match the current durable ownership generation",
-                    )
-            elif previous.get("token") != expected_claim:
-                fail(
-                    "OWNER_CLAIM_CHANGED",
-                    "takeover expected claim does not match the current durable ownership generation",
-                )
+        if args.takeover and previous is not None and previous.get("token") != expected_claim:
+            fail("OWNER_CLAIM_CHANGED", "takeover expected claim does not match the current durable local claim generation")
+        registry_sha, registry_generation, prior_registry_owner = claim_registry_ownership(
+            runner, repo, task_gid=task_gid, branch=branch, lineage_id=lineage_id,
+            sha=resolved_sha, marker=resolved_marker, agent_id=agent_id, token=token,
+            takeover=bool(args.takeover), expected_claim=expected_claim,
+        )
+        registry_claimed = True
+        if pr is not None:
+            acquire_pr_registry_claim(
+                runner, repo, pr_number=int(pr["number"]), task_gid=task_gid, branch=branch,
+                lineage_id=lineage_id, token=token, agent_id=agent_id,
+            )
+            pr_registry_acquired = True
         if pr is not None:
             remote_head = remote_ref_sha(runner, repo, f"refs/heads/{branch}")
             if remote_head != pr["head"]:
-                fail(
-                    "PR_BRANCH_HEAD_MISMATCH",
-                    f"authorized PR head {pr['head']} does not equal remote branch {branch} head {remote_head}; dispatch lineage is stale or contradictory",
-                )
+                fail("PR_BRANCH_HEAD_MISMATCH", f"authorized PR head {pr['head']} does not equal remote branch {branch} head {remote_head}")
         if args.launch_provenance:
             prior_identity, _ = bind_identity_from_launch_provenance(
-                Path(args.launch_provenance),
-                agent_id=agent_id,
-                task_gid=task_gid,
-                branch=branch,
-                repo_path=repo.source_top,
-                pr=pr,
+                Path(args.launch_provenance), agent_id=agent_id, task_gid=task_gid, branch=branch, repo_path=repo.source_top, pr=pr,
             )
             launch_identity_bound = True
         else:
             validate_agent_state(agent_id)
         record: dict[str, Any] = {
-            "schema_version": CLAIM_SCHEMA_VERSION,
-            "repository": EXPECTED_REPOSITORY,
-            "origin_id": repo.origin_id,
-            "task_gid": task_gid,
-            "branch": branch,
-            "agent_id": agent_id,
-            "host": socket.gethostname(),
-            "token": token,
-            "acquired_at": now_utc(),
-            "released_at": None,
-            "takeover": bool(args.takeover),
-            "pr": pr,
-            "launch_provenance_required": bool(args.require_launch_provenance),
+            "schema_version": CLAIM_SCHEMA_VERSION, "repository": EXPECTED_REPOSITORY, "origin_id": repo.origin_id,
+            "task_gid": task_gid, "branch": branch, "lineage_id": lineage_id, "agent_id": agent_id,
+            "host": socket.gethostname(), "token": token, "registry_marker": registry_sha,
+            "registry_generation": registry_generation, "acquired_at": now_utc(), "released_at": None,
+            "takeover": bool(args.takeover), "pr": pr, "launch_provenance_required": bool(args.require_launch_provenance),
         }
-        try:
-            atomic_write_json(path, record)
-        except Exception:
-            if launch_identity_bound:
-                restore_identity(agent_id, prior_identity)
-            raise
-
+        atomic_write_json(path, record)
         env = os.environ.copy()
-        env.update(
-            {
-                CLAIM_TOKEN_ENV: token,
-                CLAIM_TASK_ENV: task_gid,
-                CLAIM_BRANCH_ENV: branch,
-                CLAIM_AGENT_ENV: agent_id,
-            }
-        )
+        env.update({CLAIM_TOKEN_ENV: token, CLAIM_TASK_ENV: task_gid, CLAIM_BRANCH_ENV: branch, CLAIM_AGENT_ENV: agent_id, LINEAGE_ENV: lineage_id})
         try:
-            completed = subprocess.run(
-                argv,
-                cwd=repo.source_top,
-                env=env,
-                check=False,
-                pass_fds=tuple(locks.fds),
-            )
+            completed = subprocess.run(argv, cwd=repo.source_top, env=env, check=False, pass_fds=tuple(locks.fds))
         except OSError as exc:
-            _settle_failed_claim(
-                task_gid=task_gid,
-                path=path,
-                token=token,
-                agent_id=agent_id,
-                previous=previous,
-                baseline_state_owner=baseline_state_owner,
-            )
+            resolved_owner = _settle_failed_claim(task_gid=task_gid, branch=branch, lineage_id=lineage_id, path=path, token=token, agent_id=agent_id, previous=previous, baseline_state_owner=baseline_state_owner)
             if launch_identity_bound:
                 restore_identity(agent_id, prior_identity)
+            if pr_registry_acquired:
+                release_pr_registry_claim(runner, repo, pr_number=int(pr["number"]), lineage_id=lineage_id, token=token)
+            release_registry_claim(runner, repo, task_gid=task_gid, branch=branch, lineage_id=lineage_id, token=token, owner_agent_id=resolved_owner)
             fail("CLAIM_COMMAND_FAILED", f"could not launch claimed local-agent command: {exc}")
         if completed.returncode != 0:
-            _settle_failed_claim(
-                task_gid=task_gid,
-                path=path,
-                token=token,
-                agent_id=agent_id,
-                previous=previous,
-                baseline_state_owner=baseline_state_owner,
-            )
+            resolved_owner = _settle_failed_claim(task_gid=task_gid, branch=branch, lineage_id=lineage_id, path=path, token=token, agent_id=agent_id, previous=previous, baseline_state_owner=baseline_state_owner)
             if launch_identity_bound:
-                durable_state = load_task_state(task_gid) if state_path(task_gid).exists() else None
+                state_file = state_path_for_branch(task_gid, branch)
+                durable_state = read_json_object(state_file, "task worktree state") if state_file is not None else None
                 durable_owner = owner_agent_id(durable_state) if durable_state is not None else None
                 if durable_owner != agent_id:
                     restore_identity(agent_id, prior_identity)
+            if pr_registry_acquired:
+                release_pr_registry_claim(runner, repo, pr_number=int(pr["number"]), lineage_id=lineage_id, token=token)
+            release_registry_claim(runner, repo, task_gid=task_gid, branch=branch, lineage_id=lineage_id, token=token, owner_agent_id=resolved_owner)
             return completed.returncode
-        current = read_claim(task_gid)
+        current = read_claim(task_gid, branch, lineage_id)
         if current is None or current.get("token") != token:
             fail("OWNERSHIP_AMBIGUOUS", "claim metadata changed while this agent still held the live ownership locks")
         current["released_at"] = now_utc()
         atomic_write_json(path, current)
+        if pr_registry_acquired:
+            release_pr_registry_claim(runner, repo, pr_number=int(pr["number"]), lineage_id=lineage_id, token=token)
+        release_registry_claim(runner, repo, task_gid=task_gid, branch=branch, lineage_id=lineage_id, token=token)
         return completed.returncode
+    except Exception:
+        # If setup fails after the repository-wide claim was acquired, release it
+        # when it is still ours. A release failure is intentionally fail-closed.
+        try:
+            if pr_registry_acquired:
+                try:
+                    release_pr_registry_claim(runner, repo, pr_number=int(pr["number"]), lineage_id=lineage_id, token=token)
+                except Exception:
+                    pass
+            if registry_claimed:
+                reg = read_registry(runner, repo, branch)
+                if reg is not None:
+                    _, marker = reg
+                    if marker.get("lineage_id") == lineage_id and marker.get("claim_token") == token and marker.get("claim_active"):
+                        release_registry_claim(runner, repo, task_gid=task_gid, branch=branch, lineage_id=lineage_id, token=token, owner_agent_id=prior_registry_owner)
+        finally:
+            if launch_identity_bound:
+                restore_identity(agent_id, prior_identity)
+        raise
     finally:
         locks.release()
 
@@ -627,6 +647,7 @@ def require_active_claim(
     task_gid: str,
     branch: str,
     agent_id: str | None,
+    runner: GitRunner,
     *,
     allow_takeover: bool = False,
     require_pr: bool = False,
@@ -637,50 +658,56 @@ def require_active_claim(
     if agent_id is None:
         fail("OWNERSHIP_AGENT_REQUIRED", "local-agent writer operations require --agent-id inside an active ownership claim")
     token = os.environ.get(CLAIM_TOKEN_ENV)
-    if not token:
-        fail(
-            "OWNERSHIP_CLAIM_REQUIRED",
-            "local-agent writer operations must run inside `tools/agent-worktree claim`; direct unclaimed branch/worktree access is refused",
-        )
-    record = read_claim(task_gid)
+    lineage_id = os.environ.get(LINEAGE_ENV)
+    if not token or not lineage_id or os.environ.get(CLAIM_TASK_ENV) != task_gid or os.environ.get(CLAIM_BRANCH_ENV) != branch:
+        fail("OWNERSHIP_CLAIM_REQUIRED", "local-agent writer operations require the exact task/branch/lineage claim environment")
+    record = read_claim(task_gid, branch, lineage_id)
     if record is None:
-        fail("OWNERSHIP_CLAIM_REQUIRED", "no durable local-agent claim metadata exists for this task")
-    if record.get("token") != token:
-        fail("OWNERSHIP_CLAIM_MISMATCH", "claim token does not match the durable task ownership claim")
+        fail("OWNERSHIP_CLAIM_REQUIRED", "no durable local-agent claim metadata exists for this exact lineage")
+    if record.get("token") != token or record.get("lineage_id") != lineage_id:
+        fail("OWNERSHIP_CLAIM_MISMATCH", "claim token/lineage does not match the durable ownership claim")
     if record.get("branch") != branch or record.get("agent_id") != agent_id:
-        fail(
-            "OWNERSHIP_CLAIM_MISMATCH",
-            "claim task/branch/agent identity does not match the requested writer operation",
-        )
+        fail("OWNERSHIP_CLAIM_MISMATCH", "claim task/branch/agent identity does not match the requested writer operation")
     if record.get("released_at") is not None:
         fail("OWNERSHIP_CLAIM_STALE", "ownership claim was already released")
     if record.get("head_moved_to") is not None and not allow_head_moved_readback:
-        fail(
-            "PR_HEAD_MOVED_REDISPATCH_REQUIRED",
-            f"owned PR head moved to {record.get('head_moved_to')}; stop semantic mutation and reacquire an exact-head claim from current orchestration",
-        )
+        fail("PR_HEAD_MOVED_REDISPATCH_REQUIRED", f"owned PR head moved to {record.get('head_moved_to')}; reacquire an exact-head claim")
     status = claim_status(task_gid)
     if status.get("state") != "live":
-        fail(
-            "OWNERSHIP_CLAIM_STALE",
-            f"ownership claim is {status.get('state')!r}, not live; dispatch/resume must reacquire it before writing",
-        )
+        fail("OWNERSHIP_CLAIM_STALE", f"ownership claim is {status.get('state')!r}, not live")
+    state_file = state_path_for_branch(task_gid, branch)
+    if state_file is not None:
+        state = read_json_object(state_file, "task worktree state")
+        if state.get("lineage_id") not in {None, lineage_id}:
+            fail("LINEAGE_REGISTRY_CHANGED", "local state lineage differs from claimed lineage")
+        repo = resolve_repository_from_state(runner, state) if state.get("lifecycle") == "active" else discover_repository(runner, Path("."))
+    else:
+        repo = discover_repository(runner, Path("."))
+    marker = assert_active_registry_claim(runner, repo, task_gid=task_gid, branch=branch, lineage_id=lineage_id, token=token)
+    if state_file is not None and state.get("published_head") is not None:
+        expected_remote = str(state.get("published_head"))
+        observed_remote = remote_ref_sha(runner, repo, f"refs/heads/{branch}", allow_missing=True)
+        # A moved-but-present remote head (fast-forward, behind, or diverged) is
+        # ordinary remote drift that resume's own remote-relation classification
+        # already fails closed on (REMOTE_AHEAD/REMOTE_DIVERGED) without touching
+        # the worktree or the registry. Only an outright missing branch is not
+        # something that classification detects, so fence just that case here.
+        if observed_remote is None:
+            fence_lineage(
+                runner, repo, task_gid=task_gid, branch=branch, lineage_id=lineage_id, token=token,
+                reason="published branch disappeared or moved outside the admitted lineage",
+                expected_head=expected_remote, observed_head=observed_remote,
+            )
+            fail("LINEAGE_REMOTE_CONTRADICTION", f"published branch {branch!r} expected {expected_remote}, observed <missing>; lineage permanently fenced")
     if require_pr and record.get("pr") is None:
-        fail(
-            "PR_LEASE_VISIBILITY_REQUIRED",
-            "adopting a handed-off PR branch requires current PR head/lease visibility on the live claim",
-        )
+        fail("PR_LEASE_VISIBILITY_REQUIRED", "adopting a handed-off PR branch requires current PR head/lease visibility")
     if allow_takeover and not record.get("takeover"):
         fail("TAKEOVER_CLAIM_REQUIRED", "resume --takeover requires the live dispatch claim to have been acquired with --takeover")
-    if state_path(task_gid).exists():
-        state = load_task_state(task_gid)
+    if state_file is not None:
         current_owner = owner_agent_id(state)
         if current_owner != agent_id:
             if not allow_takeover:
-                fail(
-                    "OWNER_MISMATCH",
-                    f"task record owner provenance is {current_owner!r}; this live claim does not authorize silent ownership replacement",
-                )
+                fail("OWNER_MISMATCH", f"lineage owner provenance is {current_owner!r}; this claim does not authorize silent replacement")
             if not record.get("takeover"):
                 fail("TAKEOVER_CLAIM_REQUIRED", "ownership replacement requires both claim --takeover and resume --takeover")
     return record

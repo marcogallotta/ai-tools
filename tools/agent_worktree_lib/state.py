@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
 import socket
@@ -17,8 +18,61 @@ def state_root() -> Path:
     return Path.home().resolve() / ".local" / "state" / "dish" / "worktrees"
 
 
-def state_path(task_gid: str) -> Path:
-    return state_root() / f"{require_task_gid(task_gid)}.json"
+def _branch_digest(branch: str) -> str:
+    return hashlib.sha256(branch.encode("utf-8")).hexdigest()[:24]
+
+
+def lineage_state_dir(task_gid: str) -> Path:
+    return state_root() / require_task_gid(task_gid)
+
+
+def lineage_state_path(task_gid: str, branch: str, lineage_id: str) -> Path:
+    if not lineage_id or len(lineage_id) < 16:
+        fail("LINEAGE_ID_INVALID", "lineage_id must be a durable non-empty incarnation id")
+    return lineage_state_dir(task_gid) / f"{_branch_digest(branch)}-{lineage_id}.json"
+
+
+def task_state_paths(task_gid: str) -> list[Path]:
+    task_gid = require_task_gid(task_gid)
+    paths: list[Path] = []
+    legacy = state_root() / f"{task_gid}.json"
+    if legacy.exists():
+        paths.append(legacy)
+    directory = lineage_state_dir(task_gid)
+    if directory.is_dir():
+        paths.extend(sorted(path for path in directory.glob("*.json") if path.is_file() and not path.is_symlink()))
+    return paths
+
+
+def state_path(task_gid: str, branch: str | None = None, lineage_id: str | None = None) -> Path:
+    task_gid = require_task_gid(task_gid)
+    if branch is None and os.environ.get("DISH_AGENT_CLAIM_TASK") == task_gid:
+        branch = os.environ.get("DISH_AGENT_CLAIM_BRANCH")
+        lineage_id = os.environ.get("DISH_AGENT_LINEAGE_ID")
+    if branch is not None or lineage_id is not None:
+        if branch is None or lineage_id is None:
+            fail("LINEAGE_ID_INVALID", "branch and lineage_id must be supplied together")
+        return lineage_state_path(task_gid, branch, lineage_id)
+    paths = task_state_paths(task_gid)
+    if not paths:
+        return state_root() / f"{task_gid}.json"
+    if len(paths) > 1:
+        fail("LINEAGE_AMBIGUOUS", f"task {task_gid} has {len(paths)} durable lineages; exact branch/lineage identity is required")
+    return paths[0]
+
+
+def state_path_for_branch(task_gid: str, branch: str) -> Path | None:
+    matches: list[Path] = []
+    for path in task_state_paths(task_gid):
+        try:
+            payload = read_json_object(path, "task worktree state")
+        except AgentWorktreeError:
+            raise
+        if payload.get("branch") == branch:
+            matches.append(path)
+    if len(matches) > 1:
+        fail("LINEAGE_AMBIGUOUS", f"task {task_gid} has multiple durable states for branch {branch!r}")
+    return matches[0] if matches else None
 
 
 def agent_state_path(agent_id: str) -> Path:
@@ -32,8 +86,16 @@ def worktree_root() -> Path:
     return Path.home().resolve() / ".local" / "share" / "dish" / "worktrees" / "ai-tools"
 
 
-def task_worktree_path(task_gid: str) -> Path:
-    return worktree_root() / require_task_gid(task_gid)
+def task_worktree_path(task_gid: str, branch: str | None = None, lineage_id: str | None = None) -> Path:
+    task_gid = require_task_gid(task_gid)
+    if branch is None and os.environ.get("DISH_AGENT_CLAIM_TASK") == task_gid:
+        branch = os.environ.get("DISH_AGENT_CLAIM_BRANCH")
+        lineage_id = os.environ.get("DISH_AGENT_LINEAGE_ID")
+    if branch is not None or lineage_id is not None:
+        if branch is None or lineage_id is None:
+            fail("LINEAGE_ID_INVALID", "branch and lineage_id must be supplied together for worktree resolution")
+        return worktree_root() / task_gid / f"{_branch_digest(branch)}-{lineage_id}"
+    return worktree_root() / task_gid
 
 
 def new_active_task_state(
@@ -52,14 +114,17 @@ def new_active_task_state(
     remote_owned_head: str | None,
     remote_relation: str,
     target_current_head: str,
+    lineage_id: str | None = None,
 ) -> dict[str, Any]:
     """Build the single durable active-worktree state shape used by start/adopt."""
     stamp = now_utc()
+    lineage_id = lineage_id or os.environ.get("DISH_AGENT_LINEAGE_ID")
     return {
         "schema_version": SCHEMA_VERSION,
         "repository": {"full_name": EXPECTED_REPOSITORY, "origin_id": origin_id},
         "task_gid": task_gid,
         "branch": branch,
+        "lineage_id": lineage_id,
         "worktree_path": str(worktree_path),
         "git_common_dir": str(git_common_dir),
         "git_dir": str(git_dir),
@@ -92,9 +157,17 @@ def ensure_state_dir() -> None:
 
 
 class TaskLock:
-    def __init__(self, task_gid: str):
+    def __init__(self, task_gid: str, branch: str | None = None, lineage_id: str | None = None):
         ensure_state_dir()
-        self.path = state_root() / f"{require_task_gid(task_gid)}.lock"
+        task_gid = require_task_gid(task_gid)
+        if branch is None and os.environ.get("DISH_AGENT_CLAIM_TASK") == task_gid:
+            branch = os.environ.get("DISH_AGENT_CLAIM_BRANCH")
+            lineage_id = os.environ.get("DISH_AGENT_LINEAGE_ID")
+        if branch and lineage_id:
+            self.path = state_root() / "locks" / f"{task_gid}-{_branch_digest(branch)}-{lineage_id}.lock"
+            self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        else:
+            self.path = state_root() / f"{task_gid}.lock"
         self.handle = None
 
     def __enter__(self) -> "TaskLock":
@@ -145,8 +218,8 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
             temp.unlink()
 
 
-def load_task_state(task_gid: str) -> dict[str, Any]:
-    path = state_path(task_gid)
+def load_task_state(task_gid: str, *, branch: str | None = None, lineage_id: str | None = None) -> dict[str, Any]:
+    path = state_path(task_gid, branch, lineage_id)
     state = read_json_object(path, "task worktree state")
     required = {
         "schema_version",
@@ -180,6 +253,9 @@ def load_task_state(task_gid: str) -> dict[str, Any]:
     require_full_sha(str(state.get("base_sha")), "stored base SHA")
     require_full_sha(str(state.get("local_head")), "stored local HEAD")
     branch = str(state.get("branch"))
+    lineage_id = state.get("lineage_id")
+    if lineage_id is not None and (not isinstance(lineage_id, str) or len(lineage_id) < 16):
+        fail("STATE_INVALID", "task worktree state has invalid lineage_id")
     if not branch.startswith("agent/"):
         fail("STATE_INVALID", f"stored owned branch is not agent/*: {branch!r}")
     return state
@@ -203,14 +279,15 @@ def set_agent_reference(agent_id: str, state: dict[str, Any]) -> None:
     payload = read_json_object(path, "per-agent identity state")
     payload["active_worktree"] = {
         "task_gid": state["task_gid"],
-        "state_path": str(state_path(state["task_gid"])),
+        "state_path": str(state_path(state["task_gid"], state["branch"], state.get("lineage_id"))) if state.get("lineage_id") else str(state_path(state["task_gid"])),
         "worktree": state["worktree_path"],
         "branch": state["branch"],
+        "lineage_id": state.get("lineage_id"),
     }
     atomic_write_json(path, payload)
 
 
-def clear_agent_reference(agent_id: str | None, task_gid: str) -> None:
+def clear_agent_reference(agent_id: str | None, task_gid: str, lineage_id: str | None = None) -> None:
     if agent_id is None:
         return
     path = agent_state_path(agent_id)
@@ -219,5 +296,6 @@ def clear_agent_reference(agent_id: str | None, task_gid: str) -> None:
     payload = read_json_object(path, "per-agent identity state")
     active = payload.get("active_worktree")
     if isinstance(active, dict) and active.get("task_gid") == task_gid:
-        payload["active_worktree"] = None
-        atomic_write_json(path, payload)
+        if lineage_id is None or active.get("lineage_id") in {None, lineage_id}:
+            payload["active_worktree"] = None
+            atomic_write_json(path, payload)

@@ -15,16 +15,18 @@ from .operations import (
     remote_relation, resolve_repository_from_state, validate_branch, verify_owned_worktree, ensure_commit_object,
 )
 from .repository import discover_repository
-from .state import TaskLock, atomic_write_json, clear_agent_reference, load_task_state, state_path
+from .state import TaskLock, atomic_write_json, clear_agent_reference, load_task_state, read_json_object, state_path, state_path_for_branch
 from .operations import owner_agent_id
 from .ownership import invalidate_claim_after_head_movement, require_active_claim
+from .lineage import LINEAGE_ENV, record_lineage_head, terminalize_lineage
 
-def _claimed_state(task_gid: str, *, allow_head_moved_readback: bool = False) -> dict[str, Any]:
+def _claimed_state(task_gid: str, runner: GitRunner, *, allow_head_moved_readback: bool = False) -> dict[str, Any]:
     state = load_task_state(task_gid)
     claimed_agent = require_active_claim(
         task_gid,
         str(state["branch"]),
         owner_agent_id(state),
+        runner,
         allow_head_moved_readback=allow_head_moved_readback,
     )["agent_id"]
     if owner_agent_id(state) is None:
@@ -37,9 +39,9 @@ def _claimed_state(task_gid: str, *, allow_head_moved_readback: bool = False) ->
 
 def command_publish(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]:
     task_gid = require_task_gid(args.task)
-    _claimed_state(task_gid)
+    _claimed_state(task_gid, runner)
     with TaskLock(task_gid):
-        state = _claimed_state(task_gid)
+        state = _claimed_state(task_gid, runner)
         repo = resolve_repository_from_state(runner, state)
         identity = verify_owned_worktree(runner, repo, state)
         relation, remote_head = remote_relation(runner, repo, state["branch"], identity.head)
@@ -47,16 +49,41 @@ def command_publish(args: argparse.Namespace, runner: GitRunner) -> dict[str, An
             fail("REMOTE_AHEAD", "remote owned branch is ahead; publish refuses automatic synchronization")
         if relation == "divergent":
             fail("REMOTE_DIVERGED", "remote owned branch diverged; publish refuses merge/rebase/force-push")
+        first_publication = state.get("remote_owned_head") is None and state.get("published_head") is None
+        if first_publication and relation != "absent":
+            # A new lineage is admitted before its first remote branch attachment.
+            # If the branch appears before that attachment attempt, do not silently
+            # adopt it merely because it happens to point at the same SHA. Supported
+            # agent-worktree contenders are already serialized by registry CAS; this
+            # check fences local-vs-out-of-band branch creation races.
+            fail(
+                "BRANCH_CREATE_RACE",
+                f"remote branch {state['branch']!r} appeared before first lineage publication at {remote_head}; exact admitted lineage will not adopt it",
+            )
         if relation != "equal":
             ref = f"refs/heads/{state['branch']}"
             refspec = f"{ref}:{ref}"
-            result = runner.run(repo.source_top, "push", repo.origin_url, refspec, check=False)
+            push_args = ["push"]
+            if first_publication:
+                push_args.append(f"--force-with-lease={ref}:")
+            push_args += [repo.origin_url, refspec]
+            result = runner.run(repo.source_top, *push_args, check=False)
             if result.returncode != 0:
+                observed = remote_ref_sha(runner, repo, ref, allow_missing=True)
+                if first_publication and observed is not None:
+                    fail("BRANCH_CREATE_RACE", f"remote branch {state['branch']!r} was created concurrently before expected-absent attachment completed; observed {observed}")
                 fail("PUBLISH_FAILED", f"explicit owned-branch push failed without force: {result.stderr.strip()}")
         verified_remote = remote_ref_sha(runner, repo, f"refs/heads/{state['branch']}")
         assert verified_remote is not None
         if verified_remote != identity.head:
             fail("PUBLISH_VERIFY_FAILED", f"remote owned head {verified_remote} != local HEAD {identity.head}")
+        lineage_id = state.get("lineage_id") or os.environ.get(LINEAGE_ENV)
+        token = os.environ.get("DISH_AGENT_CLAIM_TOKEN")
+        if lineage_id and token:
+            record_lineage_head(
+                runner, repo, task_gid=task_gid, branch=str(state["branch"]),
+                lineage_id=str(lineage_id), token=token, head=verified_remote,
+            )
         state["published_head"] = identity.head
         state["remote_owned_head"] = verified_remote
         state["remote_relation"] = "equal"
@@ -72,9 +99,9 @@ def command_publish(args: argparse.Namespace, runner: GitRunner) -> dict[str, An
 
 def command_verify_handoff(args: argparse.Namespace, runner: GitRunner) -> dict[str, Any]:
     task_gid = require_task_gid(args.task)
-    _claimed_state(task_gid, allow_head_moved_readback=True)
+    _claimed_state(task_gid, runner, allow_head_moved_readback=True)
     with TaskLock(task_gid):
-        state = _claimed_state(task_gid, allow_head_moved_readback=True)
+        state = _claimed_state(task_gid, runner, allow_head_moved_readback=True)
         repo = resolve_repository_from_state(runner, state)
         identity = verify_owned_worktree(runner, repo, state)
         relation, remote_head, target_head, moved = remote_and_target_observation(runner, repo, state, identity.head)
@@ -135,7 +162,9 @@ def _checked_out_path(runner: GitRunner, repo, branch: str) -> str | None:
 def _write_cleanup_progress(task_gid: str, state: dict[str, Any], cleanup: dict[str, Any]) -> None:
     state["terminal_cleanup"] = cleanup
     state["last_verified_at"] = now_utc()
-    atomic_write_json(state_path(task_gid), state)
+    lineage_id = state.get("lineage_id")
+    path = state_path(task_gid, str(state["branch"]), str(lineage_id)) if lineage_id else state_path(task_gid)
+    atomic_write_json(path, state)
 
 
 def _delete_remote_branch_exact(runner: GitRunner, repo, branch: str, expected_head: str) -> None:
@@ -176,9 +205,19 @@ def command_cleanup(args: argparse.Namespace, runner: GitRunner) -> dict[str, An
     task_gid = require_task_gid(args.task)
     if args.disposition not in DISPOSITIONS:
         fail("INVALID_DISPOSITION", "cleanup disposition must be merged|closed|abandoned|superseded")
-    with TaskLock(task_gid):
-        state_file = state_path(task_gid)
-        state = load_task_state(task_gid) if state_file.exists() else None
+    requested_state = state_path_for_branch(task_gid, args.branch) if args.branch else None
+    if args.branch is None:
+        try:
+            candidate = state_path(task_gid)
+            requested_state = candidate if candidate.exists() else None
+        except Exception as exc:
+            if getattr(exc, "code", None) == "LINEAGE_AMBIGUOUS":
+                fail("LINEAGE_AMBIGUOUS", "cleanup for a task with multiple lineages requires --branch")
+            raise
+    state = read_json_object(requested_state, "task worktree state") if requested_state is not None else None
+    lineage_id = str(state.get("lineage_id")) if state is not None and state.get("lineage_id") else None
+    with TaskLock(task_gid, args.branch or (str(state.get("branch")) if state else None), lineage_id):
+        state_file = requested_state
         if state is not None:
             # Terminal cleanup must remain restartable after lifecycle leaves active.
             # Resolve from the explicitly supplied controller checkout, then bind it
@@ -293,6 +332,22 @@ def command_cleanup(args: argparse.Namespace, runner: GitRunner) -> dict[str, An
                 state["lifecycle"] = args.disposition
                 state["disposition"] = args.disposition
                 state["disposed_at"] = state.get("disposed_at") or now_utc()
+                if lineage_id is not None:
+                    cleanup["registry_tombstone"] = terminalize_lineage(
+                        runner, repo, task_gid=task_gid, branch=branch, lineage_id=lineage_id,
+                        disposition=args.disposition, expected_head=expected_head,
+                    )
+                    cleanup["registry_terminalized"] = True
+                    cleanup["registry_terminalized_at"] = now_utc()
+                _write_cleanup_progress(task_gid, state, cleanup)
+
+            elif lineage_id is not None and not cleanup.get("registry_terminalized"):
+                cleanup["registry_tombstone"] = terminalize_lineage(
+                    runner, repo, task_gid=task_gid, branch=branch, lineage_id=lineage_id,
+                    disposition=args.disposition, expected_head=expected_head,
+                )
+                cleanup["registry_terminalized"] = True
+                cleanup["registry_terminalized_at"] = now_utc()
                 _write_cleanup_progress(task_gid, state, cleanup)
 
             if worktree_exists:
@@ -374,7 +429,7 @@ def command_cleanup(args: argparse.Namespace, runner: GitRunner) -> dict[str, An
             if target_head is not None:
                 state["target_current_head"] = target_head
             _write_cleanup_progress(task_gid, state, cleanup)
-            clear_agent_reference(owner_agent_id(state), task_gid)
+            clear_agent_reference(owner_agent_id(state), task_gid, lineage_id)
 
         return {
             "command": "cleanup",
@@ -392,13 +447,13 @@ def command_cleanup(args: argparse.Namespace, runner: GitRunner) -> dict[str, An
             "local_head": local_head,
             "remote_owned_head": None,
             "current_target_head": target_head,
-            "state_path": str(state_path(task_gid)) if state is not None else None,
+            "state_path": str(requested_state) if requested_state is not None else None,
         }
 
 
 def command_exec(args: argparse.Namespace, runner: GitRunner) -> "NoReturn":
     task_gid = require_task_gid(args.task)
-    state = _claimed_state(task_gid)
+    state = _claimed_state(task_gid, runner)
     repo = resolve_repository_from_state(runner, state)
     identity = verify_owned_worktree(runner, repo, state)
     command = list(args.argv)

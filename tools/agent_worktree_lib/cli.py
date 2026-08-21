@@ -125,10 +125,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "claim":
             return command_claim(args, runner)
         if args.command == "start":
-            require_active_claim(args.task, args.branch, args.agent_id)
+            require_active_claim(args.task, args.branch, args.agent_id, runner)
             payload = command_start(args, runner)
         elif args.command == "adopt":
-            claim = require_active_claim(args.task, args.branch, args.agent_id, require_pr=True)
+            claim = require_active_claim(args.task, args.branch, args.agent_id, runner, require_pr=True)
             claim_pr = claim.get("pr")
             if not isinstance(claim_pr, dict) or claim_pr.get("head") != args.expected_head:
                 from .common import fail
@@ -142,7 +142,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "resume":
             state = load_task_state(args.task)
             require_active_claim(
-                args.task, str(state["branch"]), args.agent_id, allow_takeover=bool(args.takeover)
+                args.task, str(state["branch"]), args.agent_id, runner, allow_takeover=bool(args.takeover)
             )
             payload = command_resume(args, runner)
         elif args.command == "status":
