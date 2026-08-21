@@ -1880,34 +1880,9 @@
                     "minItems": 1,
                     "maxItems": 1,
                     "items": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "required": [
-                        "id",
-                        "name",
-                        "mime_type",
-                        "download_link"
-                      ],
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "description": "Stable OpenAI file identifier."
-                        },
-                        "name": {
-                          "type": "string",
-                          "description": "Stable file name."
-                        },
-                        "mime_type": {
-                          "type": "string",
-                          "description": "Stable file MIME type."
-                        },
-                        "download_link": {
-                          "type": "string",
-                          "description": "Transient signed transport URL. Dish fetches it once and never persists it in durable replay identity, logs, receipts, or errors."
-                        }
-                      }
+                      "type": "string"
                     },
-                    "description": "Exactly one Code-Interpreter-produced file to fetch and qualify."
+                    "description": "Exactly one Code-Interpreter-produced file to fetch and qualify. OpenAI expands the selected file into id, name, mime_type, and download_link fields at runtime."
                   }
                 }
               }
@@ -1946,7 +1921,7 @@
                               },
                               "content": {
                                 "type": "string",
-                                "contentEncoding": "base64",
+                                "format": "byte",
                                 "description": "Base64-encoded receipt bytes returned inline to Code Interpreter."
                               }
                             }

@@ -431,24 +431,14 @@ OPENAI_FILE_ID_REFS_SCHEMA = {
     "type": "array",
     "minItems": 1,
     "maxItems": 1,
-    "items": {
-        "type": "object",
-        "additionalProperties": False,
-        "required": list(QUALIFY_FILE_TRANSPORT_FILE_FIELDS),
-        "properties": {
-            "id": {"type": "string", "description": "Stable OpenAI file identifier."},
-            "name": {"type": "string", "description": "Stable file name."},
-            "mime_type": {"type": "string", "description": "Stable file MIME type."},
-            "download_link": {
-                "type": "string",
-                "description": (
-                    "Transient signed transport URL. Dish fetches it once and never "
-                    "persists it in durable replay identity, logs, receipts, or errors."
-                ),
-            },
-        },
-    },
-    "description": "Exactly one Code-Interpreter-produced file to fetch and qualify.",
+    # OpenAI requires string items in the imported schema, then expands them into
+    # file-reference objects before sending the HTTP request to the Action.
+    "items": {"type": "string"},
+    "description": (
+        "Exactly one Code-Interpreter-produced file to fetch and qualify. OpenAI "
+        "expands the selected file into id, name, mime_type, and download_link fields "
+        "at runtime."
+    ),
 }
 
 OPENAI_FILE_RESPONSE_SCHEMA = {
@@ -462,7 +452,7 @@ OPENAI_FILE_RESPONSE_SCHEMA = {
             "mime_type": {"type": "string"},
             "content": {
                 "type": "string",
-                "contentEncoding": "base64",
+                "format": "byte",
                 "description": "Base64-encoded receipt bytes returned inline to Code Interpreter.",
             },
         },

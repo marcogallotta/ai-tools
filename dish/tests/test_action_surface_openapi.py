@@ -212,6 +212,21 @@ def test_checked_in_openapi_is_synchronized_with_generator():
 
 
 @pytest.mark.smoke
+def test_file_transport_openapi_uses_openai_runtime_file_shapes():
+    spec = action_openapi()
+    operation = spec["paths"]["/v1/action/qualify-file-transport"]["post"]
+    request = operation["requestBody"]["content"]["application/json"]["schema"]
+    assert request["properties"]["openaiFileIdRefs"]["items"] == {"type": "string"}
+
+    response = operation["responses"]["200"]["content"]["application/json"]["schema"]
+    file_response = response["allOf"][1]["properties"]["openaiFileResponse"]
+    content = file_response["items"]["properties"]["content"]
+    assert content["type"] == "string"
+    assert content["format"] == "byte"
+    assert "contentEncoding" not in content
+
+
+@pytest.mark.smoke
 def test_inspect_openapi_requires_request_id_in_generated_and_checked_in_schema():
     from pathlib import Path
 
