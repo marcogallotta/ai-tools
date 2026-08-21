@@ -522,3 +522,47 @@ assert require_active_claim(task, branch, agent, runner, allow_head_moved_readba
     _, claim = record(h, task)
     assert claim["head_moved_to"] == new_head
     assert claim["semantic_mutation_closed_at"]
+
+
+def test_repository_claim_rejects_non_implementation_role(h: Harness) -> None:
+    h.agent_file("reviewer", role="review", owning_task_gid="3010")
+    result = claim(
+        h, task="3010", branch="agent/non-implementation", agent="reviewer",
+        child=["python3", "-c", "raise SystemExit('must not run')"],
+    )
+    assert_error(result, "MUTATION_AUTHORITY_REQUIRED")
+
+
+def test_repository_claim_rejects_mismatched_task_identity(h: Harness) -> None:
+    h.agent_file("impl", role="implementation", owning_task_gid="9999")
+    result = claim(
+        h, task="3011", branch="agent/wrong-task", agent="impl",
+        child=["python3", "-c", "raise SystemExit('must not run')"],
+    )
+    assert_error(result, "MUTATION_AUTHORITY_TASK_MISMATCH")
+
+
+def test_repository_claim_rejects_non_implementation_task_mode(h: Harness) -> None:
+    h.agent_file(
+        "impl",
+        role="implementation",
+        owning_task_gid="3012",
+        task_section="Needs Research",
+    )
+    result = claim(
+        h, task="3012", branch="agent/needs-research", agent="impl",
+        child=["python3", "-c", "raise SystemExit('must not run')"],
+    )
+    assert_error(result, "MUTATION_TASK_MODE_BLOCKED")
+
+
+def test_repository_writer_rechecks_role_after_claim(h: Harness) -> None:
+    task, branch, agent = "3013", "agent/role-change", "impl"
+    h.agent_file(agent, role="implementation", owning_task_gid=task)
+    h.start(task=task, branch=branch, agent=agent)
+    path = h.home / ".local/state/dish/agents" / f"{agent}.json"
+    payload = json.loads(path.read_text())
+    payload["role"] = "review"
+    path.write_text(json.dumps(payload) + "\n")
+    result = h.tool("commit", "--task", task, "--agent-id", agent, "--message", "x", "tracked.txt", check=False)
+    assert_error(result, "MUTATION_AUTHORITY_REQUIRED")

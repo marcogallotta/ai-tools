@@ -274,6 +274,48 @@ def validate_agent_state(agent_id: str | None) -> dict[str, Any] | None:
     return payload
 
 
+
+
+NON_IMPLEMENTATION_TASK_SECTIONS = {
+    "Needs Research",
+    "Needs Agentic Review",
+    "Needs Human Review",
+    "Waiting on Dependency",
+    "Done",
+}
+
+
+def require_repository_mutation_identity(agent_id: str, task_gid: str) -> dict[str, Any]:
+    """Fail closed when local identity does not authorize repository Implementation.
+
+    The identity file is a recovery projection, not authority creation.  This check
+    only rejects contradictions that are already mechanically present: wrong role,
+    wrong owning task, or a live task-section witness that is not implementation-
+    eligible.  Missing optional legacy projections are not upgraded into authority.
+    """
+    payload = validate_agent_state(agent_id)
+    assert payload is not None
+    role = str(payload.get("role") or "").strip().lower().replace("_", "-")
+    if role != "implementation":
+        fail(
+            "MUTATION_AUTHORITY_REQUIRED",
+            f"active agent role {role or 'unknown'!r} is not Implementation; repository mutation refused",
+        )
+    owning = payload.get("owning_task_gid")
+    if owning is not None and require_task_gid(str(owning)) != require_task_gid(task_gid):
+        fail(
+            "MUTATION_AUTHORITY_TASK_MISMATCH",
+            f"active Implementation identity is bound to task {owning}, not requested task {task_gid}",
+        )
+    section = str(payload.get("task_section") or "").strip()
+    if section in NON_IMPLEMENTATION_TASK_SECTIONS:
+        fail(
+            "MUTATION_TASK_MODE_BLOCKED",
+            f"current task mode {section!r} does not permit repository Implementation",
+        )
+    return payload
+
+
 def set_agent_reference(agent_id: str, state: dict[str, Any]) -> None:
     path = agent_state_path(agent_id)
     payload = read_json_object(path, "per-agent identity state")
