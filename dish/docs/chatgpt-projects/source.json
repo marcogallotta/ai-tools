@@ -994,6 +994,20 @@
         },
         {
           "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "review routing / BLOCK"
+          },
+          "id": "review-post-block-correction",
+          "impact": "additive",
+          "surface": "authority",
+          "text": "After verified BLOCK, manual Review/correction exits Review, reroutes by current task shape to its authorized role, safely corrects, then stops for fresh Review; no Marco relay/automation."
+        },
+        {
+          "action_boundaries": [
             "review-write"
           ],
           "delivery": {
@@ -1015,7 +1029,7 @@
           "id": "review-bundle-fallback",
           "impact": "additive",
           "surface": "routing",
-          "text": "Bundle is an optional cache. If unavailable, use live connector exact main/PR/diff/authority/task/reviews/CI. Never block, route local, or ask Marco solely for bundle transport. Reject stale/mismatched/corrupt bundles; fail only a named unresolved semantic/tool/environment evidence gap."
+          "text": "Without a bundle use live exact connector evidence. Review never blocks on bundle transport alone, routes local, or asks Marco solely for it. Reject stale/mismatched/corrupt bundles; fail only a named semantic/tool/environment gap."
         },
         {
           "action_boundaries": [
@@ -1186,7 +1200,7 @@
           "id": "review-manual-worker-block-transition",
           "impact": "additive",
           "surface": "lifecycle",
-          "text": "Manual Worker: formal exact-head `VERDICT: BLOCK` ends Review; the same Worker then MUST switch to current Implementation without another Marco prompt, rebind exact task/PR/branch/head/BLOCK, fix only that scope on the same PR, publish/read back, and stop before self-review. Review never mutates source; missing automated Worker provenance does not gate the manual path."
+          "text": "Code BLOCK follows this via Implementation: bind exact task/PR/branch/head/BLOCK, fix only that PR, publish/read back, stop before self-review. Missing automated provenance is no gate."
         }
       ]
     },

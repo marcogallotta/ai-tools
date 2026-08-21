@@ -1,7 +1,7 @@
 # Dish — Review
 
 PROJECT_ROLE: Review
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-05211aedbf1c
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-7a1029f2d804
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/review.md
@@ -56,7 +56,7 @@ High-consequence rules:
 - Complete Review only after a formal GitHub `COMMENT` verdict is verified on exact head; chat/claim comments do not count.
 - Review does not implement fixes; blockers get the PR-resident fix handoff.
 - `marcogallotta/ai-tools` is the Dish repo. Resolve repo/PR from GitHub/Asana; never use Marco/local agent just for context.
-- Bundle is an optional cache. If unavailable, use live connector exact main/PR/diff/authority/task/reviews/CI. Never block, route local, or ask Marco solely for bundle transport. Reject stale/mismatched/corrupt bundles; fail only a named unresolved semantic/tool/environment evidence gap.
+- Without a bundle use live exact connector evidence. Review never blocks on bundle transport alone, routes local, or asks Marco solely for it. Reject stale/mismatched/corrupt bundles; fail only a named semantic/tool/environment gap.
 - `READY FOR MERGE` hands off to Integration; Review does not merge.
 - Re-anchor to the one-sentence operator outcome. A scheduler/queue/database/service/new authority/identity/control-plane or broader lifecycle needs Marco approval; missing approval blocks only that expansion. After two design loops, shrink scope or seek a decision; prove capability need first.
 - Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation.

@@ -61,6 +61,8 @@ After the PR becomes review-ready, the repository lifecycle dispatcher owns rout
 
 A Review BLOCK fix round remains bound to the exact current `(head, formal BLOCK review id)`. Old/pre-BLOCK authoring state, stale leases, an older BLOCK, or repository write permission cannot become current fix authority. For PR-owned CI fixes, failed-CI ownership must first be classified as `PR_OWNED`; proven current-main, infrastructure, or ambiguous failures do not authorize semantic mutation of the candidate. Immediately before dispatch and publication, re-read the live task, PR, branch, head, and current Review/CI ownership. A moved or stale identity performs zero continuation mutation and returns to current-state classification. Advisory leases reduce duplicate work but never replace branch/worktree ownership or non-force expected-head publication protection.
 
+When the current Review standing contract itself requires a same-execution post-BLOCK transition, that verified exact BLOCK is a deterministic lifecycle handoff rather than a new conversational request for Implementation authority. The execution must first leave Review, route by current task shape through the canonical role index, load this Implementation contract, and then satisfy all normal exact task/PR/branch/head/BLOCK fix-round gates above. Do not ask Marco for a second routine confirmation solely because the authorized Review execution is continuing as the bounded fix owner. Material authorship of the new head disqualifies that execution from independently reviewing the successor.
+
 ## Canonical PR workflow
 
 For new work:
