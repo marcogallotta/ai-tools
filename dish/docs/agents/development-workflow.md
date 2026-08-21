@@ -105,6 +105,22 @@ For Development Workflow design/research work, the owning Asana task is the dura
 
 These durability rules change process state only; they do not expand semantic design, Review, Implementation, or Integration authority.
 
+## Material design-claim provenance and source policy
+
+For material mandatory gates, operator ceremonies, authority restrictions, persistent mechanisms, and architecture choices, keep claim provenance with the exact Review V2 design generation using the structured `dish-design-provenance:v1` record validated by [review_design_lineage.py](../../../scripts/review_design_lineage.py). The Review V2 generation remains the only design identity; do not create a global claim database or a second approval lineage.
+
+External primary evidence used by a material claim must resolve through [`source-policy.json`](source-policy.json). Keep these statements separate and explicit:
+
+- what the primary source actually says (`source_statement`);
+- the Dish adaptation/inference beyond that statement (`dish_inference`);
+- whether the evidence is used as `FACTUAL` platform evidence or `NORMATIVE` precedent.
+
+Normative use consumes the current disposition for the exact `(source_id, decision_class)` scope, falling back only to an explicit global `*` scope. `DISALLOWED_AS_PRECEDENT` cannot justify a new normative claim in that class. `CAUTION` must be carried and addressed. No active disposition is `NO_ACTIVE_DISPOSITION`, never implicit `ALLOWED`. A source disallowed as normative precedent may still supply a current factual constraint about its own platform when that fact is applicable. Creating or superseding a source disposition requires durable explicit Marco/authorized-human provenance; authenticated-account attribution alone is insufficient. Historical disposition events remain in the versioned registry.
+
+For every material mechanism, record target-environment requirements with `VERIFIED_AVAILABLE`, `VERIFIED_UNAVAILABLE`, or `UNKNOWN`, including the exact target surface, evidence and as-of date for verified states, and a refresh trigger. A recommended/selected mechanism may not retain a required `UNKNOWN`; a required `VERIFIED_UNAVAILABLE` rejects that mechanism for the current environment. An unresolved mechanism may remain a candidate/hypothesis. Do not route Marco toward a different product/tier merely to make an otherwise unavailable recommendation fit unless he explicitly asks for that tradeoff.
+
+A later source-policy change creates bounded revalidation of materially affected **current** claims. Discover candidates by stable `source_id`, then confirm each hit against the current exact Review V2 generation before treating it as active. Independent Dish evidence or still-eligible support causes reassessment, not automatic invalidation. Historical generations are never rewritten, and any derived reverse-lookup cache/index is convenience only, never authority.
+
 ## Canonical repository lifecycle
 
 Repository-changing Implementation/fix dispatch policy is defined once in the canonical handoff contract at [`templates/implementation-handoff.md`](templates/implementation-handoff.md). Development Workflow tooling and handoffs must consume that source rather than maintaining a parallel template.

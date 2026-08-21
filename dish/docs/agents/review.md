@@ -84,6 +84,16 @@ Canonical failure-derived challenges include universal-scope-to-enumeration drif
 
 For the event-driven fixture specifically, distinguish primary change detection from bounded startup/recovery reconciliation. If durable intent says one authoritative startup poll followed by event/webhook-driven steady state, recurring polling becoming the practical primary mechanism is a signed-intent deviation unless explicitly amended; surface its recurring API/rate-limit/operator cost. Bounded secondary recovery polling is not itself a blocker when necessary, observable, and genuinely secondary.
 
+### Source-policy, claim-provenance, and environment challenge
+
+For material mandatory gates, operator ceremonies, authority restrictions, persistent mechanisms, or architecture choices, inspect the structured `dish-design-provenance:v1` record bound to the exact current Review V2 generation and the current repository [`source-policy.json`](source-policy.json). A real citation is not enough: inspect the cited primary source and verify that its actual statement supports the specific claim attributed to it. Separately challenge the source statement, Dish's inference/extrapolation, and whether the evidence is being used factually or normatively.
+
+For normative precedent, verify the current scoped source disposition. `DISALLOWED_AS_PRECEDENT` for the applicable decision class is a defect; `CAUTION` must be explicitly addressed; no active disposition must remain recorded as `NO_ACTIVE_DISPOSITION` rather than being treated as `ALLOWED`. Normative disposition does not erase a current factual platform constraint merely because the same source organization is disallowed as workflow precedent. Review challenges source-policy use but does not create or supersede source dispositions.
+
+For each recommended/selected material mechanism, verify its required target-environment capabilities from current evidence. A required `UNKNOWN` means the mechanism is still a candidate/hypothesis and cannot pass as the recommended architecture; a required `VERIFIED_UNAVAILABLE` rejects it for that environment. `VERIFIED_AVAILABLE` makes it eligible for comparison, not automatically preferred. Keep environment evidence per mechanism/claim rather than inventing a global environment registry.
+
+When a source policy changes, treat stable-source-ID reverse lookup as discovery only: confirm active impact against the current exact Review V2 generation. Independent still-eligible support causes bounded reassessment, not blanket invalidation, and historical generations remain unchanged. Do not introduce source ranking, a company blacklist, a second design lineage, or another Review authority.
+
 ### Sticky headline approval and human stamp packet
 
 `Has Headline` is discovery/reconciliation projection only. `Yes - approved` is valid only when durable evidence recovers the exact headline text shown to Marco and Marco's explicit approval of those exact words. Agent synthesis, paraphrase, inferred intent, or the structured field alone is not approval. Any wording change requires exact-word re-approval; a field/evidence conflict is a reconciliation defect and durable human decision evidence remains authoritative. This exact-word rule does not turn routine task prose into a human approval ceremony.

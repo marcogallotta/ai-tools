@@ -8,16 +8,24 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from review_design_lineage import (  # noqa: E402
+    DESIGN_PROVENANCE_SCHEMA,
+    SOURCE_POLICY_SCHEMA,
     Challenge,
     ChallengeKey,
     Disposition,
+    EnvironmentApplicability,
     Event,
     EventType,
     HumanDecisionProvenance,
     Identity,
     Projection,
     ReviewDisposition,
+    SourceClass,
+    SourceDisposition,
+    SourceUse,
     State,
+    active_source_disposition,
+    affected_claims_for_source_policy,
     challenge_used,
     consume_identity,
     create_generation,
@@ -28,8 +36,10 @@ from review_design_lineage import (  # noqa: E402
     recover_notes,
     recover_snapshot,
     require_challenge_available,
+    validate_design_provenance,
     validate_disposition,
     validate_lineage,
+    validate_source_policy_registry,
 )
 
 
@@ -394,3 +404,378 @@ def test_cumulative_drift_uses_last_exact_marco_approved_ancestor():
         histories,
         decisions,
     ) == g4
+
+
+def policy_authority(decision, *, authority_type="MARCO_EXPLICIT"):
+    return {
+        "authority_type": authority_type,
+        "durable_ref": f"asana:decision:{sha(decision)[:12]}",
+        "decided_by": "Marco",
+        "decision": decision,
+        "decision_sha256": sha(decision),
+        "effective_at": "2026-08-20T00:00:00Z",
+    }
+
+
+def source_policy(*events):
+    return {
+        "schema": SOURCE_POLICY_SCHEMA,
+        "schema_version": 1,
+        "sources": [
+            {
+                "source_id": "company-x",
+                "organization": "Company X",
+                "primary_source": {
+                    "title": "Primary X",
+                    "uri": "https://example.invalid/x",
+                    "version_or_date": "2026-08-20",
+                },
+            },
+            {
+                "source_id": "company-y",
+                "organization": "Company Y",
+                "primary_source": {
+                    "title": "Primary Y",
+                    "uri": "https://example.invalid/y",
+                    "version_or_date": "2026-08-20",
+                },
+            },
+        ],
+        "disposition_events": list(events),
+    }
+
+
+def policy_event(
+    event_id,
+    source_id,
+    decision_class,
+    disposition,
+    *,
+    predecessor=None,
+    authority_type="MARCO_EXPLICIT",
+):
+    decision = f"{source_id} {disposition} for {decision_class}"
+    return {
+        "event_id": event_id,
+        "source_id": source_id,
+        "decision_class": decision_class,
+        "disposition": disposition,
+        "predecessor_event_id": predecessor,
+        "authority": policy_authority(decision, authority_type=authority_type),
+    }
+
+
+def external_support(
+    support_id,
+    source_id,
+    *,
+    use="NORMATIVE",
+    decision_class="approval-ux",
+    observed="NO_ACTIVE_DISPOSITION",
+    event_id=None,
+    caution=None,
+):
+    support = {
+        "support_id": support_id,
+        "source_class": SourceClass.EXTERNAL_PRIMARY_EVIDENCE.value,
+        "evidence_refs": [f"primary:{source_id}"],
+        "source_id": source_id,
+        "source_use": use,
+        "decision_class": decision_class,
+        "source_statement": f"{source_id} primary source says the bounded thing",
+        "dish_inference": "Dish adapts the bounded source statement to this claim",
+    }
+    if use == SourceUse.NORMATIVE.value:
+        support["source_policy"] = {
+            "observed_disposition": observed,
+            "event_id": event_id,
+        }
+    if caution is not None:
+        support["caution_acknowledgement"] = caution
+    return support
+
+
+def local_support(support_id, source_class=SourceClass.DISH_LOCAL_INFERENCE.value):
+    return {
+        "support_id": support_id,
+        "source_class": source_class,
+        "evidence_refs": [f"dish:{support_id}"],
+    }
+
+
+def provenance(record, supports, *, mechanisms=()):
+    return {
+        "schema": DESIGN_PROVENANCE_SCHEMA,
+        "task_gid": record.identity.task_gid,
+        "generation_id": record.identity.generation_id,
+        "canonical_sha256": record.identity.canonical_sha256,
+        "relevant_repo_baseline": record.identity.relevant_repo_baseline,
+        "claims": [
+            {
+                "claim_id": "claim-approval",
+                "decision": "Use bounded approval mechanism",
+                "problem_outcome": "Keep the control understandable and reversible",
+                "operator_cost": "One explicit approval at the material boundary",
+                "failure_mode": "Unsupported gate would add needless ceremony",
+                "alternatives_considered": ["No new mandatory gate"],
+                "reversibility": "Remove through the existing successor design path",
+                "assumptions": [],
+                "supports": list(supports),
+                "mechanisms": list(mechanisms),
+            }
+        ],
+    }
+
+
+def environment_requirement(status, *, required=True):
+    item = {
+        "capability": "control-surface",
+        "target_surface": "current-chatgpt-environment",
+        "required": required,
+        "status": status,
+        "refresh_trigger": "product surface or permission change",
+    }
+    if status != EnvironmentApplicability.UNKNOWN.value:
+        item.update(
+            {
+                "evidence_ref": "runtime:verified-surface",
+                "evidence_as_of": "2026-08-20",
+            }
+        )
+    return item
+
+
+def test_repository_source_policy_registry_is_valid_and_empty_is_not_allowed():
+    import json
+
+    registry = json.loads(
+        (ROOT / "dish/docs/agents/source-policy.json").read_text()
+    )
+    assert validate_source_policy_registry(registry) == ()
+    assert active_source_disposition(registry, "missing", "approval-ux") is None
+
+
+def test_source_policy_requires_durable_human_authority_not_account_attribution():
+    actor_only = policy_event(
+        "x-1",
+        "company-x",
+        "approval-ux",
+        SourceDisposition.DISALLOWED_AS_PRECEDENT.value,
+        authority_type="AUTHENTICATED_ACCOUNT",
+    )
+    problems = validate_source_policy_registry(source_policy(actor_only))
+    assert any(p.code == "source-policy-human-authority" for p in problems)
+
+
+def test_invalid_source_policy_is_reported_without_hiding_claim_validation():
+    actor_only = policy_event(
+        "x-1",
+        "company-x",
+        "approval-ux",
+        SourceDisposition.DISALLOWED_AS_PRECEDENT.value,
+        authority_type="AUTHENTICATED_ACCOUNT",
+    )
+    registry = source_policy(actor_only)
+    g5 = gen("G5-invalid-policy", "candidate")
+    support = external_support(
+        "x",
+        "company-x",
+        observed=SourceDisposition.DISALLOWED_AS_PRECEDENT.value,
+        event_id="x-1",
+    )
+
+    problems = validate_design_provenance(provenance(g5, [support]), g5.identity, registry)
+
+    assert any(p.code == "source-policy-human-authority" for p in problems)
+
+
+def test_source_policy_supersession_is_append_only_and_terminal_event_wins():
+    allowed = policy_event(
+        "x-1",
+        "company-x",
+        "approval-ux",
+        SourceDisposition.ALLOWED.value,
+    )
+    blocked = policy_event(
+        "x-2",
+        "company-x",
+        "approval-ux",
+        SourceDisposition.DISALLOWED_AS_PRECEDENT.value,
+        predecessor="x-1",
+    )
+    registry = source_policy(allowed, blocked)
+
+    assert validate_source_policy_registry(registry) == ()
+    assert [event["event_id"] for event in registry["disposition_events"]] == ["x-1", "x-2"]
+    state = active_source_disposition(registry, "company-x", "approval-ux")
+    assert state is not None
+    assert state.event_id == "x-2"
+    assert state.disposition is SourceDisposition.DISALLOWED_AS_PRECEDENT
+
+
+def test_normative_use_records_no_active_disposition_instead_of_inventing_allowed():
+    registry = source_policy()
+    g5 = gen("G5-no-disposition", "candidate")
+    support = external_support("x", "company-x")
+
+    assert validate_design_provenance(provenance(g5, [support]), g5.identity, registry) == ()
+
+    support["source_policy"] = {
+        "observed_disposition": SourceDisposition.ALLOWED.value,
+        "event_id": None,
+    }
+    problems = validate_design_provenance(provenance(g5, [support]), g5.identity, registry)
+    assert any(p.code == "source-policy-stale-or-missing" for p in problems)
+
+
+def test_scoped_source_disposition_preserves_factual_use_and_other_decision_classes():
+    blocked = policy_event(
+        "x-1",
+        "company-x",
+        "approval-ux",
+        SourceDisposition.DISALLOWED_AS_PRECEDENT.value,
+    )
+    registry = source_policy(blocked)
+    assert active_source_disposition(registry, "company-x", "approval-ux").disposition is SourceDisposition.DISALLOWED_AS_PRECEDENT
+    assert active_source_disposition(registry, "company-x", "rollback") is None
+
+    g5 = gen("G5-source-policy", "candidate")
+    factual = external_support(
+        "x-fact",
+        "company-x",
+        use=SourceUse.FACTUAL.value,
+        decision_class="approval-ux",
+    )
+    assert validate_design_provenance(provenance(g5, [factual]), g5.identity, registry) == ()
+
+
+def test_disallowed_normative_precedent_is_rejected_but_local_inference_is_valid():
+    blocked = policy_event(
+        "x-1",
+        "company-x",
+        "approval-ux",
+        SourceDisposition.DISALLOWED_AS_PRECEDENT.value,
+    )
+    registry = source_policy(blocked)
+    g5 = gen("G5-disallowed", "candidate")
+    x = external_support(
+        "x-normative",
+        "company-x",
+        observed=SourceDisposition.DISALLOWED_AS_PRECEDENT.value,
+        event_id="x-1",
+    )
+    problems = validate_design_provenance(provenance(g5, [x]), g5.identity, registry)
+    assert any(p.code == "disallowed-normative-source" for p in problems)
+
+    local = local_support("dish-inference")
+    assert validate_design_provenance(provenance(g5, [local]), g5.identity, registry) == ()
+
+
+def test_caution_must_be_acknowledged_and_policy_snapshot_must_match_current():
+    caution = policy_event(
+        "x-1",
+        "company-x",
+        "approval-ux",
+        SourceDisposition.CAUTION.value,
+    )
+    registry = source_policy(caution)
+    g5 = gen("G5-caution", "candidate")
+    support = external_support(
+        "x-normative",
+        "company-x",
+        observed=SourceDisposition.CAUTION.value,
+        event_id="x-1",
+    )
+    problems = validate_design_provenance(provenance(g5, [support]), g5.identity, registry)
+    assert any(p.code == "source-caution-unacknowledged" for p in problems)
+
+    support["caution_acknowledgement"] = "Treat as comparator only; independent Dish evidence carries the choice."
+    assert validate_design_provenance(provenance(g5, [support]), g5.identity, registry) == ()
+
+
+def test_required_unknown_or_unavailable_cannot_be_recommended():
+    registry = source_policy()
+    g5 = gen("G5-env", "candidate")
+    local = local_support("dish-inference")
+    for status, code in (
+        (EnvironmentApplicability.UNKNOWN.value, "required-environment-unknown"),
+        (
+            EnvironmentApplicability.VERIFIED_UNAVAILABLE.value,
+            "required-environment-unavailable",
+        ),
+    ):
+        record = provenance(
+            g5,
+            [local],
+            mechanisms=[
+                {
+                    "mechanism_id": f"mechanism-{status}",
+                    "recommended": True,
+                    "requirements": [environment_requirement(status)],
+                }
+            ],
+        )
+        problems = validate_design_provenance(record, g5.identity, registry)
+        assert any(p.code == code for p in problems)
+
+    candidate = provenance(
+        g5,
+        [local],
+        mechanisms=[
+            {
+                "mechanism_id": "candidate-unknown",
+                "recommended": False,
+                "requirements": [
+                    environment_requirement(EnvironmentApplicability.UNKNOWN.value)
+                ],
+            }
+        ],
+    )
+    assert validate_design_provenance(candidate, g5.identity, registry) == ()
+
+
+def test_source_policy_change_flags_only_current_exact_claim_and_preserves_independent_support():
+    g5 = gen("G5-current", "current")
+    historical = gen("G4-historical", "historical")
+    x = external_support("x-approval", "company-x")
+    y = external_support(
+        "y-rollback",
+        "company-y",
+        decision_class="rollback",
+    )
+    incident = local_support("incident", SourceClass.DISH_INCIDENT_EVIDENCE.value)
+    current_record = provenance(g5, [x, y, incident])
+    historical_record = provenance(historical, [x])
+
+    affected = affected_claims_for_source_policy(
+        [historical_record, current_record],
+        {g5.identity.task_gid: g5.identity},
+        source_id="company-x",
+        decision_class="approval-ux",
+    )
+    assert len(affected) == 1
+    assert affected[0].generation_id == g5.generation_id
+    assert affected[0].support_id == "x-approval"
+    assert affected[0].has_independent_support is True
+
+
+def test_provenance_binding_prevents_historical_generation_from_becoming_current():
+    registry = source_policy()
+    g5 = gen("G5-binding", "current")
+    g4 = gen("G4-binding", "old")
+    record = provenance(g4, [local_support("dish")])
+    problems = validate_design_provenance(record, g5.identity, registry)
+    assert any(p.code == "design-provenance-identity-mismatch" for p in problems)
+
+
+def test_source_statement_and_dish_inference_are_separate_required_fields():
+    registry = source_policy()
+    g5 = gen("G5-separation", "candidate")
+    support = external_support("x", "company-x")
+    support["source_statement"] = ""
+    support["dish_inference"] = ""
+    problems = validate_design_provenance(provenance(g5, [support]), g5.identity, registry)
+    assert {p.code for p in problems} >= {
+        "support-source-statement",
+        "support-dish-inference",
+    }
