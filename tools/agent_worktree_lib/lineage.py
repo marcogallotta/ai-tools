@@ -90,11 +90,16 @@ def reserve_or_recover_lineage(
     *,
     task_gid: str,
     branch: str,
-) -> tuple[str, str, dict[str, Any]]:
-    """Return (registry_sha, lineage_id, marker), creating one reservation if absent.
+) -> tuple[str, str, dict[str, Any], bool]:
+    """Return (registry_sha, lineage_id, marker, newly_created), creating one
+    reservation if absent.
 
     An ACTIVE reservation may be recovered only by the same task. Different tasks
     cannot adopt the branch name, and TERMINAL names are permanently retired.
+    ``newly_created`` tells the caller whether this exact call is the one that
+    just admitted the lineage (as opposed to recovering an already-established
+    one), since the admission window itself has stricter remote-identity
+    requirements than ordinary post-admission drift.
     """
     task_gid = require_task_gid(task_gid)
     branch = validate_branch(runner, repo.source_top, branch)
@@ -108,7 +113,7 @@ def reserve_or_recover_lineage(
                 "BRANCH_LINEAGE_OWNED",
                 f"branch {branch!r} is already admitted to task {marker.get('task_gid')!r} under lineage {marker.get('lineage_id')}",
             )
-        return sha, str(marker["lineage_id"]), marker
+        return sha, str(marker["lineage_id"]), marker, False
 
     lineage_id = uuid.uuid4().hex
     stamp = now_utc()
@@ -143,7 +148,7 @@ def reserve_or_recover_lineage(
                 f"branch {branch!r} was admitted concurrently to lineage {winner.get('lineage_id')}; this attempt is not a writer",
             )
         raise exc
-    return marker_sha, lineage_id, marker
+    return marker_sha, lineage_id, marker, True
 
 
 def resolve_lineage_for_branch(
@@ -160,12 +165,26 @@ def resolve_lineage_for_branch(
     local-state consistency checks against the resolved ``lineage_id`` before the
     owner gate below can short-circuit with a durable-owner error.
     """
-    sha, lineage_id, marker = reserve_or_recover_lineage(
+    sha, lineage_id, marker, newly_created = reserve_or_recover_lineage(
         runner, repo, task_gid=task_gid, branch=branch
     )
     bound_head = marker.get("branch_head")
+    observed_head = remote_ref_sha(runner, repo, f"refs/heads/{branch}", allow_missing=True)
+    if newly_created:
+        if observed_head != bound_head:
+            # The remote branch identity moved (or appeared/disappeared) between
+            # this call's own pre-admission read and this immediate post-CAS
+            # reread: a race during first admission itself, not ordinary drift
+            # of an already-established lineage. No lineage has actually begun
+            # yet, so fail closed and fence the partially admitted marker
+            # unconditionally -- even a fast-forward -- rather than accepting it.
+            fenced = dict(marker)
+            fenced.update(state="TERMINAL", disposition="admission-window-race", terminal_head=bound_head, observed_head=observed_head, terminalized_at=now_utc(), updated_at=now_utc(), claim_active=False)
+            fenced_sha = _marker_commit(runner, repo, fenced, parent=sha)
+            _push_marker_cas(runner, repo, branch=branch, marker_sha=fenced_sha, expected_sha=sha)
+            fail("LINEAGE_ADMISSION_RACE", f"branch {branch!r} remote identity moved during lineage admission; expected {bound_head or '<absent>'}, observed {observed_head or '<absent>'}; partially admitted lineage fenced")
+        return sha, lineage_id, marker
     if bound_head is not None:
-        observed_head = remote_ref_sha(runner, repo, f"refs/heads/{branch}", allow_missing=True)
         if observed_head is not None and observed_head != bound_head:
             ensure_commit_object(runner, repo, bound_head)
             ensure_commit_object(runner, repo, observed_head)
@@ -174,10 +193,11 @@ def resolve_lineage_for_branch(
             )
             if ff_check.returncode == 0:
                 # Ordinary linear advancement (e.g. another publish/push moved the
-                # owned branch forward without rewriting history): not an identity
-                # contradiction, just remote drift. Leave the marker's branch_head as
-                # last-recorded-by-publish and let the caller's own local-vs-remote
-                # relation check (REMOTE_AHEAD/REMOTE_DIVERGED) handle it.
+                # owned branch forward without rewriting history) of an already-
+                # established lineage: not an identity contradiction, just remote
+                # drift. Leave the marker's branch_head as last-recorded-by-publish
+                # and let the caller's own local-vs-remote relation check
+                # (REMOTE_AHEAD/REMOTE_DIVERGED) handle it.
                 return sha, lineage_id, marker
         if observed_head != bound_head:
             fenced = dict(marker)

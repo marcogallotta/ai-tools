@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import sys
 
-from agent_worktree_support import SCRIPT, Harness, assert_error, git, git_out, h, payload
+import pytest
+
+from agent_worktree_support import SCRIPT, TOOLS_DIR, Harness, assert_error, git, git_out, h, payload
 
 
 def _claim(h: Harness, task: str, branch: str, agent: str, *, pr: int | None = None, head: str | None = None, child: list[str] | None = None):
@@ -106,6 +110,90 @@ def test_published_branch_disappearance_fences_only_that_lineage(h: Harness) -> 
     refused = _claim(h, task, "agent/fence-a", "a")
     assert_error(refused, "LINEAGE_REMOTE_CONTRADICTION")
     assert _claim(h, task, "agent/fence-b", "b").returncode == 0
+
+
+def test_branch_advance_during_admission_window_fences_the_new_lineage_and_fails_closed(
+    h: Harness, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Every writer command reaches lineage admission by running fully inside the
+    # test harness's sandboxed environment (fake GIT_SSH_COMMAND redirecting to
+    # a local bare origin, sandboxed HOME/worktree root). Calling the admission
+    # function directly in-process below is deliberately routed through that
+    # exact same sandbox. Subprocess children spawned with env=None inherit the
+    # real OS-level environment, not a swapped os.environ object, so each var is
+    # set individually here (monkeypatch.setenv/delenv go through os.putenv) --
+    # so no git operation here can reach a real remote.
+    for key, value in h.env.items():
+        monkeypatch.setenv(key, value)
+    for key in list(os.environ):
+        if key not in h.env:
+            monkeypatch.delenv(key, raising=False)
+    sys.path.insert(0, str(TOOLS_DIR))
+    from agent_worktree_lib.common import AgentWorktreeError, GitRunner
+    from agent_worktree_lib.repository import discover_repository
+    from agent_worktree_lib import lineage as lineage_mod
+
+    branch = "agent/admission-race"
+    base = h.current_remote_main()
+    head_a = h.remote_branch_commit(branch, "first", start=base)
+
+    runner = GitRunner()
+    repo = discover_repository(runner, h.primary)
+
+    real_push_cas = lineage_mod._push_marker_cas
+    raced = False
+
+    def racing_push_cas(runner, repo, *, branch, marker_sha, expected_sha):
+        # Perform the real admission CAS (binding the marker to head_a), then --
+        # before resolve_lineage_for_branch's own post-admission reread runs --
+        # simulate a concurrent writer advancing the branch during this exact
+        # admission window: the race the review flagged.
+        nonlocal raced
+        real_push_cas(runner, repo, branch=branch, marker_sha=marker_sha, expected_sha=expected_sha)
+        if not raced:
+            raced = True
+            h.remote_branch_commit(branch, "raced forward", start=head_a)
+
+    monkeypatch.setattr(lineage_mod, "_push_marker_cas", racing_push_cas)
+    try:
+        with pytest.raises(AgentWorktreeError) as excinfo:
+            lineage_mod.resolve_lineage_for_branch(runner, repo, task_gid="4200", branch=branch)
+    finally:
+        monkeypatch.setattr(lineage_mod, "_push_marker_cas", real_push_cas)
+    assert excinfo.value.code == "LINEAGE_ADMISSION_RACE"
+    assert raced
+
+    registry = lineage_mod.read_registry(runner, repo, branch)
+    assert registry is not None
+    _, marker = registry
+    assert marker["state"] == "TERMINAL"
+    assert marker["disposition"] == "admission-window-race"
+
+    # The partially admitted lineage is fenced, not merely refused: the branch
+    # name is now permanently retired, exactly like any other terminal lineage.
+    h.agent_file("race-agent")
+    again = _claim(h, "4200", branch, "race-agent")
+    assert_error(again, "BRANCH_NAME_RETIRED")
+
+
+def test_ordinary_fast_forward_after_established_admission_is_not_an_admission_race(
+    h: Harness, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Companion to the admission-window race test above: a fast-forward that
+    # happens after a lineage is already established (post-first-admission) is
+    # ordinary drift and must still resolve, not fence -- only the first
+    # admission call itself is held to the strict exact-match requirement.
+    for agent in ("a",):
+        h.agent_file(agent)
+    task = "4201"
+    branch = "agent/post-admission-drift"
+    h.start(task=task, branch=branch, agent="a")
+    h.commit_local(task=task, text="a")
+    h.tool("publish", "--task", task, "--json")
+    published_head = git_out(h.origin, "rev-parse", f"refs/heads/{branch}")
+    h.remote_branch_commit(branch, "external fast-forward", start=published_head)
+    result = _claim(h, task, branch, "a")
+    assert result.returncode == 0, result.stderr
 
 
 def test_task_only_mutation_is_ambiguous_when_multiple_lineages_exist(h: Harness) -> None:
