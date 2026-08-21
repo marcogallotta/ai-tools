@@ -124,19 +124,27 @@ Rules:
 
 ## Dispatch concurrency and stack shape
 
-Choose dispatch shape from evidence about authoring and landing relationships, not from a target number of stacks or agents.
+Choose dispatch shape and launch timing from evidence about authoring, near-term return horizon, and landing relationships, not from a target number of stacks or agents.
 
-Start with the full currently eligible high-priority set. Classify each material relationship before deciding what to dispatch:
+Start with the full currently eligible high-priority set after current authority and holds are applied. Every omitted executable high-priority action needs a named current reason; agent count, task count, stack count, and stack depth are not universal caps. Classify each material relationship before deciding what to dispatch:
 
 1. **Independent through landing** — work has separate mutation surfaces and no expected landing dependency or convergence step that would invalidate another candidate's exact-head approval. Dispatch these concurrently when useful.
-2. **Parallel authoring / coordinated convergence** — workers can author safely on separate branches/worktrees, but the results are expected to meet at a shared interface, generated artifact, landing order, or reconciliation point. Before dispatch, account for likely rebase, regeneration, reconciliation, new-head invalidation, and re-review churn. Parallelize only when the useful authoring progress is expected to outweigh that convergence cost, and record the coordination point or landing order.
+2. **Parallel authoring / coordinated convergence** — workers can author safely on separate branches/worktrees, but the results are expected to meet at a shared interface, generated artifact, landing order, or reconciliation point. Before dispatch, account for likely rebase, regeneration, reconciliation, new-head invalidation, focused evidence reruns, and re-review churn. Parallelize only when the useful authoring progress is expected to outweigh that convergence cost, and record the coordination point or landing order.
 3. **True predecessor** — downstream authoring cannot be correct until an upstream decision, interface, artifact, or semantic result exists. Serialize before downstream authoring rather than creating speculative parallel work.
 
-Optimize for useful completed progress through landing, not for the number of agents started. If Review or Integration fan-in is the active bottleneck, drain that fan-in before creating more overlapping authoring returns that would only increase convergence or re-review work.
+Semantic work-order membership is not a collision group. Do not merge objectives merely because files or generated families overlap, and do not rewrite the owning work-order membership to encode a temporary landing dependency. Keep temporary collision, convergence, and landing-order edges as Coordinator planning facts; a separate objective may temporarily need to land before an aggregate without becoming part of that aggregate.
 
-After a material return changes the evidence — including a semantic head change, review-driven fix, landed prerequisite, regeneration, reconciliation, or newly discovered collision — recompute the collision and landing relationships before the next dispatch or landing decision. Do not keep an earlier parallelism classification merely because workers are already grouped that way.
+**Safe now does not mean should start now.** For each executable action, compare near-term useful value — independent scope, survival across likely upstream outcomes, and critical-path shortening — against startup/fragmentation cost, likely invalidation, convergence/reconciliation churn, successor-head evidence/re-review cost, and near-term returns that may materially change the work. Classify launch timing as **NOW**, **AHEAD**, or **WAIT FOR `<exact result>`**. A wait must name the exact result, what work it changes, why useful independent value before that result is shallow, and what materially better wave becomes possible afterward.
 
-A coherent manual stack remains valid when its dependency and landing shape make the stack useful; do not flatten it merely to increase concurrency. This guidance does not create a scheduler, queue, universal dependency graph, merge authority, or global WIP cap.
+Concrete interactions include exact shared branch/PR/lineage, duplicate objective, explicit dependency, shared source/policy/generated surfaces, exclusive resources or unavailable required hosts, and shared workflow/tool/protocol changes that can invalidate active workers or worktrees even when feature files are disjoint. Conceptual similarity, task count, PR number, or vague semantic overlap without a concrete consequence is not by itself a reason to hold otherwise independent work.
+
+Optimize for useful completed progress through landing, not for the number of agents started. If Review or Integration fan-in is the active bottleneck, drain that fan-in before creating overlapping authoring returns that would only increase convergence or re-review work. Drain pressure never bypasses a genuine Review, Integration, authority, or evidence blocker.
+
+After a material return changes the evidence — including a semantic head change, review-driven fix, landed prerequisite, regeneration, reconciliation, gate result, or newly discovered collision — recompute the collision and landing relationships before the next dispatch or landing decision. Do not keep an earlier parallelism or launch-timing classification merely because workers are already grouped that way, and never transfer exact-head Review evidence to a changed head.
+
+Adapt pressure from outcomes rather than agent-count heuristics: increase or maintain it while durable completion improves without disproportionate collision, Review BLOCK/rework, successor-head churn, rollback, CI/Integration instability, or Marco relay/firefighting; reduce or reshape it when concrete negative evidence appears.
+
+A coherent manual stack remains valid when its dependency and landing shape make the stack useful and it still produces separate reviewable PRs; do not flatten it merely to increase concurrency or require automatic stacked-workstream machinery. This guidance does not create a scheduler, queue, universal dependency graph, merge authority, or global WIP cap.
 
 ## Comparison compatibility and blocker ownership
 
