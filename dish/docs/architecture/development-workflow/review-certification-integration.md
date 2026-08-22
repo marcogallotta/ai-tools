@@ -33,6 +33,8 @@ Standing role contracts and accepted architecture remain semantic Review authori
 
 The bounded [`review_governance.py`](../../../../dish/scripts/review_governance.py) helper validates the versioned [`review-governance.json`](../../agents/review-governance.json) projection and mechanically decidable generation, independent-Review, human-decision, supersession, digest, parity, admission, and report evidence after an authorized role supplies semantic classification. It is not a semantic reviewer or a lifecycle authority.
 
+Its trust boundary is an authoritative-read adapter: the helper reloads referenced classification, generation, snapshot, independent-Review, event-history, human-decision-provenance, and decision-payload bytes and recomputes their bindings. It never treats caller-created evidence fields or internal consistency alone as proof.
+
 The existing exact-path ownership map makes new in-scope files explicit. Changes to that map and every protected Review-governance executable/projection seam select one focused structural contract test, which rejects direct use of named governance decision, admission, approval, or report primitives outside the helper allowlist.
 
 <!-- review-governance-rule:RV5-TRIPWIRE-01 -->

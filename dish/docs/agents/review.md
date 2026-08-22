@@ -18,6 +18,8 @@ Ordinary PRs get bounded high-signal review. Use a narrow specialist review only
 
 [`review-governance.json`](review-governance.json) is the machine-readable projection of the rules below. [`../../scripts/review_governance.py`](../../scripts/review_governance.py) checks its semantic digest, contract anchors, and mechanical evidence after the governing role has supplied a semantic classification. The projection and helper never replace this standing contract or Review judgment.
 
+The helper accepts only references reloaded through the caller's authoritative Asana/Git adapter. It recomputes canonical-snapshot and human-decision payload digests and cross-checks classification, independent Review, current generation events, approval, and material-delta records. Caller-supplied booleans, role names, hashes, or self-consistent claim objects are not admission evidence.
+
 <!-- review-governance-rule:RV5-AUTHORITY-01 -->
 Standing role contracts and accepted architecture remain semantic Review authority; this record is a checked projection/index, and disagreement is a parity failure rather than a precedence choice.
 
