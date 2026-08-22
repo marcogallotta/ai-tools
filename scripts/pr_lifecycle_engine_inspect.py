@@ -442,9 +442,30 @@ class LifecycleInspectMixin:
                 "AMBIGUOUS": "ownership-required",
             }.get(classification, "ownership-required")
 
+            current_target_matches = False
+            if ownership.get("candidate_disposition") == "MERGEABLE_WITH_BASELINE_DEBT":
+                target_branch = str(
+                    pr.get("base", {}).get("ref")
+                    if isinstance(pr.get("base"), Mapping)
+                    else ""
+                ).strip()
+                try:
+                    current_target_sha = (
+                        self.github.get_ref_sha(f"heads/{target_branch}").lower()
+                        if target_branch else ""
+                    )
+                except (LifecycleError, KeyError, AssertionError):
+                    current_target_sha = ""
+                    marker_note = "authoritative target-branch read failed"
+                if current_target_sha and current_target_sha == ownership.get("failure_main_sha"):
+                    current_target_matches = True
+                elif current_target_sha:
+                    marker_note = "current target branch moved beyond the proved baseline-failure SHA"
+
             baseline_admitted = (
                 ownership.get("candidate_disposition") == "MERGEABLE_WITH_BASELINE_DEBT"
                 and pending_cert is None
+                and current_target_matches
                 and dependency is not None and owner_active
                 and dependency.candidate_head == head.lower()
                 and dependency.task_gid == ownership.get("repair_owner_task")

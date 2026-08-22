@@ -325,7 +325,13 @@ def ensure_baseline_owner(engine: Any, current: Any) -> Any:
         f"reason={urllib.parse.quote('proven current-main failure', safe='')} -->"
     )
     existing = parse_external_dependency(engine.github.get_comments(current.number))
-    if existing is None or existing.task_gid != owner_gid or existing.main_sha != main_sha:
+    if (
+        existing is None
+        or existing.task_gid != owner_gid
+        or existing.main_sha != main_sha
+        or existing.candidate_head != current.head.lower()
+        or existing.causal_fingerprint != cause.fingerprint
+    ):
         engine.github.add_comment(
             current.number,
             dependency_marker

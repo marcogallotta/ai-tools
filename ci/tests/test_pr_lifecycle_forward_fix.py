@@ -156,6 +156,31 @@ def test_current_main_failure_dedupes_one_owner_and_fans_out():
     assert len([s for s in asana.stories[owner_gid] if BASELINE_OCCURRENCE_MARKER in s["text"]]) == 1
 
 
+def test_legacy_dependency_marker_is_upgraded_with_candidate_and_fingerprint():
+    main = "b" * 40
+    asana = FakeAsana()
+    task = {"gid":"1217561810880370","name":"stage2","notes":"","completed":False,"modified_at":"t","memberships":[{"project":{"gid":"proj"},"section":{"gid":"ready"}}],"dependencies":[]}
+    asana.tasks[task["gid"]] = task; asana.project_tasks["proj"] = [task["gid"]]
+    current = lifecycle("PROVEN_CURRENT_MAIN", main_sha=main); current.asana = [task]
+    engine = FakeEngine(current, asana=asana)
+    recover_failed_ci(engine, current)
+    owner_gid = next(gid for gid, value in asana.tasks.items() if BASELINE_OWNER_MARKER in value.get("notes", ""))
+    engine.github.comments = [{
+        "id": 1,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "body": (
+            "<!-- dish-external-dependency:v1 action=blocked "
+            f"task={owner_gid} check=Dish%20%2F%20exact-head%20certification main={main} "
+            "evidence=proof reason=proven%20current-main%20failure -->"
+        ),
+    }]
+    recover_failed_ci(engine, current)
+    assert len(engine.github.comments) == 2
+    upgraded = engine.github.comments[-1]["body"]
+    assert f"head={'a' * 40}" in upgraded
+    assert f"fingerprint={FINGERPRINT}" in upgraded
+
+
 def test_same_cause_across_main_shas_reuses_owner_and_refreshes_occurrence():
     asana=FakeAsana()
     task={"gid":"1217561810880370","name":"stage2","notes":"","completed":False,"modified_at":"t","memberships":[{"project":{"gid":"proj"},"section":{"gid":"ready"}}],"dependencies":[]}

@@ -260,7 +260,7 @@ def _baseline_debt_comments(*, interaction="none", targeted_evidence=None):
     ownership = _ownership_comment(
         "PROVEN_CURRENT_MAIN", fingerprint=fingerprint, identity=identity,
         disposition="MERGEABLE_WITH_BASELINE_DEBT", generation="run-700-attempt-1",
-        contrary="none", owner_task="1217449623846547", main="d" * 40,
+        contrary="none", owner_task="1217449623846547", main="c" * 40,
         main_reproduction="nightly-run-600-on-exact-main",
         candidate_evidence="exact-head-targeted-test-clean",
         interaction=interaction,
@@ -269,7 +269,8 @@ def _baseline_debt_comments(*, interaction="none", targeted_evidence=None):
         comment_id=81,
     )
     dependency = external_dependency_comment(
-        owner_pr=None, head=base.HEAD, fingerprint=fingerprint, comment_id=80,
+        owner_pr=None, head=base.HEAD, main="c" * 40,
+        fingerprint=fingerprint, comment_id=80,
     )
     return [dependency, ownership]
 
@@ -321,6 +322,19 @@ def test_baseline_marker_for_an_older_candidate_cannot_admit_current_head():
     assert state.gate["candidate_disposition"] == "MERGEABLE_WITH_BASELINE_DEBT"
     assert state.gate["repair_owner_active"] is False
     assert "older candidate head" in state.residual_reason
+
+
+def test_baseline_debt_cannot_admit_after_authoritative_main_moves():
+    gh = ExternalGitHub(); gh.reviews = [base.review()]
+    gh.workflow_runs = base.runs(conclusion="failure")
+    gh.comments = _baseline_debt_comments()
+    gh.refs["heads/main"] = "d" * 40
+    state = pr_lifecycle.LifecycleEngine(
+        gh, asana=ActiveOwnerAsana(), now=lambda: base.NOW
+    ).inspect(gh.pr)
+    assert state.state == pr_lifecycle.LifecycleState.WAITING_EXTERNAL_DEPENDENCY
+    assert state.gate["candidate_disposition"] == "MERGEABLE_WITH_BASELINE_DEBT"
+    assert "target branch moved" in state.residual_reason
 
 
 def test_baseline_owner_authority_read_failure_blocks_admission_explicitly():
