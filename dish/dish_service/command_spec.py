@@ -106,11 +106,20 @@ if ACTION_COMMANDS != tuple(spec.name for spec in ACTION_COMMAND_SPECS):
     raise ValueError("GPT Action command metadata does not cover connected-agent identities")
 ACTION_LEASE_COMMAND = RENEW_LEASE_COMMAND.name
 ACTION_QUALIFY_FILE_TRANSPORT_COMMAND = QUALIFY_FILE_TRANSPORT_COMMAND.name
+IMPLEMENTATION_ACTION_CLIENT_ID = "implementation-action"
+IMPLEMENTATION_ACTION_COMMANDS = frozenset({ACTION_QUALIFY_FILE_TRANSPORT_COMMAND})
 QUALIFY_FILE_TRANSPORT_FILE_FIELDS = ("id", "name", "mime_type", "download_link")
 _SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 REPLAY_SAFE_COMMANDS = frozenset(
     spec.name for spec in ACTION_COMMAND_SPECS if spec.request_id_required
 )
+
+
+def action_commands_for_client(action_client_id: str) -> frozenset[str]:
+    """Return the commands intentionally exposed by one Action deployment."""
+    if action_client_id == IMPLEMENTATION_ACTION_CLIENT_ID:
+        return IMPLEMENTATION_ACTION_COMMANDS
+    return frozenset(ACTION_COMMANDS)
 
 DISH_UUID_SCHEMA = dict(CANONICAL_DISH_UUID_SCHEMA)
 ASANA_GID_SCHEMA = {
@@ -431,24 +440,14 @@ OPENAI_FILE_ID_REFS_SCHEMA = {
     "type": "array",
     "minItems": 1,
     "maxItems": 1,
-    "items": {
-        "type": "object",
-        "additionalProperties": False,
-        "required": list(QUALIFY_FILE_TRANSPORT_FILE_FIELDS),
-        "properties": {
-            "id": {"type": "string", "description": "Stable OpenAI file identifier."},
-            "name": {"type": "string", "description": "Stable file name."},
-            "mime_type": {"type": "string", "description": "Stable file MIME type."},
-            "download_link": {
-                "type": "string",
-                "description": (
-                    "Transient signed transport URL. Dish fetches it once and never "
-                    "persists it in durable replay identity, logs, receipts, or errors."
-                ),
-            },
-        },
-    },
-    "description": "Exactly one Code-Interpreter-produced file to fetch and qualify.",
+    # OpenAI requires string items in the imported schema, then expands them into
+    # file-reference objects before sending the HTTP request to the Action.
+    "items": {"type": "string"},
+    "description": (
+        "Exactly one Code-Interpreter-produced file to fetch and qualify. OpenAI "
+        "expands the selected file into id, name, mime_type, and download_link fields "
+        "at runtime."
+    ),
 }
 
 OPENAI_FILE_RESPONSE_SCHEMA = {
@@ -462,7 +461,7 @@ OPENAI_FILE_RESPONSE_SCHEMA = {
             "mime_type": {"type": "string"},
             "content": {
                 "type": "string",
-                "contentEncoding": "base64",
+                "format": "byte",
                 "description": "Base64-encoded receipt bytes returned inline to Code Interpreter.",
             },
         },

@@ -29,6 +29,7 @@ Connected-agent command identity/exposure membership is shared lower-level metad
 - The public GPT Action transport may add `data.agent_guidance` derived from the canonical result. Guidance is contextual caller help, not workflow authority: it must not add or authorize legal actions, invent authoritative identifiers or state, or contradict `allowed_actions`.
 - Command identity and replay classification should not be independently redefined in every surface.
 - Overlapping capabilities across agent/admin/frontend surfaces are allowed when exposure and authorization are explicit.
+- The dedicated `implementation-action` deployment is a closed Development Workflow publication projection. During Gate A it exposes only `qualify-file-transport`; it must neither advertise nor route the ordinary Dish workflow Action inventory. It reuses the shared HTTP, authentication, replay, logging, and file-transport infrastructure without inheriting unrelated command exposure.
 - The private frontend has a separate, closed OpenAPI contract. Its shared-password exchange
   creates a server-managed session scoped only to frontend reads and session bootstrap/logout;
   frontend cookies are not accepted on agent, admin, or Action routes, and those bearer

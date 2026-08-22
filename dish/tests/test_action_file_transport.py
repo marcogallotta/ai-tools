@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 
 import pytest
 
@@ -144,6 +145,48 @@ def test_successful_qualification_returns_receipt(running_service, monkeypatch):
     assert receipt["name"] == "dish-action-gate-a-receipt.json"
     assert receipt["mime_type"] == "application/json"
     assert "download_link" not in receipt["content"]
+
+
+def test_missing_file_ref_logs_only_safe_shape(running_service, caplog):
+    _instance, url = running_service
+    payload = _payload()
+    payload.pop("openaiFileIdRefs")
+    with caplog.at_level(logging.INFO, logger="dish.service"):
+        status, response = _post(
+            url,
+            "/v1/action/qualify-file-transport",
+            token="action-secret",
+            payload=payload,
+        )
+    assert status == 200
+    assert response["errors"][0]["rule"] == "openai_file_refs_invalid"
+    assert "action_file_transport_received" in caplog.text
+    assert "action_file_transport_rejected" in caplog.text
+    assert f"run_id={RUN_ID}" in caplog.text
+    assert f"request_id={REQUEST_ID}" in caplog.text
+    assert "file_refs_type=missing" in caplog.text
+    assert "file_refs_count=None" in caplog.text
+    assert "rule=openai_file_refs_invalid" in caplog.text
+    assert "download_link" not in caplog.text
+
+
+def test_file_ref_log_never_contains_file_values(running_service, monkeypatch, caplog):
+    _instance, url = running_service
+    _patch_fetch(monkeypatch)
+    with caplog.at_level(logging.INFO, logger="dish.service"):
+        status, response = _post(
+            url,
+            "/v1/action/qualify-file-transport",
+            token="action-secret",
+            payload=_payload(),
+        )
+    assert status == 200
+    assert response["ok"] is True
+    assert "file_refs_type=array" in caplog.text
+    assert "file_refs_count=1" in caplog.text
+    assert "file_ref_item_type=dict" in caplog.text
+    for secret_value in FILE_REF.values():
+        assert secret_value not in caplog.text
 
 
 def test_digest_mismatch_is_validation_failed(running_service, monkeypatch):

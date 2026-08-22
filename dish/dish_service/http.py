@@ -23,8 +23,14 @@ from .auth import authenticate_bearer
 from .http_routing import resolve_post_route
 from .leases import ServicePrincipal
 from .legacy_writer_fence import assert_legacy_writer_mutation_allowed
-from .command_spec import ACTION_COMMANDS, REPLAY_SAFE_COMMANDS, validate_action_request
-from .openapi import action_openapi
+from .command_spec import (
+    ACTION_COMMANDS,
+    IMPLEMENTATION_ACTION_CLIENT_ID,
+    REPLAY_SAFE_COMMANDS,
+    action_commands_for_client,
+    validate_action_request,
+)
+from .openapi import action_openapi, implementation_action_openapi
 from .frontend_http import (
     dispatch_get as dispatch_frontend_get,
     dispatch_post as dispatch_frontend_post,
@@ -61,6 +67,54 @@ def _requires_request_id(surface: str, command: str) -> bool:
         "admin-lease-expiry",
         "admin-backup",
     }
+
+
+def _file_ref_diagnostics(request: dict[str, Any]) -> dict[str, Any]:
+    """Return a value-free description of an Action file-reference field."""
+    client = request.get("client")
+    client = client if isinstance(client, dict) else {}
+    if "openaiFileIdRefs" not in request:
+        field_type = "missing"
+        count: int | None = None
+        item_type = "none"
+    else:
+        file_refs = request.get("openaiFileIdRefs")
+        if file_refs is None:
+            field_type = "null"
+            count = None
+            item_type = "none"
+        elif isinstance(file_refs, list):
+            field_type = "array"
+            count = len(file_refs)
+            if len(file_refs) == 1:
+                item_type = type(file_refs[0]).__name__
+            else:
+                item_type = "none"
+        else:
+            field_type = type(file_refs).__name__
+            count = None
+            item_type = "none"
+    return {
+        "run_id": client.get("run_id"),
+        "request_id": client.get("request_id"),
+        "field_type": field_type,
+        "count": count,
+        "item_type": item_type,
+    }
+
+
+def _log_file_ref_diagnostics(event: str, diagnostics: dict[str, Any], **fields: Any) -> None:
+    LOG.info(
+        "%s run_id=%s request_id=%s file_refs_type=%s file_refs_count=%s "
+        "file_ref_item_type=%s%s",
+        event,
+        diagnostics["run_id"],
+        diagnostics["request_id"],
+        diagnostics["field_type"],
+        diagnostics["count"],
+        diagnostics["item_type"],
+        "".join(f" {name}={value}" for name, value in fields.items()),
+    )
 
 
 def _replay_arguments(
@@ -118,6 +172,12 @@ class DishHTTPServer(ThreadingHTTPServer):
             self._stop_event = stop_event
 
     def supports_route(self, surface: str, command: str) -> bool:
+        if (
+            surface == "action"
+            and self.service.config.action_client_id == IMPLEMENTATION_ACTION_CLIENT_ID
+            and command not in action_commands_for_client(IMPLEMENTATION_ACTION_CLIENT_ID)
+        ):
+            return False
         checker = getattr(self.service, "supports_http_route", None)
         if checker is None:
             return True
@@ -133,6 +193,10 @@ class DishHTTPServer(ThreadingHTTPServer):
         silently appearing on the legacy/Asana Action service.
         """
 
+        if command not in action_commands_for_client(
+            self.service.config.action_client_id
+        ):
+            return False
         if command in ACTION_COMMANDS:
             return True
         validator = getattr(self.service, "validate_action_request", None)
@@ -370,12 +434,18 @@ class DishRequestHandler(BaseHTTPRequestHandler):
         if path == "/openapi/action.json":
             host = self.headers.get("Host") or "dish.example.invalid"
             server_url = self.server.service.config.action_public_base_url or f"https://{host}"
-            provider = getattr(self.server.service, "action_openapi", None)
-            document = (
-                provider(server_url=server_url)
-                if provider is not None
-                else action_openapi(server_url=server_url)
-            )
+            if (
+                self.server.service.config.action_client_id
+                == IMPLEMENTATION_ACTION_CLIENT_ID
+            ):
+                document = implementation_action_openapi(server_url=server_url)
+            else:
+                provider = getattr(self.server.service, "action_openapi", None)
+                document = (
+                    provider(server_url=server_url)
+                    if provider is not None
+                    else action_openapi(server_url=server_url)
+                )
             self._write_json(HTTPStatus.OK, document)
             return
         self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not_found"})
@@ -394,6 +464,7 @@ class DishRequestHandler(BaseHTTPRequestHandler):
         principal = None
         request_id = None
         agent_command_dispatched = False
+        file_ref_diagnostics = None
         try:
             if command == "unknown":
                 self._write_json(
@@ -437,6 +508,11 @@ class DishRequestHandler(BaseHTTPRequestHandler):
             self._validate_request_shape(surface, command, request)
             if surface == "action":
                 principal = self._principal(credential, request)
+                if command == "qualify-file-transport":
+                    file_ref_diagnostics = _file_ref_diagnostics(request)
+                    _log_file_ref_diagnostics(
+                        "action_file_transport_received", file_ref_diagnostics
+                    )
                 action_validator = getattr(
                     self.server.service,
                     "validate_action_request",
@@ -584,6 +660,13 @@ class DishRequestHandler(BaseHTTPRequestHandler):
                 payload = attach_action_agent_guidance(payload)
             self._write_json(HTTPStatus.OK, payload)
         except DishRuleError as exc:
+            if file_ref_diagnostics is not None:
+                _log_file_ref_diagnostics(
+                    "action_file_transport_rejected",
+                    file_ref_diagnostics,
+                    code=exc.code,
+                    rule=exc.rule,
+                )
             replay_payload = None
             if (
                 not agent_command_dispatched

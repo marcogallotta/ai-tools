@@ -132,6 +132,34 @@ def test_action_schema_uses_configured_public_base_url(tmp_path):
     assert document["servers"] == [{"url": "https://public.example.test/test"}]
 
 
+def test_implementation_action_runtime_exposes_only_qualification(tmp_path):
+    service = _service(
+        tmp_path,
+        action_client_id="implementation-action",
+        action_public_base_url="https://public.example.test/gate-a",
+    )
+    server = build_action_server(service)
+    thread = _start(server)
+    try:
+        status, document = _get(server, "/openapi/action.json")
+        hidden_status, hidden = _post(
+            server,
+            "/v1/action/sections",
+            {
+                "client": {"run_id": "123e4567-e89b-42d3-a456-426614174000"},
+                "arguments": {"agent": "gpt"},
+            },
+        )
+    finally:
+        _stop(server, thread)
+
+    assert status == 200
+    assert document["info"]["title"] == "Dish Development Workflow Implementation Action"
+    assert set(document["paths"]) == {"/v1/action/qualify-file-transport"}
+    assert hidden_status == 404
+    assert hidden == {"ok": False, "error": "not_found"}
+
+
 @pytest.mark.parametrize(
     ("command", "arguments", "rule", "field"),
     [

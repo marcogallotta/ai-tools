@@ -77,7 +77,7 @@
     "dish_service/admin_cli.py": "ccba76a6a796639a75f24d6e5baed8c380fc5bc4af5080d0722fe322519f5c38",
     "dish_service/application.py": "657b531e77ccd4a11464608426e37cb297dba24d0607a5cd85688e2543ae8cb2",
     "dish_service/backup_creation.py": "6dbd2519aeb8a306ad5d78a61b318addba5ba47b051698c8f031dbf7b906a4bd",
-    "dish_service/command_spec.py": "ec0b0de93bde7f0d357411d4832b14f7532db576c0a2a7bf8580e8d07ab28d39",
+    "dish_service/command_spec.py": "fc1c609f63389aa8685a8ce5c594d5e95857d8fa56a47555d41faecd4ab318b2",
     "dish_service/planning_reopen.py": "28321ba068fb2b271a8cc5ec54a1d2584f44d6425231e33c77490b721bd0a872",
     "dish_tool/admin_command_spec.py": "20f4b33cd7096fc6314df543aeea9f33364eb4b34c7f769523ef708801a98221",
     "dish_tool/command_identity.py": "c12a3afe0225583862a35f37b4b602350403616ab1d0f8edfb97fe93090ba381",
@@ -87,11 +87,11 @@
     "dish_tool/database_schema_validation.py": "2c04862bf1f3bcd35aa7b14aa2cad3edbe5e7312f4e3d0afd42007cb17af3f4b",
     "dish_tool/workflow_policy.py": "213219dfc857a65b9720043426f9ddb6c7ea68706086322648051da3f7775fe9",
     "docs/runtime-contract.md": "a1236a7eef7141e709692e971e515090621f48bd49e4a1d92c2fe409fa5bf6be",
-    "openapi/dish-action.openapi.json": "f3ed666bf4b905ffb7c668ae199cd9cf51e429ca034f8c94629ed561d03e1e40",
+    "openapi/dish-action.openapi.json": "86e25682a9035a76190cc90cafcbc0c8b23ed5a7b9d87c3e7d5cb01ac69e9296",
     "scripts/dish-pg-acceptance": "d7b30b7f45a9ff38b1106aa868065449bea879f71ce30f2428b1333aa0ec43d4",
     "scripts/dish-pg-stage-a-baseline": "ef030edc5685c16082a537db5c53425f3572fc6cf8b2a79f9182bd07a77c530e"
   },
-  "last_rebaseline_reason": "Refresh the governed admin CLI source hash after the reviewed unexpected-failure observability change in PR #212.",
+  "last_rebaseline_reason": "Merge main (PR #212 governed admin CLI source-hash refresh) into Implementation Action Gate A: restrict implementation-action to the dedicated Gate A publication transport projection and add value-free file-ingress diagnostics; no PostgreSQL execution wiring change",
   "notes": [
     "The baseline records current source authority only; PostgreSQL is not production authority.",
     "Changes to governed source hashes or acceptance rules require explicit baseline review; ordinary test-file changes do not.",
