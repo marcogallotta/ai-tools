@@ -517,7 +517,18 @@ def attention_cases(
                 reason_class="POST_MERGE_ACTION_REQUIRED",
                 pr=pr,
                 task=None,
-                evidence={"post_merge_gates": list(pr.get("post_merge_gates") or [])},
+                evidence={
+                    "post_merge_gates": list(pr.get("post_merge_gates") or []),
+                    "residual": {
+                        "state": "active",
+                        "owner": "Coordinator",
+                        "wake_condition": "named post-merge gate changes or is accepted",
+                        "provenance": {
+                            "kind": "accepted_task_design_obligation",
+                            "source": "authoritative lifecycle post_merge_gates",
+                        },
+                    },
+                },
                 next_owner="Coordinator",
                 next_action="schedule/track residual post-merge acceptance work",
                 observed_at=generated_at,

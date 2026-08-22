@@ -673,7 +673,7 @@ class AsanaREST:
         seen: set[str] = set()
         for _ in range(1000):
             params = {
-                "opt_fields": "gid,name,notes,completed,completed_at,modified_at,memberships.project.gid,memberships.section.gid,dependencies.gid,dependencies.completed",
+                "opt_fields": "gid,name,notes,completed,completed_at,modified_at,memberships.project.gid,memberships.project.name,memberships.section.gid,memberships.section.name,dependencies.gid,dependencies.completed",
                 "limit": 100,
             }
             if offset:

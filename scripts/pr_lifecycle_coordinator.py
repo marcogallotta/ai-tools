@@ -13,50 +13,22 @@ import hashlib
 import json
 from typing import Any, Mapping
 
+from pr_lifecycle_duties import DUTIES, duty_for
 from pr_lifecycle_v4 import POLICY_GENERATION, actionable_version
 
 
 REPORT_SCHEMA = "dish-coordinator-observe-report-v1"
-FRONTIER_SCHEMA = "dish-coordinator-frontier-v1"
 AUDIT_SCHEMA = "dish-coordinator-audit-v1"
-AUTHORITATIVE_RESIDUAL_KINDS = frozenset({
-    "explicit_human_decision",
-    "standing_repository_policy",
-    "accepted_task_design_obligation",
-})
 ATTENTION_SECTIONS = frozenset({
     "needs research",
     "needs agentic review",
     "needs human review",
 })
-
-
-@dataclass(frozen=True)
-class DutySpec:
-    duty_id: str
-    role: str
-    schedule: str
-    handler: str
-    output_schema: str
-    observe_only: bool = True
-
-
-DUTIES = {
-    "coordinator.hourly-frontier": DutySpec(
-        duty_id="coordinator.hourly-frontier",
-        role="Coordinator",
-        schedule="hourly",
-        handler="coordinator_hourly_frontier",
-        output_schema=FRONTIER_SCHEMA,
-    ),
-    "coordinator.noon-hygiene": DutySpec(
-        duty_id="coordinator.noon-hygiene",
-        role="Coordinator",
-        schedule="12:00 Europe/Rome",
-        handler="coordinator_noon_hygiene",
-        output_schema=FRONTIER_SCHEMA,
-    ),
-}
+READY_SECTIONS = frozenset({"ready"})
+BLOCKED_SECTIONS = frozenset({"waiting on dependency"})
+FRICTION_PROJECT = "1217443500915644"
+DEBT_PROJECT = "1217443501022227"
+DEVELOPMENT_WORKFLOW_PROJECT = "1217419962189616"
 
 
 @dataclass(frozen=True)
@@ -77,8 +49,10 @@ def audit_record(
         "correlation_id": correlation_id,
         "duty_id": (report.get("duty") or {}).get("duty_id"),
         "frontier_digest": report.get("frontier_digest"),
+        "authoritative_read": dict(report.get("authoritative_read") or {}),
         "counts": dict(report.get("counts") or {}),
         "decisions": list(report.get("decisions") or []),
+        "cases": list(report.get("cases") or []),
         "wake_enabled": False,
         "model_turns_started": 0,
     }
@@ -108,6 +82,18 @@ def _membership_sections(task: Mapping[str, Any]) -> set[str]:
             name = str(section or "").strip().lower()
         if name:
             result.add(name)
+    return result
+
+
+def _membership_projects(task: Mapping[str, Any]) -> set[str]:
+    result: set[str] = set()
+    for membership in task.get("memberships") or []:
+        if not isinstance(membership, Mapping):
+            continue
+        project = membership.get("project")
+        gid = project.get("gid") if isinstance(project, Mapping) else project
+        if gid:
+            result.add(str(gid))
     return result
 
 
@@ -165,6 +151,46 @@ def _hourly_cases(projection: Mapping[str, Any]) -> tuple[list[dict[str, Any]], 
     cases = _existing_coordinator_cases(projection)
     decisions: list[dict[str, Any]] = []
     existing_tasks = {str(case.get("task") or "") for case in cases}
+    existing_prs = {int(case["pr"]) for case in cases if case.get("pr") is not None}
+
+    for lifecycle in projection.get("resolved_lifecycle") or []:
+        if not isinstance(lifecycle, Mapping):
+            continue
+        pr = int(lifecycle.get("pr") or 0)
+        if not pr or pr in existing_prs:
+            continue
+        state = str(lifecycle.get("state") or "")
+        phase = str(lifecycle.get("phase") or "")
+        reason_class = ""
+        next_action = ""
+        if state == "INTEGRATION_READY":
+            reason_class = "WORK_READY_TO_SHIP"
+            next_action = "decide whether to route the exact reviewed candidate to Integration now"
+        elif phase in {"READY_FOR_REVIEW", "REVIEW_IN_PROGRESS"}:
+            reason_class = "WORK_READY_TO_ADVANCE"
+            next_action = "check the exact Review state and route the next existing lifecycle step"
+        elif state == "BLOCKED_EXTERNAL":
+            reason_class = "ACTIVE_DELIVERY_BLOCKER"
+            next_action = "track the exact external blocker owner and wake condition"
+        elif state == "CONTRADICTION" or lifecycle.get("truth") == "CONTRADICTION":
+            reason_class = "AUTHORITATIVE_STATE_CONTRADICTION"
+            next_action = "hold unsafe coordination and route reconciliation to the exact authority owner"
+        if reason_class:
+            cases.append(_case(
+                repository=repository,
+                reason_class=reason_class,
+                pr=pr,
+                head=str(lifecycle.get("head") or "") or None,
+                evidence={
+                    "state": state,
+                    "phase": phase,
+                    "truth": lifecycle.get("truth"),
+                    "task_gids": list(lifecycle.get("task_gids") or []),
+                    "conflicts": list(lifecycle.get("conflicts") or []),
+                },
+                next_action=next_action,
+            ))
+            existing_prs.add(pr)
 
     for raw_task in projection.get("tasks") or []:
         if not isinstance(raw_task, Mapping) or raw_task.get("error") or raw_task.get("completed"):
@@ -194,73 +220,61 @@ def _hourly_cases(projection: Mapping[str, Any]) -> tuple[list[dict[str, Any]], 
                 next_action="assess the exact stuck work state and decide the next coordination action",
             ))
             existing_tasks.add(task_gid)
-
-        for residual in raw_task.get("residuals") or []:
-            if not isinstance(residual, Mapping) or residual.get("state") not in {"active", "deferred"}:
-                continue
-            provenance = residual.get("provenance") if isinstance(residual.get("provenance"), Mapping) else {}
-            if provenance.get("kind") not in AUTHORITATIVE_RESIDUAL_KINDS:
-                decisions.append({
-                    "result": "suppressed",
-                    "reason": "residual_lacks_authoritative_provenance",
-                    "task": task_gid,
-                    "residual": residual.get("id"),
-                })
-                continue
-            if not residual.get("owner") or not residual.get("wake_condition"):
-                decisions.append({
-                    "result": "suppressed",
-                    "reason": "residual_owner_or_wake_unavailable",
-                    "task": task_gid,
-                    "residual": residual.get("id"),
-                })
-                continue
+        elif task_gid not in existing_tasks and sections & READY_SECTIONS:
             cases.append(_case(
                 repository=repository,
-                reason_class="AUTHORITATIVE_RESIDUAL_AT_RISK",
+                reason_class="WORK_READY_TO_SCHEDULE",
                 task=task_gid or None,
-                evidence={
-                    "residual_id": residual.get("id"),
-                    "state": residual.get("state"),
-                    "owner": residual.get("owner"),
-                    "wake_condition": residual.get("wake_condition"),
-                    "provenance": dict(provenance),
-                },
-                next_action="preserve the residual's exact owner, state and wake condition in the delivery plan",
+                evidence={"sections": sorted(sections & READY_SECTIONS), "task_name": raw_task.get("name")},
+                next_action="decide whether the exact ready work should enter the current delivery wave",
             ))
+            existing_tasks.add(task_gid)
+        elif task_gid not in existing_tasks and sections & BLOCKED_SECTIONS:
+            cases.append(_case(
+                repository=repository,
+                reason_class="ACTIVE_DELIVERY_BLOCKER",
+                task=task_gid or None,
+                evidence={"sections": sorted(sections & BLOCKED_SECTIONS), "task_name": raw_task.get("name")},
+                next_action="track the exact dependency owner and wake condition",
+            ))
+            existing_tasks.add(task_gid)
+
     return cases, decisions
 
 
 def _noon_cases(projection: Mapping[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     repository = str(projection.get("repository") or "")
-    evidence = projection.get("coordinator_duty_evidence")
-    evidence = evidence.get("coordinator.noon-hygiene") if isinstance(evidence, Mapping) else None
-    if not isinstance(evidence, Mapping) or evidence.get("status") != "COMPLETE":
+    scope = projection.get("task_scope") if isinstance(projection.get("task_scope"), Mapping) else {}
+    observed_projects = {str(value) for value in scope.get("projects") or []}
+    required_projects = {FRICTION_PROJECT, DEBT_PROJECT, DEVELOPMENT_WORKFLOW_PROJECT}
+    if scope.get("status") != "COMPLETE" or not required_projects.issubset(observed_projects):
         return [], [{"result": "suppressed", "reason": "authoritative_noon_evidence_unavailable"}]
 
     cases: list[dict[str, Any]] = []
     decisions: list[dict[str, Any]] = []
-    for item in evidence.get("items") or []:
-        if not isinstance(item, Mapping) or not item.get("due"):
+    for task in projection.get("tasks") or []:
+        if not isinstance(task, Mapping) or task.get("error") or task.get("completed"):
             continue
-        kind = str(item.get("kind") or "")
-        source_id = str(item.get("source_id") or "")
-        if kind == "audit_due" and source_id:
-            cases.append(_case(
-                repository=repository,
-                reason_class="AUDIT_SCHEDULING_DUE",
-                evidence={"source_id": source_id, "cadence": item.get("cadence")},
-                next_action="schedule or route the due audit under its existing cadence and ownership rules",
-            ))
-        elif kind == "development_workflow_hygiene_due" and source_id:
+        projects = _membership_projects(task)
+        sections = _membership_sections(task)
+        task_gid = str(task.get("gid") or "")
+        name = str(task.get("name") or "")
+        if projects & {FRICTION_PROJECT, DEBT_PROJECT} and "inbox" in sections:
             cases.append(_case(
                 repository=repository,
                 reason_class="DEVELOPMENT_WORKFLOW_TRIAGE_DUE",
-                evidence={"source_id": source_id, "queue": item.get("queue")},
+                task=task_gid or None,
+                evidence={"projects": sorted(projects), "sections": sorted(sections), "task_name": name},
                 next_action="route the due semantic triage to Development Workflow and later verify completion",
             ))
-        else:
-            decisions.append({"result": "suppressed", "reason": "unsupported_or_unidentified_noon_item"})
+        elif DEVELOPMENT_WORKFLOW_PROJECT in projects and "audit" in name.lower() and sections & {"ready", "needs processing"}:
+            cases.append(_case(
+                repository=repository,
+                reason_class="AUDIT_SCHEDULING_DUE",
+                task=task_gid or None,
+                evidence={"projects": sorted(projects), "sections": sorted(sections), "task_name": name},
+                next_action="schedule or route the due audit under its existing cadence and ownership rules",
+            ))
     return cases, decisions
 
 
@@ -271,8 +285,7 @@ def consume_projection(
     policy_generation: str = POLICY_GENERATION,
 ) -> CoordinatorProjection:
     """Build a deterministic frontier without admitting or starting a wake."""
-    if duty_id not in DUTIES:
-        raise ValueError(f"unknown Coordinator duty: {duty_id}")
+    duty = duty_for(duty_id, role="Coordinator")
     if duty_id == "coordinator.hourly-frontier":
         raw_cases, decisions = _hourly_cases(projection)
     else:
@@ -302,18 +315,26 @@ def consume_projection(
     report = {
         "schema": REPORT_SCHEMA,
         "generated_at": _now(),
-        "duty": DUTIES[duty_id].__dict__,
+        "duty": duty.__dict__,
         "observe_only": True,
         "wake_enabled": False,
         "wake_identity": "Lifecycle V4 actionable_version",
         "wake_policy_generation": policy_generation,
         "frontier_digest": _digest(semantic_frontier),
         "frontier_digest_is_wake_identity": False,
+        "authoritative_read": {
+            "projection_schema": projection.get("schema"),
+            "repository": projection.get("repository"),
+            "reconciled_at": projection.get("reconciled_at"),
+            "task_scope": dict(projection.get("task_scope") or {}),
+            "state_drift": list(projection.get("state_drift") or []),
+        },
         "counts": {
             "actionable": len(cases),
             "suppressed": sum(1 for value in decisions if value["result"] == "suppressed"),
             "model_turns_started": 0,
         },
         "decisions": decisions,
+        "cases": list(cases),
     }
     return CoordinatorProjection(cases, report)

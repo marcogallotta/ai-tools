@@ -10,29 +10,31 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from pr_lifecycle_coordinator import DUTIES, audit_record, consume_projection
+from pr_lifecycle_projection import build_projection
+from pr_lifecycle_support import LifecycleState, PRLifecycle, STATE_LABELS
 from pr_lifecycle_v4 import actionable_version
 
 
 REPOSITORY = "marcogallotta/ai-tools"
 
 
-def projection(*, tasks=None, cases=None, scope_status="COMPLETE", noon=None):
+def projection(*, tasks=None, cases=None, scope_status="COMPLETE"):
     value = {
         "repository": REPOSITORY,
-        "task_scope": {"status": scope_status, "projects": ["project-1"]},
+        "task_scope": {"status": scope_status, "projects": [
+            "project-1", "1217419962189616", "1217443500915644", "1217443501022227",
+        ]},
         "tasks": list(tasks or []),
         "v3": {"attention": {"cases": list(cases or [])}},
     }
-    if noon is not None:
-        value["coordinator_duty_evidence"] = {"coordinator.noon-hygiene": noon}
     return value
 
 
-def task(*, gid="121", priority="UNKNOWN", section=None, residuals=None):
+def task(*, gid="121", priority="UNKNOWN", section=None, project="project-1"):
     memberships = []
     if section:
         memberships = [{
-            "project": {"gid": "project-1"},
+            "project": {"gid": project},
             "section": {"gid": "section-1", "name": section},
         }]
     return {
@@ -42,13 +44,14 @@ def task(*, gid="121", priority="UNKNOWN", section=None, residuals=None):
         "modified_at": "2026-08-22T10:00:00+00:00",
         "memberships": memberships,
         "execution": {"priority": priority},
-        "residuals": list(residuals or []),
     }
 
 
 def test_registry_is_declarative_observe_only_and_role_scoped():
-    assert set(DUTIES) == {"coordinator.hourly-frontier", "coordinator.noon-hygiene"}
-    assert all(value.role == "Coordinator" for value in DUTIES.values())
+    assert {key for key in DUTIES if key.startswith("coordinator.")} == {
+        "coordinator.hourly-frontier", "coordinator.noon-hygiene"
+    }
+    assert DUTIES["integrator.nightly-ci-consumer"].role == "Integrator"
     assert all(value.observe_only for value in DUTIES.values())
 
 
@@ -105,55 +108,19 @@ def test_existing_coordinator_case_is_consumed_without_reinventing_owner_or_acti
     assert result.report["decisions"][0]["actionable_version"] == actionable_version(case)
 
 
-def test_residual_requires_authoritative_provenance_owner_and_wake():
-    inferred = {
-        "id": "r-inferred",
-        "state": "active",
-        "owner": "Coordinator",
-        "wake_condition": "later",
-        "provenance": {"kind": "agent_inference"},
-    }
-    authoritative = {
-        "id": "r-real",
-        "state": "deferred",
-        "owner": "Deployment",
-        "wake_condition": "source lands",
-        "provenance": {"kind": "accepted_task_design_obligation", "source": "task-1"},
-    }
-    cancelled = {
-        **authoritative,
-        "id": "r-cancelled",
-        "state": "cancelled",
-    }
-    result = consume_projection(
-        projection(tasks=[task(residuals=[inferred, authoritative, cancelled])]),
-        duty_id="coordinator.hourly-frontier",
-    )
-    assert [case["evidence"]["residual_id"] for case in result.actionable_cases] == ["r-real"]
-    assert any(
-        item.get("reason") == "residual_lacks_authoritative_provenance"
-        for item in result.report["decisions"]
-    )
-
-
 def test_noon_clean_scan_is_zero_turn_and_due_hygiene_routes_without_triaging():
     clean = consume_projection(
-        projection(noon={"status": "COMPLETE", "items": []}),
+        projection(),
         duty_id="coordinator.noon-hygiene",
     )
     assert clean.actionable_cases == ()
     assert clean.report["counts"]["model_turns_started"] == 0
 
     due = consume_projection(
-        projection(noon={
-            "status": "COMPLETE",
-            "items": [{
-                "kind": "development_workflow_hygiene_due",
-                "source_id": "code-smells-project",
-                "queue": "Code Smells / Engineering Debt",
-                "due": True,
-            }],
-        }),
+        projection(tasks=[task(
+            section="Inbox",
+            project="1217443501022227",
+        )]),
         duty_id="coordinator.noon-hygiene",
     )
     assert len(due.actionable_cases) == 1
@@ -163,14 +130,16 @@ def test_noon_clean_scan_is_zero_turn_and_due_hygiene_routes_without_triaging():
 
 
 def test_noon_missing_authority_is_silent_and_unknown_duty_fails_closed():
-    missing = consume_projection(projection(), duty_id="coordinator.noon-hygiene")
+    missing = consume_projection(
+        projection(scope_status="INCOMPLETE"), duty_id="coordinator.noon-hygiene"
+    )
     assert missing.actionable_cases == ()
     assert missing.report["decisions"][0]["reason"] == "authoritative_noon_evidence_unavailable"
 
     try:
         consume_projection(projection(), duty_id="coordinator.never")
     except ValueError as exc:
-        assert "unknown Coordinator duty" in str(exc)
+        assert "unknown lifecycle duty" in str(exc)
     else:
         raise AssertionError("unknown duty must fail closed")
 
@@ -184,4 +153,67 @@ def test_report_replays_into_bounded_existing_v4_audit_record():
     assert record["schema"] == "dish-coordinator-audit-v1"
     assert record["duty_id"] == "coordinator.hourly-frontier"
     assert record["counts"]["actionable"] == 1
+    assert record["cases"][0]["next_owner"] == "Coordinator"
+    assert record["cases"][0]["next_action"]
+    assert record["authoritative_read"]["task_scope"]["status"] == "COMPLETE"
     assert record["model_turns_started"] == 0
+
+
+def lifecycle(*, state=LifecycleState.INTEGRATION_READY, post_merge_gates=None):
+    return PRLifecycle(
+        number=239,
+        url="https://github.com/marcogallotta/ai-tools/pull/239",
+        title="Coordinator slice",
+        head="a" * 40,
+        branch="agent/coordinator",
+        base="main",
+        draft=False,
+        state=state,
+        state_label=STATE_LABELS[state],
+        task_ids=["121"],
+        review_verdict="MERGE",
+        reviewed_head="a" * 40,
+        gate={"diagnosis": "READY"},
+        post_merge_gates=list(post_merge_gates or []),
+    )
+
+
+def test_real_projection_producer_embeds_hourly_and_noon_observe_reports():
+    projected = build_projection(
+        [lifecycle()],
+        repository=REPOSITORY,
+        tasks=[task(section="Inbox", project="1217443500915644")],
+        task_scope={"status": "COMPLETE", "projects": [
+            "1217419962189616", "1217443500915644", "1217443501022227",
+        ]},
+    )
+    coordinator = projected["coordinator"]
+    assert coordinator["mode"] == "OBSERVE_ONLY"
+    assert coordinator["wake_enabled"] is False
+    assert any(
+        case["reason_class"] == "WORK_READY_TO_SHIP"
+        for case in coordinator["hourly"]["cases"]
+    )
+    assert any(
+        case["reason_class"] == "DEVELOPMENT_WORKFLOW_TRIAGE_DUE"
+        for case in coordinator["noon"]["cases"]
+    )
+    assert coordinator["hourly"]["counts"]["model_turns_started"] == 0
+    assert coordinator["noon"]["counts"]["model_turns_started"] == 0
+
+
+def test_real_projection_preserves_authoritative_post_merge_residual_provenance():
+    projected = build_projection(
+        [lifecycle(state=LifecycleState.MERGED, post_merge_gates=["commissioning"])],
+        repository=REPOSITORY,
+        tasks=[task()],
+        task_scope={"status": "COMPLETE", "projects": ["project-1"]},
+    )
+    residual = next(
+        case for case in projected["coordinator"]["hourly"]["cases"]
+        if case["reason_class"] == "POST_MERGE_ACTION_REQUIRED"
+    )["evidence"]["residual"]
+    assert residual["state"] == "active"
+    assert residual["owner"] == "Coordinator"
+    assert residual["wake_condition"]
+    assert residual["provenance"]["kind"] == "accepted_task_design_obligation"
