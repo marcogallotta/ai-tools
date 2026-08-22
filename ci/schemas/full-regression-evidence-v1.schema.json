@@ -37,6 +37,7 @@
     "lane_results": {
       "type": "object",
       "required": [
+        "pglite",
         "python-control-plane",
         "frontend-static-tooling",
         "native-postgresql",
@@ -44,6 +45,7 @@
       ],
       "additionalProperties": false,
       "properties": {
+        "pglite": {"$ref": "#/$defs/result"},
         "python-control-plane": {"$ref": "#/$defs/result"},
         "frontend-static-tooling": {"$ref": "#/$defs/result"},
         "native-postgresql": {"$ref": "#/$defs/result"},

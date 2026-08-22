@@ -10,8 +10,9 @@ Scheduled execution is bound to the workflow event's exact `main` SHA. Before ex
 
 ## Execution and evidence
 
-A substantive run forces all four diagnostic execution groups:
+A substantive run forces all five diagnostic execution groups:
 
+- `pglite` — the governed `harness:pglite-nested-collection` target via `dish/scripts/dish-pg-pglite`
 - `python-control-plane`
 - `frontend-static-tooling`
 - `native-postgresql`
@@ -23,7 +24,7 @@ The full-regression workflow deliberately differs from Integration certification
 
 The uploaded `full-regression-<main-sha>` artifact contains `evidence.json` with schema `dish-full-regression-v1`. It records exact `main` SHA, prior completed full-regression SHA/run and Git range, run identity, all lane results, setup phase results, failures, elapsed timings, and approximate one-job billed minutes. The repository schema is `ci/schemas/full-regression-evidence-v1.schema.json`.
 
-Lane status/timing remains aggregate execution evidence, but failure identity is **below the lane**. Structured runner outputs are harvested into one durable failure record per distinct failing/error invariant. Pytest and Node test suites use JUnit collection; native PostgreSQL certification uses its structured report; named non-structured boundaries record an explicit source/invariant failure. If a failed lane produces no finer record, finalization emits one `lane-command` fallback failure so a failure can never disappear from triage. Each failure record carries a stable `failure_id`, lane/component, source, invariant, failure kind, and optional detail. Multiple failures in one lane therefore remain independently classifiable.
+Lane status/timing remains aggregate execution evidence, but failure identity is **below the lane**. Structured runner outputs are harvested into one durable failure record per distinct failing/error invariant. Pytest and Node test suites use JUnit collection; governed PGlite preserves its structured report plus primary/quarantine aggregate JUnit and failure classification; native PostgreSQL certification uses its structured report; named non-structured boundaries record an explicit source/invariant failure. If a failed lane produces no finer record, finalization emits one `lane-command` fallback failure so a failure can never disappear from triage. Each failure record carries a stable `failure_id`, lane/component, source, invariant, failure kind, and optional detail. Multiple failures in one lane therefore remain independently classifiable.
 
 The detailed-failure collector is part of the runner adapter seam: Agent C's shared runner may replace concrete commands, but it must preserve or emit the same distinct-failure records before finalization. It must not collapse a set of known failing tests/invariants back to one lane-level classification.
 
