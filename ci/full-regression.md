@@ -24,7 +24,7 @@ The full-regression workflow deliberately differs from Integration certification
 
 The uploaded `full-regression-<main-sha>` artifact contains `evidence.json` with schema `dish-full-regression-v1`. It records exact `main` SHA, prior completed full-regression SHA/run and Git range, run identity, all lane results, setup phase results, failures, elapsed timings, and approximate one-job billed minutes. The repository schema is `ci/schemas/full-regression-evidence-v1.schema.json`.
 
-Lane status/timing remains aggregate execution evidence, but failure identity is **below the lane**. Structured runner outputs are harvested into one durable failure record per distinct failing/error invariant. Pytest and Node test suites use JUnit collection; governed PGlite preserves its structured report plus primary/quarantine aggregate JUnit and failure classification; native PostgreSQL certification uses its structured report; named non-structured boundaries record an explicit source/invariant failure. If a failed lane produces no finer record, finalization emits one `lane-command` fallback failure so a failure can never disappear from triage. Each failure record carries a stable `failure_id`, lane/component, source, invariant, failure kind, and optional detail. Multiple failures in one lane therefore remain independently classifiable.
+Lane status/timing remains aggregate execution evidence, but failure identity is **below the lane**. Structured runner outputs are harvested into one durable failure record per distinct failing/error invariant. Pytest and Node test suites use JUnit collection; governed PGlite preserves its structured report plus primary/quarantine aggregate JUnit and failure classification; native PostgreSQL certification uses its structured report; named non-structured boundaries record an explicit source/invariant failure. If a failed lane produces no finer record, finalization emits one `lane-command` fallback failure so a failure can never disappear from triage. Each failure record carries a stable `failure_id`, lane/component, source, invariant, failure kind, and optional detail. When evidence is strong enough, it also carries a typed `dish-ci-causal-fingerprint-v1` identity and its verified fingerprint. That identity normalizes owner surface, failing surface, invariant, and stable failure signature; run IDs and commit SHAs remain occurrence evidence and never fragment the cause. Stable structured detail distinguishes materially different failures of the same test. Coarse command/setup fallbacks have no causal fingerprint and must remain ambiguous. Multiple failures in one lane therefore remain independently classifiable without collapsing weak evidence into a repair owner.
 
 The detailed-failure collector is part of the runner adapter seam: Agent C's shared runner may replace concrete commands, but it must preserve or emit the same distinct-failure records before finalization. It must not collapse a set of known failing tests/invariants back to one lane-level classification.
 
@@ -35,6 +35,7 @@ Every distinct `failure_id` in `evidence.json` requires exactly one durable tria
 - **related regression** — the failing invariant was introduced or exposed by a change in the relevant `main` range. Record the responsible PR/head and the responsible exact-head certification plan/run.
 - **unrelated baseline** — the failure pre-existed the responsible range or is otherwise demonstrably unrelated to those changes. The analysis must state the baseline evidence used to establish that conclusion.
 - **environment-infrastructure** — the product invariant was not meaningfully exercised because runner, dependency, service, network, or other infrastructure failed. The analysis must identify that boundary rather than attributing a product regression.
+- **ambiguous** — the occurrence is preserved, but evidence is not strong enough to assign a normalized cause or another classification. It cannot create or reuse a corrective owner.
 
 Validate one classification record with:
 
@@ -53,6 +54,17 @@ python scripts/full_regression.py check-triage \
 ```
 
 A run with failures is not triage-complete until that command succeeds. Asana remains live orchestration authority for assigning/following the defect; GitHub source/PRs remain the durable correction surface.
+
+After an `unrelated baseline` record is validated, the event-driven Integrator routes it through the same corrective-owner function used by PR current-main recovery:
+
+```sh
+ASANA_ACCESS_TOKEN=... python scripts/full_regression.py route-triage \
+  --evidence evidence.json \
+  --triage triage/failure.json \
+  --project-gid <development-workflow-project-gid>
+```
+
+The router verifies the fingerprint against the typed identity, reuses one owner across scheduled/manual/PR occurrences and changing main SHAs, records every exact occurrence idempotently, and reopens a completed owner into the project's unique `Ready` section through the existing fenced task-transition/readback contract. Related, infrastructure, and ambiguous records do not enter baseline ownership. This command is an event consumer; it adds no scheduler, queue, database, or PR certification authority.
 
 ## SELECTOR MISS
 

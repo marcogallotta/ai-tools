@@ -11,6 +11,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "full_regression.py"
+sys.path.insert(0, str(ROOT / "scripts"))
 WORKFLOW = ROOT / ".github/workflows/full-regression.yml"
 TRIAGE_SCHEMA = ROOT / "ci/schemas/full-regression-triage-v1.schema.json"
 EVIDENCE_SCHEMA = ROOT / "ci/schemas/full-regression-evidence-v1.schema.json"
@@ -54,12 +55,18 @@ def _lanes(path: Path, failed: str | None = None) -> None:
         )
 
 
-def _miss(*, failure_id: str = "lane:browser-acceptance:test-browser:deadbeefdeadbeef", invariant: str = "authenticated refresh preserves session") -> dict:
+def _miss(
+    *,
+    failure_id: str = "lane:browser-acceptance:test-browser:deadbeefdeadbeef",
+    invariant: str = "authenticated refresh preserves session",
+    causal_fingerprint: str = "ci-cause-v1:" + "d" * 32,
+) -> dict:
     return {
         "schema": fr.TRIAGE_SCHEMA,
         "full_regression_run_id": "42",
         "main_sha": SHA,
         "failure_id": failure_id,
+        "causal_fingerprint": causal_fingerprint,
         "classification": "related regression",
         "analysis": "responsible change regressed a browser invariant",
         "responsible_change": {"pr_number": 123, "head_sha": RESPONSIBLE_SHA},
@@ -162,6 +169,64 @@ def test_evidence_records_exact_range_all_lanes_failure_and_timing(tmp_path: Pat
     assert len(required) == 1
     assert required[0].startswith("lane:browser-acceptance:lane-command:")
     assert evidence["lane_results"]["browser-acceptance"]["failure_ids"] == required
+    failure = evidence["failures"][0]
+    assert failure["causal_fingerprint"] is None
+    assert failure["causal_identity"] is None
+
+
+def test_causal_fingerprint_ignores_occurrence_sha_and_separates_distinct_causes(tmp_path: Path):
+    first = fr.record_failure(
+        output_dir=tmp_path / "first", kind="lane", component="python-control-plane",
+        source="pytest", invariant="tests/test_policy.py::test_owner", failure_kind="test_failure",
+        detail="expected 5 got 8; run id 40",
+    )
+    repeated = fr.record_failure(
+        output_dir=tmp_path / "repeated", kind="lane", component="python-control-plane",
+        source="pytest", invariant="tests/test_policy.py::test_owner", failure_kind="test_failure",
+        detail="expected 5 got 8; run id 41",
+    )
+    distinct = fr.record_failure(
+        output_dir=tmp_path / "distinct", kind="lane", component="python-control-plane",
+        source="pytest", invariant="tests/test_policy.py::test_owner", failure_kind="test_failure",
+        detail="database connection refused",
+    )
+    assert first["causal_fingerprint"] == repeated["causal_fingerprint"]
+    assert first["causal_fingerprint"] != distinct["causal_fingerprint"]
+
+
+def test_weak_fallback_evidence_requires_ambiguous_triage(tmp_path: Path):
+    _state(tmp_path)
+    _lanes(tmp_path, failed="browser-acceptance")
+    evidence = fr.finalize_run(output_dir=tmp_path, evidence_path=tmp_path / "evidence.json")
+    failure = evidence["failures"][0]
+    assert failure["causal_fingerprint"] is None
+    record = {
+        "schema": fr.TRIAGE_SCHEMA,
+        "full_regression_run_id": "42",
+        "main_sha": SHA,
+        "failure_id": failure["failure_id"],
+        "causal_fingerprint": None,
+        "classification": "unrelated baseline",
+        "analysis": "coarse fallback only",
+    }
+    with pytest.raises(fr.ContractError, match="must remain ambiguous"):
+        fr.validate_triage_record(record, evidence)
+    record["classification"] = "ambiguous"
+    fr.validate_triage_record(record, evidence)
+
+
+def test_named_failure_kind_without_material_detail_remains_ambiguous(tmp_path: Path):
+    failure = fr.record_failure(
+        output_dir=tmp_path,
+        kind="lane",
+        component="native-postgresql",
+        source="pytest",
+        invariant="tests/test_native.py::test_locking",
+        failure_kind="failed",
+        detail=None,
+    )
+    assert failure["causal_fingerprint"] is None
+    assert failure["causal_identity"] is None
 
 
 def test_missing_required_lane_fails_closed(tmp_path: Path):
@@ -231,12 +296,16 @@ def test_multiple_failures_in_one_lane_are_independently_triageable(tmp_path: Pa
     first, second = sorted(failures, key=lambda item: item["invariant"])
     triage = tmp_path / "triage"
     triage.mkdir()
-    related = _miss(failure_id=first["failure_id"], invariant=first["invariant"])
+    related = _miss(
+        failure_id=first["failure_id"], invariant=first["invariant"],
+        causal_fingerprint=first["causal_fingerprint"],
+    )
     baseline = {
         "schema": fr.TRIAGE_SCHEMA,
         "full_regression_run_id": "42",
         "main_sha": SHA,
         "failure_id": second["failure_id"],
+        "causal_fingerprint": second["causal_fingerprint"],
         "classification": "unrelated baseline",
         "analysis": "failure reproduced before the responsible range",
     }
@@ -254,9 +323,13 @@ def test_triage_related_failure_must_match_evidence_lane_and_invariant(tmp_path:
     failure = fr.record_failure(
         output_dir=tmp_path, kind="lane", component="browser-acceptance",
         source="browser-harness", invariant="fixture board renders", failure_kind="assertion_failure",
+        detail="expected fixture board to render",
     )
     evidence = fr.finalize_run(output_dir=tmp_path, evidence_path=tmp_path / "evidence.json")
-    record = _miss(failure_id=failure["failure_id"], invariant="wrong invariant")
+    record = _miss(
+        failure_id=failure["failure_id"], invariant="wrong invariant",
+        causal_fingerprint=failure["causal_fingerprint"],
+    )
     with pytest.raises(fr.ContractError, match="failing_invariant does not match"):
         fr.validate_triage_record(record, evidence)
 

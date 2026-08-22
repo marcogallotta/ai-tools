@@ -6,6 +6,7 @@ import io
 import json
 import zipfile
 
+from ci_failure_fingerprint import FingerprintError, SCHEMA as CAUSAL_IDENTITY_SCHEMA, validate_cause
 from pr_lifecycle_support import *
 
 
@@ -183,14 +184,32 @@ def parse_ci_failure_ownership(
                 cid = int(comment.get("id"))
             except (TypeError, ValueError):
                 cid = -1
-            records.append(
-                {
-                    "classification": classification,
-                    "evidence": evidence,
-                    "comment_id": cid,
-                    "timestamp": timestamp,
+            record = {
+                "classification": classification,
+                "evidence": evidence,
+                "comment_id": cid,
+                "timestamp": timestamp,
+            }
+            fingerprint = str(fields.get("fingerprint") or "").strip().lower()
+            if fingerprint:
+                identity = {
+                    "schema": CAUSAL_IDENTITY_SCHEMA,
+                    "owner_surface": urlparse.unquote(str(fields.get("owner_surface") or "")),
+                    "failure_surface": urlparse.unquote(str(fields.get("failure_surface") or "")),
+                    "invariant": urlparse.unquote(str(fields.get("invariant") or "")),
+                    "signature": urlparse.unquote(str(fields.get("signature") or "")),
                 }
-            )
+                try:
+                    cause = validate_cause(fingerprint=fingerprint, identity=identity)
+                except FingerprintError:
+                    return {
+                        "classification": "AMBIGUOUS",
+                        "evidence": "CI ownership marker has unverified causal identity",
+                        "comment_id": comment.get("id"),
+                    }
+                record["causal_fingerprint"] = cause.fingerprint
+                record["causal_identity"] = cause.json()
+            records.append(record)
     if not records:
         return {
             "classification": "AMBIGUOUS",

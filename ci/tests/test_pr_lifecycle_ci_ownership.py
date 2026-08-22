@@ -1,4 +1,5 @@
 import test_pr_lifecycle as base
+from ci_failure_fingerprint import causal_fingerprint
 
 pr_lifecycle = base.pr_lifecycle
 
@@ -30,15 +31,29 @@ def test_pending_exact_head_ci_waits_in_integration_without_changing_review_verd
     assert state.gate["diagnosis"] == pr_lifecycle.pr_gate.GateDiagnosis.PENDING.value
 
 
-def _ownership_comment(classification, *, evidence="run:700/job:test/signature:x"):
+def _ownership_comment(
+    classification, *, evidence="run:700/job:test/signature:x", fingerprint=None,
+    identity=None,
+):
     from urllib.parse import quote
 
+    identity = identity or {}
+    fingerprint_field = ""
+    if fingerprint:
+        fingerprint_field = (
+            f" fingerprint={fingerprint}"
+            f" owner_surface={quote(str(identity.get('owner_surface') or ''), safe='')}"
+            f" failure_surface={quote(str(identity.get('failure_surface') or ''), safe='')}"
+            f" invariant={quote(str(identity.get('invariant') or ''), safe='')}"
+            f" signature={quote(str(identity.get('signature') or ''), safe='')}"
+        )
     return {
         "id": 99,
         "body": (
             f"<!-- dish-ci-failure-ownership:v1 head={base.HEAD} "
             f"check={quote('Dish / exact-head certification', safe='')} "
-            f"classification={classification} evidence={quote(evidence, safe='')} -->"
+            f"classification={classification} evidence={quote(evidence, safe='')}"
+            f"{fingerprint_field} -->"
         ),
         "created_at": base.NOW.isoformat(),
         "updated_at": base.NOW.isoformat(),
@@ -79,6 +94,34 @@ def test_failed_ci_proven_current_main_requires_external_owner_record_not_candid
     assert state.state == pr_lifecycle.LifecycleState.REVIEW_PASSED
     assert state.gate["failure_ownership"] == "PROVEN_CURRENT_MAIN"
     assert "MAIN OWNED" in state.residual_reason
+
+
+def test_proven_current_main_carries_valid_causal_fingerprint_to_recovery_gate():
+    fingerprint, identity = causal_fingerprint(
+        owner_surface="python-control-plane", failure_surface="pytest",
+        invariant="tests/test_policy.py::test_owner", signature="test_failure: expected 5 got 8",
+    )
+    gh = base.FakeGitHub()
+    gh.reviews = [base.review()]
+    gh.workflow_runs = base.runs(conclusion="failure")
+    gh.comments = [_ownership_comment("PROVEN_CURRENT_MAIN", fingerprint=fingerprint, identity=identity)]
+    state = base.engine(gh, authority=True).inspect(gh.pr)
+    assert state.gate["failure_causal_fingerprint"] == fingerprint
+    assert state.gate["failure_causal_identity"] == identity
+
+
+def test_mismatched_causal_identity_fails_closed_as_ambiguous():
+    fingerprint, identity = causal_fingerprint(
+        owner_surface="python-control-plane", failure_surface="pytest",
+        invariant="tests/test_policy.py::test_owner", signature="test_failure",
+    )
+    forged = dict(identity); forged["invariant"] = "tests/test_policy.py::test_other"
+    gh = base.FakeGitHub(); gh.reviews = [base.review()]
+    gh.workflow_runs = base.runs(conclusion="failure")
+    gh.comments = [_ownership_comment("PROVEN_CURRENT_MAIN", fingerprint=fingerprint, identity=forged)]
+    state = base.engine(gh, authority=True).inspect(gh.pr)
+    assert state.gate["failure_ownership"] == "AMBIGUOUS"
+    assert "unverified causal identity" in state.gate["failure_ownership_evidence"]
 
 
 def test_pending_ci_preserves_review_passed_headline():

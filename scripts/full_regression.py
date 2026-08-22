@@ -21,6 +21,8 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 from xml.etree import ElementTree
 
+from ci_failure_fingerprint import cause_for_failure
+
 EVIDENCE_SCHEMA = "dish-full-regression-v1"
 TRIAGE_SCHEMA = "dish-full-regression-triage-v1"
 RUN_STATE_SCHEMA = "dish-full-regression-run-state-v1"
@@ -38,6 +40,7 @@ CLASSIFICATIONS = (
     "related regression",
     "unrelated baseline",
     "environment-infrastructure",
+    "ambiguous",
 )
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 
@@ -208,6 +211,13 @@ def record_failure(
     failure_id = _failure_identity(
         kind=kind, component=component, source=source, invariant=invariant
     )
+    cause = cause_for_failure(
+        owner_surface=component,
+        failure_surface=source,
+        invariant=invariant,
+        failure_kind=failure_kind,
+        detail=detail,
+    )
     payload = {
         "schema": FAILURE_SCHEMA,
         "failure_id": failure_id,
@@ -217,6 +227,8 @@ def record_failure(
         "invariant": invariant,
         "failure_kind": failure_kind,
         "detail": detail,
+        "causal_fingerprint": cause.fingerprint if cause else None,
+        "causal_identity": cause.json() if cause else None,
     }
     path = output_dir / "failures" / f"{hashlib.sha256(failure_id.encode()).hexdigest()[:20]}.json"
     if path.exists():
@@ -775,6 +787,13 @@ def validate_triage_record(
         )
         if not isinstance(evidence_failure, Mapping):
             raise ContractError(f"evidence missing failure record for required ID: {failure_id}")
+        supplied = record.get("causal_fingerprint")
+        causal_fingerprint = str(supplied).strip().lower() if supplied is not None else None
+        expected_fingerprint = evidence_failure.get("causal_fingerprint")
+        if causal_fingerprint != expected_fingerprint:
+            raise ContractError("triage causal_fingerprint does not match evidence failure")
+        if expected_fingerprint is None and classification != "ambiguous":
+            raise ContractError("weak causal evidence must remain ambiguous")
     else:
         evidence_failure = None
 
@@ -993,6 +1012,14 @@ def _parser() -> argparse.ArgumentParser:
     )
     correction.add_argument("--triage", type=Path, required=True)
     correction.add_argument("--changed-path", action="append", default=[], required=True)
+
+    route = sub.add_parser(
+        "route-triage", help="route one classified scheduled/manual baseline failure"
+    )
+    route.add_argument("--evidence", type=Path, required=True)
+    route.add_argument("--triage", type=Path, required=True)
+    route.add_argument("--project-gid", required=True)
+    route.add_argument("--asana-token")
     return parser
 
 
@@ -1130,6 +1157,29 @@ def main(argv: list[str] | None = None) -> int:
             triage = _read_json(args.triage)
             payload = verify_selector_correction(triage=triage, changed_paths=args.changed_path)
             print(json.dumps(payload, sort_keys=True))
+            return 0
+
+        if args.command == "route-triage":
+            evidence = _read_json(args.evidence)
+            triage = _read_json(args.triage)
+            validate_triage_record(triage, evidence)
+            token = args.asana_token or os.getenv("ASANA_ACCESS_TOKEN")
+            if not token:
+                raise ContractError("ASANA_ACCESS_TOKEN is required to route baseline triage")
+            from pr_lifecycle_ci_recovery import ensure_scheduled_baseline_owner
+            from pr_lifecycle_support import LifecycleError
+            from pr_lifecycle_support import AsanaREST, JSONHTTPClient
+
+            try:
+                owner = ensure_scheduled_baseline_owner(
+                    AsanaREST(token, http=JSONHTTPClient()),
+                    project_gid=args.project_gid,
+                    evidence=evidence,
+                    triage=triage,
+                )
+            except LifecycleError as exc:
+                raise ContractError(str(exc)) from exc
+            print(json.dumps({"owner": owner, "routed": owner is not None}, sort_keys=True))
             return 0
 
     except (ContractError, json.JSONDecodeError, OSError) as exc:
