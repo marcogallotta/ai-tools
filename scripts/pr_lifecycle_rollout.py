@@ -22,12 +22,17 @@ from pr_lifecycle_task_state import (
 )
 
 PLAN_SCHEMA = "dish-rollout-plan-v1"
+PLAN_SCHEMA_V2 = "dish-rollout-plan-v2"
+PLAN_SCHEMAS = {PLAN_SCHEMA, PLAN_SCHEMA_V2}
 TRANSITION_SCHEMA = "dish-rollout-transition-v1"
+TRANSITION_SCHEMA_V2 = "dish-rollout-transition-v2"
+TRANSITION_SCHEMAS = {TRANSITION_SCHEMA, TRANSITION_SCHEMA_V2}
 PROJECTION_START = "<!-- dish-rollout-projection:v1 -->"
 PROJECTION_END = "<!-- /dish-rollout-projection:v1 -->"
 HUMAN_EVENTS = {"ACCEPTED", "REJECTED"}
 TERMINAL_EVENTS = HUMAN_EVENTS | {"CANCELLED"}
 ALLOWED_EVENTS = {"ACTIVATED"} | TERMINAL_EVENTS
+ALLOWED_EVENTS_V2 = ALLOWED_EVENTS | {"ROLLED_BACK"}
 TRUSTED_HUMAN_PROVENANCE = {"marco-chat-exact-decision", "signed-operator-record"}
 
 
@@ -46,6 +51,12 @@ def _required_text(value: Any, label: str) -> str:
     return text
 
 
+def _required_string(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise LifecycleError(f"rollout {label} is required and must be one string")
+    return value.strip()
+
+
 def _generation(value: Any) -> int:
     if isinstance(value, bool):
         raise LifecycleError("rollout generation must be a positive integer")
@@ -58,43 +69,102 @@ def _generation(value: Any) -> int:
     return generation
 
 
+def _normalize_rollback(value: Any) -> dict[str, str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise LifecycleError("rollout rollback must be an object or null")
+    return {
+        "state": _required_string(value.get("state"), "rollback state"),
+        "artifact": _required_string(value.get("artifact"), "rollback artifact identity"),
+        "config": _required_string(value.get("config"), "rollback config identity"),
+        "activation_source": _required_string(value.get("activation_source"), "rollback activation source"),
+        "activation_method": _required_string(value.get("activation_method"), "rollback activation method"),
+    }
+
+
+def _normalize_stage_v2(item: Mapping[str, Any], index: int) -> dict[str, Any]:
+    return {
+        "stage": _required_string(item.get("stage"), "stage"),
+        "artifact": _required_string(item.get("artifact"), "artifact identity"),
+        "config": _required_string(item.get("config"), "config identity"),
+        "target": _required_string(item.get("target"), f"stage {index + 1} target"),
+        "scope": _required_string(item.get("scope"), f"stage {index + 1} scope"),
+        "activation_source": _required_string(
+            item.get("activation_source"), f"stage {index + 1} activation source"
+        ),
+        "activation_method": _required_string(
+            item.get("activation_method"), f"stage {index + 1} activation method"
+        ),
+        "expected_prior_state": _required_string(
+            item.get("expected_prior_state"), f"stage {index + 1} expected prior state"
+        ),
+        "fence": _required_string(item.get("fence"), f"stage {index + 1} fence identity"),
+        "authority": _required_string(item.get("authority"), f"stage {index + 1} transition authority"),
+        "rollback": _normalize_rollback(item.get("rollback")),
+    }
+
+
 def normalize_plan(task_gid: str, raw: Mapping[str, Any]) -> dict[str, Any]:
-    stages: list[dict[str, str]] = []
+    schema = str(raw.get("schema") or PLAN_SCHEMA)
+    if schema not in PLAN_SCHEMAS:
+        raise LifecycleError(f"unsupported rollout plan schema: {schema}")
+    stages: list[dict[str, Any]] = []
     names: set[str] = set()
     for index, item in enumerate(raw.get("stages") or []):
         if not isinstance(item, Mapping):
             raise LifecycleError(f"rollout stage {index + 1} must be an object")
-        name = _required_text(item.get("stage"), "stage")
+        if schema == PLAN_SCHEMA_V2:
+            stage = _normalize_stage_v2(item, index)
+        else:
+            stage = {
+                "stage": _required_text(item.get("stage"), "stage"),
+                "artifact": _required_text(item.get("artifact"), "artifact identity"),
+                "config": _required_text(item.get("config"), "config identity"),
+            }
+        name = stage["stage"]
         if name in names:
             raise LifecycleError(f"rollout stage is duplicated: {name}")
         names.add(name)
-        stages.append({
-            "stage": name,
-            "artifact": _required_text(item.get("artifact"), "artifact identity"),
-            "config": _required_text(item.get("config"), "config identity"),
-        })
+        stages.append(stage)
     if not stages:
         raise LifecycleError("rollout plan requires at least one stage")
-    plan = {
-        "schema": PLAN_SCHEMA,
+    plan_id_value = raw.get("plan_id") or raw.get("control_id")
+    plan_id = (
+        _required_string(plan_id_value, "plan ID")
+        if schema == PLAN_SCHEMA_V2
+        else _required_text(plan_id_value, "plan ID")
+    )
+    plan: dict[str, Any] = {
+        "schema": schema,
         "task_gid": _required_text(task_gid, "task GID"),
-        "plan_id": _required_text(raw.get("plan_id"), "plan ID"),
+        "plan_id": plan_id,
         "generation": _generation(raw.get("generation")),
         "stages": stages,
         "predecessor_plan_digest": str(raw.get("predecessor_plan_digest") or "") or None,
     }
+    if schema == PLAN_SCHEMA_V2:
+        control_id = _required_string(raw.get("control_id") or plan_id, "control ID")
+        if control_id != plan_id:
+            raise LifecycleError("rollout control ID must match the durable plan ID")
+        plan["control_id"] = control_id
     plan["plan_digest"] = _digest(plan)
     return plan
 
 
 def transition_identity(raw: Mapping[str, Any]) -> str:
-    stable = {
-        key: raw.get(key)
-        for key in (
-            "task_gid", "plan_id", "generation", "stage", "artifact", "config",
-            "event", "activated_identity", "effect_mode", "human_decision",
-        )
-    }
+    keys = [
+        "task_gid", "plan_id", "generation", "stage", "artifact", "config",
+        "event", "activated_identity", "effect_mode", "human_decision",
+    ]
+    if raw.get("schema") == TRANSITION_SCHEMA_V2:
+        # Post-effect readback is deliberately excluded: the transition identity is
+        # the stable execution key needed before a retry-safe effect runs.
+        keys.extend([
+            "target", "scope", "activation_source", "activation_method",
+            "fence", "authority", "prior_readback",
+        ])
+    stable = {key: raw.get(key) for key in keys}
     return hashlib.sha256(_canonical(stable).encode()).hexdigest()[:32]
 
 
@@ -114,7 +184,7 @@ def reconstruct(stories: Iterable[Mapping[str, Any]], *, task_gid: str) -> Rollo
     for story in stories:
         plan = structured_story_payload(story, ROLLOUT_PLAN_PREFIX)
         if plan is not None:
-            if plan.get("schema") != PLAN_SCHEMA or str(plan.get("task_gid")) != task_gid:
+            if plan.get("schema") not in PLAN_SCHEMAS or str(plan.get("task_gid")) != task_gid:
                 continue
             normalized = normalize_plan(task_gid, plan)
             if normalized != plan:
@@ -126,7 +196,7 @@ def reconstruct(stories: Iterable[Mapping[str, Any]], *, task_gid: str) -> Rollo
             plans_by_key[key] = plan
         transition = structured_story_payload(story, ROLLOUT_TRANSITION_PREFIX)
         if transition is not None:
-            if transition.get("schema") != TRANSITION_SCHEMA or str(transition.get("task_gid")) != task_gid:
+            if transition.get("schema") not in TRANSITION_SCHEMAS or str(transition.get("task_gid")) != task_gid:
                 continue
             stable_id = str(transition.get("transition_id") or "")
             if not stable_id or transition_identity(transition) != stable_id:
@@ -231,46 +301,123 @@ def _validate_human_decision(decision: Mapping[str, Any], transition: Mapping[st
     return normalized
 
 
+def _normalize_prior_readback(value: Any, *, target: str, state: str) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        raise LifecycleError("rollout activation/rollback requires authoritative prior-state readback")
+    normalized = {
+        "target": _required_string(value.get("target"), "prior-state readback target"),
+        "state": _required_string(value.get("state"), "prior-state readback state"),
+        "evidence": _required_string(value.get("evidence"), "prior-state readback evidence"),
+    }
+    if normalized["target"] != target or normalized["state"] != state:
+        raise LifecycleError("rollout prior-state readback does not match the expected target/state fence")
+    return normalized
+
+
+def _normalize_effective_readback(
+    value: Any,
+    *,
+    target: str,
+    state: str,
+    artifact: str,
+    config: str,
+    activation_source: str,
+) -> dict[str, str]:
+    if not isinstance(value, Mapping):
+        raise LifecycleError("rollout activation/rollback requires authoritative effective-state readback")
+    normalized = {
+        "target": _required_string(value.get("target"), "effective readback target"),
+        "state": _required_string(value.get("state"), "effective readback state"),
+        "artifact": _required_string(value.get("artifact"), "effective readback artifact identity"),
+        "config": _required_string(value.get("config"), "effective readback config identity"),
+        "activation_source": _required_string(value.get("activation_source"), "effective readback activation source"),
+        "evidence": _required_string(value.get("evidence"), "effective readback evidence"),
+    }
+    expected = {
+        "target": target,
+        "state": state,
+        "artifact": artifact,
+        "config": config,
+        "activation_source": activation_source,
+    }
+    for key, expected_value in expected.items():
+        if normalized[key] != expected_value:
+            raise LifecycleError(f"rollout effective readback does not match intended {key}")
+    return normalized
+
+
+def _effective_target(stage: Mapping[str, Any], event: str) -> Mapping[str, str]:
+    if event == "ACTIVATED":
+        return {
+            "state": str(stage["stage"]),
+            "artifact": str(stage["artifact"]),
+            "config": str(stage["config"]),
+            "activation_source": str(stage["activation_source"]),
+        }
+    rollback = stage.get("rollback")
+    if not isinstance(rollback, Mapping):
+        raise LifecycleError("rollout stage does not declare a supported rollback target")
+    return rollback
+
+
+def _latest_event(events: list[dict[str, Any]]) -> str | None:
+    return str(events[-1]["event"]) if events else None
+
+
 def commit_transition(
     asana: Any,
     task_gid: str,
     raw: Mapping[str, Any],
     *,
     effect: Callable[[str], None] | None = None,
-    effect_readback: Callable[[str], bool] | None = None,
+    effect_readback: Callable[[str], bool | Mapping[str, Any]] | None = None,
     fence_root: Path | None = None,
     crash_after_append: bool = False,
 ) -> tuple[dict[str, Any], bool]:
-    plan_id = _required_text(raw.get("plan_id"), "plan ID")
+    plan_id = _required_text(raw.get("plan_id") or raw.get("control_id"), "plan ID")
     with rollout_fence(task_gid, plan_id, root=fence_root):
         state = reconstruct(asana.get_stories(task_gid), task_gid=task_gid)
         plan = state.current_plan
         if plan is None or plan["plan_id"] != plan_id:
             raise LifecycleError("rollout transition has no current matching plan")
+        v2 = plan["schema"] == PLAN_SCHEMA_V2
         generation = _generation(raw.get("generation"))
         if generation != plan["generation"]:
             raise LifecycleError("rollout transition targets a stale generation")
         stage_name = _required_text(raw.get("stage"), "stage")
         index, stage = _stage(plan, stage_name)
         event = _required_text(raw.get("event"), "event").upper()
-        if event not in ALLOWED_EVENTS:
+        allowed = ALLOWED_EVENTS_V2 if v2 else ALLOWED_EVENTS
+        if event not in allowed:
             raise LifecycleError(f"unsupported rollout event: {event}")
         if raw.get("artifact") != stage["artifact"] or raw.get("config") != stage["config"]:
             raise LifecycleError("rollout transition artifact/config identity does not match the plan")
         events = _stage_events(state, plan, stage_name)
         activation = next((item for item in events if item["event"] == "ACTIVATED"), None)
         activated_identity = str(raw.get("activated_identity") or "") or None
+        prior_readback: dict[str, str] | None = None
         if event == "ACTIVATED":
             activated_identity = None
             if index:
                 prior_name = plan["stages"][index - 1]["stage"]
-                if not any(item["event"] == "ACCEPTED" for item in _stage_events(state, plan, prior_name)):
+                prior_events = _stage_events(state, plan, prior_name)
+                if (v2 and _latest_event(prior_events) != "ACCEPTED") or (
+                    not v2 and not any(item["event"] == "ACCEPTED" for item in prior_events)
+                ):
                     raise LifecycleError(f"rollout predecessor stage is not accepted: {prior_name}")
+            if v2:
+                prior_readback = _normalize_prior_readback(
+                    raw.get("prior_readback"), target=stage["target"], state=stage["expected_prior_state"]
+                )
         else:
             if activation is None or activated_identity != activation["transition_id"]:
                 raise LifecycleError("rollout decision is not bound to the exact activated identity")
+            if v2 and event == "ROLLED_BACK":
+                prior_readback = _normalize_prior_readback(
+                    raw.get("prior_readback"), target=stage["target"], state=stage_name
+                )
         transition: dict[str, Any] = {
-            "schema": TRANSITION_SCHEMA,
+            "schema": TRANSITION_SCHEMA_V2 if v2 else TRANSITION_SCHEMA,
             "task_gid": task_gid,
             "plan_id": plan_id,
             "generation": generation,
@@ -282,10 +429,22 @@ def commit_transition(
             "effect_mode": None,
             "human_decision": None,
         }
+        if v2:
+            transition.update({
+                "target": stage["target"],
+                "scope": stage["scope"],
+                "activation_source": stage["activation_source"],
+                "activation_method": stage["activation_method"],
+                "fence": stage["fence"],
+                "authority": stage["authority"],
+                "prior_readback": prior_readback,
+                "readback": None,
+            })
         automatic = bool(raw.get("automatic_effect"))
         if automatic:
-            if event != "ACTIVATED":
-                raise LifecycleError("automatic rollout effects are valid only for activation")
+            automatic_events = {"ACTIVATED", "ROLLED_BACK"} if v2 else {"ACTIVATED"}
+            if event not in automatic_events:
+                raise LifecycleError("automatic rollout effects are valid only for activation/rollback")
             effect_mode = str(raw.get("effect_mode") or "")
             if effect_mode not in {"idempotent-stable-key", "target-fenced"}:
                 raise LifecycleError("automatic rollout effect requires declared idempotent-stable-key or target-fenced mode")
@@ -298,18 +457,61 @@ def commit_transition(
         transition["transition_id"] = transition_identity(transition)
         existing = next((item for item in state.transitions if item["transition_id"] == transition["transition_id"]), None)
         if existing is not None:
-            if existing != transition:
+            intent = {key: value for key, value in transition.items() if key != "readback"}
+            durable_intent = {key: value for key, value in existing.items() if key != "readback"}
+            if durable_intent != intent:
                 raise LifecycleError("rollout transition identity conflicts with durable history")
+            if v2 and not automatic and event in {"ACTIVATED", "ROLLED_BACK"}:
+                target = _effective_target(stage, event)
+                requested = _normalize_effective_readback(
+                    raw.get("readback"),
+                    target=stage["target"],
+                    state=target["state"],
+                    artifact=target["artifact"],
+                    config=target["config"],
+                    activation_source=target["activation_source"],
+                )
+                if existing.get("readback") != requested:
+                    raise LifecycleError("rollout transition replay conflicts with durable effective readback")
             repair_projection(asana, task_gid, state)
-            return transition, False
-        if events and any(item["event"] in TERMINAL_EVENTS for item in events):
+            return existing, False
+        if v2:
+            latest = _latest_event(events)
+            if event == "ACTIVATED" and events:
+                raise LifecycleError("rollout stage is already activated or terminal")
+            if event in TERMINAL_EVENTS and latest in TERMINAL_EVENTS | {"ROLLED_BACK"}:
+                raise LifecycleError("rollout stage is already terminal")
+            if event == "ROLLED_BACK" and latest not in {"ACTIVATED", "ACCEPTED"}:
+                raise LifecycleError("rollout rollback requires the exact stage to still be active or accepted")
+        elif events and any(item["event"] in TERMINAL_EVENTS for item in events):
             raise LifecycleError("rollout stage is already terminal")
         if automatic:
             if effect is None or effect_readback is None:
                 raise LifecycleError("automatic rollout effect requires an idempotent adapter and authoritative readback")
             effect(transition["transition_id"])
-            if not effect_readback(transition["transition_id"]):
+            observed = effect_readback(transition["transition_id"])
+            if v2:
+                target = _effective_target(stage, event)
+                transition["readback"] = _normalize_effective_readback(
+                    observed,
+                    target=stage["target"],
+                    state=target["state"],
+                    artifact=target["artifact"],
+                    config=target["config"],
+                    activation_source=target["activation_source"],
+                )
+            elif not observed:
                 raise LifecycleError("automatic rollout effect did not pass authoritative readback")
+        elif v2 and event in {"ACTIVATED", "ROLLED_BACK"}:
+            target = _effective_target(stage, event)
+            transition["readback"] = _normalize_effective_readback(
+                raw.get("readback"),
+                target=stage["target"],
+                state=target["state"],
+                artifact=target["artifact"],
+                config=target["config"],
+                activation_source=target["activation_source"],
+            )
         _append_readback(asana, task_gid, ROLLOUT_TRANSITION_PREFIX, transition)
         if crash_after_append:
             raise RuntimeError("injected crash after authoritative transition append")
@@ -322,17 +524,29 @@ def rollout_projection(state: RolloutState) -> dict[str, Any] | None:
     plan = state.current_plan
     if plan is None:
         return None
+    v2 = plan["schema"] == PLAN_SCHEMA_V2
     stages = []
     for item in plan["stages"]:
         events = _stage_events(state, plan, item["stage"])
         latest = events[-1] if events else None
-        stages.append({
+        stage_projection = {
             **item,
             "state": latest["event"] if latest else "PENDING",
             "activated_identity": next((event["transition_id"] for event in events if event["event"] == "ACTIVATED"), None),
-        })
-    return {
-        "schema": "dish-rollout-projection-v1",
+        }
+        if v2:
+            effective_event = next(
+                (event for event in reversed(events) if event["event"] in {"ACTIVATED", "ROLLED_BACK"}),
+                None,
+            )
+            readback = effective_event.get("readback") if effective_event else None
+            stage_projection["effective_state"] = (
+                readback.get("state") if isinstance(readback, Mapping) else "UNKNOWN"
+            )
+            stage_projection["effective_readback"] = readback
+        stages.append(stage_projection)
+    projection: dict[str, Any] = {
+        "schema": "dish-rollout-projection-v2" if v2 else "dish-rollout-projection-v1",
         "task_gid": plan["task_gid"],
         "plan_id": plan["plan_id"],
         "generation": plan["generation"],
@@ -341,6 +555,9 @@ def rollout_projection(state: RolloutState) -> dict[str, Any] | None:
         "stages": stages,
         "complete": bool(stages) and all(item["state"] in {"ACCEPTED", "CANCELLED"} for item in stages),
     }
+    if v2:
+        projection["control_id"] = plan["control_id"]
+    return projection
 
 
 def repair_projection(asana: Any, task_gid: str, state: RolloutState | None = None) -> dict[str, Any] | None:
