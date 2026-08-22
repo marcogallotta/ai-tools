@@ -481,8 +481,8 @@ def commit_transition(
                 raise LifecycleError("rollout stage is already activated or terminal")
             if event in TERMINAL_EVENTS and latest in TERMINAL_EVENTS | {"ROLLED_BACK"}:
                 raise LifecycleError("rollout stage is already terminal")
-            if event == "ROLLED_BACK" and latest not in {"ACTIVATED", "ACCEPTED"}:
-                raise LifecycleError("rollout rollback requires the exact stage to still be active or accepted")
+            if event == "ROLLED_BACK" and latest not in {"ACTIVATED", "ACCEPTED", "REJECTED", "CANCELLED"}:
+                raise LifecycleError("rollout rollback requires the exact activated stage to remain effectively active")
         elif events and any(item["event"] in TERMINAL_EVENTS for item in events):
             raise LifecycleError("rollout stage is already terminal")
         if automatic:
