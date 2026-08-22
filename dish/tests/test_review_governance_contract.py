@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import csv
 import hashlib
 import importlib.util
@@ -83,6 +84,12 @@ PRIMITIVES = (
     "apply_semantic_override(",
     "fast_track_use(",
 )
+CALL_SEAMS = {
+    primitive.removesuffix("("): primitive
+    for primitive in PRIMITIVES
+    if primitive.endswith("(")
+}
+ATTRIBUTE_SEAMS = {"EventType": {"MARCO_APPROVED": "EventType.MARCO_APPROVED"}}
 ALLOWLIST = {
     "dish/scripts/chatgpt_project_kernels.py",
     "dish/scripts/dish-asana-migration-plan",
@@ -100,7 +107,14 @@ def _sha(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
-def _story_bundle(projection, *, include_approval=True, corrupt_payload=False):
+def _story_bundle(
+    monkeypatch,
+    projection,
+    *,
+    include_approval=True,
+    corrupt_payload=False,
+    extra_events=(),
+):
     snapshot = b"sanitized exact Review V5 G8 canonical snapshot"
     canonical_sha = _sha(snapshot)
     identity = {
@@ -113,7 +127,7 @@ def _story_bundle(projection, *, include_approval=True, corrupt_payload=False):
         "schema": "dish-design-generation:v1",
         **identity,
         "predecessor_generation_id": "review-v5-g7",
-        "canonical_snapshot_ref": "asana-story:snapshot",
+        "canonical_snapshot_ref": "asana-story:1001",
         "created_at": "2026-08-22T20:04:58.001Z",
         "created_by": "Dish Agent: Development Workflow | ChatGPT",
     }
@@ -140,7 +154,7 @@ def _story_bundle(projection, *, include_approval=True, corrupt_payload=False):
         f"Exact decision payload:\n{decision_text}\n\n"
         "Decision SHA-256: durable-record-value"
     ).encode()
-    decision_ref = "asana-story:decision#exact-decision-payload"
+    decision_ref = "asana-story:1003#exact-decision-payload"
     decision_sha = _sha(decision_payload)
     provenance = {
         "schema": "dish-human-decision-provenance:v1",
@@ -164,13 +178,13 @@ def _story_bundle(projection, *, include_approval=True, corrupt_payload=False):
     }
     old_bad_provenance = {
         **provenance,
-        "decision_ref": "asana-story:decision",
+        "decision_ref": "asana-story:1003",
         "decision_sha256": "b" * 64,
     }
     old_bad_approval = {
         **approval,
         "event_gid": f"task:{TASK}:{GENERATION}:MARCO_APPROVED:bad-old-record",
-        "human_decision_ref": "asana-story:decision",
+        "human_decision_ref": "asana-story:1003",
         "human_decision_sha256": "b" * 64,
     }
     approval_story = (
@@ -199,34 +213,40 @@ This execution does not remember or recover material authorship of G8.
 
 — Dish Agent: Development Workflow | ChatGPT | independent Design Review""".encode()
 
-    records = list(parse_record_envelope(generation_story))
-    if include_approval:
-        records.extend(parse_record_envelope(old_story))
-        records.extend(parse_record_envelope(approval_story))
-    generation = next(value for value in records if isinstance(value, Generation))
-    events = [value for value in records if isinstance(value, Event)]
-    decisions = [value for value in records if isinstance(value, HumanDecisionProvenance)]
-    independent = governance.recover_independent_design_review(
-        identity=generation.identity,
-        review_ref="asana-story:independent-review",
-        review_payload=review_story,
-        cumulative_material_authors=("— Dish Agent: Development Workflow | ChatGPT | author",),
-    )
-    payload = governance.extract_exact_decision_payload(decision_story)
     if corrupt_payload:
-        payload = b"fabricated replacement"
-    evidence = governance.reconstruct_review_v2_evidence(
-        generation=generation,
-        events=events,
-        human_decisions=decisions,
-        canonical_snapshot_payload=snapshot,
-        decision_payloads={decision_ref: payload},
-        independent_review=independent,
-        source_refs=(
-            "asana-story:generation",
-            "asana-story:independent-review",
-            "asana-story:approval-reconciliation",
-        ),
+        decision_story = decision_story.replace(decision_payload, b"fabricated replacement")
+    stories = [
+        {"gid": "1001", "text": snapshot.decode(), "resource_subtype": "comment_added"},
+        {"gid": "1002", "text": generation_story.decode(), "resource_subtype": "comment_added"},
+        {"gid": "1003", "text": decision_story.decode(), "resource_subtype": "comment_added"},
+        {"gid": "1004", "text": review_story.decode(), "resource_subtype": "comment_added"},
+    ]
+    if include_approval:
+        stories.extend(
+            (
+                {"gid": "1005", "text": old_story.decode(), "resource_subtype": "comment_added"},
+                {"gid": "1006", "text": approval_story.decode(), "resource_subtype": "comment_added"},
+            )
+        )
+    for index, event in enumerate(extra_events, start=10):
+        stories.append(
+            {
+                "gid": str(1000 + index),
+                "text": json.dumps(lineage.event_mapping(event), separators=(",", ":")),
+                "resource_subtype": "comment_added",
+            }
+        )
+    monkeypatch.setattr(
+        governance,
+        "_authoritative_task_stories",
+        lambda task_gid: tuple(stories) if task_gid == TASK else (),
+    )
+    evidence = governance.resolve_review_v2_evidence(
+        refs=governance.ReviewV2AuthorityRefs(
+            task_gid=TASK,
+            generation_story_gid="1002",
+            independent_review_story_gid="1004",
+        )
     )
     classification = governance.AuthorizedClassification(
         classification="SEMANTIC_REVIEW_GOVERNANCE_CHANGE",
@@ -255,9 +275,9 @@ def test_projection_digest_and_standing_contract_parity():
     assert governance.validate_contract_parity(REPO_ROOT, projection) == ()
 
 
-def test_real_story_shape_uses_canonical_review_v2_and_exact_four_part_identity():
+def test_real_story_shape_uses_canonical_review_v2_and_exact_four_part_identity(monkeypatch):
     projection = governance.load_projection(REPO_ROOT)
-    classification, evidence = _story_bundle(projection)
+    classification, evidence = _story_bundle(monkeypatch, projection)
     decision = governance.evaluate_admission(
         classification=classification,
         evidence=evidence,
@@ -271,13 +291,52 @@ def test_real_story_shape_uses_canonical_review_v2_and_exact_four_part_identity(
     )
 
 
-def test_arbitrary_loader_and_fabricated_wrapper_bundle_are_not_admission_inputs():
+def test_fabricated_canonical_dataclasses_and_bytes_cannot_issue_admission_evidence():
     projection = governance.load_projection(REPO_ROOT)
     classification = _classification(projection, "SEMANTIC_REVIEW_GOVERNANCE_CHANGE")
     assert "authoritative_loader" not in inspect.signature(governance.evaluate_admission).parameters
+    assert not hasattr(governance, "recover_independent_design_review")
+    assert not hasattr(governance, "reconstruct_review_v2_evidence")
+    snapshot = b"caller-fabricated canonical snapshot"
+    fabricated_generation = Generation(
+        task_gid=TASK,
+        generation_id=GENERATION,
+        predecessor_generation_id=None,
+        canonical_sha256=_sha(snapshot),
+        relevant_repo_baseline=BASELINE,
+        created_at="2026-08-22T00:00:00Z",
+        created_by="fabricated author",
+        canonical_snapshot=snapshot.decode(),
+    )
+    fabricated_approval = Event(
+        event_gid="fabricated-approval",
+        event_type=EventType.MARCO_APPROVED,
+        identity=fabricated_generation.identity,
+        occurred_at="2026-08-22T00:00:01Z",
+        actor="fabricated actor",
+        material_delta_set_sha256=DELTA_SHA,
+        human_decision_ref="asana-story:9999#exact-decision-payload",
+        human_decision_sha256="a" * 64,
+    )
+    fabricated_decision = HumanDecisionProvenance(
+        decision_ref="asana-story:9999#exact-decision-payload",
+        decision_sha256="a" * 64,
+        identity=fabricated_generation.identity,
+        material_delta_set_sha256=DELTA_SHA,
+    )
+    with pytest.raises(TypeError):
+        governance.resolve_review_v2_evidence(
+            refs=governance.ReviewV2AuthorityRefs(TASK, "1002", "1004"),
+            generation=fabricated_generation,
+            events=(fabricated_approval,),
+            human_decisions=(fabricated_decision,),
+            canonical_snapshot_payload=snapshot,
+            decision_payloads={fabricated_decision.decision_ref: b"fabricated"},
+            source_refs=("asana-story:invented",),
+        )
     decision = governance.evaluate_admission(
         classification=classification,
-        evidence={"schema": "fabricated", "approval": True},
+        evidence=fabricated_generation,
         projection=projection,
     )
     assert decision.admission == "MECHANICAL_EVIDENCE_BLOCKED"
@@ -300,16 +359,16 @@ def test_direct_construction_of_sealed_reconstruction_is_rejected():
         )
 
 
-def test_missing_approval_needs_human_review_but_corrupt_claim_is_blocked():
+def test_missing_approval_needs_human_review_but_corrupt_claim_is_blocked(monkeypatch):
     projection = governance.load_projection(REPO_ROOT)
-    classification, missing = _story_bundle(projection, include_approval=False)
+    classification, missing = _story_bundle(monkeypatch, projection, include_approval=False)
     result = governance.evaluate_admission(
         classification=classification,
         evidence=missing,
         projection=projection,
     )
     assert result.admission == "NEEDS_HUMAN_REVIEW"
-    _, corrupt = _story_bundle(projection, corrupt_payload=True)
+    _, corrupt = _story_bundle(monkeypatch, projection, corrupt_payload=True)
     result = governance.evaluate_admission(
         classification=classification,
         evidence=corrupt,
@@ -318,9 +377,9 @@ def test_missing_approval_needs_human_review_but_corrupt_claim_is_blocked():
     assert result.admission == "MECHANICAL_EVIDENCE_BLOCKED"
 
 
-def test_superseded_generation_is_not_current():
+def test_superseded_generation_is_not_current(monkeypatch):
     projection = governance.load_projection(REPO_ROOT)
-    classification, evidence = _story_bundle(projection)
+    classification, evidence = _story_bundle(monkeypatch, projection)
     generation = evidence.generation
     superseded = Event(
         event_gid="superseded",
@@ -330,22 +389,7 @@ def test_superseded_generation_is_not_current():
         actor="Dish Agent: Development Workflow",
         successor_generation_id="review-v5-g9",
     )
-    rebuilt = governance.reconstruct_review_v2_evidence(
-        generation=generation,
-        events=[
-            Event("created", EventType.CREATED, generation.identity, "1", "agent"),
-            evidence.current_approval_event,
-            superseded,
-        ],
-        human_decisions=[evidence.current_human_decision],
-        canonical_snapshot_payload=b"sanitized exact Review V5 G8 canonical snapshot",
-        decision_payloads={
-            evidence.current_human_decision.decision_ref:
-                b"Marco approves the exact sanitized G8 generation and material delta."
-        },
-        independent_review=evidence.independent_review,
-        source_refs=evidence.source_refs,
-    )
+    _, rebuilt = _story_bundle(monkeypatch, projection, extra_events=(superseded,))
     result = governance.evaluate_admission(
         classification=classification,
         evidence=rebuilt,
@@ -393,9 +437,9 @@ def test_wrong_rule_and_projection_parity_fail_closed():
     assert decision.admission == "MECHANICAL_EVIDENCE_BLOCKED"
 
 
-def test_human_impact_report_names_canonical_sources():
+def test_human_impact_report_names_canonical_sources(monkeypatch):
     projection = governance.load_projection(REPO_ROOT)
-    classification, evidence = _story_bundle(projection)
+    classification, evidence = _story_bundle(monkeypatch, projection)
     decision = governance.evaluate_admission(
         classification=classification,
         evidence=evidence,
@@ -433,30 +477,88 @@ def _is_executable_source(path):
         return False
 
 
-def _structural_violations(root):
+def _aliased_python_seams(text):
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return set()
+    imported_names = {}
+    imported_modules = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for imported in node.names:
+                if imported.name in CALL_SEAMS or imported.name in ATTRIBUTE_SEAMS:
+                    imported_names[imported.asname or imported.name] = imported.name
+        elif isinstance(node, ast.Import):
+            for imported in node.names:
+                imported_modules.add(imported.asname or imported.name.split(".")[0])
+
+    hits = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name):
+                original = imported_names.get(node.func.id)
+                if original in CALL_SEAMS:
+                    hits.add(CALL_SEAMS[original])
+            elif (
+                isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id in imported_modules
+                and node.func.attr in CALL_SEAMS
+            ):
+                hits.add(CALL_SEAMS[node.func.attr])
+        elif (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in imported_names
+        ):
+            original = imported_names[node.value.id]
+            marker = ATTRIBUTE_SEAMS.get(original, {}).get(node.attr)
+            if marker:
+                hits.add(marker)
+        elif (
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Attribute)
+            and isinstance(node.value.value, ast.Name)
+            and node.value.value.id in imported_modules
+        ):
+            marker = ATTRIBUTE_SEAMS.get(node.value.attr, {}).get(node.attr)
+            if marker:
+                hits.add(marker)
+    return hits
+
+
+def _structural_scan(root):
     violations = []
+    scanned = []
     for path in root.rglob("*"):
         if not path.is_file() or not _is_executable_source(path):
             continue
-        relative = path.relative_to(root).as_posix()
+        relative_path = path.relative_to(root)
+        relative = relative_path.as_posix()
         if relative in ALLOWLIST:
             continue
-        if any(part.startswith(".") for part in path.parts):
+        if any(part.startswith(".") for part in relative_path.parts):
             continue
-        if "tests" in path.parts or "node_modules" in path.parts:
+        if "tests" in relative_path.parts or "node_modules" in relative_path.parts:
             continue
         try:
             text = path.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             continue
-        for primitive in PRIMITIVES:
-            if primitive in text:
-                violations.append(f"{relative}: {primitive}")
-    return violations
+        scanned.append(relative)
+        hits = {primitive for primitive in PRIMITIVES if primitive in text}
+        if path.suffix.lower() == ".py" or not path.suffix:
+            hits.update(_aliased_python_seams(text))
+        violations.extend(f"{relative}: {primitive}" for primitive in sorted(hits))
+    return violations, scanned
 
 
 def test_protected_primitives_stay_inside_validator_executor_allowlist():
-    assert _structural_violations(REPO_ROOT) == []
+    violations, scanned = _structural_scan(REPO_ROOT)
+    assert violations == []
+    assert "dish/scripts/dish-test-plan" in scanned
+    assert len(scanned) >= 25
 
 
 @pytest.mark.parametrize(
@@ -477,4 +579,35 @@ def test_new_classified_no_extension_executable_trips_each_canonical_seam(
     consumer = tmp_path / "dish" / "new-consumer"
     consumer.parent.mkdir()
     consumer.write_text(f"#!/usr/bin/env python3\nvalue = {primitive}\n", encoding="utf-8")
-    assert _structural_violations(tmp_path) == [f"dish/new-consumer: {primitive}"]
+    violations, scanned = _structural_scan(tmp_path)
+    assert violations == [f"dish/new-consumer: {primitive}"]
+    assert scanned == ["dish/new-consumer"]
+
+
+@pytest.mark.parametrize("symbol", tuple(CALL_SEAMS) + tuple(ATTRIBUTE_SEAMS))
+def test_aliased_direct_import_trips_every_protected_seam(tmp_path, symbol):
+    consumer = tmp_path / "dish" / "new_consumer.py"
+    consumer.parent.mkdir()
+    if symbol in CALL_SEAMS:
+        source = f"from authority import {symbol} as Alias\nAlias()\n"
+        expected = CALL_SEAMS[symbol]
+    else:
+        source = f"from authority import {symbol} as Alias\nvalue = Alias.MARCO_APPROVED\n"
+        expected = "EventType.MARCO_APPROVED"
+    consumer.write_text(source, encoding="utf-8")
+    violations, scanned = _structural_scan(tmp_path)
+    assert violations == [f"dish/new_consumer.py: {expected}"]
+    assert scanned == ["dish/new_consumer.py"]
+
+
+def test_hidden_checkout_ancestor_does_not_suppress_repository_scan(tmp_path):
+    root = tmp_path / ".local" / "share" / "owned-worktree"
+    consumer = root / "dish" / "new_consumer.py"
+    consumer.parent.mkdir(parents=True)
+    consumer.write_text(
+        "from review_design_lineage import HumanDecisionProvenance as HDP\nHDP()\n",
+        encoding="utf-8",
+    )
+    violations, scanned = _structural_scan(root)
+    assert violations == ["dish/new_consumer.py: HumanDecisionProvenance("]
+    assert scanned == ["dish/new_consumer.py"]

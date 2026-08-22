@@ -12,7 +12,10 @@ import sys
 from typing import Any, Mapping, Sequence
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+DISH_ROOT = Path(__file__).resolve().parents[1]
 ROOT_SCRIPTS = REPO_ROOT / "scripts"
+if str(DISH_ROOT) not in sys.path:
+    sys.path.insert(0, str(DISH_ROOT))
 if str(ROOT_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(ROOT_SCRIPTS))
 
@@ -24,6 +27,7 @@ from review_design_lineage import (  # noqa: E402
     Identity,
     State,
     digest,
+    parse_record_envelope,
     reconstruct,
 )
 
@@ -76,6 +80,15 @@ class AuthorizedClassification:
     evidence_ref: str
     governance_semantic_sha256: str
     material_delta_set_sha256: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewV2AuthorityRefs:
+    """Exact durable references accepted by the concrete Asana resolver."""
+
+    task_gid: str
+    generation_story_gid: str
+    independent_review_story_gid: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,7 +193,7 @@ def _is_sha256(value: str | None) -> bool:
     return bool(value and re.fullmatch(r"[0-9a-f]{64}", value))
 
 
-def recover_independent_design_review(
+def _recover_independent_design_review(
     *,
     identity: Identity,
     review_ref: str,
@@ -239,7 +252,7 @@ def extract_exact_decision_payload(story_payload: bytes) -> bytes:
     return decision.encode()
 
 
-def reconstruct_review_v2_evidence(
+def _reconstruct_review_v2_evidence(
     *,
     generation: Generation,
     events: Sequence[Event],
@@ -301,6 +314,196 @@ def reconstruct_review_v2_evidence(
         repairable_provenance_event_gids=tuple(repairable),
         blocking_contradictions=tuple(blocking),
         _seal=_EVIDENCE_SEAL,
+    )
+
+
+def _authoritative_task_stories(task_gid: str) -> tuple[Mapping[str, Any], ...]:
+    """Read the complete task story collection through the repository Asana backend."""
+    try:
+        import asana
+        from dish_tool.backend import AsanaBackend
+    except ImportError as exc:
+        raise GovernanceError("the repository Asana authority resolver is unavailable") from exc
+
+    options: dict[str, Any] = {
+        "opt_fields": "gid,text,created_by.name,created_at,resource_subtype",
+        "limit": 100,
+    }
+    stories: list[Mapping[str, Any]] = []
+    seen_offsets: set[str] = set()
+    with AsanaBackend() as backend:
+        function = asana.StoriesApi(backend.client()).get_stories_for_task
+        while True:
+            envelope = backend.call_envelope(
+                function,
+                task_gid,
+                options,
+                context=f"Review V2 authority stories for task {task_gid}",
+            )
+            page = envelope.get("data")
+            if not isinstance(page, list) or not all(isinstance(item, Mapping) for item in page):
+                raise GovernanceError("Asana returned malformed task-story authority data")
+            stories.extend(page)
+            next_page = envelope.get("next_page")
+            if next_page is None:
+                break
+            if not isinstance(next_page, Mapping):
+                raise GovernanceError("Asana returned malformed task-story pagination")
+            offset = str(next_page.get("offset") or "").strip()
+            if not offset or offset in seen_offsets:
+                raise GovernanceError("Asana task-story pagination did not advance")
+            seen_offsets.add(offset)
+            options = {**options, "offset": offset}
+    return tuple(stories)
+
+
+def _story_payloads_by_gid(
+    task_gid: str,
+    stories: Sequence[Mapping[str, Any]],
+) -> dict[str, bytes]:
+    payloads: dict[str, bytes] = {}
+    for story in stories:
+        gid = str(story.get("gid") or "").strip()
+        text = story.get("text")
+        if not gid or not isinstance(text, str):
+            continue
+        if gid in payloads:
+            raise GovernanceError(f"duplicate Asana story authority record {gid}")
+        payloads[gid] = text.encode()
+    if not payloads:
+        raise GovernanceError(f"task {task_gid} has no readable Asana story authority")
+    return payloads
+
+
+def _asana_story_gid(reference: str, *, exact_decision_payload: bool = False) -> str:
+    suffix = "#exact-decision-payload" if exact_decision_payload else ""
+    match = re.fullmatch(rf"asana-story:(\d+){re.escape(suffix)}", reference)
+    if match is None:
+        boundary = " with the exact decision-payload boundary" if exact_decision_payload else ""
+        raise GovernanceError(f"Review V2 requires an exact Asana story reference{boundary}")
+    return match.group(1)
+
+
+def resolve_review_v2_evidence(
+    *,
+    refs: ReviewV2AuthorityRefs,
+) -> ReconstructedReviewV2Evidence:
+    """Resolve and verify Review V2 evidence from one authoritative Asana task history.
+
+    Callers name durable identities only. Canonical records, snapshot bytes, decision
+    bytes, source membership, and author evidence are all recovered inside this
+    concrete repository-owned authority boundary.
+    """
+    if not isinstance(refs, ReviewV2AuthorityRefs):
+        raise GovernanceError("exact Review V2 authority references are required")
+    for label, value in (
+        ("task", refs.task_gid),
+        ("generation story", refs.generation_story_gid),
+        ("independent Review story", refs.independent_review_story_gid),
+    ):
+        if re.fullmatch(r"\d+", value) is None:
+            raise GovernanceError(f"{label} GID must be an exact Asana identifier")
+
+    payloads = _story_payloads_by_gid(
+        refs.task_gid,
+        _authoritative_task_stories(refs.task_gid),
+    )
+    try:
+        generation_payload = payloads[refs.generation_story_gid]
+        review_payload = payloads[refs.independent_review_story_gid]
+    except KeyError as exc:
+        raise GovernanceError(
+            "named Review V2 authority story is not a member of the exact Asana task"
+        ) from exc
+
+    generation_records = [
+        record
+        for record in parse_record_envelope(generation_payload)
+        if isinstance(record, Generation)
+    ]
+    if len(generation_records) != 1:
+        raise GovernanceError("generation authority story must contain exactly one Generation")
+    generation = generation_records[0]
+    if generation.task_gid != refs.task_gid:
+        raise GovernanceError("generation authority belongs to a different Asana task")
+
+    records = [
+        record
+        for payload in payloads.values()
+        for record in parse_record_envelope(payload)
+    ]
+    events = [
+        record
+        for record in records
+        if isinstance(record, Event) and record.identity == generation.identity
+    ]
+    decisions = [
+        record
+        for record in records
+        if isinstance(record, HumanDecisionProvenance)
+        and record.identity == generation.identity
+    ]
+
+    if generation.canonical_snapshot is not None:
+        snapshot_payload = generation.canonical_snapshot.encode()
+        snapshot_ref = f"asana-story:{refs.generation_story_gid}#inline-canonical-snapshot"
+    else:
+        assert generation.canonical_snapshot_ref is not None
+        snapshot_gid = _asana_story_gid(generation.canonical_snapshot_ref)
+        try:
+            snapshot_payload = payloads[snapshot_gid]
+        except KeyError as exc:
+            raise GovernanceError(
+                "canonical snapshot story is not a member of the exact Asana task"
+            ) from exc
+        snapshot_ref = generation.canonical_snapshot_ref
+
+    decision_payloads: dict[str, bytes] = {}
+    for decision in decisions:
+        try:
+            decision_gid = _asana_story_gid(
+                decision.decision_ref,
+                exact_decision_payload=True,
+            )
+            decision_payloads[decision.decision_ref] = extract_exact_decision_payload(
+                payloads[decision_gid]
+            )
+        except (GovernanceError, KeyError):
+            # Historical malformed records remain reconstruction evidence, but
+            # cannot become recovered human-decision authority.
+            continue
+
+    material_authors = {
+        generation.created_by.strip(),
+        *(event.actor.strip() for event in events),
+    }
+    independent = _recover_independent_design_review(
+        identity=generation.identity,
+        review_ref=f"asana-story:{refs.independent_review_story_gid}",
+        review_payload=review_payload,
+        cumulative_material_authors=tuple(material_authors),
+    )
+    source_refs = {
+        f"asana-story:{refs.generation_story_gid}",
+        f"asana-story:{refs.independent_review_story_gid}",
+        snapshot_ref,
+    }
+    for gid, payload in payloads.items():
+        if any(
+            getattr(record, "identity", None) == generation.identity
+            for record in parse_record_envelope(payload)
+        ):
+            source_refs.add(f"asana-story:{gid}")
+    source_refs.update(decision_payloads)
+
+    return _reconstruct_review_v2_evidence(
+        generation=generation,
+        events=events,
+        human_decisions=decisions,
+        canonical_snapshot_payload=snapshot_payload,
+        decision_payloads=decision_payloads,
+        independent_review=independent,
+        source_refs=tuple(sorted(source_refs)),
     )
 
 

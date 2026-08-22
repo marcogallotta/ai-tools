@@ -5,6 +5,10 @@ from pathlib import Path
 
 
 REVIEWED_PRIVATE_FAULT_SEAMS = {
+    ("test_review_governance_contract.py", "_authoritative_task_stories"): (
+        "Concrete Asana read boundary replaced with task-member story fixtures; the public "
+        "resolver still accepts durable GIDs only and performs all reconstruction itself."
+    ),
     ("postgresql/test_pglite_governed_runner.py", "_snapshot"): (
         "Descendant-tracker observation boundary used to synchronize real process discovery."
     ),
