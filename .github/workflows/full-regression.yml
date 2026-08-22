@@ -176,6 +176,26 @@ jobs:
               npm ci --no-audit --no-fund
             '
 
+      - name: Run governed PGlite group (harness:pglite-nested-collection)
+        if: always() && steps.decision.outputs.should_run == 'true'
+        shell: bash
+        run: |
+          python3 scripts/full_regression.py run-lane \
+            --output-dir "$FULL_REGRESSION_OUTPUT" \
+            --lane pglite -- \
+            bash -lc '
+              set +e
+              report=.test-artifacts/full-regression/pglite-report.json
+              pglite_rc=0
+              dish/.venv/bin/python dish/scripts/dish-pg-pglite --output "$report" || pglite_rc=$?
+              collector_rc=0
+              python3 scripts/full_regression.py collect-pglite-report \
+                --output-dir "$FULL_REGRESSION_OUTPUT" --lane pglite \
+                --source dish-pg-pglite --report "$report" --command-exit "$pglite_rc" || collector_rc=$?
+              [ "$pglite_rc" -eq 0 ] || exit "$pglite_rc"
+              exit "$collector_rc"
+            '
+
       # Adapter seam: the command following `--` can be replaced by Agent C's shared lane runner.
       # This workflow owns force-all/continue/evidence semantics, not final lane command semantics.
       - name: Run Python/control-plane group
