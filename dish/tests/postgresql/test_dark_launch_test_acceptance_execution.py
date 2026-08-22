@@ -340,7 +340,9 @@ def test_main_records_capture_pass_worker_blocked_as_partial(
 def test_child_timeout_preserves_process_group_evidence(tmp_path: Path) -> None:
     namespace = _namespace()
     child = tmp_path / "sleep.py"
-    child.write_text("import time\ntime.sleep(30)\n", encoding="utf-8")
+    child.write_text(
+        "import threading\nthreading.Event().wait()\n", encoding="utf-8"
+    )
 
     result = namespace["_run_first_attempt"](
         name="timeout-probe",
@@ -371,10 +373,10 @@ def test_process_group_cleanup_escalates_after_sigterm_is_ignored(
     ready = tmp_path / "ready"
     child = tmp_path / "ignore-term.py"
     child.write_text(
-        "import pathlib, signal, time\n"
+        "import pathlib, signal, threading\n"
         "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
         f"pathlib.Path({str(ready)!r}).write_text('ready', encoding='utf-8')\n"
-        "time.sleep(30)\n",
+        "threading.Event().wait()\n",
         encoding="utf-8",
     )
     process = subprocess.Popen(

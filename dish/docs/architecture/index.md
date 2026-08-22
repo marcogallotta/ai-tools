@@ -50,6 +50,7 @@ flowchart LR
 | PostgreSQL target/runtime | [PostgreSQL runtime](postgresql-runtime.md) |
 | Dark launch | [Dark launch](dark-launch.md) |
 | Review V2 design-generation lineage | [Review V2 design lineage](review-v2-design-lineage.md) |
+| Development Workflow system | [Development Workflow architecture](development-workflow/index.md) |
 | PostgreSQL cutover policy and ordering | [`../postgresql-cutover.md`](../postgresql-cutover.md) |
 | Dark-launch/reset operations | [`../database-backend-dark-launch-runbook.md`](../database-backend-dark-launch-runbook.md) |
 | Exact cutover operations | [`../database-backend-stage6-runbook.md`](../database-backend-stage6-runbook.md) |
@@ -72,6 +73,7 @@ Read only what is relevant to the boundary being changed. Small local changes do
 | External effects | [External effects and Asana](external-effects-and-asana.md) |
 | PostgreSQL/dark launch | [PostgreSQL runtime](postgresql-runtime.md), [Dark launch](dark-launch.md) |
 | Cutover policy or sequencing | [`../postgresql-cutover.md`](../postgresql-cutover.md) and the owning runbook |
+| Development lifecycle, work identity, review, CI, Integration, execution hosts, or agent recovery | Start at [Development Workflow architecture](development-workflow/index.md), then follow its focused routing |
 
 ## Subsystem-to-authoritative-code map
 
@@ -88,6 +90,7 @@ These are current implementation anchors, not promises that these exact modules 
 | Replay/leases | `dish_service/request_replay.py`, `dish_service/leases.py` |
 | PostgreSQL target | `dish_pg/command_port.py`, `dish_pg/postgres_service.py`, `dish_pg/transition.py` |
 | Dark launch | `dish_service/shadow_capture.py`, `dish_service/shadow_spool.py`, `dish_shadow/policy.py`, `dish_pg/shadow_worker.py` |
+| Development lifecycle orchestration | [PR lifecycle dispatcher](../../../scripts/pr_lifecycle.py), [PR gate](../../../scripts/pr_gate.py), [operator handoff](../../../scripts/operator_handoff.py) |
 
 ## Document status and ownership
 
@@ -104,6 +107,21 @@ Architecture documents are descriptive current-state records plus explicitly acc
 ## Related documents
 
 - [Architecture decisions](decisions/index.md)
+- [Development Workflow architecture](development-workflow/index.md)
+- [Development Workflow system context](development-workflow/system-context.md)
+- [Development Workflow authority and state](development-workflow/authority-and-state.md)
+- [Development Workflow lifecycle](development-workflow/lifecycle.md)
+- [Work identity and concurrency](development-workflow/work-identity-and-concurrency.md)
+- [Review, certification, and Integration](development-workflow/review-certification-integration.md)
+- [Execution hosts and operator boundary](development-workflow/execution-hosts-and-operator-boundary.md)
+- [Recovery, observability, and completion](development-workflow/recovery-observability-and-completion.md)
+- [Development Workflow extension rules](development-workflow/extension-rules.md)
+- [Development Workflow decisions](development-workflow/decisions/index.md)
+- [Development authority is split by fact](development-workflow/decisions/0001-authority-is-split-by-fact.md)
+- [Code changes use durable PR and exact-head lineage](development-workflow/decisions/0002-durable-pr-exact-head-lifecycle.md)
+- [The lifecycle dispatcher is restartable derived orchestration](development-workflow/decisions/0003-single-restartable-lifecycle-dispatcher.md)
+- [Review, certification, Integration, landing, and completion are distinct](development-workflow/decisions/0004-phases-remain-distinct.md)
+- [Execution choices are capability-grounded](development-workflow/decisions/0005-capability-grounded-execution.md)
 - [`../runtime-contract.md`](../runtime-contract.md)
 - [`../testing.md`](../testing.md)
 

@@ -5,6 +5,9 @@ from pathlib import Path
 
 
 REVIEWED_PRIVATE_FAULT_SEAMS = {
+    ("postgresql/test_pglite_governed_runner.py", "_snapshot"): (
+        "Descendant-tracker observation boundary used to synchronize real process discovery."
+    ),
     ("postgresql/test_scheduled_backup.py", "_regular_file"): (
         "Device-boundary stat forgery for local/off-device same-filesystem detection."
     ),

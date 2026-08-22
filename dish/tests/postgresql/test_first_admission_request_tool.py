@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import json
 import socket
-import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from dish_pg.first_admission_request import submit_first_admission
+from tests.support.thread_teardown import start_server_thread, stop_server
 
 REQUEST_ID = "20000000-0000-4000-8000-000000000001"
 RUN_ID = "20000000-0000-4000-8000-000000000002"
@@ -67,8 +67,7 @@ def test_first_admission_helper_submits_exact_plan_once(tmp_path: Path) -> None:
     )
     plan.chmod(0o600)
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Target)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
+    thread = start_server_thread(server, poll_interval=0.005)
     try:
         report = submit_first_admission(
             plan_path=plan.resolve(),
@@ -78,9 +77,7 @@ def test_first_admission_helper_submits_exact_plan_once(tmp_path: Path) -> None:
             response_timeout=2,
         )
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join(timeout=5)
+        stop_server(server, thread, timeout=5)
 
     assert report["ok"] is True
     assert report["delivery_state"] == "response_received"

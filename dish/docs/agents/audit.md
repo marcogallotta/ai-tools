@@ -26,6 +26,8 @@ Every created/updated finding links the audit task and exact audited SHA. Dedupe
 
 When bounded Audit reconciliation confirms a Development Workflow escape, Audit may additionally append exactly one validated, exact-evidence-deduped record to the canonical escape-analysis task under [`../../../ci/development-workflow-escape-ledger.md`](../../../ci/development-workflow-escape-ledger.md). That append-only exception grants no parent-note rewrite, corrective-task creation, priority, dispatch, Review, merge, or other lifecycle authority.
 
+For a Development Workflow architecture-gardening assignment, start at [`../architecture/index.md`](../architecture/index.md), follow the Development Workflow route, and check current anchors, local links/paths, contradictions, and ADR status against the exact audited baseline. Use the same bounded finding disposition; do not create a separate documentation audit queue or claim semantic freshness from structural checks alone.
+
 ## Domain context and fail-closed behavior
 
 A PostgreSQL audit may read PostgreSQL specialist authority and a Workflow audit may read Workflow authority; neither gains that role's mutation/product authority. If required GitHub, Asana, specialist, or runtime authority cannot be read, stop the affected conclusion/disposition and name what is missing rather than reconstructing it from chat.

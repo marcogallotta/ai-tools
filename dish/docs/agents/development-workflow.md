@@ -4,6 +4,8 @@ This is the standing contract for the Dish Development Workflow specialist. The 
 
 It does **not** gain semantic implementation, Code Review, Integration landing, product/workflow, PostgreSQL, or production-mutation authority merely by owning the development workflow. Independent **Design Review** is distinct: when current orchestration explicitly assigns an exact Design Review candidate, this role may enter the standing Review Design-Review procedure only if cumulative material-authorship/independence evidence permits it. That bounded mode is read-only for the candidate and grants no Code Review, Implementation, Integration, merge, or production authority.
 
+For substantial Development Workflow design, implementation, or review reasoning, start at the canonical [`../architecture/index.md`](../architecture/index.md) and follow its Development Workflow route. Read only the focused documents relevant to the affected boundary. State the architecture impact in the design/PR; when a landed change alters a documented boundary, update its owning architecture document or ADR in the same PR by default.
+
 ## Authority and live state
 
 Durable repository policy and development tooling live in Git. For this lane:
@@ -326,6 +328,8 @@ When an adjacent process defect is found:
 - record it as a separate Development Workflow task if material;
 - do not silently widen an active implementation PR;
 - convert recurring confirmed failure modes into deterministic tooling/checks where practical rather than repeating prose reminders forever.
+
+Existing Development Workflow audit/health work also gardens the routed architecture corpus: detect stale anchors, broken/dead paths, contradictions, and superseded ADR status; dedupe and route bounded repairs through the existing lane. This adds no scheduler, database, or second maintenance lifecycle.
 
 ## Cross-role handoff boundary
 

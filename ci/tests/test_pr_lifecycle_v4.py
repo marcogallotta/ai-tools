@@ -186,9 +186,31 @@ def test_duplicate_and_out_of_order_webhooks_coalesce_to_one_authoritative_wake(
 
 def test_actionable_version_ignores_volatile_timing_but_changes_on_semantic_action():
     first = dict(CASE)
+    first["evidence"] = {
+        "check": "Dish / exact-head certification",
+        "workflow_run_id": 700,
+        "workflow_run_attempt": 1,
+        "job_id": 800,
+        "delivery_id": "delivery-1",
+    }
     second = dict(CASE)
-    second["evidence"] = {"check": "Dish / exact-head certification", "last_changed": "volatile-b", "retry_after": 90}
+    second["evidence"] = {
+        "check": "Dish / exact-head certification",
+        "last_changed": "volatile-b",
+        "retry_after": 90,
+        "workflow_run_id": 701,
+        "workflow_run_attempt": 2,
+        "job_id": 801,
+        "delivery_id": "delivery-2",
+    }
     assert actionable_version(first) == actionable_version(second)
+    packet = wake_packet(
+        owner="Integrator",
+        cases=[first],
+        versions=[actionable_version(first)],
+        policy_generation=POLICY_GENERATION,
+    )
+    assert packet["cases"][0]["evidence"]["workflow_run_attempt"] == 1
     second["next_action"] = "different material next action"
     assert actionable_version(first) != actionable_version(second)
 

@@ -6,11 +6,12 @@ import json
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from threading import Thread
 from types import ModuleType
 from typing import Iterator
 
 import pytest
+
+from tests.support.thread_teardown import start_server_thread, stop_server
 
 
 def _load_router_module() -> ModuleType:
@@ -57,15 +58,12 @@ class _CaddyFake(BaseHTTPRequestHandler):
 def caddy_fake() -> Iterator[str]:
     _CaddyFake.dials = dict(router.EXPECTED_DIALS)
     server = ThreadingHTTPServer(("127.0.0.1", 0), _CaddyFake)
-    thread = Thread(target=server.serve_forever)
-    thread.start()
+    thread = start_server_thread(server, poll_interval=0.005)
     try:
         host, port = server.server_address
         yield f"http://{host}:{port}"
     finally:
-        server.shutdown()
-        server.server_close()
-        thread.join()
+        stop_server(server, thread)
 
 
 def test_status_reports_fixed_prod_test_and_comparator_routes(caddy_fake: str) -> None:
