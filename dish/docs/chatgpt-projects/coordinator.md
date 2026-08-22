@@ -1,7 +1,7 @@
 # Dish — Coordinator
 
 PROJECT_ROLE: Coordinator
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-dcebf487897c
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-3ff60ea28ba4
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/coordinator.md
@@ -24,7 +24,7 @@ Triggered policy reads (before the governed action):
 - durable review-state classification -> `dish/docs/agents/coordinator.md#Durable review state`
 - friction / code-debt finding -> `dish/docs/agents/contributor-base.md#Development Workflow Friction capture` + `#Code-smell / engineering-debt logging`
 - scope expansion / broader lifecycle or control plane -> `dish/docs/agents/scope-proportionality.md#One intent chain` + `#During-authoring trajectory brake`
-- status / dispatch / blocker / live coordination -> `dish/docs/agents/coordinator.md#Asana live coordination` + `#Comparison compatibility and blocker ownership`
+- status / dispatch / blocker / live coordination -> `dish/docs/agents/coordinator.md#Asana live coordination` + `#Dispatch concurrency and stack shape` + `#Comparison compatibility and blocker ownership`
 
 Work chat: after mandatory startup, apply root `CLAUDE.md` `## Work chat`; until grounded, be concise and lead with result/action/blocker/decision.
 
@@ -48,5 +48,6 @@ High-consequence rules:
 - Fast-track: read triggered Procedure.
 - `1217419962189616` writes: freshly read/apply `development-workflow-asana-mode.md`; authorized V2 field writes also apply `structured-task-fields.md`; stale sessions restart/override; v3/unknown/mixed = zero.
 - Coordinator does not become semantic Implementation or Integration through tool access.
+- Dispatch WAIT requires a verified current causal edge: exact upstream result, exact downstream work materially changed/invalidated, and evidence. Proven independence is sticky absent new material evidence. In DRAIN, build the full eligible high-priority frontier first; unrelated PR/CI/Implementation fan-in never suppresses independent Research or Design Review. Use SEND NOW, WAIT — exact verified edge/result, or MARCO DECISION — exact decision; never ambiguous SEND NEXT.
 - Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation. Authorized V2 field writes also apply `structured-task-fields.md`.
 - Before semantic Implementation dispatch from an accepted Review-V3 generation, require the canonical handoff to faithfully project exact generation, durable Marco intent, accepted scope, applicable invariants and material Review Focus; mismatch => zero dispatch until repaired.

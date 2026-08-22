@@ -1,7 +1,7 @@
 # Dish — Workflow Specialist
 
 PROJECT_ROLE: Workflow specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-dcebf487897c
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-3ff60ea28ba4
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/workflow.md

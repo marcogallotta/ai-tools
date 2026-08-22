@@ -675,6 +675,33 @@ def test_c1_standing_contracts_preserve_authority_and_capture_surfaces():
  idx=(DISH_ROOT/'docs'/'agents'/'index.md').read_text()
  assert 'Authenticated-account metadata' in idx and 'not that Marco physically performed or approved' in idx
 
+
+def test_coordinator_concurrency_requires_evidence_and_preserves_reasoning_frontier():
+ _,source=kernels.load_canonical()
+ rule={r['id']:r for r in kernels.effective_rules(source,'coordinator')}[
+  'coordinator-evidence-based-concurrency'
+ ]
+ assert 'verified current causal edge' in rule['text']
+ assert 'Proven independence is sticky' in rule['text']
+ assert 'unrelated PR/CI/Implementation fan-in never suppresses independent Research or Design Review' in rule['text']
+ coordinator=(DISH_ROOT/'docs'/'agents'/'coordinator.md').read_text()
+ architecture=(DISH_ROOT/'docs'/'architecture'/'development-workflow'/'work-identity-and-concurrency.md').read_text()
+ for text in (coordinator,architecture):
+  assert 'exact upstream result' in text
+  assert 'exact downstream work' in text
+  assert 'new material evidence' in text
+  assert 'P-CRITICAL/P0' in text
+ assert 'ambiguous `SEND NEXT`' in coordinator
+ expected={
+  'coordinator-concurrency-nonoverlap-start-wait',
+  'coordinator-concurrency-exact-sounding-noncause',
+  'coordinator-concurrency-true-causal-wait',
+  'coordinator-concurrency-sticky-independence',
+  'coordinator-concurrency-drain-reasoning-frontier',
+  'coordinator-concurrency-omitted-p0',
+ }
+ assert expected<={scenario['id'] for scenario in kernels._evals()}
+
 def test_fixture_mismatch_standing_contracts_stop_impossible_repair_and_escalate_owner():
  coordinator=(DISH_ROOT/'docs'/'agents'/'coordinator.md').read_text()
  workflow=(DISH_ROOT/'docs'/'agents'/'development-workflow.md').read_text()
@@ -807,8 +834,8 @@ def test_triggered_rule_text_change_does_not_manufacture_project_settings_versio
 def test_required_version_inventory_matches_published_first_parent_history_and_restores_losses():
  m,s=kernels.load_canonical(); versions=kernels.required_versions(m)
  expected={f'dish-chatgpt-projects-v2-{x}' for x in ['d96ab5f0588d','708fb9a9a9bc','39ff3abc502e','857d88788c12','23365034a0f1','9575ccfd79c8','28dcb04decc8','9bb70124ca21','694190185f60','712e3b16aa05','d048682742d6','54041bbbc8d8','86b8011172ee','219f34402511','9bf227f53f0a','5d24af30193a','bfaeef68aed9','d3a070d57fb2','443e13732e7f','7644d9ed0518','0a572f3b0a67']}
- expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d','dish-chatgpt-projects-v2-7924b7da9fc0','dish-chatgpt-projects-v2-3fe9827c4adc','dish-chatgpt-projects-v2-a9cefd1968b7','dish-chatgpt-projects-v2-05211aedbf1c','dish-chatgpt-projects-v2-7a1029f2d804','dish-chatgpt-projects-v2-dc2161f69f2e','dish-chatgpt-projects-v2-fdf64d096829','dish-chatgpt-projects-v2-1340ad677ecd','dish-chatgpt-projects-v2-c2e0ae019a96'})
- assert set(versions)==expected and len(versions)==35
+ expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d','dish-chatgpt-projects-v2-7924b7da9fc0','dish-chatgpt-projects-v2-3fe9827c4adc','dish-chatgpt-projects-v2-a9cefd1968b7','dish-chatgpt-projects-v2-05211aedbf1c','dish-chatgpt-projects-v2-7a1029f2d804','dish-chatgpt-projects-v2-dc2161f69f2e','dish-chatgpt-projects-v2-fdf64d096829','dish-chatgpt-projects-v2-1340ad677ecd','dish-chatgpt-projects-v2-c2e0ae019a96','dish-chatgpt-projects-v2-dcebf487897c'})
+ assert set(versions)==expected and len(versions)==36
  assert kernels.validate_required_version_topology(m)==versions
  for old in ('dish-chatgpt-projects-v2-39ff3abc502e','dish-chatgpt-projects-v2-9bb70124ca21'):
   path=kernels._change_path(m,old); assert path and path[-1]['to_version']==m['canonical_version']
