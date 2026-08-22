@@ -12,7 +12,6 @@ INTEGRATOR_PROPOSAL_SCHEMA: dict[str, Any] = {
             "type": "array",
             "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
             "minItems": 1,
-            "uniqueItems": True,
         },
         "classification": {
             "type": "string",
@@ -27,7 +26,7 @@ INTEGRATOR_PROPOSAL_SCHEMA: dict[str, Any] = {
         "classification_challenge": {"type": "boolean"},
         "evidence_summary": {
             "type": "array",
-            "items": {"type": "string", "maxLength": 1000},
+            "items": {"type": "string"},
             "maxItems": 12,
         },
         "repair_route": {
@@ -53,13 +52,13 @@ INTEGRATOR_PROPOSAL_SCHEMA: dict[str, Any] = {
         "marco_action_required": {"type": "boolean"},
         "marco_message": {
             "anyOf": [
-                {"type": "string", "maxLength": 1500},
+                {"type": "string"},
                 {"type": "null"},
             ]
         },
         "proposed_asana_follow_up": {
             "anyOf": [
-                {"type": "string", "maxLength": 1500},
+                {"type": "string"},
                 {"type": "null"},
             ]
         },
@@ -67,13 +66,13 @@ INTEGRATOR_PROPOSAL_SCHEMA: dict[str, Any] = {
         "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
         "unknown_reason": {
             "anyOf": [
-                {"type": "string", "maxLength": 1000},
+                {"type": "string"},
                 {"type": "null"},
             ]
         },
         "refused_actions": {
             "type": "array",
-            "items": {"type": "string", "maxLength": 300},
+            "items": {"type": "string"},
             "maxItems": 12,
         },
     },

@@ -194,6 +194,24 @@ def test_automated_turn_is_read_only_and_schema_bound():
     assert captured["params"]["approvalPolicy"] == "never"
     assert captured["params"]["sandboxPolicy"] == {"type": "readOnly"}
     assert captured["params"]["outputSchema"] == INTEGRATOR_PROPOSAL_SCHEMA
+    versions = captured["params"]["outputSchema"]["properties"]["actionable_versions"]
+    assert versions == {
+        "type": "array",
+        "items": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "minItems": 1,
+    }
+    assert "uniqueItems" not in versions
+
+    def keys(value):
+        if isinstance(value, dict):
+            return set(value).union(*(keys(item) for item in value.values()))
+        if isinstance(value, list):
+            return set().union(*(keys(item) for item in value))
+        return set()
+
+    assert keys(captured["params"]["outputSchema"]).isdisjoint(
+        {"uniqueItems", "minLength", "maxLength", "allOf", "not", "if", "then", "else"}
+    )
 
 
 def test_app_server_completion_wait_uses_notification_without_status_polling():
