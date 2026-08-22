@@ -11,7 +11,7 @@ if str(SCRIPTS) not in sys.path:
 
 from pr_lifecycle_coordinator import DUTIES, audit_record, consume_projection
 from pr_lifecycle_projection import build_projection
-from pr_lifecycle_support import LifecycleState, PRLifecycle, STATE_LABELS
+from pr_lifecycle_support import AsanaREST, LifecycleState, PRLifecycle, STATE_LABELS
 from pr_lifecycle_v4 import actionable_version
 
 
@@ -217,3 +217,17 @@ def test_real_projection_preserves_authoritative_post_merge_residual_provenance(
     assert residual["owner"] == "Coordinator"
     assert residual["wake_condition"]
     assert residual["provenance"]["kind"] == "accepted_task_design_obligation"
+
+
+def test_exact_task_reader_requests_membership_names_used_by_live_frontier():
+    class HTTP:
+        url = ""
+
+        def request(self, method, url, **kwargs):
+            self.url = url
+            return 200, {}, {"data": {"gid": "121"}}
+
+    http = HTTP()
+    AsanaREST("token", http=http).get_task("121")
+    assert "memberships.project.name" in http.url
+    assert "memberships.section.name" in http.url
