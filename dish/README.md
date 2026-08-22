@@ -206,10 +206,14 @@ The instances bind four loopback listeners:
 - production private/Action on `127.0.0.1:8775` and `127.0.0.1:8776`.
 
 Caddy listens on `127.0.0.1:8786` with fixed routes: root paths reach production and `/test` Action
-paths reach test after the prefix is stripped. Inspect both upstreams with
-`deploy/caddy/dish-action-route status`. The TEST service must set
-`DISH_ACTION_PUBLIC_BASE_URL=https://<node>.<tailnet>.ts.net/test` so its generated schema retains
-the public prefix. Caddy's autosaved native configuration preserves the split across restart.
+paths reach test after the prefix is stripped. `dish-action-router.service` is file-authoritative: it
+starts Caddy from `deploy/caddy/dish-action-router.json` without `--resume`, so an older autosave cannot
+silently win over the committed source. `deploy/caddy/dish-action-route status` reads Caddy's effective
+`/config/`, compares its canonical digest with that source file, and reads all fixed upstreams; `ready`
+therefore proves both the intended config generation and route shape are active. A config edit or revert
+is not activation/rollback proof until the service has consumed it and this readback succeeds. The TEST
+service must set `DISH_ACTION_PUBLIC_BASE_URL=https://<node>.<tailnet>.ts.net/test` so its generated schema
+retains the public prefix.
 
 Keep `DISH_DB_PATH` in one stable host-state location independent of any checkout or worktree. The
 service and both direct local entry points derive one common process lock and the persistent ownership
