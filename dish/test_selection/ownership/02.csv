@@ -115,6 +115,7 @@ docs/chatgpt-projects/audit.md,documentation,1,1,agent-policy; documentation; ch
 docs/chatgpt-projects/evals.json,config-or-runner,1,1,agent-policy; chatgpt-projects,tests/test_chatgpt_project_kernels.py,tests/test_chatgpt_project_kernels.py,none,,exact changed test/module,,
 docs/chatgpt-projects/implementation.md,documentation,1,1,agent-policy; documentation; chatgpt-projects,tests/test_chatgpt_project_kernels.py,tests/test_chatgpt_project_kernels.py,none,,exact changed test/module,,
 docs/chatgpt-projects/manifest-history/01.json,config-or-runner,1,1,agent-policy; chatgpt-projects,tests/test_chatgpt_project_kernels.py,tests/test_chatgpt_project_kernels.py,none,,exact changed test/module,,
+docs/chatgpt-projects/manifest-history/02.json,config-or-runner,1,1,agent-policy; chatgpt-projects,tests/test_chatgpt_project_kernels.py,tests/test_chatgpt_project_kernels.py,none,,exact changed test/module,,
 docs/chatgpt-projects/review.md,documentation,1,1,agent-policy; documentation; chatgpt-projects,tests/test_chatgpt_project_kernels.py,tests/test_chatgpt_project_kernels.py,none,,exact changed test/module,,
 docs/chatgpt-projects/workflow.md,documentation,1,1,agent-policy; documentation; chatgpt-projects,tests/test_chatgpt_project_kernels.py,tests/test_chatgpt_project_kernels.py,none,,exact changed test/module,,
 docs/database-backend-dark-launch-runbook.md,documentation,1,1,documentation,,,none,,,,
