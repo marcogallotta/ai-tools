@@ -4,9 +4,36 @@ import ast
 from pathlib import Path
 
 from tests.support.ast_contracts import call_name
+from tests.support.thread_teardown import join_thread, start_server_thread
 
 
 TESTS_ROOT = Path(__file__).parent
+
+
+class _RecordingServer:
+    def __init__(self) -> None:
+        self.poll_intervals: list[float] = []
+
+    def serve_forever(self, poll_interval: float = 0.5) -> None:
+        self.poll_intervals.append(poll_interval)
+
+
+def test_server_thread_preserves_server_default_poll_interval():
+    server = _RecordingServer()
+    thread = start_server_thread(server)
+
+    join_thread(thread, timeout=1.0)
+
+    assert server.poll_intervals == [0.5]
+
+
+def test_server_thread_accepts_explicit_test_poll_interval():
+    server = _RecordingServer()
+    thread = start_server_thread(server, poll_interval=0.005)
+
+    join_thread(thread, timeout=1.0)
+
+    assert server.poll_intervals == [0.005]
 
 
 

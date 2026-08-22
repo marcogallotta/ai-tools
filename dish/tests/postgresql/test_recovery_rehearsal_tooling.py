@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 import os
+import select as select_module
 import subprocess
 import sys
 import time
 from pathlib import Path
 from types import SimpleNamespace
 
+import psutil
 import pytest
 from sqlalchemy import create_engine, select, text
 
@@ -309,18 +312,38 @@ def test_backup_reservation_ambiguity_partial_and_stale_fail_closed(tmp_path):
 
 
 def test_runner_timeout_terminates_process_group_and_preserves_logs(tmp_path):
-    marker = tmp_path / "grandchild-finished"
-    code = (
-        "import subprocess,sys,time; "
-        "subprocess.Popen([sys.executable,'-c',"
-        f"\"import time,pathlib; time.sleep(0.8); pathlib.Path(r'{marker}').write_text('bad')\"]); "
-        "time.sleep(30)"
+    ready = tmp_path / "grandchild-ready.fifo"
+    os.mkfifo(ready)
+    ready_fd = os.open(ready, os.O_RDWR | os.O_NONBLOCK)
+    code = "\n".join(
+        [
+            "import subprocess, sys, threading",
+            "child = subprocess.Popen([sys.executable, '-S', '-c', "
+            "'import threading; threading.Event().wait()'])",
+            "with open(sys.argv[1], 'w') as handle:",
+            "    handle.write(str(child.pid))",
+            "    handle.flush()",
+            "threading.Event().wait()",
+        ]
     )
     runner = Runner(tmp_path / "logs")
-    with pytest.raises(CommandTimeout, match="timed out"):
-        runner.run([sys.executable, "-c", code], timeout_seconds=0.1)
-    time.sleep(1.0)
-    assert not marker.exists()
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(
+                runner.run,
+                [sys.executable, "-S", "-c", code, str(ready)],
+                timeout_seconds=0.75,
+            )
+            readable, _, _ = select_module.select([ready_fd], [], [], 2.0)
+            assert readable == [ready_fd]
+            child = psutil.Process(int(os.read(ready_fd, 64)))
+            with pytest.raises(CommandTimeout, match="timed out"):
+                future.result(timeout=3.0)
+    finally:
+        os.close(ready_fd)
+
+    _, alive = psutil.wait_procs([child], timeout=3.0)
+    assert alive == []
     evidence = runner.commands[-1]
     assert evidence.timed_out is True
     assert evidence.termination in {"SIGTERM", "SIGTERM_then_SIGKILL"}

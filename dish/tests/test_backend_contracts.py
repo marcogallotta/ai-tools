@@ -1,3 +1,4 @@
+import threading
 from typing import Any
 
 import pytest
@@ -127,6 +128,7 @@ def test_close_asana_sdk_client_terminates_a_pool_that_will_not_join(monkeypatch
     from dish_tool import backend as backend_module
 
     monkeypatch.setattr(backend_module, "POOL_SHUTDOWN_JOIN_SECONDS", 0.05)
+    release = threading.Event()
 
     class StuckPool:
         def __init__(self):
@@ -138,12 +140,11 @@ def test_close_asana_sdk_client_terminates_a_pool_that_will_not_join(monkeypatch
             self.closed = True
 
         def join(self):
-            import time
-
-            time.sleep(10)
+            release.wait()
 
         def terminate(self):
             self.terminated = True
+            release.set()
 
     pool = StuckPool()
 
