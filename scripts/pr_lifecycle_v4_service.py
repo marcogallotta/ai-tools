@@ -12,6 +12,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from typing import Any, Mapping
 
 
@@ -168,6 +169,7 @@ class Runtime:
         self.completion_observers: set[str] = set()
         self.projection_ready = threading.Event()
         self.projection_bootstrap_pending = True
+        self.projection_boot_id = uuid.uuid4().hex
         self.projection_error: str | None = "startup bootstrap pending"
         self.metrics_lock = threading.Lock()
         self.metrics = {
@@ -197,6 +199,8 @@ class Runtime:
             "10",
             "--projection-path",
             str(PROJECTION),
+            "--projection-boot-id",
+            self.projection_boot_id,
         ]
         if self.projection_bootstrap_pending:
             command.append("--projection-bootstrap")

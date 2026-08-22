@@ -251,6 +251,7 @@ def test_service_bootstrap_and_dirty_task_are_forwarded_to_projection(monkeypatc
     runtime = object.__new__(v4_service.Runtime)
     runtime.projection_ready = threading.Event()
     runtime.projection_bootstrap_pending = True
+    runtime.projection_boot_id = "boot-a"
     runtime.projection_error = "pending"
     runtime.audit = SimpleNamespace(publish_report=lambda report: None)
     snapshot = DirtySnapshot(token=1, resources=({
@@ -260,6 +261,7 @@ def test_service_bootstrap_and_dirty_task_are_forwarded_to_projection(monkeypatc
     assert runtime.authoritative_cases(snapshot) == []
     command = commands[0]
     assert "--projection-bootstrap" in command
+    assert command[command.index("--projection-boot-id") + 1] == "boot-a"
     assert command[command.index("--refresh-task-gid") + 1] == "1217762116932884"
     assert command[command.index("--refresh-task-token") + 1] == "1217762116932884:0"
     assert runtime.projection_ready.is_set()

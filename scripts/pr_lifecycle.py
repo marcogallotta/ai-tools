@@ -365,7 +365,9 @@ def _refresh_cache_path(projection_path: Path) -> Path:
     return projection_path.with_name(projection_path.name + ".refresh-cache.json")
 
 
-def _read_refresh_cache(projection_path: Path, *, repository: str) -> dict[str, Any]:
+def _read_refresh_cache(
+    projection_path: Path, *, repository: str, boot_id: str,
+) -> dict[str, Any]:
     path = _refresh_cache_path(projection_path)
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
@@ -375,6 +377,7 @@ def _read_refresh_cache(projection_path: Path, *, repository: str) -> dict[str, 
         not isinstance(value, Mapping)
         or value.get("schema") != REFRESH_CACHE_SCHEMA
         or value.get("repository") != repository
+        or value.get("boot_id") != boot_id
         or not isinstance(value.get("tasks"), list)
         or not isinstance(value.get("dirty_task_tokens"), Mapping)
     ):
@@ -386,6 +389,7 @@ def _write_refresh_cache(
     projection_path: Path,
     *,
     repository: str,
+    boot_id: str,
     tasks: list[dict[str, Any]],
     dirty_task_tokens: Mapping[str, int],
 ) -> None:
@@ -395,6 +399,7 @@ def _write_refresh_cache(
         {
             "schema": REFRESH_CACHE_SCHEMA,
             "repository": repository,
+            "boot_id": boot_id,
             "tasks": tasks,
             "dirty_task_tokens": {
                 str(gid): int(token)
@@ -792,7 +797,16 @@ def _publish_projection(engine: LifecycleEngine, values: list[PRLifecycle], args
             previous = read_projection(args.projection_path)
         except (OSError, ValueError):
             previous = {}
-    refresh_cache = _read_refresh_cache(args.projection_path, repository=args.repo)
+    projection_boot_id = str(getattr(args, "projection_boot_id", "") or "")
+    refresh_cache = (
+        _read_refresh_cache(
+            args.projection_path,
+            repository=args.repo,
+            boot_id=projection_boot_id,
+        )
+        if projection_boot_id
+        else {}
+    )
     cached_by_gid = {
         str(task.get("gid") or ""): dict(task)
         for task in previous.get("tasks") or []
@@ -828,12 +842,14 @@ def _publish_projection(engine: LifecycleEngine, values: list[PRLifecycle], args
         bootstrap=bool(getattr(args, "projection_bootstrap", False)) and not bool(refresh_cache),
         max_active_tasks=int(getattr(args, "projection_max_active_tasks", 200)),
     )
-    _write_refresh_cache(
-        args.projection_path,
-        repository=args.repo,
-        tasks=tasks,
-        dirty_task_tokens=dirty_task_tokens,
-    )
+    if projection_boot_id:
+        _write_refresh_cache(
+            args.projection_path,
+            repository=args.repo,
+            boot_id=projection_boot_id,
+            tasks=tasks,
+            dirty_task_tokens=dirty_task_tokens,
+        )
     if mutate_tasks:
         _write_task_projection_comments(engine, tasks)
     else:
@@ -927,6 +943,7 @@ def _parser() -> argparse.ArgumentParser:
         "--refresh-task-token", dest="refresh_task_tokens", action="append", default=[],
         help="dirty Asana task and monotonic event token as GID:TOKEN; repeatable",
     )
+    parser.add_argument("--projection-boot-id", default="", help=argparse.SUPPRESS)
     parser.add_argument("--projection-max-active-tasks", type=int, default=200)
     parser.add_argument("--projection-max-requests", type=int, default=600)
     parser.add_argument("--projection-max-seconds", type=float, default=600.0)
