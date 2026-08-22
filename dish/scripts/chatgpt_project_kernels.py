@@ -51,6 +51,20 @@ def _read_json(p:Path)->dict[str,Any]:
  except (OSError,json.JSONDecodeError) as e: raise KernelError(f'cannot read JSON {p}: {e}') from e
  if not isinstance(v,dict): raise KernelError(f'JSON object required: {p}')
  return v
+def _read_manifest(p:Path)->dict[str,Any]:
+ m=_read_json(p); shards=m.pop('change_history_shards',None)
+ if shards is None:return m
+ if 'change_history' in m or not isinstance(shards,list) or not shards:
+  raise KernelError(f'invalid change_history shard index: {p}')
+ history=[]
+ for raw in shards:
+  shard=Path(str(raw))
+  if shard.is_absolute() or '..' in shard.parts:raise KernelError(f'unsafe change_history shard path: {raw!r}')
+  try:value=json.loads((p.parent/shard).read_text())
+  except (OSError,json.JSONDecodeError) as e:raise KernelError(f'cannot read change_history shard {p.parent/shard}: {e}') from e
+  if not isinstance(value,list):raise KernelError(f'change_history shard must be a JSON array: {p.parent/shard}')
+  history.extend(value)
+ m['change_history']=history; return m
 def _h(b:bytes)->str:return hashlib.sha256(b).hexdigest()
 def _semantic_json_hash(v):return _h(json.dumps(v,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode())
 
@@ -410,7 +424,7 @@ def render_project_settings_payload(m,s,role,*,channel='production',overlay=None
  return report
 
 def render_test_candidate(s,role,*,candidate_version,pr_number,candidate_ref,candidate_head,candidate_manifest_sha256,production_version,manifest=None,overlay=None):
- m=_read_json(MANIFEST_PATH) if manifest is None else manifest
+ m=_read_manifest(MANIFEST_PATH) if manifest is None else manifest
  return render_project_settings_payload(m,s,role,channel='test',overlay=overlay,candidate_version=candidate_version,pr_number=pr_number,candidate_ref=candidate_ref,candidate_head=candidate_head,candidate_manifest_sha256=candidate_manifest_sha256,production_version=production_version)['text']
 
 def kernel_identity(s):
@@ -749,7 +763,7 @@ def generated_sha256(m,s):
  for key in sorted(profile_specs(s)): parts.append('profile:'+key+'\0'+render_profile_with_version(s,key,str(m['canonical_version'])))
  return _h('\0'.join(parts).encode())
 def load_canonical(*,validate_history=True):
- m=_read_json(MANIFEST_PATH); p=PROJECT_DIR/str(m.get('source_file','')); s=_read_json(p)
+ m=_read_manifest(MANIFEST_PATH); p=PROJECT_DIR/str(m.get('source_file','')); s=_read_json(p)
  project_settings_policy(m)
  if m.get('source_sha256')!=_semantic_json_hash(s): raise KernelError('canonical source semantic hash mismatch')
  if s.get('schema_version')!=m.get('schema_version'): raise KernelError('manifest/source schema mismatch')
@@ -992,7 +1006,7 @@ def command_check():
  for r,n in rr: print(f'PASS kernel {r}: {n} chars')
  for x in ee: print(f'PASS eval-contract {x}')
 def _load_manifest_source_files(manifest_path:Path,source_path:Path|None=None):
- m=_read_json(manifest_path); p=source_path or manifest_path.parent/str(m.get('source_file','')); s=_read_json(p)
+ m=_read_manifest(manifest_path); p=source_path or manifest_path.parent/str(m.get('source_file','')); s=_read_json(p)
  if m.get('source_sha256')!=_semantic_json_hash(s): raise KernelError(f'manifest/source semantic hash mismatch: {manifest_path}')
  if s.get('schema_version')!=m.get('schema_version'): raise KernelError(f'manifest/source schema mismatch: {manifest_path}')
  kid=kernel_identity(s); expected=f"{m.get('version_namespace','')}-{kid[:12]}"
@@ -1012,8 +1026,22 @@ def command_reconcile(base_manifest:Path,source:Path,output:Path,base_source:Pat
   out=generate_candidate_manifest(base,bs,target)
  else:
   candidate,cs=_load_manifest_source_files(candidate_manifest,candidate_source); out=reconcile_manifests(base,bs,candidate,cs,target)
- _write_json(output,out); print(f"WROTE {output} canonical_version={out['canonical_version']}")
+ _write_manifest(output,out); print(f"WROTE {output} canonical_version={out['canonical_version']}")
 def _write_json(p,v):p.write_text(json.dumps(v,indent=2,sort_keys=True)+'\n')
+def _write_manifest(p,v):
+ out=copy.deepcopy(v); history=out.pop('change_history',None)
+ if not isinstance(history,list):raise KernelError('manifest.change_history must be a list')
+ shard_dir=p.with_name(p.stem+'-history'); shard_dir.mkdir(parents=True,exist_ok=True)
+ chunks=[]; chunk=[]; size=0
+ for edge in history:
+  edge_size=len(json.dumps(edge,indent=2,sort_keys=True).encode())
+  if chunk and size+edge_size>180000:chunks.append(chunk); chunk=[]; size=0
+  chunk.append(edge); size+=edge_size
+ if chunk:chunks.append(chunk)
+ names=[]
+ for index,chunk in enumerate(chunks):
+  shard=shard_dir/f'{index:02d}.json'; _write_json(shard,chunk); names.append(shard.relative_to(p.parent).as_posix())
+ out['change_history_shards']=names; _write_json(p,out)
 def _parser():
  p=argparse.ArgumentParser(description=__doc__); s=p.add_subparsers(dest='command',required=True); r=s.add_parser('render'); r.add_argument('--check',action='store_true'); s.add_parser('check'); pe=s.add_parser('prepare-eval'); pe.add_argument('--output',required=True,type=Path); ev=s.add_parser('eval'); g=ev.add_mutually_exclusive_group(required=True); g.add_argument('--results',type=Path); g.add_argument('--runner-command'); ev.add_argument('--save-results',type=Path); v=s.add_parser('version'); v.add_argument('--project-version',required=True); v.add_argument('--role',required=True); v.add_argument('--action-boundary',default='role-critical-write')
  ad=s.add_parser('admit'); ad.add_argument('--base-manifest',required=True,type=Path); ad.add_argument('--base-source',type=Path); ad.add_argument('--candidate-manifest',required=True,type=Path); ad.add_argument('--candidate-source',type=Path)

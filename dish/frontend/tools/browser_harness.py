@@ -13,7 +13,7 @@ from stage5_cursor_harness import assert_stage5_repeated_invalid_cursors
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-SCREENSHOTS = ROOT / "screenshots"
+SCREENSHOTS = ROOT.parent / ".test-artifacts" / "frontend-screenshots"
 STYLE_FILES = (
     "tokens.css",
     "base.css",

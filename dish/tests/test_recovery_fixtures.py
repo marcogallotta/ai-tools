@@ -5,8 +5,6 @@ from pathlib import Path
 
 import pytest
 
-FIXTURES = Path(__file__).resolve().parent / "fixtures" / "upgrade"
-
 from dish_tool.constants import COOKING_PROJECT_GID
 from dish_tool.database import content_identity
 from dish_tool.database_initialization import initialize_database
@@ -18,7 +16,18 @@ from tests.support.recovery_fixture_contract import (
     assert_sidecars_match_contract,
 )
 
+FIXTURES = Path(__file__).resolve().parent / "fixtures" / "upgrade"
 DB_NAME = "dish-tool-recovery-v12.sqlite"
+
+
+@pytest.fixture(scope="module")
+def generated_recovery_fixture(tmp_path_factory):
+    import runpy
+
+    output = tmp_path_factory.mktemp("recovery-v12")
+    namespace = runpy.run_path(str(FIXTURES / "generate_recovery_fixtures.py"))
+    namespace["build"](output)
+    return output
 
 
 class SidecarBackend(StatefulAsanaBackend):
@@ -55,33 +64,29 @@ def _semantic_snapshot(path: Path):
 def test_recovery_fixture_generator_is_reproducible(tmp_path):
     import runpy
     namespace = runpy.run_path(str(FIXTURES / "generate_recovery_fixtures.py"))
-    namespace["build"](tmp_path)
-    generated_db = tmp_path / DB_NAME
-    assert _semantic_snapshot(generated_db) == _semantic_snapshot(FIXTURES / DB_NAME)
-    assert (tmp_path / "live-tasks.json").read_bytes() == (FIXTURES / "live-tasks.json").read_bytes()
-    assert (tmp_path / "fixture-matrix.json").read_bytes() == (FIXTURES / "fixture-matrix.json").read_bytes()
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    namespace["build"](first)
+    namespace["build"](second)
+    assert _semantic_snapshot(first / DB_NAME) == _semantic_snapshot(second / DB_NAME)
+    assert (first / "live-tasks.json").read_bytes() == (second / "live-tasks.json").read_bytes()
+    assert (first / "fixture-matrix.json").read_bytes() == (second / "fixture-matrix.json").read_bytes()
 
 
 
-def test_checked_in_recovery_artifacts_match_independent_literal_contract():
+def test_generated_recovery_artifacts_match_independent_literal_contract(
+    generated_recovery_fixture,
+):
     assert assert_sidecars_match_contract(
         FIXTURES / "live-tasks.json", FIXTURES / "fixture-matrix.json"
     ) is None
-    assert assert_database_matches_contract(FIXTURES / DB_NAME) is None
+    assert assert_database_matches_contract(generated_recovery_fixture / DB_NAME) is None
 
 
-def test_generated_recovery_artifacts_match_independent_literal_contract(tmp_path):
-    import runpy
-
-    namespace = runpy.run_path(str(FIXTURES / "generate_recovery_fixtures.py"))
-    namespace["build"](tmp_path)
-    assert assert_sidecars_match_contract(
-        tmp_path / "live-tasks.json", tmp_path / "fixture-matrix.json"
-    ) is None
-    assert assert_database_matches_contract(tmp_path / DB_NAME) is None
-
-def test_recovery_fixture_identities_and_live_sidecars_are_truthful():
-    conn = sqlite3.connect(FIXTURES / DB_NAME)
+def test_recovery_fixture_identities_and_live_sidecars_are_truthful(
+    generated_recovery_fixture,
+):
+    conn = sqlite3.connect(generated_recovery_fixture / DB_NAME)
     conn.row_factory = sqlite3.Row
     for row in conn.execute("SELECT identity, title, notes FROM content_versions"):
         assert row["identity"] == content_identity(row["title"], row["notes"]).digest
@@ -106,9 +111,11 @@ def test_recovery_fixture_identities_and_live_sidecars_are_truthful():
     conn.close()
 
 
-def test_recovery_sidecars_execute_and_match_exact_row_diff_contracts(tmp_path):
+def test_recovery_sidecars_execute_and_match_exact_row_diff_contracts(
+    tmp_path, generated_recovery_fixture
+):
     db_copy = tmp_path / "recovery.sqlite"
-    shutil.copy2(FIXTURES / DB_NAME, db_copy)
+    shutil.copy2(generated_recovery_fixture / DB_NAME, db_copy)
     sidecar = json.loads((FIXTURES / "live-tasks.json").read_text())
     backend = SidecarBackend(sidecar["tasks"])
     conn = initialize_database(db_copy)
@@ -144,7 +151,7 @@ def test_recovery_sidecars_execute_and_match_exact_row_diff_contracts(tmp_path):
             # Use a fresh disposable copy so the correct reconciliation above
             # does not hide the contradiction check.
             contradiction_db = tmp_path / f"contradiction-{item['task_gid']}.sqlite"
-            shutil.copy2(FIXTURES / DB_NAME, contradiction_db)
+            shutil.copy2(generated_recovery_fixture / DB_NAME, contradiction_db)
             contradiction_conn = initialize_database(contradiction_db)
             with pytest.raises(DishRuleError) as exc:
                 recover_operation(contradiction_conn, backend, operation_id=op, requested_outcome=contradictory, reason="must fail closed")

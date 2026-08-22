@@ -20,7 +20,7 @@ from .model import (
     PolicyError,
     PolicyRow,
     load_policy,
-    load_policy_text,
+    load_policy_index_text,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -413,7 +413,28 @@ def load_git_policy(*, repo_root: Path = ROOT, ref: str = "HEAD") -> dict[str, P
         # The first commit introducing the selector has no historical map. New/current paths still
         # classify normally; only a deletion from that same initial commit cannot use fallback.
         return {}
-    return load_policy_text(completed.stdout, source=f"{ref}:{relative_policy}")
+    def load_shard(shard: str) -> str:
+        relative_shard = (Path(relative_policy).parent / shard).as_posix()
+        shard_result = subprocess.run(
+            ["git", "show", f"{ref}:{relative_shard}"],
+            cwd=git_root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if shard_result.returncode != 0:
+            raise PolicyError(
+                f"cannot load test-selection shard {ref}:{relative_shard}: "
+                f"{shard_result.stderr.strip()}"
+            )
+        return shard_result.stdout
+
+    return load_policy_index_text(
+        completed.stdout,
+        source=f"{ref}:{relative_policy}",
+        shard_loader=load_shard,
+    )
 
 
 def discover_git_paths(

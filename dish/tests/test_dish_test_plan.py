@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import shutil
 import subprocess
@@ -7,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from test_selection.model import PolicyError, load_policy
+from test_selection.model import PolicyError, load_policy, load_policy_mappings
 from test_selection.planner import build_plan, discover_git_paths
 
 
@@ -321,16 +322,12 @@ def test_planner_keeps_unreviewed_focused_test_serial_when_parallel_is_requested
 
 
 def test_deleted_path_can_use_base_revision_policy(tmp_path: Path) -> None:
-    current_rows = POLICY.read_text(encoding="utf-8").splitlines()
-    header, *rows = current_rows
+    fields, rows = load_policy_mappings(POLICY)
     current_without_path = tmp_path / "current.csv"
-    current_without_path.write_text(
-        "\n".join(
-            [header, *[row for row in rows if not row.startswith("dish_tool/review_queue.py,")]]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    with current_without_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(row for row in rows if row["path"] != "dish_tool/review_queue.py")
 
     plan = build_plan(
         ["dish_tool/review_queue.py"],

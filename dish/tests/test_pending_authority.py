@@ -177,8 +177,10 @@ def test_task_head_requires_exact_confirmed_content_version(tmp_path: Path) -> N
 def test_historical_recovery_databases_upgrade_with_explicit_reconciliation(
     tmp_path: Path, fixture: str
 ) -> None:
+    from tests.fixtures.upgrade.materialize_recovery_fixture import materialize
+
     path = tmp_path / fixture
-    shutil.copy2(FIXTURES / fixture, path)
+    materialize(FIXTURES, fixture, path)
     conn = initialize_database(path)
     assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
