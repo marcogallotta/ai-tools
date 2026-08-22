@@ -22,6 +22,8 @@ import subprocess
 import threading
 from typing import Any, Callable, Iterable, Mapping, Protocol, Sequence
 
+from integrator_model_contract import INTEGRATOR_PROPOSAL_SCHEMA, INTEGRATOR_WAKE_INSTRUCTION
+
 
 STATE_SCHEMA = "dish-pr-lifecycle-v4-state-v1"
 WAKE_SCHEMA = "dish-pr-lifecycle-v4-wake-v1"
@@ -525,8 +527,7 @@ class CodexAppServer:
         client_user_message_id: str,
     ) -> Mapping[str, Any]:
         text = (
-            "Dish lifecycle V4 actionable wake. Treat this packet as an event hint only; re-read live authority before action.\n"
-            + json.dumps(packet, sort_keys=True)
+            INTEGRATOR_WAKE_INSTRUCTION + "\n" + json.dumps(packet, sort_keys=True)
         )
         return self._request(
             "turn/start",
@@ -534,6 +535,9 @@ class CodexAppServer:
                 "threadId": thread_id,
                 "clientUserMessageId": client_user_message_id,
                 "input": [{"type": "text", "text": text}],
+                "approvalPolicy": "never",
+                "sandboxPolicy": {"type": "readOnly"},
+                "outputSchema": INTEGRATOR_PROPOSAL_SCHEMA,
             },
         )
 

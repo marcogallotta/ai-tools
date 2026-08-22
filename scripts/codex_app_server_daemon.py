@@ -11,6 +11,8 @@ import struct
 import threading
 from typing import Any, Mapping
 
+from integrator_model_contract import INTEGRATOR_PROPOSAL_SCHEMA, INTEGRATOR_WAKE_INSTRUCTION
+
 
 _WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 _MAX_MESSAGE_BYTES = 16 * 1024 * 1024
@@ -188,8 +190,7 @@ class CodexDaemonAppServer:
         client_user_message_id: str,
     ) -> Mapping[str, Any]:
         text = (
-            "Dish lifecycle V4 actionable wake. Treat this packet as an event hint only; "
-            "re-read live authority before action.\n" + json.dumps(packet, sort_keys=True)
+            INTEGRATOR_WAKE_INSTRUCTION + "\n" + json.dumps(packet, sort_keys=True)
         )
         return self._request(
             "turn/start",
@@ -197,6 +198,9 @@ class CodexDaemonAppServer:
                 "threadId": thread_id,
                 "clientUserMessageId": client_user_message_id,
                 "input": [{"type": "text", "text": text}],
+                "approvalPolicy": "never",
+                "sandboxPolicy": {"type": "readOnly"},
+                "outputSchema": INTEGRATOR_PROPOSAL_SCHEMA,
             },
         )
 

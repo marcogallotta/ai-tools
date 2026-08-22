@@ -30,7 +30,8 @@ export DISH_LIFECYCLE_V4_STATE_PATH="$DISH_LIFECYCLE_V4_STATE_DIR/state.json"
 export DISH_LIFECYCLE_V4_PROJECTION=/home/marco/.local/state/dish/pr-lifecycle/lifecycle.json
 export DISH_LIFECYCLE_V4_PYTHON=/home/marco/ai-tools/dish/.venv/bin/python
 export DISH_LIFECYCLE_V4_CODEX=/home/marco/.codex/packages/standalone/current/codex
-export DISH_LIFECYCLE_V4_APP_SERVER_SOCKET=/home/marco/.codex/app-server-control/app-server-control.sock
+export DISH_INTEGRATOR_CODEX_HOME="$DISH_LIFECYCLE_V4_STATE_DIR/codex-home"
+export DISH_LIFECYCLE_V4_APP_SERVER_SOCKET="$DISH_INTEGRATOR_CODEX_HOME/app-server-control/app-server-control.sock"
 export DISH_LIFECYCLE_V4_BASELINE_ON_START=1
 export DISH_LIFECYCLE_V4_WAKE_ENABLED=1
 exec "$DISH_LIFECYCLE_V4_PYTHON" \
@@ -41,14 +42,28 @@ exec "$DISH_LIFECYCLE_V4_PYTHON" \
 Keep GitHub and Asana credentials and webhook secrets outside Git. The service creates webhook
 secret files mode `0600` beneath the configured state directory. `GET /healthz` reports the exact
 repository source root, state path, thread id/status, dirty count, and process-lifetime counters.
+The observe-only Integrator consumer writes `integrator-report.json` and rotated
+`integrator-audit.ndjson` in that same directory. These consume the lifecycle projection's canonical
+CI ownership, causal fingerprint, and repair owner; they never classify a failure or create a second
+wake identity. `dish-integrator report` shows the latest decision snapshot and `dish-integrator audit`
+shows the latest structured evidence. Missing or contradictory canonical projection evidence is logged
+and suppressed with zero model turns until an authoritative reread resolves it.
+
+The Codex daemon must be started through `tools/dish-integrator-daemon start`, with the matching
+`stop` command in `ExecStop`. That wrapper prepares an isolated Codex home, reuses only the operator's
+authentication file, disables shell, web search, apps/plugins inherited from the operator home and
+multi-agent tools, and configures only the repository's purpose-built `dish_integrator` read-only MCP
+server. The MCP tools resolve inputs from the exact local V4 receipt ledger: the model cannot select an
+arbitrary repository, PR, head or Asana task. The automated turn also has a strict observe-only result
+schema and a read-only sandbox. Changing this daemon configuration, thread bootstrap, turn packet,
+output schema or submission fence requires fresh commissioning of the exact runtime.
 
 ## Persistent interactive Integrator
 
-The service connects by WebSocket to the Unix socket of the already-managed shared Codex daemon.
-It does not spawn a second private app-server. The persistent thread therefore has one resident
-daemon owner and is also directly resumable in the Codex TUI. The socket defaults to
-`~/.codex/app-server-control/app-server-control.sock` and may be set explicitly with
-`DISH_LIFECYCLE_V4_APP_SERVER_SOCKET`.
+The service connects by WebSocket to the Unix socket of the dedicated Integrator Codex daemon.
+The persistent thread has one resident daemon owner and is directly resumable in the Codex TUI.
+The socket defaults to `$DISH_LIFECYCLE_V4_STATE_DIR/codex-home/app-server-control/app-server-control.sock`
+and is set explicitly with `DISH_LIFECYCLE_V4_APP_SERVER_SOCKET` in the host runner.
 
 Install `tools/dish-lifecycle-v4-integrator` on the operator path as `dish-integrator`:
 
@@ -63,6 +78,12 @@ reconcile without a model turn; pending actionable versions wait for the fence. 
 releases the fence and permits the bridge to deliver pending work. Direct `codex resume` without
 this wrapper is unsupported because it bypasses the shared admission fence.
 
-The wrapper also provides `status`, `start`, `stop`, `restart`, `logs`, and `thread`. Its default
+The wrapper also provides `status`, `start`, `stop`, `restart`, `logs`, `thread`, `report`, and `audit`. Its default
 service names match the current user services and may be overridden with
 `DISH_LIFECYCLE_V4_DAEMON_SERVICE` and `DISH_LIFECYCLE_V4_BRIDGE_SERVICE`.
+
+The existing `.github/workflows/full-regression.yml` schedule remains the nightly semantic owner.
+Integrator does not schedule, classify, fingerprint or route a second nightly path. Its
+`get_nightly_health` tool and operator report read that workflow's current result; any unresolved
+failure reaches the model only after the existing Tests/CI machinery emits an Integrator-owned V4
+case. A clean or unchanged nightly result therefore costs zero model turns.
