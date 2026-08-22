@@ -464,6 +464,37 @@ def test_v2_progressive_guard_order_and_rollback_use_effective_readback(tmp_path
     assert projection["complete"] is False
 
 
+def test_v2_rejected_stage_can_still_roll_back_effective_behavior(tmp_path):
+    asana = FakeAsana()
+    install_plan(asana, "task", control_plan(), fence_root=tmp_path)
+    observe, _ = commit_transition(asana, "task", control_transition("OBSERVE"), fence_root=tmp_path)
+    commit_transition(
+        asana, "task",
+        control_decision("REJECTED", observe["transition_id"], stage="OBSERVE", config="guard-observe-a"),
+        fence_root=tmp_path,
+    )
+    rollback = control_transition(
+        "OBSERVE",
+        event="ROLLED_BACK",
+        activated_identity=observe["transition_id"],
+        prior_state="OBSERVE",
+        readback={
+            "target": "repo:marcogallotta/ai-tools profile:dish",
+            "state": "OFF",
+            "artifact": "source-a",
+            "config": "guard-off-a",
+            "activation_source": "file:dish/config/guard.json",
+            "evidence": "runtime-after:OFF",
+        },
+    )
+    rolled_back, changed = commit_transition(asana, "task", rollback, fence_root=tmp_path)
+    assert changed and rolled_back["event"] == "ROLLED_BACK"
+    projection = rollout_projection(reconstruct(asana.get_stories("task"), task_gid="task"))
+    assert projection["stages"][0]["state"] == "ROLLED_BACK"
+    assert projection["stages"][0]["effective_state"] == "OFF"
+    assert projection["complete"] is False
+
+
 def test_v2_automatic_effect_requires_structured_effective_readback(tmp_path):
     asana = FakeAsana()
     install_plan(asana, "task", control_plan(), fence_root=tmp_path)
