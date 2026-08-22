@@ -33,6 +33,7 @@ CI_REASON_CLASSES = frozenset({
     "CI_OWNERSHIP_AMBIGUOUS",
     "CI_INFRASTRUCTURE_OR_NETWORK",
 })
+INTEGRATOR_CI_REASON_CLASSES = CI_REASON_CLASSES | {"CI_SLOW"}
 
 
 def _now() -> str:
@@ -116,6 +117,10 @@ def consume_projection(
             "pr": case.get("pr"),
             "next_owner": "Integrator",
         }
+        if reason_class not in INTEGRATOR_CI_REASON_CLASSES:
+            decision.update(result="suppressed", reason="outside_ci_reliability_scope")
+            decisions.append(decision)
+            continue
         if reason_class in CI_REASON_CLASSES:
             try:
                 pr_number = int(case.get("pr"))
@@ -123,6 +128,8 @@ def consume_projection(
                 pr_number = -1
             pr = prs.get(pr_number)
             gate = pr.get("gate") if isinstance(pr, Mapping) and isinstance(pr.get("gate"), Mapping) else None
+            if gate is None and isinstance(evidence.get("canonical_ci"), Mapping):
+                gate = evidence["canonical_ci"]
             if gate is None:
                 decision.update(result="suppressed", reason="authoritative_ci_projection_unavailable")
                 decisions.append(decision)

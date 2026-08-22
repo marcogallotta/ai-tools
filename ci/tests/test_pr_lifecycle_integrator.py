@@ -104,6 +104,30 @@ def test_active_canonical_repair_owner_is_reported_as_zero_turn_suppression():
     assert decision["causal_fingerprint"] == FINGERPRINT
 
 
+def test_non_ci_integrator_case_is_zero_turn_suppressed():
+    value = projection()
+    value["v3"]["integrator"]["active_cases"][0]["reason_class"] = "MERGE_CONFLICT_OR_BASE_RECONCILIATION_REQUIRED"
+    result = consume_projection(value)
+    assert result.actionable_cases == ()
+    assert result.report["decisions"][0]["reason"] == "outside_ci_reliability_scope"
+
+
+def test_scheduled_ci_case_consumes_embedded_canonical_output_without_a_pr():
+    value = projection()
+    case = value["v3"]["integrator"]["active_cases"][0]
+    case["pr"] = None
+    gate = value["pull_requests"][0]["gate"]
+    case["evidence"] = {
+        "failure_ownership": "AMBIGUOUS",
+        "canonical_ci": gate,
+        "full_regression_run_id": "nightly-700",
+    }
+    value["pull_requests"] = []
+    result = consume_projection(value)
+    assert len(result.actionable_cases) == 1
+    assert result.report["decisions"][0]["canonical_ci"]["causal_fingerprint"] == FINGERPRINT
+
+
 def test_audit_publishes_latest_report_and_rotates_ndjson(tmp_path):
     audit = IntegratorAudit(
         tmp_path / "audit.ndjson",

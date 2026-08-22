@@ -14,8 +14,14 @@ from pr_lifecycle_integrator import IntegratorAudit
 
 
 VERSION_RE = re.compile(r"^[0-9a-f]{64}$")
-MAX_TEXT = 12_000
-MAX_LIST = 100
+MAX_TEXT = 4_000
+MAX_LIST = 50
+
+
+def _clip(value: Any, limit: int = 2_000) -> Any:
+    if not isinstance(value, str) or len(value) <= limit:
+        return value
+    return value[:limit] + "…[truncated]"
 
 
 def _bounded(value: Any) -> Any:
@@ -79,6 +85,15 @@ TOOLS = (
         "Read current GitHub PR/head/check/review evidence only for the PR bound to one wake version.",
         VERSION_PROPERTY,
         ["actionable_version"],
+    ),
+    _rpc_tool(
+        "get_exact_check_log",
+        "Read a bounded failure-focused log excerpt only after proving the check belongs to the exact wake head.",
+        {
+            **VERSION_PROPERTY,
+            "check_run_id": {"type": "integer", "minimum": 1},
+        },
+        ["actionable_version", "check_run_id"],
     ),
     _rpc_tool(
         "get_repair_owner",
@@ -168,6 +183,14 @@ class IntegratorReadTools:
             raise RuntimeError(_bounded(detail))
         return json.loads(result.stdout)
 
+    @staticmethod
+    def _command_text(argv: tuple[str, ...]) -> str:
+        result = subprocess.run(argv, text=True, capture_output=True, timeout=25, check=False)
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip() or f"exit {result.returncode}"
+            raise RuntimeError(_bounded(detail))
+        return result.stdout
+
     def get_integrator_case(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
         return self._case(self._version(arguments))
 
@@ -202,6 +225,18 @@ class IntegratorReadTools:
         main = self._command_json(("/usr/bin/gh", "api", f"{prefix}/branches/main"))
         main_sha = str(main.get("commit", {}).get("sha") or "")
         main_checks = self._command_json(("/usr/bin/gh", "api", f"{prefix}/commits/{main_sha}/check-runs?per_page=100"))
+        def check_summary(value: Mapping[str, Any]) -> dict[str, Any]:
+            output = value.get("output") if isinstance(value.get("output"), Mapping) else {}
+            return {
+                key: value.get(key)
+                for key in ("id", "name", "status", "conclusion", "started_at", "completed_at", "details_url")
+            } | {
+                "output": {
+                    "title": _clip(output.get("title")),
+                    "summary": _clip(output.get("summary")),
+                    "text": _clip(output.get("text")),
+                }
+            }
         return _bounded({
             "actionable_version": version,
             "authority_status": "current",
@@ -215,14 +250,74 @@ class IntegratorReadTools:
                 "base_sha": pr.get("base", {}).get("sha"),
                 "mergeable": pr.get("mergeable"),
             },
-            "checks": checks.get("check_runs") or [],
-            "statuses": statuses.get("statuses") or [],
-            "reviews": reviews,
+            "checks": [
+                check_summary(value)
+                for value in checks.get("check_runs") or [] if isinstance(value, Mapping)
+            ],
+            "statuses": [
+                {key: value.get(key) for key in ("context", "state", "target_url", "description", "created_at")}
+                for value in statuses.get("statuses") or [] if isinstance(value, Mapping)
+            ],
+            "reviews": [
+                {
+                    **{key: value.get(key) for key in ("id", "state", "commit_id", "submitted_at")},
+                    "body": _clip(value.get("body")),
+                }
+                for value in reviews if isinstance(value, Mapping)
+            ],
             "files": [
-                {key: value.get(key) for key in ("filename", "status", "additions", "deletions", "changes")}
+                {
+                    **{key: value.get(key) for key in ("filename", "status", "additions", "deletions", "changes")},
+                    "patch": _clip(value.get("patch"), limit=4_000),
+                }
                 for value in files if isinstance(value, Mapping)
             ],
-            "current_main": {"sha": main_sha, "checks": main_checks.get("check_runs") or []},
+            "current_main": {
+                "sha": main_sha,
+                "checks": [
+                    check_summary(value)
+                    for value in main_checks.get("check_runs") or [] if isinstance(value, Mapping)
+                ],
+            },
+        })
+
+    def get_exact_check_log(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
+        version = self._version(arguments)
+        try:
+            check_run_id = int(arguments.get("check_run_id"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("check_run_id must be a positive integer") from exc
+        if check_run_id <= 0:
+            raise ValueError("check_run_id must be a positive integer")
+        case = self._case(version)["case"]
+        repository = str(case.get("repository") or "")
+        head = str(case.get("head") or case.get("reviewed_head") or "")
+        if repository != self.repository or re.fullmatch(r"[0-9a-f]{40}", head) is None:
+            raise ValueError("wake packet has no allowlisted exact PR head")
+        prefix = f"repos/{repository}"
+        check = self._command_json(("/usr/bin/gh", "api", f"{prefix}/check-runs/{check_run_id}"))
+        if str(check.get("head_sha") or "") != head:
+            raise ValueError("check run does not belong to the exact wake head")
+        raw = self._command_text(("/usr/bin/gh", "api", f"{prefix}/actions/jobs/{check_run_id}/logs"))
+        lines = raw.splitlines()
+        interesting = re.compile(r"(?:error|fail(?:ed|ure)?|traceback|exception|assert|timed?\s*out)", re.I)
+        selected_indexes: set[int] = set()
+        for index, line in enumerate(lines):
+            if interesting.search(line):
+                selected_indexes.update(range(max(0, index - 2), min(len(lines), index + 3)))
+            if len(selected_indexes) >= 300:
+                break
+        selected = [lines[index] for index in sorted(selected_indexes)[:300]]
+        tail = lines[-80:]
+        return _bounded({
+            "actionable_version": version,
+            "check_run_id": check_run_id,
+            "check_name": check.get("name"),
+            "head": head,
+            "failure_focused_lines": selected,
+            "tail_lines": tail,
+            "raw_line_count": len(lines),
+            "truncated": len(selected_indexes) > 300 or len(lines) > 80,
         })
 
     def get_repair_owner(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
@@ -258,7 +353,19 @@ class IntegratorReadTools:
                 for value in record.get("decisions") or []
             )
             if direct or listed or nested:
-                matches.append(_bounded(record))
+                matched_decisions = [
+                    dict(value)
+                    for value in record.get("decisions") or []
+                    if isinstance(value, Mapping) and value.get("actionable_version") == version
+                ]
+                matches.append(_bounded({
+                    key: record.get(key)
+                    for key in (
+                        "at", "event", "wake_id", "actionable_version", "actionable_versions",
+                        "receipt_status", "valid", "proposal", "reason", "result",
+                    )
+                    if record.get(key) is not None
+                } | ({"decisions": matched_decisions} if matched_decisions else {})))
             if len(matches) == 20:
                 break
         return {"actionable_version": version, "records": matches}
@@ -291,6 +398,7 @@ class IntegratorReadTools:
         handlers: dict[str, Callable[[Mapping[str, Any]], dict[str, Any]]] = {
             "get_integrator_case": self.get_integrator_case,
             "get_exact_pr_evidence": self.get_exact_pr_evidence,
+            "get_exact_check_log": self.get_exact_check_log,
             "get_repair_owner": self.get_repair_owner,
             "get_prior_integrator_decisions": self.get_prior_integrator_decisions,
             "get_nightly_health": self.get_nightly_health,

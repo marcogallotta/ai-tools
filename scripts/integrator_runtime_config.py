@@ -12,6 +12,7 @@ import tempfile
 MCP_TOOLS = (
     "get_integrator_case",
     "get_exact_pr_evidence",
+    "get_exact_check_log",
     "get_repair_owner",
     "get_prior_integrator_decisions",
     "get_nightly_health",
@@ -47,7 +48,12 @@ def prepare_codex_home(
     python = python.expanduser().resolve()
     if codex_home == source_codex_home:
         raise ValueError("Integrator Codex home must be isolated from the operator Codex home")
-    for required in (repo / "scripts/integrator_mcp_server.py", python, source_codex_home / "auth.json"):
+    for required in (
+        repo / "scripts/integrator_mcp_server.py",
+        python,
+        source_codex_home / "auth.json",
+        source_codex_home / "packages",
+    ):
         if not required.exists():
             raise FileNotFoundError(required)
 
@@ -56,15 +62,16 @@ def prepare_codex_home(
     state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     state_dir.chmod(0o700)
 
-    auth = codex_home / "auth.json"
-    source_auth = source_codex_home / "auth.json"
-    if auth.is_symlink():
-        if auth.resolve() != source_auth:
-            raise ValueError("Integrator auth link points at an unexpected credential source")
-    elif auth.exists():
-        raise ValueError("Integrator auth path exists but is not the expected symlink")
-    else:
-        auth.symlink_to(source_auth)
+    for name in ("auth.json", "packages"):
+        target = codex_home / name
+        source = source_codex_home / name
+        if target.is_symlink():
+            if target.resolve() != source:
+                raise ValueError(f"Integrator {name} link points at an unexpected source")
+        elif target.exists():
+            raise ValueError(f"Integrator {name} path exists but is not the expected symlink")
+        else:
+            target.symlink_to(source, target_is_directory=source.is_dir())
 
     enabled_tools = ", ".join(_toml_string(value) for value in MCP_TOOLS)
     config = f'''approval_policy = "never"
@@ -79,7 +86,15 @@ enabled = false
 shell_tool = false
 unified_exec = false
 multi_agent = false
+apps = false
+plugins = false
+hooks = false
 skill_mcp_dependency_install = false
+
+[memories]
+generate_memories = false
+use_memories = false
+disable_on_external_context = true
 
 [mcp_servers.dish_integrator]
 command = {_toml_string(str(python))}
@@ -92,8 +107,11 @@ default_tools_approval_mode = "auto"
 startup_timeout_sec = 10
 tool_timeout_sec = 30
 '''
+    socket_path = codex_home / "app-server-control/app-server-control.sock"
+    if len(os.fsencode(socket_path)) >= 104:
+        raise ValueError("Integrator Codex home is too long for a portable Unix socket path")
     _atomic_text(codex_home / "config.toml", config)
-    return codex_home / "app-server-control/app-server-control.sock"
+    return socket_path
 
 
 def main() -> int:

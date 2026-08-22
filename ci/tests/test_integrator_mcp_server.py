@@ -3,7 +3,9 @@ from __future__ import annotations
 import io
 import json
 from pathlib import Path
+import shutil
 import sys
+import tempfile
 import tomllib
 
 
@@ -90,6 +92,18 @@ def test_exact_pr_tool_refuses_head_movement_before_other_reads(tmp_path, monkey
     assert len(calls) == 1
 
 
+def test_check_log_refuses_a_check_from_another_head(tmp_path, monkeypatch):
+    tools = configured_tools(tmp_path)
+    monkeypatch.setattr(tools, "_command_json", lambda argv: {"head_sha": "b" * 40})
+    monkeypatch.setattr(tools, "_command_text", lambda argv: (_ for _ in ()).throw(AssertionError("must not read log")))
+    try:
+        tools.get_exact_check_log({"actionable_version": actionable_version(case()), "check_run_id": 99})
+    except ValueError as exc:
+        assert "does not belong" in str(exc)
+    else:
+        raise AssertionError("wrong-head check log was not refused")
+
+
 def test_isolated_codex_home_has_only_read_tools_and_no_shell(tmp_path):
     repo = tmp_path / "repo"
     (repo / "scripts").mkdir(parents=True)
@@ -99,22 +113,32 @@ def test_isolated_codex_home_has_only_read_tools_and_no_shell(tmp_path):
     source = tmp_path / "operator-home"
     source.mkdir()
     (source / "auth.json").write_text("{}\n")
-    home = tmp_path / "integrator-home"
-    socket_path = prepare_codex_home(
-        codex_home=home,
-        source_codex_home=source,
-        repo=repo,
-        state_dir=tmp_path / "state",
-        python=python,
-    )
-    config = tomllib.loads((home / "config.toml").read_text())
-    assert socket_path == home / "app-server-control/app-server-control.sock"
-    assert (home / "auth.json").is_symlink()
-    assert config["web_search"] == "disabled"
-    assert config["features"]["shell_tool"] is False
-    assert config["features"]["unified_exec"] is False
-    assert config["agents"]["enabled"] is False
-    assert tuple(config["mcp_servers"]["dish_integrator"]["enabled_tools"]) == MCP_TOOLS
+    (source / "packages").mkdir()
+    home = Path(tempfile.mkdtemp(prefix="di-config-", dir="/tmp"))
+    try:
+        socket_path = prepare_codex_home(
+            codex_home=home,
+            source_codex_home=source,
+            repo=repo,
+            state_dir=tmp_path / "state",
+            python=python,
+        )
+        config = tomllib.loads((home / "config.toml").read_text())
+        assert socket_path == home / "app-server-control/app-server-control.sock"
+        assert (home / "auth.json").is_symlink()
+        assert (home / "packages").is_symlink()
+        assert config["web_search"] == "disabled"
+        assert config["features"]["shell_tool"] is False
+        assert config["features"]["unified_exec"] is False
+        assert config["features"]["apps"] is False
+        assert config["features"]["plugins"] is False
+        assert config["features"]["hooks"] is False
+        assert config["agents"]["enabled"] is False
+        assert config["memories"]["generate_memories"] is False
+        assert config["memories"]["use_memories"] is False
+        assert tuple(config["mcp_servers"]["dish_integrator"]["enabled_tools"]) == MCP_TOOLS
+    finally:
+        shutil.rmtree(home)
 
 
 def test_mcp_protocol_lists_only_purpose_built_tools(tmp_path, monkeypatch):
