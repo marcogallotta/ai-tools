@@ -1,0 +1,186 @@
+name: Code quality verification
+
+on:
+  pull_request:
+    branches: [main]
+    types: [ready_for_review, reopened]
+  issue_comment:
+    types: [created, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: >-
+      (github.event_name == 'pull_request' && github.event.pull_request.draft == false) ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request != null &&
+       contains(github.event.comment.body, '<!-- dish-code-quality-result:v1'))
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      statuses: write
+    steps:
+      - name: Resolve exact PR head and local result comment
+        id: identity
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            pr_number=$(jq -r '.pull_request.number' "$GITHUB_EVENT_PATH")
+            head_sha=$(jq -r '.pull_request.head.sha' "$GITHUB_EVENT_PATH")
+            gh api --paginate --slurp "/repos/$GITHUB_REPOSITORY/issues/$pr_number/comments?per_page=100" > /tmp/comments.json
+            python3 - "$head_sha" /tmp/comments.json /tmp/code-quality-comment.md <<'PY'
+          import json, sys
+          head, source, target = sys.argv[1:]
+          pages = json.load(open(source, encoding="utf-8"))
+          comments = [item for page in pages for item in page]
+          marker = f"<!-- dish-code-quality-result:v1 head={head} "
+          matches = [item for item in comments if marker in str(item.get("body") or "")]
+          if not matches:
+              raise SystemExit(f"missing local code-quality result for exact head {head}")
+          selected = max(matches, key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""))
+          open(target, "w", encoding="utf-8").write(str(selected["body"]))
+          PY
+          else
+            pr_number=$(jq -r '.issue.number' "$GITHUB_EVENT_PATH")
+            head_sha=$(gh api "/repos/$GITHUB_REPOSITORY/pulls/$pr_number" --jq '.head.sha')
+            jq -r '.comment.body' "$GITHUB_EVENT_PATH" > /tmp/code-quality-comment.md
+          fi
+          echo "pr_number=$pr_number" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.identity.outputs.head_sha }}
+          fetch-depth: 0
+
+      - name: Resolve base-policy evaluator
+        id: evaluator
+        shell: bash
+        env:
+          HEAD_SHA: ${{ steps.identity.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p .test-artifacts/code-quality
+          python3 - /tmp/code-quality-comment.md .test-artifacts/code-quality/untrusted.json <<'PY'
+          import json, re, sys
+          body = open(sys.argv[1], encoding="utf-8").read()
+          match = re.search(r"```json\s*(\{.*?\})\s*```", body, re.S)
+          if not match:
+              raise SystemExit("local code-quality comment has no JSON result")
+          value = json.loads(match.group(1))
+          open(sys.argv[2], "w", encoding="utf-8").write(json.dumps(value))
+          print(value["comparison_base_sha"])
+          PY
+          comparison_base=$(python3 -c 'import json; print(json.load(open(".test-artifacts/code-quality/untrusted.json"))["comparison_base_sha"])')
+          if git cat-file -e "$comparison_base:scripts/code_quality_gate.py" 2>/dev/null; then
+            base_dir="$RUNNER_TEMP/code-quality-base"
+            git worktree add --detach "$base_dir" "$comparison_base"
+            echo "script=$base_dir/scripts/code_quality_gate.py" >> "$GITHUB_OUTPUT"
+            echo "base_dir=$base_dir" >> "$GITHUB_OUTPUT"
+          else
+            echo "script=$GITHUB_WORKSPACE/scripts/code_quality_gate.py" >> "$GITHUB_OUTPUT"
+            echo "base_dir=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Verify persisted result identity
+        shell: bash
+        env:
+          DISH_CODE_QUALITY_TOOL_ROOT: ${{ github.workspace }}
+          HEAD_SHA: ${{ steps.identity.outputs.head_sha }}
+          GATE_SCRIPT: ${{ steps.evaluator.outputs.script }}
+        run: |
+          set -euo pipefail
+          python3 "$GATE_SCRIPT" verify-comment \
+            --comment /tmp/code-quality-comment.md \
+            --expected-head "$HEAD_SHA" \
+            --output .test-artifacts/code-quality/local-result.json
+
+      - name: Install pinned fast-gate tools when enforcement is active
+        if: steps.evaluator.outputs.base_dir != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          readarray -t specs < <(python3 - <<'PY'
+          import json
+          result=json.load(open('.test-artifacts/code-quality/local-result.json'))
+          print('ruff==' + result['tool_policy']['ruff']['version'])
+          print('pyright==' + result['tool_policy']['pyright']['version'])
+          PY
+          )
+          python3 -m venv dish/.venv
+          dish/.venv/bin/python -m pip install --disable-pip-version-check "${specs[@]}"
+
+      - name: Recompute exact semantic result
+        id: verify
+        continue-on-error: true
+        shell: bash
+        env:
+          DISH_CODE_QUALITY_TOOL_ROOT: ${{ github.workspace }}
+          GATE_SCRIPT: ${{ steps.evaluator.outputs.script }}
+          HEAD_SHA: ${{ steps.identity.outputs.head_sha }}
+          PR_NUMBER: ${{ steps.identity.outputs.pr_number }}
+        run: |
+          set -uo pipefail
+          target_base=$(python3 -c 'import json; print(json.load(open(".test-artifacts/code-quality/local-result.json"))["target_base_sha"])')
+          task_gid=$(python3 -c 'import json; print(json.load(open(".test-artifacts/code-quality/local-result.json"))["task_gid"])')
+          correction_round=$(python3 -c 'import json; print(json.load(open(".test-artifacts/code-quality/local-result.json"))["correction_round"])')
+          python3 "$GATE_SCRIPT" evaluate \
+            --repo "$GITHUB_WORKSPACE" \
+            --target-base "$target_base" \
+            --head "$HEAD_SHA" \
+            --task-gid "$task_gid" \
+            --pr-number "$PR_NUMBER" \
+            --correction-round "$correction_round" \
+            --output .test-artifacts/code-quality/ci-result.json
+          rc=$?
+          python3 - <<'PY'
+          import json
+          local=json.load(open('.test-artifacts/code-quality/local-result.json'))
+          current=json.load(open('.test-artifacts/code-quality/ci-result.json'))
+          if local['result_digest'] != current['result_digest']:
+              raise SystemExit('CI result digest does not match persisted local result')
+          PY
+          compare_rc=$?
+          if [[ "$rc" -ne 0 || "$compare_rc" -ne 0 ]]; then
+            echo "result=failed" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "result=passed" >> "$GITHUB_OUTPUT"
+
+      - name: Publish exact-head code-quality status
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ steps.identity.outputs.head_sha }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+        run: |
+          set -euo pipefail
+          state=success
+          description='Persisted local code-quality result verified'
+          if [[ "$VERIFY_OUTCOME" != "success" ]]; then
+            state=failure
+            description='Code-quality verification failed'
+          fi
+          gh api --method POST \
+            -H 'Accept: application/vnd.github+json' \
+            "/repos/$GITHUB_REPOSITORY/statuses/$HEAD_SHA" \
+            -f state="$state" \
+            -f context='Dish / code quality' \
+            -f description="$description" \
+            -f target_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+      - name: Fail job when semantic verification failed
+        if: steps.verify.outcome != 'success'
+        run: exit 1
+
+      - name: Remove base evaluator worktree
+        if: always() && steps.evaluator.outputs.base_dir != ''
+        shell: bash
+        run: git worktree remove --force '${{ steps.evaluator.outputs.base_dir }}' || true
