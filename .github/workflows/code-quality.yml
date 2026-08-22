@@ -194,12 +194,58 @@ jobs:
           if [[ "$rc" -ne 0 ]]; then
             exit "$rc"
           fi
+          result_digest=$(python3 -c 'import json; print(json.load(open(".test-artifacts/code-quality/ci-result.json"))["result_digest"])')
+          echo "result_digest=$result_digest" >> "$GITHUB_OUTPUT"
+
+      - name: Build trusted exact-head attestation
+        if: github.event_name == 'issue_comment'
+        id: attestation
+        shell: bash
+        env:
+          BASE_SHA: ${{ steps.identity.outputs.base_sha }}
+          COMPARISON_BASE_SHA: ${{ steps.evaluator.outputs.comparison_base }}
+          HEAD_SHA: ${{ steps.identity.outputs.head_sha }}
+          PR_NUMBER: ${{ steps.identity.outputs.pr_number }}
+          RESULT_DIGEST: ${{ steps.semantic.outputs.result_digest }}
+        run: |
+          set -euo pipefail
+          artifact_name="dish-code-quality-attestation-v1-pr${PR_NUMBER}-${HEAD_SHA}-${RESULT_DIGEST}-run${GITHUB_RUN_ID}-attempt${GITHUB_RUN_ATTEMPT}"
+          python3 - <<'PY'
+          import json, os
+          payload = {
+              "schema": "dish-code-quality-attestation-v1",
+              "repository": os.environ["GITHUB_REPOSITORY"],
+              "pr_number": int(os.environ["PR_NUMBER"]),
+              "head_sha": os.environ["HEAD_SHA"],
+              "target_base_sha": os.environ["BASE_SHA"],
+              "comparison_base_sha": os.environ["COMPARISON_BASE_SHA"],
+              "result_digest": os.environ["RESULT_DIGEST"],
+              "workflow_run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "workflow_run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+              "workflow_path": ".github/workflows/code-quality.yml",
+              "workflow_event": os.environ["GITHUB_EVENT_NAME"],
+              "trusted_branch": os.environ["GITHUB_REF_NAME"],
+              "trusted_workflow_sha": os.environ["GITHUB_SHA"],
+          }
+          open(".test-artifacts/code-quality/attestation.json", "w", encoding="utf-8").write(
+              json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
+          )
+          PY
+          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
+
+      - name: Upload trusted code-quality attestation
+        if: github.event_name == 'issue_comment'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.attestation.outputs.artifact_name }}
+          path: .test-artifacts/code-quality/attestation.json
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Remove base evaluator worktree
         if: always() && steps.evaluator.outputs.base_dir != ''
         shell: bash
         run: git worktree remove --force '${{ steps.evaluator.outputs.base_dir }}' || true
-
   report:
     needs: verify
     if: >-
