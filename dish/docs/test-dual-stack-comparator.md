@@ -24,11 +24,11 @@ Before starting the rig:
 sudo systemctl disable --now dish-shadow-worker-test.service
 sudo systemctl daemon-reload
 sudo systemctl restart dish-postgres-test.service dish-service-test.service dish-service-test-legacy.service
-sudo systemctl restart caddy
+sudo systemctl restart dish-action-router.service
 /home/marco/ai-tools/dish/deploy/caddy/dish-action-route status
 ```
 
-The route status must show exactly production `127.0.0.1:8776`, TEST authority `127.0.0.1:8766`, and comparator `127.0.0.1:8796`. Verify `dish-service-test` health reports `backend=postgresql`, `profile=test`, and an empty `asana_environment_keys`; verify the legacy health endpoint is ready against the designated disposable project.
+The route status must report `source_is_effective=true`, matching source/effective config digests, and exactly production `127.0.0.1:8776`, TEST authority `127.0.0.1:8766`, and comparator `127.0.0.1:8796`. The router unit deliberately does not use Caddy `--resume`; a stale autosave is not an activation source. Verify `dish-service-test` health reports `backend=postgresql`, `profile=test`, and an empty `asana_environment_keys`; verify the legacy health endpoint is ready against the designated disposable project.
 
 Run native PostgreSQL certification against the exact disposable TEST DSN/candidate before treating comparator evidence as cutover qualification. TEST evidence does not prove PROD.
 
