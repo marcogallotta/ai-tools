@@ -1027,6 +1027,14 @@ def command_reconcile(base_manifest:Path,source:Path,output:Path,base_source:Pat
  else:
   candidate,cs=_load_manifest_source_files(candidate_manifest,candidate_source); out=reconcile_manifests(base,bs,candidate,cs,target)
  _write_manifest(output,out); print(f"WROTE {output} canonical_version={out['canonical_version']}")
+def command_refresh(base_manifest:Path,source:Path,base_source:Path|None=None,candidate_manifest:Path|None=None,candidate_source:Path|None=None):
+ if source.resolve()!=PROJECT_DIR.joinpath('source.json').resolve(): raise KernelError('refresh requires the canonical docs/chatgpt-projects/source.json')
+ command_reconcile(base_manifest,source,MANIFEST_PATH,base_source,candidate_manifest,candidate_source)
+ render_all(check=False)
+ command_check()
+ m,s=load_canonical()
+ print('PASTE-READY PROJECT KERNELS')
+ for role,path in sorted(generated_paths(m,s).items()): print(f'{role}: {path}')
 def _write_json(p,v):p.write_text(json.dumps(v,indent=2,sort_keys=True)+'\n')
 def _write_manifest(p,v):
  out=copy.deepcopy(v); history=out.pop('change_history',None)
@@ -1046,6 +1054,7 @@ def _parser():
  p=argparse.ArgumentParser(description=__doc__); s=p.add_subparsers(dest='command',required=True); r=s.add_parser('render'); r.add_argument('--check',action='store_true'); s.add_parser('check'); pe=s.add_parser('prepare-eval'); pe.add_argument('--output',required=True,type=Path); ev=s.add_parser('eval'); g=ev.add_mutually_exclusive_group(required=True); g.add_argument('--results',type=Path); g.add_argument('--runner-command'); ev.add_argument('--save-results',type=Path); v=s.add_parser('version'); v.add_argument('--project-version',required=True); v.add_argument('--role',required=True); v.add_argument('--action-boundary',default='role-critical-write')
  ad=s.add_parser('admit'); ad.add_argument('--base-manifest',required=True,type=Path); ad.add_argument('--base-source',type=Path); ad.add_argument('--candidate-manifest',required=True,type=Path); ad.add_argument('--candidate-source',type=Path)
  rc=s.add_parser('reconcile'); rc.add_argument('--base-manifest',required=True,type=Path); rc.add_argument('--base-source',type=Path); rc.add_argument('--source',required=True,type=Path); rc.add_argument('--candidate-manifest',type=Path); rc.add_argument('--candidate-source',type=Path); rc.add_argument('--output',required=True,type=Path)
+ rf=s.add_parser('refresh'); rf.add_argument('--base-manifest',required=True,type=Path); rf.add_argument('--base-source',type=Path); rf.add_argument('--source',required=True,type=Path); rf.add_argument('--candidate-manifest',type=Path); rf.add_argument('--candidate-source',type=Path)
  return p
 def main():
  a=_parser().parse_args()
@@ -1062,6 +1071,7 @@ def main():
    for x in evaluate_behavior_results(p): print(f'PASS behavior {x}')
   elif a.command=='admit': command_admit(a.base_manifest,a.candidate_manifest,a.base_source,a.candidate_source)
   elif a.command=='reconcile': command_reconcile(a.base_manifest,a.source,a.output,a.base_source,a.candidate_manifest,a.candidate_source)
+  elif a.command=='refresh': command_refresh(a.base_manifest,a.source,a.base_source,a.candidate_manifest,a.candidate_source)
   else:
    ok,msg=version_status(a.project_version,a.role,a.action_boundary); print(msg); return 0 if ok else 3
  except KernelError as e: print(f'ERROR: {e}',file=sys.stderr); return 2

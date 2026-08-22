@@ -796,6 +796,29 @@ def test_concurrent_ambiguous_rule_edits_fail_closed_without_manifest_surgery():
  with pytest.raises(kernels.KernelError,match='ambiguous/incompatible concurrent rule history'):
   kernels.reconcile_manifests(base,base_source,candidate,candidate_source,base_source)
 
+def test_refresh_reconciles_renders_checks_and_reports_paste_ready_paths(tmp_path,monkeypatch,capsys):
+ project=tmp_path/'chatgpt-projects'; project.mkdir(); source=project/'source.json'; source.write_text('{}')
+ manifest=project/'manifest.json'; review=project/'review.md'; calls=[]
+ monkeypatch.setattr(kernels,'PROJECT_DIR',project); monkeypatch.setattr(kernels,'MANIFEST_PATH',manifest)
+ monkeypatch.setattr(kernels,'command_reconcile',lambda *args: calls.append(('reconcile',args[2])))
+ monkeypatch.setattr(kernels,'render_all',lambda *,check: calls.append(('render',check)))
+ monkeypatch.setattr(kernels,'command_check',lambda: calls.append(('check',)))
+ monkeypatch.setattr(kernels,'load_canonical',lambda: ({'canonical_version':'v2'},{'roles':{'review':{}}}))
+ monkeypatch.setattr(kernels,'generated_paths',lambda manifest,source: {'review':review})
+ kernels.command_refresh(tmp_path/'base.json',source)
+ assert calls==[('reconcile',manifest),('render',False),('check',)]
+ assert f'review: {review}' in capsys.readouterr().out
+
+def test_refresh_does_not_report_paste_ready_paths_when_check_fails(tmp_path,monkeypatch,capsys):
+ project=tmp_path/'chatgpt-projects'; project.mkdir(); source=project/'source.json'; source.write_text('{}')
+ monkeypatch.setattr(kernels,'PROJECT_DIR',project); monkeypatch.setattr(kernels,'MANIFEST_PATH',project/'manifest.json')
+ monkeypatch.setattr(kernels,'command_reconcile',lambda *args: None)
+ monkeypatch.setattr(kernels,'render_all',lambda *,check: None)
+ monkeypatch.setattr(kernels,'command_check',lambda: (_ for _ in ()).throw(kernels.KernelError('check failed')))
+ with pytest.raises(kernels.KernelError,match='check failed'):
+  kernels.command_refresh(tmp_path/'base.json',source)
+ assert 'PASTE-READY' not in capsys.readouterr().out
+
 def test_design_principles_projection_is_derived_and_present_everywhere():
  m,s=kernels.load_canonical(); rule=kernels.design_principles_rule(s)
  assert [f'DP-{i:02d}' for i in range(1,11)]==s['design_principles']['principle_ids']
