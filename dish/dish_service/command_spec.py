@@ -106,11 +106,20 @@ if ACTION_COMMANDS != tuple(spec.name for spec in ACTION_COMMAND_SPECS):
     raise ValueError("GPT Action command metadata does not cover connected-agent identities")
 ACTION_LEASE_COMMAND = RENEW_LEASE_COMMAND.name
 ACTION_QUALIFY_FILE_TRANSPORT_COMMAND = QUALIFY_FILE_TRANSPORT_COMMAND.name
+IMPLEMENTATION_ACTION_CLIENT_ID = "implementation-action"
+IMPLEMENTATION_ACTION_COMMANDS = frozenset({ACTION_QUALIFY_FILE_TRANSPORT_COMMAND})
 QUALIFY_FILE_TRANSPORT_FILE_FIELDS = ("id", "name", "mime_type", "download_link")
 _SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
 REPLAY_SAFE_COMMANDS = frozenset(
     spec.name for spec in ACTION_COMMAND_SPECS if spec.request_id_required
 )
+
+
+def action_commands_for_client(action_client_id: str) -> frozenset[str]:
+    """Return the commands intentionally exposed by one Action deployment."""
+    if action_client_id == IMPLEMENTATION_ACTION_CLIENT_ID:
+        return IMPLEMENTATION_ACTION_COMMANDS
+    return frozenset(ACTION_COMMANDS)
 
 DISH_UUID_SCHEMA = dict(CANONICAL_DISH_UUID_SCHEMA)
 ASANA_GID_SCHEMA = {

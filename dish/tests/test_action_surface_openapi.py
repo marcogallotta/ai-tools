@@ -6,7 +6,7 @@ import pytest
 
 from dish_service import command_spec
 from dish_service import openapi
-from dish_service.openapi import action_openapi
+from dish_service.openapi import action_openapi, implementation_action_openapi
 from dish_tool.constants import APPROVAL_CORRECTIONS, REJECTION_ROUTES
 from tests.support.action_contract import (
     EXPECTED_ACTION_COMMANDS,
@@ -76,6 +76,20 @@ def test_trimmed_openapi_contains_only_action_workflow_and_renewal_paths():
             assert all("run_id" not in variant["required"] for variant in arguments["oneOf"])
         else:
             assert "run_id" not in arguments["required"]
+
+
+@pytest.mark.smoke
+def test_implementation_action_openapi_exposes_only_file_transport_qualification():
+    spec = implementation_action_openapi(
+        server_url="https://dish.example.test/gate-a"
+    )
+
+    assert spec["info"]["title"] == "Dish Development Workflow Implementation Action"
+    assert spec["servers"] == [{"url": "https://dish.example.test/gate-a"}]
+    assert set(spec["paths"]) == {"/v1/action/qualify-file-transport"}
+    operation = spec["paths"]["/v1/action/qualify-file-transport"]["post"]
+    assert operation["operationId"] == "implementation_qualify_file_transport"
+    assert "dish_sections" not in json.dumps(spec)
 
 
 @pytest.mark.smoke

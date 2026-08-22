@@ -35,7 +35,13 @@ def _action_operation_description(spec: ActionCommandSpec) -> str:
     )
 
 
-def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[str, Any]:
+def action_openapi(
+    *,
+    server_url: str = "https://dish.example.invalid",
+    commands: frozenset[str] | None = None,
+    title: str = "Dish GPT Action",
+    operation_id_prefix: str = "dish",
+) -> dict[str, Any]:
     envelope = {
         "type": "object",
         "required": list(RESULT_OPENAPI_REQUIRED_FIELDS),
@@ -216,7 +222,15 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
         },
     }
     paths: dict[str, Any] = {}
-    for spec in ACTION_COMMAND_DEFINITIONS.values():
+    definitions = ACTION_COMMAND_DEFINITIONS.values()
+    if commands is not None:
+        unknown = commands - ACTION_COMMAND_DEFINITIONS.keys()
+        if unknown:
+            raise ValueError(f"unknown Action commands: {sorted(unknown)}")
+        definitions = (
+            spec for spec in ACTION_COMMAND_DEFINITIONS.values() if spec.name in commands
+        )
+    for spec in definitions:
         command = spec.name
         request_id_required = spec.request_id_required
         is_lease_command = spec.private_route == "lease"
@@ -264,7 +278,7 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
         )
         paths[f"/v1/action/{command}"] = {
             "post": {
-                "operationId": f"dish_{command.replace('-', '_')}",
+                "operationId": f"{operation_id_prefix}_{command.replace('-', '_')}",
                 "x-openai-isConsequential": request_id_required,
                 "summary": (
                     "Renew the current GPT Action operation lease"
@@ -291,7 +305,7 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
         }
     return {
         "openapi": "3.1.0",
-        "info": {"title": "Dish GPT Action", "version": "1.0.0"},
+        "info": {"title": title, "version": "1.0.0"},
         "servers": [{"url": server_url}],
         "paths": paths,
         "components": {
@@ -299,3 +313,15 @@ def action_openapi(*, server_url: str = "https://dish.example.invalid") -> dict[
             "schemas": {"ResultEnvelope": envelope},
         },
     }
+
+
+def implementation_action_openapi(
+    *, server_url: str = "https://dish.example.invalid"
+) -> dict[str, Any]:
+    """Return the narrow Development Workflow publication Action contract."""
+    return action_openapi(
+        server_url=server_url,
+        commands=frozenset({ACTION_QUALIFY_FILE_TRANSPORT_COMMAND}),
+        title="Dish Development Workflow Implementation Action",
+        operation_id_prefix="implementation",
+    )
