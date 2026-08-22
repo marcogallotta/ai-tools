@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import uuid
 from dataclasses import asdict, replace
 from datetime import datetime, timedelta
