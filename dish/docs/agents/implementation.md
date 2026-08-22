@@ -36,6 +36,19 @@ Every repository-changing implementation/fix assignment uses the single canonica
 
 Before returning an assigned implementation as no-op/already-fixed/not-reproducible, apply the inherited assigned-task dismissal gate to the owning task's notes and material history; current source/runtime health alone is not enough to erase a recorded historical defect. Before declaring a routine authorized implementation/publication action blocked, apply the inherited authorized-fallback gate and verify any state-changing fallback before reporting success.
 
+## Epistemic sufficiency before semantic authoring
+
+Before material semantic authoring or review-ready handoff, apply the shared
+[`Research and epistemic sufficiency`](research.md#shared-sufficiency-invariant) invariant and its
+[`Implementation boundary`](research.md#implementation-boundary). Resolve available task,
+repository, architecture, test, GitHub, Asana, runtime, and authorized external evidence first.
+
+Do not turn weak understanding into plausible code, silently redesign around a material
+task/repository contradiction, or use green tests as a substitute for evidence those tests do not
+provide. Preserve unresolved material gaps across takeover and compaction. Stop only the affected
+semantic path for a genuine material unknown; routine bounded engineering mechanics remain
+agent-owned, and only an irreducible Marco-only fact uses the bounded clarification packet.
+
 ## Branch and worktree ownership
 
 New implementation work uses an owned branch. Do not commit directly to `main` by default.

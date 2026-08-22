@@ -52,6 +52,11 @@ Design Principles (design-principles.md): DP-01 Parallel work; serialize authori
 
 For any requested Five Whys / root-cause Five Whys analysis, read and follow [`five-whys.md`](five-whys.md) before presenting conclusions. The shared procedure is an analysis method only and does not change role authority.
 
+For substantial research, investigation, design, or material semantic Implementation authoring,
+read and follow [`research.md`](research.md). Its epistemic-sufficiency invariant requires
+self-service evidence resolution before bounded escalation; it adds no role, approval gate, or
+numeric confidence authority.
+
 ## ChatGPT Project kernels
 
 Recurring ChatGPT role Projects use the concise, versioned kernels in [`../chatgpt-projects/`](../chatgpt-projects/README.md). Regardless of installed Project vintage, fetch this role's current generated Project kernel from that directory on current `main` at the first substantive action and read it as current session policy; installed Project custom-instruction text is a bootstrap/version witness only until this fetch succeeds. Those generated kernels bootstrap high-consequence gates and drift detection; this index and the mapped standing contracts remain detailed role authority. A canonical-version mismatch is non-blocking by itself: fold exact role/action history, continue for `DRIFT 1/3` compatible/unrelated and `DRIFT 2/3` additive changes, and stop/resynchronize only for proof-backed applicable `DRIFT 3/3` incompatibility. Missing, malformed, or unproved drift metadata is `INTEGRITY ERROR · DRIFT ?/3` and fails closed only the affected action for repository repair, not Project resync.

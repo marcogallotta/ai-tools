@@ -15,6 +15,11 @@
         "dish/docs/agents/five-whys.md#Procedure",
         "dish/docs/agents/five-whys.md#Required output"
       ],
+      "substantial research / material semantic authoring": [
+        "dish/docs/agents/research.md#Shared sufficiency invariant",
+        "dish/docs/agents/research.md#Research procedure",
+        "dish/docs/agents/research.md#Implementation boundary"
+      ],
       "Worker dispatch / phase cutover": [
         "ci/pr-lifecycle-dispatcher-runbook.md#Worker execution profile"
       ],
@@ -1483,6 +1488,21 @@
       "impact": "breaking",
       "surface": "authority",
       "text": "Asana/GitHub actor fields under Marco's account prove attribution, not human action/approval. Never infer human authorization, ownership transfer, or Review verdict; agent durable writes retain Dish Agent role/host provenance."
+    },
+    {
+      "action_boundaries": [
+        "analysis",
+        "role-critical-write",
+        "handoff"
+      ],
+      "delivery": {
+        "mode": "TRIGGERED_READ",
+        "trigger": "substantial research / material semantic authoring"
+      },
+      "id": "epistemic-sufficiency",
+      "impact": "additive",
+      "surface": "safety",
+      "text": "Before substantial research/design or material semantic authoring, apply `research.md`: resolve available authority first; classify material gaps; never turn weak understanding into architecture/code. Only the affected semantic path stops, and only irreducible Marco-only facts interrupt Marco."
     },
     {
       "action_boundaries": [

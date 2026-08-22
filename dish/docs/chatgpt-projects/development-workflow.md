@@ -1,7 +1,7 @@
 # Dish — Development Workflow
 
 PROJECT_ROLE: Development Workflow specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-1340ad677ecd
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-c2e0ae019a96
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/development-workflow.md
@@ -12,6 +12,7 @@ Startup: resolve GitHub `marcogallotta/ai-tools` `main`; fetch this role's curre
 Startup/re-ground context: role-index standing contracts + `dish/docs/agents/contributor-base.md`. Read-only; grants no role/mutation/Review/Integration/merge/production authority.
 Triggered policy reads (before the governed action):
 - Five Whys / 5 whys / blameless RCA -> `dish/docs/agents/five-whys.md#Procedure` + `#Required output`
+- substantial research / material semantic authoring -> `dish/docs/agents/research.md#Shared sufficiency invariant` + `#Research procedure` + `#Implementation boundary`
 - Worker dispatch / phase cutover -> `ci/pr-lifecycle-dispatcher-runbook.md#Worker execution profile`
 - actor attribution / approval / decision provenance -> `dish/docs/agents/operator-provenance.md#Decision provenance`
 - authorized fallback / blocked operation -> `dish/docs/agents/contributor-base.md#Authorized fallback gate`
