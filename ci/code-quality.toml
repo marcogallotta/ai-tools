@@ -1,0 +1,33 @@
+version = 1
+enabled = true
+task_gid = "1217743999805836"
+max_quality_correction_rounds = 2
+local_p95_target_seconds = 10.0
+
+[python_size]
+max_nonblank_lines = 500
+
+[tracked_files]
+manageability_bytes = 100000
+operational_hard_bytes = 200000
+source_extensions = [".py", ".pyi", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".sh", ".bash", ".zsh", ".sql", ".css", ".scss", ".html", ".vue", ".svelte", ".rs", ".go", ".java", ".kt", ".rb", ".php"]
+likely_generated_extensions = [".db", ".sqlite", ".sqlite3", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".zip", ".gz", ".tgz", ".tar", ".bin", ".wasm"]
+generated_registry = "ci/code-quality-generated.json"
+
+[ruff]
+version = "0.16.2"
+select = ["E9", "F", "B006", "B008", "B011", "B012", "B015", "B017", "B018", "B019", "B020", "B023", "B025", "B026", "B029", "B030", "B031", "B032", "B033", "B034", "B035", "B039", "B904", "B905"]
+
+[pyright]
+version = "1.1.411"
+type_checking_mode = "basic"
+include = ["dish", "scripts", "ci", "tools"]
+nonblocking_rules = ["reportMissingImports", "reportMissingModuleSource", "reportUnknownArgumentType", "reportUnknownLambdaType", "reportUnknownMemberType", "reportUnknownParameterType", "reportUnknownVariableType"]
+
+[jscpd]
+version = "4.2.5"
+mode = "mild"
+min_lines = 10
+min_tokens = 80
+scan_paths = ["dish", "scripts", "ci", "tools"]
+ignore = ["**/.venv/**", "**/.venv-flake/**", "**/node_modules/**", "**/.test-artifacts/**", "**/__pycache__/**"]
