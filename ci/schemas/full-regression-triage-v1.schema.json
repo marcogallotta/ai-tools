@@ -47,6 +47,7 @@
     "failing_invariant": {"type": "string", "minLength": 1},
     "failing_lane": {
       "enum": [
+        "pglite",
         "python-control-plane",
         "frontend-static-tooling",
         "native-postgresql",
@@ -76,6 +77,7 @@
             "changed_path_class": {"type": "string", "minLength": 1},
             "expected_lane": {
               "enum": [
+                "pglite",
                 "python-control-plane",
                 "frontend-static-tooling",
                 "native-postgresql",

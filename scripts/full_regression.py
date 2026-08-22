@@ -30,6 +30,7 @@ COMPONENT_SCHEMA = "dish-full-regression-component-v1"
 FAILURE_SCHEMA = "dish-full-regression-failure-v1"
 
 LANES = (
+    "pglite",
     "python-control-plane",
     "frontend-static-tooling",
     "native-postgresql",
@@ -353,6 +354,123 @@ def collect_native_report_failures(
                 output_dir=output_dir, kind="lane", component=lane, source=source,
                 invariant=f"{source} command", failure_kind="command_failed", detail=detail,
             )
+        )
+    return records
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def collect_pglite_report_failures(
+    *,
+    output_dir: Path,
+    lane: str,
+    source: str,
+    report_path: Path,
+    command_exit: int,
+) -> list[dict[str, Any]]:
+    """Translate the governed PGlite report without weakening its classifications."""
+    records: list[dict[str, Any]] = []
+
+    def add(*, group: str | None, invariant: str, failure_kind: str, detail: str | None = None) -> None:
+        records.append(
+            record_failure(
+                output_dir=output_dir,
+                kind="lane",
+                component=lane,
+                source=f"{source}:{group}" if group else source,
+                invariant=invariant,
+                failure_kind=failure_kind,
+                detail=detail,
+            )
+        )
+
+    try:
+        report = _read_json(report_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        report = None
+        parse_error = str(exc)
+    else:
+        parse_error = None
+
+    if not isinstance(report, Mapping) or report.get("format") != "dish-pglite-development-report-v4":
+        detail = "PGlite report is unavailable or has the wrong format"
+        if parse_error:
+            detail += f": {parse_error}"
+        add(invariant="governed PGlite structured report", failure_kind="evidence_invalid", detail=detail, group=None)
+    else:
+        try:
+            if report.get("certification_evidence") is not False or report.get("native_postgresql_certified") is not False:
+                add(
+                    invariant="PGlite report remains non-certifying",
+                    failure_kind="evidence_invalid",
+                    detail="governed PGlite report carried an invalid certification claim",
+                    group=None,
+                )
+            if bool(report.get("passed")) != (command_exit == 0):
+                add(
+                    invariant="PGlite report result matches runner exit",
+                    failure_kind="evidence_invalid",
+                    detail=f"report passed={report.get('passed')!r}; command exit={command_exit}",
+                    group=None,
+                )
+
+            for group_name in ("primary", "quarantine"):
+                group = report[group_name]
+                nodes = group["nodes"]
+                counts = group["counts"]
+                node_assertions = sum(int(node.get("assertion_failures", 0) or 0) for node in nodes)
+                node_infrastructure = sum(int(node.get("infrastructure_failures", 0) or 0) for node in nodes)
+                for node in nodes:
+                    nodeid = str(node.get("nodeid", "")).strip() or "unnamed PGlite node"
+                    detail = str(node.get("detail", "")).strip() or None
+                    if int(node.get("assertion_failures", 0) or 0):
+                        add(group=group_name, invariant=nodeid, failure_kind="assertion_failure", detail=detail)
+                    if int(node.get("infrastructure_failures", 0) or 0):
+                        if node.get("status") == "timeout":
+                            detail = f"timeout: {detail}" if detail else "PGlite node timed out"
+                        add(group=group_name, invariant=nodeid, failure_kind="infrastructure_failure", detail=detail)
+
+                collection_error = group.get("collection_error")
+                if collection_error:
+                    collection_assertions = int(counts.get("assertion_failures", 0) or 0) - node_assertions
+                    collection_infrastructure = int(counts.get("infrastructure_failures", 0) or 0) - node_infrastructure
+                    failure_kind = "infrastructure_failure" if collection_infrastructure > 0 else "assertion_failure"
+                    add(
+                        group=group_name,
+                        invariant=f"{group_name} PGlite inventory collection",
+                        failure_kind=failure_kind,
+                        detail=str(collection_error),
+                    )
+
+                junit_path = Path(str(group["aggregate_junit_path"]))
+                expected_sha = str(group["aggregate_junit_sha256"])
+                if not junit_path.is_file() or not expected_sha or _sha256_file(junit_path) != expected_sha:
+                    add(
+                        group=group_name,
+                        invariant=f"{group_name} aggregate JUnit evidence",
+                        failure_kind="evidence_invalid",
+                        detail=f"aggregate JUnit missing or hash mismatch: {junit_path}",
+                    )
+        except (KeyError, TypeError, ValueError) as exc:
+            add(
+                invariant="governed PGlite structured report",
+                failure_kind="evidence_invalid",
+                detail=f"invalid PGlite report content: {exc}",
+                group=None,
+            )
+
+    if command_exit != 0 and not records:
+        add(
+            invariant=f"{source} command",
+            failure_kind="command_failed",
+            detail=f"command exited with status {command_exit}",
+            group=None,
         )
     return records
 
@@ -853,6 +971,13 @@ def _parser() -> argparse.ArgumentParser:
     junit.add_argument("--junit", type=Path, required=True)
     junit.add_argument("--command-exit", type=int, required=True)
 
+    pglite = sub.add_parser("collect-pglite-report", help="record governed PGlite report failures")
+    pglite.add_argument("--output-dir", type=Path, required=True)
+    pglite.add_argument("--lane", choices=LANES, required=True)
+    pglite.add_argument("--source", required=True)
+    pglite.add_argument("--report", type=Path, required=True)
+    pglite.add_argument("--command-exit", type=int, required=True)
+
     native = sub.add_parser("collect-native-report", help="record native PostgreSQL report failures")
     native.add_argument("--output-dir", type=Path, required=True)
     native.add_argument("--lane", choices=LANES, required=True)
@@ -970,6 +1095,15 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(json.dumps({"failures": payload}, sort_keys=True))
             return 0
+
+        if args.command == "collect-pglite-report":
+            payload = collect_pglite_report_failures(
+                output_dir=args.output_dir, lane=args.lane, source=args.source,
+                report_path=args.report, command_exit=args.command_exit,
+            )
+            print(json.dumps({"failures": payload}, sort_keys=True))
+            evidence_invalid = any(item["failure_kind"] == "evidence_invalid" for item in payload)
+            return 2 if args.command_exit == 0 and evidence_invalid else 0
 
         if args.command == "collect-native-report":
             payload = collect_native_report_failures(

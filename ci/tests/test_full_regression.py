@@ -98,7 +98,7 @@ def test_workflow_contract_is_independent_force_all_diagnostic_backstop():
     assert "scripts/pr_gate.py" not in workflow
     for lane in fr.LANES:
         assert f"--lane {lane} --" in workflow
-    assert workflow.count("run-lane") == 4
+    assert workflow.count("run-lane") == len(fr.LANES)
     assert "Adapter seam" in workflow
     assert workflow.index("Upload durable full-regression evidence") < workflow.index(
         "Enforce terminal full-regression result after evidence upload"
@@ -117,15 +117,23 @@ def test_native_postgresql_skip_waivers_use_shared_registry_serializer():
     assert "1217428310522281" not in workflow
 
 
-def test_workflow_installs_pglite_dependencies_before_python_control_plane_lane():
+def test_workflow_runs_governed_pglite_exactly_once_before_later_groups():
     workflow = WORKFLOW.read_text()
     install = "Install PGlite Node dependencies"
-    lane = "Run Python/control-plane group"
+    pglite_lane = "Run governed PGlite group (harness:pglite-nested-collection)"
+    python_lane = "Run Python/control-plane group"
     assert install in workflow
     assert "--phase pglite-node-dependencies --" in workflow
     assert "cd dish/tests/postgresql/pglite" in workflow
     assert "npm ci --no-audit --no-fund" in workflow
-    assert workflow.index(install) < workflow.index(lane)
+    assert workflow.count("--lane pglite --") == 1
+    assert workflow.count("dish/scripts/dish-pg-pglite") == 1
+    assert workflow.count("harness:pglite-nested-collection") == 1
+    assert workflow.count("collect-pglite-report") == 1
+    assert workflow.index(install) < workflow.index(pglite_lane) < workflow.index(python_lane)
+    assert workflow.index(pglite_lane) < workflow.index("Run frontend static/tooling group")
+    assert workflow.index(pglite_lane) < workflow.index("Run native PostgreSQL group")
+    assert workflow.index(pglite_lane) < workflow.index("Run browser acceptance group")
 
 
 def test_unchanged_success_dedupes_scheduled_only():
@@ -140,12 +148,12 @@ def test_unchanged_success_dedupes_scheduled_only():
 
 def test_failed_lane_records_but_does_not_fail_fast(tmp_path: Path):
     completed = subprocess.run(
-        [sys.executable, str(SCRIPT), "run-lane", "--output-dir", str(tmp_path), "--lane", "python-control-plane", "--", sys.executable, "-c", "import sys; sys.exit(7)"],
+        [sys.executable, str(SCRIPT), "run-lane", "--output-dir", str(tmp_path), "--lane", "pglite", "--", sys.executable, "-c", "import sys; sys.exit(7)"],
         cwd=ROOT,
         check=False,
     )
     assert completed.returncode == 0
-    record = json.loads((tmp_path / "components/lane-python-control-plane.json").read_text())
+    record = json.loads((tmp_path / "components/lane-pglite.json").read_text())
     assert record["status"] == "failed" and record["exit_code"] == 7
 
 
@@ -235,6 +243,8 @@ def test_missing_required_lane_fails_closed(tmp_path: Path):
 def test_triage_has_exact_three_classes_and_selector_miss_exact_head_binding():
     schema = json.loads(TRIAGE_SCHEMA.read_text())
     assert schema["properties"]["classification"]["enum"] == list(fr.CLASSIFICATIONS)
+    assert schema["properties"]["failing_lane"]["enum"] == list(fr.LANES)
+    assert schema["properties"]["required_selector_correction"]["properties"]["representative_selector_regression"]["properties"]["expected_lane"]["enum"] == list(fr.LANES)
     record = _miss()
     fr.validate_triage_record(record)
     record["certification"]["candidate_sha"] = "d" * 40
@@ -324,7 +334,99 @@ def test_triage_related_failure_must_match_evidence_lane_and_invariant(tmp_path:
         fr.validate_triage_record(record, evidence)
 
 
-def test_evidence_schema_requires_all_four_lanes_and_distinct_failure_contract():
+def test_pglite_report_preserves_assertion_infrastructure_and_junit_evidence(tmp_path: Path):
+    primary_junit = tmp_path / "primary.junit.xml"
+    quarantine_junit = tmp_path / "quarantine.junit.xml"
+    primary_junit.write_text('<testsuite tests="1" failures="1"/>')
+    quarantine_junit.write_text('<testsuite tests="1" errors="1"/>')
+    report = {
+        "format": "dish-pglite-development-report-v4",
+        "certification_evidence": False,
+        "native_postgresql_certified": False,
+        "passed": False,
+        "primary": {
+            "collection_error": None,
+            "nodes": [{
+                "nodeid": "tests/postgresql/test_primary.py::test_case",
+                "status": "failed",
+                "assertion_failures": 1,
+                "infrastructure_failures": 0,
+                "detail": "expected row",
+            }],
+            "counts": {"assertion_failures": 1, "infrastructure_failures": 0},
+            "aggregate_junit_path": str(primary_junit),
+            "aggregate_junit_sha256": fr._sha256_file(primary_junit),
+        },
+        "quarantine": {
+            "collection_error": None,
+            "nodes": [{
+                "nodeid": "tests/postgresql/test_quarantine.py::test_case",
+                "status": "infrastructure",
+                "assertion_failures": 0,
+                "infrastructure_failures": 1,
+                "detail": "connection refused",
+            }],
+            "counts": {"assertion_failures": 0, "infrastructure_failures": 1},
+            "aggregate_junit_path": str(quarantine_junit),
+            "aggregate_junit_sha256": fr._sha256_file(quarantine_junit),
+        },
+    }
+    report_path = tmp_path / "pglite-report.json"
+    report_path.write_text(json.dumps(report))
+
+    failures = fr.collect_pglite_report_failures(
+        output_dir=tmp_path, lane="pglite", source="dish-pg-pglite",
+        report_path=report_path, command_exit=2,
+    )
+
+    assert {(item["source"], item["failure_kind"], item["invariant"]) for item in failures} == {
+        ("dish-pg-pglite:primary", "assertion_failure", "tests/postgresql/test_primary.py::test_case"),
+        ("dish-pg-pglite:quarantine", "infrastructure_failure", "tests/postgresql/test_quarantine.py::test_case"),
+    }
+
+
+    _state(tmp_path)
+    _lanes(tmp_path, failed="pglite")
+    evidence = fr.finalize_run(output_dir=tmp_path, evidence_path=tmp_path / "evidence.json")
+    assert evidence["overall_result"] == "failed"
+    assert set(evidence["lane_results"]["pglite"]["failure_ids"]) == {
+        item["failure_id"] for item in failures
+    }
+
+
+def test_pglite_report_missing_junit_fails_evidence_closed(tmp_path: Path):
+    report = {
+        "format": "dish-pglite-development-report-v4",
+        "certification_evidence": False,
+        "native_postgresql_certified": False,
+        "passed": True,
+        "primary": {
+            "collection_error": None, "nodes": [],
+            "counts": {"assertion_failures": 0, "infrastructure_failures": 0},
+            "aggregate_junit_path": str(tmp_path / "missing-primary.xml"),
+            "aggregate_junit_sha256": "0" * 64,
+        },
+        "quarantine": {
+            "collection_error": None, "nodes": [],
+            "counts": {"assertion_failures": 0, "infrastructure_failures": 0},
+            "aggregate_junit_path": str(tmp_path / "missing-quarantine.xml"),
+            "aggregate_junit_sha256": "0" * 64,
+        },
+    }
+    report_path = tmp_path / "pglite-report.json"
+    report_path.write_text(json.dumps(report))
+
+    failures = fr.collect_pglite_report_failures(
+        output_dir=tmp_path, lane="pglite", source="dish-pg-pglite",
+        report_path=report_path, command_exit=0,
+    )
+
+    assert len(failures) == 2
+    assert {item["failure_kind"] for item in failures} == {"evidence_invalid"}
+    assert all("aggregate JUnit evidence" in item["invariant"] for item in failures)
+
+
+def test_evidence_schema_requires_all_governed_lanes_and_distinct_failure_contract():
     schema = json.loads(EVIDENCE_SCHEMA.read_text())
     assert set(schema["properties"]["lane_results"]["required"]) == set(fr.LANES)
     result = schema["$defs"]["result"]
