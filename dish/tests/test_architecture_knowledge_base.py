@@ -10,6 +10,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 ARCHITECTURE = ROOT / "docs" / "architecture"
 INDEX = ARCHITECTURE / "index.md"
+DEVELOPMENT_WORKFLOW = ARCHITECTURE / "development-workflow"
+DEVELOPMENT_WORKFLOW_INDEX = DEVELOPMENT_WORKFLOW / "index.md"
 DOMAIN_DOCUMENTS = (
     "system-context.md",
     "authority-and-data-ownership.md",
@@ -51,6 +53,24 @@ REPOSITORY_PATH_PREFIXES = (
     "frontend/",
     "openapi/",
     "docs/",
+)
+DEVELOPMENT_WORKFLOW_DOCUMENTS = (
+    "system-context.md",
+    "authority-and-state.md",
+    "lifecycle.md",
+    "work-identity-and-concurrency.md",
+    "review-certification-integration.md",
+    "execution-hosts-and-operator-boundary.md",
+    "recovery-observability-and-completion.md",
+    "extension-rules.md",
+)
+DEVELOPMENT_WORKFLOW_HEADINGS = (
+    "Read this when",
+    "Scope",
+    "Current architecture",
+    "Invariants",
+    "Current anchors",
+    "Related documents",
 )
 
 
@@ -115,6 +135,57 @@ def test_architecture_index_is_a_complete_router() -> None:
     ):
         assert f"## {heading}" in index
     assert "Runbooks describe operations; architecture documents describe ownership and invariants." in index
+    assert "[Development Workflow architecture](development-workflow/index.md)" in index
+
+
+def test_development_workflow_index_is_a_complete_subordinate_router() -> None:
+    index = DEVELOPMENT_WORKFLOW_INDEX.read_text(encoding="utf-8")
+    assert "single canonical [Dish architecture knowledge base](../index.md)" in index
+    for heading in (
+        "One-page system overview",
+        "Current authority summary",
+        "Start here for…",
+        "Task-to-document routing",
+        "Authoritative-code and runbook map",
+        "Document status and ownership",
+        "Architecture decisions",
+    ):
+        assert f"## {heading}" in index
+    missing = [
+        path.relative_to(DEVELOPMENT_WORKFLOW).as_posix()
+        for path in sorted(DEVELOPMENT_WORKFLOW.rglob("*.md"))
+        if path != DEVELOPMENT_WORKFLOW_INDEX
+        and f"({path.relative_to(DEVELOPMENT_WORKFLOW).as_posix()})" not in index
+    ]
+    assert missing == []
+
+
+@pytest.mark.parametrize("name", DEVELOPMENT_WORKFLOW_DOCUMENTS)
+def test_development_workflow_documents_have_navigation_contract(name: str) -> None:
+    text = (DEVELOPMENT_WORKFLOW / name).read_text(encoding="utf-8")
+    for heading in DEVELOPMENT_WORKFLOW_HEADINGS:
+        assert f"## {heading}" in text
+
+
+def test_development_workflow_adr_index_covers_all_adrs() -> None:
+    decisions = DEVELOPMENT_WORKFLOW / "decisions"
+    index = (decisions / "index.md").read_text(encoding="utf-8")
+    missing = [path.name for path in sorted(decisions.glob("*.md")) if path.name != "index.md" and f"({path.name})" not in index]
+    assert missing == []
+
+
+def test_development_workflow_design_implementation_and_review_start_at_canonical_index() -> None:
+    for relative in (
+        "agents/development-workflow.md",
+        "agents/implementation.md",
+        "agents/review.md",
+    ):
+        text = (ROOT / "docs" / relative).read_text(encoding="utf-8")
+        assert "architecture/index.md" in text
+
+
+def test_development_workflow_architecture_has_text_diagram() -> None:
+    assert "```mermaid" in DEVELOPMENT_WORKFLOW_INDEX.read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("name", DOMAIN_DOCUMENTS)
