@@ -544,8 +544,8 @@
             "dish/docs/agents/implementation.md#Canonical PR workflow",
             "dish/docs/agents/implementation.md#Publication blockers and local branch completion"
           ],
-          "remote-vs-local semantic implementation routing": [
-            "dish/docs/agents/implementation.md#Publication blockers and local branch completion"
+          "fresh implementation routing": [
+            "dish/docs/agents/implementation.md#Start from authoritative task and repository identity"
           ]
         }
       },
@@ -628,12 +628,12 @@
           ],
           "delivery": {
             "mode": "TRIGGERED_READ",
-            "trigger": "remote-vs-local semantic implementation routing"
+            "trigger": "fresh implementation routing"
           },
           "id": "implementation-remote-first-local-boundary",
           "impact": "additive",
           "surface": "routing",
-          "text": "Default semantic Implementation to hosted/ChatGPT. Local source work requires `IMPLEMENTATION / PUBLICATION` naming the unavailable hosted capability and exhausted fallbacks; `TESTS ONLY`, `LOCAL SYSTEM ACCESS`, runtime, convenience, or prior local use never justify it."
+          "text": "Default semantic Implementation to hosted/ChatGPT. For fresh authoring with authoritative task/repo/target and no lineage, orchestration derives and records branch/base; missing prefilled mechanics never routes to Marco or local. Existing lineages stay exact. Local source work still requires a proved unavailable hosted capability and exhausted fallbacks."
         },
         {
           "action_boundaries": [

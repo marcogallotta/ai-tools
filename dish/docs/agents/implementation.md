@@ -2,7 +2,7 @@
 
 This is the standing contract for Dish implementation and fix agents. All implementation work inherits [`contributor-base.md`](contributor-base.md). Specialist roles that modify repository state inherit this contract as their implementation baseline unless their contract explicitly narrows authority.
 
-Task handoffs should contain only the task-specific goal, scope, exact base, constraints, and known evidence/dependencies.
+Task handoffs carry only the task-specific goal, scope, constraints, and known evidence/dependencies. For fresh authoring, routine branch/base mechanics are agent/orchestration-owned when the authoritative task, repository, and target already determine them; do not ask Marco to supply those fields.
 
 Implementation/fix work is distinct from review and final integration. The canonical lifecycle for new work is:
 
@@ -14,7 +14,7 @@ GitHub branch/commit/PR identity is the authoritative code artifact and review s
 
 Do not continuously poll `origin` while implementing. Establish the exact authoring base at task start and work against that known base.
 
-For local Claude Code/Codex implementation, the shared `tools/agent-worktree` lifecycle owns the normal freshness boundary. First creation verifies the supplied exact base ref + SHA against authoritative `origin` before it creates the owned branch/worktree. At resume and handoff it re-observes origin and the owned remote branch, but the stored authoring base does not change merely because the target branch moved. Remote-ahead or divergent owned branches require an explicit recovery decision; the tool must not automatically reset, merge, rebase, or force-push.
+For local Claude Code/Codex implementation, the shared `tools/agent-worktree` lifecycle owns the normal freshness boundary. First creation verifies the exact base ref + SHA recorded for the attempt against authoritative `origin` before it creates the owned branch/worktree. When fresh-authoring task/repository/target authority is complete but routine mechanics were not prefilled, Implementation resolves the current target/base, chooses the canonical branch, records the complete assignment identity, and continues without a Marco round-trip. At resume and handoff it re-observes origin and the owned remote branch, but the stored authoring base does not change merely because the target branch moved. Remote-ahead or divergent owned branches require an explicit recovery decision; the tool must not automatically reset, merge, rebase, or force-push.
 
 Fetch/synchronize during implementation only when:
 
@@ -24,15 +24,19 @@ Fetch/synchronize during implementation only when:
 
 Do not update task state merely because unrelated commits appear on GitHub.
 
-## Start from the supplied authority
+## Start from authoritative task and repository identity
 
-Use the exact authoritative source supplied with the task. For repository work, record the exact base commit SHA. Do not invent a different source identity.
+Use the exact authoritative task/objective and source identity available from the request plus live authority. For repository work, record the exact base commit SHA. Do not invent a different source identity.
+
+For **fresh authoring only**, if the authoritative task, repository, and target are known and no durable branch/PR/worktree lineage exists, resolve the current target/base from live Git/GitHub, choose the normal `agent/<short-task-slug>` branch, record the full assignment tuple, then acquire the worktree claim/create path. Read-only task/repository/GitHub investigation needed to resolve that tuple is allowed before the claim; task-owned branch/worktree mutation is not. Missing prefilled branch/base values alone are not a blocker, a local-host justification, or a reason to ask Marco for internal mechanics.
+
+Existing/resumed/fix/publication-completion work is different: bind the exact durable task/branch/PR/head/base and continue that lineage. Never derive a convenient replacement lineage. Stop only for a real contradiction that routine reconciliation cannot resolve, such as a conflicting live owner, ambiguous target repository/branch, existing branch/PR mismatch, or incompatible durable base/claim state. A stale or mismatched newly resolved base still fails the existing origin/freshness check; do not chase a moved target.
 
 Before changing Dish code, follow root `CLAUDE.md` and start at `dish/docs/architecture/index.md` for subsystem routing.
 
 Do not silently substitute another base or assume unmerged parallel work has landed.
 
-Every repository-changing implementation/fix assignment uses the single canonical handoff contract at [`templates/implementation-handoff.md`](templates/implementation-handoff.md). Treat repository + Asana task GID + authorized branch + existing PR/expected head as one assignment identity. When that handoff projects an exact accepted design/spec generation, Marco Intent Baseline, protected invariants, solution envelope, or Review Focus, treat those as bounded projections back to the named authority rather than new authority; a material handoff/governing-source mismatch stops the affected semantic work for projection repair instead of being silently resolved in code. Matching task identity on a different branch or PR never authorizes adopting or modifying that lineage. Local Claude Code/Codex work acquires the matching `tools/agent-worktree claim` before touching task-owned worktree or branch state; replacement/fix/publication handoffs reconcile the same claim before takeover.
+Every repository-changing implementation/fix assignment uses the single canonical handoff contract at [`templates/implementation-handoff.md`](templates/implementation-handoff.md). Treat repository + Asana task GID + authorized branch + existing PR/expected head as one assignment identity. The exact tuple must exist before task-owned mutation, but for fresh authoring the authorized agent/orchestration may derive and record its routine branch/base fields from live authority; the tuple is a machine safety invariant, not mandatory operator input. When that handoff projects an exact accepted design/spec generation, Marco Intent Baseline, protected invariants, solution envelope, or Review Focus, treat those as bounded projections back to the named authority rather than new authority; a material handoff/governing-source mismatch stops the affected semantic work for projection repair instead of being silently resolved in code. Matching task identity on a different branch or PR never authorizes adopting or modifying that lineage. Local Claude Code/Codex work acquires the matching `tools/agent-worktree claim` before touching task-owned worktree or branch state; replacement/fix/publication handoffs reconcile the same claim before takeover.
 
 Before returning an assigned implementation as no-op/already-fixed/not-reproducible, apply the inherited assigned-task dismissal gate to the owning task's notes and material history; current source/runtime health alone is not enough to erase a recorded historical defect. Before declaring a routine authorized implementation/publication action blocked, apply the inherited authorized-fallback gate and verify any state-changing fallback before reporting success.
 
@@ -80,7 +84,7 @@ When the current Review standing contract itself requires a same-execution post-
 
 For new work:
 
-1. create or take ownership of the implementation branch from the exact supplied base;
+1. create or take ownership of the implementation branch from the exact recorded authoring base;
 2. make the smallest coherent change that satisfies the task;
 3. commit/publish coherent work on the owned branch;
 4. open a **draft pull request** early when useful for durable Git/PR identity;
@@ -300,7 +304,7 @@ Do not rerun large suites merely to produce volume when existing focused evidenc
 
 Return enough information for the coordinator/reviewer to proceed without reconstructing your work:
 
-1. result and whether the requested gap existed on the supplied base;
+1. result and whether the requested gap existed on the recorded authoring base;
 2. PR URL;
 3. owned branch name;
 4. exact implementation commit SHA and current PR head SHA;

@@ -7,7 +7,7 @@ Asana may mirror or link this contract, but it is not the sole policy source.
 
 ## Assignment identity
 
-Every handoff states this tuple explicitly:
+Every repository-changing assignment has this exact tuple recorded before task-owned mutation:
 
 ```text
 Repository: marcogallotta/ai-tools
@@ -21,10 +21,22 @@ Assignment class: <implementation | fix | local implementation completion>
 Implementation host: <CHATGPT_IMPLEMENTATION | LOCAL_IMPLEMENTATION>
 ```
 
+For fresh authoring, this is not a Marco input form. When the authoritative task/objective,
+repository, and target are already known and no existing lineage governs, orchestration or the
+authorized Implementation agent resolves the current base ref/SHA, chooses the canonical
+`agent/<short-task-slug>` branch, records the tuple, then acquires the worktree claim/create path.
+Read-only authority resolution may precede the claim; task-owned branch/worktree mutation may not. Missing
+prefilled branch/base fields alone never require a Marco round-trip.
+
+Existing/resumed/fix/publication-completion assignments never regenerate this identity. They bind
+the durable branch/PR/head/base and stop for a genuine unresolved owner, target, lineage, or base
+contradiction. A newly resolved stale/mismatched base still fails the normal origin/freshness check.
+
 When initial pre-PR orchestration selects `CHATGPT_IMPLEMENTATION` and later Review routing may use
 that fact, the **independent pre-launch authority** is the durable Asana operator-handoff record
-written by `scripts/operator_handoff.py` before the writer is launched. Use target role
-`Implementation`, record the known branch/base with `PR: not yet known` and `Head: not yet known`,
+written by `scripts/operator_handoff.py` before the writer is launched. Orchestration mechanically
+derives the fresh branch/base from current authority; Marco does not enter them. Use target role
+`Implementation`, record the resolved branch/base with `PR: not yet known` and `Head: not yet known`,
 require its normal state + story readback, and use this exact source string (single spaces, field
 order unchanged):
 
@@ -60,7 +72,7 @@ write, publish, or complete that other lineage. If any element disagrees with li
 local worktree state, stop and reconcile the contradiction rather than choosing a lineage from
 memory or convenience.
 
-The supplied base is the authoring base. Later target-branch movement is observed at normal
+The recorded base is the authoring base. Later target-branch movement is observed at normal
 resume/handoff boundaries; it does not silently replace the base or authorize rebase/reset.
 
 ## Local dispatch ownership
@@ -69,7 +81,7 @@ Claude Code/Codex repository writers acquire the matching exclusive local claim 
 branch/worktree state or executing the implementation agent. `tools/agent-worktree claim` is the
 only dispatch/start ownership gate; writer subcommands run inside it.
 
-New work:
+New work (after orchestration/Implementation has resolved and recorded the fresh assignment tuple):
 
 ```sh
 tools/agent-worktree claim \

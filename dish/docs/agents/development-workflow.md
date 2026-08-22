@@ -263,7 +263,7 @@ For local Claude Code/Codex implementation, `tools/agent-worktree` is the shared
 Repository freshness must be deterministic:
 
 - resolve the repository/common-dir/worktree/origin identity before network or mutation;
-- on first creation, require the supplied exact base ref + SHA to equal authoritative `origin` before the owned branch/worktree exists; fetch missing objects without moving local target/task refs;
+- for fresh authoring with authoritative task/repository/target and no existing lineage, derive and record the canonical branch plus exact base ref + SHA without asking Marco for routine mechanics; on first creation require that recorded base to equal authoritative `origin` before the owned branch/worktree exists, fetching missing objects without moving local target/task refs;
 - on resume, preserve dirty files/index and the stored authoring base while observing current target and owned-remote heads;
 - fail closed on wrong-worktree identity, remote-ahead, divergence, or recovery ambiguity rather than silently resetting/merging/rebasing/force-pushing semantic changes;
 - publish only the explicit owned branch refspec and verify the remote owned head equals local `HEAD`;

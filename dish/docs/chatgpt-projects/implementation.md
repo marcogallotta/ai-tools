@@ -1,7 +1,7 @@
 # Dish — Implementation
 
 PROJECT_ROLE: Implementation
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-b545b493a5cc
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-7d10fa5d611e
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/implementation.md
@@ -25,7 +25,7 @@ Triggered policy reads (before the governed action):
 - friction / code-debt finding -> `dish/docs/agents/contributor-base.md#Development Workflow Friction capture` + `#Code-smell / engineering-debt logging`
 - post-PR fix routing -> `dish/docs/agents/implementation.md#Branch and worktree ownership` + `#Manual Worker formal-BLOCK fix continuation` + `#Review-head changes`
 - publication / local completion / materializer -> `dish/docs/agents/implementation.md#Canonical PR workflow` + `#Publication blockers and local branch completion`
-- remote-vs-local semantic implementation routing -> `dish/docs/agents/implementation.md#Publication blockers and local branch completion`
+- fresh implementation routing -> `dish/docs/agents/implementation.md#Start from authoritative task and repository identity`
 
 Work chat: after mandatory startup, apply root `CLAUDE.md` `## Work chat`; until grounded, be concise and lead with result/action/blocker/decision.
 

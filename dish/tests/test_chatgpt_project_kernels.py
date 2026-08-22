@@ -662,6 +662,38 @@ def test_role_and_publication_boundaries_remain_high_salience():
  assert 'current head must equal the exact reviewed/certified head' in integ
 
 
+def test_fresh_implementation_identity_is_agent_derived_without_weakening_lineage_guards():
+ _,source=kernels.load_canonical()
+ rule={r['id']:r for r in kernels.effective_rules(source,'implementation')}[
+  'implementation-remote-first-local-boundary'
+ ]
+ assert rule['impact']=='additive'
+ assert 'orchestration derives and records branch/base' in rule['text']
+ assert 'Existing lineages stay exact' in rule['text']
+ root=(DISH_ROOT.parent/'CLAUDE.md').read_text()
+ implementation=(DISH_ROOT/'docs'/'agents'/'implementation.md').read_text()
+ handoff=(DISH_ROOT/'docs'/'agents'/'templates'/'implementation-handoff.md').read_text()
+ workflow=(DISH_ROOT/'docs'/'agents'/'development-workflow.md').read_text()
+ architecture=(DISH_ROOT/'docs'/'architecture'/'development-workflow'/'execution-hosts-and-operator-boundary.md').read_text()
+ for text in (root,implementation,handoff,workflow,architecture):
+  assert 'Marco' in text
+ assert 'Missing prefilled branch/base values alone are not a blocker' in implementation
+ assert 'Existing/resumed/fix/publication-completion work is different' in implementation
+ assert 'this is not a Marco input form' in handoff
+ assert 'task-owned branch/worktree mutation may not' in handoff
+ ids={scenario['id'] for scenario in kernels._evals()}
+ assert {
+  'implementation-start-derives-fresh-identity',
+  'implementation-start-missing-prefill-no-block',
+  'implementation-start-conflicting-lineage-blocks',
+  'implementation-start-stale-derived-base-refuses',
+  'implementation-start-existing-pr-no-rederive',
+  'implementation-start-chatgpt-prelaunch-derived',
+  'implementation-start-local-authority-no-redundant-asana',
+  'implementation-start-claim-boundary',
+ }<=ids
+
+
 def test_integration_rendered_kernel_preserves_v1a_local_only_landing_boundary():
  _,s=kernels.load_canonical()
  source={r['id']:r for r in s['roles']['integration']['rules']}['integration-local-only']['text']
@@ -861,8 +893,8 @@ def test_triggered_rule_text_change_does_not_manufacture_project_settings_versio
 def test_required_version_inventory_matches_published_first_parent_history_and_restores_losses():
  m,s=kernels.load_canonical(); versions=kernels.required_versions(m)
  expected={f'dish-chatgpt-projects-v2-{x}' for x in ['d96ab5f0588d','708fb9a9a9bc','39ff3abc502e','857d88788c12','23365034a0f1','9575ccfd79c8','28dcb04decc8','9bb70124ca21','694190185f60','712e3b16aa05','d048682742d6','54041bbbc8d8','86b8011172ee','219f34402511','9bf227f53f0a','5d24af30193a','bfaeef68aed9','d3a070d57fb2','443e13732e7f','7644d9ed0518','0a572f3b0a67']}
- expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d','dish-chatgpt-projects-v2-7924b7da9fc0','dish-chatgpt-projects-v2-3fe9827c4adc','dish-chatgpt-projects-v2-a9cefd1968b7','dish-chatgpt-projects-v2-05211aedbf1c','dish-chatgpt-projects-v2-7a1029f2d804','dish-chatgpt-projects-v2-dc2161f69f2e','dish-chatgpt-projects-v2-fdf64d096829','dish-chatgpt-projects-v2-1340ad677ecd','dish-chatgpt-projects-v2-c2e0ae019a96','dish-chatgpt-projects-v2-dcebf487897c','dish-chatgpt-projects-v2-3ff60ea28ba4','dish-chatgpt-projects-v2-ae1ea8a3ef1a','dish-chatgpt-projects-v2-69f3f14a3426'})
- assert set(versions)==expected and len(versions)==39
+ expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d','dish-chatgpt-projects-v2-7924b7da9fc0','dish-chatgpt-projects-v2-3fe9827c4adc','dish-chatgpt-projects-v2-a9cefd1968b7','dish-chatgpt-projects-v2-05211aedbf1c','dish-chatgpt-projects-v2-7a1029f2d804','dish-chatgpt-projects-v2-dc2161f69f2e','dish-chatgpt-projects-v2-fdf64d096829','dish-chatgpt-projects-v2-1340ad677ecd','dish-chatgpt-projects-v2-c2e0ae019a96','dish-chatgpt-projects-v2-dcebf487897c','dish-chatgpt-projects-v2-3ff60ea28ba4','dish-chatgpt-projects-v2-ae1ea8a3ef1a','dish-chatgpt-projects-v2-69f3f14a3426','dish-chatgpt-projects-v2-b545b493a5cc'})
+ assert set(versions)==expected and len(versions)==40
  assert kernels.validate_required_version_topology(m)==versions
  for old in ('dish-chatgpt-projects-v2-39ff3abc502e','dish-chatgpt-projects-v2-9bb70124ca21'):
   path=kernels._change_path(m,old); assert path and path[-1]['to_version']==m['canonical_version']

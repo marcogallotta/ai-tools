@@ -5283,6 +5283,78 @@
       ],
       "required_rules": ["review-action-handoff"],
       "roles": ["review"]
+    },
+    {
+      "expected_outcome": "fresh_assignment_identity_is_agent_derived",
+      "forbidden_actions": ["ask-marco-for-branch", "ask-marco-for-base-sha", "mutate-before-recorded-identity"],
+      "id": "implementation-start-derives-fresh-identity",
+      "prompt": "Implementation has an authoritative task, repository, and target branch. No branch, PR, worktree, or claim exists and no branch/base tuple was prefilled. Start the work.",
+      "required_actions": ["read-live-task-repository-and-target", "derive-canonical-agent-branch", "resolve-exact-current-base", "record-complete-assignment-tuple", "claim-before-task-owned-mutation"],
+      "required_rules": ["implementation-remote-first-local-boundary"],
+      "roles": ["implementation"]
+    },
+    {
+      "expected_outcome": "missing_prefill_is_not_an_operator_blocker",
+      "forbidden_actions": ["report-publication-blocker", "request-marco-metadata", "route-local-because-prefill-missing"],
+      "id": "implementation-start-missing-prefill-no-block",
+      "prompt": "The implementation objective and repository target are authoritative, but the handoff omitted routine fresh-authoring branch/base fields. There is no existing lineage or contradiction.",
+      "required_actions": ["classify-missing-prefill-as-routine-mechanics", "derive-and-record-identity", "continue-without-marco-round-trip"],
+      "required_rules": ["implementation-remote-first-local-boundary"],
+      "roles": ["implementation"]
+    },
+    {
+      "expected_outcome": "real_live_lineage_conflict_fails_closed",
+      "forbidden_actions": ["invent-replacement-lineage", "overwrite-live-owner", "choose-convenient-base"],
+      "id": "implementation-start-conflicting-lineage-blocks",
+      "prompt": "Fresh reads find an existing task branch/PR owned by another live writer whose durable identity conflicts with the proposed new branch.",
+      "required_actions": ["bind-exact-conflicting-identities", "stop-task-owned-mutation", "route-owner-lineage-reconciliation"],
+      "required_rules": ["implementation-remote-first-local-boundary"],
+      "roles": ["implementation"]
+    },
+    {
+      "expected_outcome": "stale_derived_base_hits_existing_freshness_refusal",
+      "forbidden_actions": ["silently-chase-moved-target", "reset-or-rebase-automatically", "ask-marco-to-supply-new-sha"],
+      "id": "implementation-start-stale-derived-base-refuses",
+      "prompt": "Implementation recorded a freshly derived base, but authoritative origin moved before first worktree creation and the recorded ref/SHA no longer matches.",
+      "required_actions": ["preserve-recorded-attempt-identity", "fail-existing-origin-freshness-check", "reconcile-current-authority-before-new-attempt"],
+      "required_rules": ["implementation-remote-first-local-boundary"],
+      "roles": ["implementation"]
+    },
+    {
+      "expected_outcome": "existing_pr_lineage_cannot_be_regenerated",
+      "forbidden_actions": ["derive-new-branch", "create-replacement-pr", "discard-durable-base-or-head"],
+      "id": "implementation-start-existing-pr-no-rederive",
+      "prompt": "A fix assignment already names an exact task, PR, branch, blocked head, and base. A newly derived branch would be easier to use.",
+      "required_actions": ["bind-existing-durable-lineage", "continue-same-pr-only", "treat-mismatch-as-reconciliation-not-fresh-authoring"],
+      "required_rules": ["implementation-remote-first-local-boundary"],
+      "roles": ["implementation"]
+    },
+    {
+      "expected_outcome": "chatgpt_prelaunch_record_uses_orchestration_derived_identity",
+      "forbidden_actions": ["ask-marco-to-enter-branch-base", "accept-caller-chosen-provenance", "launch-before-record-readback"],
+      "id": "implementation-start-chatgpt-prelaunch-derived",
+      "prompt": "Initial orchestration selects CHATGPT_IMPLEMENTATION for authoritative fresh work without a prefilled branch/base. Later Review routing needs the prelaunch witness.",
+      "required_actions": ["derive-branch-base-from-live-authority", "write-canonical-prelaunch-record", "verify-task-state-and-story-readback", "use-returned-handoff-identity"],
+      "required_rules": ["implementation-remote-first-local-boundary"],
+      "roles": ["implementation"]
+    },
+    {
+      "expected_outcome": "local_explicit_task_authority_needs_no_redundant_asana_prelaunch",
+      "forbidden_actions": ["manufacture-second-authority-record", "ask-marco-to-confirm-routine-fields", "treat-record-absence-as-no-authority"],
+      "id": "implementation-start-local-authority-no-redundant-asana",
+      "prompt": "Codex has explicit Implementation authority for a live task plus authoritative repository/target facts and no existing lineage. There is no ChatGPT routing requirement.",
+      "required_actions": ["derive-and-record-local-assignment", "use-existing-task-authority", "acquire-worktree-claim", "continue-without-redundant-prelaunch-ceremony"],
+      "required_rules": ["implementation-remote-first-local-boundary"],
+      "roles": ["implementation"]
+    },
+    {
+      "expected_outcome": "read_only_identity_resolution_precedes_claim_but_mutation_does_not",
+      "forbidden_actions": ["mutate-branch-before-claim", "commit-directly-to-main", "self-review", "claim-integration-authority"],
+      "id": "implementation-start-claim-boundary",
+      "prompt": "Implementation must discover the live task, target, current base, and absence of a lineage before creating a local worktree.",
+      "required_actions": ["allow-read-only-authority-resolution", "record-exact-assignment-before-mutation", "claim-before-branch-worktree-mutation", "preserve-independent-review-and-integration-separation"],
+      "required_rules": ["implementation-remote-first-local-boundary", "implementation-no-self-review-integration"],
+      "roles": ["implementation"]
     }
   ],
   "schema_version": 3
