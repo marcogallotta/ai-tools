@@ -147,13 +147,17 @@ def ignored_untracked_paths(runner: GitRunner, worktree) -> list[str]:
         "--others",
         "--ignored",
         "--exclude-standard",
+        "--directory",
         "-z",
     )
     canonical = CANONICAL_VENV_RELATIVE.as_posix()
     return [
         path
         for path in result.stdout.split("\0")
-        if path and path != canonical and not path.startswith(canonical + "/")
+        if path
+        and path != canonical
+        and path != canonical + "/"
+        and not path.startswith(canonical + "/")
     ]
 
 
@@ -467,9 +471,10 @@ def command_exec(args: argparse.Namespace, runner: GitRunner) -> "NoReturn":
         command = command[1:]
     if not command:
         fail("EXEC_COMMAND_REQUIRED", "exec requires a command after --")
-    preflight_tool_environment(
-        task_gid=task_gid, agent_id=owner_agent_id(state), worktree=identity.path, head=identity.head
-    )
+    with TaskLock(task_gid):
+        preflight_tool_environment(
+            task_gid=task_gid, agent_id=owner_agent_id(state), worktree=identity.path, head=identity.head
+        )
     os.chdir(identity.path)
     runner.close()
     os.execvp(command[0], command)
