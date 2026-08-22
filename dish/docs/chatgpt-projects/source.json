@@ -58,9 +58,10 @@
       "DP-07",
       "DP-08",
       "DP-09",
-      "DP-10"
+      "DP-10",
+      "DP-11"
     ],
-    "sha256": "c50260523a67185ddc4362960f448864b62194ab3bbbbb8be76da2cd7537770d",
+    "sha256": "0ebf83ed870a3e567f47db7b6e7198a219dfa2f9827569feb0d780c8e3dd3a2b",
     "shared_rule_id": "design-principles-bootstrap",
     "surface": "authority"
   },
@@ -299,6 +300,46 @@
             "mode": "DIRECT_ALWAYS_ON"
           },
           "text": "Before semantic Implementation dispatch from an accepted Review-V3 generation, require the canonical handoff to faithfully project exact generation, durable Marco intent, accepted scope, applicable invariants and material Review Focus; mismatch => zero dispatch until repaired."
+        },
+        {
+          "action_boundaries": [
+            "dispatch",
+            "handoff"
+          ],
+          "delivery": {
+            "mode": "DIRECT_ALWAYS_ON"
+          },
+          "id": "review-v4-final-admission",
+          "impact": "additive",
+          "surface": "safety",
+          "text": "Before material dispatch, fast-check exact generation/PASS+authorship, human provenance, complete intent/invariants/verbatim wording, current human decision, faithful handoff, and later invalidation; any delta stops only affected dispatch."
+        },
+        {
+          "action_boundaries": [
+            "status",
+            "dispatch",
+            "handoff"
+          ],
+          "delivery": {
+            "mode": "DIRECT_ALWAYS_ON"
+          },
+          "id": "review-v4-human-surface-autonomy",
+          "impact": "additive",
+          "surface": "lifecycle",
+          "text": "Current V2 Needs Human Review surfaces its exact decision revision via existing mechanics. Interactive work is Marco-selected; ordinary Asana task + go and routine correction stay autonomous."
+        },
+        {
+          "action_boundaries": [
+            "dispatch",
+            "handoff"
+          ],
+          "delivery": {
+            "mode": "DIRECT_ALWAYS_ON"
+          },
+          "id": "review-v4-verbatim-intent",
+          "impact": "additive",
+          "surface": "authority",
+          "text": "Marco-supplied/approved exact headline/outcome/invariant/non-goal/required wording stays verbatim; any rewrite needs exact delta, consequence, and explicit approval."
         }
       ]
     },
@@ -492,6 +533,33 @@
             "trigger": "durable review-state classification"
           },
           "text": "Assigned exact-candidate Design Review is read-only and requires cumulative authorship independence; formal Code Review still routes to Review and self-review stays closed."
+        },
+        {
+          "action_boundaries": [
+            "design",
+            "handoff",
+            "review-write"
+          ],
+          "delivery": {
+            "mode": "DIRECT_ALWAYS_ON"
+          },
+          "id": "review-v4-author-falsification",
+          "impact": "additive",
+          "surface": "evidence",
+          "text": "Material design authors falsify/fix/rerun against the Review V4 contract; the author pass never counts as independent Design Review."
+        },
+        {
+          "action_boundaries": [
+            "design",
+            "handoff"
+          ],
+          "delivery": {
+            "mode": "DIRECT_ALWAYS_ON"
+          },
+          "id": "review-v4-verbatim-intent",
+          "impact": "additive",
+          "surface": "authority",
+          "text": "Marco-supplied/approved exact headline/outcome/invariant/non-goal/required wording stays verbatim; any rewrite needs exact delta, consequence, and explicit approval."
         }
       ]
     },
@@ -702,6 +770,33 @@
           "impact": "additive",
           "surface": "lifecycle",
           "text": "Manual Worker BLOCK-fix: require live exact task/PR/branch/blocked-head/formal-BLOCK identity, fix only that scope on the same PR, publish/read back, then stop before self-review. No second Marco prompt or automated Worker bookkeeping is required; Integration stays separate."
+        },
+        {
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff",
+            "review-write"
+          ],
+          "delivery": {
+            "mode": "DIRECT_ALWAYS_ON"
+          },
+          "id": "review-v4-author-falsification",
+          "impact": "additive",
+          "surface": "evidence",
+          "text": "Before material handoff, falsify/fix/rerun against complete intent, invariants, and architecture. The author pass is not independent Review; publish the exact candidate, then stop for a fresh independent Review."
+        },
+        {
+          "action_boundaries": [
+            "role-critical-write",
+            "handoff"
+          ],
+          "delivery": {
+            "mode": "DIRECT_ALWAYS_ON"
+          },
+          "id": "review-v4-verbatim-intent",
+          "impact": "additive",
+          "surface": "authority",
+          "text": "Marco-supplied/approved exact headline/outcome/invariant/non-goal/required wording stays verbatim; any rewrite needs exact delta, consequence, and explicit approval."
         }
       ]
     },
@@ -948,6 +1043,9 @@
             "dish/docs/agents/review.md#Blocker fixes and recheck",
             "dish/docs/agents/review.md#Review claims and dispatcher routing",
             "dish/docs/agents/review.md#Worker BLOCK"
+          ],
+          "Review V4 material review / findings": [
+            "dish/docs/agents/review.md#Review V4 governing contract"
           ]
         }
       },
@@ -1200,6 +1298,45 @@
           "impact": "additive",
           "surface": "lifecycle",
           "text": "Code BLOCK follows this via Implementation: bind exact task/PR/branch/head/BLOCK, fix only that PR, publish/read back, stop before self-review. Missing automated provenance is no gate."
+        },
+        {
+          "action_boundaries": [
+            "review-write"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "Review V4 material review / findings"
+          },
+          "id": "review-v4-complete-governing-set",
+          "impact": "additive",
+          "surface": "safety",
+          "text": "Review V4 judges the exact candidate against the complete still-applicable intent/invariants and targeted domain architecture; PASS also requires implementation-readiness where applicable and real authority/event producers."
+        },
+        {
+          "action_boundaries": [
+            "review-write",
+            "handoff"
+          ],
+          "delivery": {
+            "mode": "TRIGGERED_READ",
+            "trigger": "Review V4 material review / findings"
+          },
+          "id": "review-v4-fresh-review-followup",
+          "impact": "additive",
+          "surface": "lifecycle",
+          "text": "Material authorship requires fresh independent Review; BLOCK correction stays agent-owned. Safe findings go asynchronously to Code Smells and do not stop delivery; additive polish is follow-up."
+        },
+        {
+          "action_boundaries": [
+            "review-write"
+          ],
+          "delivery": {
+            "mode": "DIRECT_ALWAYS_ON"
+          },
+          "id": "review-v4-verbatim-intent",
+          "impact": "additive",
+          "surface": "authority",
+          "text": "Marco-supplied/approved exact headline/outcome/invariant/non-goal/required wording stays verbatim; any rewrite needs exact delta, consequence, and explicit approval."
         }
       ]
     },

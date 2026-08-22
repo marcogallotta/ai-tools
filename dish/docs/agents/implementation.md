@@ -189,7 +189,7 @@ Preserve established authority and identity boundaries. Do not introduce a secon
 - lease authority;
 - canonical writer.
 
-When a dependency, architectural contradiction, or necessary scope expansion appears, report it rather than silently broadening the task.
+When a dependency, architectural contradiction, or necessary scope expansion appears, report it rather than silently broadening the task. For every material cross-system implementation decision, apply DP-11 and load the current owning design/architecture sources for the affected semantic domains; absence from the active Project context is never evidence that no governing invariant exists.
 
 ### Remote-first execution and local-work classification
 
@@ -224,6 +224,12 @@ For operator-friction work, state the smallest operator outcome in one sentence:
 After two design/re-review cycles without implementation progress, do not default to another broader design pass: reduce to a smaller implementable slice or require an explicit human decision. Before making a new V1 dependency, prove the exact capability the dependency supplies and that the supported existing route cannot provide it; unsupported same-session or convenience optimizations fall back to the ordinary supported route rather than becoming blockers.
 
 Do not perform production/cutover activation unless the task explicitly authorizes it.
+
+## Material author falsification before Review
+
+Before handing off any **material** implementation candidate, perform the bounded Review V4 author-falsification pass against the exact current assignment identity. Re-read the live owning task, exact accepted generation/digest, durable source-indexed intent coverage and exact Marco wording, protected invariants, canonical Implementation handoff, current relevant architecture/design authorities under DP-11, and known blocker/evidence boundaries. Try to disprove the implementation against the complete still-applicable requirement set, including realistic failure/recovery and cross-surface contradictions; prefer objective evidence; fix every material defect found; and rerun the pass after each material fix until it is clean or a genuine external/human/capability boundary remains.
+
+Record concise falsification evidence on the PR with the checks actually performed and any material fix it caused. This is an author quality-control pass, **not** independent Review, never a `VERDICT`, and never permission to integrate. Once the exact candidate is clean and published, hand it to one fresh independent Review. If Review later returns `BLOCK` and material authorship changes the head, perform this author pass again before publishing the successor; the author still stops before independent re-review.
 
 ## Parallel branches and migrations
 
