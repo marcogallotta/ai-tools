@@ -143,7 +143,7 @@
           "id": "asana-v2-project-registry",
           "impact": "additive",
           "surface": "safety",
-          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation."
+          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation. Authorized V2 field writes also apply `structured-task-fields.md`."
         }
       ]
     },
@@ -285,7 +285,7 @@
           "id": "asana-v2-project-registry",
           "impact": "additive",
           "surface": "safety",
-          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation."
+          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation. Authorized V2 field writes also apply `structured-task-fields.md`."
         },
         {
           "id": "review-v3-handoff-fidelity",
@@ -674,7 +674,7 @@
           "id": "asana-v2-project-registry",
           "impact": "additive",
           "surface": "safety",
-          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation."
+          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation. Authorized V2 field writes also apply `structured-task-fields.md`."
         },
         {
           "id": "review-v3-handoff-consumption",
@@ -858,7 +858,7 @@
           "id": "asana-v2-project-registry",
           "impact": "additive",
           "surface": "safety",
-          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation."
+          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation. Authorized V2 field writes also apply `structured-task-fields.md`."
         }
       ]
     },
@@ -926,7 +926,7 @@
           "id": "asana-v2-project-registry",
           "impact": "additive",
           "surface": "safety",
-          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation."
+          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation. Authorized V2 field writes also apply `structured-task-fields.md`."
         }
       ]
     },
@@ -1121,7 +1121,7 @@
           "id": "asana-v2-project-registry",
           "impact": "additive",
           "surface": "safety",
-          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation."
+          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation. Authorized V2 field writes also apply `structured-task-fields.md`."
         },
         {
           "id": "review-v3-semantic-grounding",
@@ -1267,7 +1267,7 @@
           "id": "asana-v2-project-registry",
           "impact": "additive",
           "surface": "safety",
-          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation."
+          "text": "Other Dish Asana projects: apply `asana-v2-project-mode.md` registry by live name only: no suffix=LEGACY, v2=V2, other=stop+flag Marco; unregistered=zero mutation. Authorized V2 field writes also apply `structured-task-fields.md`."
         }
       ]
     }
@@ -1551,7 +1551,7 @@
       "id": "development-workflow-asana-mode",
       "impact": "additive",
       "surface": "safety",
-      "text": "`1217419962189616` writes: freshly read/apply `dish/docs/agents/development-workflow-asana-mode.md`; stale sessions restart/override; v3/unknown/mixed = zero."
+      "text": "`1217419962189616` writes: freshly read/apply `development-workflow-asana-mode.md`; authorized V2 field writes also apply `structured-task-fields.md`; stale sessions restart/override; v3/unknown/mixed = zero."
     }
   ],
   "profiles": {

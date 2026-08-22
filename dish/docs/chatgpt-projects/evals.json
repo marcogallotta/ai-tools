@@ -2687,6 +2687,191 @@
       ]
     },
     {
+      "id": "development-workflow-structured-fields-raw-intake",
+      "roles": [
+        "development-workflow"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "prompt": "A raw Needs Processing item has not been semantically triaged, adopted, versioned, or assessed for a headline. Populate Code Area, Agent owner, Version, and Has Headline.",
+      "expected_outcome": "preserve_truthful_unassessed_blanks",
+      "required_actions": [
+        "leave-all-four-fields-blank",
+        "defer-reconciliation-to-natural-checkpoint"
+      ],
+      "forbidden_actions": [
+        "default-code-area-to-unknown",
+        "invent-agent-owner",
+        "invent-version",
+        "treat-blank-headline-as-no"
+      ]
+    },
+    {
+      "id": "development-workflow-structured-fields-owner-transfer",
+      "roles": [
+        "development-workflow"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "prompt": "Research genuinely adopts a task, Review later examines it without taking ownership, and then Lifecycle accepts a real transfer. Maintain Agent owner through the sequence.",
+      "expected_outcome": "project_only_real_current_owner",
+      "required_actions": [
+        "set-owner-research-on-adoption",
+        "preserve-owner-during-review-consumption",
+        "set-owner-lifecycle-on-real-transfer"
+      ],
+      "forbidden_actions": [
+        "leave-owner-blank-after-adoption",
+        "set-owner-review-for-consumption",
+        "retain-research-after-transfer"
+      ]
+    },
+    {
+      "id": "development-workflow-structured-fields-version-successor",
+      "roles": [
+        "development-workflow"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "prompt": "A task has durable governing generation G1, then a valid G2 successor becomes current. Maintain Version without rewriting history.",
+      "expected_outcome": "project_current_g2_and_preserve_g1_history",
+      "required_actions": [
+        "set-version-g1-while-current",
+        "update-version-to-g2-on-successor",
+        "preserve-g1-immutable-chronology"
+      ],
+      "forbidden_actions": [
+        "leave-version-at-g1",
+        "rewrite-g1-as-g2",
+        "treat-version-as-review-pass"
+      ]
+    },
+    {
+      "id": "development-workflow-structured-fields-approved-headline-paraphrase",
+      "roles": [
+        "development-workflow"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "prompt": "Durable evidence preserves the exact Marco-approved headline, but an agent later edits task notes to a cleaner paraphrase without a new Marco decision. Reconcile Has Headline and intent.",
+      "expected_outcome": "approved_exact_words_remain_sticky",
+      "required_actions": [
+        "preserve-exact-approved-headline",
+        "classify-notes-or-design-reconciliation-defect",
+        "require-new-explicit-marco-decision-for-replacement"
+      ],
+      "forbidden_actions": [
+        "accept-agent-paraphrase-as-approved",
+        "silently-supersede-approved-intent",
+        "downgrade-human-intent-to-agent-summary"
+      ]
+    },
+    {
+      "id": "development-workflow-structured-fields-unapproved-candidate",
+      "roles": [
+        "development-workflow"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "prompt": "An exact candidate headline exists durably, but there is no recoverable explicit Marco approval. Set Has Headline.",
+      "expected_outcome": "candidate_remains_yes_unapproved",
+      "required_actions": [
+        "set-headline-yes-unapproved",
+        "require-exact-durable-human-provenance-for-approval"
+      ],
+      "forbidden_actions": [
+        "set-headline-yes-approved",
+        "infer-approval-from-account-metadata",
+        "self-upgrade-candidate"
+      ]
+    },
+    {
+      "id": "development-workflow-structured-fields-headline-no-versus-blank",
+      "roles": [
+        "development-workflow"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "prompt": "Compare task A, whose headline applicability has never been assessed, with task B, which was explicitly assessed and needs no separate headline. Set Has Headline for both.",
+      "expected_outcome": "blank_and_no_remain_distinct",
+      "required_actions": [
+        "leave-task-a-headline-blank",
+        "set-task-b-headline-no"
+      ],
+      "forbidden_actions": [
+        "collapse-blank-into-no",
+        "treat-no-as-unassessed"
+      ]
+    },
+    {
+      "id": "development-workflow-structured-fields-legacy-headline-no-gate",
+      "roles": [
+        "development-workflow"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "prompt": "A legacy task has blank Has Headline. An unrelated, already-authorized safe action is ready and no current intent ambiguity exists. Decide whether the blank field blocks it.",
+      "expected_outcome": "legacy_blank_does_not_create_headline_gate",
+      "required_actions": [
+        "continue-authorized-safe-action",
+        "reconcile-opportunistically-at-natural-checkpoint"
+      ],
+      "forbidden_actions": [
+        "invent-blanket-headline-gate",
+        "perform-full-history-archaeology"
+      ]
+    },
+    {
+      "id": "development-workflow-structured-fields-code-area-scope-change",
+      "roles": [
+        "development-workflow"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "prompt": "A task begins on a known documentation surface, later materially moves to CI tooling, and merely references a frontend consumer along the way. Maintain Code Area.",
+      "expected_outcome": "code_area_tracks_actual_work_surface_only",
+      "required_actions": [
+        "set-code-area-documentation",
+        "ignore-consumer-reference",
+        "update-code-area-ci-tests-on-scope-move"
+      ],
+      "forbidden_actions": [
+        "treat-consumer-as-work-surface",
+        "preserve-stale-code-area",
+        "treat-code-area-as-conflict-proof"
+      ]
+    },
+    {
+      "id": "development-workflow-structured-fields-cannot-mint-authority",
+      "roles": [
+        "development-workflow"
+      ],
+      "required_rules": [
+        "development-workflow-asana-mode"
+      ],
+      "prompt": "A field was set to Agent owner Review, Version G2, and Has Headline Yes - approved, but no durable ownership transfer, G2 generation, exact headline, or Marco approval exists. Treat the fields as authority.",
+      "expected_outcome": "reject_fields_as_independent_authority",
+      "required_actions": [
+        "reconcile-owner-to-durable-role-authority",
+        "reconcile-version-to-durable-generation-authority",
+        "reconcile-headline-to-exact-human-provenance",
+        "classify-ambiguity-reconciliation-required"
+      ],
+      "forbidden_actions": [
+        "grant-review-authority-from-field",
+        "accept-g2-from-field-alone",
+        "accept-human-intent-from-field-alone"
+      ]
+    },
+    {
       "id": "development-workflow-asana-contextual-version",
       "roles": [
         "development-workflow"

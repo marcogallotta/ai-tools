@@ -344,6 +344,11 @@ def test_development_workflow_asana_mode_guard_reaches_every_project_and_worker(
  assert 'development-workflow-asana-mode.md' in index and 'development-workflow-asana-mode.md' in worker
  assert 'freshly read and apply' in worker
  assert 'V3 returns `PROJECT MODE V3 REQUIRES UPDATED PROJECT SETTINGS / GPT ACTION PROTOCOL`' in worker
+ fields=(DISH_ROOT/'docs'/'agents'/'structured-task-fields.md').read_text()
+ for token in ('raw or unassessed intake','real ownership transfer','exact durable version','Yes - unapproved','Yes - approved','sticky','no blanket headline gate','natural checkpoint','Priority remains'):
+  assert token in fields
+ assert 'structured-task-fields.md' in contract
+ assert 'structured-task-fields.md' in rule['text']
 
 def test_development_workflow_asana_mode_behavior_matrix_is_registered():
  expected={
@@ -367,6 +372,15 @@ def test_development_workflow_asana_mode_behavior_matrix_is_registered():
   'development-workflow-asana-priority-absent',
   'development-workflow-asana-historical-final-stamp',
   'development-workflow-asana-stale-session-fresh-read',
+  'development-workflow-structured-fields-raw-intake',
+  'development-workflow-structured-fields-owner-transfer',
+  'development-workflow-structured-fields-version-successor',
+  'development-workflow-structured-fields-approved-headline-paraphrase',
+  'development-workflow-structured-fields-unapproved-candidate',
+  'development-workflow-structured-fields-headline-no-versus-blank',
+  'development-workflow-structured-fields-legacy-headline-no-gate',
+  'development-workflow-structured-fields-code-area-scope-change',
+  'development-workflow-structured-fields-cannot-mint-authority',
  }
  for scenario_id in expected:
   scenario=_scenario(scenario_id)
@@ -391,6 +405,10 @@ def test_asana_v2_project_registry_rule_excludes_development_workflow_and_reache
   assert token in registry
  for token in ('lifecycle_state','v2-governed','structural-repair-pending','migration-pending'):
   assert token not in registry
+ assert 'structured-task-fields.md' in registry
+ fields=(DISH_ROOT/'docs'/'agents'/'structured-task-fields.md').read_text()
+ assert 'fields project current durable authority' in fields
+ assert all('structured-task-fields.md' in next(x for x in kernels.effective_rules(s,role) if x['id']=='asana-v2-project-registry')['text'] for role in target_roles)
  contract=(DISH_ROOT/'docs'/'agents'/'development-workflow-asana-mode.md').read_text()
  for token in ('1217419962189616','Dish — Development Workflow`','Dish — Development Workflow v2','Needs Post-Merge Rollout'):
   assert token in contract
@@ -725,8 +743,8 @@ def test_triggered_rule_text_change_does_not_manufacture_project_settings_versio
 def test_required_version_inventory_matches_published_first_parent_history_and_restores_losses():
  m,s=kernels.load_canonical(); versions=kernels.required_versions(m)
  expected={f'dish-chatgpt-projects-v2-{x}' for x in ['d96ab5f0588d','708fb9a9a9bc','39ff3abc502e','857d88788c12','23365034a0f1','9575ccfd79c8','28dcb04decc8','9bb70124ca21','694190185f60','712e3b16aa05','d048682742d6','54041bbbc8d8','86b8011172ee','219f34402511','9bf227f53f0a','5d24af30193a','bfaeef68aed9','d3a070d57fb2','443e13732e7f','7644d9ed0518','0a572f3b0a67']}
- expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d','dish-chatgpt-projects-v2-7924b7da9fc0','dish-chatgpt-projects-v2-3fe9827c4adc','dish-chatgpt-projects-v2-a9cefd1968b7','dish-chatgpt-projects-v2-05211aedbf1c','dish-chatgpt-projects-v2-7a1029f2d804','dish-chatgpt-projects-v2-dc2161f69f2e'})
- assert set(versions)==expected and len(versions)==32
+ expected.update({m['canonical_version'],'dish-chatgpt-projects-v2-33e1d8d28254','dish-chatgpt-projects-v2-98cec53850f6','dish-chatgpt-projects-v2-e537f97c302f','dish-chatgpt-projects-v2-c864c29a420d','dish-chatgpt-projects-v2-7924b7da9fc0','dish-chatgpt-projects-v2-3fe9827c4adc','dish-chatgpt-projects-v2-a9cefd1968b7','dish-chatgpt-projects-v2-05211aedbf1c','dish-chatgpt-projects-v2-7a1029f2d804','dish-chatgpt-projects-v2-dc2161f69f2e','dish-chatgpt-projects-v2-fdf64d096829'})
+ assert set(versions)==expected and len(versions)==33
  assert kernels.validate_required_version_topology(m)==versions
  for old in ('dish-chatgpt-projects-v2-39ff3abc502e','dish-chatgpt-projects-v2-9bb70124ca21'):
   path=kernels._change_path(m,old); assert path and path[-1]['to_version']==m['canonical_version']
