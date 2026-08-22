@@ -68,6 +68,7 @@ def test_frozen_sqlite_authority_inventory_matches_schema() -> None:
 
 def test_frozen_governing_sources_have_exact_hashes() -> None:
     baseline = _baseline()
+    assert "dish_tool/database_schema_migrations.py" in baseline["governing_source_sha256"]
     actual = {
         relative: _sha256(ROOT / relative)
         for relative in baseline["governing_source_sha256"]

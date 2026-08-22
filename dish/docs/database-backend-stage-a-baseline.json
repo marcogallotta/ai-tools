@@ -83,7 +83,8 @@
     "dish_tool/command_identity.py": "c12a3afe0225583862a35f37b4b602350403616ab1d0f8edfb97fe93090ba381",
     "dish_tool/database_initialization.py": "13b49cf8f722a0b6a56ca30cce5f8e2a9a037acaa50d1bb74776929fedb7343d",
     "dish_tool/database_migrations.py": "31bdbf9966f399ce7a21966e35ff9183f75958911456d9a80a68c1e54a8af6b9",
-    "dish_tool/database_schema.py": "f4b170d2443e3e3ede2b918bb3ff52275f1f394fa0beb0e9bbc9d0889ce8d2f8",
+    "dish_tool/database_schema.py": "5b576d60885f4891227d04c87d4cb98d0ac7831adb600355543dfabfda973708",
+    "dish_tool/database_schema_migrations.py": "c3ca81d3bebdd68564069b061220d7b8a9af42b274cd632aaaff5f0bf7449982",
     "dish_tool/database_schema_validation.py": "2c04862bf1f3bcd35aa7b14aa2cad3edbe5e7312f4e3d0afd42007cb17af3f4b",
     "dish_tool/workflow_policy.py": "213219dfc857a65b9720043426f9ddb6c7ea68706086322648051da3f7775fe9",
     "docs/runtime-contract.md": "a1236a7eef7141e709692e971e515090621f48bd49e4a1d92c2fe409fa5bf6be",
@@ -91,7 +92,7 @@
     "scripts/dish-pg-acceptance": "d7b30b7f45a9ff38b1106aa868065449bea879f71ce30f2428b1333aa0ec43d4",
     "scripts/dish-pg-stage-a-baseline": "ef030edc5685c16082a537db5c53425f3572fc6cf8b2a79f9182bd07a77c530e"
   },
-  "last_rebaseline_reason": "Merge main (PR #212 governed admin CLI source-hash refresh) into Implementation Action Gate A: restrict implementation-action to the dedicated Gate A publication transport projection and add value-free file-ingress diagnostics; no PostgreSQL execution wiring change",
+  "last_rebaseline_reason": "PR #237 physically split immutable SQLite migration bodies into database_schema_migrations.py; preserve both the facade and extracted authority in the governed source-hash baseline with no schema or migration semantic change",
   "notes": [
     "The baseline records current source authority only; PostgreSQL is not production authority.",
     "Changes to governed source hashes or acceptance rules require explicit baseline review; ordinary test-file changes do not.",
