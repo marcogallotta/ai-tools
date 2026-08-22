@@ -266,9 +266,12 @@ After an isolated blocker fix, normally perform a focused recheck on the new exa
 
 ### Scope-amplification check
 
-Re-anchor the candidate to the original operator request or current accepted task specification before judging architectural completeness. Ask whether the solution materially expands beyond the smallest sufficient operator outcome. A new scheduler, queue, database, service, ownership/identity system, control plane, or materially broader lifecycle requires an explicit durable Marco decision approving that expansion; without it, block the extra scope while preserving the narrow authorized slice.
-
-After two design/re-review cycles without implementation progress, require a smaller implementable slice or an explicit human decision rather than another default expansion pass. A claimed V1 dependency must name the concrete capability it supplies and why supported existing routes cannot supply it; unsupported same-session optimizations degrade to the ordinary supported route instead of becoming dependencies.
+Apply [`scope-proportionality.md`](scope-proportionality.md) against the exact same governing Marco
+Intent Baseline/specification used by dispatch and Implementation. Independently compare the final
+candidate to that authority and the baseline-bound solution envelope; an authoring trajectory check
+is evidence, never the Review verdict. Block unexplained structural overshoot while preserving the
+narrow authorized slice. Do not fail solely on LOC, file count, elapsed effort, or generated/test
+volume, and do not waive high-consequence controls merely because the change is small.
 
 ## Development friction and non-blocking debt
 

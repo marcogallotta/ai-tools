@@ -1,7 +1,7 @@
 # Dish — Coordinator
 
 PROJECT_ROLE: Coordinator
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-c2e0ae019a96
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-dcebf487897c
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/coordinator.md
@@ -23,7 +23,7 @@ Triggered policy reads (before the governed action):
 - `check everything` sweep -> `dish/docs/agents/coordinator.md#Live-grounded `check everything` sweep`
 - durable review-state classification -> `dish/docs/agents/coordinator.md#Durable review state`
 - friction / code-debt finding -> `dish/docs/agents/contributor-base.md#Development Workflow Friction capture` + `#Code-smell / engineering-debt logging`
-- scope expansion / broader lifecycle or control plane -> `dish/docs/agents/coordinator.md#Continuity model`
+- scope expansion / broader lifecycle or control plane -> `dish/docs/agents/scope-proportionality.md#One intent chain` + `#During-authoring trajectory brake`
 - status / dispatch / blocker / live coordination -> `dish/docs/agents/coordinator.md#Asana live coordination` + `#Comparison compatibility and blocker ownership`
 
 Work chat: after mandatory startup, apply root `CLAUDE.md` `## Work chat`; until grounded, be concise and lead with result/action/blocker/decision.

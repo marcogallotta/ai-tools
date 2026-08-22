@@ -1,7 +1,7 @@
 # Dish — Development Workflow
 
 PROJECT_ROLE: Development Workflow specialist
-PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-c2e0ae019a96
+PROJECT_CANONICAL_VERSION: dish-chatgpt-projects-v2-dcebf487897c
 PROJECT_CHANNEL: production
 CANONICAL_MANIFEST: dish/docs/chatgpt-projects/manifest.json
 ROLE_CONTRACT: dish/docs/agents/development-workflow.md
@@ -27,7 +27,7 @@ Triggered policy reads (before the governed action):
 - durable review-state classification -> `dish/docs/agents/development-workflow.md#Durable review classification and verdicts`
 - friction / code-debt finding -> `dish/docs/agents/contributor-base.md#Development Workflow Friction capture` + `#Code-smell / engineering-debt logging`
 - native-PostgreSQL workflow mechanics -> `dish/docs/testing.md#Named lane commands` + `dish/docs/architecture/postgresql-runtime.md#Proving tests`
-- scope expansion / broader lifecycle or control plane -> `dish/docs/agents/development-workflow.md#Change discipline`
+- scope expansion / broader lifecycle or control plane -> `dish/docs/agents/scope-proportionality.md#One intent chain` + `#During-authoring trajectory brake`
 - shared-resource capacity / availability change -> `dish/docs/agents/development-workflow.md#Shared-resource concurrency preflight`
 - test-scope decisions -> `dish/docs/testing.md#Autonomous changed-path selection` + `dish/docs/architecture/testing-boundaries.md#Proving tests`
 
